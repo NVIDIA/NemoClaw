@@ -12,41 +12,51 @@ import * as dockerDriverGatewayEnv from "../../../src/lib/onboard/docker-driver-
 import { createDockerDriverGatewayRuntimeHelpers } from "../../../src/lib/onboard/docker-driver-gateway-runtime.ts";
 import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import {
-  assertTlsServerNameRegressionInjectsAndRejects,
-  assertTlsServerNameRemovedAfterUserEnvironmentMerge,
-  OPENSHELL_V0106_TLS_SERVER_NAME_REGRESSIONS,
+  assertOpenShellTlsServerNameSource,
+  type OpenShellTlsServerNameSource,
   OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES,
   verifyOpenShellTlsServerNameSourceBoundary,
 } from "../live/openshell-v0106-tls-server-name-source.ts";
 
+function withBlobSha(
+  reviewedSource: OpenShellTlsServerNameSource,
+  source: string,
+): OpenShellTlsServerNameSource {
+  const bytes = Buffer.from(source, "utf8");
+  const header = Buffer.from(`blob ${String(bytes.byteLength)}\0`, "utf8");
+  return {
+    ...reviewedSource,
+    blobSha: createHash("sha1").update(header).update(bytes).digest("hex"),
+  };
+}
+
+function checkFor(reviewedSource: OpenShellTlsServerNameSource, category: "driver" | "regression") {
+  const check = reviewedSource.checks.find((candidate) => candidate.category === category);
+  expect(check).toBeDefined();
+  return check!;
+}
+
 describe("OpenShell 0.0.106 TLS server-name boundary", () => {
   it("covers every local supervisor driver changed by the upstream security fix", () => {
-    expect(OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES.map(({ driver }) => driver)).toEqual([
-      "docker",
-      "podman",
-      "vm",
-    ]);
-    expect(OPENSHELL_V0106_TLS_SERVER_NAME_REGRESSIONS.map(({ driver }) => driver)).toEqual([
-      "docker",
-      "podman",
-      "vm",
-    ]);
+    const checks = OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES.flatMap(({ checks }) => checks);
+
+    expect(
+      checks.filter(({ category }) => category === "driver").map(({ driver }) => driver),
+    ).toEqual(["docker", "podman", "vm"]);
+    expect(
+      checks.filter(({ category }) => category === "regression").map(({ driver }) => driver),
+    ).toEqual(["docker", "podman", "vm"]);
   });
 
   it("rejects a regression assertion that occurs before hostile-value injection", () => {
-    const contract = OPENSHELL_V0106_TLS_SERVER_NAME_REGRESSIONS[0];
-    const source = `${contract.testToken}\n${contract.assertionToken}\n${contract.injectionToken}\n`;
-    const bytes = Buffer.from(source, "utf8");
-    const header = Buffer.from(`blob ${String(bytes.byteLength)}\0`, "utf8");
+    const reviewedSource = OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES[1]!;
+    const check = checkFor(reviewedSource, "regression");
+    const [testToken, injectionToken, assertionToken] = check.orderedTokens;
+    const source = `${testToken}\n${assertionToken}\n${injectionToken}\n`;
+
     expect(() =>
-      assertTlsServerNameRegressionInjectsAndRejects(
-        {
-          ...contract,
-          blobSha: createHash("sha1").update(header).update(bytes).digest("hex"),
-        },
-        source,
-      ),
-    ).toThrow(/must inject and reject/u);
+      assertOpenShellTlsServerNameSource(withBlobSha(reviewedSource, source), source),
+    ).toThrow(/docker regression does not preserve/u);
   });
 
   it("binds the live qualification target to the production supervisor map", () => {
@@ -77,55 +87,44 @@ describe("OpenShell 0.0.106 TLS server-name boundary", () => {
   });
 
   it("rejects removal that occurs before the user environment merge", () => {
-    const contract = OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES[0];
-    const source = `${contract.removeToken}\n${contract.mergeToken}\n`;
-    const bytes = Buffer.from(source, "utf8");
-    const header = Buffer.from(`blob ${String(bytes.byteLength)}\0`, "utf8");
+    const reviewedSource = OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES[0]!;
+    const check = checkFor(reviewedSource, "driver");
+    const [mergeToken, removeToken] = check.orderedTokens;
+    const source = `${removeToken}\n${mergeToken}\n`;
+
     expect(() =>
-      assertTlsServerNameRemovedAfterUserEnvironmentMerge(
-        {
-          ...contract,
-          blobSha: createHash("sha1").update(header).update(bytes).digest("hex"),
-        },
-        source,
-      ),
-    ).toThrow(/must remove.*after merging user environment/u);
+      assertOpenShellTlsServerNameSource(withBlobSha(reviewedSource, source), source),
+    ).toThrow(/docker driver does not preserve/u);
   });
 
-  it("requires every exact Docker, Podman, and VM source before passing", async () => {
-    const fixtures = OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES.map((contract, index) => {
-      const regression = OPENSHELL_V0106_TLS_SERVER_NAME_REGRESSIONS[index];
-      const source =
-        `${contract.mergeToken}\n${contract.removeToken}\n` +
-        `${regression.testToken}\n${regression.injectionToken}\n${regression.assertionToken}\n`;
-      const bytes = Buffer.from(source, "utf8");
-      const header = Buffer.from(`blob ${String(bytes.byteLength)}\0`, "utf8");
+  it("fetches each exact source once before projecting driver and regression results", async () => {
+    const fixtures = OPENSHELL_V0106_TLS_SERVER_NAME_SOURCES.map((reviewedSource) => {
+      const source = reviewedSource.checks.flatMap(({ orderedTokens }) => orderedTokens).join("\n");
       return {
-        blobSha: createHash("sha1").update(header).update(bytes).digest("hex"),
-        contract,
-        regression,
+        reviewedSource: withBlobSha(reviewedSource, source),
         source,
       };
     });
-    const contracts = fixtures.map(({ blobSha, contract }) => ({ ...contract, blobSha }));
-    const regressions = fixtures.map(({ blobSha, regression }) => ({ ...regression, blobSha }));
     const fetchSource = vi.fn<typeof fetch>(async (input) => {
-      const path = String(input).split(`${OPENSHELL_V0106_QUALIFICATION.sourceRevision}/`)[1] ?? "";
-      const fixture = fixtures.find(
-        ({ contract, regression }) => contract.path === path || regression.path === path,
-      );
+      const sourcePath =
+        String(input).split(`${OPENSHELL_V0106_QUALIFICATION.sourceRevision}/`)[1] ?? "";
+      const fixture = fixtures.find(({ reviewedSource }) => reviewedSource.path === sourcePath);
       return fixture
         ? new Response(fixture.source, { status: 200 })
         : new Response("", { status: 404 });
     });
 
     await expect(
-      verifyOpenShellTlsServerNameSourceBoundary(fetchSource, contracts, regressions),
+      verifyOpenShellTlsServerNameSourceBoundary(
+        fetchSource,
+        fixtures.map(({ reviewedSource }) => reviewedSource),
+      ),
     ).resolves.toMatchObject({
       drivers: [{ driver: "docker" }, { driver: "podman" }, { driver: "vm" }],
       regressions: [{ driver: "docker" }, { driver: "podman" }, { driver: "vm" }],
       sourceRevision: OPENSHELL_V0106_QUALIFICATION.sourceRevision,
       version: "0.0.106",
     });
+    expect(fetchSource).toHaveBeenCalledTimes(4);
   });
 });

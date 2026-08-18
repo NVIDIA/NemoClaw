@@ -380,11 +380,11 @@ describe("llama.cpp image PR workflow", () => {
       'cosign sign --yes "$IMAGE@$DIGEST"',
     );
     expect(JSON.stringify(attestationWorkflow)).not.toContain("secrets.");
-    for (const action of (attest.steps ?? [])
+    (attest.steps ?? [])
       .map((step) => step.uses)
-      .filter((uses): uses is string => uses !== undefined)) {
+      .filter((uses): uses is string => uses !== undefined).forEach((action) => {
       expect(action).toMatch(fullShaAction);
-    }
+    });
   });
 
   it("pins actions and validates the native non-root read-only image (#8231)", () => {
@@ -392,9 +392,9 @@ describe("llama.cpp image PR workflow", () => {
       .flatMap((job) => job.steps ?? [])
       .map((step) => step.uses)
       .filter((uses): uses is string => uses !== undefined);
-    for (const action of actions) {
+    actions.forEach((action) => {
       expect(action).toMatch(fullShaAction);
-    }
+    });
 
     expect(buildStep.with?.platforms).toBe("${{ matrix.platform }}");
     expect(buildStep.with?.provenance).toBe(false);

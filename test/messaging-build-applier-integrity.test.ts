@@ -90,16 +90,16 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-applier-boundary-"));
     const messagingRoot = path.join(root, "src", "lib", "messaging");
     try {
-      for (const copy of dockerfile.matchAll(
+      [...dockerfile.matchAll(
         /^COPY (src\/lib\/messaging\/|scripts\/lib\/(?:openclaw-npm-remediation|reviewed-npm-archive)\.mts) (\/\S+)$/gm,
-      )) {
+      )].forEach((copy) => {
         const source = copy[1] ?? "";
         const destination = copy[2] ?? "";
         const sourcePath = path.join(REPO_ROOT, source);
         const destinationPath = path.join(root, destination.replace(/^\//, ""));
         fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
         fs.cpSync(sourcePath, destinationPath, { recursive: true });
-      }
+      });
       const stagedApplier = path.join(
         messagingRoot,
         "applier",

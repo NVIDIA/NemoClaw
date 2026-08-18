@@ -272,13 +272,13 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
           ),
         ),
       ).toEqual(statePaths.map((statePath) => [statePath]));
-      for (const statePath of statePaths) {
+      statePaths.forEach((statePath) => {
         expect(console.log).toHaveBeenCalledWith(
           expect.stringContaining(
             `Recovery restores ${JSON.stringify(statePath)} state only for this sandbox`,
           ),
         );
-      }
+      });
       expect(console.log).toHaveBeenCalledWith(
         expect.stringContaining("Files outside this recorded managed state path"),
       );

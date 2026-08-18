@@ -427,15 +427,15 @@ describe("OpenShell gateway auth source contract helpers", () => {
       );
     } finally {
       openSpy.mockRestore();
-      for (const descriptor of [scanSourceFd, copySourceFd].filter(
+      [scanSourceFd, copySourceFd].filter(
         (candidate): candidate is number => candidate !== undefined,
-      )) {
+      ).forEach((descriptor) => {
         try {
           fs.closeSync(descriptor);
         } catch {
           // The implementation already closed the descriptor.
         }
-      }
+      });
       fs.rmSync(parent, { recursive: true, force: true });
     }
   });

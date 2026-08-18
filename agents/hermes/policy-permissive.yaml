@@ -22,6 +22,7 @@ filesystem_policy:
     - /proc
     - /dev/urandom
     - /app
+    - /run/nemoclaw/managed-startup-ca-bundle.pem
     - /etc
     - /var/log
     - /var/lib/dpkg                  # Allow package-version inspection without package mutation.

@@ -214,7 +214,7 @@ describe("MCP CLI input validation", () => {
     expect(() => parseMcpAddArgs(["github", "--url", "stdio://github"])).toThrow(/https/);
   });
 
-  function verifyCredentialFreeUrlNormalization() {
+  it("normalizes URLs without persisting credentials", () => {
     expect(normalizeMcpServerUrl("https://mcp.example.test")).toBe("https://mcp.example.test/");
     expect(() => normalizeMcpServerUrl("https://user:pass@mcp.example.test/mcp")).toThrow(
       /must not embed credentials/,
@@ -231,67 +231,70 @@ describe("MCP CLI input validation", () => {
     expect(() => normalizeMcpServerUrl("https://mcp.example.test/mcp#")).toThrow(
       /must not include a fragment/,
     );
-    for (const token of [
-      "nvapi-abcdefghijklmnop",
-      "ghp_abcdefghijklmnop",
-      "sk-abcdefghijklmnopqrstuvwxyz",
-      "sk-abcdefghijklmnopqrstuvwxyz.json",
-      `bot1234567890:${"A".repeat(35)}`,
-      `bot1234567890:${"A".repeat(34)}-`,
-      `1234567890:${"B".repeat(35)}`,
-      `${"A".repeat(24)}.${"B".repeat(6)}.${"C".repeat(26)}-`,
-    ]) {
-      expect(() => normalizeMcpServerUrl(`https://mcp.example.test/mcp/${token}`)).toThrow(
-        /paths must not contain secret-shaped credential material.*full URL is persisted/i,
-      );
-    }
-    for (const path of ["/botanical/mcp", "/bottom/mcp", "/api/bots/mcp"]) {
-      expect(normalizeMcpServerUrl(`https://mcp.example.test${path}`)).toBe(
-        `https://mcp.example.test${path}`,
-      );
-    }
     expect(() => normalizeMcpServerUrl("https://*.example.test/mcp")).toThrow(
       /hosts must be literal/,
     );
     expect(() => normalizeMcpServerUrl("https://mcp.example.test:0/mcp")).toThrow(
       /port must be between 1 and 65535/,
     );
-    for (const hostname of [
-      "mcp_bad.example.test",
-      "-mcp.example.test",
-      "mcp-.example.test",
-      "mcp..example.test",
-      `${"a".repeat(64)}.example.test`,
-      `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(63)}`,
-    ]) {
-      expect(() => normalizeMcpServerUrl(`https://${hostname}/mcp`)).toThrow(
-        /canonical DNS labels/,
-      );
-    }
     expect(normalizeMcpServerUrl(`https://${"a".repeat(63)}.example.test/mcp`)).toBe(
       `https://${"a".repeat(63)}.example.test/mcp`,
     );
-    for (const path of [
-      "/mcp/**",
-      "/mcp/%2A%2A",
-      "/a/%2e%2e/mcp",
-      "/mcp/%2fadmin",
-      "/mcp/%",
-      "/mcp/%GG",
-      "/mcp/%2",
-      "/mcp;version=1",
-      "/mcp/[admin]",
-      "/mcp\\admin",
-      "/mcp//admin",
-      "/mcp/café",
-    ]) {
-      expect(() => normalizeMcpServerUrl(`https://mcp.example.test${path}`)).toThrow(
-        /literal and canonical/,
-      );
-    }
-  }
+  });
 
-  it("normalizes URLs without persisting credentials", verifyCredentialFreeUrlNormalization);
+  it.each([
+    "nvapi-abcdefghijklmnop",
+    "ghp_abcdefghijklmnop",
+    "sk-abcdefghijklmnopqrstuvwxyz",
+    "sk-abcdefghijklmnopqrstuvwxyz.json",
+    `bot1234567890:${"A".repeat(35)}`,
+    `bot1234567890:${"A".repeat(34)}-`,
+    `1234567890:${"B".repeat(35)}`,
+    `${"A".repeat(24)}.${"B".repeat(6)}.${"C".repeat(26)}-`,
+  ])("rejects secret-shaped MCP URL path token %#", (token) => {
+    expect(() => normalizeMcpServerUrl(`https://mcp.example.test/mcp/${token}`)).toThrow(
+      /paths must not contain secret-shaped credential material.*full URL is persisted/i,
+    );
+  });
+
+  it.each(["/botanical/mcp", "/bottom/mcp", "/api/bots/mcp"])(
+    "accepts credential-free MCP URL path %s",
+    (path) => {
+      expect(normalizeMcpServerUrl(`https://mcp.example.test${path}`)).toBe(
+        `https://mcp.example.test${path}`,
+      );
+    },
+  );
+
+  it.each([
+    "mcp_bad.example.test",
+    "-mcp.example.test",
+    "mcp-.example.test",
+    "mcp..example.test",
+    `${"a".repeat(64)}.example.test`,
+    `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(63)}`,
+  ])("rejects noncanonical MCP hostname %#", (hostname) => {
+    expect(() => normalizeMcpServerUrl(`https://${hostname}/mcp`)).toThrow(/canonical DNS labels/);
+  });
+
+  it.each([
+    "/mcp/**",
+    "/mcp/%2A%2A",
+    "/a/%2e%2e/mcp",
+    "/mcp/%2fadmin",
+    "/mcp/%",
+    "/mcp/%GG",
+    "/mcp/%2",
+    "/mcp;version=1",
+    "/mcp/[admin]",
+    "/mcp\\admin",
+    "/mcp//admin",
+    "/mcp/café",
+  ])("rejects noncanonical MCP URL path %#", (path) => {
+    expect(() => normalizeMcpServerUrl(`https://mcp.example.test${path}`)).toThrow(
+      /literal and canonical/,
+    );
+  });
 
   it.each([
     "https://qa-user:qa-pass-123@/mcp",

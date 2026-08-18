@@ -23,25 +23,32 @@ const QUALIFICATION_INSTALLER_IDENTITIES = [
   "559b8aaad3a8eeab45c511e7de531d9baa98a311282dcb0c2c5f38cc2d4ca355",
   "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8",
 ] as const;
-
-function expectSingleInstallerIdentities(source: string): void {
-  for (const identity of QUALIFICATION_INSTALLER_IDENTITIES) {
-    expect(source.match(new RegExp(identity.replaceAll(".", "\\."), "gu"))).toHaveLength(1);
-  }
-}
+const QUALIFICATION_INSTALLER_PATH = "tools/e2e/install-openshell-v00106-qualification.sh";
+const QUALIFICATION_INSTALLER_SOURCE = readFileSync(QUALIFICATION_INSTALLER_PATH, "utf8");
 
 describe("OpenShell gateway auth contract workflow boundary", () => {
-  it("binds the qualification installer to one coherent OpenShell 0.0.106 release", () => {
-    const installerPath = "tools/e2e/install-openshell-v00106-qualification.sh";
-    const source = readFileSync(installerPath, "utf8");
+  it.each(QUALIFICATION_INSTALLER_IDENTITIES)(
+    "binds the qualification installer identity exactly once [%s]",
+    (identity) => {
+      expect(
+        QUALIFICATION_INSTALLER_SOURCE.match(new RegExp(identity.replaceAll(".", "\\."), "gu")),
+      ).toHaveLength(1);
+    },
+  );
 
-    expect(source).toContain('readonly release_tag="v0.0.106"');
-    expect(source).not.toMatch(/v0\.0\.(?:101|105|107)/u);
-    expectSingleInstallerIdentities(source);
-    expect(source).toContain('printf \'%s  %s\\n\' "${archive_sha256[$index]}" "$archive" | sha256sum -c -');
-    expect(source).toContain('printf \'%s  %s\\n\' "${binary_sha256[$index]}" "${extracted}/${member}" | sha256sum -c -');
-    expect(source).toContain('printf \'%s  %s\\n\' "${binary_sha256[$index]}" "${target_dir}/${member}" | sha256sum -c -');
-    execFileSync("bash", ["-n", installerPath]);
+  it("binds the qualification installer to one coherent OpenShell 0.0.106 release", () => {
+    expect(QUALIFICATION_INSTALLER_SOURCE).toContain('readonly release_tag="v0.0.106"');
+    expect(QUALIFICATION_INSTALLER_SOURCE).not.toMatch(/v0\.0\.(?:101|105|107)/u);
+    expect(QUALIFICATION_INSTALLER_SOURCE).toContain(
+      'printf \'%s  %s\\n\' "${archive_sha256[$index]}" "$archive" | sha256sum -c -',
+    );
+    expect(QUALIFICATION_INSTALLER_SOURCE).toContain(
+      'printf \'%s  %s\\n\' "${binary_sha256[$index]}" "${extracted}/${member}" | sha256sum -c -',
+    );
+    expect(QUALIFICATION_INSTALLER_SOURCE).toContain(
+      'printf \'%s  %s\\n\' "${binary_sha256[$index]}" "${target_dir}/${member}" | sha256sum -c -',
+    );
+    execFileSync("bash", ["-n", QUALIFICATION_INSTALLER_PATH]);
   });
 
   it("accepts the checked-in workflow and rejects protected trust-boundary mutations", () => {

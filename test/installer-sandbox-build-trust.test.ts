@@ -9,7 +9,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { V00103_SANDBOX_BUILD_DIGESTS } from "./helpers/openshell-release-fixtures";
+import {
+  V00103_SANDBOX_BUILD_DIGESTS,
+  V00106_SANDBOX_BUILD_DIGESTS,
+} from "./helpers/openshell-release-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const PARSER = path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts");
@@ -73,6 +76,40 @@ function addSandboxBuildPins(
   );
 }
 
+function sandboxBuildPins(version: string, digests: readonly [string, string]): string {
+  return `    ${digests[0]} | \\
+      ${digests[1]})
+      printf '%s\\n' "${version}"
+      ;;`;
+}
+
+function ensureSandboxBuildPins(
+  source: string,
+  version: string,
+  digests: readonly [string, string],
+): string {
+  return source.includes(sandboxBuildPins(version, digests))
+    ? source
+    : addSandboxBuildPins(source, version, digests);
+}
+
+function remapSandboxBuildPins(
+  source: string,
+  currentVersion: string,
+  remappedVersion: string,
+  digests: readonly [string, string],
+): string {
+  const currentPins = sandboxBuildPins(currentVersion, digests);
+  const remappedPins = sandboxBuildPins(remappedVersion, digests);
+  expect(source).toContain(currentPins);
+  const result = mutateSandboxBuildFunction(source, (functionSource) =>
+    functionSource.replace(currentPins, remappedPins),
+  );
+  expect(result).not.toContain(currentPins);
+  expect(result).toContain(remappedPins);
+  return result;
+}
+
 function runParser(mutate: (source: string) => string = (source) => source) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-build-trust-"));
   const scriptsDir = path.join(root, "scripts");
@@ -116,16 +153,32 @@ describe("standalone sandbox build trust", () => {
     expect(runParser().status).toBe(0);
   });
 
-  it("accepts the selected reviewed v0.0.101 identities", () => {
+  it("accepts the selected reviewed v0.0.106 identities", () => {
     expect(runParser().status).toBe(0);
   });
 
-  it("accepts the base-trusted OpenShell 0.0.103 sandbox identities before version selection (#8893)", () => {
+  it.each([["0.0.103", V00103_SANDBOX_BUILD_DIGESTS]] as const)(
+    "accepts the base-trusted OpenShell %s sandbox identities before version selection (#8893)",
+    (version, digests) => {
+      const result = runParser((source) => ensureSandboxBuildPins(source, version, digests));
+
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it("rejects the OpenShell 0.0.106 sandbox identities when they are remapped", () => {
     const result = runParser((source) =>
-      addSandboxBuildPins(source, "0.0.103", V00103_SANDBOX_BUILD_DIGESTS),
+      remapSandboxBuildPins(
+        source,
+        "0.0.106",
+        "0.0.105",
+        [...V00106_SANDBOX_BUILD_DIGESTS].reverse() as [string, string],
+      ),
     );
 
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must use only base-trusted binary identities");
+    expect(result.stderr).toContain(`unexpected=[0.0.105:${V00106_SANDBOX_BUILD_DIGESTS[0]}`);
   });
 
   it("rejects an arbitrary structurally valid identity addition", () => {

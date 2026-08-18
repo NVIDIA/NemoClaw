@@ -63,18 +63,6 @@ function withTemporaryDirectory<T>(action: (directory: string) => Promise<T>): P
   return action(directory).finally(() => fs.rmSync(directory, { force: true, recursive: true }));
 }
 
-async function expectDeferredEvidenceBatches(
-  runs: E2ERunRecord[],
-  cacheDir: string,
-  runGh: Parameters<typeof collectEvidence>[2],
-): Promise<void> {
-  for (const deferredRuns of [250, 200, 150, 100, 50]) {
-    await expect(collectEvidence(runs, cacheDir, runGh)).rejects.toEqual(
-      expect.objectContaining({ deferredRuns }),
-    );
-  }
-}
-
 describe("weekly E2E unit-test gap analysis", () => {
   it("redacts volatile identifiers, paths, URLs, sandboxes, and durations", () => {
     const signature = normalizeFailureSignature(
@@ -359,7 +347,11 @@ describe("weekly E2E unit-test gap analysis", () => {
         return "job\tstep\tError: cached high-volume failure\n";
       };
 
-      await expectDeferredEvidenceBatches(runs, cacheDir, runGh);
+      for (const deferredRuns of [250, 200, 150, 100, 50]) {
+        await expect(collectEvidence(runs, cacheDir, runGh)).rejects.toEqual(
+          expect.objectContaining({ deferredRuns }),
+        );
+      }
 
       await collectEvidence(runs, cacheDir, runGh);
       expect(reads).toBe(300);

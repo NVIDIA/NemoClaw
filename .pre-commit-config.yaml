@@ -270,15 +270,6 @@ repos:
         stages: [pre-push]
         priority: 10
 
-      - id: version-tag-sync
-        name: package.json ↔ git tag version sync
-        entry: bash scripts/check-version-tag-sync.sh
-        language: system
-        always_run: true
-        pass_filenames: false
-        stages: [pre-push]
-        priority: 10
-
   # ── post-merge / post-checkout: warn about stale compiled dist/ ───────────
   # See #1958 — dist/ is gitignored, so git pull / checkout can leave stale
   # compiled output. This hook warns the developer immediately after the git

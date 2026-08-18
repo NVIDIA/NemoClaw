@@ -774,7 +774,7 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
   ] as const)(
     "fails closed when the exact %s anchor is missing or duplicated",
     (label, pathKey, anchor) => {
-      for (const mode of ["missing", "duplicate"] as const) {
+      (["missing", "duplicate"] as const).forEach((mode) => {
         const fixture = makePatchFixture();
         const target = fixture[pathKey];
         const original = fs.readFileSync(target, "utf8");
@@ -792,7 +792,7 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
         expect(result.stderr).toContain(`Expected one Deep Agents Code ${label} marker`);
         expect(snapshot(fixture.sourcePaths)).toEqual(before);
         expect(fs.existsSync(fixture.modulePath)).toBe(false);
-      }
+      });
     },
   );
 

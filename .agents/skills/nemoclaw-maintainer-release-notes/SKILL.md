@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-release-notes
-description: Drafts the post-tag NemoClaw Announcement from live GitHub tag and compare data. Produces three lead paragraphs, categorized shipped changes, why-it-matters bullets, and external-only contributor thanks. Use after cutting a release tag or when asked to draft an announcement or summarize v0.0.x. The evening maintainer flow owns the native `docs/changelog/YYYY-MM-DD.mdx` entry before tagging.
+description: Drafts the post-tag NemoClaw Announcement from tag, compare, and release-entry data. Use after tagging or when asked to summarize vX.Y.Z.
 user_invocable: true
 ---
 
@@ -31,8 +31,8 @@ Create a local Markdown draft. Do not create or update a GitHub Discussion; the 
 - The release tag should already exist. If the user is still cutting the tag, use `nemoclaw-maintainer-cut-release-tag` first.
 - The tagged commit should already contain exactly one `## <current-version>` entry in `docs/changelog/YYYY-MM-DD.mdx`. This skill drafts the post-tag Announcement and does not replace or create that canonical entry.
 - Use live GitHub and remote tag state, not memory or a stale local branch.
-- If `<release-dir>/notes-data.json` exists from `npm run release:notes-data`, use it as the starting source of truth and query GitHub only to fill missing fields.
-- If `notes-data.json` has `status: "partial"` or non-empty `pullRequestWarnings`, report those warnings and ask the maintainer whether to fetch or fill the missing PR metadata before drafting.
+- Read the signed tag annotation or its exact `release-brief.md` source for release-range facts. Do not
+  copy internal test results or exception details into the public Announcement.
 
 ## Step 1: Verify the Release Range
 
@@ -42,21 +42,21 @@ Identify the current release tag and previous release tag. If the user gives onl
 git ls-remote https://github.com/NVIDIA/NemoClaw.git \
   refs/heads/main \
   refs/tags/<previous-version> 'refs/tags/<previous-version>^{}' \
-  refs/tags/<current-version> 'refs/tags/<current-version>^{}' \
-  refs/tags/latest 'refs/tags/latest^{}'
+  refs/tags/<current-version> 'refs/tags/<current-version>^{}'
 ```
 
 Confirm:
 
 - `<current-version>^{}` peels to the intended release commit.
-- `latest` points to the same peeled commit unless the user explicitly says otherwise.
 - The compare range is `<previous-version>...<current-version>`.
+
+Do not wait for `latest`. It is an independent post-tag state.
 
 ## Step 2: Collect the Shipped Surface
 
 Read the tagged commit's matching dated changelog entry as release context, then verify it against live compare and PR data. Preserve factual consistency with the canonical entry, but use live data to fill the richer Announcement narrative and contributor credit.
 
-If `notes-data.json` exists, read it first. Otherwise, use the compare API as the first source of truth:
+Use the compare API as the first source of truth:
 
 ```bash
 gh api repos/NVIDIA/NemoClaw/compare/<previous-version>...<current-version> \
@@ -87,7 +87,8 @@ Be careful with sensitive internal cleanup:
 - Do not count testing reverts or guardrail reversions as release value unless the user explicitly asks for a full raw changelog.
 - If a revert-like commit must be mentioned, use neutral language and do not frame it as someone else's mistake.
 - Avoid public wording that could embarrass a teammate.
-- Keep the candidate SHA, E2E failure classifications, rerun ledger, and waiver rationale out of the public Announcement. Preserve that information in the release evidence ledger.
+- Keep the candidate SHA, image identities, E2E results, and exception reason out of the public
+  Announcement. They remain in the signed tag annotation.
 
 ## Step 4: Categorize the Changes
 
@@ -157,7 +158,7 @@ Keep the prose warm and polished, but concrete. Tie the narrative to actual PRs 
 Create a Markdown draft outside the checkout root so the repo stays clean, for example:
 
 ```bash
-../nemoclaw-<current-version>-release-note-draft.md
+../nemoclaw-release-vX.Y.Z/release-note-draft.md
 ```
 
 The Markdown body is the source the maintainer can paste into GitHub Discussions.
@@ -179,7 +180,8 @@ Also return the suggested discussion title: `NemoClaw <current-version> is out`.
 - Never draft from memory alone; use live `gh api compare` and PR metadata.
 - Never mention contributor affiliation unless the user explicitly asks.
 - Never thank internal contributors by default; keep thanks external-only.
-- Never include the candidate SHA, internal E2E failure classifications, rerun details, or waiver rationale in the public Announcement.
+- Never include the candidate SHA, image identities, E2E results, rerun details, or exception reason
+  in the public Announcement.
 - Never include testing reverts as release-value bullets unless explicitly asked for a raw changelog.
 - Never create duplicate release Discussions.
 - Never create or silently repair `docs/changelog/` from this post-tag Announcement workflow. If the canonical entry is missing, report the release-process defect and route recovery through `nemoclaw-maintainer-evening`.

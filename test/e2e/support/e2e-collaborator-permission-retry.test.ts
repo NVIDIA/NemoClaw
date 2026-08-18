@@ -26,16 +26,6 @@ type PermissionScenario =
 
 const AUTHORIZATION_STEPS: AuthorizationStep[] = [
   {
-    deniedMessage: "Manual PR E2E requires a repository maintainer or administrator",
-    mismatchMessage: "Manual PR E2E permission response did not match the actor",
-    name: "Authenticate manual PR dispatch",
-  },
-  {
-    deniedMessage: "Release qualification waiver requires a repository administrator",
-    mismatchMessage: "Release qualification waiver permission response did not match the actor",
-    name: "Authorize release qualification waiver",
-  },
-  {
     deniedMessage: "Launchable E2E requires a repository maintainer or administrator",
     mismatchMessage: "Launchable E2E permission response did not match the actor",
     name: "Authorize Launchable E2E maintainer dispatch",
@@ -109,12 +99,6 @@ if [[ "$url" == *"/collaborators/"*"/permission" ]]; then
   exit "$curl_exit"
 fi
 
-if [[ "$url" == *"/pulls/42" ]]; then
-  printf '%s\n' "pull" >>"$CURL_LOG"
-  printf '%s' '{"state":"open","head":{"repo":{"full_name":"contributor/NemoClaw"},"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
-  exit 0
-fi
-
 exit 2
 `,
   );
@@ -138,12 +122,12 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
       ALLOW_JETSON_DISPATCH: "false",
       BASE_SHA: "b".repeat(40),
       CHECKOUT_REPOSITORY: "contributor/NemoClaw",
-      CHECKOUT_SHA: stepName === "Authenticate manual PR dispatch" ? "a".repeat(40) : "",
+      CHECKOUT_SHA: "",
       CURL_LOG: curlLog,
       EXPECTED_WORKFLOW_SHA: workflowSha,
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       GITHUB_TOKEN: "private-test-token",
-      INCLUDE_LAUNCHABLE: stepName === "Authenticate manual PR dispatch" ? "false" : "true",
+      INCLUDE_LAUNCHABLE: "true",
       JOBS: "",
       PATH: `${fixture}:${process.env.PATH ?? ""}`,
       PERMISSION_ATTEMPT_FILE: attemptFile,
@@ -156,8 +140,6 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
       SLEEP_LOG: sleepLog,
       TARGETS: "",
       TRIGGERING_ACTOR: "dispatch-admin",
-      WAIVED_JOBS: "staging-brev-launchable",
-      WAIVER_REASON: "Brev credential expired",
       WORKFLOW_EVENT: "workflow_dispatch",
       WORKFLOW_REF: "refs/heads/main",
       WORKFLOW_SHA: workflowSha,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 
 import { dockerBuild, dockerRmi } from "../../adapters/docker";
 import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
@@ -18,6 +19,7 @@ import {
   formatBuildFailureDiagnostics,
   OPENCLAW_SANDBOX_BASE_IMAGE,
   SANDBOX_BASE_TAG,
+  type SandboxBaseImageResolutionMetadata,
 } from "../../sandbox-base-image";
 import {
   applyReasoningEffortEnv,
@@ -44,6 +46,7 @@ export type ManagedDcodeRebuildImageInput = {
   webSearchConfig: WebSearchConfig | null;
   toolDisclosure: ToolDisclosure;
   dcodeAutoApprovalMode: DcodeAutoApprovalMode;
+  preResolvedBaseImageMetadata: SandboxBaseImageResolutionMetadata;
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayPort?: number;
 };
@@ -84,6 +87,26 @@ function buildResultDetail(result: {
 
 function defaultImageTag(): string {
   return `nemoclaw-rebuild-preflight:${String(process.pid)}-${crypto.randomUUID()}`;
+}
+
+function requirePinnedDcodeBaseImage(
+  stagedDockerfile: string,
+  metadata: SandboxBaseImageResolutionMetadata,
+): void {
+  let dockerfile: string;
+  try {
+    dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
+  } catch {
+    throw new Error("managed DCode staged Dockerfile could not be read");
+  }
+  const baseImageRefs = [...dockerfile.matchAll(/^ARG BASE_IMAGE=(\S+)$/gm)].map(
+    (match) => match[1],
+  );
+  if (baseImageRefs.length !== 1 || baseImageRefs[0] !== metadata.ref) {
+    throw new Error(
+      "managed DCode staged base image does not match pinned base-image resolution metadata",
+    );
+  }
 }
 
 /** Confirm that the retained, private build context still matches the prebuilt input. */
@@ -146,6 +169,7 @@ export async function prepareManagedDcodeRebuildImage(
       },
     });
     cleanupBuildContext = createIdempotentBuildContextCleanup(staged.cleanupBuildCtx);
+    requirePinnedDcodeBaseImage(staged.stagedDockerfile, input.preResolvedBaseImageMetadata);
 
     const { buildId, dashboardRemoteBindPrepared } = await preparePatch({
       agent: input.agent,
@@ -160,6 +184,7 @@ export async function prepareManagedDcodeRebuildImage(
       webSearchConfig: input.webSearchConfig,
       toolDisclosure: input.toolDisclosure,
       dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,
+      preResolvedBaseImageMetadata: input.preResolvedBaseImageMetadata,
       hermesToolGateways: [],
       sandboxGpuConfig: input.sandboxGpuConfig,
       gatewayPort: input.gatewayPort ?? GATEWAY_PORT,

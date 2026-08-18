@@ -306,12 +306,12 @@ test(
     const gateway = path.join(fixture, "openshell-gateway");
     const sandbox = path.join(fixture, "openshell-sandbox");
     const executableSource = "#!/bin/sh\nprintf '%s\\n' \"$@\"\n";
-    for (const executable of [delegate, gateway, sandbox]) {
+    [delegate, gateway, sandbox].forEach((executable) => {
       fs.writeFileSync(executable, executableSource, {
         encoding: "utf8",
         mode: 0o700,
       });
-    }
+    });
     const components = resolvePinnedOpenShellComponents(delegate);
     const wrapper = createOpenShellTrustedImageWrapper({
       driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,

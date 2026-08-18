@@ -28,6 +28,9 @@ import {
 } from "./managed-startup/profile";
 
 const CA_SHA256 = "a".repeat(64);
+const HERMES_RESERVED_API_PORTS = [
+  8_642, 8_643, 8_644, 8_645, 8_646, 8_647, 8_648, 8_649, 8_650, 8_651, 8_652, 18_642,
+];
 
 const MESSAGING_PLAN = {
   schemaVersion: 1,
@@ -516,12 +519,12 @@ describe("managed startup profile", () => {
       const supportedAgents =
         STOCK_RUNTIME_INPUT_AGENTS[obligation.input as keyof typeof STOCK_RUNTIME_INPUT_AGENTS];
       expect(obligation.owner).toBe("application-environment");
-      for (const agent of obligation.emittedFor) {
+      obligation.emittedFor.forEach((agent) => {
         expect(supportedAgents).not.toContain(agent);
         expect(
           MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
         ).not.toContain(obligation.input);
-      }
+      });
       expect(obligation.supportedFor.every((agent) =>
           supportedAgents.some((supportedAgent) => supportedAgent === agent))).toBe(true);
     },
@@ -557,15 +560,15 @@ describe("managed startup profile", () => {
   it.each(VALID_PROFILES)(
     "maps every $agent inventory entry to an explicit profile field",
     (profile) => {
-      for (const { profilePath } of MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent]) {
+      MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent].forEach(({ profilePath }) => {
         let current: unknown = profile;
-        for (const segment of profilePath.split(".")) {
-          expect(current).not.toBeNull();
-          expect(typeof current).toBe("object");
-          expect(Object.hasOwn(current as object, segment)).toBe(true);
-          current = (current as Record<string, unknown>)[segment];
-        }
-      }
+      profilePath.split(".").forEach((segment) => {
+        expect(current).not.toBeNull();
+        expect(typeof current).toBe("object");
+        expect(Object.hasOwn(current as object, segment)).toBe(true);
+        current = (current as Record<string, unknown>)[segment];
+      });
+      });
     },
   );
 
@@ -1138,20 +1141,18 @@ describe("managed startup profile", () => {
     ).toThrow(/reserved API ports 8642-8652 or 18642/);
   });
 
-  it.each(
-    Array.from([HERMES_API_PORT_RANGE_START - 1, HERMES_API_PORT_RANGE_END + 1], (value) => [
-      value,
-    ]),
-  )("rejects port %s outside the reserved Hermes API port range", (port) => {
-    for (let port = HERMES_API_PORT_RANGE_START; port <= HERMES_API_PORT_RANGE_END; port += 1) {
+  it.each(HERMES_RESERVED_API_PORTS)("rejects reserved Hermes API port %s", (port) => {
       expect(() =>
         validateManagedStartupProfile({
           ...HERMES_PROFILE,
           dashboard: { ...HERMES_PROFILE.dashboard, publicPort: port },
         }),
       ).toThrow(/reserved API ports/);
-    }
+  });
 
+  it.each([HERMES_API_PORT_RANGE_START - 1, HERMES_API_PORT_RANGE_END + 1])(
+    "accepts dashboard port %s outside the reserved Hermes API port range",
+    (port) => {
     expect(() =>
       validateManagedStartupProfile({
         ...HERMES_PROFILE,
@@ -1162,7 +1163,8 @@ describe("managed startup profile", () => {
         },
       }),
     ).not.toThrow();
-  });
+    },
+  );
 
   it.each([
     "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",

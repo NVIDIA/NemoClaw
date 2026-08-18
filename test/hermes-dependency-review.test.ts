@@ -150,7 +150,7 @@ describe("Hermes 0.19.0 dependency review", () => {
     ).toBe(1);
   });
 
-  function verifyReviewedHermesDependencyRemediations() {
+  it("ships the reviewed Python dependency remediations and records residual debt", () => {
     expect(dockerfileBase).toContain(
       "COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch",
     );
@@ -292,12 +292,7 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`tornado==6.5.7`");
     expect(review).toContain("checksum-pinned Node.js `24.18.1`");
     expect(review).toContain("exact uv `0.11.33`");
-  }
-
-  it(
-    "ships the reviewed Python dependency remediations and records residual debt",
-    verifyReviewedHermesDependencyRemediations,
-  );
+  });
 
   it("rejects an altered Hindsight wheel before the compatibility import", () => {
     const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hindsight-hash-"));
@@ -394,14 +389,14 @@ describe("Hermes 0.19.0 dependency review", () => {
       "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
     ];
     let previousIndex = -1;
-    for (const contract of orderedContracts) {
+    orderedContracts.forEach((contract) => {
       const contractIndex = layer.indexOf(contract);
       expect(
         contractIndex,
         `Missing or misordered lazy-install contract: ${contract}`,
       ).toBeGreaterThan(previousIndex);
       previousIndex = contractIndex;
-    }
+    });
     expect(layer).toContain("-perm /022");
     expect(layer).toContain("--network=none");
     expect(layer).toContain("PIP_NO_INDEX=1");

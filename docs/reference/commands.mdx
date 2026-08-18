@@ -1928,6 +1928,7 @@ The existing inference probes run in a fresh sandbox command, so they do not att
 NemoClaw does not probe the serving process yet.
 For terminal runtimes, `servingProcessHealth` is `null` and the text output omits this line because there is no long-running gateway process.
 The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, the authoritative in-sandbox inference route fails or cannot be probed, or a terminal runtime sandbox reports a recorded OOM kill.
+When the canonical text command targets an unregistered name, it reports that the sandbox is not registered and tells you to run `$$nemoclaw list`.
 The alias form `$$nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `$$nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
 For a sandbox that owns managed llama.cpp, text output also reports the recipe ID, model digest, image reference, `https://inference.local/v1` endpoint, and lifecycle state.

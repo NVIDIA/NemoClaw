@@ -8,6 +8,7 @@ import type {
   SandboxCreateIntent,
   SandboxCreateMessagingProviderRequest,
 } from "./sandbox-create-intent-types";
+import { containerPathsOverlap } from "./host-mount/path-overlap";
 import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 
 type PrepareInitialSandboxCreatePolicy =
@@ -22,10 +23,25 @@ const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
   size_bytes: 1_048_576,
   mode: 0o1777,
 } as const;
-function buildSandboxDriverConfig(intent: SandboxCreateIntent): string | null {
+
+function buildSandboxDriverConfig(
+  intent: SandboxCreateIntent,
+  managedStateMount: MaterializeSandboxCreatePlanInput["managedStateMount"],
+): string | null {
   const dockerMounts: Array<Record<string, unknown>> = (intent.hostMounts ?? []).map(
     ({ source, target }) => ({ type: "bind", source, target, read_only: true }),
   );
+  if (managedStateMount) {
+    const conflictingHostMount = intent.hostMounts?.find(({ target }) =>
+      containerPathsOverlap(target, managedStateMount.target),
+    );
+    if (conflictingHostMount) {
+      throw new Error(
+        `Host mount target '${conflictingHostMount.target}' conflicts with the managed Hermes state root '${managedStateMount.target}'.`,
+      );
+    }
+    dockerMounts.unshift({ ...managedStateMount });
+  }
   const podmanMounts: Array<Record<string, unknown>> = [];
   if (intent.policy.options.agentName === "langchain-deepagents-code") {
     dockerMounts.unshift(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
@@ -142,6 +158,7 @@ function filterDisabledMessagingProviders(
 export function materializeSandboxCreatePlan({
   intent,
   fromRef,
+  managedStateMount,
   messagingTokenDefs,
   runProviderPreDeleteCleanup,
   upsertMessagingProviders,
@@ -150,6 +167,7 @@ export function materializeSandboxCreatePlan({
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
 }: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
+  const driverConfig = buildSandboxDriverConfig(intent, managedStateMount);
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
     intent.policy.basePolicyPath,
     [...intent.policy.activeMessagingChannels],
@@ -174,7 +192,6 @@ export function materializeSandboxCreatePlan({
     initialSandboxPolicy.cleanup?.();
     throw error;
   }
-  const driverConfig = buildSandboxDriverConfig(intent);
   const createArgs = [
     "--from",
     fromRef,

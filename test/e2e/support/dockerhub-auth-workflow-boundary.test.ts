@@ -150,7 +150,9 @@ function validateCleanupArtifactMutation(options: {
 }
 
 describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
-  function verifyPinnedPreRestoreCleanupAction() {
+  it(
+    "accepts only the pinned pre-restore cleanup action in the complete workflow",
+    () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
 
     const jobNames = [
@@ -207,11 +209,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
         `${jobName} step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'`,
       );
     }
-  }
-
-  it(
-    "accepts only the pinned pre-restore cleanup action in the complete workflow",
-    verifyPinnedPreRestoreCleanupAction,
+  },
     testTimeout(15_000),
   );
 
@@ -219,11 +217,11 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);
     const errors = validateMutation((mutatedWorkflow) => {
-      for (const jobName of requiredJobs) {
+      requiredJobs.forEach((jobName) => {
         mutatedWorkflow.jobs[jobName].steps = mutatedWorkflow.jobs[jobName].steps?.filter(
           (step) => step.name !== AUTH_STEP_NAME && step.name !== CLEANUP_STEP_NAME,
         );
-      }
+      });
     });
 
     expect(errors).toEqual(
@@ -330,7 +328,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     const errors = validateMutation((workflow) => {
       const auth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
       const ungatedPredicate =
-        "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
+        "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == ''";
       auth.with = {
         "auth-required": `\${{ ${ungatedPredicate} && '1' || '0' }}`,
         username: `\${{ ${ungatedPredicate} && secrets.DOCKERHUB_USERNAME || '' }}`,
@@ -351,21 +349,21 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);
     const errors = validateMutation((mutatedWorkflow) => {
-      for (const jobName of requiredJobs) {
+      requiredJobs.forEach((jobName) => {
         const cleanup = namedStep(mutatedWorkflow.jobs[jobName], CLEANUP_STEP_NAME)!;
         cleanup.run = `${CLEANUP_HELPER_RUN} || true`;
         cleanup["continue-on-error"] = true;
-      }
+      });
     });
 
-    for (const jobName of requiredJobs) {
+    requiredJobs.forEach((jobName) => {
       expect(errors).toContain(
         `${jobName} Docker Hub cleanup step must contain exactly name, if, shell, and run`,
       );
       expect(errors).toContain(
         `${jobName} Docker Hub cleanup step must run only ${CLEANUP_HELPER_RUN}`,
       );
-    }
+    });
   });
 
   it("treats every new E2E job as image-consuming unless it is explicitly exempt", () => {

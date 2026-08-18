@@ -4,9 +4,8 @@
 // Private-network block list for SSRF validation. Loads the canonical
 // CIDR set from nemoclaw-blueprint/private-networks.yaml and builds a
 // node:net BlockList on first use, then memoises until the YAML file
-// source or stats (mtime/size) change. The CLI has an equivalent module
-// at src/lib/private-networks.ts; the parity test at test/ssrf-parity.test.ts
-// verifies both produce identical results.
+// source or stats (mtime/size) change. Pure parsing and matching live in
+// the shared private-network boundary.
 //
 // Path resolution mirrors loadBlueprint() in runner.ts: honour
 // NEMOCLAW_BLUEPRINT_PATH when set, otherwise try the dev-checkout
@@ -16,28 +15,29 @@
 // cwd-located blueprint is required at runtime.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { BlockList, isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import YAML from "yaml";
+import * as importedPrivateNetworkBoundary from "../shared/private-networks-boundary.cjs";
+import type {
+  NetworkDocument,
+  PrivateNetworkMatcher,
+} from "../shared/private-networks-boundary.cjs";
 
-export interface NetworkEntry {
-  address: string;
-  prefix: number;
-  purpose: string;
-}
+export type {
+  NameEntry,
+  NetworkDocument,
+  NetworkEntry,
+} from "../shared/private-networks-boundary.cjs";
 
-export interface NameEntry {
-  name: string;
-  purpose: string;
-}
-
-export interface NetworkDocument {
-  ipv4: NetworkEntry[];
-  ipv6: NetworkEntry[];
-  names: NameEntry[];
-}
+// The generated module exposes named CommonJS exports. Source-mode tsx maps
+// the .cjs specifier to .cts and exposes the same module as its default.
+const sourceOrGeneratedPrivateNetworkBoundary =
+  importedPrivateNetworkBoundary as typeof importedPrivateNetworkBoundary & {
+    default?: typeof importedPrivateNetworkBoundary;
+  };
+const { createPrivateNetworkMatcher, parsePrivateNetworkDocument } =
+  sourceOrGeneratedPrivateNetworkBoundary.default ?? sourceOrGeneratedPrivateNetworkBoundary;
 
 interface LoadedNetworks {
   source: string;
@@ -45,8 +45,7 @@ interface LoadedNetworks {
   size: number;
   checkedAtMs: number;
   networks: NetworkDocument;
-  blockList: BlockList;
-  normalisedNames: string[];
+  matcher: PrivateNetworkMatcher;
 }
 
 // Keep hot SSRF checks in memory while still letting long-running plugin
@@ -72,79 +71,6 @@ function resolveBlueprintPath(): string {
   // the expected file falls through to cwd instead of a read failure.
   if (existsSync(join(devGuess, "private-networks.yaml"))) return devGuess;
   return ".";
-}
-
-function validateNetworkEntry(
-  entry: unknown,
-  family: "ipv4" | "ipv6",
-  index: number,
-  source: string,
-): NetworkEntry {
-  const where = `${source}: ${family}[${String(index)}]`;
-  if (typeof entry !== "object" || entry === null) {
-    throw new Error(`${where}: expected an object`);
-  }
-  const record = entry as Record<string, unknown>;
-  const address = record.address;
-  const prefix = record.prefix;
-  const purpose = record.purpose;
-  if (typeof address !== "string" || address.length === 0) {
-    throw new Error(`${where}: missing or empty 'address'`);
-  }
-  const expectedFamily = family === "ipv4" ? 4 : 6;
-  if (isIP(address) !== expectedFamily) {
-    throw new Error(
-      `${where}: 'address' must be a valid ${family} literal, got ${JSON.stringify(address)}`,
-    );
-  }
-  const maxPrefix = family === "ipv4" ? 32 : 128;
-  if (typeof prefix !== "number" || !Number.isInteger(prefix) || prefix < 0 || prefix > maxPrefix) {
-    throw new Error(
-      `${where}: 'prefix' must be an integer in [0, ${String(maxPrefix)}], got ${JSON.stringify(prefix)}`,
-    );
-  }
-  if (typeof purpose !== "string" || purpose.trim().length === 0) {
-    throw new Error(
-      `${where}: 'purpose' must be a non-empty string so reviewers can judge the block`,
-    );
-  }
-  return { address, prefix, purpose };
-}
-
-function validateNameEntry(entry: unknown, index: number, source: string): NameEntry {
-  const where = `${source}: names[${String(index)}]`;
-  if (typeof entry !== "object" || entry === null) {
-    throw new Error(`${where}: expected an object`);
-  }
-  const record = entry as Record<string, unknown>;
-  const name = record.name;
-  const purpose = record.purpose;
-  if (typeof name !== "string" || name.length === 0) {
-    throw new Error(`${where}: missing or empty 'name'`);
-  }
-  if (typeof purpose !== "string" || purpose.trim().length === 0) {
-    throw new Error(
-      `${where}: 'purpose' must be a non-empty string so reviewers can judge the block`,
-    );
-  }
-  return { name, purpose };
-}
-
-function parseDocument(raw: string, source: string): NetworkDocument {
-  const parsed = YAML.parse(raw) as Record<string, unknown> | null;
-  if (
-    !parsed ||
-    !Array.isArray(parsed.ipv4) ||
-    !Array.isArray(parsed.ipv6) ||
-    !Array.isArray(parsed.names)
-  ) {
-    throw new Error(`${source}: expected top-level 'ipv4', 'ipv6', and 'names' arrays`);
-  }
-  return {
-    ipv4: parsed.ipv4.map((entry, i) => validateNetworkEntry(entry, "ipv4", i, source)),
-    ipv6: parsed.ipv6.map((entry, i) => validateNetworkEntry(entry, "ipv6", i, source)),
-    names: parsed.names.map((entry, i) => validateNameEntry(entry, i, source)),
-  };
 }
 
 function isNodeEnoent(err: unknown): boolean {
@@ -179,23 +105,20 @@ function load(): LoadedNetworks {
     cached.checkedAtMs = now;
     return cached;
   }
-  const networks = parseDocument(readPrivateNetworksFile(source), source);
-  const blockList = new BlockList();
-  for (const { address, prefix } of networks.ipv4) blockList.addSubnet(address, prefix, "ipv4");
-  for (const { address, prefix } of networks.ipv6) blockList.addSubnet(address, prefix, "ipv6");
-  const normalisedNames = networks.names.map((e) => e.name.replace(/\.$/, "").toLowerCase());
-  cached = { source, mtimeMs, size, checkedAtMs: now, networks, blockList, normalisedNames };
+  const networks = parsePrivateNetworkDocument(readPrivateNetworksFile(source), source);
+  cached = {
+    source,
+    mtimeMs,
+    size,
+    checkedAtMs: now,
+    networks,
+    matcher: createPrivateNetworkMatcher(networks),
+  };
   return cached;
 }
 
-function isPrivateIpInBlockList(address: string, blockList: BlockList): boolean {
-  const family = isIP(address);
-  if (family === 0) return false;
-  return blockList.check(address, family === 6 ? "ipv6" : "ipv4");
-}
-
-export function getPrivateNetworks(): BlockList {
-  return load().blockList;
+export function getPrivateNetworks(): PrivateNetworkMatcher["blockList"] {
+  return load().matcher.blockList;
 }
 
 export function getNetworkEntries(): NetworkDocument {
@@ -223,7 +146,7 @@ export function resetCache(): void {
  * because BlockList does not extract embedded IPv4 from those forms.
  */
 export function isPrivateIp(address: string): boolean {
-  return isPrivateIpInBlockList(address, getPrivateNetworks());
+  return load().matcher.isPrivateIp(address);
 }
 
 /**
@@ -239,15 +162,5 @@ export function isPrivateIp(address: string): boolean {
  * the narrower isPrivateIp.
  */
 export function isPrivateHostname(hostname: string): boolean {
-  // Strip URL IPv6 brackets before any check. Brackets are only legal
-  // in URL syntax around IPv6 literals, so stripping them is safe for
-  // both the name-level and IP-literal checks below.
-  const stripped =
-    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  const normalised = stripped.replace(/\.$/, "").toLowerCase();
-  const { blockList, normalisedNames } = load();
-  for (const reserved of normalisedNames) {
-    if (normalised === reserved || normalised.endsWith(`.${reserved}`)) return true;
-  }
-  return isPrivateIpInBlockList(normalised, blockList);
+  return load().matcher.isPrivateHostname(hostname);
 }

@@ -4,6 +4,7 @@
 import fs from "node:fs";
 
 import {
+  dockerLogs as defaultDockerLogs,
   dockerRename as defaultDockerRename,
   dockerRm as defaultDockerRm,
   dockerStart as defaultDockerStart,
@@ -15,6 +16,10 @@ import {
 } from "../../adapters/docker/run";
 import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
+import {
+  captureDockerContainerFailureEvidence,
+  formatDockerContainerState,
+} from "./docker-container-failure-evidence";
 import {
   buildDockerGpuCloneRunArgs,
   dockerContainerName,
@@ -176,6 +181,7 @@ type DockerCommandResult = {
 export type DockerManagedBootstrapDeps = Pick<
   DockerGpuPatchDeps,
   | "dockerCapture"
+  | "dockerLogs"
   | "dockerRename"
   | "dockerRm"
   | "dockerRun"
@@ -184,6 +190,7 @@ export type DockerManagedBootstrapDeps = Pick<
   | "runCaptureOpenshell"
   | "runOpenshell"
   | "sleep"
+  | "errorPhaseDebouncePolls"
   | "now"
 > & {
   readonly createBootstrapIdentity?: () => string;
@@ -196,6 +203,7 @@ type ResolvedDeps = Required<
   Pick<
     DockerManagedBootstrapDeps,
     | "dockerCapture"
+    | "dockerLogs"
     | "dockerRename"
     | "dockerRm"
     | "dockerRun"
@@ -223,6 +231,7 @@ function resolveDeps(deps: DockerManagedBootstrapDeps): ResolvedDeps {
   }
   return {
     dockerCapture: defaultDockerCapture,
+    dockerLogs: defaultDockerLogs,
     dockerRename: defaultDockerRename,
     dockerRm: defaultDockerRm,
     dockerRun: defaultDockerRun,
@@ -241,6 +250,33 @@ function commandDetail(result: DockerCommandResult): string {
   )}`
     .trim()
     .slice(-1200);
+}
+
+function supervisorReconnectFailureDetail(runtimeId: string, deps: ResolvedDeps): string {
+  const evidence = captureDockerContainerFailureEvidence(runtimeId, deps);
+  const stateDetail = formatDockerContainerState(evidence.state).join(" ");
+  return [
+    "Managed bootstrap Docker supervisor did not reconnect.",
+    stateDetail ? `Replacement state: ${stateDetail}.` : "",
+    evidence.redactedLogTail ? `Redacted replacement log tail:\n${evidence.redactedLogTail}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function replacementNotStableError(runtimeId: string, label: string, deps: ResolvedDeps): Error {
+  const evidence = captureDockerContainerFailureEvidence(runtimeId, deps);
+  const stateDetail = formatDockerContainerState(evidence.state).join(" ");
+  return new Error(
+    [
+      `Managed bootstrap Docker ${label} is not stably running.`,
+      `Replacement runtime ID: ${runtimeId}.`,
+      stateDetail ? `Replacement state: ${stateDetail}.` : "",
+      evidence.redactedLogTail ? `Redacted replacement log tail:\n${evidence.redactedLogTail}` : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
 }
 
 function isExactMissingDockerContainer(containerId: string, result: DockerCommandResult): boolean {
@@ -1180,7 +1216,9 @@ function assertCompletedCutoverRuntimeState(
   assertTransactionOriginal(transaction, original);
   assertTransactionReplacement(transaction, replacement);
   assertExplicitlyStopped(original, "rollback backup");
-  assertStableRunning(replacement, "replacement");
+  if (!isStableRunning(replacement)) {
+    throw replacementNotStableError(transaction.replacementRuntimeId, "replacement", deps);
+  }
   if (
     dockerContainerName(original) !== transaction.backupName ||
     dockerContainerName(replacement) !== transaction.originalName
@@ -3554,13 +3592,16 @@ export function createDockerManagedBootstrapAdapter(
         const started = deps.dockerStart(prepared.preparedRuntimeId, options);
         const running = inspectExact(prepared.preparedRuntimeId, deps);
         assertTransactionReplacement(journal, running);
+        if (!isStableRunning(running)) {
+          throw replacementNotStableError(
+            journal.replacementRuntimeId,
+            "replacement after Docker start",
+            deps,
+          );
+        }
         const runningSpec = normalizeDockerManagedBootstrapLaunchSpec(running);
         if (
           dockerContainerName(running) !== journal.originalName ||
-          running.State?.Running !== true ||
-          running.State.Paused === true ||
-          running.State.Restarting === true ||
-          running.State.Dead === true ||
           runningSpec.canonicalJson !== prepared.expectedActivatedSpecCanonicalJson
         ) {
           throw new Error(
@@ -3628,13 +3669,16 @@ export function createDockerManagedBootstrapAdapter(
       }
       assertCompletedCutoverRuntimeState(journal, deps);
       const before = inspectExact(replacement.replacementRuntimeId, deps);
-      assertStableRunning(before, "replacement");
+      if (!isStableRunning(before)) {
+        throw replacementNotStableError(replacement.replacementRuntimeId, "replacement", deps);
+      }
       const beforeImageContentId = assertImage(before, replacement.image, deps);
       if (beforeImageContentId !== replacement.runtimeImageContentId) {
         throw new Error("Managed bootstrap Docker replacement image content changed.");
       }
       assertReplacementBoundary(before, handle, snapshot);
-      const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
+      const supervisorReconnectTimeoutSecs =
+        getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
       if (
         !waitForOpenShellSupervisorReconnect(
           handle.sandbox.sandboxName,
@@ -3642,7 +3686,7 @@ export function createDockerManagedBootstrapAdapter(
           deps,
         )
       ) {
-        throw new Error("Managed bootstrap Docker supervisor did not reconnect.");
+        throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
       }
       const afterWaitJournal = deps.journalStore.load(journal.bootstrapIdentity);
       if (!afterWaitJournal || !sameDockerBootstrapJournal(afterWaitJournal, journal)) {
@@ -3654,7 +3698,13 @@ export function createDockerManagedBootstrapAdapter(
       }
       assertCompletedCutoverRuntimeState(afterWaitJournal, deps);
       const after = inspectExact(replacement.replacementRuntimeId, deps);
-      assertStableRunning(after, "completed replacement");
+      if (!isStableRunning(after)) {
+        throw replacementNotStableError(
+          replacement.replacementRuntimeId,
+          "completed replacement",
+          deps,
+        );
+      }
       if (assertImage(after, replacement.image, deps) !== replacement.runtimeImageContentId) {
         throw new Error("Managed bootstrap Docker completed image content changed.");
       }

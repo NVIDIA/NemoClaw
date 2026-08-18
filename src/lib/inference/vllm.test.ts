@@ -1124,13 +1124,13 @@ describe("installVllm model resolution", () => {
       (options) => options.env?.DOCKER_CONTEXT !== "default",
     );
     expect(ambientDockerOptions).toHaveLength(8);
-    for (const options of ambientDockerOptions) {
+    ambientDockerOptions.forEach((options) => {
       expect(options).toEqual(
         expect.objectContaining({
           env: expect.objectContaining({ DOCKER_CONTEXT: "local-test-context" }),
         }),
       );
-    }
+    });
   });
 
   it("pins authenticated host-local installs to the physical default daemon (#8379)", async () => {
@@ -1178,11 +1178,11 @@ describe("installVllm model resolution", () => {
       ...mocks.dockerStop.mock.calls.map((call) => call[1]),
     ];
     expect(dockerAdapterOptions.length).toBeGreaterThan(0);
-    for (const options of dockerAdapterOptions) {
+    dockerAdapterOptions.forEach((options) => {
       expect(options.env.DOCKER_CONTEXT).toBe("default");
       expect(options.env.DOCKER_HOST).toBeUndefined();
       expect(options.env.DOCKER_CONFIG).toBeUndefined();
-    }
+    });
     expect(resolveManagedBridgeHost).toHaveBeenCalledWith(
       expect.objectContaining({
         DOCKER_CONTEXT: "default",

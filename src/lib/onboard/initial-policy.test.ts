@@ -119,18 +119,6 @@ afterEach(() => {
   else process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = originalOtelEnv.sampleRate;
 });
 
-function createStationGb300SysfsDirectories(sysfsRoot: string): void {
-  for (const relativePath of [
-    "devices/system/cpu",
-    "devices/system/memory",
-    "devices/system/node",
-    "module/nvidia/initstate",
-    "module/nvidia_uvm/initstate",
-  ]) {
-    fs.mkdirSync(path.join(sysfsRoot, relativePath), { recursive: true });
-  }
-}
-
 describe("initial sandbox policy helpers", () => {
   it.each([
     ["Dell Pro Max with Station GB300", true],
@@ -153,7 +141,15 @@ describe("initial sandbox policy helpers", () => {
     addPciDevice(sysfsRoot, "0000:03:00.8", "0x10de\n", "0x030000\n");
     addPciDevice(sysfsRoot, "0000:04:00.0", "0x10de\n", "0x030000\n", "0xffff\n");
 
-    createStationGb300SysfsDirectories(sysfsRoot);
+    for (const relativePath of [
+      "devices/system/cpu",
+      "devices/system/memory",
+      "devices/system/node",
+      "module/nvidia/initstate",
+      "module/nvidia_uvm/initstate",
+    ]) {
+      fs.mkdirSync(path.join(sysfsRoot, relativePath), { recursive: true });
+    }
 
     expect(discoverStationGb300SysfsReadOnlyPaths("NVIDIA DGX Station GB300", sysfsRoot)).toEqual(
       STATION_GB300_SYSFS_READ_ONLY_PATHS,
@@ -369,11 +365,11 @@ network_policies: {}
 
     expect(gpuDoc.filesystem_policy.read_only).not.toContain(writablePath);
     expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, writablePath);
-    for (const sysfsPath of STATION_GB300_SYSFS_READ_ONLY_PATHS.filter(
+    STATION_GB300_SYSFS_READ_ONLY_PATHS.filter(
       (candidate) => candidate !== writablePath,
-    )) {
+    ).forEach((sysfsPath) => {
       expectSingleOccurrence(gpuDoc.filesystem_policy.read_only, sysfsPath);
-    }
+    });
   });
 
   it.each(Array.from(STATION_GB300_SYSFS_READ_ONLY_PATHS, (value) => [value]))(
@@ -429,9 +425,9 @@ network_policies: {}
       "/sys/devices/system/cpu",
       "/sys/module/nvidia/initstate",
     ]);
-    for (const discoveredPath of discoveredPaths) {
+    discoveredPaths.forEach((discoveredPath) => {
       expectSingleOccurrence(preparedDoc.filesystem_policy.read_only, discoveredPath);
-    }
+    });
     expect(preparedDoc.filesystem_policy.read_only).not.toContain("/sys");
     expect(prepared.cleanup?.()).toBe(true);
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
@@ -464,9 +460,9 @@ network_policies: {}
     expect(commands[1].args.join(" ")).toContain("/proc/self/comm");
     expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
-    for (const command of commands) {
+    commands.forEach((command) => {
       expect(command.args.every((arg) => !/[\r\n]/.test(arg))).toBe(true);
-    }
+    });
   });
 
   it("returns network policy names from a policy document", () => {

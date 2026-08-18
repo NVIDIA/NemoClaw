@@ -92,9 +92,9 @@ describe("snapshot commands live env helper", () => {
     "never exposes ambient hosted credential %s to the child env",
     (name) => {
       process.env[HOSTED_FLAG] = "1";
-      for (const name of HOSTED_CREDENTIAL_ENVS) {
+      HOSTED_CREDENTIAL_ENVS.forEach((name) => {
         process.env[name] = "nvapi-ambient-credential-that-must-not-leak";
-      }
+      });
 
       const env = buildSnapshotCommandEnv(SANDBOX_NAME, INFERENCE);
 
@@ -142,6 +142,15 @@ describe("snapshot restore result classification", () => {
         stderr: "scope-upgrade-pending secret-output",
       },
       "restored-pairing-unverified",
+    ],
+    [
+      {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "restoring 'source' as 'clone' requires managed-profile clone rebind. Destination 'clone' was not changed. secret-output",
+      },
+      "managed-clone-rebind-required",
     ],
     [
       {

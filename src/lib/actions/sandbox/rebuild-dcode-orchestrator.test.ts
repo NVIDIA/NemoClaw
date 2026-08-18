@@ -65,7 +65,7 @@ describe("DCode rebuild orchestrator", () => {
     expect(ensureAgentBaseImage).toHaveBeenCalledWith("hermes", bail, baseImageOptions);
   });
 
-  it("keeps warm-cache options out of the sealed DCode image path (#6195)", async () => {
+  it("forwards recorded base-image resolution metadata to Deep Agents Code preflight (#9386)", async () => {
     const ensureAgentBaseImage = vi.fn(() => true);
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
@@ -110,6 +110,10 @@ describe("DCode rebuild orchestrator", () => {
         dcodeAutoApprovalMode: "thread-opt-in",
         skipLiveRoute: false,
         gatewayPort: 19_080,
+        baseImageOptions: {
+          resolutionHint,
+          forceBaseImageRefresh: true,
+        },
       }),
     );
     expect(ensureAgentBaseImage).not.toHaveBeenCalled();

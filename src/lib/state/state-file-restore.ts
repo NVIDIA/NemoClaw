@@ -89,6 +89,10 @@ export function buildStateFileRestoreCommand(
   }
 
   const steps = [
+    // Steps join with ";", so only the last step sets the exit status and the
+    // OpenClaw path ends with `|| true`. "&&" is not a substitute: an earlier
+    // failure then falls into the next step's `|| { ...; exit N; }` guard.
+    "set -e",
     `dst=${quotedRemotePath}`,
     'parent="$(dirname "$dst")"',
     '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',

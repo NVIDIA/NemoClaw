@@ -227,7 +227,9 @@ print(json.dumps({
 `,
       [JSON.stringify(blockedNames)],
     );
-    for (const name of blockedNames) expect(() => validateMcpCredentialEnvName(name)).toThrow();
+    blockedNames.forEach((name) => {
+      expect(() => validateMcpCredentialEnvName(name)).toThrow();
+    });
     expect(() => validateMcpCredentialEnvName("MY_SERVICE_MCP_TOKEN")).not.toThrow();
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
@@ -414,14 +416,14 @@ print(json.dumps({"results": results, "null_result": null_result}))
       results: Record<string, Array<{ error: string; preserved: boolean; writes: number }>>;
       null_result: { error: string; preserved: boolean; writes: number };
     };
-    for (const outcomes of Object.values(payload.results)) {
+    Object.values(payload.results).forEach((outcomes) => {
       expect(outcomes).toHaveLength(4);
       for (const outcome of outcomes) {
         expect(outcome.error).toContain("expected a YAML object");
         expect(outcome.preserved).toBe(true);
         expect(outcome.writes).toBe(0);
       }
-    }
+    });
     expect(payload.null_result.error).toBe("");
     expect(payload.null_result.preserved).toBe(false);
     expect(payload.null_result.writes).toBe(1);
@@ -740,13 +742,13 @@ print(json.dumps(results, sort_keys=True))
       hash_inode_race: "UnsafePathError",
       hash_symlink: "OSError",
     };
-    for (const [name, scenario] of Object.entries(scenarios)) {
+    Object.entries(scenarios).forEach(([name, scenario]) => {
       expect(scenario.blocked, name).toBe(true);
       expect(scenario.error, `${name}.error`).toBe(expectedErrors[name]);
       expect(Object.entries(scenario).filter(
             ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
           ).every(([property, value]) => Object.is(value, true))).toBe(true);
-    }
+    });
   });
 
   it("keeps config ownership and gateway lifecycle identities separated", () => {
