@@ -42,6 +42,9 @@ const MANAGED_STARTUP_NODE_EXECUTABLE = "/usr/local/bin/node";
 const LIFECYCLE_GENERATION_PATTERN = /^[A-Za-z0-9._:/=-]{1,512}$/u;
 const ANSI_PATTERN = /\u001b\[[0-9;]*m/gu;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
+const CONTROL_CHARACTERS_GLOBAL = /[\u0000-\u001f\u007f-\u009f]/gu;
+const TERMINAL_CONTROL_SEQUENCE =
+  /(?:\u001b\[[0-?]*[ -/]*[@-~]|\u009b[0-?]*[ -/]*[@-~]|(?:\u001b\]|\u009d)(?:[^\u0007\u001b\u009c]|\u001b(?!\\))*(?:\u0007|\u001b\\|\u009c)|\u001b[ -/]*[@-~])/gu;
 
 export interface RuntimeProviderSnapshotObservation {
   readonly lifecycleState: RuntimeProviderSnapshotLifecycleState;
@@ -57,6 +60,7 @@ export type RuntimeProviderSnapshotObserver = (
 export type RuntimeProviderManagedProfileRestorer = (
   sandbox: SandboxEntry,
   authority: RuntimeProviderManagedProfileRestoreAuthority,
+  runtime: RuntimeProviderRuntimeReceipt,
 ) => string;
 
 export interface RuntimeProviderSnapshotDriver {
@@ -105,13 +109,17 @@ function cleanOutput(value: string): string {
   return value.replace(ANSI_PATTERN, "");
 }
 
+function cleanDiagnostic(value: string): string {
+  return value.replace(TERMINAL_CONTROL_SEQUENCE, "").replace(CONTROL_CHARACTERS_GLOBAL, "");
+}
+
 function managedProfileVerificationFailureDetail(result: RuntimeProviderCommandCapture): string {
   // This command accepts only a validated agent and secret-free profile hash;
   // bound its fixed-runtime diagnostic so restore failures remain actionable.
-  const output = cleanOutput([result.stderr, result.stdout].filter(Boolean).join("\n"))
+  const output = cleanDiagnostic([result.stderr, result.stdout].filter(Boolean).join("\n"))
     .replace(/\s+/gu, " ")
     .trim();
-  const error = cleanOutput(result.error?.message ?? "")
+  const error = cleanDiagnostic(result.error?.message ?? "")
     .replace(/\s+/gu, " ")
     .trim();
   return [
@@ -397,17 +405,19 @@ export function observeDockerRuntimeSnapshot(
 export function verifyDockerManagedProfileRestore(
   sandbox: SandboxEntry,
   authorityValue: RuntimeProviderManagedProfileRestoreAuthority,
-  dependencies: Pick<
-    DockerRuntimeSnapshotDependencies,
-    "captureHostCommand" | "queryRuntimeSnapshot"
-  >,
+  runtimeValue: RuntimeProviderRuntimeReceipt,
+  dependencies: Pick<DockerRuntimeSnapshotDependencies, "captureHostCommand">,
 ): string {
   const authority = normalizeRuntimeProviderManagedProfileRestoreAuthority(authorityValue);
   if (!authority) {
     throw new RuntimeProviderSnapshotError("managed profile restore authority is invalid");
   }
-  const snapshot = dependencies.queryRuntimeSnapshot(sandbox.name);
-  if (!snapshot.ok || !DOCKER_CONTAINER_ID_PATTERN.test(snapshot.containerId)) {
+  const runtime = normalizeRuntimeProviderRuntimeReceipt(runtimeValue);
+  if (
+    !runtime ||
+    runtime.runtime.kind !== "docker-container" ||
+    !DOCKER_CONTAINER_ID_PATTERN.test(runtime.runtime.handle)
+  ) {
     throw new RuntimeProviderSnapshotError(
       `sandbox '${sandbox.name}' exact Docker runtime identity could not be inspected`,
     );
@@ -422,7 +432,7 @@ export function verifyDockerManagedProfileRestore(
       "exec",
       "--user",
       "root",
-      snapshot.containerId,
+      runtime.runtime.handle,
       "/usr/bin/env",
       "-i",
       "HOME=/root",
@@ -567,6 +577,7 @@ function validateRestoreRequest(
   readonly expected: RuntimeProviderSnapshotPreflightReceipt;
   readonly source: RuntimeProviderSnapshotRestoreSource;
   readonly managedProfile: RuntimeProviderManagedProfileRestoreAuthority;
+  readonly observed: RuntimeProviderSnapshotObservation;
 } {
   const expected = requireStablePreflight(preflightValue, providerId, "restore", sandbox);
   const source = normalizeRuntimeProviderSnapshotRestoreSource(sourceValue);
@@ -605,7 +616,7 @@ function validateRestoreRequest(
       `sandbox '${sandbox.name}' cannot represent the snapshot acceleration state`,
     );
   }
-  return { expected, source, managedProfile };
+  return { expected, source, managedProfile, observed };
 }
 
 export function createRuntimeProviderSnapshotSurface(
@@ -644,7 +655,7 @@ export function createRuntimeProviderSnapshotSurface(
       validateRestoreRequest(providerId, driver, sandbox, preflight, source, managedProfile);
     },
     restore(sandbox, preflight, sourceValue, managedProfileValue) {
-      const { expected, source, managedProfile } = validateRestoreRequest(
+      const { expected, source, managedProfile, observed } = validateRestoreRequest(
         providerId,
         driver,
         sandbox,
@@ -652,7 +663,7 @@ export function createRuntimeProviderSnapshotSurface(
         sourceValue,
         managedProfileValue,
       );
-      const providerProof = driver.restoreManagedProfile(sandbox, managedProfile);
+      const providerProof = driver.restoreManagedProfile(sandbox, managedProfile, observed.runtime);
       if (
         typeof providerProof !== "string" ||
         providerProof.trim() === "" ||
@@ -698,7 +709,7 @@ export function createDockerRuntimeProviderSnapshotSurface(
   };
   return createRuntimeProviderSnapshotSurface(providerId, {
     observe: (sandbox, id) => observeDockerRuntimeSnapshot(sandbox, id, resolved),
-    restoreManagedProfile: (sandbox, authority) =>
-      verifyDockerManagedProfileRestore(sandbox, authority, resolved),
+    restoreManagedProfile: (sandbox, authority, runtime) =>
+      verifyDockerManagedProfileRestore(sandbox, authority, runtime, resolved),
   });
 }

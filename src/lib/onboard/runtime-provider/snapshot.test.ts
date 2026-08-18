@@ -120,7 +120,11 @@ describe("runtime provider snapshot surface", () => {
       managedProfile,
     );
 
-    expect(restoreManagedProfile).toHaveBeenCalledWith(target, managedProfile);
+    expect(restoreManagedProfile).toHaveBeenCalledWith(
+      target,
+      managedProfile,
+      observation().runtime,
+    );
     expect(receipt).toMatchObject({
       providerId: "mxc",
       sandboxName: "alpha",
@@ -756,9 +760,10 @@ describe("Docker provider snapshot evidence", () => {
         stdout: `[managed-startup] verified ${agent} profile completion\n`,
         stderr: "",
       });
+      const queryRuntimeSnapshot = vi.fn(() => dockerSnapshot());
       const dependencies = {
         captureHostCommand,
-        queryRuntimeSnapshot: () => dockerSnapshot(),
+        queryRuntimeSnapshot,
       };
       const surface = requireSupportedSurface(
         createDockerRuntimeProviderSnapshotSurface("docker", dependencies),
@@ -773,6 +778,7 @@ describe("Docker provider snapshot evidence", () => {
       });
       const receipt = surface.restore(target, preflight, source, authority);
       expect(receipt.managedProfile).toEqual(authority);
+      expect(queryRuntimeSnapshot).toHaveBeenCalledTimes(3);
       expect(captureHostCommand).toHaveBeenCalledWith(
         "docker",
         [
@@ -814,4 +820,30 @@ describe("Docker provider snapshot evidence", () => {
       );
     },
   );
+
+  it("sanitizes verifier failure diagnostics", () => {
+    const denied = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        captureHostCommand: dockerRestoreCapture({
+          status: 1,
+          stdout: "",
+          stderr: "\u001b]0;unsafe\u0007profile \u001b[31mmismatch\u001b[0m\u0000",
+          error: new Error("\u009b31mspawn\u009b0m\u0001 failed"),
+        }),
+        queryRuntimeSnapshot: () => dockerSnapshot(),
+      }),
+    );
+    const target = sandbox({ openshellDriver: "docker" });
+    const preflight = denied.preflight("restore", target);
+    const source = snapshotSource(preflight, {
+      schemaVersion: 1,
+      providerId: "docker",
+      runtime: { kind: "docker-container", handle: "c".repeat(64) },
+      acceleration: { kind: "none" },
+    });
+
+    expect(() => denied.restore(target, preflight, source, managedProfile)).toThrow(
+      /status=1; error=spawn failed; output=profile mismatch\)/u,
+    );
+  });
 });
