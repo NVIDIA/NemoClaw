@@ -91,6 +91,17 @@ describe("doctor inference checks", () => {
     );
   });
 
+  it.each([
+    ["nvidia-prod", "unknown"],
+    ["unknown", "nvidia/nemotron"],
+  ] as const)("warns with recovery guidance when only %s / %s resolves", async (provider, model) => {
+    const checks = await collectInferenceChecks("alpha", { provider, model }, false, {
+      probeProviderHealthImpl: () => null,
+    });
+
+    expect(checks[0]).toMatchObject({ label: "Route", status: "warn", hint: expect.any(String) });
+  });
+
   it("makes a broken inference.local route authoritative over a healthy upstream (#6192)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
