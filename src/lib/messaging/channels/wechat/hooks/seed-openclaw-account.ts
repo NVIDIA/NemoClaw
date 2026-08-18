@@ -9,6 +9,7 @@ import type {
 } from "../../../hooks/types";
 import {
   assertSafeWechatAccountId,
+  WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT,
   WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID,
   WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
   WECHAT_TOKEN_PLACEHOLDER,
@@ -77,7 +78,7 @@ export function buildWechatSeedOpenClawAccountOutputs(
       kind: "build-file",
       value: {
         path: wechatAccountFilePath(accountId),
-        mode: "0600",
+        mode: WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT.mode,
         content: {
           token,
           savedAt,

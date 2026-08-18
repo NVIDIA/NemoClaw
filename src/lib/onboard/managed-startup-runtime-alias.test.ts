@@ -202,4 +202,23 @@ describe("managed startup messaging build files", () => {
       ),
     ).toThrow(/credential-shaped/);
   });
+
+  it.each([
+    ["without an explicit mode", undefined],
+    ["with a group-readable mode", "0640"],
+  ])("rejects the WeChat token placeholder in an account file %s (#9397)", (_label, mode) => {
+    const step = wechatAccountBuildStep();
+    const value = step.value as ManagedStartupJsonObject;
+    const { mode: _mode, ...valueWithoutMode } = value;
+    expect(() =>
+      validateManagedStartupProfile(
+        profileWithBuildSteps([
+          {
+            ...step,
+            value: mode === undefined ? valueWithoutMode : { ...value, mode },
+          },
+        ]),
+      ),
+    ).toThrow(/credential-shaped/);
+  });
 });

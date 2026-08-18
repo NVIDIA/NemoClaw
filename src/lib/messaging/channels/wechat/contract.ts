@@ -15,6 +15,7 @@ export const WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT = {
   outputId: "openclawWeixinAccountFile",
   kind: "build-file",
   required: true,
+  mode: "0600",
 } as const;
 
 export const WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID = WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT.handlerId;
@@ -33,7 +34,12 @@ export interface WechatManagedStartupPlaceholderAuthorization {
 export function authorizeWechatAccountFilePlaceholders(
   value: unknown,
 ): readonly WechatManagedStartupPlaceholderAuthorization[] {
-  if (!isPlainDataObject(value) || !isWechatAccountFilePath(ownDataPropertyValue(value, "path"))) {
+  if (
+    !isPlainDataObject(value) ||
+    !isWechatAccountFilePath(ownDataPropertyValue(value, "path")) ||
+    ownDataPropertyValue(value, "mode") !== WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT.mode ||
+    !isPlainDataObject(ownDataPropertyValue(value, "content"))
+  ) {
     return [];
   }
   return [{ path: ["content", "token"], value: WECHAT_TOKEN_PLACEHOLDER }];
