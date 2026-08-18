@@ -275,7 +275,7 @@ function completeBrief(plan: Record<string, string>): string {
     "## Exact staging Brev Launchable evidence",
     "",
     `- Launchable candidate: \`${plan.originMainCommit}\``,
-    "- Evidence: successful exact Launchable E2E and cleanup receipts.",
+    "- Evidence: recorded exact Launchable E2E status and available cleanup receipts.",
     "",
     "## General E2E decision",
     "",
@@ -774,17 +774,21 @@ describe("release-latest-tag.sh", () => {
     expect(result.stderr).toContain("is not reachable from refs/remotes/origin/main");
   });
 
-  it("signs the release brief verbatim and pushes only the tag without hooks or gh", () => {
+  it("signs a release brief with a Launchable exception and pushes only the tag", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
     const brief = completeBrief(plan)
+      .replace(
+        "- Evidence: recorded exact Launchable E2E status and available cleanup receipts.",
+        "- Evidence: exact staging Launchable failed before cleanup confirmation.",
+      )
       .replace("- Decision: proceed.", "- Decision: proceed with recorded exception.")
       .replace(
         "Exceptions: None",
-        "Exceptions: The accepted full run tested the preceding commit.",
+        "Exceptions: The maintainer accepted the failed Launchable result and assigned workspace cleanup follow-up.",
       );
     const messageFile = writeBrief(fixture, brief);
     const hookPath = path.join(fixture.work, ".git", "hooks", "pre-push");

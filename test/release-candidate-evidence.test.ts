@@ -102,6 +102,13 @@ afterEach(() => {
 });
 
 describe("release candidate evidence commands", () => {
+  it("selects the newest Launchable status without requiring success", () => {
+    expect(evidence).toContain('launchable: latest_check("Exact staging Brev Launchable")');
+    expect(evidence).not.toContain(
+      'launchable: successful_check("Exact staging Brev Launchable")',
+    );
+  });
+
   it("extracts only the exact release H2 section from a multi-entry changelog", () => {
     const input = fixture({
       "docs/changelog/2026-08-17.mdx": [

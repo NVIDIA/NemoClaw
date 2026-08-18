@@ -170,14 +170,15 @@ run_or_stop "candidate documentation branch read" git ls-remote --heads origin \
 This is the initial pending-state check. Do not repeat it before showing the release brief. Run the
 self-contained final recheck below only after the maintainer confirms the tag.
 
-## Image and Launchable Evidence
+## Image Evidence and Launchable Status
 
-Query the candidate's check runs once and select the newest successful check for each required job.
-Then inspect only the one or two workflow run attempts that own those checks. The
+Query the candidate's check runs once. Select the newest successful base-image check and the newest
+Launchable status. Then inspect only the workflow run attempts that own those checks. The
 `base-image-publication` job runs the checked-in applicable-publication verifier, including every
 required publisher and immutable Deep Agents Code base contract. Trust the aggregate instead of
 repeating its publisher queries. `Exact staging Brev Launchable` builds the candidate image, boots
-that exact image, verifies the baked runtime, runs full E2E, and verifies workspace cleanup.
+that exact image, verifies the baked runtime, runs full E2E, and verifies workspace cleanup when it
+completes successfully.
 
 ```bash
 CHECK_RUNS_FILE="$EVIDENCE_DIR/candidate-check-runs.json"
@@ -187,6 +188,18 @@ run_or_stop "candidate check-run list" gh api --paginate --slurp \
   >"$CHECK_RUNS_FILE"
 SELECTED_CHECKS_FILE="$EVIDENCE_DIR/selected-image-checks.json"
 run_or_stop "image check-run selection" jq -er '
+  def owned_check($check):
+    ($check | (.details_url // .html_url // "") |
+      capture("/actions/runs/(?<runId>[0-9]+)/job/(?<jobId>[0-9]+)(?:[?].*)?$")) as $owner |
+    {
+      name: $check.name,
+      runId: ($owner.runId | tonumber),
+      jobId: ($owner.jobId | tonumber),
+      jobUrl: ($check.html_url // $check.details_url),
+      status: $check.status,
+      conclusion: $check.conclusion,
+      completedAt: $check.completed_at
+    };
   def successful_check($name):
     ([.[].check_runs[]? |
       select(.name == $name and .status == "completed" and .conclusion == "success")] |
@@ -194,19 +207,19 @@ run_or_stop "image check-run selection" jq -er '
     if $check == null then
       error("No successful candidate check run named \($name) was found")
     else
-      ($check | (.details_url // .html_url // "") |
-        capture("/actions/runs/(?<runId>[0-9]+)/job/(?<jobId>[0-9]+)(?:[?].*)?$")) as $owner |
-      {
-        name: $check.name,
-        runId: ($owner.runId | tonumber),
-        jobId: ($owner.jobId | tonumber),
-        jobUrl: ($check.html_url // $check.details_url),
-        completedAt: $check.completed_at
-      }
+      owned_check($check)
+    end;
+  def latest_check($name):
+    ([.[].check_runs[]? | select(.name == $name)] |
+      sort_by(.started_at // .completed_at // "") | last) as $check |
+    if $check == null then
+      error("No candidate check run named \($name) was found")
+    else
+      owned_check($check)
     end;
   {
     base: successful_check("base-image-publication"),
-    launchable: successful_check("Exact staging Brev Launchable")
+    launchable: latest_check("Exact staging Brev Launchable")
   }
 ' "$CHECK_RUNS_FILE" >"$SELECTED_CHECKS_FILE"
 SELECTED_CHECK_FIELDS_FILE="$EVIDENCE_DIR/selected-image-check-fields.txt"
@@ -239,8 +252,7 @@ run_or_stop "Launchable job validation" jq -e --arg sha "$CANDIDATE_SHA" \
   .id == $job and .run_id == $run and
   (.run_attempt | type) == "number" and .run_attempt >= 1 and
   .run_attempt == (.run_attempt | floor) and .head_sha == $sha and
-  .name == "Exact staging Brev Launchable" and
-  .status == "completed" and .conclusion == "success"
+  .name == "Exact staging Brev Launchable"
 ' "$LAUNCHABLE_JOB_FILE" >/dev/null
 IMAGE_JOB_FIELDS_FILE="$EVIDENCE_DIR/image-job-fields.txt"
 run_or_stop "base image job field read" jq -er '[.run_attempt, .html_url] | .[]' \
@@ -249,11 +261,14 @@ run_or_stop "base image job field read" jq -er '[.run_attempt, .html_url] | .[]'
   IFS= read -r BASE_IMAGE_ATTEMPT
   IFS= read -r BASE_IMAGE_JOB_URL
 } <"$IMAGE_JOB_FIELDS_FILE"
-run_or_stop "Launchable job field read" jq -er '[.run_attempt, .html_url] | .[]' \
+run_or_stop "Launchable job field read" jq -er \
+  '[.run_attempt, .html_url, .status, (.conclusion // "pending")] | .[]' \
   "$LAUNCHABLE_JOB_FILE" >"$IMAGE_JOB_FIELDS_FILE"
 {
   IFS= read -r LAUNCHABLE_ATTEMPT
   IFS= read -r LAUNCHABLE_JOB_URL
+  IFS= read -r LAUNCHABLE_STATUS
+  IFS= read -r LAUNCHABLE_CONCLUSION
 } <"$IMAGE_JOB_FIELDS_FILE"
 
 OWNING_RUNS_FILE="$EVIDENCE_DIR/image-owning-runs.txt"
@@ -279,7 +294,7 @@ run_or_stop "Launchable run validation" jq -e --arg sha "$CANDIDATE_SHA" \
   --argjson attempt "$LAUNCHABLE_ATTEMPT" '
   .head_sha == $sha and .run_attempt == $attempt and
   .path == ".github/workflows/e2e.yaml" and .head_branch == "main" and
-  .event == "workflow_dispatch"
+  (.event == "push" or .event == "workflow_dispatch")
 ' "$LAUNCHABLE_RUN_FILE" >/dev/null
 IMAGE_RUN_FIELDS_FILE="$EVIDENCE_DIR/image-run-fields.txt"
 run_or_stop "base image run field read" jq -er '.html_url' \
@@ -299,11 +314,15 @@ Record these values:
 - `LAUNCHABLE_RUN_ID`;
 - `LAUNCHABLE_ATTEMPT`;
 - `LAUNCHABLE_RUN_URL`; and
-- `LAUNCHABLE_JOB_URL`.
+- `LAUNCHABLE_JOB_URL`;
+- `LAUNCHABLE_STATUS`; and
+- `LAUNCHABLE_CONCLUSION`.
 
-Download only that run's private receipts and bind them to the candidate:
+For a successful Launchable job, download only that run's private receipts and bind them to the
+candidate:
 
 ```bash
+if [[ "$LAUNCHABLE_STATUS" == "completed" && "$LAUNCHABLE_CONCLUSION" == "success" ]]; then
 LAUNCHABLE_ARTIFACT_DIR="$EVIDENCE_DIR/launchable"
 mkdir "$LAUNCHABLE_ARTIFACT_DIR"
 ARTIFACT="staging-brev-launchable-${CANDIDATE_SHA}-${LAUNCHABLE_RUN_ID}-${LAUNCHABLE_ATTEMPT}"
@@ -360,9 +379,10 @@ IFS= read -r LAUNCHABLE_WORKSPACE_NAME <"$WORKSPACE_NAME_FILE"
 IFS= read -r LAUNCHABLE_WORKSPACE_ID <"$WORKSPACE_ID_FILE"
 IFS= read -r LAUNCHABLE_CLEANUP_TIME <"$CLEANUP_TIME_FILE"
 PRODUCER_URL="https://github.com/brevdev/nemoclaw-image/actions/runs/${PRODUCER_RUN_ID}"
+fi
 ```
 
-Record these values:
+For a successful result, also record these values:
 
 - `ARTIFACT`;
 - the workflow and job URLs;
@@ -373,15 +393,14 @@ Record these values:
 - the full E2E result; and
 - the verified cleanup time.
 
-This exact job is the nonwaivable Launchable requirement. The rest of the general E2E suite remains
-maintainer context.
+For any other result, record the status, conclusion, URLs, and available failure artifacts. Do not
+claim that the image, runtime, inference, or workspace cleanup passed.
 
-If Launchable evidence is missing or failed and the planned candidate still equals `origin/main`,
-load `nemoclaw-maintainer-e2e` and request Launchable mode. A new dispatch always tests current
-`origin/main`; it cannot create evidence for an older planned candidate. After `main` advances,
-either use existing exact-candidate evidence or prepare and plan a new documented candidate before
-dispatching. If the base-image aggregate is missing or failed, repair or rerun the affected
-publisher workflow and verifier. Neither result can be replaced by the general E2E decision.
+If the Launchable result is missing or non-successful, offer Launchable mode or let the maintainer
+proceed with the displayed status. A new dispatch always tests current `origin/main`; it cannot
+create evidence for an older planned candidate. If the base-image aggregate is missing or failed,
+repair or rerun the affected publisher workflow and verifier. The E2E decision cannot replace the
+base-image result.
 
 ## Final Documentation Recheck
 

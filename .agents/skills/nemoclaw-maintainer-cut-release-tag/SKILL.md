@@ -15,8 +15,9 @@ push, version-bump, or other release-state GitHub writes.
 
 Treat these as separate states:
 
-- **Tag can be cut:** all required documentation, image, and exact staging Launchable checks pass.
-  The release brief records the maintainer's general E2E decision and contains no unresolved prompts.
+- **Tag can be cut:** all required documentation and image checks pass. The release brief records
+  the maintainer's E2E decision, including the exact staging Launchable status, and contains no
+  unresolved prompts.
 - **Tag cut:** the remote signed tag exists and peels to the planned candidate.
 - **Post-tag work:** `latest`, release labels, public documentation, release images, `lkg`, and the Announcement
   continue outside this skill. Do not wait for them here; some share a downstream workflow.
@@ -28,11 +29,9 @@ Treat these as separate states:
 - Require the release entry and exact-candidate approved-empty Pi documentation result. They cannot
   be waived.
 - Require applicable GHCR base and managed-image publication evidence.
-- Require a successful exact-candidate `Exact staging Brev Launchable` job. It must verify the
-  deployed image, baked runtime, hosted and sandbox inference, preinstalled full E2E suite, and
-  workspace cleanup. The general E2E decision cannot waive these requirements.
-- Treat general E2E as maintainer context, not a tag gate. Show the newest full E2E result and let the
-  maintainer run focused tests, run the full suite, or proceed with the displayed status.
+- Treat all E2E, including `Exact staging Brev Launchable`, as maintainer context rather than a tag
+  gate. Show the newest full E2E result and let the maintainer run focused tests, run the full suite,
+  or proceed with the displayed status.
 - Record every displayed or requested E2E result and the decision in the release brief, the signed
   Markdown release record. Record a plain-language exception reason when the status is exceptional
   or a requested run remains unresolved.
@@ -114,15 +113,10 @@ the helper after evidence has been added.
 
 Read and follow [Candidate Evidence](references/candidate-evidence.md). It owns the executable reads
 for the release entry, approved-empty Pi result, candidate-specific managed documentation state, applicable
-base-image verifier, and exact staging Launchable result.
+base-image verifier.
 
 Do not offer the general E2E proceed option until every candidate-evidence check passes. Record the
 returned paths, URLs, run identities, and image identities in the release brief.
-
-The exact staging Launchable result is nonwaivable. A successful job retains
-`launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`; the cleanup record exists only after the
-job confirms workspace absence. A preparation failure can produce no artifact. A later failure can
-retain only `lane.log` and the phase artifacts created before exit.
 
 ### 3. Present General E2E and Ask for a Decision
 
@@ -134,6 +128,11 @@ instead of reducing the run to one passing/failing label:
 - workflow attempt, created, started, and last-updated timestamps, plus age at inspection;
 - workflow URL and `Release qualification` job URL; and
 - any failed, cancelled, skipped, queued, or still-running results.
+
+Include the `Exact staging Brev Launchable` job status when the displayed run contains it. Record
+the exact-candidate Launchable result when one is available. A successful job retains
+`launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`. A failed job can retain only `lane.log`
+and the phase artifacts created before exit.
 
 Offer exactly these choices:
 
@@ -150,8 +149,8 @@ and no requested run remains unresolved. Otherwise, ask for and record one conci
 reason. The reason must say what differs or remains unresolved and why the maintainer is proceeding.
 Selecting “Proceed with the status as shown” is the decision, not the reason. Stop and ask the
 maintainer why before continuing when a reason is required.
-This exception applies only to general E2E. It never covers documentation, required image evidence,
-or `Exact staging Brev Launchable`.
+This decision covers all E2E results, including `Exact staging Brev Launchable`. It never covers
+documentation or required image evidence.
 
 ### 4. Finish and Review the Release Brief
 
@@ -160,8 +159,8 @@ Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 - the complete canonical release entry and its repository path;
 - Pi documentation workflow and job URLs, artifact name, and normalized approved-empty review;
 - exact-candidate E2E workflow, attempt, and successful `base-image-publication` job URL;
-- exact staging Brev workflow and job URLs, candidate SHA, producer run, concrete boot image,
-  baked-runtime identity, full E2E result, and workspace-cleanup result;
+- exact staging Brev workflow and job status, plus available candidate SHA, producer run, concrete
+  boot image, baked-runtime identity, full E2E result, and workspace-cleanup result;
 - the newest full E2E result and every focused or full rerun result, including SHA, time, age, status,
   conclusion, and URLs;
 - the maintainer's E2E choice; and
@@ -218,10 +217,9 @@ retried without moving the semver tag. Do not call it promotion-only.
 - Required GHCR evidence fails: repair and rerun only the affected image work. Do not replace it
   with the general E2E proceed decision.
 - `Exact staging Brev Launchable` or its workspace cleanup fails: inspect the available `lane.log`,
-  `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` artifacts. Correct the failure and rerun
-  the Launchable job only while the candidate still equals `origin/main`. After `main` advances, a
-  new dispatch cannot test the older candidate; prepare and plan a new documented candidate instead.
-  Do not replace this evidence with the general E2E proceed decision.
+  `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` artifacts. Offer a focused Launchable
+  rerun or let the maintainer proceed with the displayed status. If cleanup is not confirmed, record
+  the workspace identity, credential exposure, and administrator follow-up without claiming absence.
 - General E2E is old, incomplete, failed, or from another SHA: show it and offer focused, full, or
   proceed. Record the decision and reason in the brief.
 - Candidate is no longer on `origin/main`, the previous release changed, or the version is no longer

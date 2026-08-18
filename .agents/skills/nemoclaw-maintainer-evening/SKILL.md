@@ -75,7 +75,7 @@ move to the next target, but do not perform label writes here.
 Load `nemoclaw-maintainer-cut-release-tag` and pass the exact version. That skill owns:
 
 - the exact-version plan and candidate;
-- nonwaivable documentation, image, and exact staging Launchable evidence;
+- required documentation and image evidence, plus exact staging Launchable status;
 - the maintainer's focused, full, or proceed E2E choice;
 - `../nemoclaw-release-vX.Y.Z/release-brief.md`;
 - the exact confirmation phrase; and
