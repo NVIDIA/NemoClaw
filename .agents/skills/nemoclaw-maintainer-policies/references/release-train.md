@@ -11,7 +11,9 @@ Daily release labels coordinate release work. They do not classify issues and th
 - Engineers and agents may add the current `v0.0.x` label to open PRs to activate them for day work.
 - After a PR merges to `main`, the trusted post-merge workflow adds the next patch label only when the merge is ahead of the latest release tag. A merge already contained in a release tag receives no release label.
 - A scheduled and manually dispatchable reconciliation pass repairs missed or failed merge events only across the untagged interval from the latest release tag to `main`.
-- Post-merge assignment and tag-triggered label retirement share one queued GitHub Actions concurrency group. Authorized automation cannot add a released label during the retirement verification-and-delete window.
+- Post-merge assignment and tag-triggered label retirement share one non-cancelling GitHub Actions
+  concurrency group. GitHub retains at most one pending run, so scheduled reconciliation repairs a
+  merge event that a newer pending run replaces.
 - Issues may also carry daily version labels when they need a PR, fix, or regression follow-up for the daily tag.
 - Applying a daily version label is not a readiness claim.
 - Release includes PRs that both carry the daily version label and are merged by cutoff.
@@ -22,13 +24,25 @@ Daily release labels coordinate release work. They do not classify issues and th
 
 ## Release-Prep Docs
 
-During the evening flow, continue the managed documentation PR when one exists; otherwise open a
-direct documentation-only PR. Add `docs/changelog/YYYY-MM-DD.mdx` with its required `## vX.Y.Z`
-heading, parser-safe MDX SPDX comment, summary, and detailed bullets. Merge it before the final plan.
+Use one cumulative documentation PR for all merged changes selected for the release. Continue the
+managed Pi PR when one exists. If no managed PR exists and only release documentation remains, use
+one direct documentation-only PR.
 
-Require the exact candidate's successful no-change `Docs / Post-Merge Catch-Up` publisher job.
-At plan generation and tag cut, no managed documentation PR may be open and no branch may exist for the exact candidate.
-If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
+That PR must include all required user documentation and one canonical
+`docs/changelog/YYYY-MM-DD.mdx` entry headed `## vX.Y.Z`. In the normal evening flow, merge it before
+generating the release plan so the entry is in the planned candidate. If direct use of the release-tag
+skill has already produced a plan whose candidate lacks the entry or another required documentation
+change, merge the documentation PR and generate a new plan for the resulting candidate.
+
+Require the exact candidate's `Docs / Post-Merge Catch-Up` run to finish with a successful
+`Publish documentation catch-up` job. That success records an independently reviewed, approved
+empty Pi patch for the candidate. If Pi finds a change, the workflow opens a managed PR and
+publication does not succeed.
+
+For the candidate only, require no open managed PR and no remote branch named
+`automation/post-merge-docs-<first-12-candidate-characters>`. A managed PR or branch for a later
+commit does not invalidate an earlier candidate. The release entry and approved-empty Pi result
+cannot be waived.
 
 ## Cutoff
 
@@ -39,61 +53,120 @@ At cutoff:
 1. List merged PRs carrying the target version label.
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
-4. Complete [Release-Prep Docs](#release-prep-docs) for the exact candidate.
-5. Generate QA handoff from merged PRs.
-6. Generate the release plan to capture the candidate commit. Merges may continue; a late drift check advances the candidate and invalidates evidence for the older SHA.
-7. Review the candidate commit's pre-tag E2E evidence.
-8. Cut the release tag only with explicit maintainer confirmation.
-9. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label, verify none remain, and delete the released version label.
+4. Complete [Release-Prep Docs](#release-prep-docs) for the intended release range.
+5. Generate the immutable release plan with the exact `--version vX.Y.Z` to capture the candidate
+   commit.
+6. Verify the candidate's required documentation, image, and exact staging Launchable evidence. If
+   documentation is missing, complete [Release-Prep Docs](#release-prep-docs), merge that PR,
+   generate a new plan, and repeat the evidence checks for the new candidate.
+7. Show the newest full E2E context and record the maintainer's focused, full, or proceed decision.
+8. Build the Markdown release brief from the exact range and evidence.
+9. Cut the release tag only with the plan's explicit maintainer confirmation.
 
-## Pre-Tag E2E Evidence
+Merges may continue after planning. Keep the planned candidate when it remains an ancestor of
+`origin/main`, the previous release has not changed, and its own required evidence remains valid.
+Regenerate the plan only when the intended range, version, or candidate changes.
 
-The release candidate is the full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
+## Required Image and Launchable Evidence
 
-Before asking for the release confirmation phrase, require a completed, successful `Release qualification` check from a pre-tag manual run at that SHA.
+Before confirmation, require both exact-candidate results:
 
-- `.github/workflows/e2e.yaml` derives the release-required jobs from its E2E metadata. Do not copy them into a second release test list.
-- Push runs publish `Relevant E2E`; only full manual runs dispatched against `main` with empty selectors publish `Release qualification`.
-- By default, the check requires every default-required workflow E2E result to succeed, including `Exact staging Brev Launchable`.
-- A repository administrator may waive one or more release-required E2E execution jobs with `release_qualification_waived_jobs` and `release_qualification_waiver_reason`.
-- `release_qualification_waived_jobs` is a comma-separated list of requested job IDs.
-- The reason must begin with an ASCII letter or digit and contain 10-500 characters chosen from ASCII letters, digits, spaces, and `.,:;/_()'-`.
-- Both inputs must be nonempty, or both inputs must be empty.
-- Both `github.actor` and `github.triggering_actor` must have repository `admin` permission for the waiver.
-- The trusted planner must reject unknown, duplicate, or non-release-required job IDs.
-- Trusted controller jobs cannot be waived.
-- The trusted planner removes only the named jobs from `release_required_jobs` and emits canonical waived-job JSON.
-- Every waived job still runs, and `include_staging_brev_launchable=true` remains required.
-- The `generate-matrix` dispatch receipt is written after waiver authorization and before that job's source checkout. It records the requested job IDs, reason, both actor identities, and candidate SHA.
-- After trusted planner validation, the `Release qualification` summary and waiver artifact record the canonical job IDs and each waived job's completed outcome.
-- A normal full run must conclude with `success`.
-- An administrator-waived full run may conclude with `failure` when a waived execution job fails, `Release qualification` succeeds, and the waiver artifact binds that failure to the candidate, run, actors, reason, and canonical waived job IDs.
-- `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` remain separate opt-in work and do not block this check.
-- A successful Launchable job proves the candidate checkout, in-guest full E2E result, and cleanup. Its artifacts are diagnostic evidence, not a second status ledger.
-- A skipped, queued, in-progress, cancelled, or failed `Release qualification` check is not release evidence.
-- A check from another commit SHA is not release evidence.
-- Use an existing qualifying pre-tag run for the candidate SHA; run `nemoclaw-maintainer-e2e` in full mode when none exists, with an administrator-authorized job waiver when required.
+1. A successful exact-candidate E2E `base-image-publication` job. Its checked-in verifier selects
+   the newest applicable image-changing commit in first-parent history, requires every managed
+   publisher, and validates the immutable Deep Agents Code base contract. Record the E2E workflow
+   and aggregate-job URLs and the run attempt; do not repeat its publisher queries in the tag skill.
+2. A successful `Exact staging Brev Launchable` job for the exact candidate SHA. The trusted job
+   builds the candidate image, deploys the configured standing Launchable, verifies environment
+   access and the exact booted image, verifies the baked runtime, runs hosted and sandbox inference
+   through the preinstalled full E2E suite, deletes its Brev workspace, and confirms absence.
 
-Record the workflow and `Release qualification` job URLs.
-Run the release script's signing preflight before confirmation.
-For the canonical `NVIDIA/NemoClaw` remote, `scripts/release-cut-tag.sh` searches completed, successful manual `.github/workflows/e2e.yaml` runs and completed failed manual runs at the exact planned `origin/main` commit.
-It accepts the first successful run with exactly one completed, successful `Release qualification` job.
-For a failed run, it also requires a valid waiver artifact with at least one planner-validated waived job failure.
-It fails closed when no qualifying run exists.
-A run with zero or multiple jobs of that name is not evidence.
-The script repeats this check before it pushes the tag.
-Local fixture remotes skip the production gate only when tests set `NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL=1` and the shared classifier confirms a noncanonical origin.
-Canonical-equivalent `NVIDIA/NemoClaw` remotes always run the gate, even when that override is set.
-A local fixture cannot authorize a release.
-If the candidate SHA changes, discard the earlier check, regenerate the release plan, and require qualifying full manual E2E for the new SHA.
-This does not freeze `main` or prevent merges.
-No release-note-only delta exception is currently defined.
+Record:
+
+- the Launchable workflow and job URLs;
+- the attempt and producer run;
+- the concrete boot image;
+- the image-repository SHA;
+- the baked-runtime identity;
+- the full E2E result; and
+- the workspace-cleanup result.
+
+A successful job retains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`. The cleanup record
+exists only after the job confirms workspace absence. A preparation failure can produce no artifact;
+a later failure can retain only `lane.log` and the phase artifacts created before exit.
+
+Neither result can be waived by the general E2E decision. A successful `Release qualification`
+aggregate does not replace either exact-candidate result. The Launchable job may come from a
+Launchable-only or full manual run against trusted `main`.
+
+Before dispatch, apply the Launchable credential and resource boundary in
+[`test/e2e/README.md`](../../../../test/e2e/README.md#push-and-manual-pr-e2e). The trusted workflow
+requires repository `maintain` or `admin` permission before the Launchable source checkout.
+
+## General E2E Decision
+
+The general E2E decision records whether the maintainer chooses focused tests, the full suite, or the
+displayed general E2E status. General E2E informs the maintainer; it does not decide whether a tag
+can exist. Show the newest full run's full SHA, status, conclusion, attempt, created, started, and
+last-updated timestamps, age at inspection, workflow URL, `Release qualification` URL, and any
+failed, cancelled, skipped, queued, or active results.
+
+Offer three choices:
+
+1. run maintainer-selected focused tests;
+2. run the full suite; or
+3. proceed with the status shown.
+
+Show and record every requested run result. A requested run remains unresolved while it is queued or
+running, or after it ends without success. It becomes resolved only when a successful result covers
+the same requested scope.
+
+Use `Exceptions: None` only when the maintainer accepts a successful full result for the candidate
+and no requested run remains unresolved. Otherwise, record one plain-language reason that names the
+different, missing, non-successful, or unresolved status and explains why the maintainer is
+proceeding.
+
+This decision applies only to general E2E. It cannot cover missing documentation, required image
+evidence, or `Exact staging Brev Launchable`. Do not maintain a separate exception schema or ledger.
+
+## Signed Release Brief
+
+Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the exact plan range. Include:
+
+- exact range, commit and risky-file counts, risky areas, and suggested QA focus from the handoff
+  helper;
+- the complete canonical release entry and its path;
+- Pi documentation workflow and job URLs, artifact name, and normalized approved-empty review;
+- the base-image aggregate and exact staging Launchable URLs, identities, full E2E result, and
+  cleanup result;
+- the newest full E2E result and every requested run;
+- the maintainer's E2E decision; and
+- `Exceptions: None` or the plain-language exception reason.
+
+Pass that exact Markdown to `release:cut` with `--message-file`. It becomes the signed annotated tag
+message and is the release evidence record. Do not create a separate exception file.
+
+Require the full confirmation phrase from the plan. After the script reads the remote tag back and
+confirms that it peels to the candidate, report the tag as cut and return.
+
+## Post-Tag States
+
+Moving `latest`, carrying labels forward, publishing public documentation, rebuilding and publishing release
+images, promoting `lkg`, and publishing the Announcement do not extend tag cutting. Some share a
+workflow or depend on another post-tag state. Report only already-known results and mark the rest
+pending or unknown; do not poll before returning the tag result.
+
+Tag-triggered image publication performs a release rebuild and can fail after the tag exists. Repair
+and rerun that workflow independently. Do not describe it as promotion-only and do not move the
+semver tag.
 
 ## Carry Forward
 
 Open PRs and issues that miss the cutoff remain active carry-forward work, but their target changes after the release succeeds. Post-tag housekeeping creates the next patch label if needed, removes the released-version label from every open straggler, adds the next patch label, verifies no open item remains on the released label, and deletes the released label.
 
-The `release-latest-tag` workflow runs automatic carry-forward after moving `latest`. It shares the release-label coordination queue with post-merge assignment and must complete before housekeeping is considered successful. The release confirmation must include the housekeeping plan, so the post-tag label writes remain inside the authorized release operation. Do not run the retirement script directly or manually add a label whose semver tag already exists.
+The `release-latest-tag` workflow runs automatic carry-forward after moving `latest`. It shares the
+release-label concurrency group with post-merge assignment and must complete before housekeeping is
+considered successful. Its status does not change whether the semver tag was cut. Do not run the
+retirement script directly or manually add a label whose semver tag already exists.
 
 Maintainers may:
 
@@ -108,7 +181,6 @@ Release labels are temporary planning state. Retire one only when all conditions
 1. The semver tag and workflow-managed `latest` both resolve to the confirmed release commit.
 2. Every open PR and issue has moved to the next patch label or explicitly left the daily release cycle.
 3. A final query finds no open item carrying the released label.
-4. The release confirmation explicitly authorizes deletion of that released label.
-5. Retirement runs inside the shared release-label coordination queue.
+4. Retirement runs inside the trusted release workflow's shared concurrency group.
 
 Delete the repository label after those checks. Deletion removes it from merged and closed items without preserving a second, mutable release-membership signal. Never rename a released label into a future version, and never recreate a label whose semver tag already exists.

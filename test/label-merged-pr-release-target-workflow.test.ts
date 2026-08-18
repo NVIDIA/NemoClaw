@@ -12,7 +12,7 @@ const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor a
 ) => (...args: unknown[]) => Promise<unknown>;
 
 type AutoLabelWorkflow = {
-  concurrency?: { group?: string; queue?: string };
+  concurrency?: { "cancel-in-progress"?: boolean; group?: string };
   on?: {
     pull_request_target?: {
       branches?: string[];
@@ -26,7 +26,7 @@ type AutoLabelWorkflow = {
 };
 
 type ReleaseLatestWorkflow = {
-  concurrency?: { group?: string; queue?: string };
+  concurrency?: { "cancel-in-progress"?: boolean; group?: string };
   permissions?: Record<string, string>;
   jobs: Record<string, WorkflowJob>;
 };
