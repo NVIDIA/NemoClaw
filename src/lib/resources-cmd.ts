@@ -132,7 +132,8 @@ export function resolveCpuModel(
 
   const lscpuOutput = (options.readLscpu ?? readLscpuJson)();
   const lscpuModels = lscpuOutput === null ? [] : parseLscpuCpuModels(lscpuOutput);
-  return (lscpuModels.length > 0 ? lscpuModels : nodeModels).join(" / ") || UNKNOWN_CPU_MODEL;
+  const models = distinctCpuModels([...nodeModels, ...lscpuModels]);
+  return models.join(" / ") || UNKNOWN_CPU_MODEL;
 }
 
 // ── Implementation ───────────────────────────────────────────────

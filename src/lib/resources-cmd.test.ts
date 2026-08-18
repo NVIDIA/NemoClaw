@@ -150,6 +150,15 @@ describe("resources-cmd", () => {
     ).toBe("Cortex-X925");
   });
 
+  it("combines known Node models with additional Linux models (#9403)", () => {
+    expect(
+      resolveCpuModel([{ model: "Cortex-X925" }, { model: "unknown" }], {
+        platform: "linux",
+        readLscpu: () => JSON.stringify({ cpus: [{ modelname: "Cortex-A725" }] }),
+      }),
+    ).toBe("Cortex-X925 / Cortex-A725");
+  });
+
   it("prints JSON and returns the hardware object in JSON mode", () => {
     const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
