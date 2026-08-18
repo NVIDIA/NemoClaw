@@ -507,6 +507,40 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("runs the trusted planner before checking out candidate code", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          steps: Array<{
+            name?: string;
+            uses?: string;
+            with?: Record<string, string | number | boolean>;
+          }>;
+        }
+      >;
+    };
+    const steps = workflow.jobs["generate-matrix"]!.steps;
+    const plannerCheckout = steps.find((step) => step.name === "Check out trusted E2E planner")!;
+    plannerCheckout.with!.ref = "${{ inputs.checkout_sha || github.sha }}";
+    const [generate] = steps.splice(
+      steps.findIndex((step) => step.name === "Generate E2E target matrix"),
+      1,
+    );
+    steps.splice(
+      steps.findIndex((step) => step.name === "Check out E2E candidate") + 1,
+      0,
+      generate!,
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "trusted E2E planner checkout must use the workflow commit without credentials",
+        "trusted E2E planning must finish before candidate checkout and execution",
+      ]),
+    );
+  });
+
   it("includes deleted owning paths in main-push selection", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
@@ -590,7 +624,7 @@ describe("e2e workflow boundary", () => {
     );
     trusted!.run = trusted!.run!.replace('"runner":"ubuntu-latest"', '"runner":"self-hosted"');
     generateMatrix.steps.splice(
-      generateMatrix.steps.findIndex((step) => step.uses?.startsWith("actions/checkout@")) + 1,
+      generateMatrix.steps.findIndex((step) => step.name === "Check out E2E candidate") + 1,
       0,
       trusted!,
     );

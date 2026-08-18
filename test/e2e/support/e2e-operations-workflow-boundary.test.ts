@@ -246,7 +246,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
   it("validates manual PR dispatch inputs and the checked-out commit", () => {
     const workflow = readE2eOperationsWorkflow();
-    delete workflow.on?.workflow_dispatch?.inputs?.review_reason;
+    delete workflow.on?.workflow_dispatch?.inputs?.checkout_repository;
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
@@ -258,7 +258,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "workflow_dispatch review_reason must be an optional string with an empty default",
+        "workflow_dispatch checkout_repository must be an optional string with an empty default",
         'Manual PR authentication must retain "$WORKFLOW_EVENT" == "workflow_dispatch"',
         'Manual PR authentication must retain "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
         'Manual PR checkout validation must retain "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',

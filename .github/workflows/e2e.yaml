@@ -73,11 +73,6 @@ on:
         required: false
         default: ""
         type: string
-      review_reason:
-        description: Deprecated optional audit note retained for dispatcher compatibility; not used for authorization.
-        required: false
-        default: ""
-        type: string
       base_sha:
         description: Optional lowercase PR base SHA for manual exact-revision E2E.
         required: false
@@ -612,7 +607,82 @@ jobs:
             require_maintainer "$TRIGGERING_ACTOR"
           fi
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out trusted E2E planner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node for trusted E2E planning
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.3.0
+        with:
+          node-version: 22
+
+      - name: Install trusted E2E planner dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - id: matrix
+        name: Generate E2E target matrix
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
+          CONTROLLER_TEST_MATRIX: ${{ steps.controller_matrix.outputs.test_matrix }}
+          INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
+          JOBS: ${{ inputs.jobs }}
+          TARGETS: ${{ inputs.targets }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CANDIDATE_SHA: ${{ github.sha }}
+          RELEASE_QUALIFICATION_WAIVED_JOBS: ${{ inputs.release_qualification_waived_jobs }}
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}
+          NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
+        run: |
+          set -euo pipefail
+          if [[ "${JOBS:-}" == "native-runtime-qualification-producer" && -z "${TARGETS:-}" ]]; then
+            {
+              echo 'matrix=[]'
+              echo 'test_matrix=[]'
+              echo 'catalogue_standard_matrix=[]'
+              echo 'catalogue_nvidia_api_matrix=[]'
+              echo 'catalogue_nvidia_inference_matrix=[]'
+              echo 'catalogue_github_read_matrix=[]'
+              echo 'catalogue_brave_nvidia_inference_matrix=[]'
+              echo 'selected_jobs=["native-runtime-qualification-producer"]'
+              echo 'selected_workflow_jobs=["native-runtime-qualification-producer"]'
+              echo 'hermes_selected=false'
+              echo 'explicit_only_jobs=native-runtime-qualification-producer'
+              echo 'release_qualification_waived_jobs=[]'
+              echo 'release_required_jobs=[]'
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${EVENT_NAME:-}" = "push" ]; then
+            [[ "${BEFORE_SHA}" =~ ^[a-f0-9]{40}$ && "${CANDIDATE_SHA}" =~ ^[a-f0-9]{40}$ ]] || {
+              echo "::error::Main push E2E requires exact before and candidate commit SHAs" >&2
+              exit 1
+            }
+            CHANGED_FILES="$(git diff --name-only --diff-filter=ACMRD "${BEFORE_SHA}" "${CANDIDATE_SHA}")"
+            export CHANGED_FILES
+          fi
+          npx tsx tools/e2e/workflow-plan.mts --ci-output
+          if [ -n "${CHECKOUT_SHA}" ] && [ "${NVIDIA_OWNED}" != "true" ]; then
+            matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
+            expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
+            actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
+            test_matrix="$(sed -n 's/^test_matrix=//p' "${GITHUB_OUTPUT}")"
+            expected_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${CONTROLLER_TEST_MATRIX}")"
+            actual_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${test_matrix}")"
+            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ] ||
+              [ "${actual_controller_test_matrix}" != "${expected_controller_test_matrix}" ]; then
+              : > "${GITHUB_OUTPUT}"
+              echo "::error::E2E planner matrix does not match controller-selected targets or shared tests" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Check out E2E candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
@@ -859,65 +929,6 @@ jobs:
             echo "- GitHub archive digest: \`${ARTIFACT_DIGEST}\`"
             echo "- Payload digest: \`${PAYLOAD_SHA256}\`"
           } >>"$GITHUB_STEP_SUMMARY"
-
-      - id: matrix
-        name: Generate E2E target matrix
-        env:
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
-          CONTROLLER_TEST_MATRIX: ${{ steps.controller_matrix.outputs.test_matrix }}
-          INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
-          JOBS: ${{ inputs.jobs }}
-          TARGETS: ${{ inputs.targets }}
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE_SHA: ${{ github.event.before }}
-          CANDIDATE_SHA: ${{ github.sha }}
-          RELEASE_QUALIFICATION_WAIVED_JOBS: ${{ inputs.release_qualification_waived_jobs }}
-          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ (inputs.checkout_sha == '' || steps.e2e_credentials.outputs.allowed == 'true') && 'true' || 'false' }}
-          NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
-        run: |
-          set -euo pipefail
-          if [[ "${JOBS:-}" == "native-runtime-qualification-producer" && -z "${TARGETS:-}" ]]; then
-            {
-              echo 'matrix=[]'
-              echo 'test_matrix=[]'
-              echo 'catalogue_standard_matrix=[]'
-              echo 'catalogue_nvidia_api_matrix=[]'
-              echo 'catalogue_nvidia_inference_matrix=[]'
-              echo 'catalogue_github_read_matrix=[]'
-              echo 'catalogue_brave_nvidia_inference_matrix=[]'
-              echo 'selected_jobs=["native-runtime-qualification-producer"]'
-              echo 'selected_workflow_jobs=["native-runtime-qualification-producer"]'
-              echo 'hermes_selected=false'
-              echo 'explicit_only_jobs=native-runtime-qualification-producer'
-              echo 'release_qualification_waived_jobs=[]'
-              echo 'release_required_jobs=[]'
-            } >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "${EVENT_NAME:-}" = "push" ]; then
-            [[ "${BEFORE_SHA}" =~ ^[a-f0-9]{40}$ && "${CANDIDATE_SHA}" =~ ^[a-f0-9]{40}$ ]] || {
-              echo "::error::Main push E2E requires exact before and candidate commit SHAs" >&2
-              exit 1
-            }
-            CHANGED_FILES="$(git diff --name-only --diff-filter=ACMRD "${BEFORE_SHA}" "${CANDIDATE_SHA}")"
-            export CHANGED_FILES
-          fi
-          npx tsx tools/e2e/workflow-plan.mts --ci-output
-          if [ -n "${CHECKOUT_SHA}" ] && [ "${NVIDIA_OWNED}" != "true" ]; then
-            matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
-            expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
-            actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
-            test_matrix="$(sed -n 's/^test_matrix=//p' "${GITHUB_OUTPUT}")"
-            expected_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${CONTROLLER_TEST_MATRIX}")"
-            actual_controller_test_matrix="$(jq -c 'map({id, file, project}) | sort_by(.id)' <<< "${test_matrix}")"
-            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ] ||
-              [ "${actual_controller_test_matrix}" != "${expected_controller_test_matrix}" ]; then
-              : > "${GITHUB_OUTPUT}"
-              echo "::error::E2E planner matrix does not match controller-selected targets or shared tests" >&2
-              exit 1
-            fi
-          fi
 
   native-runtime-qualification-producer-plan:
     needs: generate-matrix

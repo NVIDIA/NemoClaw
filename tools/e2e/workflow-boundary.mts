@@ -1886,9 +1886,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   ]) {
     requireRunContains(errors, authorization, required);
   }
-  const generateCheckout = generateSteps.find((step) =>
-    stringValue(step.uses).startsWith("actions/checkout@"),
-  );
+  const generateCheckout = namedStep(generateSteps, "Check out E2E candidate");
   if (
     authorization &&
     generateCheckout &&
@@ -2082,9 +2080,7 @@ function validateReleaseQualificationWaiverAuthorization(
   ]) {
     requireRunContains(errors, authorization, required);
   }
-  const checkout = generateSteps.find((step) =>
-    stringValue(step.uses).startsWith("actions/checkout@"),
-  );
+  const checkout = namedStep(generateSteps, "Check out E2E candidate");
   if (
     authorization &&
     checkout &&
@@ -2239,9 +2235,7 @@ function validateTrustedE2eDispatchReceipt(
   const authentication = namedStep(generateSteps, "Authenticate manual PR dispatch");
   const controllerMatrix = namedStep(generateSteps, "Build trusted controller target matrix");
   const waiverAuthorization = namedStep(generateSteps, "Authorize release qualification waiver");
-  const candidateCheckout = generateSteps.find((step) =>
-    stringValue(step.uses).startsWith("actions/checkout@"),
-  );
+  const candidateCheckout = namedStep(generateSteps, "Check out E2E candidate");
   const authenticationIndex = authentication ? generateSteps.indexOf(authentication) : -1;
   const controllerMatrixIndex = controllerMatrix ? generateSteps.indexOf(controllerMatrix) : -1;
   const waiverAuthorizationIndex = waiverAuthorization
@@ -2476,9 +2470,22 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     controllerMatrix,
     `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
   );
-  const generateCheckout = generateSteps.find((step) =>
-    stringValue(step.uses).startsWith("actions/checkout@"),
+  const trustedPlannerCheckout = requireStep(
+    errors,
+    generateSteps,
+    "Check out trusted E2E planner",
   );
+  const trustedPlannerSetup = requireStep(
+    errors,
+    generateSteps,
+    "Set up Node for trusted E2E planning",
+  );
+  const trustedPlannerInstall = requireStep(
+    errors,
+    generateSteps,
+    "Install trusted E2E planner dependencies",
+  );
+  const generateCheckout = requireStep(errors, generateSteps, "Check out E2E candidate");
   if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
   const candidateAuthorization = generateSteps.find(
     (step) => stringValue(step.id) === "candidate_authorization",
@@ -2503,6 +2510,45 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
+  requireFullShaAction(errors, trustedPlannerCheckout, "trusted E2E planner checkout");
+  if (
+    !isDeepStrictEqual(asRecord(trustedPlannerCheckout?.with), {
+      ref: "${{ github.workflow_sha }}",
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    })
+  ) {
+    errors.push("trusted E2E planner checkout must use the workflow commit without credentials");
+  }
+  requireFullShaAction(errors, trustedPlannerSetup, "trusted E2E planner Node setup");
+  if (
+    !isDeepStrictEqual(asRecord(trustedPlannerSetup?.with), {
+      "node-version": 22,
+    })
+  ) {
+    errors.push("trusted E2E planner must use Node 22");
+  }
+  if (trustedPlannerInstall?.run !== "npm ci --ignore-scripts --no-audit --no-fund") {
+    errors.push("trusted E2E planner dependencies must install without lifecycle scripts");
+  }
+  const trustedPlannerIndex = trustedPlannerCheckout
+    ? generateSteps.indexOf(trustedPlannerCheckout)
+    : -1;
+  const trustedSetupIndex = trustedPlannerSetup ? generateSteps.indexOf(trustedPlannerSetup) : -1;
+  const trustedInstallIndex = trustedPlannerInstall
+    ? generateSteps.indexOf(trustedPlannerInstall)
+    : -1;
+  const generateIndex = generate ? generateSteps.indexOf(generate) : -1;
+  const candidateCheckoutIndex = generateCheckout ? generateSteps.indexOf(generateCheckout) : -1;
+  if (
+    trustedPlannerIndex < 0 ||
+    trustedSetupIndex <= trustedPlannerIndex ||
+    trustedInstallIndex <= trustedSetupIndex ||
+    generateIndex <= trustedInstallIndex ||
+    candidateCheckoutIndex <= generateIndex
+  ) {
+    errors.push("trusted E2E planning must finish before candidate checkout and execution");
+  }
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
     errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
@@ -2527,7 +2573,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   if (
     generateEnv.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !==
-    "${{ (inputs.checkout_sha == '' || steps.e2e_credentials.outputs.allowed == 'true') && 'true' || 'false' }}"
+    "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}"
   ) {
     errors.push("matrix generation step must bind NVIDIA-owned candidate authorization");
   }

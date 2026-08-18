@@ -230,7 +230,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "pr_number",
     "checkout_sha",
     "checkout_repository",
-    "review_reason",
     "base_sha",
     "workflow_sha",
     "correlation_id",
@@ -272,7 +271,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authenticationIndex = steps.findIndex(
     (step) => step.name === "Authenticate manual PR dispatch",
   );
-  const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+  const checkoutIndex = steps.findIndex((step) => step.name === "Check out E2E candidate");
   const validationIndex = steps.findIndex((step) => step.name === "Validate manual PR checkout");
   const credentialAuthorizationIndex = steps.findIndex(
     (step) => step.name === "Authorize E2E credentials",
@@ -445,6 +444,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Checkout trusted Hermes GPU runtime fixture" &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedE2ePlannerCheckout =
+        jobName === "generate-matrix" &&
+        step.name === "Check out trusted E2E planner" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       const trustedReportHelperCheckout =
         jobName === "report-to-pr" &&
         step.name === "Check out the trusted E2E reporting helper" &&
@@ -530,6 +533,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
           step.with?.ref === "${{ github.workflow_sha }}");
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
+        trustedE2ePlannerCheckout ||
         trustedReportHelperCheckout ||
         trustedReleaseQualificationCheckout ||
         trustedRelevantE2eCheckout ||
