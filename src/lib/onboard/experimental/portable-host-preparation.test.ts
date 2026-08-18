@@ -437,6 +437,37 @@ describe("preparePortableExperimentalHost", () => {
     expect(docker).toHaveBeenCalledTimes(2);
   });
 
+  it("fails closed when portable network inspection reports a process error (#9461)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce({
+        ...result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }])),
+        error: new Error("network inspection interrupted"),
+      });
+
+    expect(() =>
+      preparePortableExperimentalHost(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        {
+          platform: "linux",
+          home,
+          uid: 1001,
+          systemctl: () => result(),
+          podman: () => result(0, "/run/user/1001/podman/podman.sock"),
+          docker,
+          hardenSocketDirectory: vi.fn(),
+          validateConfigAuthority: vi.fn(),
+        },
+        undefined,
+        { simulateExistingPortableNetwork: false },
+      ),
+    ).toThrow(/Inspecting the portable sandbox network failed: network inspection interrupted/u);
+    expect(docker).toHaveBeenCalledTimes(2);
+  });
+
   it("uses one configured network for portable host preparation (#9461)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);

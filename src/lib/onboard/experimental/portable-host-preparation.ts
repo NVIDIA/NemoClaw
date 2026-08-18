@@ -99,7 +99,7 @@ function commandDetail(result: SpawnResult): string {
 }
 
 function requireCommand(result: SpawnResult, description: string): void {
-  if (result.status === 0) return;
+  if (result.status === 0 && !result.error) return;
   throw new Error(`${description} failed: ${commandDetail(result)}`);
 }
 
