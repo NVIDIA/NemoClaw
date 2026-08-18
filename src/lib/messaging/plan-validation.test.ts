@@ -366,7 +366,13 @@ describe("parseSandboxMessagingPlan", () => {
     expect(parseSandboxMessagingPlan(plan)).toBeNull();
   });
 
-  it("accepts and rejects channel host forward plans", () => {
+  it.each([
+    { channelId: "telegram", port: 0, label: "Telegram webhook" },
+    { channelId: "telegram", port: 70000, label: "Telegram webhook" },
+    { channelId: "telegram", port: 3978.5, label: "Telegram webhook" },
+    { channelId: "telegram", port: "3978", label: "Telegram webhook" },
+    { channelId: "telegram", port: 3978 },
+  ])("accepts and rejects channel host forward plans [case %#]", (hostForward) => {
     const source = makePlan({
       channels: [
         {
@@ -399,37 +405,26 @@ describe("parseSandboxMessagingPlan", () => {
       label: "Microsoft Teams webhook",
     });
 
-    for (const hostForward of [
-      { channelId: "telegram", port: 0, label: "Telegram webhook" },
-      { channelId: "telegram", port: 70000, label: "Telegram webhook" },
-      { channelId: "telegram", port: 3978.5, label: "Telegram webhook" },
-      { channelId: "telegram", port: "3978", label: "Telegram webhook" },
-      { channelId: "telegram", port: 3978 },
-    ]) {
-      const plan = makePlan() as unknown as { channels: Array<Record<string, unknown>> };
-      plan.channels[0] = {
-        ...plan.channels[0],
-        hostForward,
-      };
+    const plan = makePlan() as unknown as { channels: Array<Record<string, unknown>> };
+    plan.channels[0] = {
+      ...plan.channels[0],
+      hostForward,
+    };
 
-      expect(parseSandboxMessagingPlan(plan), JSON.stringify(hostForward)).toBeNull();
-    }
+    expect(parseSandboxMessagingPlan(plan), JSON.stringify(hostForward)).toBeNull();
   });
 
-  it("rejects malformed object arrays without throwing", () => {
-    for (const field of [
-      "credentialBindings",
-      "agentRender",
-      "buildSteps",
-      "stateUpdates",
-      "healthChecks",
-    ]) {
+  it.each(["credentialBindings", "agentRender", "buildSteps", "stateUpdates", "healthChecks"])(
+    "rejects null entries in the $field object array",
+    (field) => {
       const plan = makePlan() as unknown as Record<string, unknown>;
       plan[field] = [null];
 
       expect(parseSandboxMessagingPlan(plan), field).toBeNull();
-    }
+    },
+  );
 
+  it("rejects malformed nested object arrays without throwing", () => {
     const channelHooksPlan = makePlan() as unknown as { channels: { hooks: unknown[] }[] };
     channelHooksPlan.channels[0].hooks = [null];
     expect(parseSandboxMessagingPlan(channelHooksPlan), "channel hooks").toBeNull();

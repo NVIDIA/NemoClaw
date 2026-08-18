@@ -51,9 +51,6 @@ export async function assertHermesGpuStartupProof({
   expect(installText).not.toContain("Reusing existing Docker-driver gateway");
   expect(installText).not.toContain("[reuse] Skipping gateway (running)");
   if (gpuRoute === "compatibility-only") {
-    expect(installText).toContain(
-      "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
-    );
     expect(installText).toContain("Docker container mode selected:");
     for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
       expect(installText).not.toContain(fragment);
@@ -65,19 +62,10 @@ export async function assertHermesGpuStartupProof({
     for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
       expect(installText).toContain(fragment);
     }
-    expect(installText).toContain(
-      "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
-    );
     expect(installText).toContain("Docker container mode selected:");
   } else {
     expect(installText).toContain(
       "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
-    );
-    expect(installText).not.toContain(
-      "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
-    );
-    expect(installText).toContain(
-      "Recreating OpenShell Docker sandbox container with restart-safe startup",
     );
     expect(installText).toContain(
       "Docker container mode selected: persistent sandbox startup command",

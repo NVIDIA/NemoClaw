@@ -12,6 +12,7 @@ import {
   isExternallySupervised,
 } from "../onboard/gateway-ownership";
 import type { GatewayReuseState } from "../state/gateway";
+import { measureObservationAge, type ObservationAge, staleEvidence } from "./observation-age";
 import { sanitizeReadinessText } from "./sanitize";
 import type {
   EvidenceScalar,
@@ -24,10 +25,6 @@ import type {
 
 const DEFAULT_MAX_AGE_MS = 30_000;
 const MAX_REPORT_TEXT_LENGTH = 1024;
-const projectionSnapshots = new WeakMap<
-  GatewayReadinessProjection,
-  Readonly<GatewayObservationSnapshot>
->();
 
 export type GatewayAttachmentState = "verified" | "rejected" | "not-applicable" | "unknown";
 export type GatewayDriftState = "detected" | "not-detected" | "not-applicable" | "unknown";
@@ -65,10 +62,10 @@ export interface GatewayObservations {
 
 export interface GatewayObservationSnapshot {
   observedAt: string;
+  completedAt: string;
   observations?: Readonly<GatewayObservations>;
   failure?: string;
   authorityFailure?: boolean;
-  reusable?: boolean;
 }
 
 export interface CollectGatewayObservationsOptions {
@@ -125,11 +122,20 @@ function rejectedAttachment(
   };
 }
 
+/** Stamp the completion of a collection so its own duration cannot age it out. */
 export async function collectGatewayObservations(
   deps: GatewayReadinessDependencies,
   options: CollectGatewayObservationsOptions = {},
 ): Promise<GatewayObservationSnapshot> {
-  const observedAt = (options.now ?? (() => new Date()))().toISOString();
+  const now = options.now ?? (() => new Date());
+  const observed = await observeGateway(deps, now().toISOString());
+  return { ...observed, completedAt: now().toISOString() };
+}
+
+async function observeGateway(
+  deps: GatewayReadinessDependencies,
+  observedAt: string,
+): Promise<Omit<GatewayObservationSnapshot, "completedAt">> {
   let owner: GatewayOwner;
   try {
     owner = deps.resolveOwner();
@@ -138,7 +144,6 @@ export async function collectGatewayObservations(
       observedAt,
       failure: "Gateway lifecycle authority could not be resolved before lifecycle effects.",
       authorityFailure: true,
-      reusable: false,
     };
   }
 
@@ -149,7 +154,6 @@ export async function collectGatewayObservations(
         return {
           observedAt,
           observations: rejectedAttachment(owner, result.code, result.message),
-          reusable: false,
         };
       }
       return {
@@ -161,14 +165,12 @@ export async function collectGatewayObservations(
           driftState: "not-applicable",
           portConflictState: "none",
         },
-        reusable: false,
       };
     } catch (error) {
       if (error instanceof GatewayOwnershipError) {
         return {
           observedAt,
           observations: rejectedAttachment(owner, error.code, error.message),
-          reusable: false,
         };
       }
       return {
@@ -181,7 +183,6 @@ export async function collectGatewayObservations(
           portConflictState: "unknown",
         },
         failure: "The externally supervised gateway attachment probe failed safely.",
-        reusable: false,
       };
     }
   }
@@ -200,7 +201,6 @@ export async function collectGatewayObservations(
           ? safeReportText(managed.portConflictDetail)
           : undefined,
       },
-      reusable: false,
     };
   } catch {
     return {
@@ -213,7 +213,6 @@ export async function collectGatewayObservations(
         portConflictState: "unknown",
       },
       failure: "Managed gateway observations could not be collected safely.",
-      reusable: false,
     };
   }
 }
@@ -260,7 +259,7 @@ const ATTACHMENT_FINDING_IDS: Record<GatewayOwnershipFailureCode, string> = {
 
 function unknownProjection(
   snapshot: Readonly<GatewayObservationSnapshot>,
-  stale = false,
+  stale?: ObservationAge,
 ): GatewayReadinessProjection {
   const evidenceIds = [
     ...(snapshot.failure ? ["gateway.probe.failure"] : []),
@@ -301,24 +300,22 @@ function unknownProjection(
         ? [{ id: "gateway.probe.failure", summary: safeReportText(snapshot.failure) }]
         : []),
       ...(stale
-        ? [
-            {
-              id: "gateway.probe.stale",
-              summary: "Gateway observations exceeded their safe reuse window.",
-            },
-          ]
+        ? [staleEvidence("gateway.probe.stale", "Gateway", snapshot.completedAt, stale)]
         : []),
     ],
   };
-  projectionSnapshots.set(projection, snapshot);
   return projection;
 }
 
-function ownerEvidence(owner: GatewayOwnerDescription): ReadinessEvidence {
+function ownerEvidence(
+  owner: GatewayOwnerDescription,
+  snapshot: Readonly<GatewayObservationSnapshot>,
+): ReadinessEvidence {
   return {
     id: "gateway.owner",
     summary: "Resolved gateway lifecycle authority.",
     details: {
+      collectionMs: Date.parse(snapshot.completedAt) - Date.parse(snapshot.observedAt),
       gatewayName: safeReportText(owner.gatewayName),
       gatewayPort: owner.gatewayPort,
       mode: owner.mode,
@@ -332,29 +329,22 @@ function ownerEvidence(owner: GatewayOwnerDescription): ReadinessEvidence {
   };
 }
 
-/** Re-evaluate the original snapshot after another readiness collection. */
-export function refreshGatewayReadinessProjection(
-  projection: GatewayReadinessProjection,
-  options: ProjectGatewayReadinessOptions = {},
-): GatewayReadinessProjection {
-  const snapshot = projectionSnapshots.get(projection);
-  return snapshot ? projectGatewayReadiness(snapshot, options) : projection;
-}
-
 export function projectGatewayReadiness(
   snapshot: Readonly<GatewayObservationSnapshot>,
   options: ProjectGatewayReadinessOptions = {},
 ): GatewayReadinessProjection {
   const now = (options.now ?? (() => new Date()))();
-  const age = now.getTime() - Date.parse(snapshot.observedAt);
-  const stale =
-    !Number.isFinite(age) || age < 0 || age > (options.maxObservationAgeMs ?? DEFAULT_MAX_AGE_MS);
-  if (stale && snapshot.reusable !== true) return unknownProjection(snapshot, true);
+  const stale = measureObservationAge(
+    snapshot.completedAt,
+    now,
+    options.maxObservationAgeMs ?? DEFAULT_MAX_AGE_MS,
+  );
+  if (stale) return unknownProjection(snapshot, stale);
 
   const gateway = snapshot.observations;
   if (!gateway) return unknownProjection(snapshot);
 
-  const evidence: ReadinessEvidence[] = [ownerEvidence(gateway.owner)];
+  const evidence: ReadinessEvidence[] = [ownerEvidence(gateway.owner, snapshot)];
   const evidenceIds = ["gateway.owner"];
   if (snapshot.failure) {
     evidence.push({ id: "gateway.probe.failure", summary: safeReportText(snapshot.failure) });
@@ -529,7 +519,6 @@ export function projectGatewayReadiness(
     findings,
     evidence,
   };
-  projectionSnapshots.set(projection, snapshot);
   return projection;
 }
 

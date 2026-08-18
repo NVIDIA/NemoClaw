@@ -263,11 +263,11 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       false,
       null,
     ]);
-    for (const outcome of outcomes) {
+    outcomes.forEach((outcome) => {
       expect(outcome.probed, outcome.case).toBe(false);
       expect(outcome.resolution.ok, outcome.case).toBeNull();
       expect(outcome.resolution.detail, outcome.case).toContain("probe skipped");
-    }
+    });
   });
 
   it("renders the identical-rejection probe in the human-readable status output (#6379)", () => {
@@ -638,12 +638,12 @@ describe("MCP add post-add credential-resolution probe", () => {
       exitCode: number;
     }>;
     expect(outcomes).toHaveLength(3);
-    for (const outcome of outcomes) {
+    outcomes.forEach((outcome) => {
       expect(outcome.probed, String(outcome.policyState)).toBe(false);
       expect(outcome.output).toContain("Credential resolution probe was inconclusive");
       expect(outcome.output).toContain("probe skipped");
       expect(outcome.exitCode).toBe(0);
-    }
+    });
   });
 
   it("keeps the post-add warning for identical 400 explicitly inconclusive (#6379)", () => {

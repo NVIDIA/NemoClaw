@@ -12,7 +12,10 @@ import {
 } from "../../onboard/observability-policy-presets";
 import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
 import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-selection";
-import { filterSuppressedAgentRequiredPresets } from "../../onboard/policy-tier-suppression";
+import {
+  ensureRequiredTierPolicyPresets,
+  filterSuppressedAgentRequiredPresets,
+} from "../../onboard/policy-tier-suppression";
 import { parsePresetPolicyKeys } from "../../policy";
 import { hasCompleteOpenClawImagePluginProvenance } from "../../state/openclaw-plugin-restore";
 import { hasAuthoritativeOpenClawImagePluginProvenance } from "../../state/sandbox";
@@ -138,9 +141,12 @@ export function normalizeRebuildTargetPolicyPresets(
   sandboxEntry: RebuildSandboxEntry,
   webSearchConfig: WebSearchConfig | null,
 ): string[] {
-  return normalizeRebuildObservabilityPolicyPresets(
-    normalizeRebuildWebSearchPolicyPresets([...new Set(presets)], sandboxEntry, webSearchConfig),
-    sandboxEntry,
+  return ensureRequiredTierPolicyPresets(
+    sandboxEntry.policyTier,
+    normalizeRebuildObservabilityPolicyPresets(
+      normalizeRebuildWebSearchPolicyPresets([...new Set(presets)], sandboxEntry, webSearchConfig),
+      sandboxEntry,
+    ),
   );
 }
 

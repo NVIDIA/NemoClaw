@@ -8,7 +8,7 @@ interface SentRequest {
   readonly params: Record<string, unknown>;
 }
 
-/** Emits the pinned OpenClaw v2026.7.1 chat shape after one omitted delta. */
+/** Emits chat events for pinned OpenClaw v2026.7.1, including a repeated final sequence. */
 export class PinnedOpenClawGateway {
   onopen: (() => void) | null = null;
   onmessage: ((event: { readonly data: unknown }) => void) | null = null;
@@ -76,9 +76,17 @@ export class PinnedOpenClawGateway {
     this.chat({
       sessionKey,
       runId: "pinned-openclaw-run",
-      seq: 3,
-      state: "final",
+      seq: 7,
+      state: "delta",
+      deltaText: "",
       message: this.assistantMessage("Hello world"),
+    });
+    this.chat({
+      sessionKey,
+      runId: "pinned-openclaw-run",
+      seq: 7,
+      state: "final",
+      message: this.assistantMessage("Hello world!"),
     });
   }
 

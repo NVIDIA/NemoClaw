@@ -122,9 +122,9 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
     expect(runProof).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves WSL hosts without Docker Desktop unproven (#8096)", () => {
-    // Windows-on-ARM passthrough scope is unchanged: only native Linux is added.
-    for (const status of ["not-docker-desktop", "unknown"] as const) {
+  it.each(["not-docker-desktop", "unknown"] as const)(
+    "leaves WSL hosts without Docker Desktop unproven [case %#] (#8096)",
+    (status) => {
       const runProof = vi.fn(() => passingProof);
       const prover = createArm64WslDockerDesktopGpuProver({
         platform: "linux",
@@ -136,8 +136,8 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
       });
       expect(prover(["JMJWOA-Generic-GPU"])).toBeNull();
       expect(runProof).not.toHaveBeenCalled();
-    }
-  });
+    },
+  );
 
   it("runs the bounded proof and reports the result on ARM64 Docker Desktop WSL", () => {
     const runProof = vi.fn((_argv: string[], _timeoutMs: number) => passingProof);

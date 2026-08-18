@@ -238,6 +238,9 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     }
     expect(execInSandbox).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
+
+    expect(sleep).toHaveBeenNthCalledWith(1, 2_000);
+    expect(sleep).toHaveBeenNthCalledWith(2, 2_000);
   });
 
   it("fails when the inference route is up but the local backend errors (HTTP 502)", () => {

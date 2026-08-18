@@ -399,73 +399,74 @@ describe("managed bootstrap adapter contract", () => {
     ).toBe(false);
   });
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("prepares, durably records, and only then activates %s through a provider-neutral adapter", async (agent) => {
-    const result = await prepareAndActivate(agent);
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "prepares, durably records, and only then activates %s through a provider-neutral adapter",
+    async (agent) => {
+      const result = await prepareAndActivate(agent);
 
-    expect(result.order).toEqual([
-      "create",
-      "discover",
-      "inspect",
-      "prepare-replacement",
-      "record",
-      "activate",
-      "await",
-    ]);
-    expect(result.activated.completion).toMatchObject({
-      bootstrapIdentity: IDENTITY,
-      runtimeId: PREPARED_ID,
-      profileFingerprint: requestFor(agent).profileFingerprint,
-    });
-    expect(Object.isFrozen(result.prepared)).toBe(true);
-    expect(Object.isFrozen(result.prepared.handle.plan.metadata)).toBe(true);
-    expect(Object.isFrozen(result.prepared.prepared)).toBe(true);
-    expect(Object.isFrozen(result.activated.durablePreparation)).toBe(true);
-    const prepareInput = vi.mocked(result.adapter.prepareBootstrapReplacement).mock.calls[0]?.[0];
-    expect(Object.isFrozen(prepareInput?.replacementOptions.values)).toBe(true);
-    expect(Object.isFrozen(prepareInput?.replacementOptions.values.groups)).toBe(true);
-  });
+      expect(result.order).toEqual([
+        "create",
+        "discover",
+        "inspect",
+        "prepare-replacement",
+        "record",
+        "activate",
+        "await",
+      ]);
+      expect(result.activated.completion).toMatchObject({
+        bootstrapIdentity: IDENTITY,
+        runtimeId: PREPARED_ID,
+        profileFingerprint: requestFor(agent).profileFingerprint,
+      });
+      expect(Object.isFrozen(result.prepared)).toBe(true);
+      expect(Object.isFrozen(result.prepared.handle.plan.metadata)).toBe(true);
+      expect(Object.isFrozen(result.prepared.prepared)).toBe(true);
+      expect(Object.isFrozen(result.activated.durablePreparation)).toBe(true);
+      const prepareInput = vi.mocked(result.adapter.prepareBootstrapReplacement).mock.calls[0]?.[0];
+      expect(Object.isFrozen(prepareInput?.replacementOptions.values)).toBe(true);
+      expect(Object.isFrozen(prepareInput?.replacementOptions.values.groups)).toBe(true);
+    },
+  );
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("renders one exact identity-bound %s hold and preserves only the intended startup tail", (agent) => {
-    const request = requestFor(agent);
-    expect(
-      renderManagedBootstrapHeldCommand(request, IDENTITY, [
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "renders one exact identity-bound %s hold and preserves only the intended startup tail",
+    (agent) => {
+      const request = requestFor(agent);
+      expect(
+        renderManagedBootstrapHeldCommand(request, IDENTITY, [
+          "env",
+          "A=1",
+          "/usr/local/bin/nemoclaw-start",
+          "/bin/sh",
+          "-c",
+          "printf tail",
+        ]),
+      ).toEqual([
         "env",
         "A=1",
-        "/usr/local/bin/nemoclaw-start",
+        "/usr/local/bin/nemoclaw-managed-startup-hold",
+        "--agent",
+        agent,
+        "--profile-fingerprint",
+        request.profileFingerprint,
+        "--bootstrap-identity",
+        IDENTITY,
+        "--",
         "/bin/sh",
         "-c",
         "printf tail",
-      ]),
-    ).toEqual([
-      "env",
-      "A=1",
-      "/usr/local/bin/nemoclaw-managed-startup-hold",
-      "--agent",
-      agent,
-      "--profile-fingerprint",
-      request.profileFingerprint,
-      "--bootstrap-identity",
-      IDENTITY,
-      "--",
-      "/bin/sh",
-      "-c",
-      "printf tail",
-    ]);
-  });
+      ]);
+    },
+  );
 
-  it.each([
-    "nemoclaw-start",
-    "/bin/sh",
-    "/tmp/nemoclaw-start",
-  ])("rejects non-canonical intended startup executable %s", (executable) => {
-    expect(() =>
-      renderManagedBootstrapHeldCommand(requestFor("openclaw"), IDENTITY, ["env", executable]),
-    ).toThrow("intended workload executable must be /usr/local/bin/nemoclaw-start");
-  });
+  it.each(["nemoclaw-start", "/bin/sh", "/tmp/nemoclaw-start"])(
+    "rejects non-canonical intended startup executable %s",
+    (executable) => {
+      expect(() =>
+        renderManagedBootstrapHeldCommand(requestFor("openclaw"), IDENTITY, ["env", executable]),
+      ).toThrow("intended workload executable must be /usr/local/bin/nemoclaw-start");
+    },
+  );
 
   it("stops after non-destructive preparation until durable activation is requested", async () => {
     const fixture = adapterFor("openclaw");
@@ -555,18 +556,20 @@ describe("managed bootstrap adapter contract", () => {
         },
       }),
     },
-  ])("rejects custom-prototype $label before provider invocation", async ({
-    expected,
-    invalidate,
-  }) => {
-    const fixture = adapterFor("openclaw");
-    const input = invalidate(preparationInput("openclaw"));
+  ])(
+    "rejects custom-prototype $label before provider invocation",
+    async ({ expected, invalidate }) => {
+      const fixture = adapterFor("openclaw");
+      const input = invalidate(preparationInput("openclaw"));
 
-    await expect(prepareManagedBootstrapSequence(fixture.adapter, input)).rejects.toThrow(expected);
-    expect(fixture.adapter.createHeldWorkload).not.toHaveBeenCalled();
-    expect(input.create.launch).not.toHaveBeenCalled();
-    expect(fixture.order).toEqual([]);
-  });
+      await expect(prepareManagedBootstrapSequence(fixture.adapter, input)).rejects.toThrow(
+        expected,
+      );
+      expect(fixture.adapter.createHeldWorkload).not.toHaveBeenCalled();
+      expect(input.create.launch).not.toHaveBeenCalled();
+      expect(fixture.order).toEqual([]);
+    },
+  );
 
   it("consumes prepared authority exactly once and rejects a second activation", async () => {
     const fixture = adapterFor("openclaw");
@@ -647,62 +650,62 @@ describe("managed bootstrap adapter contract", () => {
     expect(failure.managedBootstrapRollbackError).toBeUndefined();
   });
 
-  it.each([
-    "throws after launch",
-    "returns an invalid handle",
-  ] as const)("runs exact cleanup when createHeldWorkload %s", async (failureMode) => {
-    const fixture = adapterFor("langchain-deepagents-code");
-    const original = fixture.adapter.createHeldWorkload;
-    switch (failureMode) {
-      case "throws after launch":
-        vi.mocked(original).mockImplementationOnce(async (input) => {
-          await input.launch({
-            heldWorkloadArgv: renderManagedBootstrapHeldCommand(
-              input.request,
-              input.bootstrapIdentity as string,
-              input.plan.intendedWorkloadArgv,
-            ),
-            bootstrapIdentity: input.bootstrapIdentity as string,
+  it.each(["throws after launch", "returns an invalid handle"] as const)(
+    "runs exact cleanup when createHeldWorkload %s",
+    async (failureMode) => {
+      const fixture = adapterFor("langchain-deepagents-code");
+      const original = fixture.adapter.createHeldWorkload;
+      switch (failureMode) {
+        case "throws after launch":
+          vi.mocked(original).mockImplementationOnce(async (input) => {
+            await input.launch({
+              heldWorkloadArgv: renderManagedBootstrapHeldCommand(
+                input.request,
+                input.bootstrapIdentity as string,
+                input.plan.intendedWorkloadArgv,
+              ),
+              bootstrapIdentity: input.bootstrapIdentity as string,
+            });
+            throw new Error("create failed after materialization");
           });
-          throw new Error("create failed after materialization");
-        });
-        break;
-      default:
-        vi.mocked(original).mockImplementationOnce(async (input) => {
-          const receipt = await input.launch({
-            heldWorkloadArgv: renderManagedBootstrapHeldCommand(
-              input.request,
-              input.bootstrapIdentity as string,
-              input.plan.intendedWorkloadArgv,
-            ),
-            bootstrapIdentity: input.bootstrapIdentity as string,
+          break;
+        default:
+          vi.mocked(original).mockImplementationOnce(async (input) => {
+            const receipt = await input.launch({
+              heldWorkloadArgv: renderManagedBootstrapHeldCommand(
+                input.request,
+                input.bootstrapIdentity as string,
+                input.plan.intendedWorkloadArgv,
+              ),
+              bootstrapIdentity: input.bootstrapIdentity as string,
+            });
+            return {
+              ...handleFor(requestFor("langchain-deepagents-code"), receipt),
+              sandbox: { ...receipt.sandbox, sandboxId: "wrong-owner" },
+            };
           });
-          return {
-            ...handleFor(requestFor("langchain-deepagents-code"), receipt),
-            sandbox: { ...receipt.sandbox, sandboxId: "wrong-owner" },
-          };
-        });
-    }
+      }
 
-    const failure = await captureFailure(
-      prepareManagedBootstrapSequence(
-        fixture.adapter,
-        preparationInput("langchain-deepagents-code"),
-      ),
-    );
+      const failure = await captureFailure(
+        prepareManagedBootstrapSequence(
+          fixture.adapter,
+          preparationInput("langchain-deepagents-code"),
+        ),
+      );
 
-    expect(fixture.adapter.cleanupIncompleteCreate).toHaveBeenCalledWith({
-      plan: expect.objectContaining({ sandboxName: "alpha", driverId: "mxc-fixture" }),
-      bootstrapIdentity: IDENTITY,
-      heldWorkloadArgv: expect.arrayContaining([IDENTITY]),
-      createReceipt: expect.objectContaining({ sandbox: sandbox(), ready: true }),
-    });
-    expect(failure.managedBootstrapRollback).toMatchObject({
-      outcome: "rolled-back",
-      heldWorkloadRemoved: true,
-      bootstrapIdentity: IDENTITY,
-    });
-  });
+      expect(fixture.adapter.cleanupIncompleteCreate).toHaveBeenCalledWith({
+        plan: expect.objectContaining({ sandboxName: "alpha", driverId: "mxc-fixture" }),
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: expect.arrayContaining([IDENTITY]),
+        createReceipt: expect.objectContaining({ sandbox: sandbox(), ready: true }),
+      });
+      expect(failure.managedBootstrapRollback).toMatchObject({
+        outcome: "rolled-back",
+        heldWorkloadRemoved: true,
+        bootstrapIdentity: IDENTITY,
+      });
+    },
+  );
 
   it("rejects post-launch createHeldWorkload cleanup for a different sandbox", async () => {
     const fixture = adapterFor("langchain-deepagents-code");
@@ -1133,36 +1136,40 @@ describe("managed bootstrap adapter contract", () => {
     );
   });
 
-  it("blocks same-name and identity-unknown failures while warning for unrelated sandboxes", () => {
-    const failure = (bootstrapIdentity: string, sandboxName: string | null) =>
-      Object.freeze({
-        schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-        providerId: "mxc",
-        sourcePhase: "cleanup",
-        sandbox:
-          sandboxName === null
-            ? null
-            : Object.freeze({ sandboxName, sandboxId: `mxc-${sandboxName}`, driverId: "mxc" }),
-        bootstrapIdentity,
-        code: "provider-owned-retry",
-        retryable: true,
-        detail: "opaque provider detail",
-      });
-    const warn = vi.fn();
-    const unrelated = failure("a".repeat(64), "bravo");
-    const sameName = failure("b".repeat(64), "alpha");
-    const identityUnknown = failure("c".repeat(64), null);
+  it.each([{ scenario: "same-name failure" }, { scenario: "unknown-identity failure" }])(
+    "blocks same-name and identity-unknown failures while warning for unrelated sandboxes [$scenario]",
+    ({ scenario }) => {
+      const failure = (bootstrapIdentity: string, sandboxName: string | null) =>
+        Object.freeze({
+          schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+          providerId: "mxc",
+          sourcePhase: "cleanup",
+          sandbox:
+            sandboxName === null
+              ? null
+              : Object.freeze({ sandboxName, sandboxId: `mxc-${sandboxName}`, driverId: "mxc" }),
+          bootstrapIdentity,
+          code: "provider-owned-retry",
+          retryable: true,
+          detail: "opaque provider detail",
+        });
+      const warn = vi.fn();
+      const unrelated = failure("a".repeat(64), "bravo");
+      const sameName = failure("b".repeat(64), "alpha");
+      const identityUnknown = failure("c".repeat(64), null);
 
-    expect(
-      enforceManagedBootstrapRecoveryForSandbox(
-        Object.freeze({ receipts: Object.freeze([]), failures: Object.freeze([unrelated]) }),
-        "alpha",
-        warn,
-      ),
-    ).toMatchObject({ failures: [unrelated] });
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unrelated sandbox 'bravo'"));
+      expect(
+        enforceManagedBootstrapRecoveryForSandbox(
+          Object.freeze({ receipts: Object.freeze([]), failures: Object.freeze([unrelated]) }),
+          "alpha",
+          warn,
+        ),
+      ).toMatchObject({ failures: [unrelated] });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("unrelated sandbox 'bravo'"));
 
-    for (const blocking of [sameName, identityUnknown]) {
+      const blocking = (
+        { "same-name failure": sameName, "unknown-identity failure": identityUnknown } as const
+      )[scenario]!;
       expect(() =>
         enforceManagedBootstrapRecoveryForSandbox(
           Object.freeze({ receipts: Object.freeze([]), failures: Object.freeze([blocking]) }),
@@ -1170,8 +1177,8 @@ describe("managed bootstrap adapter contract", () => {
           warn,
         ),
       ).toThrow(ManagedBootstrapRecoveryBlockedError);
-    }
-  });
+    },
+  );
 
   it.each([
     "BASHOPTS=extdebug",

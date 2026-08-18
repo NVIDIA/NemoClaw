@@ -30,29 +30,32 @@ const commands = [
 ] as const;
 
 describe("Hermes image build probes", () => {
-  it("uses a checked-in probe runner instead of builder-dependent heredocs (#7981)", () => {
-    expect(dockerfile).not.toMatch(/<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/u);
-    expect(dockerfile).toContain(`COPY agents/hermes/image-build-probes.py ${imageProbePath}`);
-    const normalizedDockerfile = dockerfile.replace(/\\\n/gu, "").replace(/\s+/gu, " ");
+  it.each(commands)(
+    "uses a checked-in probe runner instead of builder-dependent heredocs [case %#] (#7981)",
+    (command) => {
+      expect(dockerfile).not.toMatch(/<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/u);
+      expect(dockerfile).toContain(`COPY agents/hermes/image-build-probes.py ${imageProbePath}`);
+      const normalizedDockerfile = dockerfile.replace(/\\\n/gu, "").replace(/\s+/gu, " ");
 
-    for (const command of commands) {
       expect(normalizedDockerfile).toContain(`${imageProbePath} ${command}`);
-    }
 
-    const removal = dockerfile.indexOf(`rm -f ${imageProbePath}`);
-    expect(removal).toBeGreaterThan(dockerfile.indexOf(`${imageProbePath} discord-reopen`));
-    expect(dockerfile.indexOf(`check_absent ${imageProbePath}`)).toBeGreaterThan(removal);
-  });
+      const removal = dockerfile.indexOf(`rm -f ${imageProbePath}`);
+      expect(removal).toBeGreaterThan(dockerfile.indexOf(`${imageProbePath} discord-reopen`));
+      expect(dockerfile.indexOf(`check_absent ${imageProbePath}`)).toBeGreaterThan(removal);
+    },
+  );
 
-  it("lists every Dockerfile probe command in the runner usage", () => {
-    const result = spawnSync("python3", ["-I", probes], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
+  it.each(Array.from(commands, (value) => [value]))(
+    "lists Dockerfile probe command %s in the runner usage",
+    (command) => {
+      const result = spawnSync("python3", ["-I", probes], {
+        encoding: "utf8",
+        timeout: 5000,
+      });
 
-    expect(result.status).toBe(1);
-    for (const command of commands) {
+      expect(result.status).toBe(1);
+
       expect(result.stderr).toContain(command);
-    }
-  });
+    },
+  );
 });

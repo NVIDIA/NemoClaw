@@ -44,25 +44,27 @@ describe("read-only host mount validation", () => {
     );
   });
 
-  it("rejects missing, relative, symlinked, non-normalized, and terminal-control paths", () => {
-    const source = workspaceTempDir();
-    const symlink = `${source}-link`;
-    fs.symlinkSync(source, symlink);
-    created.push(symlink);
+  it.each(["\u001b[31m", "\u202e", "\u2028", "\u2029"])(
+    "rejects missing, relative, symlinked, non-normalized, and terminal-control paths [%s]",
+    (terminalControl) => {
+      const source = workspaceTempDir();
+      const symlink = `${source}-link`;
+      fs.symlinkSync(source, symlink);
+      created.push(symlink);
 
-    expect(() => parseReadOnlyHostMount("relative:/sandbox/project")).toThrow(
-      "host directory must be an absolute path",
-    );
-    expect(() => parseReadOnlyHostMount(`${source}-missing:/sandbox/project`)).toThrow(
-      "does not exist",
-    );
-    expect(() => parseReadOnlyHostMount(`${symlink}:/sandbox/project`)).toThrow(
-      "must not contain symlinks",
-    );
-    expect(() => parseReadOnlyHostMount(`${source}:/sandbox/../project`)).toThrow(
-      "normalized absolute path below /sandbox",
-    );
-    for (const terminalControl of ["\u001b[31m", "\u202e", "\u2028", "\u2029"]) {
+      expect(() => parseReadOnlyHostMount("relative:/sandbox/project")).toThrow(
+        "host directory must be an absolute path",
+      );
+      expect(() => parseReadOnlyHostMount(`${source}-missing:/sandbox/project`)).toThrow(
+        "does not exist",
+      );
+      expect(() => parseReadOnlyHostMount(`${symlink}:/sandbox/project`)).toThrow(
+        "must not contain symlinks",
+      );
+      expect(() => parseReadOnlyHostMount(`${source}:/sandbox/../project`)).toThrow(
+        "normalized absolute path below /sandbox",
+      );
+
       let message = "";
       try {
         parseReadOnlyHostMount(`${source}:/sandbox/project${terminalControl}forged`);
@@ -71,8 +73,8 @@ describe("read-only host mount validation", () => {
       }
       expect(message).toContain("must not contain terminal control characters");
       expect(message).not.toContain(terminalControl);
-    }
-  });
+    },
+  );
 
   it("rejects duplicate host and sandbox directories", () => {
     const first = workspaceTempDir();

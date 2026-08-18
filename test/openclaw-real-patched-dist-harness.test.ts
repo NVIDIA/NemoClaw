@@ -444,16 +444,16 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "Patch 6",
         );
 
-        for (const marker of [
+        [
           "nemoclaw: env-gated bypass",
           "nemoclaw: OpenShell host gateway for web_fetch trusted env proxy",
           "nemoclaw: route unconfigured strict fetch through sandbox egress proxy",
           'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"',
-        ]) {
+        ].forEach((marker) => {
           const grep = grepRealDist(dist, marker);
           requireSpawnSuccess(grep, `find real-dist marker ${marker}`);
           grep.stdout.trim().length > 0 || runtimeMismatch("empty", "non-empty", marker);
-        }
+        });
 
         const retryPersistencePreimage = [
           "\t\t\tlet suppressNextUserMessagePersistence = params.suppressNextUserMessagePersistence ?? false;",
@@ -742,7 +742,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "1",
           "generated models file mode patch target count",
         );
-        for (const target of [
+        [
           ...gatewayDialbackTargets,
           ...gatewayToolTarget,
           ...sharedStateTargets,
@@ -751,13 +751,13 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           ...stateMigrationTargets,
           ...fileStoreTargets,
           ...modelsConfigTargets,
-        ]) {
+        ].forEach((target) => {
           const syntax = spawnSync(nodeRuntime.executable, ["--check", target], {
             encoding: "utf-8",
             timeout: PATCH_COMMAND_TIMEOUT_MS,
           });
           requireSpawnSuccess(syntax, `validate reviewed OpenClaw dist syntax: ${target}`);
-        }
+        });
 
         // These proofs install the reviewed shrinkwrapped runtime dependencies
         // with lifecycle scripts disabled. Keep them after every shape-only

@@ -119,7 +119,7 @@ test(
         { trigger: "OpenAI-compatible base URL", response: `${fake.baseUrl}\n` },
         { trigger: "Other OpenAI-compatible endpoint API key:", response: `${apiKey}\n` },
         { trigger: "endpoint model", response: `${MODEL}\n` },
-        { trigger: "Apply this configuration?", response: "y\n" },
+        { trigger: "Choose an action:", response: "1\n" },
         { trigger: "Enable web search", response: "1\n" },
         // Raw-mode messaging-channel selector; Enter with none toggled skips.
         { trigger: "Press 1-7 to toggle", response: "\r" },
@@ -151,14 +151,14 @@ test(
 
     progress.phase("confirm every ordered onboarding step appears in order");
     let searchFrom = 0;
-    for (const marker of ORDERED_STEP_MARKERS) {
+    ORDERED_STEP_MARKERS.forEach((marker) => {
       const index = result.output.indexOf(marker, searchFrom);
       expect(
         index,
         `expected step marker ${JSON.stringify(marker)} after offset ${searchFrom} in the transcript; see onboard-transcript.txt`,
       ).toBeGreaterThanOrEqual(searchFrom);
       searchFrom = index + marker.length;
-    }
+    });
 
     progress.phase("confirm Policy presets is reached before completion");
     const policyIndex = result.output.indexOf("[8/8] Policy presets");

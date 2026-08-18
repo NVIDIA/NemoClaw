@@ -13,10 +13,7 @@ import {
 import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 
-export {
-  openshellSandboxSshHost,
-  resolveOpenshellSandboxSshHost,
-} from "./sandbox-ssh-host";
+export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 
 export type OpenshellSpawnSync = (
   command: string,
@@ -49,6 +46,7 @@ function openshellSpawnEnv(opts: OpenshellSpawnOptions): NodeJS.ProcessEnv {
 export interface RunOpenshellOptions extends OpenshellSpawnOptions {
   stdio?: SpawnSyncOptions["stdio"];
   input?: string;
+  killSignal?: SpawnSyncOptions["killSignal"];
 }
 
 export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
@@ -208,6 +206,7 @@ export function runOpenshellCommand(
     stdio: redirectInheritedChildStdoutToStderr(opts.stdio ?? "inherit"),
     input: opts.input,
     timeout: opts.timeout,
+    killSignal: opts.killSignal,
   });
   if (result.error) {
     if (isIgnoredTimeout(result.error, opts)) {

@@ -6,6 +6,7 @@ import { MIN_OLLAMA_VERSION } from "../inference/ollama-version";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import {
   type DetectInferenceProviderHostStateDeps,
+  detectLocalTcpListener,
   detectInferenceProviderHostState,
   type InferenceProviderHostGpu,
 } from "./provider-host-state";
@@ -40,6 +41,7 @@ function buildDeps(
     getWindowsHostOllamaDockerRequirement: vi.fn(() => SUPPORTED_WINDOWS_OLLAMA),
     detectVllmProfile: vi.fn(() => null),
     getLocalProviderAvailabilityEndpoint: vi.fn(() => "http://127.0.0.1:8000/v1/models"),
+    detectLocalTcpListener: vi.fn(() => null),
     ...overrides,
   };
 }
@@ -294,7 +296,7 @@ describe("detectInferenceProviderHostState", () => {
     expect(isWsl).toHaveBeenCalledWith({ platform: "linux", env });
   });
 
-  it("suppresses the duplicate-daemon warning when WSL mirrored networking makes the probes equivalent", () => {
+  it("classifies a mirrored loopback daemon as Windows-host Ollama (#9300)", () => {
     const logs: string[] = [];
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
@@ -310,6 +312,7 @@ describe("detectInferenceProviderHostState", () => {
         return "";
       }),
       dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      detectLocalTcpListener: vi.fn(() => false),
     });
 
     const state = detectInferenceProviderHostState({
@@ -324,7 +327,101 @@ describe("detectInferenceProviderHostState", () => {
     });
 
     expect(state.windowsOllamaReachable).toBe(true);
+    expect(state.isWindowsHostOllama).toBe(true);
+    expect(state.ollamaInstallMenu.entry).toBeNull();
     expect(logs).toEqual([]);
+  });
+
+  it("keeps a mirrored WSL-local daemon on the Linux upgrade path (#9300)", () => {
+    const logs: string[] = [];
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      hostCommandExists: vi.fn((command) => command === "ollama"),
+      findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      runCapture: vi.fn((command) =>
+        command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
+      ),
+      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      detectLocalTcpListener: vi.fn(() => true),
+    });
+
+    const state = detectInferenceProviderHostState({
+      gpu: null,
+      experimental: false,
+      platform: "linux",
+      env: {},
+      log: (message = "") => logs.push(message),
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      deps,
+    });
+
+    expect(state.windowsOllamaReachable).toBe(true);
+    expect(state.isWindowsHostOllama).toBe(false);
+    expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
+    expect(state.ollamaInstallMenu.hasUpgradableOllama).toBe(true);
+    expect(logs.join("\n")).toContain("Ollama is running on both WSL and the Windows host");
+  });
+
+  it("fails closed when mirrored listener identity is unavailable (#9300)", () => {
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      runCapture: vi.fn((command) =>
+        command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
+      ),
+      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      detectLocalTcpListener: vi.fn(() => null),
+    });
+
+    const state = detectWithDeps(deps);
+
+    expect(state.isWindowsHostOllama).toBe(false);
+  });
+
+  it("keeps an unrecognized WSL networking mode on the Linux upgrade path (#9300)", () => {
+    const detectLocalTcpListener = vi.fn(() => false);
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      hostCommandExists: vi.fn((command) => command === "ollama"),
+      findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      runCapture: vi.fn((command) =>
+        command.join(" ").includes("wslinfo --networking-mode") ? "future-mode\n" : "",
+      ),
+      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      detectLocalTcpListener,
+    });
+
+    const state = detectInferenceProviderHostState({
+      gpu: null,
+      experimental: false,
+      platform: "linux",
+      env: {},
+      log: () => undefined,
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      deps,
+    });
+
+    expect(state.isWindowsHostOllama).toBe(false);
+    expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
+    expect(state.ollamaInstallMenu.hasUpgradableOllama).toBe(true);
+    expect(detectLocalTcpListener).not.toHaveBeenCalled();
   });
 
   it("does not probe the Windows-host switch path when running Ollama already resolves to the Windows host", () => {
@@ -347,5 +444,26 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.isWindowsHostOllama).toBe(true);
     expect(state.windowsOllamaReachable).toBe(false);
     expect(dockerCapture).not.toHaveBeenCalled();
+  });
+});
+
+describe("detectLocalTcpListener", () => {
+  it("distinguishes Linux listeners from an empty procfs socket table (#9300)", () => {
+    const header = "  sl  local_address rem_address   st\n";
+    const listener = `${header}   0: 0100007F:2CAA 00000000:0000 0A\n`;
+
+    expect(detectLocalTcpListener(11434, () => listener)).toBe(true);
+    expect(detectLocalTcpListener(11434, () => header)).toBe(false);
+  });
+
+  it("fails closed when procfs is unavailable or malformed (#9300)", () => {
+    expect(detectLocalTcpListener(11434, () => null)).toBeNull();
+    expect(detectLocalTcpListener(11434, () => "header\nmalformed\n")).toBeNull();
+    expect(
+      detectLocalTcpListener(11434, (filePath) =>
+        filePath.endsWith("tcp") ? "  sl  local_address rem_address   st\n" : null,
+      ),
+    ).toBeNull();
+    expect(detectLocalTcpListener(0, () => "unused")).toBeNull();
   });
 });

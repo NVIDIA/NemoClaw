@@ -1,0 +1,196 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
+
+vi.mock("../workload/preparation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../workload/preparation")>()),
+  prepareSandboxWorkloadSource,
+}));
+
+vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
+
+import {
+  createManagedWorkloadOnboardRuntime,
+  prepareOnboardSandboxWorkloadLaunch,
+} from "./onboard-orchestration";
+
+function createFreshOnboardingRuntime(environment: Readonly<Record<string, string>>) {
+  const prepared = {
+    source: {
+      kind: "legacy-dockerfile",
+      dockerfilePath: "agents/openclaw/Dockerfile",
+      reason: "managed-image-unavailable",
+    },
+    release: "v0.0.0",
+    fallbackDiagnostic: null,
+  };
+  prepareSandboxWorkloadSource.mockClear();
+  prepareSandboxWorkloadSource.mockResolvedValueOnce(prepared);
+
+  const runtime = createManagedWorkloadOnboardRuntime(
+    {
+      computePlan: { driverName: "docker" },
+      managedWorkloadRebuild: null,
+      tempManagedRuntime: false,
+      tempManagedRuntimeCatalog: null,
+      agentName: "openclaw",
+      legacyDockerfilePath: "agents/openclaw/Dockerfile",
+      customDockerfilePath: null,
+      rootDir: "/tmp/nemoclaw",
+      model: "model",
+      provider: "provider",
+      preferredInferenceApi: null,
+      endpointUrl: null,
+      startupProfile: { environment },
+      note: vi.fn(),
+      fallbackBuildEstimate: () => null,
+    } as unknown as Parameters<typeof createManagedWorkloadOnboardRuntime>[0],
+    {
+      resolveAgentInferenceApi: vi.fn(),
+      getSandboxInferenceConfig: vi.fn(),
+    },
+  );
+
+  return { prepared, runtime };
+}
+
+describe("managed workload onboard orchestration", () => {
+  it("retains the live qualification catalog revision during fresh onboarding (#9385)", async () => {
+    const catalogRevision = "a".repeat(40);
+    const { prepared, runtime } = createFreshOnboardingRuntime({
+      GITHUB_ACTIONS: "true",
+      E2E_MANAGED_IMAGE_REVISION: catalogRevision,
+    });
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ catalogRevision }),
+    );
+  });
+
+  it("omits the qualification catalog revision outside GitHub Actions (#9385)", async () => {
+    const { prepared, runtime } = createFreshOnboardingRuntime({
+      E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
+    });
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledOnce();
+    expect(prepareSandboxWorkloadSource.mock.calls[0]?.[0]).not.toHaveProperty(
+      "catalogRevision",
+    );
+  });
+
+  it("resolves final-image patch metadata after managed build-context staging", async () => {
+    const resolutionMetadata = { key: "published-dcode-base" };
+    let staged = false;
+    const resolvePatchInput = vi.fn(() => {
+      expect(staged).toBe(true);
+      return { preResolvedBaseImageMetadata: resolutionMetadata } as never;
+    });
+    const resolveSandboxBuildPatch = vi.fn(async (input: Record<string, unknown>) => {
+      expect(input.preResolvedBaseImageMetadata).toBe(resolutionMetadata);
+      expect(input.stagedDockerfile).toBe("/tmp/nemoclaw-staged-context/Dockerfile");
+      return { buildId: "dcode-build", dashboardRemoteBindPrepared: false };
+    });
+    const materializeSandboxCreatePlan = vi.fn(() => ({
+      activeMessagingChannels: [],
+      compatibilityPolicyPath: null,
+      createArgs: [
+        "--from",
+        "/tmp/nemoclaw-staged-context/Dockerfile",
+        "--name",
+        "dcode",
+        "--policy",
+        "/tmp/nemoclaw-policy.yaml",
+      ],
+      gpuRoutePlan: "none",
+      initialSandboxPolicy: {
+        appliedPresets: [],
+        policyPath: "/tmp/nemoclaw-policy.yaml",
+      },
+      messagingProviders: [],
+      policyTier: null,
+      sandboxGpuLogMessage: null,
+    }));
+
+    await prepareOnboardSandboxWorkloadLaunch({
+      runtime: {
+        runtimeProvider: null,
+        ensurePreparedWorkload: vi.fn(),
+        ensurePreparedProfile: vi.fn(),
+      },
+      workload: {
+        source: {
+          kind: "legacy-dockerfile",
+          dockerfilePath: "agents/langchain-deepagents-code/Dockerfile",
+          reason: "runtime-unsupported",
+        },
+        release: "v0.0.0",
+        fallbackDiagnostic: null,
+      },
+      legacy: {
+        preparedBuildContext: null,
+        agent: {
+          name: "langchain-deepagents-code",
+          displayName: "LangChain Deep Agents Code",
+        },
+        fromDockerfile: null,
+        createAgentSandbox: () => {
+          staged = true;
+          return {
+            buildCtx: "/tmp/nemoclaw-staged-context",
+            stagedDockerfile: "/tmp/nemoclaw-staged-context/Dockerfile",
+            baseImageResolutionMetadata: resolutionMetadata,
+          };
+        },
+        resolvePatchInput,
+      },
+      plan: {
+        intent: {},
+        rebindMessagingTokenDefs: async () => [],
+        runProviderPreDeleteCleanup: vi.fn(),
+        upsertMessagingProviders: vi.fn(() => []),
+        getHermesToolGatewayProviderName: vi.fn(() => "unused"),
+        discloseInitialSandboxPolicy: vi.fn(),
+      },
+      launchInput: {
+        agent: null,
+        chatUiUrl: "http://127.0.0.1:18789",
+        sandboxName: "dcode",
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "0" },
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: {},
+        manageDashboard: false,
+        openshellShellCommand: () => "openshell sandbox create",
+      },
+      plannedMessagingPlan: null,
+      gpu: {
+        provider: "compatible-endpoint",
+        config: {
+          mode: "0",
+          hostGpuDetected: false,
+          hostGpuPlatform: null,
+          sandboxGpuEnabled: false,
+          sandboxGpuDevice: null,
+          errors: [],
+        },
+        dockerDriverGateway: false,
+        gatewayPort: 8080,
+      },
+      dependencies: {
+        materializeSandboxCreatePlan,
+        prepareSandboxBuildPatchConfig: vi.fn(() => ({
+          messagingChannelConfig: null,
+        })),
+        resolveSandboxBuildPatch,
+      },
+    } as unknown as Parameters<typeof prepareOnboardSandboxWorkloadLaunch>[0]);
+
+    expect(resolvePatchInput).toHaveBeenCalledOnce();
+    expect(resolveSandboxBuildPatch).toHaveBeenCalledOnce();
+  });
+});

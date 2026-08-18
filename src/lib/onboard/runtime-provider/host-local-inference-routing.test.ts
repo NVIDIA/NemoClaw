@@ -489,7 +489,7 @@ describe("provider-neutral host-local inference startup routing", () => {
       },
     ];
 
-    for (const value of cases) {
+    cases.forEach((value) => {
       const providerRuntime = runtime();
       const rejected = prepared(value);
       providerRuntime.startManaged = vi.fn(() => rejected);
@@ -503,7 +503,7 @@ describe("provider-neutral host-local inference startup routing", () => {
         }),
       ).toThrow("different runtime, proof, or publication authority");
       expect(rejected.rollback).toHaveBeenCalledOnce();
-    }
+    });
 
     const reorderedDevices = runtime();
     const multiGpuRequest = { ...request, gpuDevices: ["1", "nvidia.com/gpu=0"] };
@@ -576,7 +576,7 @@ describe("provider-neutral host-local inference startup routing", () => {
       },
     ];
 
-    for (const value of cases) {
+    cases.forEach((value) => {
       const providerRuntime = runtime();
       const rejected = prepared(value);
       providerRuntime.qualifyOllama = vi.fn(() => rejected);
@@ -590,7 +590,7 @@ describe("provider-neutral host-local inference startup routing", () => {
         }),
       ).toThrow("different runtime, proof, or publication authority");
       expect(rejected.rollback).toHaveBeenCalledOnce();
-    }
+    });
   });
 
   it("fails closed when rejected startup rollback evidence is indeterminate", () => {

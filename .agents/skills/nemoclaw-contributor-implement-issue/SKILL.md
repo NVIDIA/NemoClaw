@@ -92,8 +92,9 @@ evidence only when the real process, filesystem, network, container, hardware, w
 boundary owns the behavior. Run focused tests after the final behavior-affecting edit and record the
 exact command and result.
 
-Update user-facing documentation with the behavior when required. Use the shared documentation
-contract for authoring, validation, and final independent review.
+Keep owning repository guidance in the same change.
+This includes active `AGENTS.md` files, `.agents/skills/**`, and `test/e2e/**/README.md`.
+Defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
 
 ## Self-review the completed change
 

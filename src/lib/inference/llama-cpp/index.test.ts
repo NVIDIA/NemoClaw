@@ -85,16 +85,16 @@ describe("probeLlamaCppAttachment", () => {
     });
   });
 
-  it.each([
-    "http://127.0.0.1:8082",
-    "http://192.0.2.10:8081",
-  ])("rejects attachment endpoint %s outside fixed loopback port 8081 (#8161)", (baseUrl) => {
-    const probe = vi.fn();
-    expect(
-      probeLlamaCppAttachment("secret-token", { baseUrl, runCurlProbeImpl: probe }),
-    ).toMatchObject({ ok: false, reason: "invalid-endpoint" });
-    expect(probe).not.toHaveBeenCalled();
-  });
+  it.each(["http://127.0.0.1:8082", "http://192.0.2.10:8081"])(
+    "rejects attachment endpoint %s outside fixed loopback port 8081 (#8161)",
+    (baseUrl) => {
+      const probe = vi.fn();
+      expect(
+        probeLlamaCppAttachment("secret-token", { baseUrl, runCurlProbeImpl: probe }),
+      ).toMatchObject({ ok: false, reason: "invalid-endpoint" });
+      expect(probe).not.toHaveBeenCalled();
+    },
+  );
 
   it("accepts a bounded authenticated native llama.cpp fingerprint (#8161)", () => {
     const probe = scriptedProbe(nativeResponses());
@@ -104,10 +104,10 @@ describe("probeLlamaCppAttachment", () => {
       model: "team/model-alias",
     });
     expect(probe).toHaveBeenCalledTimes(5);
-    for (const [argv, options] of probe.mock.calls) {
+    probe.mock.calls.forEach(([argv, options]) => {
       expect(argv).toEqual(expect.arrayContaining(["--max-time", "5", "--max-filesize", "262144"]));
       expect(options).toEqual(expect.objectContaining({ maxResponseBytes: 262144 }));
-    }
+    });
   });
 
   it("accepts llama.cpp's native metrics-disabled response (#8161)", () => {
@@ -281,18 +281,19 @@ describe("probeLlamaCppAttachment", () => {
     expect(result).toMatchObject({ ok: false, reason: "not-llama-cpp" });
   });
 
-  it.each([
-    401, 403,
-  ])("rejects an authenticated model catalog response with HTTP %s (#8161)", (status) => {
-    const result = probeLlamaCppAttachment("secret-token", {
-      runCurlProbeImpl: scriptedProbe([
-        response(401, '{"error":"unauthorized"}'),
-        response(status, '{"error":"unauthorized"}'),
-      ]),
-    });
+  it.each([401, 403])(
+    "rejects an authenticated model catalog response with HTTP %s (#8161)",
+    (status) => {
+      const result = probeLlamaCppAttachment("secret-token", {
+        runCurlProbeImpl: scriptedProbe([
+          response(401, '{"error":"unauthorized"}'),
+          response(status, '{"error":"unauthorized"}'),
+        ]),
+      });
 
-    expect(result).toMatchObject({ ok: false, reason: "authentication-rejected" });
-  });
+      expect(result).toMatchObject({ ok: false, reason: "authentication-rejected" });
+    },
+  );
 
   it("rejects an oversized fingerprint response (#8161)", () => {
     const result = probeLlamaCppAttachment("secret-token", {
@@ -367,9 +368,9 @@ describe("probeLlamaCppAttachment", () => {
     const configModes: number[] = [];
     let index = 0;
     const probe = vi.fn((argv: string[], options?: CurlProbeOptions) => {
-      for (const configPath of options?.trustedConfigFiles ?? []) {
+      (options?.trustedConfigFiles ?? []).forEach((configPath) => {
         configModes.push(fs.statSync(configPath).mode & 0o777);
-      }
+      });
       const current = responses[index++];
       expect(current, `unexpected probe ${index}`).toBeDefined();
       return current!;
@@ -378,12 +379,11 @@ describe("probeLlamaCppAttachment", () => {
     const result = probeLlamaCppAttachment(token, { runCurlProbeImpl: probe });
 
     expect(JSON.stringify(result)).not.toContain(token);
-    for (const [argv, options] of probe.mock.calls) {
+    probe.mock.calls.forEach(([argv, options]) => {
       expect(JSON.stringify(argv)).not.toContain(token);
-      for (const configPath of options?.trustedConfigFiles ?? []) {
-        expect(fs.existsSync(configPath)).toBe(false);
-      }
-    }
+      expect((options?.trustedConfigFiles ?? []).every((configPath) =>
+          Object.is(fs.existsSync(configPath), false))).toBe(true);
+    });
     expect(configModes).toEqual([0o600, 0o600, 0o600, 0o600]);
   });
 });

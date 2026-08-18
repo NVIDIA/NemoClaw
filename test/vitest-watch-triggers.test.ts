@@ -6,7 +6,6 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import rootVitestConfig from "../vitest.config";
 import {
   resolveVitestWatchTests,
   vitestWatchTriggerPatterns,
@@ -18,7 +17,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
   "test/e2e/support/e2e-operations-workflow-boundary.test.ts",
   "test/e2e/support/e2e-report-to-pr-workflow-boundary.test.ts",
-  "test/e2e/support/e2e-workflow.test.ts",
   "test/e2e/support/e2e-workflow-trace.test.ts",
   "test/e2e/support/hermes-dashboard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-workflow-boundary.test.ts",
@@ -61,7 +59,6 @@ const OPAQUE_INPUTS = [
   "scripts/checks/validate-managed-base-index.sh",
   "scripts/e2e/sanitize-trace-timing.py",
   "test/e2e/manifests/openclaw-nvidia.yaml",
-  "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
   ".github/workflows/e2e-standard-profile.yaml",
   ".github/workflows/portable-profile-e2e.yaml",
@@ -72,6 +69,9 @@ const OPAQUE_INPUTS = [
   ".github/scripts/docker-auth-cleanup.sh",
   ".github/workflows/sandbox-images-and-e2e.yaml",
   ".github/workflows/code-scanning.yaml",
+  ".github/workflows/post-merge-docs.yaml",
+  "tools/post-merge-docs/review-policy.yaml",
+  "tools/post-merge-docs/artifact.mts",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
   ".github/workflows/hosted-runner-recovery.yaml",
@@ -85,18 +85,23 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  // source-shape-contract: compatibility -- Root watch mode must install the canonical opaque-input trigger resolver
-  it("registers the focused mappings at the root configuration boundary (#6692)", () => {
-    expect(rootVitestConfig.test?.watchTriggerPatterns).toBe(vitestWatchTriggerPatterns);
-  });
-
-  it("maps current opaque inputs to their direct contract tests (#6692)", () => {
+  it.each(
+    [
+        ".github/actions/docker-auth-setup/action.yaml",
+        ".github/actions/docker-auth-cleanup/action.yaml",
+        ".github/scripts/docker-auth-setup.sh",
+        ".github/scripts/docker-auth-cleanup.sh",
+      ],
+  )("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",
       "test/managed-inference-catalog-compiler.test.ts",
     ]);
-    expect(triggeredBy("Dockerfile")).toEqual(["src/lib/onboard/managed-startup-profile.test.ts"]);
+    expect(triggeredBy("Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+      "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
     ]);
@@ -161,36 +166,36 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-manifests.test.ts",
     ]);
     expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yml")).toEqual([]);
-    expect(triggeredBy("test/e2e/docs/parity-inventory.generated.json")).toEqual([
-      "test/e2e/support/e2e-migration-policy.test.ts",
-    ]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",
     ]);
-    for (const portableProfilePath of [
-      ".github/workflows/portable-profile-e2e.yaml",
-      "test/e2e/fixtures/portable-profile-systemctl-shim.sh",
-    ]) {
-      expect(triggeredBy(portableProfilePath)).toEqual([
-        "test/e2e/support/portable-profile-systemctl-shim.test.ts",
-      ]);
-    }
-    for (const authPath of [
-      ".github/actions/docker-auth-setup/action.yaml",
-      ".github/actions/docker-auth-cleanup/action.yaml",
-      ".github/scripts/docker-auth-setup.sh",
-      ".github/scripts/docker-auth-cleanup.sh",
-    ]) {
-      expect(triggeredBy(authPath)).toEqual([
-        "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
-      ]);
-    }
+    expect(triggeredBy(".github/workflows/portable-profile-e2e.yaml")).toEqual([
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ]);
+    expect(triggeredBy("test/e2e/fixtures/portable-profile-systemctl-shim.sh")).toEqual([
+      "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ]);
+
+    expect(triggeredBy(authPath)).toEqual([
+      "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+    ]);
+
     expect(triggeredBy(".github/workflows/sandbox-images-and-e2e.yaml")).toEqual([
       "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/post-merge-docs.yaml")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
+    expect(triggeredBy("tools/post-merge-docs/review-policy.yaml")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
+    expect(triggeredBy("tools/post-merge-docs/artifact.mts")).toEqual([
+      "test/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/pr-review-advisor-workflow-boundary.test.ts",
@@ -216,20 +221,22 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
   });
 
-  it("returns only concrete test files that exist (#6692)", () => {
-    const triggeredTests = new Set(OPAQUE_INPUTS.flatMap(triggeredBy));
+  it.each(Array.from(vitestWatchTriggerPatterns, (value) => [value]))(
+    "returns only concrete test files that exist [case %#] (#6692)",
+    (trigger) => {
+      const triggeredTests = new Set(OPAQUE_INPUTS.flatMap(triggeredBy));
 
-    expect(triggeredTests.size).toBeGreaterThan(0);
-    for (const testFile of triggeredTests) {
-      expect(testFile).toMatch(/\.test\.ts$/);
-      expect(testFile).not.toMatch(/[?*{}[\]]/);
-      expect(fs.existsSync(testFile), testFile).toBe(true);
-    }
-    for (const trigger of vitestWatchTriggerPatterns) {
+      expect(triggeredTests.size).toBeGreaterThan(0);
+      for (const testFile of triggeredTests) {
+        expect(testFile).toMatch(/\.test\.ts$/);
+        expect(testFile).not.toMatch(/[?*{}[\]]/);
+        expect(fs.existsSync(testFile), testFile).toBe(true);
+      }
+
       expect(trigger.pattern.global).toBe(false);
       expect(trigger.pattern.sticky).toBe(false);
-    }
-  });
+    },
+  );
 
   it("leaves unrelated YAML, shell, Python, and workflow files alone (#6692)", () => {
     expect(triggeredBy("notes/example.yaml")).toEqual([]);

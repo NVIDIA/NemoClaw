@@ -54,9 +54,7 @@ function externalGatewayProofRunResult(
     (command === "systemctl" &&
       args.includes("--property=MainPID") &&
       ok(`${String(externalPid)}\n`)) ||
-    (command === "ps" &&
-      args.includes("uid=") &&
-      ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
+    (command === "ps" && args.includes("uid=") && ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
     (command === "ps" && args.includes("args=") && ok(`${commandLine}\n`)) ||
     ok()
   );
@@ -366,9 +364,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         "https-pin-runtime-adapter.lock",
         "https-pin-runtime-adapter.log",
       ];
-      for (const name of adapterStateEntries) {
+      adapterStateEntries.forEach((name) => {
         fs.writeFileSync(path.join(stateDir, name), name.endsWith(".pid") ? "4242" : "state");
-      }
+      });
       const logs: string[] = [];
       const kill = vi.fn(() => true);
       const run = vi.fn((_command: string, _args: string[]) => ok());
@@ -394,9 +392,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(path.join(otherEnv, "sandboxes.json"))).toBe(true);
       expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(false);
       expect(fs.existsSync(stateDir)).toBe(true);
-      for (const name of adapterStateEntries) {
-        expect(fs.existsSync(path.join(stateDir, name))).toBe(true);
-      }
+      expect(adapterStateEntries.every((name) =>
+          Object.is(fs.existsSync(path.join(stateDir, name)), true))).toBe(true);
       expect(kill).not.toHaveBeenCalled();
       expect(
         run.mock.calls.some(
@@ -851,11 +848,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         "ollama-auth-proxy.pid",
         "ollama-auth-proxy.status",
       ];
-      for (const entry of proxyStateEntries) {
+      proxyStateEntries.forEach((entry) => {
         const value = entry === "ollama-auth-proxy.pid" ? "4242\n" : `${entry}\n`;
         fs.writeFileSync(path.join(shared, entry), value);
         fs.writeFileSync(path.join(selected, entry), `legacy-${value}`);
-      }
+      });
 
       const runCalls: Array<{ command: string; args: string[] }> = [];
       const dockerCalls: string[][] = [];
@@ -917,9 +914,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
       expect(kill.mock.calls.every(([pid]) => pid !== 4242)).toBe(true);
-      for (const entry of proxyStateEntries) {
-        expect(fs.existsSync(path.join(shared, entry))).toBe(true);
-      }
+      expect(proxyStateEntries.every((entry) =>
+          Object.is(fs.existsSync(path.join(shared, entry)), true))).toBe(true);
       expect(logs).toContain(
         "Preserving the shared Ollama auth proxy for the remaining gateway ports",
       );
@@ -953,6 +949,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           commandExists: (command) => command === "openshell",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: (line) => logs.push(line),
           rmSync: fs.rmSync,
@@ -1002,6 +999,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           commandExists: (command) => command === "openshell",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: (line) => logs.push(line),
           rmSync: fs.rmSync,
@@ -1279,12 +1277,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         "ollama-auth-proxy.pid",
         "ollama-auth-proxy.status",
       ];
-      for (const entry of proxyStateEntries) {
+      proxyStateEntries.forEach((entry) => {
         fs.writeFileSync(
           path.join(stateDir, entry),
           entry === "ollama-auth-proxy.pid" ? "4242\n" : "seeded\n",
         );
-      }
+      });
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       let proxyProcessIsRunning = true;
@@ -1317,12 +1315,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(logs.join("\n")).toContain("Sibling gateways remain");
       expect(fs.existsSync(path.join(stateDir, "gateways", "8091"))).toBe(true);
       expect(proxyProcessIsRunning).toBe(true);
-      for (const entry of proxyStateEntries) {
-        expect(fs.existsSync(path.join(stateDir, entry))).toBe(true);
-      }
+      expect(proxyStateEntries.every((entry) =>
+          Object.is(fs.existsSync(path.join(stateDir, entry)), true))).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
-
 });

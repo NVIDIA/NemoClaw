@@ -9,6 +9,8 @@ IMAGE_REPOSITORY=brevdev/nemoclaw-image
 IMAGE_WORKFLOW=build-launchable-e2e-image.yml
 cleanup_required=0
 diagnostic_capture=""
+raw_log=""
+raw_log_directory=""
 SSH_PROBE_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1
   -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR)
 
@@ -47,93 +49,129 @@ import os
 import re
 import sys
 
-retained = bytearray()
-while chunk := sys.stdin.buffer.read(8192):
-    if len(retained) < 4096:
-        retained.extend(chunk[: 4096 - len(retained)])
-data = bytes(retained).decode("utf-8", errors="replace")
-for name in ("BREV_API_KEY", "GH_TOKEN", "NVIDIA_INFERENCE_API_KEY"):
-    value = os.environ.get(name, "")
-    if value:
-        data = data.replace(value, "[REDACTED]")
+known_values = [
+    os.environ.get(name, "")
+    for name in ("BREV_API_KEY", "GH_TOKEN", "NVIDIA_INFERENCE_API_KEY")
+]
 instance = os.environ.get("INSTANCE_NAME", "")
-if instance:
-    data = data.replace(f"{instance}-host", "[REDACTED HOST]")
-    data = data.replace(instance, "[REDACTED HOST]")
-data = re.sub(
-    r"-----BEGIN [^-\n]*PRIVATE KEY-----.*?-----END [^-\n]*PRIVATE KEY-----",
-    "[REDACTED PRIVATE KEY]",
-    data,
-    flags=re.DOTALL,
-)
-data = re.sub(
-    r"(?i)\b(authorization)\b(\s*[:=]\s*)[^\r\n]+",
-    r"\1\2[REDACTED]",
-    data,
-)
-data = re.sub(
-    r"(?i)\b(api[_ -]?key|token|password|secret|credential|authorization)\b"
-    r"(\s*[:=]\s*)(\"[^\"]*\"|\x27[^\x27]*\x27|\S+)",
-    r"\1\2[REDACTED]",
-    data,
-)
-data = re.sub(
-    r"(?i)\b(identityfile|certificatefile|proxycommand|proxyjump)\s*[:=]\s*\S+",
-    r"\1=[REDACTED SSH CONFIGURATION]",
-    data,
-)
-data = re.sub(
-    r"(?i)\b(host|hostname|address|endpoint)\s*[:=]\s*\S+",
-    r"\1=[REDACTED ADDRESS]",
-    data,
-)
-data = re.sub(r"(?i)(connect to host|resolve hostname)\s+\S+", r"\1 [REDACTED HOST]", data)
-data = re.sub(r"(?i)\b(?:nvapi-|gh[pousr]_)[A-Za-z0-9_-]+", "[REDACTED]", data)
-def redact_generic_token(match):
-    value = match.group(0)
-    if value in {
-        "client_loop_send_disconnect",
-        "kex_exchange_identification",
-        "ssh_exchange_identification",
-    }:
-        return value
-    return "[REDACTED]"
+safe_tail = bytearray()
+private_key = False
+debug_marker_written = False
 
-data = re.sub(
-    r"(?<![A-Za-z0-9])[A-Za-z0-9_./+=-]{20,}(?![A-Za-z0-9])",
-    redact_generic_token,
-    data,
-)
-data = re.sub(r"https?://[^/\s]+", "[REDACTED ADDRESS]", data)
-data = re.sub(r"(?<![\w])(?:\d{1,3}\.){3}\d{1,3}(?![\w])", "[REDACTED ADDRESS]", data)
-data = re.sub(
-    r"(?<![\w])(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]{1,4}(?![\w])",
-    "[REDACTED ADDRESS]",
-    data,
-)
-data = re.sub(r"(?i)(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}", "[REDACTED ADDRESS]", data)
 
-lines = []
-debug_omitted = False
-for raw_line in data.splitlines():
-    line = " ".join(raw_line.split())
-    if not line:
-        continue
+def retain(text: str) -> None:
+    safe_tail.extend(text.encode("utf-8"))
+    if len(safe_tail) > 512:
+        del safe_tail[:-512]
+
+
+def sanitize_line(line: str) -> str:
+    global debug_marker_written
+    for value in known_values:
+        if value:
+            line = line.replace(value, "[REDACTED]")
+    if instance:
+        line = line.replace(f"{instance}-host", "[REDACTED HOST]")
+        line = line.replace(instance, "[REDACTED HOST]")
+    line = re.sub(
+        r"(?i)\b(authorization)\b(\s*[:=]\s*)[^\r\n]+",
+        r"\1\2[REDACTED]",
+        line,
+    )
+    line = re.sub(
+        r"(?i)\b(api[_ -]?key|token|password|secret|credential|authorization)\b"
+        r"(\s*[:=]\s*)(\"[^\"]*\"|\x27[^\x27]*\x27|\S+)",
+        r"\1\2[REDACTED]",
+        line,
+    )
+    line = re.sub(
+        r"(?i)\b(identityfile|certificatefile|proxycommand|proxyjump)\s*[:=]\s*\S+",
+        r"\1=[REDACTED SSH CONFIGURATION]",
+        line,
+    )
+    line = re.sub(
+        r"(?i)\b(host|hostname|address|endpoint)\s*[:=]\s*\S+",
+        r"\1=[REDACTED ADDRESS]",
+        line,
+    )
+    line = re.sub(
+        r"(?i)(connect to host|resolve hostname)\s+\S+",
+        r"\1 [REDACTED HOST]",
+        line,
+    )
+    line = re.sub(
+        r"(?i)(?<![A-Za-z0-9._-])[^@\s:]+@(?:\[[^\]]+\]|[A-Za-z0-9._-]+)",
+        "[REDACTED SSH USER]@[REDACTED HOST]",
+        line,
+    )
+    line = re.sub(r"(?i)\b(?:nvapi-|gh[pousr]_)[A-Za-z0-9_-]+", "[REDACTED]", line)
+    def redact_generic_token(match):
+        value = match.group(0)
+        if value in {
+            "client_loop_send_disconnect",
+            "kex_exchange_identification",
+            "ssh_exchange_identification",
+        }:
+            return value
+        return "[REDACTED]"
+
+    line = re.sub(
+        r"(?<![A-Za-z0-9])[A-Za-z0-9_./+=-]{20,}(?![A-Za-z0-9])",
+        redact_generic_token,
+        line,
+    )
+    line = re.sub(r"https?://[^/\s]+", "[REDACTED ADDRESS]", line)
+    line = re.sub(
+        r"(?<![\w])(?:\d{1,3}\.){3}\d{1,3}(?![\w])",
+        "[REDACTED ADDRESS]",
+        line,
+    )
+    line = re.sub(
+        r"(?<![\w])(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]{1,4}(?![\w])",
+        "[REDACTED ADDRESS]",
+        line,
+    )
+    line = re.sub(r"(?i)(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}", "[REDACTED ADDRESS]", line)
+    line = " ".join(line.split())
     if re.match(r"(?i)^debug[123]:", line):
-        if not debug_omitted:
-            lines.append("SSH debug output omitted")
-            debug_omitted = True
-        continue
+        if debug_marker_written:
+            return ""
+        debug_marker_written = True
+        return "SSH debug output omitted"
     if re.match(
         r"(?i)^(hostname|user|port|identityfile|certificatefile|proxycommand|proxyjump)\s+",
         line,
     ):
-        lines.append("[REDACTED SSH CONFIGURATION]")
-        continue
-    lines.append(re.sub(r"(?i)load key \S+", "SSH private key load failed", line))
+        return "[REDACTED SSH CONFIGURATION]"
+    return re.sub(r"(?i)load key \S+", "SSH private key load failed", line)
 
-result = " | ".join(dict.fromkeys(lines))
-sys.stdout.write(result.encode("utf-8")[:512].decode("utf-8", errors="ignore"))
+
+while True:
+    raw_line = sys.stdin.buffer.readline(4097)
+    if not raw_line:
+        break
+    if len(raw_line) > 4096:
+        while raw_line and not raw_line.endswith(b"\n"):
+            raw_line = sys.stdin.buffer.readline(4097)
+        retain("[REDACTED LONG LINE]\n")
+        continue
+    line = raw_line.decode("utf-8", errors="replace")
+    if private_key:
+        if re.search(r"-----END [^-\n]*PRIVATE KEY-----", line):
+            private_key = False
+        continue
+    if re.search(r"-----BEGIN [^-\n]*PRIVATE KEY-----", line):
+        retain("[REDACTED PRIVATE KEY]\n")
+        if not re.search(r"-----END [^-\n]*PRIVATE KEY-----", line):
+            private_key = True
+        continue
+    cleaned = sanitize_line(line)
+    if cleaned:
+        retain(f"{cleaned}\n")
+
+result = safe_tail.decode("utf-8", errors="ignore")
+result = " | ".join(dict.fromkeys(part.strip() for part in result.splitlines() if part.strip()))
+sys.stdout.write(result.encode("utf-8")[-512:].decode("utf-8", errors="ignore"))
 '
 }
 
@@ -164,12 +202,113 @@ run_bounded_probe() {
       output="no diagnostic output"
     fi
   fi
-  [ -z "$output_name" ] || printf -v "$output_name" '%s' "$output"
+  printf -v "$output_name" '%s' "$output"
   printf -v "$status_name" '%s' "$status"
+}
+
+run_budgeted_diagnostic_probe() {
+  local deadline="$1" output_name="$2" status_name="$3"
+  local remaining
+  shift 3
+  remaining=$((deadline - SECONDS))
+  if [ "$remaining" -le 0 ]; then
+    printf -v "$output_name" '%s' "diagnostic budget exhausted"
+    printf -v "$status_name" '%s' "not-run"
+    return
+  fi
+  [ "$remaining" -le 5 ] || remaining=5
+  run_bounded_probe "$remaining" "$output_name" "$status_name" "$@"
+}
+
+report_probe() {
+  local label="$1" status="$2" error="$3"
+  if [ "$status" = "not-run" ]; then
+    log "Readiness probe $label: not run; status unavailable; error: $error"
+  elif [ "$status" -eq 0 ]; then
+    log "Readiness probe $label: success; status 0"
+  else
+    log "Readiness probe $label: failure; status $status; error: $error"
+  fi
+}
+
+ssh_alias_status() {
+  local deadline="$1" alias="$2" result_name="$3"
+  local remaining
+  local -a pipeline_status
+  remaining=$((deadline - SECONDS))
+  if [ "$remaining" -le 0 ]; then
+    printf -v "$result_name" '%s' "not checked"
+    return
+  fi
+  [ "$remaining" -le 2 ] || remaining=2
+  set +e
+  timeout "${remaining}s" ssh -G "$alias" 2>/dev/null \
+    | awk -v alias="$alias" '
+      tolower($1) == "hostname" && $2 != alias { configured = 1 }
+      tolower($1) == "proxycommand" && tolower($2) != "none" { configured = 1 }
+      tolower($1) == "proxyjump" && tolower($2) != "none" { configured = 1 }
+      END { exit(configured ? 0 : 1) }
+    ' >/dev/null
+  pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  if [ "${pipeline_status[0]}" -ne 0 ]; then
+    printf -v "$result_name" '%s' unavailable
+  elif [ "${pipeline_status[1]}" -eq 0 ]; then
+    printf -v "$result_name" '%s' configured
+  else
+    printf -v "$result_name" '%s' missing
+  fi
+}
+
+run_connectivity_diagnostics() {
+  local refresh_status="$1" timeout_seconds="$2"
+  local container_error container_status host_exec_error host_exec_status
+  local default_ssh_error default_ssh_status host_ssh_error host_ssh_status
+  local plain_alias host_alias
+  local deadline=$((SECONDS + timeout_seconds))
+
+  log "Readiness diagnostics budget: up to $timeout_seconds seconds"
+
+  ssh_alias_status "$deadline" "$INSTANCE_NAME" plain_alias
+  ssh_alias_status "$deadline" "${INSTANCE_NAME}-host" host_alias
+  log "Readiness SSH alias $INSTANCE_NAME: $plain_alias"
+  log "Readiness SSH alias ${INSTANCE_NAME}-host: $host_alias"
+
+  run_budgeted_diagnostic_probe "$deadline" container_error container_status \
+    brev exec "$INSTANCE_NAME" true
+  run_budgeted_diagnostic_probe "$deadline" host_exec_error host_exec_status \
+    brev exec "$INSTANCE_NAME" true --host
+  run_budgeted_diagnostic_probe "$deadline" default_ssh_error default_ssh_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
+  run_budgeted_diagnostic_probe "$deadline" host_ssh_error host_ssh_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "${INSTANCE_NAME}-host" true
+
+  report_probe "brev exec container" "$container_status" "$container_error"
+  report_probe "brev exec host" "$host_exec_status" "$host_exec_error"
+  report_probe "direct SSH container" "$default_ssh_status" "$default_ssh_error"
+  report_probe "direct SSH host" "$host_ssh_status" "$host_ssh_error"
+
+  if [ "$container_status" = "not-run" ] || [ "$host_exec_status" = "not-run" ] \
+    || [ "$default_ssh_status" = "not-run" ] || [ "$host_ssh_status" = "not-run" ]; then
+    log "Readiness classification: incomplete diagnostics; inspect available bounded probe results"
+  elif [ "$refresh_status" -ne 0 ]; then
+    log "Readiness classification: Brev refresh/configuration failure"
+  elif [ "$host_exec_status" -eq 0 ] && [ "$host_ssh_status" -ne 0 ]; then
+    log "Readiness classification: Brev host execution works but direct host SSH fails"
+  elif { [ "$container_status" -eq 0 ] || [ "$default_ssh_status" -eq 0 ]; } \
+    && [ "$host_exec_status" -ne 0 ] && [ "$host_ssh_status" -ne 0 ]; then
+    log "Readiness classification: default container reachable but host unreachable"
+  elif [ "$container_status" -ne 0 ] && [ "$host_exec_status" -ne 0 ] \
+    && [ "$default_ssh_status" -ne 0 ] && [ "$host_ssh_status" -ne 0 ]; then
+    log "Readiness classification: neither target reachable"
+  else
+    log "Readiness classification: mixed connectivity failure; inspect bounded probe results"
+  fi
 }
 
 wait_for_host_ssh() {
   local timeout_seconds="${BREV_HOST_SSH_TIMEOUT_SECONDS:-900}"
+  local diagnostic_timeout_seconds="${BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS:-30}"
   local poll_seconds="${POLL_SECONDS:-5}"
   local deadline=$((SECONDS + timeout_seconds))
   local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error container_error
@@ -226,7 +365,6 @@ wait_for_host_ssh() {
     sleep_seconds="$poll_seconds"
     sleep "$((sleep_seconds < remaining ? sleep_seconds : remaining))"
   done
-
   if [ -n "$last_refresh_failure_status" ]; then
     log "Readiness Brev refresh last failure: status $last_refresh_failure_status; error: $last_refresh_error"
   else
@@ -242,19 +380,7 @@ wait_for_host_ssh() {
   else
     log "Readiness initial default Brev container probe: status $container_status; error: $container_error"
   fi
-  if [ "$container_probed" -eq 0 ]; then
-    log "Readiness classification: default Brev container and direct host SSH were not probed before deadline"
-  elif [ -n "$last_ssh_failure_status" ]; then
-    if [ "$container_status" -eq 0 ]; then
-      log "Readiness classification: initial default Brev container probe succeeded; direct host SSH did not succeed before deadline"
-    else
-      log "Readiness classification: initial default Brev container probe failed; direct host SSH did not succeed before deadline"
-    fi
-  elif [ "$container_status" -eq 0 ]; then
-    log "Readiness classification: initial default Brev container probe succeeded; direct host SSH was not probed before deadline"
-  else
-    log "Readiness classification: initial default Brev container probe failed; direct host SSH was not probed before deadline"
-  fi
+  run_connectivity_diagnostics "$refresh_status" "$diagnostic_timeout_seconds"
   die "host SSH readiness timed out"
 }
 
@@ -289,7 +415,11 @@ finish() {
   local status=$?
   trap - EXIT INT TERM
   if [ "$cleanup_required" -eq 1 ] && ! cleanup; then status=1; fi
-  rm -f "${diagnostic_capture:-}"
+  rm -f "${diagnostic_capture:-}" "${raw_log:-}"
+  if [ -n "${raw_log_directory:-}" ]; then
+    rm -f "$raw_log_directory/full-e2e.raw"
+    rmdir "$raw_log_directory" 2>/dev/null || true
+  fi
   exit "$status"
 }
 
@@ -298,24 +428,38 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 CORRELATION_ID="${CORRELATION_ID:-$(tr '[:upper:]' '[:lower:]' </proc/sys/kernel/random/uuid)}"
+IMAGE_ONLY="${NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY:-0}"
+[[ "$IMAGE_ONLY" =~ ^[01]$ ]] || die "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY must be 0 or 1"
 for name in WORK_DIR CANDIDATE_SHA CORRELATION_ID GH_TOKEN GITHUB_RUN_ID \
-  GITHUB_RUN_ATTEMPT BREV_LAUNCHABLE_ID INSTANCE_NAME NVIDIA_INFERENCE_API_KEY; do
+  GITHUB_RUN_ATTEMPT; do
   require "$name"
 done
-for tool in brev gh jq mktemp python3 sed ssh timeout; do
+for tool in gh jq; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
 [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "candidate SHA is not canonical"
 [[ "$CORRELATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
   || die "correlation ID is not a UUIDv4"
-[[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "workspace name is unsafe"
-[[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || die "Launchable ID is unsafe"
-if [ "${BREV_HOST_SSH_TIMEOUT_SECONDS+x}" = x ] \
-  && ! [[ "$BREV_HOST_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
-  die "BREV_HOST_SSH_TIMEOUT_SECONDS must be a positive integer"
-fi
-if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
-  die "POLL_SECONDS must be a positive integer"
+if [ "$IMAGE_ONLY" -eq 0 ]; then
+  for name in BREV_LAUNCHABLE_ID INSTANCE_NAME NVIDIA_INFERENCE_API_KEY; do
+    require "$name"
+  done
+  for tool in awk brev mktemp python3 sed ssh timeout; do
+    command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
+  done
+  [[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "workspace name is unsafe"
+  [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || die "Launchable ID is unsafe"
+  if [ "${BREV_HOST_SSH_TIMEOUT_SECONDS+x}" = x ] \
+    && ! [[ "$BREV_HOST_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "BREV_HOST_SSH_TIMEOUT_SECONDS must be a positive integer"
+  fi
+  if [ "${BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS+x}" = x ] \
+    && ! [[ "$BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS must be a positive integer"
+  fi
+  if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "POLL_SECONDS must be a positive integer"
+  fi
 fi
 : >"$WORK_DIR/lane.log"
 log "Candidate $CANDIDATE_SHA"
@@ -378,6 +522,35 @@ jq -e --arg sha "$CANDIDATE_SHA" --arg correlation "$CORRELATION_ID" \
 expected_boot_image="projects/$(jq -er .project "$manifest")/global/images/$(jq -er .imageName "$manifest")"
 image_repository_sha="$(jq -er .imageRepositorySha "$manifest")"
 rm -rf "$WORK_DIR/handoff"
+
+if [ "$IMAGE_ONLY" -eq 1 ]; then
+  jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
+    --arg imageUri "$expected_boot_image" --arg imageRepositorySha "$image_repository_sha" '
+    {
+      schemaVersion: 1,
+      kind: "nemoclaw-staging-launchable-image-v1",
+      candidateSha: $candidateSha,
+      producer: {
+        repository: "brevdev/nemoclaw-image",
+        workflow: ".github/workflows/build-launchable-e2e-image.yml",
+        runId: $producerRun,
+        status: "success"
+      },
+      image: {
+        uri: $imageUri,
+        family: "nemoclaw-brev-staging-cpu",
+        imageRepositorySha: $imageRepositorySha
+      },
+      validation: {
+        launchable: "not-run",
+        runtime: "not-run",
+        inference: "not-run"
+      }
+    }' >"$WORK_DIR/launchable-image.json"
+  log "Published staging Launchable image $expected_boot_image"
+  log "Launchable deployment, runtime, and inference validation did not run"
+  exit 0
+fi
 
 # The standing Launchable resolves the staging family. Give that reference time to
 # observe the family update before deploying it.
@@ -466,7 +639,10 @@ jq --argjson identity "$identity" '.boot += $identity' \
 mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
 
 # Run the existing suite from the baked checkout; no source copy, install, or rebuild.
-raw_log="${RUNNER_TEMP:-/tmp}/brev-launchable-e2e-${GITHUB_RUN_ID}.raw"
+raw_log_directory="$(mktemp -d "${RUNNER_TEMP:-/tmp}/brev-launchable-e2e.XXXXXX")"
+chmod 700 "$raw_log_directory"
+raw_log="$raw_log_directory/full-e2e.raw"
+(umask 077 && : >"$raw_log")
 set +e
 {
   printf 'export NVIDIA_INFERENCE_API_KEY=%q\n' "$NVIDIA_INFERENCE_API_KEY"
@@ -487,13 +663,17 @@ REMOTE
   "${INSTANCE_NAME}-host" 'bash -s' >"$raw_log" 2>&1
 e2e_status=$?
 set -e
-python3 - "$raw_log" "$WORK_DIR/full-e2e.log" "$NVIDIA_INFERENCE_API_KEY" <<'PY'
+NEMOCLAW_REDACTION_SECRET="$NVIDIA_INFERENCE_API_KEY" \
+  python3 - "$raw_log" "$WORK_DIR/full-e2e.log" <<'PY'
+import os
 import sys
 from pathlib import Path
-source, target, secret = sys.argv[1:]
+source, target = sys.argv[1:]
+secret = os.environ["NEMOCLAW_REDACTION_SECRET"]
 Path(target).write_bytes(Path(source).read_bytes().replace(secret.encode(), b"[REDACTED]"))
 Path(source).unlink(missing_ok=True)
 PY
+raw_log=""
 if [ "$e2e_status" -ne 0 ] || ! grep -q '^NEMOCLAW_FULL_E2E_PASSED$' "$WORK_DIR/full-e2e.log"; then
   die "full E2E failed"
 fi

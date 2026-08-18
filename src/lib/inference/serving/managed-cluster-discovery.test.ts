@@ -912,12 +912,12 @@ describe("production pinned peer transport", () => {
         pinned.close();
       }
     } finally {
-      for (const name of dockerNames) {
+      dockerNames.forEach((name) => {
         const value = previous.get(name);
         value === undefined
           ? Reflect.deleteProperty(process.env, name)
           : Reflect.set(process.env, name, value);
-      }
+      });
     }
 
     expect(calls).toHaveLength(2);

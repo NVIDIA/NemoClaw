@@ -71,7 +71,7 @@ export function makeHostState(
     vllmProfile: null,
     hasVllmImage: false,
     vllmEntries: [],
-    ollamaInstallMenu: { entry: null, hasUpgradableOllama: false },
+    ollamaInstallMenu: { entry: null, hasUpgradableOllama: false, binaryNeedsUpgrade: false },
     gpuNimCapable: false,
     ...overrides,
   };

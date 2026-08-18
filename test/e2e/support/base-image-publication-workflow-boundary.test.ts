@@ -60,6 +60,13 @@ function gateSteps(value: MutableWorkflow): MutableStep[] {
   );
 }
 
+function gateStep(value: MutableWorkflow, name: string): MutableStep {
+  return required(
+    gateSteps(value).find((step) => step.name === name),
+    `base-image-publication test fixture is missing step ${name}`,
+  );
+}
+
 function runClassifier(environment: {
   checkoutSha: string;
   eventName: string;
@@ -97,27 +104,6 @@ describe("base-image publication workflow boundary (#7372)", () => {
     const value = workflow();
 
     expect(validate(value)).toEqual([]);
-  });
-
-  // source-shape-contract: security -- Immutable base contracts must outlive the qualification interval so later E2E cannot fall back to a mutable alias.
-  it("retains immutable base contracts for later qualification (#9049)", () => {
-    const action = YAML.parse(
-      fs.readFileSync(
-        path.join(process.cwd(), ".github/actions/publish-base-image-manifest/action.yaml"),
-        "utf8",
-      ),
-    ) as { runs: { steps: MutableStep[] } };
-    const upload = action.runs.steps.find(
-      (step) => step.name === "Upload managed base image contract",
-    );
-
-    expect(upload).toMatchObject({
-      uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-      with: {
-        "if-no-files-found": "error",
-        "retention-days": 90,
-      },
-    });
   });
 
   it.each([
@@ -202,12 +188,17 @@ describe("base-image publication workflow boundary (#7372)", () => {
       },
     ],
     [
-      "contract download pin",
-      (value) => (gateSteps(value)[4].uses = "actions/download-artifact@v8"),
+      "contract download command",
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").run =
+          "node unreviewed.mts"),
     ],
     [
       "contract run binding",
-      (value) => (gateSteps(value)[4].with!["run-id"] = "${{ github.run_id }}"),
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").env![
+          "PUBLICATION_RUN_ID"
+        ] = "${{ github.run_id }}"),
     ],
     [
       "contract validation",

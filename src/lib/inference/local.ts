@@ -16,10 +16,13 @@ import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
+
+import { retryUntil } from "../core/retry";
 import { sleepSeconds } from "../core/wait";
 import { containerCanReachHostLoopback, isWsl, type WslDetectionOptions } from "../platform";
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
+
 import { resolveSharedLocalAdapterStateRoot } from "./local-adapter-lifecycle";
 import { detectNvidiaPlatform } from "./nim";
 import {
@@ -80,6 +83,7 @@ export function resetOllamaContainerPortCache(): void {
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
 export { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-probe";
+export { OLLAMA_PORT };
 
 // These tags are convenience aliases for callers that want to refer to a
 // specific bootstrap model by role rather than by string. The canonical
@@ -1083,9 +1087,9 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
   }
 }
 
+
 const CONTAINER_CHECK_MAX_ATTEMPTS = 3;
 const CONTAINER_CHECK_RETRY_DELAY_SECS = 2;
-
 export function validateLocalProvider(
   provider: string,
   runCaptureImpl?: RunCaptureFn,
@@ -1099,7 +1103,6 @@ export function validateLocalProvider(
   }
 
   const capture = runCaptureImpl ?? runCapture;
-  const sleep = sleepFn ?? sleepSeconds;
   const command = getLocalProviderHealthCheck(provider);
   if (!command) {
     if (provider === "vllm-local") {
@@ -1142,40 +1145,69 @@ export function validateLocalProvider(
     return { ok: true };
   }
 
-  // Retry container reachability check with backoff
-  for (let attempt = 1; attempt <= CONTAINER_CHECK_MAX_ATTEMPTS; attempt++) {
-    const containerOutput = capture(containerCommand, { ignoreError: true });
-    if (isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", containerOutput)) {
-      return { ok: true };
-    }
-    if (attempt < CONTAINER_CHECK_MAX_ATTEMPTS) {
-      sleep(CONTAINER_CHECK_RETRY_DELAY_SECS);
-    }
+  const sleep = sleepFn ?? sleepSeconds;
+  const containerOutput = retryUntil(
+    () => capture(containerCommand, { ignoreError: true }),
+    {
+      accept: (output) =>
+        isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", output),
+      retryDelaysMs: Array.from(
+        { length: CONTAINER_CHECK_MAX_ATTEMPTS - 1 },
+        () => CONTAINER_CHECK_RETRY_DELAY_SECS * 1_000,
+      ),
+      sleep: (milliseconds) => sleep(milliseconds / 1_000),
+    },
+  );
+  if (isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", containerOutput)) {
+    return { ok: true };
   }
 
   // All retries exhausted — collect diagnostics
   const diagnostic = collectContainerDiagnostic(containerCommand, capture);
+
+  if (diagnostic.probeImageUnavailable) {
+    return probeImageUnavailableResult(provider, diagnostic.text);
+  }
 
   switch (provider) {
     case "vllm-local":
       return {
         ok: false,
         message: `Local vLLM is responding on the host, but the Docker container reachability check failed for ${getContainerCheckUrl(provider)}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
-        diagnostic,
+        diagnostic: diagnostic.text,
       };
     case "ollama-local":
       return {
         ok: false,
         message: `Local Ollama is responding on ${getResolvedOllamaHost()}, but the Docker container reachability check failed for http://host.openshell.internal:${getOllamaContainerPort()}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
-        diagnostic,
+        diagnostic: diagnostic.text,
       };
     default:
       return {
         ok: false,
         message: "The selected local inference provider is unavailable from containers.",
-        diagnostic,
+        diagnostic: diagnostic.text,
       };
   }
+}
+
+/**
+ * Report a reachability check that never ran because Docker could not
+ * provide the probe image (#9308). Blaming the provider's network path here
+ * is a misreport: the reporter's environment had a working path once the
+ * image existed.
+ */
+function probeImageUnavailableResult(provider: string, diagnostic: string): ValidationResult {
+  const responding =
+    provider === "vllm-local"
+      ? "Local vLLM is responding on the host"
+      : `Local Ollama is responding on ${getResolvedOllamaHost()}`;
+  const providerLabel = provider === "vllm-local" ? "a vLLM" : "an Ollama";
+  return {
+    ok: false,
+    message: `${responding}, but the container reachability check could not run because Docker could not provide its probe image. This is a Docker image-pull failure, not ${providerLabel} networking failure.`,
+    diagnostic,
+  };
 }
 
 function getContainerCheckUrl(provider: string): string | null {
@@ -1195,13 +1227,62 @@ function getContainerCheckUrl(provider: string): string | null {
   }
 }
 
-function collectContainerDiagnostic(containerCommand: string[], capture: RunCaptureFn): string {
+type ContainerDiagnostic = { text: string; probeImageUnavailable: boolean };
+
+function containerRuntimeFailureDiagnostic(text: string): ContainerDiagnostic {
+  return { text, probeImageUnavailable: false };
+}
+
+/**
+ * Distinguish "Docker could not provide the probe image" from a general
+ * runtime failure using the stdout-only capture seam: the daemon answers
+ * `docker version` while `docker image inspect` finds no local copy of the
+ * probe image. Credential-helper failures land here (#9308) — a remote login
+ * session can lose access to Docker Desktop's credential store, so the pull
+ * fails and every probe run produces empty stdout.
+ *
+ * Image-absent-after-run-attempts proves the pull failed: `docker run` pulls
+ * an absent image before it creates the container, and `--add-host`, policy,
+ * and seccomp failures all happen after that pull. Five runs precede this
+ * check (three probes, two diagnostics), so a pullable image would be in the
+ * cache by now and a run that failed for any post-pull reason keeps the
+ * generic runtime diagnostic.
+ */
+function classifyContainerRunFailure(
+  dockerCommand: string[],
+  capture: RunCaptureFn,
+): ContainerDiagnostic {
+  const runtimeFailure = containerRuntimeFailureDiagnostic(
+    `Docker command failed (image pull error or runtime failure). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`,
+  );
+  const daemonVersion = capture(
+    [...dockerCommand, "version", "--format", "{{.Server.Version}}"],
+    { ignoreError: true },
+  );
+  if (!daemonVersion) return runtimeFailure;
+  const probeImageId = capture(
+    [...dockerCommand, "image", "inspect", "--format", "{{.Id}}", CONTAINER_REACHABILITY_IMAGE],
+    { ignoreError: true },
+  );
+  if (probeImageId) return runtimeFailure;
+  return {
+    text: `The probe image ${CONTAINER_REACHABILITY_IMAGE} is not in the local Docker image cache, and Docker could not pull it. The image is public and needs no credentials, but a Docker credential helper (credsStore in ~/.docker/config.json) can fail in a remote login session and block every pull. Pre-pull the image with an isolated Docker config, then resume: DOCKER_CONFIG=$(mktemp -d) docker pull ${CONTAINER_REACHABILITY_IMAGE} && nemoclaw onboard --resume`,
+    probeImageUnavailable: true,
+  };
+}
+
+function collectContainerDiagnostic(
+  containerCommand: string[],
+  capture: RunCaptureFn,
+): ContainerDiagnostic {
   const url = containerCommand.at(-1);
   const dockerRunIndex = containerCommand.indexOf("run");
   const addHostIndex = containerCommand.indexOf("--add-host");
   const hostAlias = containerCommand[addHostIndex + 1];
   if (!url || dockerRunIndex < 1 || addHostIndex < 0 || !hostAlias) {
-    return `Docker command failed (invalid reachability command). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`;
+    return containerRuntimeFailureDiagnostic(
+      `Docker command failed (invalid reachability command). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`,
+    );
   }
   const dockerCommand = containerCommand.slice(0, dockerRunIndex);
   try {
@@ -1244,7 +1325,7 @@ function collectContainerDiagnostic(containerCommand: string[], capture: RunCapt
     );
 
     if (!httpStatus && !hostsOutput) {
-      return `Docker command failed (image pull error or runtime failure). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`;
+      return classifyContainerRunFailure(dockerCommand, capture);
     }
 
     const parts: string[] = [];
@@ -1262,9 +1343,11 @@ function collectContainerDiagnostic(containerCommand: string[], capture: RunCapt
     parts.push(
       `Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times over ~${(CONTAINER_CHECK_MAX_ATTEMPTS - 1) * CONTAINER_CHECK_RETRY_DELAY_SECS}s`,
     );
-    return parts.join(". ") + ".";
+    return containerRuntimeFailureDiagnostic(parts.join(". ") + ".");
   } catch {
-    return `Docker command failed (image pull error or runtime failure). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`;
+    return containerRuntimeFailureDiagnostic(
+      `Docker command failed (image pull error or runtime failure). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`,
+    );
   }
 }
 

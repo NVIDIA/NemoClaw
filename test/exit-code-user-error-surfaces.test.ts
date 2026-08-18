@@ -186,8 +186,10 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
     ],
   ];
 
-  for (const [label, argv, expected] of cases) {
-    it(`${label} prints an error and exits non-zero`, testTimeoutOptions(30_000), () => {
+  it.each(cases)(
+    "%s prints an error and exits non-zero",
+    testTimeoutOptions(30_000),
+    (_label, argv, expected) => {
       const { status, signal, error, combined } = runCli(argv);
       // The process must have launched and exited on its own — not failed to
       // spawn and not been killed by a signal/timeout (which leaves
@@ -197,8 +199,8 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
       expect(combined.trim().length).toBeGreaterThan(0);
       expect(combined).toContain(expected);
       expect(status).toBeGreaterThan(0);
-    });
-  }
+    },
+  );
 
   // PRA-1 (#5974): exercise the NATIVE oclif argv route end-to-end through the
   // real binary. `dispatchCli` sends a leading `sandbox`/`internal` token

@@ -257,109 +257,108 @@ describe("complete managed-image publication workflow", () => {
     }
   });
 
-  it("starts after exact base contracts with complete main triggers and does not cancel release-tag runs (#7744)", () => {
-    const baseWorkflow = readWorkflow("base-image.yaml");
-    const managedWorkflow = readWorkflow("managed-images.yaml");
-    const publisher = required(
-      baseWorkflow.jobs?.["publish-managed-images"],
-      "base-image workflow is missing the managed-image publisher",
-    );
+  it.each([
+    {
+      agent: "hermes",
+      displayName: "Hermes",
+      image: "nvidia/nemoclaw/hermes-sandbox-base",
+      job: "build-and-push-hermes",
+      platformsJob: "build-hermes-platforms",
+    },
+    {
+      agent: "langchain-deepagents-code",
+      displayName: "Deep Agents Code",
+      image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+      job: "build-and-push-dcode",
+      platformsJob: "build-dcode-platforms",
+    },
+    {
+      agent: "openclaw",
+      displayName: "OpenClaw",
+      image: "nvidia/nemoclaw/sandbox-base",
+      job: "build-and-push-openclaw",
+      platformsJob: "build-openclaw-platforms",
+    },
+  ] as const)(
+    "starts the $agent publisher after exact base contracts without canceling release tags (#7744)",
+    (expectedPublisher) => {
+      const baseWorkflow = readWorkflow("base-image.yaml");
+      const managedWorkflow = readWorkflow("managed-images.yaml");
+      const publisher = required(
+        baseWorkflow.jobs?.["publish-managed-images"],
+        "base-image workflow is missing the managed-image publisher",
+      );
 
-    expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
-    expect(JSON.stringify(managedWorkflow)).not.toContain("config.plugins?.installs?.[id]");
-    const validationRun =
-      step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
-        .run ?? "";
-    expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
-    const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
-    const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
-    expect(channelGuardStart).toBeGreaterThan(-1);
-    expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
-    const weakenedWorkflow = structuredClone(managedWorkflow);
-    const weakenedValidation = step(
-      managedPublisher(weakenedWorkflow),
-      "Validate exact managed image before promotion",
-    );
-    weakenedValidation.run = weakenedValidation.run?.replace(
-      "!fs.lstatSync(manifestPath).isFile()",
-      "false",
-    );
-    expect(publicationBoundaryErrors(baseWorkflow, weakenedWorkflow)).toContain(
-      "exact managed image validation is missing lstatSync(manifestPath).isFile()",
-    );
-    const projectRootWeakenedWorkflow = structuredClone(managedWorkflow);
-    const projectRootWeakenedValidation = step(
-      managedPublisher(projectRootWeakenedWorkflow),
-      "Validate exact managed image before promotion",
-    );
-    projectRootWeakenedValidation.run = projectRootWeakenedValidation.run?.replace(
-      'path.join(nodeModulesRoot, ...name.split("/"))',
-      "",
-    );
-    expect(publicationBoundaryErrors(baseWorkflow, projectRootWeakenedWorkflow)).toContain(
-      'exact managed image validation is missing path.join(nodeModulesRoot, ...name.split("/"))',
-    );
-    expect(publisher).toMatchObject({
-      needs: [
-        "build-and-push-hermes",
-        "build-and-push-dcode",
-        "build-and-push-openclaw",
-        "reviewed-npm-audit",
-      ],
-      permissions: {
-        contents: "read",
-        packages: "write",
-      },
-      uses: "./.github/workflows/managed-images.yaml",
-    });
-    expect(publisher.if).toContain("github.repository == 'NVIDIA/NemoClaw'");
-    expect(publisher.if).toContain("github.ref == 'refs/heads/main'");
-    expect(publisher.if).toContain("startsWith(github.ref, 'refs/tags/v')");
+      expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
+      expect(JSON.stringify(managedWorkflow)).not.toContain("config.plugins?.installs?.[id]");
+      const validationRun =
+        step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
+          .run ?? "";
+      expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
+      const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
+      const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
+      expect(channelGuardStart).toBeGreaterThan(-1);
+      expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
+      const weakenedWorkflow = structuredClone(managedWorkflow);
+      const weakenedValidation = step(
+        managedPublisher(weakenedWorkflow),
+        "Validate exact managed image before promotion",
+      );
+      weakenedValidation.run = weakenedValidation.run?.replace(
+        "!fs.lstatSync(manifestPath).isFile()",
+        "false",
+      );
+      expect(publicationBoundaryErrors(baseWorkflow, weakenedWorkflow)).toContain(
+        "exact managed image validation is missing lstatSync(manifestPath).isFile()",
+      );
+      const projectRootWeakenedWorkflow = structuredClone(managedWorkflow);
+      const projectRootWeakenedValidation = step(
+        managedPublisher(projectRootWeakenedWorkflow),
+        "Validate exact managed image before promotion",
+      );
+      projectRootWeakenedValidation.run = projectRootWeakenedValidation.run?.replace(
+        'path.join(nodeModulesRoot, ...name.split("/"))',
+        "",
+      );
+      expect(publicationBoundaryErrors(baseWorkflow, projectRootWeakenedWorkflow)).toContain(
+        'exact managed image validation is missing path.join(nodeModulesRoot, ...name.split("/"))',
+      );
+      expect(publisher).toMatchObject({
+        needs: [
+          "build-and-push-hermes",
+          "build-and-push-dcode",
+          "build-and-push-openclaw",
+          "reviewed-npm-audit",
+        ],
+        permissions: {
+          contents: "read",
+          packages: "write",
+        },
+        uses: "./.github/workflows/managed-images.yaml",
+      });
+      expect(publisher.if).toContain("github.repository == 'NVIDIA/NemoClaw'");
+      expect(publisher.if).toContain("github.ref == 'refs/heads/main'");
+      expect(publisher.if).toContain("startsWith(github.ref, 'refs/tags/v')");
 
-    const reviewedAudit = required(
-      baseWorkflow.jobs?.["reviewed-npm-audit"],
-      "base-image workflow is missing the reviewed npm audit",
-    );
-    expect(reviewedAudit).toMatchObject({
-      if: "github.repository == 'NVIDIA/NemoClaw'",
-      permissions: { contents: "read" },
-      "runs-on": "ubuntu-latest",
-      "timeout-minutes": 15,
-    });
-    expect(step(reviewedAudit, "Checkout").with?.["persist-credentials"]).toBe(false);
-    expect(step(reviewedAudit, "Audit reviewed production npm graphs")).toMatchObject({
-      uses: "./.github/actions/ci-reviewed-npm-audit",
-      with: {
-        "report-dir": "artifacts/reviewed-npm-audit",
-        "target-root": "${{ github.workspace }}",
-      },
-    });
+      const reviewedAudit = required(
+        baseWorkflow.jobs?.["reviewed-npm-audit"],
+        "base-image workflow is missing the reviewed npm audit",
+      );
+      expect(reviewedAudit).toMatchObject({
+        if: "github.repository == 'NVIDIA/NemoClaw'",
+        permissions: { contents: "read" },
+        "runs-on": "ubuntu-latest",
+        "timeout-minutes": 15,
+      });
+      expect(step(reviewedAudit, "Checkout").with?.["persist-credentials"]).toBe(false);
+      expect(step(reviewedAudit, "Audit reviewed production npm graphs")).toMatchObject({
+        uses: "./.github/actions/ci-reviewed-npm-audit",
+        with: {
+          "report-dir": "artifacts/reviewed-npm-audit",
+          "target-root": "${{ github.workspace }}",
+        },
+      });
 
-    const basePublishers = [
-      {
-        agent: "hermes",
-        displayName: "Hermes",
-        image: "nvidia/nemoclaw/hermes-sandbox-base",
-        job: "build-and-push-hermes",
-        platformsJob: "build-hermes-platforms",
-      },
-      {
-        agent: "langchain-deepagents-code",
-        displayName: "Deep Agents Code",
-        image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
-        job: "build-and-push-dcode",
-        platformsJob: "build-dcode-platforms",
-      },
-      {
-        agent: "openclaw",
-        displayName: "OpenClaw",
-        image: "nvidia/nemoclaw/sandbox-base",
-        job: "build-and-push-openclaw",
-        platformsJob: "build-openclaw-platforms",
-      },
-    ] as const;
-
-    for (const expectedPublisher of basePublishers) {
       const basePublisher = required(
         baseWorkflow.jobs?.[expectedPublisher.job],
         `base-image workflow is missing ${expectedPublisher.agent} manifest publisher`,
@@ -398,10 +397,10 @@ describe("complete managed-image publication workflow", () => {
           }),
         ]),
       );
-    }
-  });
+    },
+  );
 
-  it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
+  function verifyShippedAgentImageBuildAndExercise() {
     const workflow = readWorkflow("managed-images.yaml");
     const reviewedAudit = managedPrReviewedAudit(workflow);
     const prBuilder = managedPrBuilder(workflow);
@@ -511,7 +510,7 @@ describe("complete managed-image publication workflow", () => {
     expect(resolveBase).toContain('tar -C "$local_base_oci" -xf "$local_base_oci_archive"');
     expect(resolveBase).toContain("if length == 1 then .[0].digest");
     expect(resolveBase).toContain(
-      "printf 'oci=%s@%s\\n' \"$local_base_oci\" \"$local_base_oci_digest\"",
+      'printf \'oci=%s@%s\\n\' "$local_base_oci" "$local_base_oci_digest"',
     );
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
@@ -676,7 +675,12 @@ describe("complete managed-image publication workflow", () => {
     expect(exportContract.run).toContain("revision: $revision");
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
-  });
+  }
+
+  it(
+    "builds and exercises every shipped agent from an exact PR image before merge (#7744)",
+    verifyShippedAgentImageBuildAndExercise,
+  );
 
   it("rebuilds the staging QA base from exact source before validating the Deep Agents Code repair (#8665)", () => {
     const workflow = readWorkflow("managed-images.yaml");
@@ -711,9 +715,9 @@ describe("complete managed-image publication workflow", () => {
       path: "staging-qa-base-source",
       "persist-credentials": false,
     });
-    for (const action of steps.filter((candidate) => candidate.uses)) {
+    steps.filter((candidate) => candidate.uses).forEach((action) => {
       expect(action.uses, action.name).toMatch(fullShaAction);
-    }
+    });
     expect(drift.run).toBe(
       step(managedPrBuilder(workflow), "Reproduce reviewed discovery permission drift").run,
     );
@@ -1022,11 +1026,11 @@ fi
     const promoter = managedPromoter(workflow);
     const steps = publisher.steps ?? [];
 
-    for (const action of [...steps, ...(promoter.steps ?? [])].filter(
+    [...steps, ...(promoter.steps ?? [])].filter(
       (candidate) => candidate.uses,
-    )) {
+    ).forEach((action) => {
       expect(action.uses, action.name).toMatch(fullShaAction);
-    }
+    });
     expect(step(publisher, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(publisher, "Download exact base image contract").with).toMatchObject({
       name: "managed-base-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}",
@@ -1063,24 +1067,22 @@ fi
     expect(base.run).toContain('imagetools inspect "$platform_reference"');
 
     const contract = step(publisher, "Export validated managed image candidate");
-    for (const marker of [
-      "--arg baseReference",
-      "--arg digest",
-      "--arg platform",
-      "--arg cohort",
-      "--arg revision",
-      "--arg cohort",
-      "--argjson runAttempt",
-      "--argjson runId",
-      "contractVersion: 2",
-      'phase: "candidate"',
-      "--slurpfile publicationEvidence",
-      "publicationEvidence: $publicationEvidence[0]",
-      "https://slsa.dev/provenance/v1",
-      "https://spdx.dev/Document",
-    ]) {
-      expect(contract.run).toContain(marker);
-    }
+    expect([
+          "--arg baseReference",
+          "--arg digest",
+          "--arg platform",
+          "--arg cohort",
+          "--arg revision",
+          "--arg cohort",
+          "--argjson runAttempt",
+          "--argjson runId",
+          "contractVersion: 2",
+          'phase: "candidate"',
+          "--slurpfile publicationEvidence",
+          "publicationEvidence: $publicationEvidence[0]",
+          "https://slsa.dev/provenance/v1",
+          "https://spdx.dev/Document",
+        ].every((marker) => contract.run?.includes(marker) === true)).toBe(true);
     expect(step(publisher, "Upload validated managed image candidate").with).toMatchObject({
       name: "managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}",
       path: "${{ runner.temp }}/managed-image-candidate/contract.json",
@@ -1174,10 +1176,10 @@ fi
     expect(steps.indexOf(barrier)).toBeLessThan(steps.indexOf(promotion));
     expect(steps.indexOf(revalidate)).toBeLessThan(steps.indexOf(promotion));
     expect(durableUploads).toHaveLength(7);
-    for (const upload of durableUploads) {
+    durableUploads.forEach((upload) => {
       expect(steps.indexOf(promotion)).toBeLessThan(steps.indexOf(upload));
       expect(steps.indexOf(upload)).toBeLessThan(steps.indexOf(pointer));
-    }
+    });
 
     expect(promotion.run).toContain("for agent in openclaw hermes langchain-deepagents-code");
     expect(promotion.run).toContain('--metadata-file "$cohort_metadata"');
@@ -1389,13 +1391,13 @@ fi
     expect(accepted.calls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
       expectedPullCalls.sort(),
     );
-    for (const pull of expectedPullCalls) {
+    expectedPullCalls.forEach((pull) => {
       const index = accepted.calls.indexOf(pull);
       const reference = pull.match(/^pull --platform linux\/(?:amd64|arm64) (.+)$/u)?.[1];
       expect(reference).toBeDefined();
       expect(index).toBeGreaterThanOrEqual(0);
       expect(accepted.calls[index + 1]).toBe(`image rm ${reference}`);
-    }
+    });
     expect(lastCohortStage).toBeGreaterThanOrEqual(0);
     expect(rootPointer).toBeGreaterThan(lastCohortStage);
     expect(acceptedCalls).not.toContain(`hermes-sandbox:${revision}`);
