@@ -536,17 +536,18 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
-  it("ignores malformed existing plugin install registries while regenerating config", () => {
-    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  it.each([null, { plugins: null }, { plugins: { installs: {} } }])(
+    "ignores malformed existing plugin install registry %# while regenerating config",
+    (existing) => {
+      const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
 
-    for (const existing of [null, { plugins: null }, { plugins: { installs: {} } }]) {
       fs.writeFileSync(configPath, JSON.stringify(existing));
       const config = runConfigScript();
       expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
       expect(config.plugins?.installs).toBeUndefined();
-    }
-  });
+    },
+  );
 
   it("emits canonical placeholders and proxy routing for non-Slack channels", async () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
@@ -948,36 +949,32 @@ describe("generate-openclaw-config.mts: config generation", () => {
     );
   });
 
-  it("rejects extras whose workspace points anywhere but the canonical workspace-<id> slot", () => {
+  it.each([
+    "/sandbox/.openclaw",
+    "/sandbox/.openclaw/openclaw.json",
+    "/sandbox/.openclaw/credentials",
+    "/sandbox/.openclaw/workspace",
+    "/sandbox/.openclaw/workspace-other",
+  ])("rejects extra workspace %s outside the canonical workspace-<id> slot", (workspace) => {
     // The runtime startup script provisions /sandbox/.openclaw/workspace-<id>
     // as the per-agent workspace. Pointing at sibling paths (gateway state,
     // openclaw.json, credentials/) blurs that isolation boundary.
-    for (const workspace of [
-      "/sandbox/.openclaw",
-      "/sandbox/.openclaw/openclaw.json",
-      "/sandbox/.openclaw/credentials",
-      "/sandbox/.openclaw/workspace",
-      "/sandbox/.openclaw/workspace-other",
-    ]) {
-      expectBuildConfigError(
-        { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ workspace })]) },
-        /workspace must equal "\/sandbox\/\.openclaw\/workspace-research"/,
-      );
-    }
+    expectBuildConfigError(
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ workspace })]) },
+      /workspace must equal "\/sandbox\/\.openclaw\/workspace-research"/,
+    );
   });
 
-  it("rejects extras whose agentDir points anywhere but the canonical agents/<id> slot", () => {
-    for (const agentDir of [
-      "/sandbox/.openclaw",
-      "/sandbox/.openclaw/agents",
-      "/sandbox/.openclaw/agents/other",
-      "/sandbox/.openclaw/openclaw.json",
-    ]) {
-      expectBuildConfigError(
-        { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ agentDir })]) },
-        /agentDir must equal "\/sandbox\/\.openclaw\/agents\/research"/,
-      );
-    }
+  it.each([
+    "/sandbox/.openclaw",
+    "/sandbox/.openclaw/agents",
+    "/sandbox/.openclaw/agents/other",
+    "/sandbox/.openclaw/openclaw.json",
+  ])("rejects extra agentDir %s outside the canonical agents/<id> slot", (agentDir) => {
+    expectBuildConfigError(
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ agentDir })]) },
+      /agentDir must equal "\/sandbox\/\.openclaw\/agents\/research"/,
+    );
   });
 
   it("rejects extras that lack a tools policy", () => {
@@ -1235,8 +1232,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   // OpenClaw's own Ollama detector does not recognise — so we force the
   // flag here. Cloud providers and other local backends must not be
   // affected.
-  it("enables supportsUsageInStreaming for Ollama provider keys (#2747)", () => {
-    for (const providerKey of ["ollama", "ollama-local"]) {
+  it.each(["ollama", "ollama-local"])(
+    "enables supportsUsageInStreaming for Ollama provider key %s (#2747)",
+    (providerKey) => {
       const config = runConfigScript({
         NEMOCLAW_MODEL: "qwen3.5:9b",
         NEMOCLAW_PROVIDER_KEY: providerKey,
@@ -1246,33 +1244,29 @@ describe("generate-openclaw-config.mts: config generation", () => {
       });
       const model = config.models.providers[providerKey].models[0];
       expect(model.compat?.supportsUsageInStreaming).toBe(true);
-    }
-  });
+    },
+  );
 
-  it("does not enable supportsUsageInStreaming for non-Ollama providers (#2747)", () => {
-    const cases = [
-      { NEMOCLAW_PROVIDER_KEY: "openai", NEMOCLAW_INFERENCE_BASE_URL: "https://api.openai.com/v1" },
-      {
-        NEMOCLAW_PROVIDER_KEY: "anthropic",
-        NEMOCLAW_INFERENCE_BASE_URL: "https://api.anthropic.com",
-      },
-      { NEMOCLAW_PROVIDER_KEY: "vllm", NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1" },
-      {
-        NEMOCLAW_PROVIDER_KEY: "nim-local",
-        NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
-      },
-    ];
-
-    for (const envCase of cases) {
-      const config = runConfigScript({
-        NEMOCLAW_MODEL: "test-model",
-        NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
-        NEMOCLAW_INFERENCE_API: "openai-completions",
-        ...envCase,
-      });
-      const model = config.models.providers[envCase.NEMOCLAW_PROVIDER_KEY].models[0];
-      expect(model.compat?.supportsUsageInStreaming).toBeUndefined();
-    }
+  it.each([
+    { NEMOCLAW_PROVIDER_KEY: "openai", NEMOCLAW_INFERENCE_BASE_URL: "https://api.openai.com/v1" },
+    {
+      NEMOCLAW_PROVIDER_KEY: "anthropic",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://api.anthropic.com",
+    },
+    { NEMOCLAW_PROVIDER_KEY: "vllm", NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1" },
+    {
+      NEMOCLAW_PROVIDER_KEY: "nim-local",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+    },
+  ])("does not enable supportsUsageInStreaming for $NEMOCLAW_PROVIDER_KEY (#2747)", (envCase) => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "test-model",
+      NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      ...envCase,
+    });
+    const model = config.models.providers[envCase.NEMOCLAW_PROVIDER_KEY].models[0];
+    expect(model.compat?.supportsUsageInStreaming).toBeUndefined();
   });
 
   // If a future model-specific-setup manifest declares
@@ -1292,15 +1286,15 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.models.providers.ollama.models[0].compat.supportsUsageInStreaming).toBe(false);
   });
 
-  it("does not activate the OpenClaw Kimi setup for non-matching routes", () => {
-    const cases = [
-      { NEMOCLAW_MODEL: "deepseek-ai/DeepSeek-V4-Flash" },
-      { NEMOCLAW_PROVIDER_KEY: "openai" },
-      { NEMOCLAW_INFERENCE_API: "responses" },
-      { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
-    ];
-
-    for (const envCase of cases) {
+  it.each([
+    { NEMOCLAW_MODEL: "deepseek-ai/DeepSeek-V4-Flash" },
+    { NEMOCLAW_PROVIDER_KEY: "openai" },
+    { NEMOCLAW_INFERENCE_API: "responses" },
+    { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
+  ])(
+    "does not activate the OpenClaw Kimi setup for non-matching route %#",
+    { timeout: 20_000 },
+    (envCase) => {
       const config = runConfigScript({
         NEMOCLAW_MODEL: "moonshotai/kimi-k2.6",
         NEMOCLAW_PROVIDER_KEY: "inference",
@@ -1318,34 +1312,32 @@ describe("generate-openclaw-config.mts: config generation", () => {
       expect(config.plugins.entries["nemoclaw-kimi-inference-compat"]).toBeUndefined();
       expect(config.plugins.load).toBeUndefined();
       expect(config.tools?.toolSearch).toEqual(STRUCTURED_TOOL_SEARCH);
-    }
-  }, 20_000);
+    },
+  );
   // #4780: keep false safeguards until live search can replace the direct-tool fallback.
-  it("keeps Tool Search disabled for Nemotron managed inference (#4780)", () => {
-    for (const model of [
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia/nemotron-3-ultra-550b-a55b",
-      "nvidia/nvidia/nemotron-3-ultra",
-    ]) {
-      const config = runConfigScript({
-        NEMOCLAW_MODEL: model,
-        NEMOCLAW_PROVIDER_KEY: "inference",
-        NEMOCLAW_PRIMARY_MODEL_REF: `inference/${model}`,
-        NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
-        NEMOCLAW_INFERENCE_API: "openai-completions",
-      });
-      expect(config.tools?.toolSearch, model).toBe(false);
-    }
+  it.each([
+    "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "nvidia/nvidia/nemotron-3-ultra",
+  ])("keeps Tool Search disabled for Nemotron model %s (#4780)", (model) => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: model,
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: `inference/${model}`,
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+    });
+    expect(config.tools?.toolSearch, model).toBe(false);
   });
-  it("keeps structured Tool Search for non-matching Nemotron routes (#4780)", () => {
-    const cases = [
-      { NEMOCLAW_MODEL: "nvidia/nemotron-3-nano:30b" },
-      { NEMOCLAW_PROVIDER_KEY: "nvidia" },
-      { NEMOCLAW_INFERENCE_API: "responses" },
-      { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
-    ];
-
-    for (const envCase of cases) {
+  it.each([
+    { NEMOCLAW_MODEL: "nvidia/nemotron-3-nano:30b" },
+    { NEMOCLAW_PROVIDER_KEY: "nvidia" },
+    { NEMOCLAW_INFERENCE_API: "responses" },
+    { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
+  ])(
+    "keeps structured Tool Search for non-matching Nemotron route %# (#4780)",
+    { timeout: 20_000 },
+    (envCase) => {
       const config = runConfigScript({
         NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
         NEMOCLAW_PROVIDER_KEY: "inference",
@@ -1356,8 +1348,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
       });
 
       expect(config.tools?.toolSearch).toEqual(STRUCTURED_TOOL_SEARCH);
-    }
-  }, 20_000);
+    },
+  );
 
   it("rejects model-specific setup manifests without a known agent", () => {
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");

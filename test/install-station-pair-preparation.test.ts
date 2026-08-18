@@ -282,16 +282,15 @@ describe("deterministic dual-DGX Station peer discovery", () => {
     expect(deriveDiscoveryCandidates(stationHost("local"))).toEqual(["10.10.0.2", "10.10.0.6"]);
   });
 
-  it.each([
-    "DGX-Station",
-    "P3830",
-    "NVIDIA Station GB300",
-  ])("accepts an existing Station firmware product identifier: %s", (productName) => {
-    const host = stationHost("local");
-    host.productName = productName;
+  it.each(["DGX-Station", "P3830", "NVIDIA Station GB300"])(
+    "accepts an existing Station firmware product identifier: %s",
+    (productName) => {
+      const host = stationHost("local");
+      host.productName = productName;
 
-    expect(deriveDiscoveryCandidates(host)).toEqual(["10.10.0.2", "10.10.0.6"]);
-  });
+      expect(deriveDiscoveryCandidates(host)).toEqual(["10.10.0.2", "10.10.0.6"]);
+    },
+  );
 
   it("rejects extra rails, duplicate identities, and non-jumbo links", () => {
     const extraRail = stationHost("local");
@@ -584,49 +583,48 @@ describe("dual-DGX Station reboot resume and reuse", () => {
       "remote:10.10.0.2:--verify",
     ]);
   });
-  it("rejects revision, helper, host-key, GPU, and rail substitution on resume", () => {
-    const scenarios: Array<{
-      name: string;
-      configure(harness: PreparationHarness): void;
-      options?: ReturnType<typeof preparationOptions>;
-      expected: RegExp;
-    }> = [
-      {
-        name: "revision",
-        configure: () => undefined,
-        options: { revision: "d".repeat(40), helperSha256: HELPER_SHA256 },
-        expected: /requires NemoClaw revision/,
+  it.each([
+    {
+      name: "revision",
+      configure: () => undefined,
+      options: { revision: "d".repeat(40), helperSha256: HELPER_SHA256 },
+      expected: /requires NemoClaw revision/,
+    },
+    {
+      name: "helper",
+      configure: () => undefined,
+      options: { revision: REVISION, helperSha256: "d".repeat(64) },
+      expected: /helper changed/,
+    },
+    {
+      name: "host key",
+      configure: (harness) => {
+        harness.trusted.set("10.10.0.2", sshBinding("10.10.0.2", "AAAAC3NzaChangedKey"));
       },
-      {
-        name: "helper",
-        configure: () => undefined,
-        options: { revision: REVISION, helperSha256: "d".repeat(64) },
-        expected: /helper changed/,
+      expected: /host-key identity changed/,
+    },
+    {
+      name: "GPU",
+      configure: (harness) => {
+        harness.peer.gpus[0].uuid = "GPU-SUBSTITUTED-0003";
       },
-      {
-        name: "host key",
-        configure: (harness) => {
-          harness.trusted.set("10.10.0.2", sshBinding("10.10.0.2", "AAAAC3NzaChangedKey"));
-        },
-        expected: /host-key identity changed/,
+      expected: /physical dual-Station pair changed/,
+    },
+    {
+      name: "rail",
+      configure: (harness) => {
+        harness.peer.rails[0].macAddress = "02:00:00:00:00:12";
       },
-      {
-        name: "GPU",
-        configure: (harness) => {
-          harness.peer.gpus[0].uuid = "GPU-SUBSTITUTED-0003";
-        },
-        expected: /physical dual-Station pair changed/,
-      },
-      {
-        name: "rail",
-        configure: (harness) => {
-          harness.peer.rails[0].macAddress = "02:00:00:00:00:12";
-        },
-        expected: /physical dual-Station pair changed/,
-      },
-    ];
-
-    for (const scenario of scenarios) {
+      expected: /physical dual-Station pair changed/,
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    configure: (harness: PreparationHarness) => void;
+    options?: ReturnType<typeof preparationOptions>;
+    expected: RegExp;
+  }>)(
+    "rejects revision, helper, host-key, GPU, and rail substitution on resume [$name]",
+    (scenario) => {
       const harness = new PreparationHarness();
       harness.resume = readyState();
       trustFirstRail(harness);
@@ -639,8 +637,8 @@ describe("dual-DGX Station reboot resume and reuse", () => {
         harness.calls.some((call) => call.startsWith("remote:")),
         scenario.name,
       ).toBe(false);
-    }
-  });
+    },
+  );
 
   it("preserves a remote mismatch as a pinned fail-closed state", () => {
     const harness = new PreparationHarness();
@@ -816,40 +814,35 @@ describe.sequential("dual-DGX Station trust and resume-state boundaries", () => 
     );
   });
 
-  it("does not expose ambient credentials or shell-loader variables to probes and helpers", () => {
-    const env = buildStationPrepSubprocessEnv({
-      HOME: "/home/operator",
-      PATH: "/usr/bin:/bin",
-      SSH_AUTH_SOCK: "/run/user/1000/agent",
-      HTTPS_PROXY: "http://proxy.example:8080",
-      LC_CTYPE: "en_US.UTF-8",
-      NVIDIA_API_KEY: "secret",
-      HF_TOKEN: "secret",
-      BASH_ENV: "/tmp/evil",
-      ENV: "/tmp/evil",
-      LD_PRELOAD: "/tmp/evil.so",
-      SSH_ASKPASS: "/tmp/evil",
-    });
-    expect(env).toMatchObject({
-      HOME: "/home/operator",
-      PATH: "/usr/bin:/bin",
-      SSH_AUTH_SOCK: "/run/user/1000/agent",
-      HTTPS_PROXY: "http://proxy.example:8080",
-      LC_ALL: "C",
-      LC_CTYPE: "en_US.UTF-8",
-      LANG: "C",
-    });
-    for (const forbidden of [
-      "NVIDIA_API_KEY",
-      "HF_TOKEN",
-      "BASH_ENV",
-      "ENV",
-      "LD_PRELOAD",
-      "SSH_ASKPASS",
-    ]) {
+  it.each(["NVIDIA_API_KEY", "HF_TOKEN", "BASH_ENV", "ENV", "LD_PRELOAD", "SSH_ASKPASS"])(
+    "does not expose ambient credentials or shell-loader variables to probes and helpers [case %#]",
+    (forbidden) => {
+      const env = buildStationPrepSubprocessEnv({
+        HOME: "/home/operator",
+        PATH: "/usr/bin:/bin",
+        SSH_AUTH_SOCK: "/run/user/1000/agent",
+        HTTPS_PROXY: "http://proxy.example:8080",
+        LC_CTYPE: "en_US.UTF-8",
+        NVIDIA_API_KEY: "secret",
+        HF_TOKEN: "secret",
+        BASH_ENV: "/tmp/evil",
+        ENV: "/tmp/evil",
+        LD_PRELOAD: "/tmp/evil.so",
+        SSH_ASKPASS: "/tmp/evil",
+      });
+      expect(env).toMatchObject({
+        HOME: "/home/operator",
+        PATH: "/usr/bin:/bin",
+        SSH_AUTH_SOCK: "/run/user/1000/agent",
+        HTTPS_PROXY: "http://proxy.example:8080",
+        LC_ALL: "C",
+        LC_CTYPE: "en_US.UTF-8",
+        LANG: "C",
+      });
+
       expect(env).not.toHaveProperty(forbidden);
-    }
-  });
+    },
+  );
 
   it("forces every remote helper sudo call through noninteractive mode", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-sudo-"));
@@ -954,91 +947,91 @@ fi
     }
   });
 
-  it("uses only deterministic rail candidates without trust enrollment or network discovery", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-command-boundary-"));
-    const bin = path.join(root, "bin");
-    const stateDirectory = path.join(root, "state");
-    const helper = path.join(root, "prepare-dgx-station-host.sh");
-    const state = path.join(stateDirectory, "resume.json");
-    const forbiddenLog = path.join(root, "forbidden.log");
-    fs.mkdirSync(bin, { mode: 0o700 });
-    fs.mkdirSync(stateDirectory, { mode: 0o700 });
-    fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
-    fs.writeFileSync(
-      path.join(bin, "python3"),
-      `#!/usr/bin/env bash\ncat <<'JSON'\n${JSON.stringify(stationHost("local"))}\nJSON\n`,
-      { mode: 0o700 },
-    );
-    fs.writeFileSync(path.join(bin, "ssh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o700 });
-    for (const command of [
-      "ssh-keyscan",
-      "arp-scan",
-      "avahi-browse",
-      "dns-sd",
-      "lldpctl",
-      "nmap",
-      "mdns-scan",
-    ]) {
+  it.each(
+    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
+  )(
+    "uses only deterministic rail candidates without trust enrollment or network discovery [%s]",
+    (command) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-command-boundary-"));
+      const bin = path.join(root, "bin");
+      const stateDirectory = path.join(root, "state");
+      const helper = path.join(root, "prepare-dgx-station-host.sh");
+      const state = path.join(stateDirectory, "resume.json");
+      const forbiddenLog = path.join(root, "forbidden.log");
+      fs.mkdirSync(bin, { mode: 0o700 });
+      fs.mkdirSync(stateDirectory, { mode: 0o700 });
+      fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(
+        path.join(bin, "python3"),
+        `#!/usr/bin/env bash\ncat <<'JSON'\n${JSON.stringify(stationHost("local"))}\nJSON\n`,
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(path.join(bin, "ssh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o700 });
+
       fs.writeFileSync(
         path.join(bin, command),
         `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
         { mode: 0o700 },
       );
-    }
 
-    try {
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--no-warnings",
-          "--experimental-strip-types",
-          COORDINATOR,
-          "--helper",
-          helper,
-          "--state",
-          state,
-          "--revision",
-          REVISION,
-        ],
-        {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: root,
-            PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--no-warnings",
+            "--experimental-strip-types",
+            COORDINATOR,
+            "--helper",
+            helper,
+            "--state",
+            state,
+            "--revision",
+            REVISION,
+          ],
+          {
+            cwd: REPO_ROOT,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              HOME: root,
+              PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+            },
+            timeout: 20_000,
+            killSignal: "SIGKILL",
           },
-          timeout: 20_000,
-          killSignal: "SIGKILL",
-        },
-      );
+        );
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ kind: "single-station" });
-      expect(fs.existsSync(forbiddenLog)).toBe(false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({ kind: "single-station" });
+        expect(fs.existsSync(forbiddenLog)).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
-  it("keeps forbidden discovery and trust enrollment unreachable through pair qualification", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-ready-boundary-"));
-    const bin = path.join(root, "bin");
-    const stateDirectory = path.join(root, "state");
-    const helper = path.join(root, "prepare-dgx-station-host.sh");
-    const state = path.join(stateDirectory, "resume.json");
-    const knownHosts = path.join(root, "known_hosts");
-    const forbiddenLog = path.join(root, "forbidden.log");
-    fs.mkdirSync(bin, { mode: 0o700 });
-    fs.mkdirSync(stateDirectory, { mode: 0o700 });
-    fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
-    fs.writeFileSync(knownHosts, "fixture\n", { mode: 0o600 });
-    fs.writeFileSync(path.join(bin, "docker"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o700,
-    });
-    fs.writeFileSync(
-      path.join(bin, "python3"),
-      `#!/usr/bin/env bash
+  it.each(
+    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
+  )(
+    "keeps forbidden discovery and trust enrollment unreachable through pair qualification [%s]",
+    (command) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-ready-boundary-"));
+      const bin = path.join(root, "bin");
+      const stateDirectory = path.join(root, "state");
+      const helper = path.join(root, "prepare-dgx-station-host.sh");
+      const state = path.join(stateDirectory, "resume.json");
+      const knownHosts = path.join(root, "known_hosts");
+      const forbiddenLog = path.join(root, "forbidden.log");
+      fs.mkdirSync(bin, { mode: 0o700 });
+      fs.mkdirSync(stateDirectory, { mode: 0o700 });
+      fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(knownHosts, "fixture\n", { mode: 0o600 });
+      fs.writeFileSync(path.join(bin, "docker"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o700,
+      });
+      fs.writeFileSync(
+        path.join(bin, "python3"),
+        `#!/usr/bin/env bash
 set -Eeuo pipefail
 cat >/dev/null
 if (($# == 1)); then
@@ -1051,11 +1044,11 @@ ${stationConnectivity("local")}
 JSON
 fi
 `,
-      { mode: 0o700 },
-    );
-    fs.writeFileSync(
-      path.join(bin, "ssh-keygen"),
-      `#!/usr/bin/env bash
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        path.join(bin, "ssh-keygen"),
+        `#!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ " $* " == *" -F 10.10.0.2 "* ]]; then
   printf '%s\n' '10.10.0.2 ssh-ed25519 ${HOST_KEY_DATA}'
@@ -1066,11 +1059,11 @@ if [[ " $* " == *" -F "* ]]; then
 fi
 printf '%s\n' '256 ${HOST_KEY_FINGERPRINT} fixture (ED25519)'
 `,
-      { mode: 0o700 },
-    );
-    fs.writeFileSync(
-      path.join(bin, "ssh"),
-      `#!/usr/bin/env bash
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        path.join(bin, "ssh"),
+        `#!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ " $* " == *" -G "* ]]; then
   target=''
@@ -1124,58 +1117,50 @@ if [[ " $* " == *'prepare-dgx-station-host.sh'* ]]; then
 fi
 exit 96
 `,
-      { mode: 0o700 },
-    );
-    for (const command of [
-      "ssh-keyscan",
-      "arp-scan",
-      "avahi-browse",
-      "dns-sd",
-      "lldpctl",
-      "nmap",
-      "mdns-scan",
-    ]) {
+        { mode: 0o700 },
+      );
+
       fs.writeFileSync(
         path.join(bin, command),
         `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
         { mode: 0o700 },
       );
-    }
 
-    try {
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--no-warnings",
-          "--experimental-strip-types",
-          COORDINATOR,
-          "--helper",
-          helper,
-          "--state",
-          state,
-          "--revision",
-          REVISION,
-        ],
-        {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: root,
-            PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--no-warnings",
+            "--experimental-strip-types",
+            COORDINATOR,
+            "--helper",
+            helper,
+            "--state",
+            state,
+            "--revision",
+            REVISION,
+          ],
+          {
+            cwd: REPO_ROOT,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              HOME: root,
+              PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+            },
+            timeout: 20_000,
+            killSignal: "SIGKILL",
           },
-          timeout: 20_000,
-          killSignal: "SIGKILL",
-        },
-      );
+        );
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ kind: "ready", peerTarget: "10.10.0.2" });
-      expect(fs.existsSync(forbiddenLog)).toBe(false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({ kind: "ready", peerTarget: "10.10.0.2" });
+        expect(fs.existsSync(forbiddenLog)).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("dual-DGX Station installer handoff", () => {

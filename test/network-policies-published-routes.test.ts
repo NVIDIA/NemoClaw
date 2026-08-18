@@ -141,21 +141,23 @@ describe("shared Network Policies published routes", () => {
     expect(findBrokenPublishedRoutes(CUSTOMIZE_POLICY_SOURCE, index)).toEqual([]);
   });
 
-  it("publishes the bounded policy task set for Deep Agents", () => {
+  it.each(DEEPAGENTS_POLICY_ROUTES)("publishes the Deep Agents policy route %s", (route) => {
     const index = buildPublishedRouteIndex();
-
-    for (const route of DEEPAGENTS_POLICY_ROUTES) {
-      expect(index.routes.has(route), route).toBe(true);
-    }
-    for (const route of DEEPAGENTS_EXCLUDED_POLICY_ROUTES) {
-      expect(index.routes.has(route), route).toBe(false);
-    }
+    expect(index.routes.has(route), route).toBe(true);
   });
 
-  it("publishes shared policy configuration pages for every supported agent", () => {
-    const index = buildPublishedRouteIndex();
+  it.each(DEEPAGENTS_EXCLUDED_POLICY_ROUTES)(
+    "excludes the Deep Agents policy route %s",
+    (route) => {
+      const index = buildPublishedRouteIndex();
+      expect(index.routes.has(route), route).toBe(false);
+    },
+  );
 
-    for (const source of SHARED_CONFIGURATION_SOURCES) {
+  it.each(SHARED_CONFIGURATION_SOURCES)(
+    "publishes the shared %s policy page for every supported agent",
+    (source) => {
+      const index = buildPublishedRouteIndex();
       const slug = source
         .split("/")
         .at(-1)
@@ -171,8 +173,8 @@ describe("shared Network Policies published routes", () => {
         `/user-guide/openclaw/network-policy/configure-policies/${slug}`,
       ]);
       expect(findBrokenPublishedRoutes(source, index)).toEqual([]);
-    }
-  });
+    },
+  );
 
   it("keeps raw TLS configuration scoped to OpenClaw and Hermes", () => {
     const index = buildPublishedRouteIndex();
@@ -253,13 +255,16 @@ describe("shared Network Policies published routes", () => {
     ]);
   });
 
-  it("preserves compatibility anchors on the retained policy routes (#7495)", () => {
-    const customizePolicy = readDoc(CUSTOMIZE_POLICY_SOURCE);
-
-    expect(customizePolicy).toContain("## Custom Preset Files");
-    for (const { anchors, target } of LEGACY_CUSTOMIZE_POLICY_POINTERS) {
+  it.each(LEGACY_CUSTOMIZE_POLICY_POINTERS)(
+    "preserves the compatibility anchors before $target (#7495)",
+    ({ anchors, target }) => {
+      const customizePolicy = readDoc(CUSTOMIZE_POLICY_SOURCE);
       expectUniqueAnchorsBeforePointer(customizePolicy, anchors, target);
-    }
+    },
+  );
+
+  it("preserves retained policy sections (#7495)", () => {
+    expect(readDoc(CUSTOMIZE_POLICY_SOURCE)).toContain("## Custom Preset Files");
     expect(readDoc(INTEGRATION_POLICY_SOURCE)).toContain("## Gmail With an App Password");
   });
 });

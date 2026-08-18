@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-release-notes
-description: Drafts the post-tag NemoClaw Announcement from live GitHub tag and compare data. Produces three lead paragraphs, categorized shipped changes, why-it-matters bullets, and external-only contributor thanks. Use after cutting a release tag or when asked to draft an announcement or summarize v0.0.x. Native `docs/changelog/YYYY-MM-DD.mdx` entries belong to the pre-tag `nemoclaw-contributor-update-docs` workflow.
+description: Drafts the post-tag NemoClaw Announcement from live GitHub tag and compare data. Produces three lead paragraphs, categorized shipped changes, why-it-matters bullets, and external-only contributor thanks. Use after cutting a release tag or when asked to draft an announcement or summarize v0.0.x. The evening maintainer flow owns the native `docs/changelog/YYYY-MM-DD.mdx` entry before tagging.
 user_invocable: true
 ---
 
@@ -182,4 +182,4 @@ Also return the suggested discussion title: `NemoClaw <current-version> is out`.
 - Never include the candidate SHA, internal E2E failure classifications, rerun details, or waiver rationale in the public Announcement.
 - Never include testing reverts as release-value bullets unless explicitly asked for a raw changelog.
 - Never create duplicate release Discussions.
-- Never create or silently repair `docs/changelog/` from this post-tag Announcement workflow. If the canonical entry is missing, report the release-process defect and route recovery through `nemoclaw-contributor-update-docs`.
+- Never create or silently repair `docs/changelog/` from this post-tag Announcement workflow. If the canonical entry is missing, report the release-process defect and route recovery through `nemoclaw-maintainer-evening`.

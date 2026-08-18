@@ -61,7 +61,12 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      */
     warmupScopeUpgrade(sandboxName: string): void;
     getChatUiUrl(): string;
-    buildVerifyChain(chatUiUrl: string): VerifyChain;
+    /**
+     * `sandboxName` lets the chain target the API port this sandbox actually
+     * owns: Hermes allocates a per-sandbox port from the 8642-8652 range, so
+     * the manifest default would probe a sibling sandbox's port (#9290).
+     */
+    buildVerifyChain(chatUiUrl: string, sandboxName: string): VerifyChain;
     verifyDeployment(sandboxName: string, chain: VerifyChain): Promise<VerificationResult>;
     formatVerificationDiagnostics(result: VerificationResult): string[];
     isDeploymentHealthy(result: VerificationResult): boolean;
@@ -231,7 +236,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
       (webSearchProvider !== null &&
         deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider));
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
-    const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
+    const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl(), sandboxName);
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
     deploymentHealthy =
       webSearchCredentialBoundarySafe && deps.isDeploymentHealthy(verificationResult);

@@ -11,11 +11,12 @@ import {
 } from "./corporate-ca";
 
 describe("isKnownMergedTrustStorePath (#6210)", () => {
-  it("matches every well-known merged OS trust-store path", () => {
-    for (const p of KNOWN_MERGED_TRUST_STORE_PATHS) {
+  it.each(Array.from(KNOWN_MERGED_TRUST_STORE_PATHS, (value) => [value]))(
+    "matches the well-known merged OS trust-store path %s",
+    (p) => {
       expect(isKnownMergedTrustStorePath(p)).toBe(true);
-    }
-  });
+    },
+  );
 
   it("normalizes a non-canonical path before matching", () => {
     expect(isKnownMergedTrustStorePath("/etc/ssl/certs/../certs/ca-certificates.crt")).toBe(true);

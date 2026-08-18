@@ -97,11 +97,17 @@ describe("fresh OpenClaw plugin registry reads", () => {
     });
     expect(parseSpy).not.toHaveBeenCalled();
     expect(spawnSync).toHaveBeenCalledTimes(2);
-    for (const call of vi.mocked(spawnSync).mock.calls) {
-      expect(call[2]).toEqual(
-        expect.objectContaining({ maxBuffer: MAX_PLUGIN_REGISTRY_BYTES, timeout: 30000 }),
-      );
-    }
+
+    expect(
+      vi.mocked(spawnSync).mock.calls.every((call) =>
+        expect
+          .objectContaining({
+            maxBuffer: MAX_PLUGIN_REGISTRY_BYTES,
+            timeout: 30000,
+          })
+          .asymmetricMatch(call[2]),
+      ),
+    ).toBe(true);
   });
 
   it.each([10, 11])("does not use the legacy fallback for SQLite status %i", (status) => {

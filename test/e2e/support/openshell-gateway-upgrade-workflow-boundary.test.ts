@@ -53,8 +53,7 @@ describe("OpenShell gateway upgrade boundary", () => {
         shard: "v0-0-36-x86-64",
         nemoclawRef: "v0.0.36",
         commit: "3351fbdd4eb7d9b80ec471545083956327da2b10",
-        installerSha256:
-          "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f",
+        installerSha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f",
         sandboxBaseImageRef:
           "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
         openShellVersion: "0.0.36",
@@ -67,8 +66,7 @@ describe("OpenShell gateway upgrade boundary", () => {
         shard: "v0-0-55-x86-64",
         nemoclawRef: "v0.0.55",
         commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
-        installerSha256:
-          "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
+        installerSha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
         sandboxBaseImageRef:
           "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
         openShellVersion: "0.0.44",
@@ -81,8 +79,7 @@ describe("OpenShell gateway upgrade boundary", () => {
         shard: "v0-0-55-aarch64",
         nemoclawRef: "v0.0.55",
         commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
-        installerSha256:
-          "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
+        installerSha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
         sandboxBaseImageRef:
           "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
         openShellVersion: "0.0.44",
@@ -95,8 +92,7 @@ describe("OpenShell gateway upgrade boundary", () => {
         shard: "v0-0-74-x86-64",
         nemoclawRef: "v0.0.74",
         commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3",
-        installerSha256:
-          "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db",
+        installerSha256: "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db",
         sandboxBaseImageRef:
           "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6",
         openShellVersion: "0.0.72",
@@ -109,8 +105,7 @@ describe("OpenShell gateway upgrade boundary", () => {
         shard: "v0-0-89-x86-64",
         nemoclawRef: "v0.0.89",
         commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
-        installerSha256:
-          "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2",
+        installerSha256: "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2",
         sandboxBaseImageRef:
           "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
         openShellVersion: "0.0.85",
@@ -140,8 +135,7 @@ describe("OpenShell gateway upgrade boundary", () => {
       {
         environment: {
           ...fixture.environment,
-          NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:
-            `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${"0".repeat(64)}`,
+          NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${"0".repeat(64)}`,
         },
       },
     ];
@@ -191,21 +185,24 @@ describe("OpenShell gateway upgrade boundary", () => {
     expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
   });
 
-  it("waits through the historical install for each gateway network", () => {
-    expect(legacyGatewayUpgradeHostFirewallOptions("v0.0.36")).toEqual({
-      networkName: "openshell-cluster-nemoclaw",
-      waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
-    });
-    for (const nemoclawRef of ["v0.0.55", "v0.0.74", "v0.0.89"]) {
+  it.each(["v0.0.55", "v0.0.74", "v0.0.89"])(
+    "waits through the historical install for each gateway network [%s]",
+    (nemoclawRef) => {
+      expect(legacyGatewayUpgradeHostFirewallOptions("v0.0.36")).toEqual({
+        networkName: "openshell-cluster-nemoclaw",
+        waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+      });
+
       expect(legacyGatewayUpgradeHostFirewallOptions(nemoclawRef)).toEqual({
         networkName: undefined,
         waitForNetworkMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
       });
-    }
-    expect(() => legacyGatewayUpgradeHostFirewallOptions("v0.0.90")).toThrow(
-      /Unsupported gateway-upgrade network fixture/,
-    );
-  });
+
+      expect(() => legacyGatewayUpgradeHostFirewallOptions("v0.0.90")).toThrow(
+        /Unsupported gateway-upgrade network fixture/,
+      );
+    },
+  );
 
   it("accepts successful legacy install and firewall setup results (#8696)", () => {
     expect(() =>

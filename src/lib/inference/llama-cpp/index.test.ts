@@ -85,16 +85,16 @@ describe("probeLlamaCppAttachment", () => {
     });
   });
 
-  it.each([
-    "http://127.0.0.1:8082",
-    "http://192.0.2.10:8081",
-  ])("rejects attachment endpoint %s outside fixed loopback port 8081 (#8161)", (baseUrl) => {
-    const probe = vi.fn();
-    expect(
-      probeLlamaCppAttachment("secret-token", { baseUrl, runCurlProbeImpl: probe }),
-    ).toMatchObject({ ok: false, reason: "invalid-endpoint" });
-    expect(probe).not.toHaveBeenCalled();
-  });
+  it.each(["http://127.0.0.1:8082", "http://192.0.2.10:8081"])(
+    "rejects attachment endpoint %s outside fixed loopback port 8081 (#8161)",
+    (baseUrl) => {
+      const probe = vi.fn();
+      expect(
+        probeLlamaCppAttachment("secret-token", { baseUrl, runCurlProbeImpl: probe }),
+      ).toMatchObject({ ok: false, reason: "invalid-endpoint" });
+      expect(probe).not.toHaveBeenCalled();
+    },
+  );
 
   it("accepts a bounded authenticated native llama.cpp fingerprint (#8161)", () => {
     const probe = scriptedProbe(nativeResponses());
@@ -281,18 +281,19 @@ describe("probeLlamaCppAttachment", () => {
     expect(result).toMatchObject({ ok: false, reason: "not-llama-cpp" });
   });
 
-  it.each([
-    401, 403,
-  ])("rejects an authenticated model catalog response with HTTP %s (#8161)", (status) => {
-    const result = probeLlamaCppAttachment("secret-token", {
-      runCurlProbeImpl: scriptedProbe([
-        response(401, '{"error":"unauthorized"}'),
-        response(status, '{"error":"unauthorized"}'),
-      ]),
-    });
+  it.each([401, 403])(
+    "rejects an authenticated model catalog response with HTTP %s (#8161)",
+    (status) => {
+      const result = probeLlamaCppAttachment("secret-token", {
+        runCurlProbeImpl: scriptedProbe([
+          response(401, '{"error":"unauthorized"}'),
+          response(status, '{"error":"unauthorized"}'),
+        ]),
+      });
 
-    expect(result).toMatchObject({ ok: false, reason: "authentication-rejected" });
-  });
+      expect(result).toMatchObject({ ok: false, reason: "authentication-rejected" });
+    },
+  );
 
   it("rejects an oversized fingerprint response (#8161)", () => {
     const result = probeLlamaCppAttachment("secret-token", {
@@ -380,9 +381,8 @@ describe("probeLlamaCppAttachment", () => {
     expect(JSON.stringify(result)).not.toContain(token);
     for (const [argv, options] of probe.mock.calls) {
       expect(JSON.stringify(argv)).not.toContain(token);
-      for (const configPath of options?.trustedConfigFiles ?? []) {
-        expect(fs.existsSync(configPath)).toBe(false);
-      }
+      expect((options?.trustedConfigFiles ?? []).every((configPath) =>
+          Object.is(fs.existsSync(configPath), false))).toBe(true);
     }
     expect(configModes).toEqual([0o600, 0o600, 0o600, 0o600]);
   });

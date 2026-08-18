@@ -71,26 +71,26 @@ describe("Hermes OpenShell runtime environment boundary", () => {
     expect(result.stderr).not.toContain(value);
   });
 
-  it("rejects noncanonical OpenShell TLS key values without printing them", () => {
-    const pemValue = [
-      "-----BEGIN PRIVATE ",
-      "KEY-----\nraw-private-key\n-----END PRIVATE ",
-      "KEY-----",
-    ].join("");
-    for (const value of [
-      "raw-private-key",
-      pemValue,
-      "relative/tls.key",
-      "/tmp/tls.key",
-      `${CANONICAL_TLS_KEY_PATH}.bak`,
-    ]) {
-      const result = runRuntimeEnvValidator({ OPENSHELL_TLS_KEY: value });
+  it.each(
+    Array.from(
+      [
+        "raw-private-key",
+        ["-----BEGIN PRIVATE ", "KEY-----\nraw-private-key\n-----END PRIVATE ", "KEY-----"].join(
+          "",
+        ),
+        "relative/tls.key",
+        "/tmp/tls.key",
+        `${CANONICAL_TLS_KEY_PATH}.bak`,
+      ],
+      (value) => [value],
+    ),
+  )("rejects noncanonical OpenShell TLS key values without printing them [case %#]", (value) => {
+    const result = runRuntimeEnvValidator({ OPENSHELL_TLS_KEY: value });
 
-      expect(result.status, `${value}: ${result.stderr}`).toBe(1);
-      expect(result.stderr).toContain("process environment");
-      expect(result.stderr).toContain("OPENSHELL_TLS_KEY");
-      expect(result.stderr).not.toContain(value);
-    }
+    expect(result.status, `${value}: ${result.stderr}`).toBe(1);
+    expect(result.stderr).toContain("process environment");
+    expect(result.stderr).toContain("OPENSHELL_TLS_KEY");
+    expect(result.stderr).not.toContain(value);
   });
 
   it.each([

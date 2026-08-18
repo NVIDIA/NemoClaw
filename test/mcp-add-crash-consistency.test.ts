@@ -608,11 +608,12 @@ describe("MCP add crash consistency", () => {
     }
   });
 
-  for (const [boundary, expectedProviderId, expectedProviderMarker, expectedObservationMarker] of [
+  it.each([
     ["policy", undefined, false, false],
     ["adapter", "11111111-2222-4333-8444-555555555555", true, true],
-  ] as const) {
-    it(`resumes exact resources after process death at the ${boundary} boundary`, () => {
+  ] as const)(
+    "resumes exact resources after process death at the %s boundary",
+    (boundary, expectedProviderId, expectedProviderMarker, expectedObservationMarker) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-mcp-add-${boundary}-`));
       try {
         const crashed = runAddProcess(home, boundary);
@@ -643,8 +644,8 @@ describe("MCP add crash consistency", () => {
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
       }
-    });
-  }
+    },
+  );
 
   it("rejects a same-name provider created after preflight and before the first mutation", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-race-"));

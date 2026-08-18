@@ -39,6 +39,7 @@ function fixture() {
 
 type Fixture = ReturnType<typeof fixture>;
 type TargetRole = "config" | "receipt" | "registry";
+const noMutation = (): void => undefined;
 
 function prepareFixture(test: Fixture) {
   return preparePortableRetirement(test.homeDir, [RECEIPT_BASENAME]);
@@ -112,21 +113,21 @@ describe("portable uninstall retirement state", () => {
         Buffer.from("bc"),
       ),
     );
-    for (const [size, vector] of [
-      [255, "09adecb5bfc2c496d9e1f4e737b4973699fa3f6f4a9027c0633bda893f7d9cfb"],
-      [256, "a62d83f4aa319e94abbccbb75d1dea277e450e5167be6872d87eb52d2e7a8b30"],
-      [65_535, "ab48f19398e2af46d86be80dea98e8326b67360e6cd8d3a171cc8c1a2b67a1b7"],
-      [65_536, "e868451822f03cecc74591d7785d6799f01d6742a83082d45d9f033c970afdbd"],
-    ] as const) {
-      expect(
-        portableRetirementFingerprint(
-          "a".repeat(64),
-          "config",
-          "containers.conf",
-          Buffer.alloc(size, 1),
-        ),
-      ).toBe(vector);
-    }
+    expect(([
+          [255, "09adecb5bfc2c496d9e1f4e737b4973699fa3f6f4a9027c0633bda893f7d9cfb"],
+          [256, "a62d83f4aa319e94abbccbb75d1dea277e450e5167be6872d87eb52d2e7a8b30"],
+          [65_535, "ab48f19398e2af46d86be80dea98e8326b67360e6cd8d3a171cc8c1a2b67a1b7"],
+          [65_536, "e868451822f03cecc74591d7785d6799f01d6742a83082d45d9f033c970afdbd"],
+        ] as const).every(([size, vector]) =>
+          Object.is(
+            portableRetirementFingerprint(
+              "a".repeat(64),
+              "config",
+              "containers.conf",
+              Buffer.alloc(size, 1),
+            ),
+            vector,
+          ))).toBe(true);
     for (const input of [
       ["", "config", "containers.conf", Buffer.from("x")],
       [new String("a".repeat(64)), "config", "containers.conf", Buffer.from("x")],
@@ -173,12 +174,180 @@ describe("portable uninstall retirement state", () => {
     expect(
       [test.config, test.receipt, test.registryFile].every((target) => !fs.existsSync(target)),
     ).toBe(true);
+    expect(fs.existsSync(path.dirname(test.config))).toBe(false);
+    expect(fs.existsSync(path.dirname(path.dirname(test.config)))).toBe(false);
     expect(inspectPortableRetirementRecovery(test.homeDir)).toEqual({
       artifacts: [],
       fixedState: "1000",
       registryBytes: null,
     });
     expect(() => resumePortableEvidenceRetirement(test.homeDir)).not.toThrow();
+    expect(hasPortableRetirementRecord(test.homeDir)).toBe(true);
+  });
+
+  it.each([
+    [
+      "portable configuration",
+      (test: Fixture) => path.join(path.dirname(test.config), "kept.conf"),
+      true,
+    ],
+    [
+      "NemoClaw configuration",
+      (test: Fixture) => path.join(path.dirname(path.dirname(test.config)), "kept.conf"),
+      false,
+    ],
+  ])(
+    "preserves unrelated %s content during retirement (#9189)",
+    (_label, markerPath, portableDirectoryRemains) => {
+      const test = fixture();
+      const marker = markerPath(test);
+      fs.writeFileSync(marker, "operator-owned\n", { mode: 0o600 });
+
+      publishAndRetirePortableEvidence(prepareFixture(test));
+
+      expect(fs.existsSync(test.config)).toBe(false);
+      expect(fs.readFileSync(marker, "utf8")).toBe("operator-owned\n");
+      expect(fs.existsSync(path.dirname(test.config))).toBe(portableDirectoryRemains);
+      expect(fs.existsSync(path.dirname(path.dirname(test.config)))).toBe(true);
+    },
+  );
+
+  it("preserves a NemoClaw configuration directory with more than 1,024 entries (#9189)", () => {
+    const test = fixture();
+    const prepared = prepareFixture(test);
+    const configDir = path.dirname(path.dirname(test.config));
+    const readdir = fs.readdirSync.bind(fs);
+    vi.spyOn(fs, "readdirSync").mockImplementation(((target, options) =>
+      String(target) === configDir
+        ? new Array<string>(1_025).fill("operator-owned.conf")
+        : readdir(target, options as never)) as typeof fs.readdirSync);
+
+    expect(() => publishAndRetirePortableEvidence(prepared)).not.toThrow();
+    expect(fs.existsSync(test.config)).toBe(false);
+    expect(fs.existsSync(path.dirname(test.config))).toBe(false);
+    expect(fs.existsSync(configDir)).toBe(true);
+  });
+
+  it("rejects a symlink that replaces the portable configuration directory (#9189)", () => {
+    const test = fixture();
+    const portableDir = path.dirname(test.config);
+    const outside = path.join(test.homeDir, "outside");
+    fs.mkdirSync(outside, { mode: 0o700 });
+    const unlink = fs.unlinkSync.bind(fs);
+    const replacePortableDirectory = () => {
+      fs.rmdirSync(portableDir);
+      fs.symlinkSync(outside, portableDir, "dir");
+    };
+    vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
+      unlink(target);
+      (String(target).includes(".containers.conf.portable-uninstall-")
+        ? replacePortableDirectory
+        : noMutation)();
+    });
+
+    expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).toThrow();
+    expect(fs.lstatSync(portableDir).isSymbolicLink()).toBe(true);
+    expect(fs.statSync(outside).isDirectory()).toBe(true);
+    expect(hasPortableRetirementRecord(test.homeDir)).toBe(true);
+  });
+
+  it("rejects a symlink that replaces the NemoClaw configuration directory (#9189)", () => {
+    const test = fixture();
+    const portableDir = path.dirname(test.config);
+    const configDir = path.dirname(portableDir);
+    const outside = path.join(test.homeDir, "outside");
+    fs.mkdirSync(path.join(outside, "portable"), { mode: 0o700, recursive: true });
+    const unlink = fs.unlinkSync.bind(fs);
+    const replaceConfigDirectory = () => {
+      fs.rmdirSync(portableDir);
+      fs.rmdirSync(configDir);
+      fs.symlinkSync(outside, configDir, "dir");
+    };
+    vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
+      unlink(target);
+      (String(target).includes(".containers.conf.portable-uninstall-")
+        ? replaceConfigDirectory
+        : noMutation)();
+    });
+
+    expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).toThrow();
+    expect(fs.lstatSync(configDir).isSymbolicLink()).toBe(true);
+    expect(fs.statSync(path.join(outside, "portable")).isDirectory()).toBe(true);
+    expect(hasPortableRetirementRecord(test.homeDir)).toBe(true);
+  });
+
+  it("rejects group-writable portable configuration authority (#9189)", () => {
+    const test = fixture();
+    fs.chmodSync(path.dirname(test.config), 0o770);
+
+    expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).toThrow(/Unsafe/);
+    expect(fs.existsSync(path.dirname(test.config))).toBe(true);
+    expect(hasPortableRetirementRecord(test.homeDir)).toBe(true);
+  });
+
+  it("rejects portable configuration ownership drift (#9189)", () => {
+    const test = fixture();
+    const portableDir = path.dirname(test.config);
+    const lstat = fs.lstatSync.bind(fs);
+    vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
+      const stat = lstat(target, options as never);
+      return String(target) === portableDir && typeof stat.uid === "bigint"
+        ? new Proxy(stat, {
+            get(current, property) {
+              const value = Reflect.get(current, property, current) as unknown;
+              return property === "uid"
+                ? current.uid + 1n
+                : typeof value === "function"
+                  ? value.bind(current)
+                  : value;
+            },
+          })
+        : stat;
+    }) as typeof fs.lstatSync);
+
+    expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).toThrow(/Unsafe/);
+    expect(fs.existsSync(portableDir)).toBe(true);
+    expect(hasPortableRetirementRecord(test.homeDir)).toBe(true);
+  });
+
+  it("preserves an entry inserted before empty-directory removal (#9189)", () => {
+    const test = fixture();
+    const portableDir = path.dirname(test.config);
+    const marker = path.join(portableDir, "concurrent.conf");
+    const rmdir = fs.rmdirSync.bind(fs);
+    let inserted = false;
+    const insertMarker = () => {
+      inserted = true;
+      fs.writeFileSync(marker, "concurrent\n", { mode: 0o600 });
+    };
+    vi.spyOn(fs, "rmdirSync").mockImplementation((target) => {
+      (!inserted && String(target) === portableDir ? insertMarker : noMutation)();
+      return rmdir(target);
+    });
+
+    expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).not.toThrow();
+    expect(fs.readFileSync(marker, "utf8")).toBe("concurrent\n");
+    expect(fs.existsSync(portableDir)).toBe(true);
+  });
+
+  it("rejects portable configuration directory replacement between identity checks (#9189)", () => {
+    const test = fixture();
+    const portableDir = path.dirname(test.config);
+    const readdir = fs.readdirSync.bind(fs);
+    let replaced = false;
+    const replacePortableDirectory = () => {
+      replaced = true;
+      fs.rmdirSync(portableDir);
+      fs.mkdirSync(portableDir, { mode: 0o700 });
+    };
+    vi.spyOn(fs, "readdirSync").mockImplementation(((target, options) => {
+      const entries = readdir(target, options as never);
+      (!replaced && String(target) === portableDir ? replacePortableDirectory : noMutation)();
+      return entries;
+    }) as typeof fs.readdirSync);
+
+    expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).toThrow(/changed/);
+    expect(fs.statSync(portableDir).isDirectory()).toBe(true);
     expect(hasPortableRetirementRecord(test.homeDir)).toBe(true);
   });
 
@@ -259,19 +428,24 @@ describe("portable uninstall retirement state", () => {
     expect(() => resumePortableEvidenceRetirement(staged.homeDir)).toThrow(/changed/);
   });
 
-  it("rejects noncanonical record fields and incomplete supersession before retirement (#9189)", () => {
-    const invalidIdentity = fixture();
-    const invalidPrepared = prepareFixture(invalidIdentity);
-    const invalidRecord = JSON.parse(invalidPrepared.recordBytes.toString("utf8")) as {
-      targets: string[][];
-    };
-    invalidRecord.targets[0]![2] = "01";
-    fs.writeFileSync(retirementRecordPath(invalidIdentity), `${JSON.stringify(invalidRecord)}\n`, {
-      mode: 0o600,
-    });
-    expect(() => hasPortableRetirementRecord(invalidIdentity.homeDir)).toThrow(/values/);
+  it.each([false, true])(
+    "rejects noncanonical record fields and incomplete supersession before retirement [%s] (#9189)",
+    (extra) => {
+      const invalidIdentity = fixture();
+      const invalidPrepared = prepareFixture(invalidIdentity);
+      const invalidRecord = JSON.parse(invalidPrepared.recordBytes.toString("utf8")) as {
+        targets: string[][];
+      };
+      invalidRecord.targets[0]![2] = "01";
+      fs.writeFileSync(
+        retirementRecordPath(invalidIdentity),
+        `${JSON.stringify(invalidRecord)}\n`,
+        {
+          mode: 0o600,
+        },
+      );
+      expect(() => hasPortableRetirementRecord(invalidIdentity.homeDir)).toThrow(/values/);
 
-    for (const extra of [false, true]) {
       const shape = fixture();
       const shaped = JSON.parse(prepareFixture(shape).recordBytes.toString("utf8")) as {
         targets: string[][];
@@ -279,30 +453,30 @@ describe("portable uninstall retirement state", () => {
       extra ? shaped.targets[0]!.push("0") : shaped.targets[0]!.pop();
       fs.writeFileSync(retirementRecordPath(shape), `${JSON.stringify(shaped)}\n`, { mode: 0o600 });
       expect(() => hasPortableRetirementRecord(shape.homeDir)).toThrow(/invalid/);
-    }
 
-    const missingConfig = fixture();
-    const missingPrepared = prepareFixture(missingConfig);
-    const missingRecord = JSON.parse(missingPrepared.recordBytes.toString("utf8")) as {
-      targets: unknown[];
-    };
-    missingRecord.targets.shift();
-    fs.writeFileSync(retirementRecordPath(missingConfig), `${JSON.stringify(missingRecord)}\n`, {
-      mode: 0o600,
-    });
-    expect(() => hasPortableRetirementRecord(missingConfig.homeDir)).toThrow(/order/);
+      const missingConfig = fixture();
+      const missingPrepared = prepareFixture(missingConfig);
+      const missingRecord = JSON.parse(missingPrepared.recordBytes.toString("utf8")) as {
+        targets: unknown[];
+      };
+      missingRecord.targets.shift();
+      fs.writeFileSync(retirementRecordPath(missingConfig), `${JSON.stringify(missingRecord)}\n`, {
+        mode: 0o600,
+      });
+      expect(() => hasPortableRetirementRecord(missingConfig.homeDir)).toThrow(/order/);
 
-    const incomplete = fixture();
-    const prepared = prepareFixture(incomplete);
-    fs.writeFileSync(
-      path.join(incomplete.stateDir, ".portable-uninstall-retirement.superseded"),
-      prepared.recordBytes,
-      { mode: 0o600 },
-    );
-    expect(() => publishAndRetirePortableEvidence(prepared)).toThrow(/incomplete/);
-    expect(fs.existsSync(incomplete.receipt)).toBe(true);
-    expect(fs.existsSync(incomplete.registryFile)).toBe(true);
-  });
+      const incomplete = fixture();
+      const prepared = prepareFixture(incomplete);
+      fs.writeFileSync(
+        path.join(incomplete.stateDir, ".portable-uninstall-retirement.superseded"),
+        prepared.recordBytes,
+        { mode: 0o600 },
+      );
+      expect(() => publishAndRetirePortableEvidence(prepared)).toThrow(/incomplete/);
+      expect(fs.existsSync(incomplete.receipt)).toBe(true);
+      expect(fs.existsSync(incomplete.registryFile)).toBe(true);
+    },
+  );
 
   it.each([
     ["T", [".portable-uninstall-retirement.tmp"]],
@@ -385,7 +559,13 @@ describe("portable uninstall retirement state", () => {
       };
       retirement.publishAndRetirePortableEvidence(prepared);
     `;
-    const boundaries = { fsyncSync: 10, linkSync: 1, renameSync: 4, unlinkSync: 4 } as const;
+    const boundaries = {
+      fsyncSync: 12,
+      linkSync: 1,
+      renameSync: 4,
+      rmdirSync: 2,
+      unlinkSync: 4,
+    } as const;
     const cases = Object.entries(boundaries).flatMap(([operation, count]) =>
       Array.from({ length: count }, (_value, index) => [operation, index + 1] as const),
     );
@@ -413,6 +593,8 @@ describe("portable uninstall retirement state", () => {
           const assertRecovered = () => {
             resumePortableEvidenceRetirement(test.homeDir);
             expect(targets.every((target) => !fs.existsSync(target))).toBe(true);
+            expect(fs.existsSync(path.dirname(test.config))).toBe(false);
+            expect(fs.existsSync(path.dirname(path.dirname(test.config)))).toBe(false);
           };
           const assertPrior = () => expect(targets.every(fs.existsSync)).toBe(true);
           (hasPortableRetirementRecord(test.homeDir) ? assertRecovered : assertPrior)();

@@ -12,6 +12,7 @@ import {
   normalizeProviderBaseUrl,
   parsePolicyPresetEnv,
   stripEndpointSuffix,
+  unsafeEndpointUrlViolation,
 } from "./url-utils";
 
 describe("compactText", () => {
@@ -142,6 +143,59 @@ describe("endpointUrlHasUserinfoQueryOrFragment", () => {
     ["whitespace input", "   ", false],
   ] as const)("classifies %s (#9106)", (_label, input, expected) => {
     expect(endpointUrlHasUserinfoQueryOrFragment(input)).toBe(expected);
+  });
+});
+
+describe("unsafeEndpointUrlViolation", () => {
+  it.each([
+    ["backtick command substitution", "http://127.0.0.1:8000/v1`whoami`", "unsupported-characters"],
+    ["dollar command substitution", "http://127.0.0.1:8000/v1$(id)", "unsupported-characters"],
+    ["semicolon in the path", "https://example.test/v1;id", "unsupported-characters"],
+    ["pipe in the path", "https://example.test/v1|cat", "unsupported-characters"],
+    ["ampersand in the path", "https://example.test/v1&x", "unsupported-characters"],
+    ["double quote", 'https://example.test/v1"q"', "unsupported-characters"],
+    ["single quote", "https://example.test/v1'q'", "unsupported-characters"],
+    ["interior space", "https://example.test/v 1", "unsupported-characters"],
+    ["encoded newline", "https://example.test/v1%0ainjected", "encoded-control-characters"],
+    ["encoded carriage return uppercase", "https://example.test/v1%0Dx", "encoded-control-characters"],
+    ["encoded NUL", "https://example.test/v1%00x", "encoded-control-characters"],
+    ["encoded UTF-8 C1 control", "https://example.test/v1%C2%80x", "encoded-control-characters"],
+    [
+      "encoded UTF-8 zero-width space",
+      "https://example.test/v1%E2%80%8Bx",
+      "encoded-control-characters",
+    ],
+    ["raw tab", "https://example.test/v\t1", "control-characters"],
+    ["raw newline", "https://example.test/v\n1", "control-characters"],
+    ["leading tab", "\thttps://example.test/v1", "control-characters"],
+    ["trailing tab", "https://example.test/v1\t", "control-characters"],
+    ["leading newline", "\nhttps://example.test/v1", "control-characters"],
+    ["trailing newline", "https://example.test/v1\n", "control-characters"],
+    ["leading no-break space", "\u00a0https://example.test/v1", "unsupported-characters"],
+    ["trailing ogham space mark", "https://example.test/v1\u1680", "unsupported-characters"],
+    ["leading en quad", "\u2000https://example.test/v1", "unsupported-characters"],
+    ["trailing line separator", "https://example.test/v1\u2028", "unsupported-characters"],
+    ["leading paragraph separator", "\u2029https://example.test/v1", "unsupported-characters"],
+    ["query string", "http://127.0.0.1:8000/v1?param=value", "userinfo-query-fragment"],
+    ["userinfo", "https://user:password@example.test/v1", "userinfo-query-fragment"],
+    ["non-HTTP scheme", "ftp://example.test/v1", "unsupported-protocol"],
+    ["scheme-less host and port", "localhost:8000/v1", "unsupported-protocol"],
+    ["scheme-less host path", "example.test/v1", "invalid-url"],
+    ["non-ASCII host", "https://exämple.test/v1", "unsupported-characters"],
+  ] as const)("rejects %s (#9301)", (_label, input, kind) => {
+    expect(unsafeEndpointUrlViolation(input)?.kind).toBe(kind);
+  });
+
+  it.each([
+    ["IPv6 loopback with port", "http://[::1]:8000/v1"],
+    ["host with port and deep path", "https://example.test:8443/deep/path-v1"],
+    ["path with URL-legal punctuation", "http://example.test/v1_x.y~z"],
+    ["percent-encoded space in the path", "https://example.test/v1/a%20b"],
+    ["clean origin", "https://proxy.example.com"],
+    ["empty input", ""],
+    ["whitespace input", "   "],
+  ] as const)("accepts %s (#9301)", (_label, input) => {
+    expect(unsafeEndpointUrlViolation(input)).toBeNull();
   });
 });
 

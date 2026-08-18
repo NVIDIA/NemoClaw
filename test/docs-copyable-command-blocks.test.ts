@@ -65,7 +65,7 @@ function listDocMdxFiles(dir: string): string[] {
 }
 
 describe("docs copyable command blocks (#4754)", () => {
-  it("does not use shell prompt prefixes in copyable fenced code blocks", () => {
+  function verifyCopyableCommandBlocks() {
     const violations: string[] = [];
 
     for (const docPath of listDocMdxFiles(docsRoot)) {
@@ -84,5 +84,7 @@ describe("docs copyable command blocks (#4754)", () => {
     }
 
     expect(violations).toEqual([]);
-  });
+  }
+
+  it("does not use shell prompt prefixes in copyable fenced code blocks", verifyCopyableCommandBlocks);
 });

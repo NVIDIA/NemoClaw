@@ -47,7 +47,7 @@ function parseJson<T>(text: string): T {
 }
 
 function readRegularFileNoFollow(filePath: string): string | null {
-  const noFollowFlag = constants.O_NOFOLLOW;
+  const noFollowFlag = Reflect.get(constants, "O_NOFOLLOW");
   if (typeof noFollowFlag !== "number") return null;
 
   let fd: number;

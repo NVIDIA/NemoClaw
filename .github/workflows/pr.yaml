@@ -42,6 +42,8 @@ jobs:
               - '**'
               - '!**/*.md'
               - '!docs/**'
+              - '!fern/docs.yml'
+              - '!fern/assets/**'
 
   docs-only-checks:
     needs: changes
@@ -89,6 +91,9 @@ jobs:
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
+
+      - name: Validate documentation
+        run: npm run docs
 
   static-checks:
     needs: changes

@@ -126,50 +126,55 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
       runtimeEnvironmentFile,
     };
   }
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("maps the complete %s profile into the reviewed image command contract", (agent) => {
-    const mapped = mapManagedStartupProfileToAgentEnvironment(managedStartupE2eProfile(agent));
-    const plan = buildManagedStartupImageActionPlan({
-      agent: mapped.agent,
-      actions: mapped.actions,
-    });
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "maps the complete %s profile into the reviewed image command contract",
+    (agent) => {
+      const mapped = mapManagedStartupProfileToAgentEnvironment(managedStartupE2eProfile(agent));
+      const plan = buildManagedStartupImageActionPlan({
+        agent: mapped.agent,
+        actions: mapped.actions,
+      });
 
-    expect(plan.map(({ action }) => action)).toEqual(
-      agent === "langchain-deepagents-code" || agent === "pi"
-        ? ["generate-agent-config"]
-        : ["messaging-runtime-setup", "generate-agent-config", "messaging-post-agent-install"],
-    );
-    expect(plan.some((command) => command.argv.includes("agent-install"))).toBe(false);
-  });
+      expect(plan.map(({ action }) => action)).toEqual(
+        agent === "langchain-deepagents-code" || agent === "pi"
+          ? ["generate-agent-config"]
+          : ["messaging-runtime-setup", "generate-agent-config", "messaging-post-agent-install"],
+      );
+      expect(plan.some((command) => command.argv.includes("agent-install"))).toBe(false);
+    },
+  );
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("provides valid same-profile and changed-profile fixtures for %s recreation checks", (agent) => {
-    const initial = validateManagedStartupProfile(managedStartupE2eProfile(agent));
-    const same = validateManagedStartupProfile(managedStartupE2eProfile(agent));
-    const changed = validateManagedStartupProfile(managedStartupE2eProfile(agent, true));
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "provides valid same-profile and changed-profile fixtures for %s recreation checks",
+    (agent) => {
+      const initial = validateManagedStartupProfile(managedStartupE2eProfile(agent));
+      const same = validateManagedStartupProfile(managedStartupE2eProfile(agent));
+      const changed = validateManagedStartupProfile(managedStartupE2eProfile(agent, true));
 
-    expect(fingerprintManagedStartupProfile(same)).toBe(fingerprintManagedStartupProfile(initial));
-    expect(fingerprintManagedStartupProfile(changed)).not.toBe(
-      fingerprintManagedStartupProfile(initial),
-    );
-  });
+      expect(fingerprintManagedStartupProfile(same)).toBe(
+        fingerprintManagedStartupProfile(initial),
+      );
+      expect(fingerprintManagedStartupProfile(changed)).not.toBe(
+        fingerprintManagedStartupProfile(initial),
+      );
+    },
+  );
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("accepts the root completion marker and exact runtime handoff for %s", (agent) => {
-    const fixture = writeCompletionFixture(managedStartupE2eProfile(agent));
-    mockDescriptorOwnership(0n, 0n);
-    expect(
-      verifyManagedStartupImageCompletion(
-        agent,
-        fixture.fingerprint,
-        fixture.completionFile,
-        fixture.runtimeEnvironmentFile,
-      ),
-    ).toEqual({ agent, fingerprint: fixture.fingerprint });
-  });
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "accepts the root completion marker and exact runtime handoff for %s",
+    (agent) => {
+      const fixture = writeCompletionFixture(managedStartupE2eProfile(agent));
+      mockDescriptorOwnership(0n, 0n);
+      expect(
+        verifyManagedStartupImageCompletion(
+          agent,
+          fixture.fingerprint,
+          fixture.completionFile,
+          fixture.runtimeEnvironmentFile,
+        ),
+      ).toEqual({ agent, fingerprint: fixture.fingerprint });
+    },
+  );
 
   it("rejects a changed profile against the root completion fingerprint", () => {
     const initial = writeCompletionFixture(managedStartupE2eProfile("openclaw"));
@@ -224,14 +229,17 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     );
   });
 
-  it("binds the real corporate-CA fixture into every agent profile by exact digest", () => {
-    expect(() => new X509Certificate(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM)).not.toThrow();
-    const digest = createHash("sha256").update(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM).digest("hex");
+  it.each(Array.from(MANAGED_STARTUP_AGENTS, (value) => [value]))(
+    "binds the real corporate-CA fixture into the %s profile by exact digest",
+    (agent) => {
+      expect(() => new X509Certificate(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM)).not.toThrow();
+      const digest = createHash("sha256")
+        .update(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM)
+        .digest("hex");
 
-    for (const agent of MANAGED_STARTUP_AGENTS) {
       expect(managedStartupE2eProfile(agent, false, true).corporateCa.bundleSha256).toBe(digest);
-    }
-  });
+    },
+  );
 
   it("writes a deterministic root-sourced runtime environment without profile transport", () => {
     const applicationRuntime = {
@@ -305,37 +313,37 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     expect(ambient).toHaveProperty("NEMOCLAW_MINIMAL_BOOTSTRAP", "1");
   });
 
-  it.each([
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("removes OpenClaw launch controls and cleanup obligations from %s children and runtime", (agent) => {
-    const mapped = mapManagedStartupProfileToAgentEnvironment(managedStartupE2eProfile(agent), {
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "invalid-for-this-agent",
-    });
-    const ambient = {
-      ...Object.fromEntries(OPENCLAW_APPLICATION_RUNTIME_NAMES.map((name) => [name, "ambient"])),
-      NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
-      NEMOCLAW_MINIMAL_BOOTSTRAP: "1",
-      PRESERVED: "yes",
-    };
-    const child = applyManagedStartupCommandEnvironmentPlan(ambient, mapped.applicationRuntime);
-    const script = serializeManagedStartupRuntimeEnvironment(
-      mapped.runtimeEnvironment,
-      false,
-      mapped.configurationEnvironment,
-      mapped.applicationRuntime,
-    );
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
+    "removes OpenClaw launch controls and cleanup obligations from %s children and runtime",
+    (agent) => {
+      const mapped = mapManagedStartupProfileToAgentEnvironment(managedStartupE2eProfile(agent), {
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "invalid-for-this-agent",
+      });
+      const ambient = {
+        ...Object.fromEntries(OPENCLAW_APPLICATION_RUNTIME_NAMES.map((name) => [name, "ambient"])),
+        NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
+        NEMOCLAW_MINIMAL_BOOTSTRAP: "1",
+        PRESERVED: "yes",
+      };
+      const child = applyManagedStartupCommandEnvironmentPlan(ambient, mapped.applicationRuntime);
+      const script = serializeManagedStartupRuntimeEnvironment(
+        mapped.runtimeEnvironment,
+        false,
+        mapped.configurationEnvironment,
+        mapped.applicationRuntime,
+      );
 
-    expect(child).toEqual({ PRESERVED: "yes" });
-    for (const name of [
-      ...OPENCLAW_APPLICATION_RUNTIME_NAMES,
-      "NEMOCLAW_DASHBOARD_BIND",
-      "NEMOCLAW_MINIMAL_BOOTSTRAP",
-    ]) {
-      expect(script).toContain(`unset ${name}`);
-      expect(script).not.toContain(`export ${name}=`);
-    }
-  });
+      expect(child).toEqual({ PRESERVED: "yes" });
+      for (const name of [
+        ...OPENCLAW_APPLICATION_RUNTIME_NAMES,
+        "NEMOCLAW_DASHBOARD_BIND",
+        "NEMOCLAW_MINIMAL_BOOTSTRAP",
+      ]) {
+        expect(script).toContain(`unset ${name}`);
+        expect(script).not.toContain(`export ${name}=`);
+      }
+    },
+  );
 
   it("rejects a serialized runtime export that conflicts with an explicit unset", () => {
     expect(() =>
@@ -381,19 +389,21 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     }
   });
 
-  it("clears launch-only proxy env when DCode pins managed routing", () => {
-    const mapped = mapManagedStartupProfileToAgentEnvironment(
-      managedStartupE2eProfile("langchain-deepagents-code", false, false, true),
-    );
-    const script = serializeManagedStartupRuntimeEnvironment(
-      mapped.runtimeEnvironment,
-      false,
-      mapped.configurationEnvironment,
-    );
-    for (const name of PROXY_ENV_NAMES) {
+  it.each(Array.from(PROXY_ENV_NAMES, (value) => [value]))(
+    "clears launch-only proxy env %s when DCode pins managed routing",
+    (name) => {
+      const mapped = mapManagedStartupProfileToAgentEnvironment(
+        managedStartupE2eProfile("langchain-deepagents-code", false, false, true),
+      );
+      const script = serializeManagedStartupRuntimeEnvironment(
+        mapped.runtimeEnvironment,
+        false,
+        mapped.configurationEnvironment,
+      );
+
       expect(script).toContain(`unset ${name}`);
-    }
-  });
+    },
+  );
 
   it("rejects multiline runtime values before producing a sourceable file", () => {
     expect(() =>

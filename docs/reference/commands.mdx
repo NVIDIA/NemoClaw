@@ -1876,8 +1876,9 @@ An empty body, malformed JSON, provider-error envelope, or wrong response shape 
 The probe captures at most 64 KiB and does not include the response body in diagnostics.
 The route probe treats any final HTTP status from `200` through `499` as reachable, so a route with an invalidated provider credential answers HTTP `401` while the route is up.
 The request uses the live gateway route's provider and model, and falls back to the recorded values when the live route is unreadable.
-When the live provider and model match the recorded route, the request also uses the sandbox's recorded API family, including `openai-responses`.
-During route drift, NemoClaw does not carry the sandbox's recorded API family to the live provider and model.
+When the live provider matches the recorded provider, the request uses the sandbox's recorded API family, even when only the model differs.
+This includes `openai-responses`.
+When the live provider differs, NemoClaw does not carry the recorded API family to the live provider.
 An ordinary run sends one 16-token request through the stored provider credential, with a 30-second timeout, and consumes provider tokens on a hosted route.
 When the same `status` run recovers a managed gateway, it retries the route and inference request together up to three total attempts, with a two-second delay between failed attempts.
 Each attempt can consume another 16 tokens on a hosted route.
@@ -2510,6 +2511,8 @@ If the base policy read returns non-empty output that NemoClaw cannot parse, the
 Fix the gateway or policy read problem, then rerun the command.
 For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy list` or `status`.
 Recover or re-onboard the sandbox, then re-apply the custom preset.
+For built-in presets in that same case, the command applies the preset and returns success, because a built-in preset stays discoverable from the gateway.
+It warns that `policy list` will report the preset as active on gateway, missing from local state.
 
 With `--from-file` or `--from-dir`, pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit matching RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local endpoints.
 The option is invalid for built-in presets.
@@ -2590,7 +2593,7 @@ $$nemoclaw my-assistant policy list
 ### `$$nemoclaw <name> policy remove`
 
 Remove a previously applied policy preset from a sandbox.
-The command lists only the presets currently applied, prompts you to select one, shows the endpoints that would be removed, and asks for confirmation before narrowing egress.
+The command lists the presets the local registry records together with the presets the live gateway enforces, prompts you to select one, shows the endpoints that would be removed, and asks for confirmation before narrowing egress.
 
 ```bash
 $$nemoclaw my-assistant policy remove
@@ -2604,7 +2607,9 @@ $$nemoclaw my-assistant policy remove pypi --yes
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` as an alternative to `--yes`.
 Without a preset name, `policy remove` reports the same two picker errors as `policy add` and exits non-zero.
-If the preset is unknown or not currently applied, the command exits non-zero with a clear error.
+If the preset is unknown, or neither the local registry nor the live gateway holds it, the command exits non-zero with a clear error.
+A preset the gateway enforces without a local registry record is removable, which is the state `policy list` reports as active on gateway, missing from local state.
+When NemoClaw cannot query the gateway, the command checks the local registry alone; with a preset name it also reports that the gateway could not be queried.
 
 | Flag | Description |
 |------|-------------|
@@ -4737,7 +4742,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the exact managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
-| `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. Onboarding rejects a URL that contains userinfo, query, or fragment components. |
+| `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. Onboarding rejects a URL that contains userinfo, query, or fragment components. It also rejects a URL that contains control characters, percent-encoded control characters, spaces within the URL, shell metacharacters, or other characters outside the URL-safe ASCII set, and a value that is not an absolute HTTP or HTTPS URL. NemoClaw trims ASCII spaces at the start and end of the URL before validation. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication for an HTTP OpenAI-compatible endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435` during non-interactive onboarding. |
 | `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 unique local destinations through supported inference, managed MCP, and custom-policy registration paths. Link-local metadata and other reserved ranges remain blocked; DNS resolution and exact address pinning remain active; wildcards are not supported. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | comma-separated exact hostnames or IP literals | Inference-only compatibility alias. Inference onboarding combines entries from this variable and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. |

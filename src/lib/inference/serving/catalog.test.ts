@@ -2,15 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import catalogSchema from "../../../../managed-inference/schemas/catalog.schema.json" with {
-  type: "json",
-};
-import presetSchema from "../../../../managed-inference/schemas/preset.schema.json" with {
-  type: "json",
-};
-import recipeSchema from "../../../../managed-inference/schemas/recipe.schema.json" with {
-  type: "json",
-};
+import catalogSchema from "../../../../managed-inference/schemas/catalog.schema.json" with { type: "json" };
+import presetSchema from "../../../../managed-inference/schemas/preset.schema.json" with { type: "json" };
+import recipeSchema from "../../../../managed-inference/schemas/recipe.schema.json" with { type: "json" };
 import {
   compileTrustedServingCatalog,
   parseCompiledServingCatalogJson,
@@ -595,11 +589,14 @@ describe("managed inference serving catalog compiler", () => {
     ["materializer", { materializers: new Set<string>() }, "unknown materializer"],
     ["lifecycle adapter", { lifecycles: new Set<string>() }, "unknown lifecycle adapter"],
     ["readiness contract", { readinessContracts: new Set<string>() }, "unknown readiness contract"],
-  ])("rejects a llama.cpp recipe with an unknown %s reference (#8181)", (_name, registry, message) => {
-    expect(() => compile([llamaCppRecipeSource()], { ...REGISTRIES, ...registry })).toThrow(
-      message,
-    );
-  });
+  ])(
+    "rejects a llama.cpp recipe with an unknown %s reference (#8181)",
+    (_name, registry, message) => {
+      expect(() => compile([llamaCppRecipeSource()], { ...REGISTRIES, ...registry })).toThrow(
+        message,
+      );
+    },
+  );
 
   it("validates optional receipt and readiness contracts on generic recipes (#8181)", () => {
     const receiptRecipe = recipeSource("test.recipe.receipt", {
@@ -729,13 +726,16 @@ describe("managed inference serving catalog compiler", () => {
     ["container-runtime", "            value: docker", "            value: podman"],
     ["gpu-count", "            value: 1", "            value: 0"],
     ["driver-version", "            value: 570.0.0", "            value: 1.0.0"],
-  ])("rejects a llama.cpp preset whose %s contradicts its recipe (#8181)", (role, expected, replacement) => {
-    const preset = replaceSource(llamaCppPresetSource(), expected, replacement);
+  ])(
+    "rejects a llama.cpp preset whose %s contradicts its recipe (#8181)",
+    (role, expected, replacement) => {
+      const preset = replaceSource(llamaCppPresetSource(), expected, replacement);
 
-    expect(() => compile([llamaCppRecipeSource(), preset])).toThrow(
-      `must require ${role} matching llama.cpp recipe`,
-    );
-  });
+      expect(() => compile([llamaCppRecipeSource(), preset])).toThrow(
+        `must require ${role} matching llama.cpp recipe`,
+      );
+    },
+  );
 
   it.each([
     ["shell syntax", "$(id)"],
@@ -893,22 +893,27 @@ describe("managed inference serving catalog compiler", () => {
     ).toThrow("does not satisfy the ServingRecipe schema");
   });
 
-  it("accepts only exact immutable model revision forms (#8144)", () => {
-    for (const revision of ["e".repeat(40), "e".repeat(64), `sha256:${"e".repeat(64)}`]) {
+  it.each(["e".repeat(40), "e".repeat(64), `sha256:${"e".repeat(64)}`])(
+    "accepts the immutable model revision %s (#8144)",
+    (revision) => {
       expect(() =>
         compile([
           replaceSource(recipeSource(), `revision: ${MODEL_REVISION}`, `revision: ${revision}`),
         ]),
       ).not.toThrow();
-    }
-    for (const revision of ["e".repeat(41), "e".repeat(63)]) {
+    },
+  );
+
+  it.each(["e".repeat(41), "e".repeat(63)])(
+    "rejects the mutable model revision %s (#8144)",
+    (revision) => {
       expect(() =>
         compile([
           replaceSource(recipeSource(), `revision: ${MODEL_REVISION}`, `revision: ${revision}`),
         ]),
       ).toThrow("does not satisfy the ServingRecipe schema");
-    }
-  });
+    },
+  );
 
   it("rejects duplicate source paths and YAML aliases (#8144)", () => {
     const duplicatePath = { ...presetSource(), path: recipeSource().path };
@@ -940,19 +945,19 @@ describe("managed inference serving catalog compiler", () => {
       `      - path: model.gguf\n        digest: sha256:${"d".repeat(64)}\n      - path: model.gguf\n        digest: sha256:${"e".repeat(64)}`,
     );
     expect(() => compile([duplicateModelFile])).toThrow("repeats model file model.gguf");
+  });
 
-    for (const path of [
-      "./model.gguf",
-      "models//model.gguf",
-      "models/./model.gguf",
-      "models/",
-      "models\\model.gguf",
-      "C:\\model.gguf",
-    ]) {
-      expect(() =>
-        compile([replaceSource(recipeSource(), "path: model.gguf", `path: ${path}`)]),
-      ).toThrow("does not satisfy the ServingRecipe schema");
-    }
+  it.each([
+    "./model.gguf",
+    "models//model.gguf",
+    "models/./model.gguf",
+    "models/",
+    "models\\model.gguf",
+    "C:\\model.gguf",
+  ])("rejects the noncanonical model path %j (#8144)", (path) => {
+    expect(() =>
+      compile([replaceSource(recipeSource(), "path: model.gguf", `path: ${path}`)]),
+    ).toThrow("does not satisfy the ServingRecipe schema");
   });
 
   it("rejects adapter and readiness IDs outside the injected registries (#8144)", () => {

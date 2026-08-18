@@ -344,22 +344,24 @@ describe("portable Podman activation readiness", () => {
     expect(childEnv).not.toHaveProperty("DOCKER_HOST");
   });
 
-  it("bounds configurable startup timeouts and falls back safely (#9070)", () => {
-    expect(resolvePortablePodmanStartupTimeout({})).toBe(
-      DEFAULT_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS,
-    );
-    expect(
-      resolvePortablePodmanStartupTimeout({ [PORTABLE_PODMAN_STARTUP_TIMEOUT_ENV]: "15000" }),
-    ).toBe(15_000);
-    expect(
-      resolvePortablePodmanStartupTimeout({ [PORTABLE_PODMAN_STARTUP_TIMEOUT_ENV]: "300000" }),
-    ).toBe(300_000);
-    for (const invalid of ["1", "300001", "1.5", "not-a-number"]) {
+  it.each(["1", "300001", "1.5", "not-a-number"])(
+    "bounds configurable startup timeouts and falls back safely [%s] (#9070)",
+    (invalid) => {
+      expect(resolvePortablePodmanStartupTimeout({})).toBe(
+        DEFAULT_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS,
+      );
+      expect(
+        resolvePortablePodmanStartupTimeout({ [PORTABLE_PODMAN_STARTUP_TIMEOUT_ENV]: "15000" }),
+      ).toBe(15_000);
+      expect(
+        resolvePortablePodmanStartupTimeout({ [PORTABLE_PODMAN_STARTUP_TIMEOUT_ENV]: "300000" }),
+      ).toBe(300_000);
+
       expect(
         resolvePortablePodmanStartupTimeout({
           [PORTABLE_PODMAN_STARTUP_TIMEOUT_ENV]: invalid,
         }),
       ).toBe(DEFAULT_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS);
-    }
-  });
+    },
+  );
 });

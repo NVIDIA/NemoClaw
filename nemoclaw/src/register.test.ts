@@ -177,9 +177,7 @@ describe("plugin registration", () => {
 
     const bannerLines = output.split("\n").filter((line) => line.length > 0);
     expect(bannerLines.length).toBeGreaterThan(0);
-    for (const line of bannerLines) {
-      expect(line.startsWith("[gateway] ")).toBe(true);
-    }
+    expect(bannerLines.every((line) => line.startsWith("[gateway] "))).toBe(true);
   });
 
   it("falls back to onboard config when openclaw.json has no primary model", () => {
@@ -392,7 +390,7 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     expect(result).toMatchObject({ block: true });
   });
 
-  it("blocks normalized relative memory paths when the host resolver is unavailable", () => {
+  function verifyRelativeMemoryPathRejection() {
     const api = createMockApi();
     (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
       undefined as unknown as string,
@@ -414,7 +412,12 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
       });
       expect(result).toMatchObject({ block: true });
     }
-  });
+  }
+
+  it(
+    "blocks normalized relative memory paths when the host resolver is unavailable",
+    verifyRelativeMemoryPathRejection,
+  );
 });
 
 describe("getPluginConfig", () => {
