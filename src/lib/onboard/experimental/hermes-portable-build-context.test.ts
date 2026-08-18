@@ -62,13 +62,21 @@ function transactionArtifact(prefix: string): string {
   return path.join(directory, match!);
 }
 
-function copyFixtureFile(root: string, relativePath: string, mode: "100644" | "100755"): void {
+function copyFixtureFile(
+  root: string,
+  relativePath: string,
+  mode: "100644" | "100755",
+  privateMode = false,
+): void {
   const target = path.join(root, relativePath);
   fs.copyFileSync(path.join(ROOT, relativePath), target);
-  fs.chmodSync(target, mode === "100755" ? 0o755 : 0o644);
+  fs.chmodSync(
+    target,
+    mode === "100755" ? (privateMode ? 0o700 : 0o755) : privateMode ? 0o600 : 0o644,
+  );
 }
 
-function primaryCloneFixture(): string {
+function primaryCloneFixture(privateFileModes = false): string {
   const requested = fs.mkdtempSync(path.join(stateDir, "primary-clone-"));
   const root = fs.realpathSync(requested);
   fs.chmodSync(root, 0o700);
@@ -77,7 +85,7 @@ function primaryCloneFixture(): string {
     fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
     entry.mode === "160000"
       ? fs.mkdirSync(target, { mode: 0o755 })
-      : copyFixtureFile(root, entry.path, entry.mode);
+      : copyFixtureFile(root, entry.path, entry.mode, privateFileModes);
   }
   const git = path.join(root, ".git");
   const ref = path.join(git, "refs/heads");
@@ -254,6 +262,27 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
 
     expect(plan.authority.sourceRevision).toBe("b".repeat(40));
     expect(plan.authority.contextManifestSha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("accepts a private installer checkout created under umask 077 (#9203)", () => {
+    const source = primaryCloneFixture(true);
+
+    const plan = createHermesPortableBuildContextPlan(source, BUILD_SETTINGS);
+
+    expect(plan.authority.sourceRevision).toBe("b".repeat(40));
+    expect(plan.authority.contextManifestSha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it.each([
+    { access: "group", mode: 0o620 },
+    { access: "other", mode: 0o602 },
+  ])("rejects $access-write access on a source file (#9203)", ({ mode }) => {
+    const source = primaryCloneFixture();
+    fs.chmodSync(path.join(source, "agents/hermes/Dockerfile"), mode);
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+      "source file authority is unsafe: agents/hermes/Dockerfile",
+    );
   });
 
   it("rejects lowercase Dockerfile copy opcodes before reservation (#9203)", () => {

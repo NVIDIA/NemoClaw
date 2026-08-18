@@ -503,6 +503,15 @@ function captureDirectoryChain(directory: string): readonly DirectoryEvidence[] 
   return chain;
 }
 
+function sourceFileModeMatchesGitMode(mode: bigint, expectedMode: "100644" | "100755"): boolean {
+  const actualMode = Number(mode & 0o777n);
+  const checkoutMode = expectedMode === "100755" ? 0o755 : 0o644;
+  const privateCheckoutMode = expectedMode === "100755" ? 0o700 : 0o600;
+  return (
+    (actualMode & 0o22) === 0 && (actualMode === checkoutMode || actualMode === privateCheckoutMode)
+  );
+}
+
 function readSourceFile(
   rootPath: string,
   relativePath: string,
@@ -522,7 +531,7 @@ function readSourceFile(
       named.ino !== before.ino ||
       before.uid !== currentUid() ||
       before.nlink !== 1n ||
-      Number(before.mode & 0o777n) !== (expectedMode === "100755" ? 0o755 : 0o644) ||
+      !sourceFileModeMatchesGitMode(before.mode, expectedMode) ||
       before.size < 1n ||
       before.size > BigInt(MAX_CONTEXT_FILE_BYTES)
     ) {
