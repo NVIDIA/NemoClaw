@@ -87,6 +87,55 @@ describe("inference selection validation", () => {
     }
   });
 
+  it("distinguishes a Gemini runtime 404 from native model catalog validation (#9298)", async () => {
+    const apiKey = "gemini-test-secret";
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: false,
+      failures: [{ name: "Chat Completions API", httpStatus: 404, curlStatus: 0 }],
+    }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => apiKey,
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "Google Gemini",
+          "https://generativelanguage.googleapis.com/v1beta/openai",
+          "gemini-2.5-flash",
+          "GEMINI_API_KEY",
+          undefined,
+          undefined,
+          { provider: "gemini-api", skipResponsesProbe: true },
+        ),
+      ).resolves.toEqual({ ok: false, retry: "selection" });
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "gemini-2.5-flash",
+        apiKey,
+        { skipResponsesProbe: true, calibrateTimeouts: true },
+      );
+      const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(errorOutput).toContain(
+        "This 404 came from Google's OpenAI-compatible Chat Completions runtime route, not the native /v1beta/models catalog.",
+      );
+      expect(errorOutput).toContain(
+        "the sandbox uses that Chat Completions route at runtime",
+      );
+      expect(errorOutput).not.toContain(apiKey);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   it("preserves non-zero exit signaling when non-interactive endpoint validation fails (#5721)", async () => {
     const originalExitCode = process.exitCode;
     const error = vi.spyOn(console, "error").mockImplementation(() => {});

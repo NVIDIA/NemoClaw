@@ -193,14 +193,14 @@ describe("reviewed npm archive", () => {
     ]);
 
     expect(calls.filter(({ args }) => args[0] === "pack")).toHaveLength(3);
-    for (const { request: archiveRequest } of calls) {
+    calls.forEach(({ request: archiveRequest }) => {
       expect(archiveRequest.env).toMatchObject({
         NPM_CONFIG_CACHE: reviewed.cacheDirectory,
         NPM_CONFIG_OFFLINE: "true",
         NPM_CONFIG_REGISTRY: "https://registry.npmjs.org/",
         NPM_CONFIG_USERCONFIG: "/dev/null",
       });
-    }
+    });
   });
 
   it("uses a lock alias's canonical package identity for cache verification", () => {

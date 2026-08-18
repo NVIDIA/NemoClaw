@@ -30,6 +30,7 @@ interface CleanupCall {
 }
 
 const DCODE_BASE_IMAGE_REF = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+const DCODE_BASE_IMAGE_INDEX_REF = `${DCODE_BASE_IMAGE}@sha256:${"b".repeat(64)}`;
 
 async function withProcessEnvironment<T>(
   values: Record<string, string | undefined>,
@@ -173,6 +174,29 @@ describe("onboarding phase fixture", () => {
     expect(runner.calls[0]?.options?.env?.[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
   });
 
+  it("runs the Personal cloud OpenClaw target without search-provider credentials", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    await onboard.from(ready({ policyTier: "personal" }), {
+      sandboxName: "e2e-personal-oc",
+    });
+
+    expect(runner.calls[0]?.options?.env).toEqual(
+      expect.objectContaining({
+        BRAVE_API_KEY: "",
+        NEMOCLAW_POLICY_MODE: "suggested",
+        NEMOCLAW_POLICY_PRESETS: "",
+        NEMOCLAW_POLICY_TIER: "personal",
+        NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+        TAVILY_API_KEY: "",
+      }),
+    );
+  });
+
   it("passes the immutable base reference only to Deep Agents Code onboarding", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));
@@ -211,6 +235,39 @@ describe("onboarding phase fixture", () => {
         timeoutMs: 900_000,
       },
     });
+  });
+
+  it("uses the contract-selected Deep Agents Code base image reference instead of the ambient publication index", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    await withProcessEnvironment({ [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_INDEX_REF }, () =>
+      onboard.from(ready({ onboarding: "cloud-langchain-deepagents-code" }), {
+        dcodeBaseImageReference: DCODE_BASE_IMAGE_REF,
+        sandboxName: "e2e-dcode-cloud",
+      }),
+    );
+
+    expect(runner.calls[0]?.options?.env?.[DCODE_BASE_IMAGE_ENV]).toBe(DCODE_BASE_IMAGE_REF);
+  });
+
+  it("rejects an invalid explicit Deep Agents Code base image reference before onboarding side effects", async () => {
+    const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets, cleanup);
+
+    await expect(
+      onboard.from(ready({ onboarding: "cloud-langchain-deepagents-code" }), {
+        dcodeBaseImageReference: `${DCODE_BASE_IMAGE}:latest`,
+        sandboxName: "e2e-dcode-cloud",
+      }),
+    ).rejects.toThrow(/requires .* to be the immutable official/);
+    expect(secrets.requiredCalls).toEqual([]);
+    expect(cleanup.calls).toEqual([]);
+    expect(runner.calls).toEqual([]);
   });
 
   it.each([

@@ -353,7 +353,7 @@ describe("MCP OpenShell policy", () => {
       },
     ];
 
-    for (const mismatch of mismatches) {
+    mismatches.forEach((mismatch) => {
       vi.restoreAllMocks();
       const candidateEntry = mismatch.candidateEntry ?? entry;
       vi.spyOn(registry, "getCustomPolicies").mockReturnValue([
@@ -373,7 +373,7 @@ describe("MCP OpenShell policy", () => {
         mismatch.label,
       ).toThrow(/not canonical for its recorded bridge definition/);
       expect(gatewayState, mismatch.label).not.toHaveBeenCalled();
-    }
+    });
   });
 
   it("does not expose malformed persisted URLs in canonical ownership errors", () => {

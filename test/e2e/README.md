@@ -21,9 +21,8 @@ before those targets run; local runners must provide it themselves.
 - `.github/workflows/e2e-main-retry.yaml` evaluates eligible `E2E main` push
   attempts and uploads attempt evidence. It never authorizes a broad failed-job
   rerun; retry decisions belong to bounded operation-level policies.
-- The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` publishes
-  the exact candidate image to the staging family and records the concrete image URI.
-  It does not deploy or validate a Brev environment while issue #8924 blocks the automated path.
+- The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
+  the baked candidate without installing or copying NemoClaw source.
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence` for Ubuntu 26.04, macOS, and WSL.
   On shard 1, its macOS and WSL live E2E run only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
@@ -170,13 +169,12 @@ GitHub invalidates `GITHUB_TOKEN` after the job.
 
 ## Retired Brev source-install coverage
 
-Issue #7490 retired the generic Brev source-install lane. Current validation uses
-the unified workflow, staging image-publication job, and advisory manual
-Launchable validation:
+Issue #7490 retired the generic Brev source-install lane. The unified workflow
+and exact-staging Launchable job own its product coverage:
 
 | Legacy suite | Disposition | Current owner |
 |---|---|---|
-| `full` | Manual Launchable validation | `staging-brev-launchable` publishes the exact candidate image. Use `nemoclaw-maintainer-validate-launchable` to validate a deployed instance while issue #8924 blocks automation. |
+| `full` | Launchable E2E | `staging-brev-launchable` runs `full-e2e` in preinstalled mode against the exact baked candidate. |
 | `credential-sanitization` | Unified E2E | `credential-sanitization` |
 | `telegram-injection` | Unified E2E | `telegram-injection` |
 | `messaging-providers` | Unified E2E | `messaging-providers` |
@@ -232,7 +230,7 @@ Each entry owns these target properties:
 - PR Review Advisor selection. Standard-profile targets are selectable by default; a credentialed target must set `prAdvisorSelectable` before the Advisor may recommend its logical target ID.
 - Optional Vitest title selector.
 - Target-specific environment variables.
-- Pre-tag release requirement.
+- Full-run qualification membership.
 
 Host preparation is the reviewed E2E runner preparation mode.
 `none` makes no runner-level change.
@@ -266,6 +264,13 @@ The execution profile owns the credentials available to its target step:
   The reusable workflow enforces this boundary; PR revision callers set `trusted_main` to `false`, so their target steps receive no `GITHUB_TOKEN`.
 - `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
 
+`common-egress-agent` runs 4 isolated scenario shards.
+The Personal stock-price shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
+It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives no Brave Search or Tavily Search API key.
+The Personal stock assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain the complete source URL.
+Raw OpenClaw session and trajectory JSONL stay inside the sandbox; uploaded evidence contains only the price and source date, the source hostname and protocol, and bounded reduced evidence such as tool names, public target hosts, provider labels, final statuses, and quote-match booleans.
+The live assertions require `web_fetch`, reject `web_search` and search-provider use, permit public access from curl and Python, and deny loopback and link-local targets.
+
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
 Each target selects its runner through the catalogue.
@@ -297,7 +302,7 @@ If the target reports success without product evidence, manifest creation fails 
 A catalogue Vitest selection that runs no tests exits nonzero before manifest creation, including when every selected test skips.
 Failed targets still write a manifest for diagnosis, and the existing artifact upload publishes the manifest with the target artifacts.
 The manifest is secret-free diagnostic evidence.
-It does not replace the workflow job result or the `Release qualification` release gate.
+It does not replace the workflow job result or the strict `Release qualification` aggregate.
 
 Run the planner locally to render the complete default selection as a Markdown table:
 
@@ -715,45 +720,50 @@ rm -rf -- "$evidence_dir"
 test ! -e "$evidence_dir"
 ```
 
-A manual run with `jobs=staging-brev-launchable` runs only `Publish staging Brev Launchable image`.
+A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev Launchable`.
 Push runs do not select this job.
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
-`targets` selectors runs the default workflow E2E selection plus the Launchable image-publication job.
-This selection is the full manual `main` run for pre-tag release evidence.
-Each full dispatch uses
-`github.run_id` in its workflow concurrency identity, so another full dispatch
-cannot supersede it while it waits. The trusted `main` workflow dispatch
-verifies that the dispatching and rerunning actors have repository `maintain` or
-`admin` permission before the Launchable path's source checkout. That automatic
-role check authorizes `staging-brev-launchable`; the job does not use GitHub
-environment approval. The job uses the non-cancelling
-`staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable image
-runs remain queued instead of replacing one another.
+`targets` selectors runs the default workflow E2E selection plus `Exact staging
+Brev Launchable`. The workflow names this selection `E2E full main`, with the
+correlation ID when one was supplied, so maintainers can find the newest full
+manual run without scanning every run's jobs.
 
-For a full manual run dispatched against `main`, `Release qualification` waits for every E2E job that does not require a separate opt-in.
-The check requires each of those jobs to pass, including `Publish staging Brev Launchable image`.
-A passing check at the candidate commit SHA is the pre-tag release E2E evidence.
-Ensure that each candidate commit SHA has a qualifying full manual `main` run.
-Dispatch another full run only when no qualifying run exists.
-`scripts/release-cut-tag.sh` searches completed, successful manual `.github/workflows/e2e.yaml` runs at the exact planned `origin/main` commit before a signing preflight or tag push.
-It accepts the first run with exactly one completed, successful `Release qualification` job.
-A run with zero or multiple jobs of that name is not evidence.
-If no qualifying run exists, the script fails closed.
-Local fixture remotes skip the canonical repository gate only when tests set the explicit `NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL=1` override and the shared classifier confirms a noncanonical origin.
-Canonical-equivalent `NVIDIA/NemoClaw` remotes always run the gate, even when that override is set.
-A local fixture cannot authorize a production release.
-Maintainers do not build a local evidence ledger or infer GitHub job status from an artifact.
-The Launchable image job retains `launchable-image.json` with the candidate SHA, producer run, concrete image URI, staging family, and explicit not-run validation fields.
-Manual web, runtime, and inference validation is advisory while issue #8924 remains open.
-It does not block the release tag and must not be reported as an automated E2E pass.
+Each full dispatch uses `github.run_id` in its workflow concurrency identity, so
+another full dispatch cannot supersede it while it waits. The trusted `main`
+workflow dispatch verifies that the dispatching and rerunning actors have
+repository `maintain` or `admin` permission before the Launchable path's source
+checkout. That automatic role check authorizes `staging-brev-launchable`; the job
+does not use GitHub environment approval.
 
-This is a temporary NemoClaw maintainer policy owned while #8924 remains open.
-Each release candidate still requires the successful exact image-publication job and `launchable-image.json` through `Release qualification`; GitHub keeps its logs and artifact under the repository's normal Actions retention policy.
-The accepted temporary risk is that a tag can proceed without automated or manual proof of the Launchable web deployment, environment access, exact booted image, baked runtime, inference, or workspace cleanup.
-A missing, partial, or failed manual validation needs no per-release waiver, but an image-publication failure remains release-blocking unless an administrator uses the existing job-waiver mechanism.
-Restore automated validation only after NemoClaw checksum-pins a published Brev CLI release containing both required fixes and a trusted `main` run passes deployment, access, exact image and runtime identity, hosted and sandbox inference, and verified workspace cleanup.
-Closing #8924 records the end of the temporary policy.
+The job uses the `staging-brev-launchable-cpu` concurrency group without
+cancelling a running job. GitHub keeps at most one pending job in that group, so
+a newer job can replace an older pending job.
+
+For a full manual run dispatched against `main`, `Release qualification` waits
+for every E2E job that does not require a separate opt-in, including `Exact
+staging Brev Launchable`. The strict aggregate reports whether that full run
+passed; it does not authorize or reject a tag. For a release decision, report
+the newest identifiable full run, its timestamps, tested commit SHA, workflow
+result, `Release qualification` result, and every job that did not succeed.
+Compare the tested SHA with the release candidate, but do not require a match or
+apply a staleness threshold. The maintainer can proceed with the reported status,
+rerun focused jobs, or request another full run.
+The release-tag skill records only the general E2E decision and any reason for
+proceeding with exceptional status in the signed release brief.
+
+Separately, every release candidate requires a successful exact-candidate `Exact
+staging Brev Launchable` job. That evidence can come from a Launchable-only or
+full run and cannot be waived by the maintainer's general E2E decision. The job
+builds the exact candidate image, deploys the standing Launchable, verifies the
+booted image and baked runtime, runs the preinstalled full E2E suite with
+inference, and confirms workspace absence.
+
+After preparation succeeds, the Launchable upload retains `lane.log` and each
+phase artifact created before exit. A preparation failure can produce no
+artifact. A later early failure can retain only `lane.log`. A successful job
+contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
+`cleanup.json` exists only after the job confirms workspace absence.
 
 Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
 jobs unless their independent opt-in flags are `true`.
@@ -769,9 +779,9 @@ Set `allow_dgx_spark_runner_queue=true` to select both
 GitHub can pause the qualification job for the
 `approve-dgx-spark-image-qualification` environment before it reaches the DGX
 Spark runner.
-Manual pre-tag dispatches require both hardware opt-in flags to remain `false`.
-Jetson push results and opt-in hardware results do not enter the required
-pre-tag E2E denominator.
+Full manual `main` dispatches require both hardware opt-in flags to remain `false`.
+Jetson push results and opt-in hardware results do not enter the strict full-run
+qualification set.
 
 ### Hosted-Runner Recovery
 
@@ -817,8 +827,9 @@ concrete job executions.
 - `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
-The two extra executions come from `common-egress-agent`, which runs three
-scenario shards.
+The two extra instrumented executions come from the 3 `common-egress-agent`
+scenario shards that enable runner comparison.
+The Personal stock-price shard runs without runner-comparison telemetry.
 The OpenClaw matrix entries for `mcp-bridge`,
 `channels-stop-start`, and `security-posture` are not instrumented.
 The #7145 standard-versus-larger-runner cohort compares the same lane and
@@ -1060,7 +1071,7 @@ The workflow planner connects each trusted input to its execution and evidence b
 ```mermaid
 flowchart LR
   push["main push diff"] --> planner["Workflow planner"]
-  manual["Exact-SHA full manual dispatch<br/>or manual selectors"] --> planner
+  manual["Full manual dispatch<br/>or manual selectors"] --> planner
   planner --> registry["Typed registry matrix"]
   planner --> shared["Shared test matrix"]
   planner --> profiles["Catalogue profile matrices"]
@@ -1075,7 +1086,7 @@ flowchart LR
   dedicated -->|"push job results"| relevant
   reusable -->|"full manual job results"| release["Release qualification"]
   dedicated -->|"full manual job results"| release
-  release --> gate["Release gate"]
+  release --> decision["Status for maintainer decision"]
 ```
 
 Selected jobs retain their runner, credential, evidence, and cleanup boundaries.
@@ -1083,18 +1094,32 @@ A main push can queue repository-owned GPU runners or create external resources 
 The main-run observer records attempt evidence but does not request broad failed-job reruns.
 Each E2E test owns any bounded operation-level retry policy.
 
-`Publish staging Brev Launchable image` runs only for a trusted manual dispatch against `main`.
-The job reads this credential from repository Actions secrets:
+`Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
+The job reads these credentials from repository Actions secrets:
 
+- `BREV_API_KEY` authenticates the trusted host-side Brev CLI for workspace
+  operations in the organization identified by `BREV_ORG_ID`. Candidate code
+  does not receive this API key.
 - `NEMOCLAW_IMAGE_DISPATCH_TOKEN` is exposed as `GH_TOKEN` only to the trusted
   host script. It grants Actions read/write access to `brevdev/nemoclaw-image`,
   which the script uses to dispatch the image workflow, inspect its run, and
   download its handoff artifact.
+- `NVIDIA_INFERENCE_API_KEY` is exported into the Brev guest for the full E2E
+  process. Code in the baked candidate checkout can read and use it.
 
-The credential remains valid until it expires or an administrator revokes it in GitHub.
-Rotate or revoke it to remove later access.
-The job does not receive `BREV_API_KEY`, `BREV_ORG_ID`, or `NVIDIA_INFERENCE_API_KEY`.
-It does not install or authenticate the Brev CLI, create a workspace, or run inference.
+`brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to
+`$HOME/.brev/credentials.json` on the GitHub-hosted runner. Later trusted steps
+and processes in the same job can read that file. The workflow does not delete
+it explicitly; it remains on the ephemeral runner filesystem until runner
+teardown discards that filesystem.
+These credentials remain valid until they expire or an administrator revokes
+them in their issuing services. If cleanup fails, remove the recorded Brev
+workspace. Rotate or revoke each credential to remove later access.
+
+The `NEMOCLAW_STAGING_LAUNCHABLE_ID` repository Actions variable selects the
+standing Launchable. Keep its value equal to the Launchable ID in the default
+URL owned by
+[`nemoclaw-maintainer-validate-launchable`](../../.agents/skills/nemoclaw-maintainer-validate-launchable/SKILL.md).
 
 When an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and the available source-attempt evidence.
 It does not request a broad failed-job or workflow rerun.
@@ -1107,7 +1132,7 @@ The observer ignores manual PR runs and a run superseded by a newer `main` push.
 
 For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
 
-- every default-selected free-standing workflow E2E except `Publish staging Brev Launchable image`;
+- every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
 - every catalogue target in the `standard` profile;
 - every shared credential-free test; and
 - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
@@ -1119,8 +1144,7 @@ unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the latest PR commit to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
-OpenShell PR qualification uses that receipt to bind the candidate repository, candidate commit SHA, base SHA, workflow SHA, run, and selectors.
-The pre-tag `Release qualification` check does not use this receipt.
+The full-main `Release qualification` aggregate does not use this receipt.
 
 PR Review Advisor maps changes to either of these shared journaled-recreation handlers to recommended E2E coverage:
 
@@ -1253,10 +1277,13 @@ No PR E2E controller dispatches the risk plan.
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span
 (a conservative anchor before wizard step `[1/8]`) through the first non-empty
-agent response, requires the local BuildKit prebuild for the NemoClaw-generated
-context without a gateway-builder fallback, enforces the calibrated root and
-phase limits in the budget file, and limits the longest onboard output gap to
-60 seconds. A violation fails
+agent response and reads the registered workload receipt. A `legacy-dockerfile`
+receipt requires the local BuildKit prebuild without a gateway-builder fallback.
+A `managed-image` receipt instead requires an exact digest that matches the
+registered sandbox image tag, a non-empty publication cohort, and an exact
+40-character source revision, and it forbids a local BuildKit prebuild. Both
+paths enforce the calibrated root and phase limits in the budget file and limit
+the longest onboard output gap to 60 seconds. A violation fails
 `full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
 The artifact records the first-turn command wall clock and OpenClaw's internal
 agent duration separately. Older or malformed OpenClaw output records an

@@ -46,9 +46,10 @@ fi
 exec ${JSON.stringify(process.execPath)} "$@"
 `,
       );
-      for (const command of ["curl", "sleep"]) {
-        writeExecutable(path.join(fakeBin, command), "#!/usr/bin/env bash\nexit 0\n");
-      }
+
+      writeExecutable(path.join(fakeBin, "curl"), "#!/usr/bin/env bash\nexit 0\n");
+      writeExecutable(path.join(fakeBin, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
+
       const relativeOpenshell = path.relative(REPOSITORY_ROOT, openshell);
       const result = spawnSync(
         "bash",

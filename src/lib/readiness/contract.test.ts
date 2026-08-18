@@ -5,9 +5,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import Ajv2020, { type AnySchema } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with {
-  type: "json",
-};
+import systemReadinessSchema from "../../../schemas/system-readiness.schema.json" with { type: "json" };
 import { checkSystemReadinessSchemaVersion } from "./compatibility.js";
 import { getSystemReadinessReferenceErrors } from "./references.js";
 import type { SystemReadinessReport } from "./types.js";
@@ -40,17 +38,16 @@ async function createValidator() {
 }
 
 describe("system readiness contract", () => {
-  it.each([
-    "supported",
-    "incompatible",
-    "inconclusive",
-  ])("validates the %s golden fixture (#7409)", async (name) => {
-    const validate = await createValidator();
-    const fixture = await readJson(`${fixtureRoot}/${name}.json`);
+  it.each(["supported", "incompatible", "inconclusive"])(
+    "validates the %s golden fixture (#7409)",
+    async (name) => {
+      const validate = await createValidator();
+      const fixture = await readJson(`${fixtureRoot}/${name}.json`);
 
-    expect(validate(fixture), JSON.stringify(validate.errors)).toBe(true);
-    expect(getSystemReadinessReferenceErrors(fixture as SystemReadinessReport)).toEqual([]);
-  });
+      expect(validate(fixture), JSON.stringify(validate.errors)).toBe(true);
+      expect(getSystemReadinessReferenceErrors(fixture as SystemReadinessReport)).toEqual([]);
+    },
+  );
 
   it("requires producer source identity starting with schema 1.1.0 (#7777)", async () => {
     const validate = await createValidator();
@@ -111,16 +108,16 @@ describe("system readiness contract", () => {
     ).toBe(false);
   });
 
-  it.each([
-    "2026-06-01t12:00:00z",
-    "0000-02-29T00:00:00Z",
-  ])("accepts the RFC 3339 timestamp %s (#7409)", async (observedAt) => {
-    const validate = await createValidator();
-    const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as Record<string, unknown>;
-    const provenance = { ...(fixture.provenance as Record<string, unknown>), observedAt };
+  it.each(["2026-06-01t12:00:00z", "0000-02-29T00:00:00Z"])(
+    "accepts the RFC 3339 timestamp %s (#7409)",
+    async (observedAt) => {
+      const validate = await createValidator();
+      const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as Record<string, unknown>;
+      const provenance = { ...(fixture.provenance as Record<string, unknown>), observedAt };
 
-    expect(validate({ ...fixture, provenance }), JSON.stringify(validate.errors)).toBe(true);
-  });
+      expect(validate({ ...fixture, provenance }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
 
   it("rejects status and exit-code mismatches (#7409)", async () => {
     const validate = await createValidator();
@@ -259,9 +256,8 @@ describe("system readiness contract", () => {
       },
     ];
 
-    for (const { report, error } of unresolvedReferences) {
-      expect(getSystemReadinessReferenceErrors(report)).toContain(error);
-    }
+    expect(unresolvedReferences.every(({ report, error }) =>
+        getSystemReadinessReferenceErrors(report).includes(error))).toBe(true);
   });
 
   it("rejects mutation and unbounded evidence (#7409)", async () => {

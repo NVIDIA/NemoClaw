@@ -38,7 +38,6 @@
     "test/e2e/support/e2e-live-target-gating.test.ts": 14703,
     "test/e2e/support/e2e-report-to-pr-workflow-boundary.test.ts": 7331,
     "test/e2e/support/e2e-workflow-trace.test.ts": 5566,
-    "test/e2e/support/e2e-workflow.test.ts": 15036,
     "test/e2e/support/hermes-workflow-boundary.test.ts": 5434,
     "test/e2e/support/shared-e2e-workflow-boundary.test.ts": 5043,
     "test/exit-code-user-error-surfaces.test.ts": 6568,

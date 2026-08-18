@@ -49,6 +49,8 @@ When neither side can be read, the failure asks you to check that Ollama is inst
 Fresh installs skip this second probe because the bundled installers provide a daemon at or above the minimum.
 
 The version gate does not apply to Windows-host Ollama reached from Docker Desktop through `host.docker.internal`.
+With WSL mirrored networking, the same daemon can answer on `127.0.0.1`; NemoClaw treats it as Windows-host Ollama only when Windows installation and Docker reachability checks match and Linux procfs shows no WSL-local listener on the Ollama port.
+Ambiguous evidence or a separate WSL-local listener stays on the Linux install and upgrade path.
 The Windows-host menu entries perform their own actions on the Windows side.
 
 ## Choose a Linux Install Mode

@@ -18,9 +18,14 @@ import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
+  dcodeBaseImageReferenceForContract,
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
+import {
+  requireRegistryTargetSecrets,
+  verifyPersonalStockFetchForTarget,
+} from "./personal-egress-live-proof.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
   "post-reboot-recovery",
@@ -61,6 +66,7 @@ const REGISTRY_TARGET_PHASES = [
   "execute the target lifecycle boundary",
   "verify the expected sandbox state",
   "run target-specific cloud checks",
+  "verify the Personal stock fetch contract",
   "record target completion evidence",
 ] as const;
 
@@ -88,6 +94,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       lifecycle,
       onboard,
       progress,
+      sandbox,
       secrets,
       stateValidation,
     }) => {
@@ -95,9 +102,10 @@ for (const [targetIndex, target] of listTargets().entries()) {
         target.id,
         artifacts.pathFor("dcode-base-image.json"),
       );
-      for (const secret of target.requiredSecrets ?? []) {
-        secrets.required(secret);
-      }
+      const dcodeBaseImageReference = dcodeBaseContract
+        ? dcodeBaseImageReferenceForContract(dcodeBaseContract)
+        : undefined;
+      requireRegistryTargetSecrets(target.id, target.requiredSecrets ?? [], secrets);
 
       expect(
         fs.existsSync(CLI_DIST_ENTRYPOINT),
@@ -137,6 +145,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, {
         sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
+        dcodeBaseImageReference,
       });
 
       // Lifecycle phase runs between onboard and state-validation.
@@ -170,15 +179,30 @@ for (const [targetIndex, target] of listTargets().entries()) {
       expect(checkScripts).toEqual(
         cloudExperimentalChecksForOnboarding(target.environment.onboarding),
       );
-      for (const scriptPath of checkScripts) {
-        expect(fs.existsSync(path.join(REPO_ROOT, scriptPath))).toBe(true);
-      }
+      expect(
+        checkScripts.every((scriptPath) =>
+          Object.is(fs.existsSync(path.join(REPO_ROOT, scriptPath)), true),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
       await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
         artifacts,
+        dcodeBaseImageReference,
         host,
         secrets,
       });
+
+      const personalStockFetch = await verifyPersonalStockFetchForTarget(
+        target.id,
+        target.environment.policyTier,
+        instance.agent,
+        sandbox,
+        host,
+        artifacts,
+        secrets,
+        instance.sandboxName,
+        () => progress.phase("verify the Personal stock fetch contract"),
+      );
 
       progress.phase("record target completion evidence");
       const dcodeBaseImage = dcodeBaseContract
@@ -193,6 +217,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
         lifecycle: lifecycleResult
           ? { profile: lifecycleResult.profile, steps: lifecycleResult.steps.map((s) => s.id) }
           : undefined,
+        ...(personalStockFetch ? { personalStockFetch } : {}),
       });
     },
   );

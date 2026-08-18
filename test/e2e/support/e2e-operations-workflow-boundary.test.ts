@@ -83,11 +83,22 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
 
   it("requires release qualification to evaluate every full-run result (#7912)", () => {
     const workflow = readE2eOperationsWorkflow();
-    workflow.jobs["release-qualification"].if = "${{ always() }}";
-    workflow.jobs["release-qualification"].needs = ["generate-matrix"];
-    workflow.jobs["release-qualification"].steps!.find(
+    const qualification = workflow.jobs["release-qualification"];
+    expect(qualification.steps!.map((step) => step.name)).toEqual([
+      "Check out the qualification evaluator",
+      "Require every release E2E result",
+    ]);
+    const evaluator = qualification.steps!.find(
       (step) => step.name === "Require every release E2E result",
-    )!.env!.RELEASE_REQUIRED_JOBS = "live";
+    )!;
+    expect(evaluator.env).toEqual({
+      NEEDS_JSON: "${{ toJSON(needs) }}",
+      RELEASE_REQUIRED_JOBS: "${{ needs.generate-matrix.outputs.release_required_jobs }}",
+    });
+
+    qualification.if = "${{ always() }}";
+    qualification.needs = ["generate-matrix"];
+    evaluator.env!.RELEASE_REQUIRED_JOBS = "live";
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
@@ -95,19 +106,6 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
         "release-qualification must run only for a full manual run against main",
         "release-qualification must evaluate planner-selected jobs from needs",
       ]),
-    );
-  });
-
-  it("requires release qualification to preserve admin waiver evidence", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const summary = workflow.jobs["release-qualification"].steps!.find(
-      (step) => step.name === "Record release qualification waiver",
-    )!;
-    delete summary.env?.TRIGGERING_ACTOR;
-    summary.run = "true";
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "release-qualification must record and upload authorized waived job outcomes, identities, and reason",
     );
   });
 
@@ -451,8 +449,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       const workflowSha = "c".repeat(40);
       const prefix = [
         "curl() {",
-        '  case "${@: -1}" in',
-        `    *collaborators*) printf '%s' '{"role_name":"${role}"}' ;;`,
+        '  local url="${@: -1}" output_file="" previous="" argument body',
+        '  for argument in "$@"; do',
+        '    if [[ "$previous" == "--output" ]]; then output_file="$argument"; fi',
+        '    previous="$argument"',
+        "  done",
+        '  case "$url" in',
+        `    *collaborators*) body='{"user":{"login":"maintainer"},"role_name":"${role}"}'; if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '200'; else printf '%s' "$body"; fi ;;`,
         `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"contributor/NemoClaw"},"sha":"${headSha}"},"base":{"sha":"${baseSha}"}}' ;;`,
         "    *) return 1 ;;",
         "  esac",
@@ -515,12 +518,12 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       workflow.jobs[jobName].steps!.find((step) => step.name === stepName)!,
     );
 
-    for (const guard of guards) {
+    guards.forEach((guard) => {
       expect(guard.env).not.toHaveProperty("ACTOR");
       expect(guard.run).not.toContain("github-actions[bot]");
       expect(guard.run).toContain('"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"');
       expect(guard.run).toContain('"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$');
-    }
+    });
   });
 
   it("accepts the controller target matrix for the commit under review", () => {

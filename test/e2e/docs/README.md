@@ -301,7 +301,7 @@ test/e2e/
 
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
-  E2E except `Publish staging Brev Launchable image`, every catalogue target in the
+  E2E except `Exact staging Brev Launchable`, every catalogue target in the
   `standard` profile, all shared credential-free tests, and these
   controller-selected registry targets:
   `ubuntu-policy-custom-missing-presets-negative`,
@@ -363,10 +363,9 @@ test/e2e/
 - `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
 - `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
-- The `staging-brev-launchable` job verifies the exact image-producer receipt,
-  records the concrete staging image in `launchable-image.json`, and stops before deployment.
-  Use `nemoclaw-maintainer-validate-launchable` for advisory deployment, runtime,
-  inference, and cleanup validation while issue #8924 blocks automation.
+- The `staging-brev-launchable` job validates the exact baked candidate in
+  preinstalled mode. Generic Brev VMs with source overlays are not a
+  qualification boundary.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and
   `e2e-live` for opt-in live target execution. The PR and `main` CLI coverage
   shards include `e2e-support` for code changes; they never opt into live

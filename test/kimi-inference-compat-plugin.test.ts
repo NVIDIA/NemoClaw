@@ -292,22 +292,34 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     expect(wrapper).toBeUndefined();
   });
 
-  it("does not split non-exec tools, multiple tool calls, or malformed args", () => {
-    const nonExec = toolMessage("hostname; date; uptime", { name: "write" });
-    const multipleToolCalls = {
-      ...toolMessage("hostname; date; uptime"),
-      content: [toolMessage("hostname").content[0], toolMessage("date").content[0]],
-    };
-    const malformedArgs = toolMessage("hostname; date; uptime", {
-      arguments: JSON.stringify({ command: "hostname; date; uptime", extra: true }),
-    });
+  it.each([
+    { scenario: "non-exec tool" },
+    { scenario: "multiple tool calls" },
+    { scenario: "malformed arguments" },
+  ])(
+    "does not split non-exec tools, multiple tool calls, or malformed args [$scenario]",
+    ({ scenario }) => {
+      const nonExec = toolMessage("hostname; date; uptime", { name: "write" });
+      const multipleToolCalls = {
+        ...toolMessage("hostname; date; uptime"),
+        content: [toolMessage("hostname").content[0], toolMessage("date").content[0]],
+      };
+      const malformedArgs = toolMessage("hostname; date; uptime", {
+        arguments: JSON.stringify({ command: "hostname; date; uptime", extra: true }),
+      });
 
-    for (const message of [nonExec, multipleToolCalls, malformedArgs]) {
+      const message = (
+        {
+          "non-exec tool": nonExec,
+          "multiple tool calls": multipleToolCalls,
+          "malformed arguments": malformedArgs,
+        } as const
+      )[scenario]!;
       const before = structuredClone(message);
       expect(plugin.__testing.rewriteSafeCombinedExecToolCallInMessage(message)).toBe(false);
       expect(message).toEqual(before);
-    }
-  });
+    },
+  );
 
   it("filters Kimi reasoning fields from final assistant messages after tool failures", async () => {
     const provider = makeProvider();

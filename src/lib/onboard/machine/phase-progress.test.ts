@@ -93,21 +93,21 @@ describe("phase progress", () => {
     expect(state.timerCallback).not.toBeNull();
   });
 
-  it.each([
-    "provider_selection",
-    "policies",
-  ] as const)("protects the interactive %s prompt from heartbeat output", async (stateName) => {
-    const { reporter, state } = createHarness({ interactive: true });
-    await reporter
-      .wrap(
-        phase(stateName, async (context) => ({
-          context,
-          result: advanceTo("post_verify"),
-        })),
-      )
-      .run("ctx");
-    expect(state.timerCallback).toBeNull();
-  });
+  it.each(["provider_selection", "policies"] as const)(
+    "protects the interactive %s prompt from heartbeat output",
+    async (stateName) => {
+      const { reporter, state } = createHarness({ interactive: true });
+      await reporter
+        .wrap(
+          phase(stateName, async (context) => ({
+            context,
+            result: advanceTo("post_verify"),
+          })),
+        )
+        .run("ctx");
+      expect(state.timerCallback).toBeNull();
+    },
+  );
 
   it("heartbeats prompt-owning phases during non-interactive onboarding", async () => {
     const { reporter, state } = createHarness({ interactive: false });
@@ -225,9 +225,10 @@ describe("phase progress", () => {
     expect(valid.state.timerIntervalMs).toBe(12_000);
   });
 
-  it("provides a friendly label for every non-terminal state", () => {
-    for (const [state, label] of Object.entries(ONBOARD_PHASE_LABELS)) {
-      expect(label.trim().length, state).toBeGreaterThan(0);
-    }
-  });
+  it.each(Object.entries(ONBOARD_PHASE_LABELS).map(([state, label]) => ({ state, label })))(
+    "provides a friendly label for $state",
+    ({ label }) => {
+      expect(label.trim().length).toBeGreaterThan(0);
+    },
+  );
 });

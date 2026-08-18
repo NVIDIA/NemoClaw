@@ -216,31 +216,40 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(fs.existsSync(receipt)).toBe(false);
   });
 
-  it("accepts receipt retirement state only for a completed non-resumable session", () => {
-    const valid = session.createSession();
-    valid.status = "complete";
-    valid.resumable = false;
-    valid.stationExpressReceiptRetirement = receiptGeneration;
-    expect(session.normalizeSession(valid)?.stationExpressReceiptRetirement).toBe(
-      receiptGeneration,
-    );
+  it.each([
+    { scenario: "in-progress session" },
+    { scenario: "resumable session" },
+    { scenario: "session with intent" },
+    { scenario: "invalid receipt" },
+  ])(
+    "accepts receipt retirement state only for a completed non-resumable session [$scenario]",
+    ({ scenario }) => {
+      const valid = session.createSession();
+      valid.status = "complete";
+      valid.resumable = false;
+      valid.stationExpressReceiptRetirement = receiptGeneration;
+      expect(session.normalizeSession(valid)?.stationExpressReceiptRetirement).toBe(
+        receiptGeneration,
+      );
 
-    for (const candidate of [
-      { ...valid, status: "in_progress" },
-      { ...valid, resumable: true },
-      {
-        ...valid,
-        stationExpressIntent: {
-          version: 1 as const,
-          model: "nemotron-3-ultra-550b-a55b",
-          sandboxName: "my-assistant",
-        },
-      },
-      { ...valid, stationExpressReceiptRetirement: "invalid" },
-    ]) {
+      const candidate = (
+        {
+          "in-progress session": { ...valid, status: "in_progress" },
+          "resumable session": { ...valid, resumable: true },
+          "session with intent": {
+            ...valid,
+            stationExpressIntent: {
+              version: 1 as const,
+              model: "nemotron-3-ultra-550b-a55b",
+              sandboxName: "my-assistant",
+            },
+          },
+          "invalid receipt": { ...valid, stationExpressReceiptRetirement: "invalid" },
+        } as const
+      )[scenario]!;
       expect(session.normalizeSession(candidate as never)).toBeNull();
-    }
-  });
+    },
+  );
 
   it("keeps the installer receipt when durable session completion fails", () => {
     const receipt = path.join(session.SESSION_DIR, "station-express-resume");
@@ -492,19 +501,16 @@ describe("Station Express onboarding session state (#7048)", () => {
     async () => {
       const { prepareOnboardSession } = await import("../onboard/session-bootstrap");
       const { wrapOnboard } = await import("../onboard/station-express-resume");
-      const { handleProviderInferenceState } = await import(
-        "../onboard/machine/handlers/provider-inference"
-      );
-      const { baseOptions, createDeps } = await import(
-        "../onboard/machine/handlers/provider-inference.test-support"
-      );
+      const { handleProviderInferenceState } =
+        await import("../onboard/machine/handlers/provider-inference");
+      const { baseOptions, createDeps } =
+        await import("../onboard/machine/handlers/provider-inference.test-support");
       const { runOnboardMachine } = await import("../onboard/machine/runner");
       const { OnboardRuntime } = await import("../onboard/machine/runtime");
       const { completeOnboardMachine } = await import("../onboard/machine/result");
       const { addOnboardMachineEventListener } = await import("../onboard/machine/events");
-      const { registerIncompleteOnboardExitHandlerForSession } = await import(
-        "../onboard/onboard-exit-handler"
-      );
+      const { registerIncompleteOnboardExitHandlerForSession } =
+        await import("../onboard/onboard-exit-handler");
       const bootstrapDeps = await realBootstrapDeps();
       const intent = {
         version: 1 as const,
@@ -576,19 +582,15 @@ describe("Station Express onboarding session state (#7048)", () => {
         steps: { provider_selection: { status: "failed" } },
       });
 
-      for (const name of [
-        "NEMOCLAW_STATION_EXPRESS",
-        "NEMOCLAW_NON_INTERACTIVE",
-        "NEMOCLAW_YES",
-        "NEMOCLAW_POLICY_MODE",
-        "NEMOCLAW_SANDBOX_NAME",
-        "NEMOCLAW_PROVIDER",
-        "NEMOCLAW_VLLM_MODEL",
-        "NEMOCLAW_MODEL",
-        "NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION",
-      ]) {
-        vi.stubEnv(name, "");
-      }
+      vi.stubEnv("NEMOCLAW_STATION_EXPRESS", "");
+      vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "");
+      vi.stubEnv("NEMOCLAW_YES", "");
+      vi.stubEnv("NEMOCLAW_POLICY_MODE", "");
+      vi.stubEnv("NEMOCLAW_SANDBOX_NAME", "");
+      vi.stubEnv("NEMOCLAW_PROVIDER", "");
+      vi.stubEnv("NEMOCLAW_VLLM_MODEL", "");
+      vi.stubEnv("NEMOCLAW_MODEL", "");
+      vi.stubEnv("NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION", "");
 
       const resumedSetup = vi.fn(async () => {
         expect(process.env).toMatchObject({

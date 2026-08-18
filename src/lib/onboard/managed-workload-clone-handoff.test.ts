@@ -310,10 +310,10 @@ describe("prepareManagedWorkloadCloneHandoff", () => {
         ...base.workload,
         acceptsReceipt: (candidate) => {
           const managedCandidates = candidate?.kind === "managed-image" ? [candidate] : [];
-          for (const managedCandidate of managedCandidates) {
+          managedCandidates.forEach((managedCandidate) => {
             observedReceipts.push(managedCandidate);
             mutationResults.push(Reflect.set(managedCandidate, "reference", "mutated-by-provider"));
-          }
+          });
           return true;
         },
       },

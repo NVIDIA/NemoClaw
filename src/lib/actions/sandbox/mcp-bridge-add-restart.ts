@@ -31,7 +31,7 @@ import {
 } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
-  assertNoAttachedProviderCredentialCollision,
+  assertNoAttachedProviderCredentialCollisions,
   attachProvider,
   deleteProvider,
   detachMissingProviderReference,
@@ -372,7 +372,7 @@ async function addMcpBridgeUnlocked(
     // Credential keys are sandbox-global. Prove this key is not already
     // supplied by a foreign attachment before opening its MCP route, then check
     // again after provider creation to close the intervening race.
-    assertNoAttachedProviderCredentialCollision(sandboxName, entry);
+    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
     // Loading the real protocol:mcp policy with --wait is the authoritative
     // running-supervisor capability check. Do it before any host credential is
     // created or updated so unsupported runtimes fail without that side effect.
@@ -407,7 +407,7 @@ async function addMcpBridgeUnlocked(
       // adapter mutations. A process death before this write fails closed.
       writeBridgeEntry(sandboxName, entry);
     }
-    assertNoAttachedProviderCredentialCollision(sandboxName, entry);
+    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
     if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
       throw new McpBridgeError(
         `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,

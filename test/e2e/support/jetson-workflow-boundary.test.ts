@@ -65,18 +65,14 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     );
   });
 
-  it("queues every operator-backend dispatch without cancellation (#8142)", () => {
+  it("rejects the unsupported queue key from operator-backend concurrency (#8142)", () => {
     const workflow = readWorkflow();
     const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
       concurrency?: Record<string, unknown>;
     };
-    job.concurrency = {
-      group: "jetson-${{ github.ref }}",
-      queue: 1,
-      "cancel-in-progress": true,
-    };
+    job.concurrency!.queue = "max";
     expect(validateJetsonDispatchBoundary(workflow)).toContain(
-      "jetson-nvmap-gpu concurrency must queue every operator-backend dispatch without cancellation",
+      "jetson-nvmap-gpu concurrency must preserve its operator-backend group without cancellation",
     );
   });
 
