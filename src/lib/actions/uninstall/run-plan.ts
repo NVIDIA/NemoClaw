@@ -761,17 +761,22 @@ function runOptional(
 // removal command, but it must not infer that it installed the formula. (#8882)
 const OPENSHELL_HOMEBREW_FORMULA = "nvidia/openshell/openshell";
 
-function retainHomebrewOpenShell(runtime: UninstallRuntime): boolean {
-  if (runtime.platform !== "darwin" || !runtime.commandExists("brew")) return false;
+function reportRetainedMacOsOpenShell(runtime: UninstallRuntime): void {
+  if (!runtime.commandExists("brew")) {
+    runtime.log(
+      `Kept OpenShell executables because Homebrew is unavailable. If Homebrew manages OpenShell, make brew available through PATH, then run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`,
+    );
+    return;
+  }
   const installed = runtime.run("brew", ["list", "--formula", OPENSHELL_HOMEBREW_FORMULA], {
     env: runtime.env,
     stdio: "ignore",
   });
-  if (installed.status !== 0) return false;
   runtime.log(
-    `Kept Homebrew-managed OpenShell. To remove it, run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`,
+    installed.status === 0
+      ? `Kept Homebrew-managed OpenShell. To remove it, run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`
+      : `Kept OpenShell executables because Homebrew did not confirm ${OPENSHELL_HOMEBREW_FORMULA}. Check the formula before removing OpenShell.`,
   );
-  return true;
 }
 
 function deleteSelectedGatewaySandbox(
@@ -2847,7 +2852,9 @@ function executePlan(
           runtime.log(binaryKeepMessage);
         } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
           runtime.log("Keeping OpenShell binaries used by the default gateway service.");
-        } else if (!retainHomebrewOpenShell(runtime)) {
+        } else if (runtime.platform === "darwin") {
+          reportRetainedMacOsOpenShell(runtime);
+        } else {
           for (const target of paths.openshellInstallPaths)
             removeFileWithOptionalSudo(target, runtime);
         }
