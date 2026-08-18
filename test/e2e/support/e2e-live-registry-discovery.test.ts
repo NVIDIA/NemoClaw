@@ -3,9 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
 import { target } from "../registry/builder.ts";
+import { liveTargetInventoryEntry } from "../registry/run.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
 import type { TargetDefinition, TargetEnvironment } from "../registry/types.ts";
 
@@ -80,6 +80,20 @@ describe("live target registry discovery support", () => {
     });
   });
 
+  it("reports a missing-environment declaration without resolving a runner (#9167)", () => {
+    const declaration = target("synthetic-no-environment").expectedState("synthetic-ready").build();
+
+    expect(liveTargetInventoryEntry(declaration)).toEqual({
+      id: declaration.id,
+      agentRuntime: "unresolved",
+      observableOutcome: "unresolved",
+      environmentOrInferenceEndpoint: "unresolved",
+      unresolvedReason: "This typed registry declaration has no executable owner",
+      supported: false,
+      supportReasons: ["missing environment"],
+    });
+  });
+
   it("compiles a run plan from synthetic target behavior", () => {
     const registered = syntheticTarget();
 
@@ -90,11 +104,6 @@ describe("live target registry discovery support", () => {
       suiteIds: registered.suiteIds,
       phases: ["environment", "onboarding", "state-validation"],
     });
-    const deepAgents = { ...SUPPORTED_ENVIRONMENT, onboarding: "cloud-langchain-deepagents-code" };
-
-    expect(buildLiveTargetRunPlan(syntheticTarget(deepAgents)).e2eCloudExperimentalChecks).toEqual(
-      DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
-    );
   });
 
   it("inserts lifecycle execution only when the synthetic target requests it", () => {

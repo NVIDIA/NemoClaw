@@ -13,7 +13,7 @@ import {
   readRegistrySandboxEntry,
 } from "../fixtures/phases/index.ts";
 import { listTargets, requireTargets } from "../registry/registry.ts";
-import { liveTargetSupport, liveTargetTestName } from "../registry/runtime-support.ts";
+import { liveTargetSupport, liveTargetTestTitle } from "../registry/runtime-support.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
@@ -41,7 +41,7 @@ const E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR = path.join(
 );
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-// The workflow filters by target ID via `-t "^${TARGET_ID}$"`.
+// The workflow filters by the stable target ID prefix via `-t "^${TARGET_ID}:"`.
 // When that env is set, surface the structured `[not wired]` reason for the
 // targeted unsupported target at module load so the job log/summary
 // captures it before Vitest reports the skipped test by ID.
@@ -76,7 +76,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);
     }
     test.skip(
-      liveTargetTestName(target),
+      liveTargetTestTitle(target, support),
       { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
       () => {},
     );
@@ -84,7 +84,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
   }
 
   test(
-    liveTargetTestName(target),
+    liveTargetTestTitle(target, support),
     { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
     async ({
       artifacts,
