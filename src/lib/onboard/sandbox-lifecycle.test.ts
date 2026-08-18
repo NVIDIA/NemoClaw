@@ -128,6 +128,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
       const before = JSON.stringify(registryState.sandbox);
       const helpers = createSandboxLifecycleHelpers({
         runCaptureOpenshell,
+        getGatewayName: () => "nemoclaw-18081",
         fetchGatewayAuthTokenFromSandbox: () => null,
         agentProductName: () => "OpenClaw",
         prompt: async () => "no",
