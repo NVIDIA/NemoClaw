@@ -401,7 +401,7 @@ export const diagnostics = {
     ),
   loops: (details: readonly string[]) =>
     formatList(
-      "Changed test files add loops inside test callbacks, around test definitions, or behind local helper indirection.",
+      "Changed test files add loops inside test callbacks, around test definitions, through one-use helpers, or through callback-forwarding helpers.",
       details,
       "Keep one-scenario setup, sequence, retry, polling, and aggregate loops direct. Use test.each for independent cases. Do not move one test's loop into a named callback or one-use helper.",
     ),
