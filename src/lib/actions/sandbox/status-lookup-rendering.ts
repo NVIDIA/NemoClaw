@@ -17,6 +17,8 @@ import {
 
 type SandboxGatewayLookupStatusContext = {
   sandboxName: string;
+  /** Whether the local registry holds `sandboxName`, as the status snapshot read it. */
+  registered: boolean;
   lookup: SandboxGatewayState;
   phase: string | null;
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
@@ -37,7 +39,7 @@ export async function printSandboxGatewayLookupStatus(
       console.log(context.lookup.output);
       process.exit(1);
     case "missing":
-      printMissingLiveSandboxStatusGuidance(context.sandboxName, context.lookup);
+      printMissingLiveSandboxStatusGuidance(context);
       process.exit(1);
     case "identity_drift":
       printIdentityDriftLookupStatus(context);
@@ -74,11 +76,21 @@ function printSandboxRecoveryFailedLookupStatus({
   process.exit(1);
 }
 
-function printMissingLiveSandboxStatusGuidance(
-  sandboxName: string,
-  lookup: SandboxGatewayState,
-): void {
+function printMissingLiveSandboxStatusGuidance({
+  sandboxName,
+  registered,
+  lookup,
+}: SandboxGatewayLookupStatusContext): void {
   console.log("");
+  // A gateway NotFound cannot distinguish a deleted sandbox from a name the
+  // local registry never held. Without `registered` the guidance below claims a
+  // local registration that `sandbox start` and `sandbox stop` deny (#9425).
+  if (!registered) {
+    console.log(
+      `  Sandbox '${sandboxName}' is not registered. Run '${CLI_NAME} list' to see registered sandboxes.`,
+    );
+    return;
+  }
   console.log(
     `  Sandbox '${sandboxName}' is registered locally, but is not present in the live OpenShell gateway.`,
   );

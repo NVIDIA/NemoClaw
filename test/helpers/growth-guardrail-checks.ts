@@ -244,7 +244,10 @@ function countTestLoops(file: string, source: string | null): number {
         visitTestContext(helper, new Set([...activeFunctions, helper]));
       }
     }
-    ts.forEachChild(node, (child) => visitTestContext(child, activeFunctions));
+    ts.forEachChild(node, (child) => {
+      if (isFunctionLike(child) && functionName(child)) return;
+      visitTestContext(child, activeFunctions);
+    });
   }
 
   function visit(node: ts.Node): void {

@@ -431,7 +431,7 @@ describe("effective built-in policy contracts", () => {
     });
   });
 
-  function verifyOpenClawMessagingPolicyBoundaries() {
+  it("keeps OpenClaw messaging credentials and WebSockets inside inspected endpoints", () => {
     const effective = composePresets(["discord", "slack", "teams", "telegram", "wechat"]);
 
     for (const policyName of ["discord", "slack", "teams", "telegram_bot", "wechat_bridge"]) {
@@ -468,14 +468,9 @@ describe("effective built-in policy contracts", () => {
       expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
     }
-  }
+  });
 
-  it(
-    "keeps OpenClaw messaging credentials and WebSockets inside inspected endpoints",
-    verifyOpenClawMessagingPolicyBoundaries,
-  );
-
-  function verifyHermesMessagingPolicyComposition() {
+  it("composes Hermes-specific messaging mutation and runtime identity rules", () => {
     const effective = composePresets(["discord", "slack", "wechat"], "hermes");
     const discord = requireNetworkPolicy(effective, "discord");
     const slack = requireNetworkPolicy(effective, "slack");
@@ -526,12 +521,7 @@ describe("effective built-in policy contracts", () => {
       ].sort((a, b) => `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`)),
     );
     expect(discordMutations.some((rule) => rule.path === "/**")).toBe(false);
-  }
-
-  it(
-    "composes Hermes-specific messaging mutation and runtime identity rules",
-    verifyHermesMessagingPolicyComposition,
-  );
+  });
 
   it("keeps tool installers and optional Claude egress on explicit binary and host scopes", () => {
     const effective = composePresets(["brew", "claude-code"]);

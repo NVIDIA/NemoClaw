@@ -400,7 +400,7 @@ describe("complete managed-image publication workflow", () => {
     },
   );
 
-  function verifyShippedAgentImageBuildAndExercise() {
+  it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const reviewedAudit = managedPrReviewedAudit(workflow);
     const prBuilder = managedPrBuilder(workflow);
@@ -675,12 +675,7 @@ describe("complete managed-image publication workflow", () => {
     expect(exportContract.run).toContain("revision: $revision");
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
-  }
-
-  it(
-    "builds and exercises every shipped agent from an exact PR image before merge (#7744)",
-    verifyShippedAgentImageBuildAndExercise,
-  );
+  });
 
   it("rebuilds the staging QA base from exact source before validating the Deep Agents Code repair (#8665)", () => {
     const workflow = readWorkflow("managed-images.yaml");
