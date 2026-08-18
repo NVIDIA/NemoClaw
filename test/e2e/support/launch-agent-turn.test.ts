@@ -59,6 +59,7 @@ type FixtureMode =
   | "pty-record-invalid"
   | "pty-record-permission"
   | "pty-record-timeout"
+  | "pty-termios-transient"
   | "pty-termios-unavailable"
   | "recording-timeout"
   | "valid";
@@ -246,6 +247,7 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   const openshellCallsRoot = join(fixtureRoot, "openshell-calls");
   const pendingQualificationMarker = join(fixtureRoot, "pending-qualification-observed");
   const ptyRecordReceiptPath = join(fixtureRoot, "pty-record-receipt.json");
+  const ptyTermiosRetryMarker = join(fixtureRoot, "pty-termios-retry");
   const runId = randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   const ptyRecordRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
@@ -266,6 +268,16 @@ if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-termios-unavailable" ]]; then
     sleep 0.01
   done
   exit 72
+fi
+if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-termios-transient" ]]; then
+  for _ in {1..200}; do
+    [[ ! -e "$NEMOCLAW_FIXTURE_TTY_MARKER" ]] || break
+    sleep 0.01
+  done
+  if [[ ! -e "$NEMOCLAW_FIXTURE_PTY_TERMIOS_RETRY_MARKER" ]]; then
+    : >"$NEMOCLAW_FIXTURE_PTY_TERMIOS_RETRY_MARKER"
+    exit 1
+  fi
 fi
 exec /usr/bin/stty "$@"
 `,
@@ -473,6 +485,7 @@ exec "$@"
         NEMOCLAW_FIXTURE_PTY_RECORD_ROOT: ptyRecordRoot,
         NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
         NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
+        NEMOCLAW_FIXTURE_PTY_TERMIOS_RETRY_MARKER: ptyTermiosRetryMarker,
         NEMOCLAW_FIXTURE_PTY_RECORD_RECEIPT: ptyRecordReceiptPath,
         NEMOCLAW_FIXTURE_RUN_ID: runId,
         NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
@@ -487,7 +500,8 @@ exec "$@"
         NEMOCLAW_LAUNCH_RUN_ID: runId,
         NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
         NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
-        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: mode.endsWith("-timeout") ? "2" : "230",
+        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
+          mode.endsWith("-timeout") || mode === "pty-termios-unavailable" ? "2" : "230",
         NEMOCLAW_LAUNCH_SECOND_INPUT: "second input",
         NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
         NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
@@ -524,6 +538,7 @@ exec "$@"
             },
         ),
       pendingQualificationObserved: existsSync(pendingQualificationMarker),
+      ptyTermiosRetryObserved: existsSync(ptyTermiosRetryMarker),
       ptyRecordRemoved: !existsSync(ptyRecordRoot),
       ptyRecordReceipt: existsSync(ptyRecordReceiptPath)
         ? JSON.parse(readFileSync(ptyRecordReceiptPath, "utf8"))
@@ -882,6 +897,20 @@ it.runIf(process.platform === "linux")(
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(0);
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "retries a transient PTY terminal-state probe before submitting input (#9384)",
+  () => {
+    const { baselineRemoved, ptyTermiosRetryObserved, result, ttyObserved } =
+      runLaunchSessionFixture("pty-termios-transient", "absent");
+
+    expect(ttyObserved, result.stderr).toBe(true);
+    expect(ptyTermiosRetryObserved, result.stderr).toBe(true);
+    expect(baselineRemoved, result.stderr).toBe(true);
+    expect(result.signal, result.stderr).toBeNull();
+    expect(result.status, result.stderr).toBe(0);
   },
 );
 
