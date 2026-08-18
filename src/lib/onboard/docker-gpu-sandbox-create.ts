@@ -115,7 +115,7 @@ export interface DockerManagedBootstrapDeferredCutover {
 
 export type DockerGpuSandboxCreatePatch = {
   maybeApplyDuringCreate: () => void;
-  /** Full Docker container ID owned by the replacement transaction, or null before recreation. */
+  /** Full Docker container ID owned by the transaction, or null until it records a replacement. */
   replacementRuntimeId: () => string | null;
   createFailureMessage: () => string | null;
   exitOnPatchError: () => Promise<void>;
