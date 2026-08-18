@@ -3253,7 +3253,7 @@ jobs:
           NEMOCLAW_OPENSHELL_MAX_VERSION: ${{ steps.openshell_qualification.outputs.version }}
           NEMOCLAW_OPENSHELL_MIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
           NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
-        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts install
 
       - name: Pre-pull pinned gateway auth probe image
         run: docker pull "$DOCKER_GRPC_PROBE_IMAGE"
@@ -3570,7 +3570,7 @@ jobs:
           NEMOCLAW_OPENSHELL_MAX_VERSION: ${{ steps.openshell_qualification.outputs.version }}
           NEMOCLAW_OPENSHELL_MIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
           NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
-        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts install
 
       - name: Write OpenShell provenance
         if: ${{ matrix.agent == 'deepagents' }}
@@ -3688,7 +3688,7 @@ jobs:
           NEMOCLAW_OPENSHELL_MAX_VERSION: ${{ steps.openshell_qualification.outputs.version }}
           NEMOCLAW_OPENSHELL_MIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
           NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
-        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts install
 
       - name: Write OpenShell provenance
         run: node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts provenance "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
