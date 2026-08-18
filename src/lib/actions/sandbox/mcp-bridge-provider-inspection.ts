@@ -164,26 +164,29 @@ export function inspectMcpProviderAttachments(
   }
 }
 
-export function assertNoAttachedProviderCredentialCollision(
+export function assertNoAttachedProviderCredentialCollisions(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entries: readonly McpBridgeEntry[],
 ): void {
+  if (entries.length === 0) return;
   const inspection = inspectMcpProviderAttachments(sandboxName);
   if (!inspection.attachments) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect providers attached to sandbox '${sandboxName}'.`,
     );
   }
-  const credentialKey = entry.env[0];
-  const collision = inspection.attachments.find(
-    (attachment) =>
-      attachment.credentialKeys.includes(credentialKey) &&
-      !(attachment.name === entry.providerName && attachment.providerId === entry.providerId),
-  );
-  if (collision) {
-    throw new McpBridgeError(
-      `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to reserve the key for MCP before provider activation.`,
+  for (const entry of entries) {
+    const credentialKey = entry.env[0];
+    const collision = inspection.attachments.find(
+      (attachment) =>
+        attachment.credentialKeys.includes(credentialKey) &&
+        !(attachment.name === entry.providerName && attachment.providerId === entry.providerId),
     );
+    if (collision) {
+      throw new McpBridgeError(
+        `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to continue managed MCP while this sandbox receives that key from another provider.`,
+      );
+    }
   }
 }
 
