@@ -842,26 +842,24 @@ describe("Docker managed bootstrap adapter", () => {
       expect(options).toEqual({ tail: 120, timeout: 2_000 });
       return `startup failed with NVIDIA_API_KEY=${secret}`;
     });
-    const dockerStarts: Record<
-      string,
-      () => { status: number; stdout?: string; stderr: string }
-    > = {
-      [NEW_ID]: () => {
-        assert(fake.replacement?.State);
-        Object.assign(fake.replacement.State, {
-          Status: "exited",
-          Running: false,
-          ExitCode: 31,
-          FinishedAt: "2026-08-18T12:30:00.000Z",
-        });
-        return { status: 1, stderr: "injected start failure" };
-      },
-      [OLD_ID]: () => {
-        assert(fake.original?.State);
-        Object.assign(fake.original.State, { Running: true });
-        return { status: 0, stdout: "", stderr: "" };
-      },
-    };
+    const dockerStarts: Record<string, () => { status: number; stdout?: string; stderr: string }> =
+      {
+        [NEW_ID]: () => {
+          assert(fake.replacement?.State);
+          Object.assign(fake.replacement.State, {
+            Status: "exited",
+            Running: false,
+            ExitCode: 31,
+            FinishedAt: "2026-08-18T12:30:00.000Z",
+          });
+          return { status: 1, stderr: "injected start failure" };
+        },
+        [OLD_ID]: () => {
+          assert(fake.original?.State);
+          Object.assign(fake.original.State, { Running: true });
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      };
     fake.deps.dockerStart = vi.fn((id) => dockerStarts[id]!());
     const first = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request: rootRequest, snapshot } = authority();
@@ -1053,53 +1051,54 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events).not.toContain("journal:staged");
   });
 
-  it.each(
-    SUPPORTED_AGENTS,
-  )("prepares, activates, and exactly rolls back the %s agent without a central switch", async (agent) => {
-    const fake = fixture({ agent, sharedState: "pending" });
-    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
-    const { handle, request: rootRequest, snapshot } = authority(agent);
-    const prepared = await adapter.prepareBootstrapReplacement({
-      handle,
-      snapshot,
-      request: rootRequest,
-      replacementOptions: { values: {} },
-    });
-    const durable = durablePreparation(handle, snapshot, prepared);
-    const replacement = await adapter.activateBootstrapReplacement({
-      handle,
-      snapshot,
-      prepared,
-      durablePreparation: durable,
-    });
-    await expect(
-      adapter.finalizeBootstrap({
-        outcome: "rollback",
+  it.each(SUPPORTED_AGENTS)(
+    "prepares, activates, and exactly rolls back the %s agent without a central switch",
+    async (agent) => {
+      const fake = fixture({ agent, sharedState: "pending" });
+      const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+      const { handle, request: rootRequest, snapshot } = authority(agent);
+      const prepared = await adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request: rootRequest,
+        replacementOptions: { values: {} },
+      });
+      const durable = durablePreparation(handle, snapshot, prepared);
+      const replacement = await adapter.activateBootstrapReplacement({
         handle,
         snapshot,
         prepared,
         durablePreparation: durable,
-        replacement,
-        completion: null,
-      }),
-    ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
-    expect(fake.journal?.phase).toBe("owner-cleanup-required");
-    expect(fake.finalization).toBeNull();
-    expect(fake.replacement).toBeNull();
-    expect(fake.original?.State?.Running).toBe(false);
-    expectEventBefore(fake.events, "shared:rollback", `rm:${NEW_ID}`);
-    expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
-    expect(
-      vi.mocked(fake.deps.dockerRun!).mock.calls.some(([args]) => {
-        const agentIndex = args.indexOf("--agent");
-        return (
-          args.includes("--shared-state-transaction-status") &&
-          agentIndex >= 0 &&
-          args[agentIndex + 1] === agent
-        );
-      }),
-    ).toBe(true);
-  });
+      });
+      await expect(
+        adapter.finalizeBootstrap({
+          outcome: "rollback",
+          handle,
+          snapshot,
+          prepared,
+          durablePreparation: durable,
+          replacement,
+          completion: null,
+        }),
+      ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+      expect(fake.journal?.phase).toBe("owner-cleanup-required");
+      expect(fake.finalization).toBeNull();
+      expect(fake.replacement).toBeNull();
+      expect(fake.original?.State?.Running).toBe(false);
+      expectEventBefore(fake.events, "shared:rollback", `rm:${NEW_ID}`);
+      expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
+      expect(
+        vi.mocked(fake.deps.dockerRun!).mock.calls.some(([args]) => {
+          const agentIndex = args.indexOf("--agent");
+          return (
+            args.includes("--shared-state-transaction-status") &&
+            agentIndex >= 0 &&
+            args[agentIndex + 1] === agent
+          );
+        }),
+      ).toBe(true);
+    },
+  );
 
   it("exactly rolls back an identity-bound replacement in Docker's restart loop", async () => {
     const fake = fixture({ sharedState: "pending" });
@@ -1213,35 +1212,33 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 
-  it.each([
-    "NODE_OPTIONS",
-    "NODE_PATH",
-    "LD_PRELOAD",
-    "BASH_ENV",
-  ])("rejects hostile %s from the launch snapshot before replacement creation", async (key) => {
-    const fake = fixture();
-    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
-    const { handle, request, snapshot } = authority();
-    const parsed = parseDockerManagedBootstrapLaunchSpec(snapshot.specCanonicalJson);
-    const hostileInspect = structuredClone(parsed.inspect);
-    hostileInspect.Config!.Env = [...(hostileInspect.Config!.Env ?? []), `${key}=/tmp/hostile`];
-    const hostileSpec = normalizeDockerManagedBootstrapLaunchSpec(hostileInspect);
+  it.each(["NODE_OPTIONS", "NODE_PATH", "LD_PRELOAD", "BASH_ENV"])(
+    "rejects hostile %s from the launch snapshot before replacement creation",
+    async (key) => {
+      const fake = fixture();
+      const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+      const { handle, request, snapshot } = authority();
+      const parsed = parseDockerManagedBootstrapLaunchSpec(snapshot.specCanonicalJson);
+      const hostileInspect = structuredClone(parsed.inspect);
+      hostileInspect.Config!.Env = [...(hostileInspect.Config!.Env ?? []), `${key}=/tmp/hostile`];
+      const hostileSpec = normalizeDockerManagedBootstrapLaunchSpec(hostileInspect);
 
-    await expect(
-      adapter.prepareBootstrapReplacement({
-        handle,
-        snapshot: {
-          ...snapshot,
-          specHash: hostileSpec.hash,
-          specCanonicalJson: hostileSpec.canonicalJson,
-        },
-        request,
-        replacementOptions: { values: {} },
-      }),
-    ).rejects.toThrow(`Managed bootstrap refuses root-process injection environment '${key}'.`);
-    expect(fake.events).not.toContain("create:replacement");
-    expect(fake.replacement).toBeNull();
-  });
+      await expect(
+        adapter.prepareBootstrapReplacement({
+          handle,
+          snapshot: {
+            ...snapshot,
+            specHash: hostileSpec.hash,
+            specCanonicalJson: hostileSpec.canonicalJson,
+          },
+          request,
+          replacementOptions: { values: {} },
+        }),
+      ).rejects.toThrow(`Managed bootstrap refuses root-process injection environment '${key}'.`);
+      expect(fake.events).not.toContain("create:replacement");
+      expect(fake.replacement).toBeNull();
+    },
+  );
 
   it("quiesces and retains an exact incomplete create when its mutable name is reused", async () => {
     const fake = fixture({ ownerId: "sandbox-alpha-recreated" });

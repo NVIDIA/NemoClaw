@@ -102,9 +102,7 @@ describe("managed startup shared-state transaction", () => {
       Object.defineProperty(stat, "dev", {
         configurable: true,
         value:
-          typeof stat.dev === "bigint"
-            ? stat.dev + BigInt(deviceOffset)
-            : stat.dev + deviceOffset,
+          typeof stat.dev === "bigint" ? stat.dev + BigInt(deviceOffset) : stat.dev + deviceOffset,
       });
       return stat;
     }) as typeof fs.lstatSync);
@@ -218,8 +216,11 @@ describe("managed startup shared-state transaction", () => {
         "langchain-deepagents-code": [".state", "skills"],
         pi: ["agent", path.join("agent", "models.json")],
       };
-      expect(absentManagedPaths[agent].every((relativePath) =>
-          Object.is(fs.existsSync(path.join(root, relativePath)), false))).toBe(true);
+      expect(
+        absentManagedPaths[agent].every((relativePath) =>
+          Object.is(fs.existsSync(path.join(root, relativePath)), false),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(transactionDirectory)).toBe(false);
     },
   );
