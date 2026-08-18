@@ -110,7 +110,11 @@ describe("sandbox base-image resolution metadata lifecycle", () => {
 
   it("preserves an exact digest resolution when Docker omits RepoDigests (#9386)", () => {
     mocks.dockerImageInspectFormat.mockReturnValue(
-      JSON.stringify({ ...inspected, RepoDigests: [] }),
+      JSON.stringify({
+        Id: inspected.Id,
+        Os: inspected.Os,
+        Architecture: inspected.Architecture,
+      }),
     );
 
     expect(createSandboxBaseImageResolutionMetadata(options, KEY, publishedResolution)).toEqual(
