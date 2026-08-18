@@ -139,11 +139,15 @@ export interface DockerStateMutationHarnessOptions {
   readonly lifecycleGeneration?: string;
   readonly loseAcquireResponseOnce?: boolean;
   readonly loseReleaseResponseOnce?: boolean;
+  readonly stateMountType?: "bind" | "volume";
 }
 
 export interface DockerStateMutationHarnessState {
+  mountDriver: string | null;
+  mountName: string | null;
   runtimePid: number;
   mountSource: string;
+  mountType: "bind" | "volume";
   sandboxId: string;
   pidMode: string;
   privileged: boolean;
@@ -156,9 +160,16 @@ function createContainerStateMutationHarness(
 ) {
   const lifecycleGeneration =
     options.lifecycleGeneration ?? DOCKER_STATE_MUTATION_LIFECYCLE_GENERATION;
+  const stateMountType = options.stateMountType ?? "bind";
+  const usesManagedVolume = stateMountType === "volume";
   const state: DockerStateMutationHarnessState = {
+    mountDriver: usesManagedVolume ? "local" : null,
+    mountName: usesManagedVolume ? "nemoclaw-hermes-alpha-state" : null,
     runtimePid: 4812,
-    mountSource: "/var/lib/openshell/alpha/hermes",
+    mountSource: usesManagedVolume
+      ? "/var/lib/docker/volumes/nemoclaw-hermes-alpha-state/_data"
+      : "/var/lib/openshell/alpha/hermes",
+    mountType: stateMountType,
     sandboxId: SANDBOX_ID,
     pidMode: "",
     privileged: false,
@@ -229,9 +240,11 @@ function createContainerStateMutationHarness(
           state.privileged,
           [
             {
-              Type: "bind",
+              Type: state.mountType,
               Source: state.mountSource,
+              ...(state.mountName === null ? {} : { Name: state.mountName }),
               Destination: DOCKER_STATE_MUTATION_STATE_ROOT,
+              ...(state.mountDriver === null ? {} : { Driver: state.mountDriver }),
               Mode: "",
               RW: true,
               Propagation: "rprivate",
