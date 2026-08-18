@@ -221,11 +221,19 @@ describe("Logger", () => {
     expect(output()).toContain('"name": "Error"');
   });
 
-  it("serializes the nested errors in an AggregateError", async () => {
+  it("serializes nested AggregateError entries without exposing credentials", async () => {
+    const apiKey = `nvapi-${"a".repeat(40)}`;
+    const authorizationToken = "opaque-aggregate-authorization-token";
+    const urlToken = "opaque-aggregate-url-token";
     const { log } = await freshLogger();
     log.setDebug(true);
+    const sanitizerError = new Error(`sanitizer failed with ${apiKey}`);
+    sanitizerError.stack = `Error: sanitizer failed\nAuthorization: Bearer ${authorizationToken}`;
+    Object.assign(sanitizerError, {
+      endpoint: `https://example.test/path?access_token=${urlToken}`,
+    });
     const cause = new AggregateError(
-      [new Error("sanitizer failed"), new Error("cleanup failed")],
+      [sanitizerError, new Error("cleanup failed")],
       "both failed",
     );
 
@@ -234,6 +242,10 @@ describe("Logger", () => {
     expect(output()).toContain('"errors"');
     expect(output()).toContain("sanitizer failed");
     expect(output()).toContain("cleanup failed");
+    expect(output()).not.toContain(apiKey);
+    expect(output()).not.toContain(authorizationToken);
+    expect(output()).not.toContain(urlToken);
+    expect(output()).toContain("<REDACTED>");
   });
 
   it("does not let a synchronous stderr failure escape", async () => {
