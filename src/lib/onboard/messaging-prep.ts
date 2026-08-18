@@ -3,7 +3,8 @@
 
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
-import { listMessagingCredentialMetadata } from "../messaging/channels";
+import { BUILT_IN_CHANNEL_MANIFESTS, listMessagingCredentialMetadata } from "../messaging/channels";
+import { tryGetMessagingAgentId } from "../messaging/utils";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
 import {
@@ -138,17 +139,27 @@ export function prepareCreateSandboxMessaging(
   // gateway-side) and the L7 proxy injects it. The credential value is a sentinel
   // (minted by refresh, configured post-create in onboard's
   // upsertMessagingProviders wrapper). Today only Google Chat uses this.
-  messagingTokenDefs.push(
-    ...collectMessagingBridgeTokenDefs({
-      sandboxName: input.sandboxName,
-      agent: input.agentName?.trim().toLowerCase() === "hermes" ? "hermes" : "openclaw",
-      getCredential: input.getCredential,
-      env: input.env,
-      normalizeCredentialValue: input.normalizeCredentialValue,
-      enabledChannels: input.enabledChannels,
-      disabledChannelNames,
-    }),
-  );
+  // Resolve the agent instead of defaulting it: an agent no manifest supports
+  // must configure no bridge, not the OpenClaw one.
+  // Mirror toMessagingAgentId: an unset agent is OpenClaw, but a named agent no
+  // manifest supports configures no bridge rather than borrowing OpenClaw's.
+  const agentName = input.agentName?.trim().toLowerCase();
+  const bridgeAgent = agentName
+    ? tryGetMessagingAgentId({ name: agentName }, BUILT_IN_CHANNEL_MANIFESTS)
+    : "openclaw";
+  if (bridgeAgent !== null) {
+    messagingTokenDefs.push(
+      ...collectMessagingBridgeTokenDefs({
+        sandboxName: input.sandboxName,
+        agent: bridgeAgent,
+        getCredential: input.getCredential,
+        env: input.env,
+        normalizeCredentialValue: input.normalizeCredentialValue,
+        enabledChannels: input.enabledChannels,
+        disabledChannelNames,
+      }),
+    );
+  }
 
   const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(
     input.sandboxName,

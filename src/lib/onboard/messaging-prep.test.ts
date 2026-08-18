@@ -114,6 +114,28 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.reusableMessagingProviders).not.toContain("demo-googlechat-bridge");
   });
 
+  it("configures no bridge for an agent no channel manifest supports", () => {
+    // Defaulting an unknown agent to OpenClaw would hand a sandbox with no
+    // messaging support the OpenClaw Google Chat bridge and its credential.
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        agentName: "deepagents",
+        enabledChannels: ["googlechat"],
+        env: {
+          GOOGLECHAT_SERVICE_ACCOUNT: JSON.stringify({
+            client_email: "bot@p.iam.gserviceaccount.com",
+            private_key: "fake-test-private-key-material",
+          }),
+        },
+        providerExistsInGateway: () => true,
+      }),
+    );
+
+    expect(result.messagingTokenDefs.map((def) => def.name)).not.toContain(
+      "demo-googlechat-bridge",
+    );
+  });
+
   it("does not reuse a bridge provider that is absent from the gateway", () => {
     const result = prepareCreateSandboxMessaging(
       createInput({

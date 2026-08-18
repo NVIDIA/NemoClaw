@@ -17,7 +17,14 @@ const SUBSCRIPTION = "projects/nemoclaw-test/subscriptions/hermes-chat";
 // test supplies the smallest surface `_rest_pull` touches.
 const HERMES_STUB = `
 class GoogleChatAdapter:
-    """Only what the subclass definition needs; _rest_pull calls none of it."""
+    """Only what the subclass needs: _rest_pull calls none of it, and connect()
+    stands in for the bundled implementation the override delegates to."""
+
+    async def connect(self, *, is_reconnect=False):
+        # Mirrors Hermes v2026.7.20: the no-subscription branch this override
+        # takes clears the bundled supervisor handle.
+        self._supervisor_task = None
+        return True
 
 
 class AuthorizedHttp:
@@ -98,6 +105,7 @@ adapter = object.__new__(module._sandbox_adapter_class())
 adapter._sandbox_subscription = SUBSCRIPTION
 adapter._shutting_down = False
 adapter._max_messages = 1
+adapter._supervisor_task = None  # the bundled __init__ sets this; object.__new__ skips it
 
 handled = []
 
@@ -134,13 +142,54 @@ aiohttp.SCRIPT.extend(
             (200, {}, _stop),
         ],
         "nack": [(200, delivery, _stop)],
+        # One delivery, then empty long-polls: a second live loop would keep
+        # consuming these, so the surviving one must be the only consumer.
+        # Empty long-poll first, so the loop is mid-sleep at reconnect; the
+        # delivery and its acknowledge belong to whatever survives.
+        "reconnect": [(200, {}, None), (200, delivery, None)] + [(200, {}, None)] * 8,
     }[SCENARIO]
 )
 
-asyncio.run(adapter._rest_pull())
+async def _until(predicate, limit=500):
+    for _ in range(limit):
+        if predicate():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("condition never held")
 
-print(json.dumps({"requests": aiohttp.REQUESTS, "handled": handled}))
+
+async def _main():
+    if SCENARIO != "reconnect":
+        await adapter._rest_pull()
+        return {}
+    await adapter.connect()
+    first = adapter._sandbox_pull_task
+    await _until(lambda: len(aiohttp.REQUESTS) >= 1)
+    pulls_before = len(aiohttp.REQUESTS)
+    await adapter.connect(is_reconnect=True)
+    second = adapter._sandbox_pull_task
+    await _until(lambda: handled)
+    adapter._shutting_down = True
+    await asyncio.wait_for(second, timeout=5)
+    return {
+        "firstCancelled": first.cancelled(),
+        "replaced": first is not second,
+        "boundToBundledHandle": adapter._supervisor_task is second,
+        "pullsBeforeReconnect": pulls_before,
+    }
+
+
+report = asyncio.run(_main())
+report.update({"requests": aiohttp.REQUESTS, "handled": handled})
+print(json.dumps(report))
 `;
+
+interface ReconnectReport {
+  readonly firstCancelled?: boolean;
+  readonly replaced?: boolean;
+  readonly boundToBundledHandle?: boolean;
+  readonly pullsBeforeReconnect?: number;
+}
 
 interface RecordedRequest {
   readonly url: string;
@@ -151,7 +200,9 @@ interface RecordedRequest {
 
 const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-googlechat-pull-"));
 
-function runScenario(scenario: string): { requests: RecordedRequest[]; handled: string[] } {
+function runScenario(
+  scenario: string,
+): ReconnectReport & { requests: RecordedRequest[]; handled: string[] } {
   const result = spawnSync("python3", [path.join(workspace, "driver.py"), ADAPTER, scenario], {
     encoding: "utf8",
     env: { ...process.env, PYTHONPATH: workspace, PYTHONDONTWRITEBYTECODE: "1" },
@@ -216,6 +267,23 @@ describe("Hermes Google Chat keyless REST pull", () => {
     // would stop inbound delivery for the whole session, not just this message.
     expect(handled).toEqual(["hello", "hello"]);
     expect(requests.filter((request) => request.url.endsWith(":pull"))).toHaveLength(2);
+  });
+
+  it("replaces the pull loop on reconnect instead of running two", () => {
+    // The pull loop exits only on shutdown, so a second connect() without an
+    // intervening disconnect() would leave two consumers on one subscription and
+    // every message handled twice. The pinned gateway rebuilds the adapter per
+    // reconnect, so this pins the invariant rather than a reachable path.
+    const report = runScenario("reconnect");
+
+    expect(report.firstCancelled).toBe(true);
+    expect(report.replaced).toBe(true);
+    // The bundled connect() clears its own handle on this branch, so the
+    // replacement has to be rebound for the bundled disconnect() to cancel it.
+    expect(report.boundToBundledHandle).toBe(true);
+    // The first loop really was pulling before the reconnect cancelled it.
+    expect(report.pullsBeforeReconnect).toBeGreaterThan(0);
+    expect(report.handled).toEqual(["hello"]);
   });
 
   it("acknowledges nothing for a message the handler nacks", () => {
