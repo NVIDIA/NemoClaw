@@ -4,12 +4,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import * as credentials from "../credentials/store";
+import { validateNvidiaApiKeyValue } from "../validation";
 import {
   BACK_TO_SELECTION,
   replaceNamedCredential,
   returningToProviderSelection,
   shouldReturnToProviderSelection,
 } from "./credential-navigation";
+import { createValidationRecoveryPromptHelpers } from "./validation-recovery-prompt";
 
 describe("credential prompt navigation helpers", () => {
   it("treats both the shared back sentinel and credential back intents as provider-selection navigation", () => {
@@ -71,6 +73,39 @@ describe("credential prompt navigation helpers", () => {
         expect.any(Function),
       );
     } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("returns to provider selection instead of staging back as the re-entered API key (#3697)", async () => {
+    const answers = ["retry", "", "back"];
+    const exitOnboardFromPrompt = vi.fn(() => {
+      throw new Error("unexpected exit");
+    }) as unknown as () => never;
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
+      isNonInteractive: () => false,
+      prompt: async () => answers.shift() ?? "",
+      validateNvidiaApiKeyValue: (key, credentialEnv) =>
+        validateNvidiaApiKeyValue(key, credentialEnv ?? undefined),
+      getTransportRecoveryMessage: () => "",
+      exitOnboardFromPrompt,
+    });
+    delete process.env.OPENAI_API_KEY;
+    try {
+      await expect(
+        promptValidationRecovery(
+          "OpenAI",
+          { kind: "credential", retry: "credential" },
+          "OPENAI_API_KEY",
+        ),
+      ).resolves.toBe("selection");
+      expect(process.env.OPENAI_API_KEY).toBeUndefined();
+      expect(answers).toEqual([]);
+      expect(exitOnboardFromPrompt).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.OPENAI_API_KEY;
       vi.restoreAllMocks();
     }
   });
