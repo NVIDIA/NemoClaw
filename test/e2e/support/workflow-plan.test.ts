@@ -463,15 +463,14 @@ describe("E2E workflow plan", () => {
         },
       );
 
-      const lines = readFileSync(output, "utf8").split("\n");
-      for (const profile of [
-        "nvidia_api",
-        "nvidia_inference",
-        "github_read",
-        "brave_nvidia_inference",
-      ]) {
-        expect(lines).toContain(`catalogue_${profile}_matrix=[]`);
-      }
+      expect(readFileSync(output, "utf8").split("\n")).toEqual(
+        expect.arrayContaining([
+          "catalogue_nvidia_api_matrix=[]",
+          "catalogue_nvidia_inference_matrix=[]",
+          "catalogue_github_read_matrix=[]",
+          "catalogue_brave_nvidia_inference_matrix=[]",
+        ]),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

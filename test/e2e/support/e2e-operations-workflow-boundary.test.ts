@@ -515,7 +515,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "true",
       "",
       1,
-      "Launchable PR E2E requires an NVIDIA-owned source repository",
+      "::error::Launchable PR E2E requires an NVIDIA-owned source repository\n",
     ],
     [
       "NVIDIA sibling repository",
@@ -525,7 +525,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "false",
       "staging-brev-launchable",
       1,
-      "Launchable PR E2E requires a branch in NVIDIA/NemoClaw",
+      "::error::Launchable PR E2E requires a branch in NVIDIA/NemoClaw\n",
     ],
   ])(
     "authorizes Launchable PR E2E for %s",
@@ -537,7 +537,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       includeLaunchable,
       jobs,
       expectedStatus,
-      expectedError,
+      expectedStderr,
     ) => {
       const workflow = readE2eOperationsWorkflow();
       const authentication = workflow.jobs["generate-matrix"].steps!.find(
@@ -579,7 +579,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       );
 
       expect(result.status, result.stderr).toBe(expectedStatus);
-      if (expectedError) expect(result.stderr).toContain(`::error::${expectedError}`);
+      expect(result.stderr).toBe(expectedStderr);
     },
   );
 
