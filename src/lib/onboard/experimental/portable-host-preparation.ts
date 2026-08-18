@@ -21,6 +21,7 @@ import {
   isPortableExperimentalProfile,
   parseDockerNetworkIpamEntries,
   PORTABLE_DOCKER_NETWORK_SUBNET,
+  PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_LOCAL_REGISTRY,
   PORTABLE_REGISTRY_IP,
   resolveDockerDriverNetworkName,
@@ -70,6 +71,8 @@ export interface PortableHostPreparationDeps {
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
   podman?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  ip?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  sudo?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   hardenSocketDirectory?: (socketPath: string, uid: number) => void;
   captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
   assertSocketAuthority?: (authority: PodmanSocketAuthority) => void;
@@ -123,6 +126,47 @@ function requireDockerCompatibleCli(
       "(Debian/Ubuntu: `sudo apt install podman-docker`; Fedora: `sudo dnf install podman-docker`), " +
       "then rerun `nemoclaw onboard --experimental-profile portable`.",
   );
+}
+
+function portableHostGatewayAliasState(output: string): "absent" | "configured" {
+  const escapedGatewayIp = PORTABLE_HOST_GATEWAY_IP.replaceAll(".", "\\.");
+  const addressPattern = new RegExp(`\\binet\\s+${escapedGatewayIp}/(\\d+)\\b`, "u");
+  const assignments = output
+    .split("\n")
+    .map((line) => ({
+      interfaceName: /^\d+:\s+([^ :]+)/u.exec(line)?.[1],
+      prefix: addressPattern.exec(line)?.[1],
+    }))
+    .filter((entry) => entry.prefix !== undefined);
+  if (assignments.length === 0) return "absent";
+  if (assignments.every((entry) => entry.interfaceName === "lo" && entry.prefix === "32")) {
+    return "configured";
+  }
+  throw new Error(
+    `Refusing to configure ${PORTABLE_HOST_GATEWAY_IP}/32 because the address already has a conflicting host assignment.`,
+  );
+}
+
+function ensurePortableHostGatewayAlias(
+  env: NodeJS.ProcessEnv,
+  ip: NonNullable<PortableHostPreparationDeps["ip"]>,
+  sudo: NonNullable<PortableHostPreparationDeps["sudo"]>,
+): void {
+  const inspect = (): "absent" | "configured" => {
+    const result = ip(["-o", "-4", "address", "show"], env);
+    requireCommand(result, "Inspecting the portable host gateway address");
+    return portableHostGatewayAliasState(String(result.stdout ?? ""));
+  };
+  if (inspect() === "configured") return;
+  requireCommand(
+    sudo(["--", "ip", "address", "replace", `${PORTABLE_HOST_GATEWAY_IP}/32`, "dev", "lo"], env),
+    "Configuring the portable host gateway address",
+  );
+  if (inspect() !== "configured") {
+    throw new Error(
+      `Verifying the portable host gateway address failed: ${PORTABLE_HOST_GATEWAY_IP}/32 is not assigned to loopback.`,
+    );
+  }
 }
 
 function resolvePodmanDockerHost(result: SpawnResult): string {
@@ -577,6 +621,23 @@ export function preparePortableExperimentalHost(
         timeout: REGISTRY_COMMAND_TIMEOUT_MS,
       }));
   requireDockerCompatibleCli(docker, podmanEnv);
+  const ip =
+    deps.ip ??
+    ((args, childEnv) =>
+      spawnSync("ip", [...args], {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: HOST_COMMAND_TIMEOUT_MS,
+      }));
+  const sudo =
+    deps.sudo ??
+    ((args, childEnv) =>
+      spawnSync("sudo", [...args], {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: HOST_COMMAND_TIMEOUT_MS,
+      }));
+  ensurePortableHostGatewayAlias(podmanEnv, ip, sudo);
   ensureRegistryContainer(podmanEnv, docker, dockerNetworkName);
   if (socketAuthority) {
     (
@@ -597,6 +658,8 @@ export const portableHostPreparationInternals = {
   REGISTRY_IMAGE,
   REGISTRY_FRAGMENT,
   PORTABLE_CONTAINERS_CONF,
+  ensurePortableHostGatewayAlias,
+  portableHostGatewayAliasState,
   validateOwnedConfigAuthority,
   resolvePodmanDockerHost,
 };

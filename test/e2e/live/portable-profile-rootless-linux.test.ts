@@ -21,6 +21,7 @@ import {
 } from "../../../src/lib/onboard/experimental/portable-profile.ts";
 import { test } from "../fixtures/e2e-test.ts";
 import {
+  cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
   installPortableProfileSystemctlShim,
 } from "../fixtures/portable-profile-systemctl.ts";
@@ -132,6 +133,9 @@ async function main(progress: TestProgress): Promise<void> {
   const stateDir = path.join(root, "gateway-state");
   const configHome = path.join(home, ".config");
   const runtimeDir = `/run/user/${String(process.getuid?.())}`;
+  const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
+    .split("\n")
+    .some((line) => line.includes(`inet ${PORTABLE_HOST_GATEWAY_IP}/32`));
   fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
   installPortableProfileSystemctlShim(binDir);
 
@@ -157,6 +161,10 @@ async function main(progress: TestProgress): Promise<void> {
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
       /default_rootless_network_cmd = "pasta"/,
+    );
+    assert.match(
+      run("ip", ["-o", "-4", "address", "show", "dev", "lo"]),
+      new RegExp(`\\binet ${PORTABLE_HOST_GATEWAY_IP.replaceAll(".", "\\.")}/32\\b`),
     );
 
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
@@ -303,6 +311,11 @@ async function main(progress: TestProgress): Promise<void> {
       stdio: "ignore",
       timeout: 15_000,
     });
+    cleanupPortableHostGatewayAlias(
+      PORTABLE_HOST_GATEWAY_IP,
+      gatewayAliasPresentBefore,
+      process.env,
+    );
     await cleanupPortableProfileRootlessFixture(runtimeDir, root);
   }
 }

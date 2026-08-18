@@ -21,6 +21,7 @@ import {
 import {
   PORTABLE_DOCKER_NETWORK_NAME,
   PORTABLE_DOCKER_NETWORK_SUBNET,
+  PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_REGISTRY_IP,
 } from "./portable-profile";
 
@@ -91,6 +92,10 @@ function preparePortableExperimentalHost(
                 ? result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }]))
                 : docker(args, childEnv)
           : docker,
+      ip:
+        deps.ip ??
+        (() => result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`)),
+      sudo: deps.sudo ?? (() => result()),
       // Tests run on hosts without the /sys/fs/cgroup hierarchy the portable
       // CPU-delegation preflight reads; default to a passing stub and inject
       // explicit results for the preflight wiring tests below.
@@ -102,6 +107,26 @@ function preparePortableExperimentalHost(
     },
     expectedAuthority,
   );
+}
+
+type PreparationDeps = NonNullable<Parameters<typeof preparePortableExperimentalHostUnchecked>[1]>;
+
+function portablePreparationDeps(
+  home: string,
+  docker: NonNullable<PreparationDeps["docker"]>,
+  overrides: PreparationDeps = {},
+): PreparationDeps {
+  return {
+    platform: "linux",
+    home,
+    uid: 1001,
+    systemctl: () => result(),
+    podman: () => result(0, "/run/user/1001/podman/podman.sock"),
+    docker,
+    hardenSocketDirectory: vi.fn(),
+    validateConfigAuthority: vi.fn(),
+    ...overrides,
+  };
 }
 
 describe("preparePortableExperimentalHost", () => {
@@ -380,6 +405,96 @@ describe("preparePortableExperimentalHost", () => {
       ]),
     );
   });
+
+  it("configures and verifies the portable gateway loopback alias before registry mutation (#9461)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }])))
+      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+    const ip = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(
+        result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`),
+      );
+    const sudo = vi.fn(() => result());
+
+    preparePortableExperimentalHost(
+      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      portablePreparationDeps(home, docker, { ip, sudo }),
+      undefined,
+      { simulateExistingPortableNetwork: false },
+    );
+
+    expect(ip.mock.calls.map(([args]) => args)).toEqual([
+      ["-o", "-4", "address", "show"],
+      ["-o", "-4", "address", "show"],
+    ]);
+    expect(sudo).toHaveBeenCalledWith(
+      ["--", "ip", "address", "replace", `${PORTABLE_HOST_GATEWAY_IP}/32`, "dev", "lo"],
+      expect.any(Object),
+    );
+    expect(docker).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses a conflicting portable gateway assignment before registry mutation (#9461)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const docker = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(() =>
+      result(),
+    );
+    const sudo = vi.fn(() => result());
+
+    expect(() =>
+      preparePortableExperimentalHost(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        portablePreparationDeps(home, docker, {
+          ip: () => result(0, `2: eth0    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global eth0\n`),
+          sudo,
+        }),
+      ),
+    ).toThrow(/address already has a conflicting host assignment/u);
+    expect(docker).toHaveBeenCalledTimes(1);
+    expect(sudo).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, readonly SpawnResult[], SpawnResult, number, RegExp]>([
+    [
+      "inspection process error",
+      [{ ...result(), error: new Error("gateway inspection interrupted") }],
+      result(),
+      0,
+      /Inspecting the portable host gateway address failed: gateway inspection interrupted/u,
+    ],
+    [
+      "privileged update failure",
+      [result()],
+      result(1, "permission denied"),
+      1,
+      /Configuring the portable host gateway address failed: permission denied/u,
+    ],
+    [
+      "missing alias after update",
+      [result(), result()],
+      result(),
+      1,
+      /is not assigned to loopback/u,
+    ],
+  ])(
+    "fails closed for a portable gateway %s (#9461)",
+    (_case, ipResults, sudoResult, sudoCalls, error) => {
+      const ip = vi.fn(() => ipResults.at(ip.mock.calls.length - 1) ?? result());
+      const sudo = vi.fn(() => sudoResult);
+
+      expect(() =>
+        portableHostPreparationInternals.ensurePortableHostGatewayAlias({}, ip, sudo),
+      ).toThrow(error);
+      expect(sudo).toHaveBeenCalledTimes(sudoCalls);
+    },
+  );
 
   it("reuses only the expected portable network and registry address (#9461)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
