@@ -3341,9 +3341,14 @@ During onboarding, NemoClaw verifies the loaded model's actual `context_length` 
 Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this check before reusing its route.
 Resume stops when that recorded model is missing, Ollama is unreachable, model warm-up fails, or the runtime context cannot be verified.
 If you set `NEMOCLAW_CONTEXT_WINDOW` above `64000`, the loaded model must provide at least that larger value.
-If the runtime value is too small, missing, or malformed, onboarding stops before sandbox creation and asks you to restart the host daemon with the required context length.
-`NEMOCLAW_CONTEXT_WINDOW` controls Hermes prompt budgeting; it does not change the Ollama daemon or bypass this runtime check.
-Force a larger context length:
+If the runtime value is below the requirement, NemoClaw queries Ollama's `/api/show` endpoint for the selected model's native context window.
+If the model's native context window is below the requirement, onboarding stops and tells you to select a model that meets the reported requirement.
+`OLLAMA_CONTEXT_LENGTH` cannot raise a model above its native context window.
+If the model can meet the requirement, or NemoClaw cannot read its native context window, onboarding instead shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting the host daemon.
+A missing or malformed runtime value also produces the daemon restart guidance.
+`NEMOCLAW_CONTEXT_WINDOW` controls Hermes prompt budgeting; it does not raise the model's native context window or the Ollama daemon's runtime context, and it does not bypass this check.
+Use the daemon restart command only when onboarding shows a required `OLLAMA_CONTEXT_LENGTH` value.
+The example uses the Hermes minimum; replace `64000` with the larger value from onboarding when applicable.
 
 ```bash
 pkill -f 'ollama serve'

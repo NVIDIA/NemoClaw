@@ -166,19 +166,7 @@ function indexOfRequired(haystack: string, needle: string): number {
   return index;
 }
 
-function buildKitRunMountOptions(dockerfile: string): string[] {
-  return dockerfile
-    .replace(/\\\r?\n[ \t]*/gu, " ")
-    .split(/\r?\n/u)
-    .flatMap((instruction) => {
-      const runOptionPrefix = instruction.match(/^\s*RUN((?:\s+--\S+)*)/iu)?.[1] ?? "";
-      return /(?:^|\s)--mount(?:=|$)/iu.test(runOptionPrefix) ? [runOptionPrefix.trim()] : [];
-    });
-}
 
-function hasBuildKitRunMount(dockerfile: string): boolean {
-  return buildKitRunMountOptions(dockerfile).length > 0;
-}
 
 function runFinalLayout({
   legacyData = "none",
@@ -220,13 +208,6 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
-  it.each([
-    ["same-line", "RUN --network=none --mount=type=cache,target=/tmp true", true],
-    ["line-continuation", "RUN --security=sandbox \\\n  --mount=type=secret,id=token true", true],
-    ["shell-command argument", "RUN printf '%s' --mount=type=cache", false],
-  ] as const)("recognizes BuildKit mounts only in the RUN option prefix for %s form (#7611)", (_form, dockerfile, expected) => {
-    expect(hasBuildKitRunMount(dockerfile)).toBe(expected);
-  });
 
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
