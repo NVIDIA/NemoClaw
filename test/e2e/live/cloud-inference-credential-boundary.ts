@@ -16,7 +16,7 @@ export function buildSandboxCredentialScanCommand(
   return [
     `for dir in ${roots}; do`,
     '  [ -d "$dir" ] || continue',
-    `  matches=$(grep -rIlE '${SANDBOX_CREDENTIAL_VALUE_PATTERN}' "$dir")`,
+    `  matches=$(grep -rlE '${SANDBOX_CREDENTIAL_VALUE_PATTERN}' "$dir")`,
     "  scan_status=$?",
     '  case "$scan_status" in',
     `    0) printf '%s\\n' "$matches" | grep -Ev '/policies/|/plugin-runtime-deps/|/extensions/[^/]+/(dist|node_modules)/'`,

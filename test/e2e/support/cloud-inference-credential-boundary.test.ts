@@ -22,7 +22,7 @@ function createScanRoot(): string {
   return root;
 }
 
-function writeFixture(root: string, relativePath: string, body: string): string {
+function writeFixture(root: string, relativePath: string, body: string | Uint8Array): string {
   const file = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, body);
@@ -60,6 +60,17 @@ describe("cloud inference sandbox credential scan", () => {
   ])("reports only the path of a file that contains a %s credential canary", (_label, canary) => {
     const root = createScanRoot();
     const leakedFile = writeFixture(root, "openclaw.json", `{"apiKey":"${canary}"}\n`);
+
+    const output = scan(root);
+
+    expect(output.trim()).toBe(leakedFile);
+    expect(output).not.toContain(canary);
+  });
+
+  it("reports a credential canary in a NUL-containing file", () => {
+    const root = createScanRoot();
+    const canary = "nvapi-nemoclaw-binary-credential-canary";
+    const leakedFile = writeFixture(root, "state.bin", Buffer.from(`prefix\0${canary}\n`));
 
     const output = scan(root);
 
