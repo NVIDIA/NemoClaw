@@ -35,9 +35,6 @@ results before it succeeds:
 - hosted and sandbox inference through the preinstalled full E2E suite; and
 - Brev workspace deletion and confirmed absence.
 
-For release tagging, report this job with the other E2E results. The release maintainer may proceed
-with a non-successful result and must record the reason in the signed release brief.
-
 `Exact staging Brev Launchable` reads these credentials from repository Actions secrets:
 
 - `BREV_API_KEY` authenticates the trusted host-side Brev CLI for workspace operations in the

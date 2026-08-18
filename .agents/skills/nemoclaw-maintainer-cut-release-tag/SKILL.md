@@ -15,9 +15,8 @@ push, version-bump, or other release-state GitHub writes.
 
 Treat these as separate states:
 
-- **Tag can be cut:** all required documentation and image checks pass. The release brief records
-  the maintainer's E2E decision, including the exact staging Launchable status, and contains no
-  unresolved prompts.
+- **Tag can be cut:** all required documentation and image checks pass.
+  The release brief records the maintainer's general E2E decision and contains no unresolved prompts.
 - **Tag cut:** the remote signed tag exists and peels to the planned candidate.
 - **Post-tag work:** `latest`, release labels, public documentation, release images, `lkg`, and the Announcement
   continue outside this skill. Do not wait for them here; some share a downstream workflow.
@@ -29,17 +28,11 @@ Treat these as separate states:
 - Require the release entry and exact-candidate approved-empty Pi documentation result. They cannot
   be waived.
 - Require applicable GHCR base and managed-image publication evidence.
-- Treat all E2E, including `Exact staging Brev Launchable`, as maintainer context rather than a tag
-  gate. Show the newest full E2E result and let the maintainer run focused tests, run the full suite,
-  or proceed with the displayed status.
-- Keep PR risk-plan jobs, including `managed-image-multiarch-startup`, in that E2E decision. Their
-  PR qualification role does not make them separate tag gates.
+- Treat E2E as maintainer context, not a tag gate. Show the newest full E2E result and let the
+  maintainer run focused tests, run the full suite, or proceed with the displayed status.
 - Record every displayed or requested E2E result and the decision in the release brief, the signed
   Markdown release record. Record a plain-language exception reason when the status is exceptional
   or a requested run remains unresolved.
-- At tag creation, reread the candidate's Launchable checks from GitHub and require the cleanup
-  record to match the newest check's run and job. This binds cleanup safety to the candidate without
-  making the E2E result a success gate.
 - Pass the exact final release brief to `release:cut` with `--message-file`. The file becomes the
   signed tag annotation; do not maintain another exception record.
 - Ask the maintainer to paste the plan's full confirmation phrase before cutting.
@@ -117,8 +110,8 @@ the helper after evidence has been added.
 ### 2. Verify Required Candidate Evidence
 
 Read and follow [Candidate Evidence](references/candidate-evidence.md). It owns the executable reads
-for the release entry, approved-empty Pi result, candidate-specific managed documentation state, applicable
-base-image verifier.
+for the release entry, approved-empty Pi result, candidate-specific managed documentation state, and
+applicable base-image verifier.
 
 Do not offer the general E2E proceed option until every candidate-evidence check passes. Record the
 returned paths, URLs, run identities, and image identities in the release brief.
@@ -133,11 +126,6 @@ instead of reducing the run to one passing/failing label:
 - workflow attempt, created, started, and last-updated timestamps, plus age at inspection;
 - workflow URL and `Release qualification` job URL; and
 - any failed, cancelled, skipped, queued, or still-running results.
-
-Include the `Exact staging Brev Launchable` job status when the displayed run contains it. Record
-the exact-candidate Launchable result when one is available. A successful job retains
-`launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`. A failed job can retain only `lane.log`
-and the phase artifacts created before exit.
 
 Offer exactly these choices:
 
@@ -154,8 +142,7 @@ and no requested run remains unresolved. Otherwise, ask for and record one conci
 reason. The reason must say what differs or remains unresolved and why the maintainer is proceeding.
 Selecting “Proceed with the status as shown” is the decision, not the reason. Stop and ask the
 maintainer why before continuing when a reason is required.
-This decision covers all E2E results, including `Exact staging Brev Launchable`. It never covers
-documentation or required image evidence.
+This exception applies only to E2E. It never covers documentation or required image evidence.
 
 ### 4. Finish and Review the Release Brief
 
@@ -164,24 +151,10 @@ Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 - the complete canonical release entry and its repository path;
 - Pi documentation workflow and job URLs, artifact name, and normalized approved-empty review;
 - exact-candidate E2E workflow, attempt, and successful `base-image-publication` job URL;
-- exact staging Brev workflow and job status, plus available candidate SHA, producer run, concrete
-  boot image, baked-runtime identity, full E2E result, and workspace-cleanup result;
 - the newest full E2E result and every focused or full rerun result, including SHA, time, age, status,
   conclusion, and URLs;
 - the maintainer's E2E choice; and
 - a final `Exceptions: None` line or `Exceptions: <plain-language reason>` line.
-
-Resolve the brief's `Workspace cleanup` field with exactly one of these records:
-
-- `confirmed absent: receipt=<artifact>; verified_at=<ISO 8601 UTC time>; run_id=<run>;
-  job_id=<job>` after successful cleanup verification;
-- `not applicable: no Launchable check ran` when the candidate has no Launchable check; or
-- `remediated: workspace_removed=true;
-  credentials_rotated_or_revoked=BREV_API_KEY,NEMOCLAW_IMAGE_DISPATCH_TOKEN,NVIDIA_INFERENCE_API_KEY;
-  workspace_name=<name>; workspace_id=<id>; run_id=<run>; job_id=<job>` after completed failure
-  remediation.
-
-Do not request confirmation while that field records unconfirmed or deferred cleanup.
 
 Keep the helper's compact range counts and QA focus. Do not duplicate every commit or risky file;
 the canonical release entry and compare range already preserve that detail.
@@ -205,8 +178,7 @@ a failed read or pending state, consume that confirmation, and request a new one
 restored. Otherwise, run the cutter immediately; do not insert another wait between the reads and
 the push.
 
-Then run the cutter. It rereads the candidate's newest Launchable check and rejects a cleanup record
-that does not match that run and job:
+Then run:
 
 ```bash
 npm run release:cut -- \
@@ -234,12 +206,6 @@ retried without moving the semver tag. Do not call it promotion-only.
   requesting a new confirmation.
 - Required GHCR evidence fails: repair and rerun only the affected image work. Do not replace it
   with the general E2E proceed decision.
-- `Exact staging Brev Launchable` or its workspace cleanup fails: inspect the available `lane.log`,
-  `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` artifacts. Offer a focused Launchable
-  rerun or let the maintainer proceed with the displayed status. If the job ran and cleanup is not
-  confirmed, do not proceed until an administrator removes the recorded workspace and rotates or
-  revokes `BREV_API_KEY`, `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and `NVIDIA_INFERENCE_API_KEY`. Record
-  completed remediation without claiming that the original cleanup passed.
 - General E2E is old, incomplete, failed, or from another SHA: show it and offer focused, full, or
   proceed. Record the decision and reason in the brief.
 - Candidate is no longer on `origin/main`, the previous release changed, or the version is no longer

@@ -6,9 +6,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-
-import { completeBrief, failedLaunchableBrief } from "./helpers/release-brief.ts";
-import { confirmationFor, launchableCheckRunsEnv } from "./helpers/release-check-runs.ts";
 import {
   isCanonicalNemoClawRemote,
   isLocalReleaseFixtureRemote,
@@ -122,7 +119,9 @@ function pushTag(fixture: Fixture, tag: string, target = "HEAD", annotated = tru
 }
 
 function localTagObject(fixture: Fixture, tag: string): string {
-  return run(fixture.work, ["git", "rev-parse", `refs/tags/${tag}`], { allowFailure: true }).trim();
+  return run(fixture.work, ["git", "rev-parse", `refs/tags/${tag}`], {
+    allowFailure: true,
+  }).trim();
 }
 
 function runReleaseLatest(
@@ -201,8 +200,9 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-const readJson = (filePath: string): Record<string, unknown> =>
-  JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+function readJson(filePath: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+}
 
 function createPlan(
   fixture: Fixture,
@@ -246,6 +246,41 @@ function createPlan(
   return { plan, result };
 }
 
+function confirmationFor(plan: Record<string, string>): string {
+  return `CONFIRM RELEASE ${plan.nextTag} ${plan.originMainCommit}`;
+}
+
+function completeBrief(plan: Record<string, string>): string {
+  return [
+    `# NemoClaw ${plan.nextTag} release brief`,
+    "",
+    `- Candidate: \`${plan.originMainCommit}\``,
+    "",
+    "## Canonical release entry",
+    "",
+    `## ${plan.nextTag}`,
+    "",
+    "- Release detail.",
+    "",
+    "## Pi documentation evidence",
+    "",
+    `- Pi candidate: \`${plan.originMainCommit}\``,
+    "- Evidence: approved empty patch.",
+    "",
+    "## Base and managed image evidence",
+    "",
+    `- Base-image candidate: \`${plan.originMainCommit}\``,
+    "- Evidence: successful publication aggregate.",
+    "",
+    "## General E2E decision",
+    "",
+    "- Decision: proceed.",
+    "",
+    "Exceptions: None",
+    "",
+  ].join("\n");
+}
+
 function writeBrief(fixture: Fixture, content?: string): string {
   const messageFile = path.join(fixture.root, "release-brief.md");
   const candidate = run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();
@@ -266,7 +301,6 @@ function cutFromPlan(
 ): ReturnType<typeof spawnSync> {
   const selectedMessageFile =
     messageFile ?? writeBrief(fixture, completeBrief(readJson(planPath) as Record<string, string>));
-  const candidate = String(readJson(planPath).originMainCommit);
   return runScript(
     fixture.work,
     [
@@ -279,11 +313,7 @@ function cutFromPlan(
       "--confirm",
       confirmation,
     ],
-    {
-      NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
-      ...launchableCheckRunsEnv(fixture.root, candidate, "missing"),
-      ...extraEnv,
-    },
+    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1", ...extraEnv },
   );
 }
 
@@ -507,7 +537,6 @@ describe("release-latest-tag.sh", () => {
   it.each([
     ["Pi", "Pi candidate", "plan-bound Pi candidate"],
     ["base image", "Base-image candidate", "plan-bound base-image candidate"],
-    ["Launchable", "Launchable candidate", "plan-bound Launchable candidate"],
   ])("does not accept %s evidence copied from an earlier candidate", (_kind, field, error) => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
@@ -739,50 +768,19 @@ describe("release-latest-tag.sh", () => {
     expect(result.stderr).toContain("is not reachable from refs/remotes/origin/main");
   });
 
-  it.each([
-    ["unconfirmed cleanup", "- Workspace cleanup: unconfirmed."],
-    ["a false no-check claim", "- Workspace cleanup: not applicable: no Launchable check ran"],
-    [
-      "negated remediation wording",
-      "- Workspace cleanup: remediated: workspace was not removed; BREV_API_KEY, NEMOCLAW_IMAGE_DISPATCH_TOKEN, and NVIDIA_INFERENCE_API_KEY were not rotated or revoked.",
-    ],
-  ])("rejects a Launchable exception with %s", (_case, cleanup) => {
+  it("signs the release brief verbatim and pushes only the tag without hooks or gh", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
-    const brief = failedLaunchableBrief(
-      plan,
-      cleanup,
-      "The maintainer accepted the failed result.",
-    );
-
-    const result = cutFromPlan(
-      fixture,
-      planPath,
-      confirmationFor(plan),
-      writeBrief(fixture, brief),
-      launchableCheckRunsEnv(fixture.root, releaseCommit, "failure"),
-    );
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Launchable");
-    expect(localTagObject(fixture, "v0.0.2")).toBe("");
-  });
-
-  it("signs a release brief with a remediated Launchable exception", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    const { plan } = createPlan(fixture, planPath, releaseCommit);
-    const completedBrief = failedLaunchableBrief(
-      plan,
-      "- Workspace cleanup: remediated: workspace_removed=true; credentials_rotated_or_revoked=BREV_API_KEY,NEMOCLAW_IMAGE_DISPATCH_TOKEN,NVIDIA_INFERENCE_API_KEY; workspace_name=nclaw-e2e-1; workspace_id=qndmc83z0; run_id=100; job_id=200",
-      "The maintainer accepted the failed Launchable result after completed cleanup remediation.",
-    );
-    const messageFile = writeBrief(fixture, completedBrief);
+    const brief = completeBrief(plan)
+      .replace("- Decision: proceed.", "- Decision: proceed with recorded exception.")
+      .replace(
+        "Exceptions: None",
+        "Exceptions: The accepted full run tested the preceding commit.",
+      );
+    const messageFile = writeBrief(fixture, brief);
     const hookPath = path.join(fixture.work, ".git", "hooks", "pre-push");
     fs.writeFileSync(hookPath, "#!/usr/bin/env bash\nexit 97\n", "utf8");
     fs.chmodSync(hookPath, 0o755);
@@ -797,7 +795,6 @@ describe("release-latest-tag.sh", () => {
     fs.chmodSync(path.join(mockBin, "gh"), 0o755);
 
     const cutResult = cutFromPlan(fixture, planPath, confirmationFor(plan), messageFile, {
-      ...launchableCheckRunsEnv(fixture.root, releaseCommit, "failure"),
       PATH: `${mockBin}:${process.env.PATH ?? ""}`,
     });
 
@@ -817,7 +814,7 @@ describe("release-latest-tag.sh", () => {
     expect(rawTag).toContain("-----BEGIN SSH SIGNATURE-----");
     const messageStart = rawTag.indexOf("\n\n") + 2;
     const signatureStart = rawTag.indexOf("-----BEGIN SSH SIGNATURE-----", messageStart);
-    expect(rawTag.slice(messageStart, signatureStart)).toBe(completedBrief);
+    expect(rawTag.slice(messageStart, signatureStart)).toBe(brief);
   });
 
   it("signs the validated brief snapshot when the source file changes before tagging", () => {
@@ -826,15 +823,7 @@ describe("release-latest-tag.sh", () => {
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
-    const brief = completeBrief(plan)
-      .replace(
-        "- Evidence: no exact staging Launchable check exists for the candidate.",
-        "- Evidence: successful exact staging Launchable run and cleanup receipt.",
-      )
-      .replace(
-        "- Workspace cleanup: not applicable: no Launchable check ran",
-        "- Workspace cleanup: confirmed absent: receipt=cleanup.json; verified_at=2026-08-18T14:00:00Z; run_id=100; job_id=200",
-      );
+    const brief = completeBrief(plan);
     const messageFile = writeBrief(fixture, brief);
     const mockBin = path.join(fixture.root, "mock-bin");
     const mutationMarker = path.join(fixture.root, "brief-mutated");
@@ -857,7 +846,6 @@ describe("release-latest-tag.sh", () => {
     fs.chmodSync(path.join(mockBin, "git"), 0o755);
 
     const result = cutFromPlan(fixture, planPath, confirmationFor(plan), messageFile, {
-      ...launchableCheckRunsEnv(fixture.root, releaseCommit, "success"),
       PATH: `${mockBin}:${process.env.PATH ?? ""}`,
     });
 
@@ -1295,12 +1283,14 @@ describe("release-latest-tag.sh", () => {
     ],
     [
       "another version",
-      (brief: string) => brief.replace(/^# NemoClaw.*$/mu, "# NemoClaw v0.0.3 release brief"),
+      (brief: string) =>
+        brief.replace(/^# NemoClaw.*$/mu, "# NemoClaw v0.0.3 release brief"),
       "heading does not match planned tag",
     ],
     [
       "another candidate",
-      (brief: string) => brief.replace(/^- Candidate:.*$/mu, `- Candidate: \`${"f".repeat(40)}\``),
+      (brief: string) =>
+        brief.replace(/^- Candidate:.*$/mu, `- Candidate: \`${"f".repeat(40)}\``),
       "candidate does not match",
     ],
     [
@@ -1321,26 +1311,9 @@ describe("release-latest-tag.sh", () => {
     ],
     [
       "content after the exception record",
-      (brief: string) => brief.replace("Exceptions: None", "Exceptions: None\n\nTrailing content"),
+      (brief: string) =>
+        brief.replace("Exceptions: None", "Exceptions: None\n\nTrailing content"),
       "exactly one resolved Exceptions line",
-    ],
-    [
-      "confirmed cleanup without a receipt",
-      (brief: string) =>
-        brief.replace(
-          "- Workspace cleanup: not applicable: no Launchable check ran",
-          "- Workspace cleanup: confirmed absent: verified_at=2026-08-18T14:00:00Z",
-        ),
-      "must record a receipt and UTC verification time",
-    ],
-    [
-      "confirmed cleanup without a verification time",
-      (brief: string) =>
-        brief.replace(
-          "- Workspace cleanup: not applicable: no Launchable check ran",
-          "- Workspace cleanup: confirmed absent: receipt=cleanup.json",
-        ),
-      "must record a receipt and UTC verification time",
     ],
   ])("rejects a release brief with %s", (_case, mutate, expectedError) => {
     const fixture = createFixture();

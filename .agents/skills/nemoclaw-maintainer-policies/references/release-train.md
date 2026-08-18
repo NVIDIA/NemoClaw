@@ -69,12 +69,14 @@ Regenerate the plan only when the intended range, version, or candidate changes.
 
 ## Required Image Evidence
 
-Before confirmation, require this exact-candidate result:
+Before confirmation, require a successful exact-candidate E2E `base-image-publication` job. Its
+checked-in verifier selects the newest applicable image-changing commit in first-parent history,
+requires every managed publisher, and validates the immutable Deep Agents Code base contract.
+Record the E2E workflow and aggregate-job URLs and the run attempt; do not repeat its publisher
+queries in the tag skill.
 
-A successful exact-candidate E2E `base-image-publication` job must pass. Its checked-in verifier
-selects the newest applicable image-changing commit in first-parent history, requires every managed
-publisher, and validates the immutable Deep Agents Code base contract. Record the E2E workflow and
-aggregate-job URLs and the run attempt. Do not repeat its publisher queries in the tag skill.
+The general E2E decision cannot waive required image evidence. A successful `Release
+qualification` aggregate does not replace the exact-candidate result.
 
 ## General E2E Decision
 
@@ -83,12 +85,6 @@ displayed general E2E status. General E2E informs the maintainer; it does not de
 can exist. Show the newest full run's full SHA, status, conclusion, attempt, created, started, and
 last-updated timestamps, age at inspection, workflow URL, `Release qualification` URL, and any
 failed, cancelled, skipped, queued, or active results.
-
-Treat `Exact staging Brev Launchable` as part of this decision. Record its job status and available
-receipts. If a Launchable job ran and workspace cleanup is not confirmed, do not proceed until the
-recorded workspace is removed and `BREV_API_KEY`, `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and
-`NVIDIA_INFERENCE_API_KEY` are rotated or revoked. Record completed remediation without claiming
-that the original cleanup passed.
 
 Offer three choices:
 
@@ -105,9 +101,8 @@ and no requested run remains unresolved. Otherwise, record one plain-language re
 different, missing, non-successful, or unresolved status and explains why the maintainer is
 proceeding.
 
-This decision applies to all E2E results, including `Exact staging Brev Launchable`. It cannot cover
-missing documentation or required image evidence. Do not maintain a separate exception schema or
-ledger.
+This decision applies only to E2E. It cannot cover missing documentation or required image
+evidence. Do not maintain a separate exception schema or ledger.
 
 ## Signed Release Brief
 
@@ -117,19 +112,13 @@ Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the exact plan range. 
   helper;
 - the complete canonical release entry and its path;
 - Pi documentation workflow and job URLs, artifact name, and normalized approved-empty review;
-- the base-image aggregate and exact staging Launchable status, URLs, identities, available full E2E
-  result, and cleanup result;
+- the base-image aggregate URL and identity;
 - the newest full E2E result and every requested run;
 - the maintainer's E2E decision; and
 - `Exceptions: None` or the plain-language exception reason.
 
 Pass that exact Markdown to `release:cut` with `--message-file`. It becomes the signed annotated tag
 message and is the release evidence record. Do not create a separate exception file.
-
-The `Workspace cleanup` line must record verified absence, state that no Launchable check ran, or
-record completed workspace removal and rotation or revocation of all three exposed credentials.
-The cutter rereads the candidate's newest Launchable check and requires the record to match its run
-and job. Unconfirmed, deferred, or mismatched cleanup is not ready for tag confirmation.
 
 Require the full confirmation phrase from the plan. After the script reads the remote tag back and
 confirms that it peels to the candidate, report the tag as cut and return.

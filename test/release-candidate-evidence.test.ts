@@ -14,14 +14,6 @@ const evidencePath = path.join(
   ".agents/skills/nemoclaw-maintainer-cut-release-tag/references/candidate-evidence.md",
 );
 const evidence = fs.readFileSync(evidencePath, "utf8");
-const releaseSkill = fs.readFileSync(
-  path.join(repositoryRoot, ".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md"),
-  "utf8",
-);
-const eveningSkill = fs.readFileSync(
-  path.join(repositoryRoot, ".agents/skills/nemoclaw-maintainer-evening/SKILL.md"),
-  "utf8",
-);
 
 function bashBlockUnder(source: string, heading: string): string {
   const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -37,29 +29,7 @@ function bashBlockUnder(source: string, heading: string): string {
   );
 }
 
-function jqProgramFor(source: string, label: string): string {
-  const prefix = `run_or_stop "${label}" jq -er '\n`;
-  const start = source.indexOf(prefix);
-  const requiredStart =
-    start !== -1
-      ? start
-      : (() => {
-          throw new Error(`candidate-evidence.md is missing the ${label} jq program`);
-        })();
-  const programStart = requiredStart + prefix.length;
-  const suffix = `\n' "$CHECK_RUNS_FILE"`;
-  const end = source.indexOf(suffix, programStart);
-  const requiredEnd =
-    end !== -1
-      ? end
-      : (() => {
-          throw new Error(`candidate-evidence.md has an incomplete ${label} jq program`);
-        })();
-  return source.slice(programStart, requiredEnd);
-}
-
 const releaseEntryBlock = bashBlockUnder(evidence, "## Release Entry and Pi Result");
-const imageCheckSelectionProgram = jqProgramFor(evidence, "image check-run selection");
 const temporaryDirectories: string[] = [];
 
 const shellHelpers = String.raw`
@@ -125,46 +95,6 @@ function runReleaseEntry(
   });
 }
 
-type CheckRun = {
-  completed_at: string | null;
-  conclusion: string | null;
-  created_at: string;
-  details_url: string;
-  html_url: string;
-  id: number;
-  name: string;
-  started_at: string | null;
-  status: string;
-};
-
-function checkRun(
-  id: number,
-  name: string,
-  status: string,
-  conclusion: string | null,
-  createdAt: string,
-): CheckRun {
-  const url = `https://github.com/NVIDIA/NemoClaw/actions/runs/${id}/job/${id + 1000}`;
-  return {
-    completed_at: status === "completed" ? createdAt : null,
-    conclusion,
-    created_at: createdAt,
-    details_url: url,
-    html_url: url,
-    id,
-    name,
-    started_at: status === "queued" ? null : createdAt,
-    status,
-  };
-}
-
-function selectImageChecks(checkRuns: CheckRun[]): ReturnType<typeof spawnSync> {
-  return spawnSync("jq", ["-er", imageCheckSelectionProgram], {
-    encoding: "utf8",
-    input: JSON.stringify([{ check_runs: checkRuns }]),
-  });
-}
-
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -172,81 +102,6 @@ afterEach(() => {
 });
 
 describe("release candidate evidence commands", () => {
-  it("selects a newer queued Launchable check over an older success", () => {
-    const result = selectImageChecks([
-      checkRun(10, "base-image-publication", "completed", "success", "2026-08-18T09:00:00Z"),
-      checkRun(20, "Exact staging Brev Launchable", "completed", "success", "2026-08-18T09:05:00Z"),
-      checkRun(30, "Exact staging Brev Launchable", "queued", null, "2026-08-18T09:10:00Z"),
-    ]);
-
-    expect(result.status, String(result.stderr)).toBe(0);
-    expect(JSON.parse(String(result.stdout))).toMatchObject({
-      base: { jobId: 1010, status: "completed" },
-      launchable: { jobId: 1030, status: "queued" },
-    });
-  });
-
-  it("uses the check ID to select the newest same-time Launchable status", () => {
-    const createdAt = "2026-08-18T09:10:00Z";
-    const result = selectImageChecks([
-      checkRun(10, "base-image-publication", "completed", "success", "2026-08-18T09:00:00Z"),
-      checkRun(30, "Exact staging Brev Launchable", "queued", null, createdAt),
-      checkRun(31, "Exact staging Brev Launchable", "completed", "failure", createdAt),
-    ]);
-
-    expect(result.status, String(result.stderr)).toBe(0);
-    expect(JSON.parse(String(result.stdout))).toMatchObject({
-      launchable: { conclusion: "failure", jobId: 1031, status: "completed" },
-    });
-  });
-
-  it("emits an advisory missing status when no Launchable check exists", () => {
-    const result = selectImageChecks([
-      checkRun(10, "base-image-publication", "completed", "success", "2026-08-18T09:00:00Z"),
-    ]);
-
-    expect(result.status, String(result.stderr)).toBe(0);
-    expect(JSON.parse(String(result.stdout))).toMatchObject({
-      base: { jobId: 1010, status: "completed" },
-      launchable: {
-        conclusion: "missing",
-        jobId: null,
-        runId: null,
-        status: "missing",
-      },
-    });
-  });
-
-  it("still requires a successful base-image check", () => {
-    const result = selectImageChecks([
-      checkRun(10, "base-image-publication", "completed", "failure", "2026-08-18T09:00:00Z"),
-      checkRun(30, "Exact staging Brev Launchable", "queued", null, "2026-08-18T09:10:00Z"),
-    ]);
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      "No successful candidate check run named base-image-publication",
-    );
-  });
-
-  it.each(["BREV_API_KEY", "NEMOCLAW_IMAGE_DISPATCH_TOKEN", "NVIDIA_INFERENCE_API_KEY"])(
-    "requires %s remediation when Launchable cleanup is unconfirmed",
-    (credential) => {
-      expect(releaseSkill).toContain(credential);
-    },
-  );
-
-  it("does not permit deferred Launchable cleanup remediation", () => {
-    expect(releaseSkill).toContain("do not proceed until an administrator removes");
-    expect(releaseSkill).toContain("completed remediation");
-    expect(releaseSkill).not.toContain("remediation deadline");
-  });
-
-  it("keeps Launchable status advisory in the evening release handoff", () => {
-    expect(eveningSkill).toContain("Treat exact staging Brev Launchable status as E2E context.");
-    expect(eveningSkill).not.toContain("staging Brev Launchable E2E and cleanup receipts");
-  });
-
   it("extracts only the exact release H2 section from a multi-entry changelog", () => {
     const input = fixture({
       "docs/changelog/2026-08-17.mdx": [

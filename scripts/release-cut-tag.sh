@@ -58,10 +58,8 @@ PLAN_PATH="$plan_directory/$(basename -- "$PLAN_PATH")"
 message_directory="$(cd -- "$(dirname -- "$MESSAGE_FILE")" && pwd -P)"
 MESSAGE_FILE="$message_directory/$(basename -- "$MESSAGE_FILE")"
 brief_snapshot="$(mktemp)"
-launchable_checks_snapshot="$(mktemp)"
 chmod 600 "$brief_snapshot"
-chmod 600 "$launchable_checks_snapshot"
-trap 'rm -f -- "$brief_snapshot" "$launchable_checks_snapshot"' EXIT
+trap 'rm -f -- "$brief_snapshot"' EXIT
 cp -- "$MESSAGE_FILE" "$brief_snapshot" || fail "Could not snapshot the release brief"
 [[ -s "$brief_snapshot" ]] || fail "Release brief snapshot is empty"
 
@@ -136,16 +134,8 @@ require_brief_line_once() {
 
 printf -v expected_pi_candidate -- "- Pi candidate: \`%s\`" "$target"
 printf -v expected_base_candidate -- "- Base-image candidate: \`%s\`" "$target"
-printf -v expected_launchable_candidate -- "- Launchable candidate: \`%s\`" "$target"
 require_brief_line_once "$expected_pi_candidate" "plan-bound Pi candidate"
 require_brief_line_once "$expected_base_candidate" "plan-bound base-image candidate"
-require_brief_line_once "$expected_launchable_candidate" "plan-bound Launchable candidate"
-workspace_cleanup_count="$(awk '/^- Workspace cleanup: / { count++ } END { print count + 0 }' "$brief_snapshot")" \
-  || fail "Could not validate the Launchable workspace cleanup record"
-[[ "$workspace_cleanup_count" == "1" ]] \
-  || fail "Release brief must contain exactly one Launchable workspace cleanup record"
-workspace_cleanup="$(awk '/^- Workspace cleanup: / { sub(/^- Workspace cleanup: /, ""); print }' "$brief_snapshot")" \
-  || fail "Could not read the Launchable workspace cleanup record"
 if grep -Eq -- "TODO_RELEASE_BRIEF|Complete before confirmation" "$brief_snapshot"; then
   fail "Release brief still contains unresolved prompts"
 fi
@@ -204,7 +194,6 @@ if [[ "$canonical_release_origin" == true ]]; then
   [[ "$SCRIPT_DIR" == "$repo_root/scripts" ]] \
     || fail "Release cutter must run from the canonical repository scripts directory"
   git diff --quiet origin/main -- scripts/release-cut-tag.sh scripts/release/remote.mts \
-    scripts/release/launchable-cleanup.mts \
     || fail "Release cutter files differ from refreshed origin/main"
 fi
 
@@ -290,23 +279,6 @@ git merge-base --is-ancestor "$previous_commit" "$target" \
 if git show-ref --verify --quiet "refs/tags/$tag"; then
   fail "Local tag $tag already exists. Inspect the exact remote ref and do not rerun the cutter"
 fi
-
-if [[ "$canonical_release_origin" == true ]]; then
-  if ! gh api --paginate --slurp -H "Accept: application/vnd.github+json" \
-    "repos/NVIDIA/NemoClaw/commits/${target}/check-runs?filter=all&per_page=100" \
-    >"$launchable_checks_snapshot"; then
-    fail "Could not read candidate Launchable check runs"
-  fi
-else
-  test_check_runs_file="${NEMOCLAW_RELEASE_TEST_CHECK_RUNS_FILE:-}"
-  [[ -f "$test_check_runs_file" ]] \
-    || fail "Local release fixture must provide candidate Launchable check runs"
-  cp -- "$test_check_runs_file" "$launchable_checks_snapshot" \
-    || fail "Could not snapshot fixture Launchable check runs"
-fi
-node "$SCRIPT_DIR/release/launchable-cleanup.mts" \
-  "$launchable_checks_snapshot" "$target" "$workspace_cleanup" \
-  || fail "Could not validate candidate Launchable cleanup"
 
 # Git signs the tag on the maintainer workstation. The private signing key does not enter CI.
 git tag -s -F "$brief_snapshot" --cleanup=verbatim "$tag" "$target"
