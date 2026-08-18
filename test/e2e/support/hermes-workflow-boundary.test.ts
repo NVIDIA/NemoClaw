@@ -225,7 +225,7 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
-  it("rejects live secret exposure to a PR checkout", () => {
+  it("rejects live secret exposure to a PR checkout without authorization", () => {
     const errors = wfErrors((workflow) => {
       const run = step(workflow.jobs["hermes-e2e"], "Run Hermes live Vitest test");
       run.env = {
