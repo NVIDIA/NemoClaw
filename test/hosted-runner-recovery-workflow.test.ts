@@ -67,9 +67,9 @@ describe("hosted-runner recovery workflow boundary", () => {
     expect(value).not.toHaveProperty("concurrency");
     expect(value.jobs.recover.concurrency).toEqual({
       group: "hosted-runner-recovery-${{ github.event.workflow_run.workflow_id }}",
-      queue: "max",
       "cancel-in-progress": false,
     });
+    expect(value.jobs.recover.concurrency).not.toHaveProperty("queue");
     expect(Object.keys(value.jobs)).toEqual(["recover"]);
   });
 

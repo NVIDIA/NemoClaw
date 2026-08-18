@@ -194,7 +194,9 @@ describe("canonical runner comparison progress sampling", () => {
       harness.options,
     );
 
-    for (let index = 0; index < 5; index += 1) harness.state.fireNext();
+    for (let sample = 0; sample < 5; sample += 1) {
+      harness.state.fireNext();
+    }
 
     expect(records.filter((entry) => entry.startsWith("periodic:"))).toHaveLength(5);
     expect(harness.state.now()).toBe(300_000);
@@ -219,7 +221,9 @@ describe("canonical runner comparison progress sampling", () => {
       harness.options,
     );
 
-    for (let index = 0; index < 6; index += 1) harness.state.fireNext();
+    for (let sample = 0; sample < 6; sample += 1) {
+      harness.state.fireNext();
+    }
     expect(harness.state.now()).toBe(310_000);
     expect(periodicCalls).toBe(5);
     expect(harness.state.legacySamples).toEqual([]);
@@ -229,35 +233,37 @@ describe("canonical runner comparison progress sampling", () => {
     progress.stop();
   });
 
-  it.each([
-    "false",
-    "throw",
-  ] as const)("permanently falls back to legacy evidence when the collision append returns %s (#7146)", (failure) => {
-    let periodicCalls = 0;
-    const failAtCollision = {
-      false: () => false,
-      throw: () => fail("ledger unavailable"),
-    } as const;
-    const harness = progressHarness((_phase, kind) => {
-      const isPeriodic = kind === "periodic";
-      periodicCalls += Number(isPeriodic);
-      return isPeriodic && periodicCalls === 5 ? failAtCollision[failure]() : true;
-    });
-    const progress = startTestProgress(
-      "runner comparison fallback",
-      ["build Hermes image", "validate Hermes sandbox"],
-      harness.options,
-    );
+  it.each(["false", "throw"] as const)(
+    "permanently falls back to legacy evidence when the collision append returns %s (#7146)",
+    (failure) => {
+      let periodicCalls = 0;
+      const failAtCollision = {
+        false: () => false,
+        throw: () => fail("ledger unavailable"),
+      } as const;
+      const harness = progressHarness((_phase, kind) => {
+        const isPeriodic = kind === "periodic";
+        periodicCalls += Number(isPeriodic);
+        return isPeriodic && periodicCalls === 5 ? failAtCollision[failure]() : true;
+      });
+      const progress = startTestProgress(
+        "runner comparison fallback",
+        ["build Hermes image", "validate Hermes sandbox"],
+        harness.options,
+      );
 
-    for (let index = 0; index < 5; index += 1) harness.state.fireNext();
-    expect(harness.state.now()).toBe(300_000);
-    expect(harness.state.legacySamples).toEqual(["build Hermes image"]);
-    expect(harness.state.nextTimerAt()).toBe(900_000);
-    harness.state.fireNext();
-    expect(periodicCalls).toBe(5);
-    expect(harness.state.legacySamples).toEqual(["build Hermes image", "build Hermes image"]);
-    progress.stop();
-  });
+      for (let sample = 0; sample < 5; sample += 1) {
+        harness.state.fireNext();
+      }
+      expect(harness.state.now()).toBe(300_000);
+      expect(harness.state.legacySamples).toEqual(["build Hermes image"]);
+      expect(harness.state.nextTimerAt()).toBe(900_000);
+      harness.state.fireNext();
+      expect(periodicCalls).toBe(5);
+      expect(harness.state.legacySamples).toEqual(["build Hermes image", "build Hermes image"]);
+      progress.stop();
+    },
+  );
 
   it("skips missed periodic slots after a blocking collector instead of catching up (#7146)", () => {
     const periodicStarts: number[] = [];

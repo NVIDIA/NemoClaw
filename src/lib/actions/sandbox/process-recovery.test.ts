@@ -49,7 +49,9 @@ describe("managed gateway control completion", () => {
     ["ok", 4242, 4242],
     ["already-running", 4242, 4242],
     ["already-running", 4242, 5252],
-  ] as const)("preserves the exact %s controller disposition (#7919)", (disposition, oldPid, newPid) => {
+  ] as const)(
+    "preserves the exact %s controller disposition (#7919)",
+    (disposition, oldPid, newPid) => {
     expect(
       parseManagedGatewayControlCompletion({
         status: 0,
@@ -57,7 +59,8 @@ describe("managed gateway control completion", () => {
         stderr: "",
       }),
     ).toEqual({ disposition, oldPid, newPid });
-  });
+    },
+  );
 
   it.each([
     [`v1 ${nonce} complete already-running 4242 4242\nGATEWAY_PID=5252`, ""],
@@ -288,7 +291,9 @@ describe("recreated sandbox OpenShell readiness", () => {
   it.each([
     OPENSHELL_RELAY_OPEN_TIMED_OUT_STDERR,
     OPENSHELL_SUPERVISOR_RELAY_CHANNEL_TIMED_OUT_STDERR,
-  ])("retries when the connected supervisor misses OpenShell's relay deadline (#7227)", (stderr) => {
+  ])(
+    "retries when the connected supervisor misses OpenShell's relay deadline (#7227)",
+    (stderr) => {
     const captureOpenshellImpl = vi
       .fn()
       .mockReturnValueOnce({
@@ -313,7 +318,8 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(beforeProbe).toHaveBeenCalledTimes(2);
     expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3]);
-  });
+    },
+  );
 
   it("retries when OpenShell drops the replacement supervisor's reverse relay", () => {
     const captureOpenshellImpl = vi
@@ -342,10 +348,9 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3]);
   });
 
-  it.each([
-    OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR,
-    OPENSHELL_RELAY_TARGET_REFUSED_STDERR,
-  ])("retries while the replacement supervisor's local relay target starts (#7273)", (stderr) => {
+  it.each([OPENSHELL_RELAY_TARGET_NOT_FOUND_STDERR, OPENSHELL_RELAY_TARGET_REFUSED_STDERR])(
+    "retries while the replacement supervisor's local relay target starts (#7273)",
+    (stderr) => {
     const captureOpenshellImpl = vi
       .fn()
       .mockReturnValueOnce({
@@ -370,7 +375,8 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(beforeProbe).toHaveBeenCalledTimes(2);
     expect(captureOpenshellImpl).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([3]);
-  });
+    },
+  );
 
   it.each([
     `Error:   × status: DeadlineExceeded, message: "policy update timed out"`,

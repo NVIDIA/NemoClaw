@@ -31,11 +31,6 @@ const AUTHORIZATION_STEPS: AuthorizationStep[] = [
     name: "Authenticate manual PR dispatch",
   },
   {
-    deniedMessage: "Release qualification waiver requires a repository administrator",
-    mismatchMessage: "Release qualification waiver permission response did not match the actor",
-    name: "Authorize release qualification waiver",
-  },
-  {
     deniedMessage: "Launchable E2E requires a repository maintainer or administrator",
     mismatchMessage: "Launchable E2E permission response did not match the actor",
     name: "Authorize Launchable E2E maintainer dispatch",
@@ -156,8 +151,6 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
       SLEEP_LOG: sleepLog,
       TARGETS: "",
       TRIGGERING_ACTOR: "dispatch-admin",
-      WAIVED_JOBS: "staging-brev-launchable",
-      WAIVER_REASON: "Brev credential expired",
       WORKFLOW_EVENT: "workflow_dispatch",
       WORKFLOW_REF: "refs/heads/main",
       WORKFLOW_SHA: workflowSha,

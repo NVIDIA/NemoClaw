@@ -799,16 +799,11 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
   const steps = job.steps ?? [];
   const checkout = findStep(job, "Check out the qualification evaluator");
   const requireResults = findStep(job, "Require every release E2E result");
-  const recordWaiver = findStep(job, "Record release qualification waiver");
-  const uploadWaiver = findStep(job, "Upload release qualification waiver evidence");
   requirePinnedAction(errors, checkout, "release-qualification checkout");
-  requirePinnedAction(errors, uploadWaiver, "release-qualification waiver upload");
   if (
-    steps.length !== 4 ||
+    steps.length !== 2 ||
     steps[0] !== checkout ||
     steps[1] !== requireResults ||
-    steps[2] !== recordWaiver ||
-    steps[3] !== uploadWaiver ||
     checkout.with?.ref !== "${{ github.workflow_sha }}" ||
     checkout.with?.["persist-credentials"] !== false ||
     checkout.with?.["sparse-checkout"] !== "tools/e2e/release-qualification.mts" ||
@@ -818,42 +813,12 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
   }
   if (
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
-    requireResults.env?.RELEASE_QUALIFICATION_WAIVED_JOBS !==
-      "${{ needs.generate-matrix.outputs.release_qualification_waived_jobs }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
     requireResults.run !==
       "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("release-qualification must evaluate planner-selected jobs from needs");
-  }
-  if (
-    recordWaiver.if !== "${{ inputs.release_qualification_waived_jobs != '' }}" ||
-    recordWaiver.shell !== "bash" ||
-    !isDeepStrictEqual(recordWaiver.env, {
-      ACTOR: "${{ github.actor }}",
-      CANDIDATE_SHA: "${{ github.sha }}",
-      NEEDS_JSON: "${{ toJSON(needs) }}",
-      RUN_ATTEMPT: "${{ github.run_attempt }}",
-      RUN_ID: "${{ github.run_id }}",
-      TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
-      WAIVED_JOBS: "${{ needs.generate-matrix.outputs.release_qualification_waived_jobs }}",
-      WAIVER_REASON: "${{ inputs.release_qualification_waiver_reason }}",
-    }) ||
-    !String(recordWaiver.run ?? "").includes("nemoclaw-release-qualification-waiver-v1") ||
-    !String(recordWaiver.run ?? "").includes("$GITHUB_STEP_SUMMARY") ||
-    uploadWaiver.if !== "${{ inputs.release_qualification_waived_jobs != '' }}" ||
-    !String(uploadWaiver.uses ?? "").startsWith("actions/upload-artifact@") ||
-    !isDeepStrictEqual(uploadWaiver.with, {
-      name: "release-qualification-waiver-${{ github.run_id }}-${{ github.run_attempt }}",
-      path: "${{ runner.temp }}/release-qualification-waiver/waiver.json",
-      "if-no-files-found": "error",
-      "retention-days": 30,
-    })
-  ) {
-    errors.push(
-      "release-qualification must record and upload authorized waived job outcomes, identities, and reason",
-    );
   }
 }
 

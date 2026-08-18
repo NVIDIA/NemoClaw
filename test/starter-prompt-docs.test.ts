@@ -177,6 +177,42 @@ const localCredentialConfigControlNames = [
   "XDG_STATE_HOME",
   "ZDOTDIR",
 ];
+const rejectedCredentialSchemaUrls = [
+  "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:unknown",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:text:extra",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,SECRET_TOKEN:text",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret&fields=PUBLIC_ID:text",
+  "http://127.0.0.1:4123/local-credential-form.html?field=SECRET_TOKEN:secret&fields=PUBLIC_ID:text",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=NVIDIA_INFERENCE_API_KEY:text",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=WEBHOOK_URL:text",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=PRIVATE:text",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=PIN:text",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=NODE_OPTIONS:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=BASH_FUNC_ECHO:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=DOTNET_STARTUP_HOOKS:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_EXEC_PATH:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_EXTERNAL_DIFF:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_PROXY_COMMAND:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_TRACE2_EVENT:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_SSH:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=NPM_CONFIG_USERCONFIG:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=LD_PRELOAD:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=DYLD_INSERT_LIBRARIES:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_CONFIG:secret",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_CONFIG_COUNT:secret",
+  ...localCredentialNetworkControlNames.map(
+    (name) => `http://127.0.0.1:4123/local-credential-form.html?fields=${name}:text`,
+  ),
+  ...localCredentialConfigControlNames.map(
+    (name) => `http://127.0.0.1:4123/local-credential-form.html?fields=${name}:text`,
+  ),
+  "http://127.0.0.1:4123/local-credential-form.html?fields=NPM_CONFIG_REGISTRY:text",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=OPENSHELL_DOCKER_SUPERVISOR_IMAGE:text",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=PIP_INDEX_URL:text",
+  "http://127.0.0.1:4123/local-credential-form.html?fields=PUBLIC_ID:text&submit=/capture",
+];
 const starterPromptPages = [
   "docs/index.mdx",
   "docs/get-started/quickstart.mdx",
@@ -758,7 +794,7 @@ describe("starter prompt docs CTA", () => {
     ).toThrow(`Confirmed DGX Spark must map to ${promptAssets.dgxSpark.url}`);
   });
 
-  it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {
+  it("rejects missing, invalid, and oversized credential schemas (#5048)", async () => {
     const missing = runCredentialForm(
       withCredentialCapability("http://127.0.0.1:4123/local-credential-form.html"),
     );
@@ -788,49 +824,6 @@ describe("starter prompt docs CTA", () => {
     expect(allInvalid.fieldsElement.children).toHaveLength(0);
     expect(allInvalid.resultElement.allText()).toContain("Rejected specs: bad-name:secret");
 
-    for (const malformedUrl of [
-      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:unknown",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:text:extra",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,SECRET_TOKEN:text",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret,",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:secret&fields=PUBLIC_ID:text",
-      "http://127.0.0.1:4123/local-credential-form.html?field=SECRET_TOKEN:secret&fields=PUBLIC_ID:text",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=NVIDIA_INFERENCE_API_KEY:text",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=WEBHOOK_URL:text",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=PRIVATE:text",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=PIN:text",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=NODE_OPTIONS:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=BASH_FUNC_ECHO:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=DOTNET_STARTUP_HOOKS:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_EXEC_PATH:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_EXTERNAL_DIFF:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_PROXY_COMMAND:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_TRACE2_EVENT:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_SSH:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=NPM_CONFIG_USERCONFIG:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=LD_PRELOAD:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=DYLD_INSERT_LIBRARIES:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_CONFIG:secret",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=GIT_CONFIG_COUNT:secret",
-      ...localCredentialNetworkControlNames.map(
-        (name) => `http://127.0.0.1:4123/local-credential-form.html?fields=${name}:text`,
-      ),
-      ...localCredentialConfigControlNames.map(
-        (name) => `http://127.0.0.1:4123/local-credential-form.html?fields=${name}:text`,
-      ),
-      "http://127.0.0.1:4123/local-credential-form.html?fields=NPM_CONFIG_REGISTRY:text",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=OPENSHELL_DOCKER_SUPERVISOR_IMAGE:text",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=PIP_INDEX_URL:text",
-      "http://127.0.0.1:4123/local-credential-form.html?fields=PUBLIC_ID:text&submit=/capture",
-    ]) {
-      const malformed = runCredentialForm(withCredentialCapability(malformedUrl));
-      expect(malformed.submitButton.disabled, malformedUrl).toBe(true);
-      expect(malformed.resultElement.allText(), malformedUrl).toContain("rejected");
-      await malformed.preview();
-      expect(malformed.fetchCalls, malformedUrl).toHaveLength(0);
-    }
-
     const tooManyFields = Array.from({ length: 17 }, (_, index) => `PUBLIC_ID_${index}:text`);
     const oversizedSchema = runCredentialForm(
       withCredentialCapability(
@@ -842,6 +835,17 @@ describe("starter prompt docs CTA", () => {
     await oversizedSchema.preview();
     expect(oversizedSchema.fetchCalls).toHaveLength(0);
   });
+
+  it.each(rejectedCredentialSchemaUrls)(
+    "rejects malformed or unsafe credential schema %s (#5048)",
+    async (malformedUrl) => {
+      const malformed = runCredentialForm(withCredentialCapability(malformedUrl));
+      expect(malformed.submitButton.disabled).toBe(true);
+      expect(malformed.resultElement.allText()).toContain("rejected");
+      await malformed.preview();
+      expect(malformed.fetchCalls).toHaveLength(0);
+    },
+  );
 
   it("requires and consumes one fragment capability before enabling preview (#5048)", () => {
     const withoutCapability = runCredentialForm(

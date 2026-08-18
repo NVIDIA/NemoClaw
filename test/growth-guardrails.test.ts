@@ -61,7 +61,7 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.conditionals(violations)).toEqual([]);
   });
 
-  it("does not add loops to changed test callbacks or test definitions", async () => {
+  it("does not add test loops directly or behind thin callback-forwarding helpers", async () => {
     const violations = await loopGrowthViolations(diff);
     expect(violations, diagnostics.loops(violations)).toEqual([]);
   });
@@ -218,6 +218,16 @@ describe("codebase growth guardrail test support", () => {
       "for (const row of rows) it(row.name, () => expect(row).toBe(1));",
       1,
     ],
+    [
+      "thin callback-forwarding helper",
+      "function repeat(rows, action) { for (const row of rows) action(row); } it('works', () => repeat(rows, (row) => expect(row).toBe(1)));",
+      1,
+    ],
+    [
+      "unused callback-forwarding helper",
+      "function repeat(rows, action) { for (const row of rows) action(row); } it('works', () => expect(rows).toBeDefined());",
+      0,
+    ],
     ["support helper loop", "function collect(rows) { for (const row of rows) consume(row); }", 0],
   ])("counts test loops in %s", (_name, source, expected) => {
     expect(checkTestOnly.countTestLoops("test/example.test.ts", source)).toBe(expected);
@@ -228,5 +238,29 @@ describe("codebase growth guardrail test support", () => {
       { filename: "new.ts", previous_filename: "old.ts", status: "renamed" },
       { filename: "added.ts", status: "added" },
     ]);
+  });
+
+  it("compares a main merge worktree with its MERGE_HEAD commit", () => {
+    expect(diffTestOnly.selectLocalComparisonBase("branch-base", "main-head", true)).toBe(
+      "main-head",
+    );
+  });
+
+  it("keeps the branch merge base outside a main merge", () => {
+    expect(diffTestOnly.selectLocalComparisonBase("branch-base", null, false)).toBe("branch-base");
+    expect(diffTestOnly.selectLocalComparisonBase("branch-base", "topic-head", false)).toBe(
+      "branch-base",
+    );
+  });
+
+  it("accepts only conclusive Git ancestry probe results", () => {
+    expect(diffTestOnly.parseAncestorProbe(0, undefined)).toBe(true);
+    expect(diffTestOnly.parseAncestorProbe(1, undefined)).toBe(false);
+    expect(() => diffTestOnly.parseAncestorProbe(128, undefined)).toThrow(
+      "git merge-base --is-ancestor failed with status 128",
+    );
+    expect(() => diffTestOnly.parseAncestorProbe(null, new Error("spawn failed"))).toThrow(
+      "spawn failed",
+    );
   });
 });
