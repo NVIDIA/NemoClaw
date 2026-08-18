@@ -24,6 +24,13 @@ function normalizeVolumePrefix(prefix: string): string {
   return normalized;
 }
 
+export function dockerVolumeRun(
+  args: readonly string[],
+  opts: DockerRunOptions = {},
+): DockerRunResult {
+  return dockerRun(["volume", ...args], opts);
+}
+
 export function dockerListVolumesByPrefix(
   prefix: string,
   opts: DockerCaptureOptions = {},

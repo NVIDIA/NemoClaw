@@ -43,7 +43,7 @@ function expectRequiredPodmanPackages(run: string): void {
 describe("native runtime qualification producer workflow", () => {
   it("keeps candidate execution out of the authenticated controller", () => {
     const generate = job("generate-matrix");
-    const checkout = generate.steps?.find((entry) => entry.uses?.startsWith("actions/checkout@"));
+    const checkout = step(generate, "Check out E2E candidate");
 
     expect(checkout?.if).toContain("inputs.jobs != 'native-runtime-qualification-producer'");
     expect(step(generate, "Validate manual PR checkout").if).toContain(

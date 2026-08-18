@@ -219,13 +219,13 @@ describe("Hermes GPU boundary", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a direct main dispatch or an authorized NVIDIA-owned PR dispatch",
         ),
       ]),
     );
   });
 
-  it("rejects live secret exposure to a PR checkout", () => {
+  it("rejects live secret exposure to a PR checkout without authorization", () => {
     const errors = wfErrors((workflow) => {
       const run = step(workflow.jobs["hermes-e2e"], "Run Hermes live Vitest test");
       run.env = {
@@ -237,7 +237,7 @@ describe("Hermes GPU boundary", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a direct main dispatch or an authorized NVIDIA-owned PR dispatch",
         ),
       ]),
     );
