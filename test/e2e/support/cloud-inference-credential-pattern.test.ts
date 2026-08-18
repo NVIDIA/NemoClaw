@@ -23,4 +23,18 @@ describe("cloud inference credential scan", () => {
   ])("detects a credential-shaped value", (value) => {
     expect(value).toMatch(credentialPattern);
   });
+
+  it.each(["nvapi-", "ghp_", "npm_"])(
+    "rejects a nine-character payload for %s",
+    (prefix) => {
+      expect(`${prefix}${"a".repeat(9)}`).not.toMatch(credentialPattern);
+    },
+  );
+
+  it.each(["nvapi-", "ghp_", "npm_"])(
+    "detects a ten-character payload for %s",
+    (prefix) => {
+      expect(`${prefix}${"a".repeat(10)}`).toMatch(credentialPattern);
+    },
+  );
 });
