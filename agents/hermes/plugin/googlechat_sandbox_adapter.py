@@ -296,7 +296,8 @@ def _gc_gateway_proxy_url():
 
     for cmd_path in glob.glob("/proc/[0-9]*/cmdline"):
         try:
-            cmdline = open(cmd_path, "rb").read()
+            with open(cmd_path, "rb") as cmdline_handle:
+                cmdline = cmdline_handle.read()
         except OSError:
             continue
         if b"hermes.real" not in cmdline or b"gateway" not in cmdline or b"dashboard" in cmdline:
@@ -340,8 +341,6 @@ class _GcAiohttpTransport:
     content, which this provides via an ``httplib2.Response``."""
 
     def request(self, uri, method="GET", body=None, headers=None, **kwargs):
-        import asyncio
-
         import aiohttp
 
         import plugins.platforms.google_chat.adapter as _gc
