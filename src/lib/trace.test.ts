@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runCurlProbe } from "./adapters/http/probe";
+import { finishOnboardTrace, startOnboardTrace } from "./onboard/tracing";
 import {
   addTraceEvent,
   flushTrace,
@@ -206,11 +207,18 @@ describe("onboard trace artifacts", () => {
     }
   });
 
-  it("treats false-like NEMOCLAW_TRACE values as disabled", () => {
+  it("treats false-like NEMOCLAW_TRACE values as disabled and records the flag it acted on", () => {
     process.env[TRACE_ENABLED_ENV] = "false";
     resetTraceForTests();
-
     expect(getTraceCollector()).toBeNull();
+
+    // "2" enables the collector without being canonically truthy; the span must agree.
+    process.env[TRACE_ENABLED_ENV] = "2";
+    withTraceFile((traceFile) => {
+      finishOnboardTrace(startOnboardTrace({}, process.env), true);
+      const root = readTraceArtifact(traceFile).resource_spans[0].scope_spans[0].spans[0];
+      expect(root.attributes.trace_enabled).toBe(true);
+    });
   });
 
   it("removes the registered exit listener when resetting tests", () => {
