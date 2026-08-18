@@ -7,8 +7,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildDockerGpuCloneRunArgs,
+  buildDockerGpuMode,
+} from "../../../src/lib/onboard/docker-gpu-patch.ts";
+import {
   createLegacyKeepaliveFixture,
   type LegacyKeepaliveFixtureDeps,
+  rewriteManagedInspectForLegacyKeepalive,
 } from "../live/gateway-guard-legacy-keepalive-fixture.ts";
 
 const OLD_CONTAINER_ID = "a".repeat(64);
@@ -34,26 +39,110 @@ function successfulResult() {
   };
 }
 
+function managedImageInspect(
+  entrypoint: string[] = ["/usr/local/bin/nemoclaw-start"],
+  containerId = OLD_CONTAINER_ID,
+  command: string[] = ["/bin/bash"],
+): string {
+  return JSON.stringify([
+    {
+      Id: containerId,
+      Image: `sha256:${"c".repeat(64)}`,
+      Name: "/openshell-e2e-2701",
+      Config: {
+        Image: "nemoclaw-managed:test",
+        Entrypoint: entrypoint,
+        Cmd: command,
+        Env: ["OPENSHELL_SANDBOX_COMMAND=env /usr/local/bin/nemoclaw-start"],
+      },
+      HostConfig: {},
+    },
+  ]);
+}
+
 describe("gateway guard legacy keepalive fixture", () => {
-  it("recreates only the pinned sandbox container with the legacy startup command", () => {
-    const recreate = vi.fn(() => successfulResult());
+  it("recreates only the pinned sandbox container with the reviewed legacy supervisor contract (#9364)", () => {
+    const dockerCapture = vi.fn(() => managedImageInspect());
+    const recreate = vi.fn((_, deps: Parameters<LegacyKeepaliveFixtureDeps["recreate"]>[1]) => {
+      const rewritten = JSON.parse(
+        deps?.dockerCapture?.(["inspect", "--type", "container", OLD_CONTAINER_ID], {
+          ignoreError: true,
+        }) ?? "null",
+      );
+      expect(rewritten[0].Config).toMatchObject({
+        Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+        Cmd: [],
+      });
+      return successfulResult();
+    });
 
     const result = createLegacyKeepaliveFixture(
       {
         sandboxName: "e2e-2701",
         expectedContainerId: OLD_CONTAINER_ID,
       },
-      { recreate },
+      { recreate, dockerCapture },
     );
 
     expect(result.newContainerId).toBe(NEW_CONTAINER_ID);
     expect(recreate).toHaveBeenCalledOnce();
-    expect(recreate).toHaveBeenCalledWith({
-      sandboxName: "e2e-2701",
-      expectedOldContainerId: OLD_CONTAINER_ID,
+    expect(recreate).toHaveBeenCalledWith(
+      {
+        sandboxName: "e2e-2701",
+        expectedOldContainerId: OLD_CONTAINER_ID,
+        openshellSandboxCommand: ["sleep", "infinity"],
+        timeoutSecs: 180,
+      },
+      { dockerCapture: expect.any(Function) },
+    );
+  });
+
+  it("rejects an unreviewed managed-image entrypoint before legacy recreation (#9364)", () => {
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(
+        managedImageInspect(["/unreviewed/supervisor"]),
+        OLD_CONTAINER_ID,
+      ),
+    ).toThrow("requires the reviewed managed-image process contract");
+  });
+
+  it("rejects an unreviewed managed-image command before legacy recreation (#9364)", () => {
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(
+        managedImageInspect(["/usr/local/bin/nemoclaw-start"], OLD_CONTAINER_ID, ["/bin/sh"]),
+        OLD_CONTAINER_ID,
+      ),
+    ).toThrow("requires the reviewed managed-image process contract");
+  });
+
+  it("rejects Docker inspect output for a different container before legacy recreation (#9364)", () => {
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(
+        managedImageInspect(["/usr/local/bin/nemoclaw-start"], NEW_CONTAINER_ID),
+        OLD_CONTAINER_ID,
+      ),
+    ).toThrow("Docker inspect identity changed");
+  });
+
+  it("produces a clone contract accepted by production startup-command validation (#9364)", () => {
+    const rewritten = JSON.parse(
+      rewriteManagedInspectForLegacyKeepalive(managedImageInspect(), OLD_CONTAINER_ID),
+    );
+    const immutableImage = `sha256:${"c".repeat(64)}`;
+    const args = buildDockerGpuCloneRunArgs(rewritten[0], buildDockerGpuMode("startup-command"), {
+      image: immutableImage,
       openshellSandboxCommand: ["sleep", "infinity"],
-      timeoutSecs: 180,
     });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--entrypoint",
+        "/opt/openshell/bin/openshell-sandbox",
+        "--env",
+        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+      ]),
+    );
+    expect(args.slice(args.indexOf(immutableImage))).toEqual([immutableImage]);
   });
 
   it.each([

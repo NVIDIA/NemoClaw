@@ -23,7 +23,7 @@ const PUBLICATION_REVISION = "e".repeat(40);
 
 function publicationEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
-    [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
+    [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE,
     ...overrides,
   };
 }
@@ -99,15 +99,15 @@ describe("Deep Agents Code published base runtime evidence", () => {
     });
   });
 
-  it("rejects a valid official reference that differs from the publication contract", () => {
+  it("rejects the publication index instead of the validated platform reference (#9386)", () => {
     expect(() =>
       parseDcodeBaseImagePublicationEvidence(
         publicationEvidence(),
         publicationEnvironment({
-          [DCODE_BASE_IMAGE_ENV]: `${DCODE_BASE_IMAGE}@sha256:${"f".repeat(64)}`,
+          [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
         }),
       ),
-    ).toThrow(/does not match the published base contract/);
+    ).toThrow(/does not match the published linux\/amd64 base contract/);
   });
 
   it("prefers the selected manual candidate over the trusted workflow SHA", () => {
@@ -192,7 +192,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
       loadDcodeBaseImagePublicationEvidence(
         DCODE_BASE_IMAGE_TARGET_ID,
         `/missing-dcode-base-evidence-${process.pid}.json`,
-        { [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE },
+        { [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE },
       ),
     ).toBeUndefined();
   });
@@ -204,7 +204,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
         `/missing-dcode-base-evidence-${process.pid}.json`,
         {
           GITHUB_ACTIONS: "true",
-          [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
+          [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE,
         },
       ),
     ).toThrow(/GitHub Actions run is missing published base evidence/);

@@ -1631,6 +1631,49 @@ $$nemoclaw <name> snapshot create
 $$nemoclaw <name> rebuild
 ```
 
+### Snapshot Sanitization Requires a Verified Python Interpreter
+
+The CLI operations listed below stop when NemoClaw cannot resolve a verified interpreter.
+The error begins with this text:
+
+```text
+python3 is required for snapshot sanitization; install python3 and rerun
+```
+
+NemoClaw removes credentials from copied state with an isolated `python3` helper.
+The operation fails closed when that helper cannot run.
+These operations can report the error:
+
+- `$$nemoclaw <name> snapshot create`
+- `$$nemoclaw <name> rebuild`, including rebuilds started by `$$nemoclaw upgrade-sandboxes`
+- `$$nemoclaw backup-all`, including the installer's pre-upgrade backup and an eligible stopped Docker-driver sandbox
+
+A host that already has `python3` can still report this message.
+NemoClaw does not search `PATH` for this credential-bearing helper.
+NemoClaw accepts `python3` only at these locations:
+
+- `/usr/bin/python3`
+- `/usr/local/bin/python3`
+- `/opt/homebrew/bin/python3`
+- `/opt/local/bin/python3`
+- A `python3` executable beside the canonical Node.js executable
+
+NemoClaw rejects a candidate that fails its ownership, permission, or executable checks.
+For more information about the interpreter requirement, refer to [Prerequisites](../get-started/prerequisites).
+
+If NemoClaw reports that it removed the incomplete snapshot, install or repair `python3` at an accepted location.
+Then rerun the complete command.
+
+If cleanup fails, treat the exact reported directory as retained until you confirm that it is absent.
+
+<Warning title="Retained Incomplete Snapshot">
+A retained incomplete snapshot can contain unsanitized credentials.
+The directory must remain owner-only.
+You must not restore, copy, or share the directory.
+You must remove the directory only by the exact path that NemoClaw reports.
+You must confirm that the exact path no longer exists before you rerun the complete command.
+</Warning>
+
 ### Sandbox shows as stopped
 
 When status reports `sandbox_container_stopped`, Docker still has a container for the sandbox, but the container is not running.
