@@ -447,7 +447,7 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("omits credentialed catalogue profiles for an untrusted candidate", () => {
+  it("limits an unauthorized candidate without selectors to credential-free matrices", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-fork-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
@@ -463,12 +463,44 @@ describe("E2E workflow plan", () => {
         },
       );
 
-      expect(readFileSync(output, "utf8").split("\n")).toEqual(
+      const outputLines = readFileSync(output, "utf8").split("\n");
+      expect(outputLines).toEqual(
         expect.arrayContaining([
           "catalogue_nvidia_api_matrix=[]",
           "catalogue_nvidia_inference_matrix=[]",
           "catalogue_github_read_matrix=[]",
           "catalogue_brave_nvidia_inference_matrix=[]",
+          "selected_jobs=[]",
+          "hermes_selected=false",
+        ]),
+      );
+      expect(outputLines).not.toContain("catalogue_standard_matrix=[]");
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("retains controller-approved jobs for an unauthorized candidate", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-fork-jobs-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    try {
+      writeE2eWorkflowPlanCiOutput(
+        { jobs: "cloud-onboard,hermes-e2e" },
+        {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+      );
+
+      const outputLines = readFileSync(output, "utf8").split("\n");
+      expect(outputLines).toEqual(
+        expect.arrayContaining([
+          'selected_jobs=["cloud-onboard","hermes-e2e"]',
+          "hermes_selected=true",
         ]),
       );
     } finally {

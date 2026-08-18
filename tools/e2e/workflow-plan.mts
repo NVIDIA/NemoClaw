@@ -609,7 +609,10 @@ function expectedHermesSelection(
   return (selected.length === 0 && !retiredSelectorSelected) || selected.includes(HERMES_JOB_ID);
 }
 
-function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
+function restrictUnauthorizedCandidatePlan(
+  plan: E2eWorkflowPlan,
+  hasPlannerSelectors: boolean,
+): E2eWorkflowPlan {
   const eligibleRows = (rows: E2eCatalogueMatrixRow[]) =>
     rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id)));
   return {
@@ -620,6 +623,8 @@ function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflo
         eligibleRows(plan.catalogueMatrices[profile]),
       ]),
     ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>,
+    selectedJobs: hasPlannerSelectors ? plan.selectedJobs : [],
+    hermesSelected: hasPlannerSelectors && plan.hermesSelected,
   };
 }
 
@@ -667,13 +672,16 @@ export function writeE2eWorkflowPlanCiOutput(
   const credentialsAllowed = environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED === "true";
   const plan = validateE2eWorkflowPlan(
     candidateRevision && !credentialsAllowed
-      ? withoutCredentialedCatalogueProfiles(planned)
+      ? restrictUnauthorizedCandidatePlan(planned, hasPlannerSelectors)
       : planned,
   );
+  const expectedHermes =
+    candidateRevision && !credentialsAllowed && !hasPlannerSelectors
+      ? false
+      : expectedHermesSelection(plannerSelectors, controllerMap.retiredSelectorSelected);
   if (
     !changedFiles &&
-    plan.hermesSelected !==
-      expectedHermesSelection(plannerSelectors, controllerMap.retiredSelectorSelected)
+    plan.hermesSelected !== expectedHermes
   ) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }
