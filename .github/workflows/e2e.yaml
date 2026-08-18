@@ -15,12 +15,12 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for staging Brev Launchable image publication. Jetson dispatch and DGX Spark require their opt-in flags. PR revisions use the trusted controller matrix."
+        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for Launchable. Jetson dispatch and DGX Spark require their opt-in flags. PR revisions use the trusted controller matrix."
         required: false
         default: ""
         type: string
       include_staging_brev_launchable:
-        description: "Include staging Brev Launchable image publication in a full E2E run when jobs and targets are empty."
+        description: "Include Exact staging Brev Launchable in a full E2E run when jobs and targets are empty."
         required: false
         default: false
         type: boolean
@@ -168,13 +168,12 @@ jobs:
 
       - name: Download immutable Deep Agents Code base contract
         if: ${{ steps.publication_mode.outputs.required == '1' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          github-token: ${{ github.token }}
-          name: managed-base-${{ steps.publication.outputs.run_id }}-${{ steps.publication.outputs.run_attempt }}-langchain-deepagents-code
-          path: ${{ runner.temp }}/dcode-base-contract
-          repository: NVIDIA/NemoClaw
-          run-id: ${{ steps.publication.outputs.run_id }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
+          PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"
 
       - id: validate_dcode_base
         name: Validate immutable Deep Agents Code base
@@ -288,6 +287,62 @@ jobs:
         run: |
           set -euo pipefail
 
+          read_collaborator_permission() {
+            local maintainer="$1"
+            local attempt curl_exit failure http_status permission_file
+            permission_file="$(mktemp "${RUNNER_TEMP:-/tmp}/nemoclaw-collaborator-permission.XXXXXX")"
+
+            for attempt in 1 2 3; do
+              : >"$permission_file"
+              if http_status="$(curl --silent --proto '=https' --connect-timeout 10 --max-time 30 \
+                --output "$permission_file" --write-out "%{http_code}" \
+                --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission" \
+                2>/dev/null)"; then
+                if [[ "$http_status" =~ ^2[0-9]{2}$ ]]; then
+                  if jq -e 'type == "object" and (.user.login | type == "string") and (.role_name | type == "string")' "$permission_file" >/dev/null 2>&1; then
+                    if (( attempt > 1 )); then
+                      echo "::notice::Collaborator permission read passed after retry on attempt ${attempt}/3" >&2
+                    fi
+                    cat "$permission_file"
+                    rm -f "$permission_file"
+                    return 0
+                  fi
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: malformed response" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+                if [[ "$http_status" =~ ^[0-9]{3}$ ]]; then
+                  failure="HTTP ${http_status}"
+                  case "$http_status" in
+                    408 | 429 | 5??) ;;
+                    *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: ${failure}" >&2; rm -f "$permission_file"; return 1 ;;
+                  esac
+                else
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: invalid HTTP status" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+              else
+                curl_exit=$?
+                case "$curl_exit" in
+                  5 | 6 | 7 | 16 | 18 | 28 | 35 | 52 | 55 | 56 | 92 | 95 | 96) failure="transport" ;;
+                  *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: curl exit ${curl_exit}" >&2; rm -f "$permission_file"; return 1 ;;
+                esac
+              fi
+
+              if (( attempt == 3 )); then
+                echo "::error::Collaborator permission read exhausted after attempt ${attempt}/3: ${failure}" >&2
+                rm -f "$permission_file"
+                return 1
+              fi
+              echo "::warning::Collaborator permission read attempt ${attempt}/3 failed: ${failure}; retrying" >&2
+              sleep "$attempt"
+            done
+          }
+
           require_maintainer() {
             local maintainer="$1"
             [[ "$maintainer" =~ ^[A-Za-z0-9-]{1,39}$ && "$maintainer" != -* && "$maintainer" != *- ]] || {
@@ -295,11 +350,11 @@ jobs:
               exit 1
             }
             local permission_json
-            permission_json="$(curl --fail --silent --show-error --proto '=https' \
-              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission")"
+            permission_json="$(read_collaborator_permission "$maintainer")"
+            if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$maintainer")" ]]; then
+              echo "::error::Manual PR E2E permission response did not match the actor" >&2
+              exit 1
+            fi
             case "$(jq -r '.role_name // ""' <<< "$permission_json")" in
               maintain | admin) ;;
               *) echo "::error::Manual PR E2E requires a repository maintainer or administrator" >&2; exit 1 ;;
@@ -361,6 +416,62 @@ jobs:
         run: |
           set -euo pipefail
 
+          read_collaborator_permission() {
+            local administrator="$1"
+            local attempt curl_exit failure http_status permission_file
+            permission_file="$(mktemp "${RUNNER_TEMP:-/tmp}/nemoclaw-collaborator-permission.XXXXXX")"
+
+            for attempt in 1 2 3; do
+              : >"$permission_file"
+              if http_status="$(curl --silent --proto '=https' --connect-timeout 10 --max-time 30 \
+                --output "$permission_file" --write-out "%{http_code}" \
+                --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${administrator}/permission" \
+                2>/dev/null)"; then
+                if [[ "$http_status" =~ ^2[0-9]{2}$ ]]; then
+                  if jq -e 'type == "object" and (.user.login | type == "string") and (.role_name | type == "string")' "$permission_file" >/dev/null 2>&1; then
+                    if (( attempt > 1 )); then
+                      echo "::notice::Collaborator permission read passed after retry on attempt ${attempt}/3" >&2
+                    fi
+                    cat "$permission_file"
+                    rm -f "$permission_file"
+                    return 0
+                  fi
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: malformed response" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+                if [[ "$http_status" =~ ^[0-9]{3}$ ]]; then
+                  failure="HTTP ${http_status}"
+                  case "$http_status" in
+                    408 | 429 | 5??) ;;
+                    *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: ${failure}" >&2; rm -f "$permission_file"; return 1 ;;
+                  esac
+                else
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: invalid HTTP status" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+              else
+                curl_exit=$?
+                case "$curl_exit" in
+                  5 | 6 | 7 | 16 | 18 | 28 | 35 | 52 | 55 | 56 | 92 | 95 | 96) failure="transport" ;;
+                  *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: curl exit ${curl_exit}" >&2; rm -f "$permission_file"; return 1 ;;
+                esac
+              fi
+
+              if (( attempt == 3 )); then
+                echo "::error::Collaborator permission read exhausted after attempt ${attempt}/3: ${failure}" >&2
+                rm -f "$permission_file"
+                return 1
+              fi
+              echo "::warning::Collaborator permission read attempt ${attempt}/3 failed: ${failure}; retrying" >&2
+              sleep "$attempt"
+            done
+          }
+
           require_admin() {
             local administrator="$1"
             if [[ ! "$administrator" =~ ^[A-Za-z0-9-]{1,39}$ || "$administrator" == -* || "$administrator" == *- ]]; then
@@ -369,11 +480,7 @@ jobs:
             fi
 
             local permission_json
-            permission_json="$(curl --fail --silent --show-error --proto '=https' \
-              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${administrator}/permission")"
+            permission_json="$(read_collaborator_permission "$administrator")"
             if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$administrator")" ]]; then
               echo "::error::Release qualification waiver permission response did not match the actor" >&2
               exit 1
@@ -490,7 +597,7 @@ jobs:
           name: e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json
 
-      - name: Authorize Launchable image publication
+      - name: Authorize Launchable E2E maintainer dispatch
         if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
         env:
           ACTOR: ${{ github.actor }}
@@ -500,27 +607,79 @@ jobs:
         run: |
           set -euo pipefail
 
+          read_collaborator_permission() {
+            local maintainer="$1"
+            local attempt curl_exit failure http_status permission_file
+            permission_file="$(mktemp "${RUNNER_TEMP:-/tmp}/nemoclaw-collaborator-permission.XXXXXX")"
+
+            for attempt in 1 2 3; do
+              : >"$permission_file"
+              if http_status="$(curl --silent --proto '=https' --connect-timeout 10 --max-time 30 \
+                --output "$permission_file" --write-out "%{http_code}" \
+                --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission" \
+                2>/dev/null)"; then
+                if [[ "$http_status" =~ ^2[0-9]{2}$ ]]; then
+                  if jq -e 'type == "object" and (.user.login | type == "string") and (.role_name | type == "string")' "$permission_file" >/dev/null 2>&1; then
+                    if (( attempt > 1 )); then
+                      echo "::notice::Collaborator permission read passed after retry on attempt ${attempt}/3" >&2
+                    fi
+                    cat "$permission_file"
+                    rm -f "$permission_file"
+                    return 0
+                  fi
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: malformed response" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+                if [[ "$http_status" =~ ^[0-9]{3}$ ]]; then
+                  failure="HTTP ${http_status}"
+                  case "$http_status" in
+                    408 | 429 | 5??) ;;
+                    *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: ${failure}" >&2; rm -f "$permission_file"; return 1 ;;
+                  esac
+                else
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: invalid HTTP status" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+              else
+                curl_exit=$?
+                case "$curl_exit" in
+                  5 | 6 | 7 | 16 | 18 | 28 | 35 | 52 | 55 | 56 | 92 | 95 | 96) failure="transport" ;;
+                  *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: curl exit ${curl_exit}" >&2; rm -f "$permission_file"; return 1 ;;
+                esac
+              fi
+
+              if (( attempt == 3 )); then
+                echo "::error::Collaborator permission read exhausted after attempt ${attempt}/3: ${failure}" >&2
+                rm -f "$permission_file"
+                return 1
+              fi
+              echo "::warning::Collaborator permission read attempt ${attempt}/3 failed: ${failure}; retrying" >&2
+              sleep "$attempt"
+            done
+          }
+
           require_maintainer() {
             local maintainer="$1"
             if [[ ! "$maintainer" =~ ^[A-Za-z0-9-]{1,39}$ || "$maintainer" == -* || "$maintainer" == *- ]]; then
-              echo "::error::Launchable image publication actor is invalid" >&2
+              echo "::error::Launchable E2E actor is invalid" >&2
               exit 1
             fi
 
             local permission_json
-            permission_json="$(curl --fail --silent --show-error --proto '=https' \
-              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission")"
+            permission_json="$(read_collaborator_permission "$maintainer")"
             if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$maintainer")" ]]; then
-              echo "::error::Launchable image publication permission response did not match the actor" >&2
+              echo "::error::Launchable E2E permission response did not match the actor" >&2
               exit 1
             fi
             case "$(jq -r '.role_name // ""' <<< "$permission_json")" in
               maintain | admin) ;;
               *)
-                echo "::error::Launchable image publication requires a repository maintainer or administrator" >&2
+                echo "::error::Launchable E2E requires a repository maintainer or administrator" >&2
                 exit 1
                 ;;
             esac
@@ -2523,7 +2682,7 @@ jobs:
           path: e2e-artifacts/live/retired-selector-compatibility/
 
   staging-brev-launchable:
-    name: Publish staging Brev Launchable image
+    name: Exact staging Brev Launchable
     needs: generate-matrix
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
     runs-on: ubuntu-latest
@@ -2536,6 +2695,8 @@ jobs:
       cancel-in-progress: false
     env:
       CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+      E2E_JOB: "1"
+      INSTANCE_NAME: nclaw-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout trusted Launchable lane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2548,16 +2709,27 @@ jobs:
 
       - id: workspace
         name: Prepare the trusted lane
+        env:
+          BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_API_KEY || '' }}
+          BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
+          BREV_CLI_VERSION: 0.6.334
+          BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_ORG_ID || '' }}
         run: |
           set -euo pipefail
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-launchable-e2e.XXXXXX")"
           chmod 700 "$work_dir"
+          archive="${RUNNER_TEMP}/brev-cli.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$BREV_CLI_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "${RUNNER_TEMP}" brev && sudo install -m 0755 "${RUNNER_TEMP}/brev" /usr/local/bin/brev
+          brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
           printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
 
-      - name: Build and verify the staging Launchable image
+      - name: Build, deploy, verify, test, and clean up
         env:
+          BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
-          NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "1"
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: tools/e2e/brev-launchable-e2e.sh
 
@@ -2568,7 +2740,9 @@ jobs:
           name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
-            ${{ steps.workspace.outputs.work_dir }}/launchable-image.json
+            ${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json
+            ${{ steps.workspace.outputs.work_dir }}/full-e2e.log
+            ${{ steps.workspace.outputs.work_dir }}/cleanup.json
 
   live:
     needs: [base-image-publication, generate-matrix]

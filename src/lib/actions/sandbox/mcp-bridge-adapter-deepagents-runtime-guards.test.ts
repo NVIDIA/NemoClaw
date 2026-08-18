@@ -12,32 +12,38 @@ import {
 } from "./mcp-bridge-adapter-deepagents";
 
 describe("Deep Agents MCP config adapter runtime guards", () => {
-  it("fails closed without touching either config when the runtime generation is unknown", () => {
-    const v2Config = {
-      mcpServers: {
-        github: {
-          type: "http",
-          url: baseEntry.url,
-          headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+  it.each(
+    Array.from(
+      [
+        buildDeepAgentsMcpRemoveCommand(baseEntry, true, true),
+        buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true),
+      ],
+      (value) => [value],
+    ),
+  )(
+    "fails closed without touching either config when the runtime generation is unknown [case %#]",
+    (command) => {
+      const v2Config = {
+        mcpServers: {
+          github: {
+            type: "http",
+            url: baseEntry.url,
+            headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+          },
         },
-      },
-    };
-    const legacyConfig = {
-      mcpServers: { local: { type: "stdio", command: "user-owned" } },
-      ui: { theme: "dark" },
-    };
+      };
+      const legacyConfig = {
+        mcpServers: { local: { type: "stdio", command: "user-owned" } },
+        ui: { theme: "dark" },
+      };
 
-    for (const command of [
-      buildDeepAgentsMcpRemoveCommand(baseEntry, true, true),
-      buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true),
-    ]) {
       const result = runDeepAgentsConfigCommand(command, v2Config, "unknown", legacyConfig);
       expect(result.status).toBe(2);
       expect(result.stderr).toContain("Could not identify the managed Deep Agents MCP runtime");
       expect(result.config).toEqual(v2Config);
       expect(result.legacyConfig).toEqual(legacyConfig);
-    }
-  });
+    },
+  );
 
   it("preserves ambiguous legacy JSON byte-for-byte during teardown and rollback", () => {
     const exactServer = JSON.stringify({
@@ -71,7 +77,15 @@ describe("Deep Agents MCP config adapter runtime guards", () => {
     expect(rollback.legacyConfigText).toBe(duplicateConfig);
   });
 
-  it("does not mutate a legacy file that the v1 runtime would reject", () => {
+  it.each(
+    Array.from(
+      [
+        buildDeepAgentsMcpRemoveCommand(baseEntry, true, true),
+        buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true),
+      ],
+      (value) => [value],
+    ),
+  )("does not mutate a legacy file that the v1 runtime would reject [case %#]", (command) => {
     const legacyConfig = {
       mcpServers: {
         github: {
@@ -84,13 +98,8 @@ describe("Deep Agents MCP config adapter runtime guards", () => {
     };
     const original = `${JSON.stringify(legacyConfig, null, 2)}\n`;
 
-    for (const command of [
-      buildDeepAgentsMcpRemoveCommand(baseEntry, true, true),
-      buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true),
-    ]) {
-      const result = runDeepAgentsConfigCommand(command, undefined, "legacy", legacyConfig, 0o644);
-      expect(result.legacyConfigText).toBe(original);
-      expect(result.status === 2 || result.stdout.includes("REMOVAL=unowned")).toBe(true);
-    }
+    const result = runDeepAgentsConfigCommand(command, undefined, "legacy", legacyConfig, 0o644);
+    expect(result.legacyConfigText).toBe(original);
+    expect(result.status === 2 || result.stdout.includes("REMOVAL=unowned")).toBe(true);
   });
 });

@@ -79,13 +79,10 @@ network_policies:
     expect(input.content).not.toContain("allowed_ips");
   });
 
-  it.each([
-    "rest",
-    "websocket",
-    "jsonrpc",
-    "mcp",
-  ])("pins mixed public and trusted-private DNS answers for %s endpoints (#8176)", async (protocol) => {
-    const input = preset(`preset:
+  it.each(["rest", "websocket", "jsonrpc", "mcp"])(
+    "pins mixed public and trusted-private DNS answers for %s endpoints (#8176)",
+    async (protocol) => {
+      const input = preset(`preset:
   name: private
 network_policies:
   services:
@@ -93,36 +90,39 @@ network_policies:
       - { host: api.corp.example, port: 443, protocol: ${protocol} }
 `);
 
-    const [prepared] = await prepareTrustedPrivatePolicyPresets([input], ["api.corp.example"], {
-      lookup: lookup({ "api.corp.example": ["10.20.30.40", "8.8.8.8"] }),
-    });
-    const document = YAML.parse(prepared.content) as {
-      network_policies: { services: { endpoints: Array<{ allowed_ips?: string[] }> } };
-    };
+      const [prepared] = await prepareTrustedPrivatePolicyPresets([input], ["api.corp.example"], {
+        lookup: lookup({ "api.corp.example": ["10.20.30.40", "8.8.8.8"] }),
+      });
+      const document = YAML.parse(prepared.content) as {
+        network_policies: { services: { endpoints: Array<{ allowed_ips?: string[] }> } };
+      };
 
-    expect(document.network_policies.services.endpoints[0]?.allowed_ips).toEqual([
-      "10.20.30.40",
-      "8.8.8.8",
-    ]);
-    expect(hasTrustedPrivatePolicyPinReceipt(prepared.content, prepared.trustedPrivatePins)).toBe(
-      true,
-    );
-    expect(input.content).not.toContain("allowed_ips");
-  });
+      expect(document.network_policies.services.endpoints[0]?.allowed_ips).toEqual([
+        "10.20.30.40",
+        "8.8.8.8",
+      ]);
+      expect(hasTrustedPrivatePolicyPinReceipt(prepared.content, prepared.trustedPrivatePins)).toBe(
+        true,
+      );
+      expect(input.content).not.toContain("allowed_ips");
+    },
+  );
 
-  it("rejects a pin receipt that is stale, malformed, or unversioned (#8176)", () => {
-    const content = "network_policies: {}\n";
-    for (const receipt of [
-      { version: 1, contentDigest: "a".repeat(64) },
-      { version: 2, contentDigest: "a".repeat(64) },
-      { contentDigest: "a".repeat(64) },
-      { version: 1, contentDigest: "short" },
-    ]) {
+  it.each([
+    { version: 1, contentDigest: "a".repeat(64) },
+    { version: 2, contentDigest: "a".repeat(64) },
+    { contentDigest: "a".repeat(64) },
+    { version: 1, contentDigest: "short" },
+  ])(
+    "rejects a pin receipt that is stale, malformed, or unversioned [case %#] (#8176)",
+    (receipt) => {
+      const content = "network_policies: {}\n";
+
       expect(() => normalizeTrustedPrivatePolicyPinReceipt(content, receipt)).toThrow(
         /does not match its exact content/,
       );
-    }
-  });
+    },
+  );
 
   it("rejects durable replay receipts that pin reserved destinations (#8176)", () => {
     const content = `network_policies:

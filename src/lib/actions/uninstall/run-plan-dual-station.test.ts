@@ -60,48 +60,48 @@ function managedRuntimeBindingPath(receiptPath: string): string {
 }
 
 describe("managed distributed vLLM runtime uninstall", () => {
-  it.each([
-    "dual-station-vllm-runtime.json",
-    "managed-cluster-vllm-runtime.json",
-  ])("removes the runtime owned by %s before the remaining full-uninstall steps", (receiptFile) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-pair-"));
-    const stateDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(stateDir, { mode: 0o700 });
-    const receiptPath = path.join(stateDir, receiptFile);
-    fs.writeFileSync(receiptPath, "{}\n", {
-      mode: 0o600,
-    });
-    fs.mkdirSync(managedRuntimeBindingPath(receiptPath), { mode: 0o700 });
-    const runDualStationRuntimeCleanup = vi.fn(() => ok());
-    const rmSync = vi.fn();
-    const runDocker = vi.fn(() => ok());
+  it.each(["dual-station-vllm-runtime.json", "managed-cluster-vllm-runtime.json"])(
+    "removes the runtime owned by %s before the remaining full-uninstall steps",
+    (receiptFile) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-pair-"));
+      const stateDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(stateDir, { mode: 0o700 });
+      const receiptPath = path.join(stateDir, receiptFile);
+      fs.writeFileSync(receiptPath, "{}\n", {
+        mode: 0o600,
+      });
+      fs.mkdirSync(managedRuntimeBindingPath(receiptPath), { mode: 0o700 });
+      const runDualStationRuntimeCleanup = vi.fn(() => ok());
+      const rmSync = vi.fn();
+      const runDocker = vi.fn(() => ok());
 
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: true },
-        {
-          commandExists: () => true,
-          env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
-          existsSync: () => false,
-          isTty: false,
-          log: vi.fn(),
-          rmSync,
-          run: okWithKnownGatewayList,
-          runDocker,
-          runDualStationRuntimeCleanup,
-        },
-      );
+      try {
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          {
+            commandExists: () => true,
+            env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
+            existsSync: () => false,
+            isTty: false,
+            log: vi.fn(),
+            rmSync,
+            run: okWithKnownGatewayList,
+            runDocker,
+            runDualStationRuntimeCleanup,
+          },
+        );
 
-      expect(result.exitCode).toBe(0);
-      expect(runDualStationRuntimeCleanup).toHaveBeenCalledOnce();
-      expect(runDocker).toHaveBeenCalled();
-      expect(runDualStationRuntimeCleanup.mock.invocationCallOrder[0]).toBeLessThan(
-        runDocker.mock.invocationCallOrder[0],
-      );
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        expect(result.exitCode).toBe(0);
+        expect(runDualStationRuntimeCleanup).toHaveBeenCalledOnce();
+        expect(runDocker).toHaveBeenCalled();
+        expect(runDualStationRuntimeCleanup.mock.invocationCallOrder[0]).toBeLessThan(
+          runDocker.mock.invocationCallOrder[0],
+        );
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("stops a distributed runtime before requesting shared Hugging Face cache-data cleanup", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-cache-order-"));
@@ -452,9 +452,14 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-conflict-"));
     const stateDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700 });
-    for (const name of ["managed-cluster-vllm-runtime.json", "dual-station-vllm-runtime.json"]) {
-      fs.writeFileSync(path.join(stateDir, name), "{}\n", { mode: 0o600 });
-    }
+
+    fs.writeFileSync(path.join(stateDir, "managed-cluster-vllm-runtime.json"), "{}\n", {
+      mode: 0o600,
+    });
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-runtime.json"), "{}\n", {
+      mode: 0o600,
+    });
+
     const errors: string[] = [];
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
     const runDocker = vi.fn(() => ok());
@@ -536,65 +541,68 @@ describe("managed distributed vLLM runtime uninstall", () => {
   it.each([
     ["Spark", "managed-cluster-vllm-runtime.json"],
     ["Station", "dual-station-vllm-runtime.json"],
-  ])("finds the host-global %s receipt from a non-default gateway selection", async (_topology, receiptFile) => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-managed-global-"));
-    const stateDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(stateDir, { mode: 0o700 });
-    fs.writeFileSync(path.join(stateDir, receiptFile), "{}\n", {
-      mode: 0o600,
-    });
-    fs.mkdirSync(managedRuntimeBindingPath(path.join(stateDir, receiptFile)), {
-      mode: 0o700,
-    });
-    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${"a".repeat(64)}\n`, {
-      mode: 0o600,
-    });
-    fs.mkdirSync(path.join(stateDir, "state", "mcp-lifecycle-locks"), {
-      recursive: true,
-      mode: 0o700,
-    });
-    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+  ])(
+    "finds the host-global %s receipt from a non-default gateway selection",
+    async (_topology, receiptFile) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-managed-global-"));
+      const stateDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(stateDir, { mode: 0o700 });
+      fs.writeFileSync(path.join(stateDir, receiptFile), "{}\n", {
+        mode: 0o600,
+      });
+      fs.mkdirSync(managedRuntimeBindingPath(path.join(stateDir, receiptFile)), {
+        mode: 0o700,
+      });
+      fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${"a".repeat(64)}\n`, {
+        mode: 0o600,
+      });
+      fs.mkdirSync(path.join(stateDir, "state", "mcp-lifecycle-locks"), {
+        recursive: true,
+        mode: 0o700,
+      });
+      const runDualStationRuntimeCleanup = vi.fn(() => ok());
 
-    try {
-      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
-      vi.resetModules();
-      const { runUninstallPlan: runFreshUninstallPlan } = await import("./run-plan");
-      const result = runFreshUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: true },
-        {
-          commandExists: () => true,
-          env: { HOME: home, TMPDIR: home, NEMOCLAW_GATEWAY_PORT: "18080" },
-          existsSync: () => false,
-          isTty: false,
-          log: vi.fn(),
-          rmSync: vi.fn(),
-          run: (command, args) =>
-            command === "openshell" && args[0] === "gateway" && args[1] === "list"
-              ? ok(JSON.stringify([{ name: "nemoclaw-18080" }]))
-              : ok(),
-          runDocker: () => ok(),
-          runDualStationRuntimeCleanup,
-          resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
-            gatewayName,
-            gatewayPort,
-            mode: "nemoclaw-managed",
-            source: "standalone",
-            endpoint: null,
-            stateDir: null,
-            supervisor: null,
-            requiredCapabilities: [],
-          }),
-        },
-      );
+      try {
+        vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
+        vi.resetModules();
+        const { runUninstallPlan: runFreshUninstallPlan } = await import("./run-plan");
+        const result = runFreshUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          {
+            commandExists: () => true,
+            env: { HOME: home, TMPDIR: home, NEMOCLAW_GATEWAY_PORT: "18080" },
+            existsSync: () => false,
+            isTty: false,
+            log: vi.fn(),
+            rmSync: vi.fn(),
+            run: (command, args) =>
+              command === "openshell" && args[0] === "gateway" && args[1] === "list"
+                ? ok(JSON.stringify([{ name: "nemoclaw-18080" }]))
+                : ok(),
+            runDocker: () => ok(),
+            runDualStationRuntimeCleanup,
+            resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+              gatewayName,
+              gatewayPort,
+              mode: "nemoclaw-managed",
+              source: "standalone",
+              endpoint: null,
+              stateDir: null,
+              supervisor: null,
+              requiredCapabilities: [],
+            }),
+          },
+        );
 
-      expect(result.exitCode).toBe(0);
-      expect(runDualStationRuntimeCleanup).toHaveBeenCalledOnce();
-    } finally {
-      vi.unstubAllEnvs();
-      vi.resetModules();
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        expect(result.exitCode).toBe(0);
+        expect(runDualStationRuntimeCleanup).toHaveBeenCalledOnce();
+      } finally {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     {

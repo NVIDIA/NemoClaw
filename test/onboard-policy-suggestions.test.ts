@@ -502,9 +502,8 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "hermes",
     });
-    for (const preset of ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"]) {
-      expect(hermesOpen).toContain(preset);
-    }
+    expect(["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) =>
+        hermesOpen.includes(preset))).toBe(true);
     expect(hermesOpen).toContain("weather");
     expect(hermesOpen).toContain("public-reference");
     expect(hermesOpen).not.toContain("openclaw-pricing");
@@ -514,9 +513,7 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "openclaw",
     });
-    for (const preset of ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"]) {
-      expect(openclawOpen).not.toContain(preset);
-    }
+    expect(["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"].every((preset) => !openclawOpen.includes(preset))).toBe(true);
     expect(openclawOpen).toContain("openclaw-pricing");
     expect(openclawOpen).toContain("weather");
     expect(openclawOpen).toContain("public-reference");
@@ -872,15 +869,16 @@ describe("onboard policy preset suggestions", () => {
       return union;
     }
 
-    it("includes every env-gated OpenClaw agent-required preset in the restricted suppression list", () => {
-      const additionsUnion = unionAdditionsAcrossOtelStates();
-      const restrictedSet = new Set(suppressedAgentRequiredPresets("restricted", "openclaw"));
-      for (const preset of additionsUnion) {
+    it.each(Array.from(unionAdditionsAcrossOtelStates(), (value) => [value]))(
+      "includes env-gated preset %s in the restricted suppression list",
+      (preset) => {
+        const restrictedSet = new Set(suppressedAgentRequiredPresets("restricted", "openclaw"));
+
         expect(
           restrictedSet.has(preset),
           `addition '${preset}' missing from restricted suppression list`,
         ).toBe(true);
-      }
-    });
+      },
+    );
   });
 });

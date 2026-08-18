@@ -127,76 +127,79 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
   });
 
   it("holds the mutation lock through begin, apply, verification, and finish", () => {
-    const fixture = createRestartFixture();
-    const expectedDigest = createHash("sha256").update(fixture.trustedConfig).digest("hex");
+      const fixture = createRestartFixture();
+      const expectedDigest = createHash("sha256").update(fixture.trustedConfig).digest("hex");
 
-    try {
-      const begun = runShieldsTransactionAction(fixture, "begin-shields-transition", {
-        mode: "locked",
-      });
-      expect(begun.status, begun.stderr).toBe(0);
-      const token = shieldsTransactionToken(begun.stdout);
-      expect(token).toMatch(/^[0-9a-f]{64}$/);
-      expect(fs.existsSync(fixture.statePath)).toBe(true);
-      expect(fs.existsSync(path.join(fixture.root, "hermes-config-mutation.lock"))).toBe(true);
-      expect(fs.existsSync(path.join(fixture.hermesDir, ".nemoclaw-hermes-restart-seal"))).toBe(
-        true,
-      );
-      expect(mode(fixture.sandboxDir)).toBe(0o700);
-      expect(mode(fixture.hermesDir)).toBe(0o500);
+      try {
+        const begun = runShieldsTransactionAction(fixture, "begin-shields-transition", {
+          mode: "locked",
+        });
+        expect(begun.status, begun.stderr).toBe(0);
+        const token = shieldsTransactionToken(begun.stdout);
+        expect(token).toMatch(/^[0-9a-f]{64}$/);
+        expect(fs.existsSync(fixture.statePath)).toBe(true);
+        expect(fs.existsSync(path.join(fixture.root, "hermes-config-mutation.lock"))).toBe(true);
+        expect(fs.existsSync(path.join(fixture.hermesDir, ".nemoclaw-hermes-restart-seal"))).toBe(
+          true,
+        );
+        expect(mode(fixture.sandboxDir)).toBe(0o700);
+        expect(mode(fixture.hermesDir)).toBe(0o500);
 
-      const owner = runShieldsTransactionAction(fixture, "inspect-mutation-owner");
-      expect(owner.status, owner.stderr).toBe(0);
-      expect(owner.stdout).toContain("owner_active=1");
-      expect(owner.stdout).toContain("recovery_safe=0");
+        const owner = runShieldsTransactionAction(fixture, "inspect-mutation-owner");
+        expect(owner.status, owner.stderr).toBe(0);
+        expect(owner.stdout).toContain("owner_active=1");
+        expect(owner.stdout).toContain("recovery_safe=0");
 
-      const competingRestart = runGuard("seal-restart", fixture);
-      expect(competingRestart.status).not.toBe(0);
-      expect(competingRestart.stderr).toContain("restart seal is already active");
-      const competingWrite = runWriteConfig(
-        fixture,
-        expectedDigest,
-        "model:\n  default: must-not-interleave\n",
-      );
-      expect(competingWrite.status).not.toBe(0);
-      expect(competingWrite.stderr).toContain("restart seal is already active");
+        const competingRestart = runGuard("seal-restart", fixture);
+        expect(competingRestart.status).not.toBe(0);
+        expect(competingRestart.stderr).toContain("restart seal is already active");
+        const competingWrite = runWriteConfig(
+          fixture,
+          expectedDigest,
+          "model:\n  default: must-not-interleave\n",
+        );
+        expect(competingWrite.status).not.toBe(0);
+        expect(competingWrite.stderr).toContain("restart seal is already active");
 
-      fs.chmodSync(fixture.hermesDir, 0o755);
-      const applied = runShieldsTransactionAction(fixture, "apply-shields-transition", {
-        token,
-      });
-      expect(applied.status, applied.stderr).toBe(0);
-      expect(applied.stdout).toContain("shields_mode=locked");
-      expect(fs.existsSync(fixture.statePath)).toBe(true);
-      expect(fs.existsSync(path.join(fixture.hermesDir, ".nemoclaw-hermes-restart-seal"))).toBe(
-        true,
-      );
-      expect(mode(fixture.hermesDir)).toBe(0o3770);
-      expect(mode(fixture.configPath)).toBe(0o444);
-      expect(mode(fixture.sandboxDir)).toBe(0o755);
+        fs.chmodSync(fixture.hermesDir, 0o755);
+        const applied = runShieldsTransactionAction(fixture, "apply-shields-transition", {
+          token,
+        });
+        expect(applied.status, applied.stderr).toBe(0);
+        expect(applied.stdout).toContain("shields_mode=locked");
+        expect(fs.existsSync(fixture.statePath)).toBe(true);
+        expect(fs.existsSync(path.join(fixture.hermesDir, ".nemoclaw-hermes-restart-seal"))).toBe(
+          true,
+        );
+        expect(mode(fixture.hermesDir)).toBe(0o3770);
+        expect(mode(fixture.configPath)).toBe(0o444);
+        expect(mode(fixture.sandboxDir)).toBe(0o755);
 
-      const finished = runShieldsTransactionAction(fixture, "finish-shields-transition", {
-        token,
-      });
-      expect(finished.status, finished.stderr).toBe(0);
-      expect(fs.existsSync(fixture.statePath)).toBe(false);
-      expect(fs.existsSync(path.join(fixture.root, "hermes-config-mutation.lock"))).toBe(false);
-      expect(fs.existsSync(path.join(fixture.hermesDir, ".nemoclaw-hermes-restart-seal"))).toBe(
-        false,
-      );
-      expect(mode(fixture.sandboxDir)).toBe(0o1775);
-      expect(strictHashIsValid(fixture)).toBe(true);
-    } finally {
-      for (const pathname of [fixture.sandboxDir, fixture.hermesDir]) {
-        try {
-          fs.chmodSync(pathname, 0o770);
-        } catch {
-          // A failed transition can remove the fixture directory.
-        }
+        const finished = runShieldsTransactionAction(fixture, "finish-shields-transition", {
+          token,
+        });
+        expect(finished.status, finished.stderr).toBe(0);
+        expect(fs.existsSync(fixture.statePath)).toBe(false);
+        expect(fs.existsSync(path.join(fixture.root, "hermes-config-mutation.lock"))).toBe(false);
+        expect(fs.existsSync(path.join(fixture.hermesDir, ".nemoclaw-hermes-restart-seal"))).toBe(
+          false,
+        );
+        expect(mode(fixture.sandboxDir)).toBe(0o1775);
+        expect(strictHashIsValid(fixture)).toBe(true);
+      } finally {
+        const makeRemovable = (pathname: string) => {
+          try {
+            fs.chmodSync(pathname, 0o770);
+          } catch {
+            // A failed transition can remove the fixture directory.
+          }
+        };
+        makeRemovable(fixture.sandboxDir);
+        makeRemovable(fixture.hermesDir);
+
+        fs.rmSync(fixture.root, { recursive: true, force: true });
       }
-      fs.rmSync(fixture.root, { recursive: true, force: true });
-    }
-  });
+    });
 
   it.each(["mutable", "locked"] as const)(
     "keeps weakening fan-out inaccessible and keeps monotonic lock fan-out readable [case %#]",

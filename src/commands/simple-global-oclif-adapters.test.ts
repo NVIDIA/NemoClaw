@@ -289,11 +289,12 @@ describe("simple global oclif adapters", () => {
 
   it("maps tunnel and deprecated service commands to service actions", async () => {
     await TunnelStartCommand.run([], rootDir);
+    expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await TunnelStopCommand.run([], rootDir);
     await DeprecatedStartCommand.run([], rootDir);
+    expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await DeprecatedStopCommand.run([], rootDir);
 
-    expect(mocks.runStartCommand).toHaveBeenCalledTimes(2);
     expect(mocks.runStopCommand).toHaveBeenCalledTimes(2);
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),

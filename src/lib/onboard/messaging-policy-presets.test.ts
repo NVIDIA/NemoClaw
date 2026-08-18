@@ -10,6 +10,7 @@ import {
   mergeEnabledMessagingChannelPolicyPresets,
   mergePolicyMessagingChannels,
   mergeRebuildMessagingPolicyPresets,
+  messagingChannelsForPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -18,6 +19,14 @@ describe("messaging policy presets", () => {
   it("maps Slack messaging to the Slack network policy preset", () => {
     expect(requiredMessagingChannelPolicyPresets(["slack"])).toEqual(["slack"]);
     expect(requiredMessagingChannelPolicyPresets([" Slack "])).toEqual(["slack"]);
+  });
+
+  it("names the channel behind an applied network policy preset (#9283)", () => {
+    expect(messagingChannelsForPolicyPresets(["npm", "pypi", "discord"])).toEqual(["discord"]);
+    expect(messagingChannelsForPolicyPresets([" Slack "])).toEqual(["slack"]);
+    expect(messagingChannelsForPolicyPresets(["npm", "pypi"])).toEqual([]);
+    expect(messagingChannelsForPolicyPresets([])).toEqual([]);
+    expect(messagingChannelsForPolicyPresets(null)).toEqual([]);
   });
 
   it("merges required messaging presets into an existing selection", () => {

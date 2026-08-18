@@ -291,17 +291,19 @@ describe("resolveOpenshellInstallVersion", () => {
     expect(result.message).toContain("0.0.36");
   });
 
-  it("falls back to legacy fetch behavior when max is missing or malformed", () => {
-    expect(
-      installModule.resolveOpenshellInstallVersion(["v0.0.38", "0.0.39"], { max: null }, helpers)
-        .kind,
-    ).toBe("no-max");
-    for (const max of ["", "-1.0.0", "not-a-version", "v"] as const) {
+  it.each(["", "-1.0.0", "not-a-version", "v"] as const)(
+    "falls back to legacy fetch behavior when max is missing or malformed [%s]",
+    (max) => {
+      expect(
+        installModule.resolveOpenshellInstallVersion(["v0.0.38", "0.0.39"], { max: null }, helpers)
+          .kind,
+      ).toBe("no-max");
+
       expect(installModule.resolveOpenshellInstallVersion(["v0.0.38"], { max }, helpers).kind).toBe(
         "no-max",
       );
-    }
-  });
+    },
+  );
 
   it("silently drops malformed entries from the available list", () => {
     const result = installModule.resolveOpenshellInstallVersion(

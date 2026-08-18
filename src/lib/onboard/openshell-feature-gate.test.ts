@@ -372,23 +372,30 @@ describe("OpenShell MCP feature gate", () => {
     }
   });
 
-  it("ignores stale sibling and fallback sandbox artifacts for a macOS VM-driver install", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-"));
-    try {
-      const cliDir = path.join(root, "cli");
-      const fallbackDir = path.join(root, "fallback");
-      fs.mkdirSync(cliDir);
-      fs.mkdirSync(fallbackDir);
-      const openshell = path.join(cliDir, "openshell");
-      const gateway = path.join(cliDir, "openshell-gateway");
-      const siblingSandbox = path.join(cliDir, "openshell-sandbox");
-      const fallbackSandbox = path.join(fallbackDir, "openshell-sandbox");
-      writeExecutable(openshell, `binary ${REQUIRED_OPENSHELL_MCP_FEATURES.join(" ")}`);
-      writeExecutable(gateway, "current gateway");
-      writeExecutable(siblingSandbox, "stale sibling sandbox", "0.0.44");
-      writeExecutable(fallbackSandbox, "stale fallback sandbox", "0.0.44");
+  it.each([{ scenario: "sibling sandbox binary" }, { scenario: "fallback sandbox binary" }])(
+    "ignores stale sibling and fallback sandbox artifacts for a macOS VM-driver install [$scenario]",
+    ({ scenario }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-"));
+      try {
+        const cliDir = path.join(root, "cli");
+        const fallbackDir = path.join(root, "fallback");
+        fs.mkdirSync(cliDir);
+        fs.mkdirSync(fallbackDir);
+        const openshell = path.join(cliDir, "openshell");
+        const gateway = path.join(cliDir, "openshell-gateway");
+        const siblingSandbox = path.join(cliDir, "openshell-sandbox");
+        const fallbackSandbox = path.join(fallbackDir, "openshell-sandbox");
+        writeExecutable(openshell, `binary ${REQUIRED_OPENSHELL_MCP_FEATURES.join(" ")}`);
+        writeExecutable(gateway, "current gateway");
+        writeExecutable(siblingSandbox, "stale sibling sandbox", "0.0.44");
+        writeExecutable(fallbackSandbox, "stale fallback sandbox", "0.0.44");
 
-      for (const sandboxBin of [siblingSandbox, fallbackSandbox]) {
+        const sandboxBin = (
+          {
+            "sibling sandbox binary": siblingSandbox,
+            "fallback sandbox binary": fallbackSandbox,
+          } as const
+        )[scenario]!;
         expect(
           hasRequiredOpenshellMessagingFeatures({
             openshellBin: openshell,
@@ -397,17 +404,18 @@ describe("OpenShell MCP feature gate", () => {
             requireSandboxBin: false,
           }),
         ).toBe(true);
+
+        expect(
+          hasRequiredOpenshellMessagingFeatures({
+            openshellBin: openshell,
+            gatewayBin: gateway,
+            sandboxBin: siblingSandbox,
+            requireSandboxBin: true,
+          }),
+        ).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
       }
-      expect(
-        hasRequiredOpenshellMessagingFeatures({
-          openshellBin: openshell,
-          gatewayBin: gateway,
-          sandboxBin: siblingSandbox,
-          requireSandboxBin: true,
-        }),
-      ).toBe(false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 });

@@ -288,6 +288,7 @@ export function createPhases(
               gatewayVersion: "test",
               inferenceRouteWorking: true,
               dashboardReachable: true,
+              agentApiReachable: null,
               messagingBridgesHealthy: true,
               messagingRuntimeChannelsMissing: null,
               messagingConfigChannelsMissing: null,

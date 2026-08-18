@@ -114,6 +114,11 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/no-unit-blocks-in-live-e2e.mts"],
   },
   {
+    name: "optimized-build-context-copy-sources",
+    command: TSX,
+    args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
+  },
+  {
     name: "test-registration-boundary",
     command: TSX,
     args: ["scripts/checks/test-registration-boundary.mts"],

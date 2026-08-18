@@ -455,12 +455,10 @@ describe("managed startup agent environment", () => {
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
       });
       const unsets = new Set(result.applicationRuntime.unsetEnvironment);
-      for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
-        expect(unsets.has(obligation.input)).toBe(!obligation.supportedFor.includes(agent));
-      }
-      for (const name of OPENCLAW_APPLICATION_RUNTIME_NAMES) {
-        expect(unsets.has(name)).toBe(agent !== "openclaw");
-      }
+      expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS.every((obligation) =>
+          Object.is(unsets.has(obligation.input), !obligation.supportedFor.includes(agent)))).toBe(true);
+      expect(OPENCLAW_APPLICATION_RUNTIME_NAMES.every((name) =>
+          Object.is(unsets.has(name), agent !== "openclaw"))).toBe(true);
     },
   );
 
@@ -891,129 +889,124 @@ describe("managed startup agent environment", () => {
     },
   );
 
-  it("uses explicit clear states without erasing launch-only ambient proxy credentials", () => {
-    const openclawBase = openClawProfile();
-    assert(openclawBase.agentConfig.agent === "openclaw", "fixture mismatch");
-    const openclaw: ManagedStartupProfile = {
-      ...openclawBase,
-      agentConfig: {
-        ...openclawBase.agentConfig,
-        heartbeatEvery: null,
-        minimalBootstrap: false,
-      },
-      proxy: {
-        ...openclawBase.proxy,
-        hostHttpUrl: null,
-        hostHttpsUrl: null,
-        hostNoProxy: [],
-      },
-      dashboard: {
+  it.each(["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"])(
+    "uses explicit clear states without erasing launch-only ambient proxy credentials [case %#]",
+    (name) => {
+      const openclawBase = openClawProfile();
+      assert(openclawBase.agentConfig.agent === "openclaw", "fixture mismatch");
+      const openclaw: ManagedStartupProfile = {
+        ...openclawBase,
+        agentConfig: {
+          ...openclawBase.agentConfig,
+          heartbeatEvery: null,
+          minimalBootstrap: false,
+        },
+        proxy: {
+          ...openclawBase.proxy,
+          hostHttpUrl: null,
+          hostHttpsUrl: null,
+          hostNoProxy: [],
+        },
+        dashboard: {
+          agent: "openclaw",
+          mode: "loopback",
+          url: "http://127.0.0.1:18789",
+          port: 18_789,
+          bindAddress: "127.0.0.1",
+          wslExposure: false,
+        },
+        messaging: { plan: null },
+        corporateCa: { bundleSha256: null },
+      };
+
+      const openclawResult = mapManagedStartupProfileToAgentEnvironment(openclaw);
+      expect(openclawResult.configurationEnvironment.NEMOCLAW_AGENT_HEARTBEAT_EVERY).toBe("");
+      expect(openclawResult.configurationEnvironment.NEMOCLAW_DASHBOARD_BIND).toBe("");
+      expect(openclawResult.runtimeEnvironment.NEMOCLAW_MINIMAL_BOOTSTRAP).toBe("0");
+      for (const name of [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+      ]) {
+        expect(openclawResult.runtimeEnvironment).not.toHaveProperty(name);
+      }
+      expect(openclawResult.configurationEnvironment).not.toHaveProperty(
+        "NEMOCLAW_MESSAGING_PLAN_B64",
+      );
+      expect(openclawResult.actions).toContainEqual({
+        kind: "apply-messaging-plan",
         agent: "openclaw",
-        mode: "loopback",
-        url: "http://127.0.0.1:18789",
-        port: 18_789,
-        bindAddress: "127.0.0.1",
-        wslExposure: false,
-      },
-      messaging: { plan: null },
-      corporateCa: { bundleSha256: null },
-    };
+        mode: "clear",
+        phase: "runtime-setup",
+        runAs: "root",
+      });
+      expect(openclawResult.actions).toContainEqual({
+        kind: "apply-messaging-plan",
+        agent: "openclaw",
+        mode: "clear",
+        phase: "post-agent-install",
+        runAs: "sandbox",
+      });
+      expect(openclawResult.materials[0]).toMatchObject({ expectedSha256: null });
 
-    const openclawResult = mapManagedStartupProfileToAgentEnvironment(openclaw);
-    expect(openclawResult.configurationEnvironment.NEMOCLAW_AGENT_HEARTBEAT_EVERY).toBe("");
-    expect(openclawResult.configurationEnvironment.NEMOCLAW_DASHBOARD_BIND).toBe("");
-    expect(openclawResult.runtimeEnvironment.NEMOCLAW_MINIMAL_BOOTSTRAP).toBe("0");
-    for (const name of [
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "NO_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "no_proxy",
-    ]) {
-      expect(openclawResult.runtimeEnvironment).not.toHaveProperty(name);
-    }
-    expect(openclawResult.configurationEnvironment).not.toHaveProperty(
-      "NEMOCLAW_MESSAGING_PLAN_B64",
-    );
-    expect(openclawResult.actions).toContainEqual({
-      kind: "apply-messaging-plan",
-      agent: "openclaw",
-      mode: "clear",
-      phase: "runtime-setup",
-      runAs: "root",
-    });
-    expect(openclawResult.actions).toContainEqual({
-      kind: "apply-messaging-plan",
-      agent: "openclaw",
-      mode: "clear",
-      phase: "post-agent-install",
-      runAs: "sandbox",
-    });
-    expect(openclawResult.materials[0]).toMatchObject({ expectedSha256: null });
+      const hermes: ManagedStartupProfile = {
+        ...hermesProfile(),
+        proxy: {
+          ...hermesProfile().proxy,
+          hostHttpUrl: null,
+          hostHttpsUrl: null,
+          hostNoProxy: [],
+        },
+        dashboard: {
+          agent: "hermes",
+          mode: "disabled",
+          url: "http://127.0.0.1:18789",
+          publicPort: null,
+          internalPort: null,
+          tuiEnabled: false,
+        },
+        tuning: {
+          contextWindow: null,
+          maxTokens: null,
+          reasoning: null,
+          reasoningEffort: null,
+        },
+      };
+      const hermesResult = mapManagedStartupProfileToAgentEnvironment(hermes);
+      expect(hermesResult.configurationEnvironment.NEMOCLAW_CONTEXT_WINDOW).toBe("");
+      expect(hermesResult.runtimeEnvironment).toMatchObject({
+        NEMOCLAW_DASHBOARD_PORT: "",
+        NEMOCLAW_HERMES_DASHBOARD: "0",
+        NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "",
+        NEMOCLAW_HERMES_DASHBOARD_PORT: "",
+        NEMOCLAW_HERMES_DASHBOARD_TUI: "0",
+      });
+      for (const name of [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+      ]) {
+        expect(hermesResult.runtimeEnvironment).not.toHaveProperty(name);
+      }
 
-    const hermes: ManagedStartupProfile = {
-      ...hermesProfile(),
-      proxy: {
-        ...hermesProfile().proxy,
-        hostHttpUrl: null,
-        hostHttpsUrl: null,
-        hostNoProxy: [],
-      },
-      dashboard: {
-        agent: "hermes",
-        mode: "disabled",
-        url: "http://127.0.0.1:18789",
-        publicPort: null,
-        internalPort: null,
-        tuiEnabled: false,
-      },
-      tuning: {
-        contextWindow: null,
-        maxTokens: null,
-        reasoning: null,
-        reasoningEffort: null,
-      },
-    };
-    const hermesResult = mapManagedStartupProfileToAgentEnvironment(hermes);
-    expect(hermesResult.configurationEnvironment.NEMOCLAW_CONTEXT_WINDOW).toBe("");
-    expect(hermesResult.runtimeEnvironment).toMatchObject({
-      NEMOCLAW_DASHBOARD_PORT: "",
-      NEMOCLAW_HERMES_DASHBOARD: "0",
-      NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "",
-      NEMOCLAW_HERMES_DASHBOARD_PORT: "",
-      NEMOCLAW_HERMES_DASHBOARD_TUI: "0",
-    });
-    for (const name of [
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "NO_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "no_proxy",
-    ]) {
-      expect(hermesResult.runtimeEnvironment).not.toHaveProperty(name);
-    }
+      const dcodeBase = dcodeProfile();
+      const dcode: ManagedStartupProfile = {
+        ...dcodeBase,
+        inference: { ...dcodeBase.inference, upstreamEndpointUrl: null },
+      };
+      const dcodeResult = mapManagedStartupProfileToAgentEnvironment(dcode);
+      expect(dcodeResult.configurationEnvironment.NEMOCLAW_UPSTREAM_ENDPOINT_URL).toBe("");
 
-    const dcodeBase = dcodeProfile();
-    const dcode: ManagedStartupProfile = {
-      ...dcodeBase,
-      inference: { ...dcodeBase.inference, upstreamEndpointUrl: null },
-    };
-    const dcodeResult = mapManagedStartupProfileToAgentEnvironment(dcode);
-    expect(dcodeResult.configurationEnvironment.NEMOCLAW_UPSTREAM_ENDPOINT_URL).toBe("");
-    for (const name of [
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "NO_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "no_proxy",
-    ]) {
       expect(dcodeResult.configurationEnvironment).toHaveProperty(name, "");
       expect(dcodeResult.runtimeEnvironment).not.toHaveProperty(name);
-    }
-  });
+    },
+  );
 
   it("is deterministic across profile key order and never emits certificate or credential bytes", () => {
     const profile = openClawProfile();

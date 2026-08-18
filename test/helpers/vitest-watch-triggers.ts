@@ -50,8 +50,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
-    testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
+    pattern: /(?:^|\/)(agents\/(?:hermes|langchain-deepagents-code)\/)?Dockerfile$/,
+    testsToRun: (_file, match) =>
+      match[1]
+        ? ["src/lib/onboard/managed-startup-profile.test.ts"]
+        : [
+            "src/lib/onboard/managed-startup-profile.test.ts",
+            "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+          ],
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,

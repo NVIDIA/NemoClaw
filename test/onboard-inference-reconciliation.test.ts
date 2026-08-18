@@ -312,18 +312,44 @@ gatewayState.isGatewayHealthy = () => true;
 dockerDriverPlatform.isLinuxDockerDriverGatewayEnabled = () => false;
 gatewayGpuPassthrough.reconcileGatewayGpuReuseForGpuIntent = ({ gatewayReuseState }) => gatewayReuseState;
 onboardProbes.verifyOnboardInferenceSmoke = () => {};
-preflightGatewayAuthority.collectOnboardGatewayReadiness = async () => ({
-  observations: [{ id: "gateway.management.mode", state: "present", value: "nemoclaw-managed" }],
-  capabilities: [
-    "gateway.authority.resolved",
-    "gateway.attachment.valid",
-    "gateway.reuse.ready",
-    "gateway.version.compatible",
-    "gateway.port.uncontested",
-  ].map((id) => ({ id, state: "present" })),
-  findings: [],
-  evidence: [],
-});
+preflightGatewayAuthority.collectOnboardGatewayReadiness = async () => {
+  const completedAt = new Date().toISOString();
+  return {
+    projection: {
+      observations: [
+        { id: "gateway.management.mode", state: "present", value: "nemoclaw-managed" },
+      ],
+      capabilities: [
+        "gateway.authority.resolved",
+        "gateway.attachment.valid",
+        "gateway.reuse.ready",
+        "gateway.version.compatible",
+        "gateway.port.uncontested",
+      ].map((id) => ({ id, state: "present" })),
+      findings: [],
+      evidence: [],
+    },
+    snapshot: {
+      observedAt: completedAt,
+      completedAt,
+      observations: {
+        owner: {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        },
+        attachmentState: "not-applicable",
+        reuseState: "healthy",
+        driftState: "not-detected",
+        portConflictState: "none",
+      },
+    },
+  };
+};
 
 const complete = () => ({
   status: "complete",

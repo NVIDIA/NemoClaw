@@ -49,6 +49,26 @@ const ADVERSARIAL_E2E_TEXT = [
   "command aws secretsmanager get-secret-value --secret-id prod",
 ];
 const E2E_CONTROL_PLANE_JOB_IDS = new Set(["cloud-onboard", "cloud-inference", "security-posture"]);
+const RUNTIME_INVENTORY_FILES = [
+  "tools/advisors/e2e-recommendations.mts",
+  "tools/advisors/e2e-text.mts",
+  "tools/advisors/json.mts",
+  "tools/advisors/risk-plan.mts",
+  "tools/e2e/target-catalogue.mts",
+  "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
+  "scripts/checks/protected-managed-image-contract.ts",
+  "tools/e2e/module-tags.mts",
+  ".github/workflows/e2e.yaml",
+  "test/vllm-docker-storage.test.ts",
+] as const;
+
+function copyRuntimeInventoryFiles(destinationRoot: string): void {
+  for (const file of RUNTIME_INVENTORY_FILES) {
+    const destination = path.join(destinationRoot, file);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.join(REPO_ROOT, file), destination);
+  }
+}
 
 function withoutControlPlaneRecommendations<T extends { id: string }>(
   recommendations: readonly T[],
@@ -92,9 +112,7 @@ describe("E2E recommendation normalizer", () => {
       { required: [], optional: [], confidence: "high" },
       metadata({ changedFiles: ["test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts"] }),
     );
-    expect(bedrock.required.map(({ id }) => id)).toContain(
-      "bedrock-runtime-compatible-anthropic",
-    );
+    expect(bedrock.required.map(({ id }) => id)).toContain("bedrock-runtime-compatible-anthropic");
     expect(bedrock.required.map(({ id }) => id)).not.toContain(
       "bedrock-runtime-compatible-anthropic-openclaw",
     );
@@ -120,22 +138,7 @@ describe("E2E recommendation normalizer", () => {
   it("loads the trusted inventory without repository development dependencies", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-recommendations-runtime-"));
     try {
-      for (const file of [
-        "tools/advisors/e2e-recommendations.mts",
-        "tools/advisors/e2e-text.mts",
-        "tools/advisors/json.mts",
-        "tools/advisors/risk-plan.mts",
-        "tools/e2e/target-catalogue.mts",
-        "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
-        "scripts/checks/protected-managed-image-contract.ts",
-        "tools/e2e/module-tags.mts",
-        ".github/workflows/e2e.yaml",
-        "test/vllm-docker-storage.test.ts",
-      ]) {
-        const destination = path.join(tmp, file);
-        fs.mkdirSync(path.dirname(destination), { recursive: true });
-        fs.copyFileSync(path.join(REPO_ROOT, file), destination);
-      }
+      copyRuntimeInventoryFiles(tmp);
       fs.cpSync(path.join(REPO_ROOT, "test/e2e/registry"), path.join(tmp, "test/e2e/registry"), {
         recursive: true,
       });

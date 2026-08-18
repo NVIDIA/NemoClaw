@@ -96,28 +96,31 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     },
   );
 
-  it("forces every LangChain and LangSmith tracing flag off across image boundaries", () => {
-    const dockerfile = readAgentFile("Dockerfile");
-    const start = readAgentFile("start.sh");
-    const wrapper = readAgentFile("dcode-wrapper.sh");
-    const patcher = readAgentFile("patch-managed-deepagents-code.py");
-    for (const name of TRACING_ENABLE_ENV_NAMES) {
+  it.each(TRACING_ENABLE_ENV_NAMES)(
+    "forces every LangChain and LangSmith tracing flag off across image boundaries [case %#]",
+    (name) => {
+      const dockerfile = readAgentFile("Dockerfile");
+      const start = readAgentFile("start.sh");
+      const wrapper = readAgentFile("dcode-wrapper.sh");
+      const patcher = readAgentFile("patch-managed-deepagents-code.py");
+
       expect(dockerfile).toContain(`${name}=false`);
       expect(start).toContain(`export ${name}=false`);
       expect(wrapper).toContain(`export ${name}=false`);
       expect(patcher).toContain(`os.environ["${name}"] = "false"`);
-    }
-    expect(dockerfile).toContain("dcode-inference-base-url");
-    expect(dockerfile).toContain("LANGGRAPH_NO_VERSION_CHECK=true");
-    expect(dockerfile).toContain("LANGGRAPH_CLI_NO_ANALYTICS=1");
-    expect(start).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
-    expect(start).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
-    expect(wrapper).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
-    expect(wrapper).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
-    expect(patcher).toContain('os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
-    expect(patcher).toContain('env["LANGGRAPH_NO_VERSION_CHECK"] = "true"');
-    expect(patcher).toContain('env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
-  });
+
+      expect(dockerfile).toContain("dcode-inference-base-url");
+      expect(dockerfile).toContain("LANGGRAPH_NO_VERSION_CHECK=true");
+      expect(dockerfile).toContain("LANGGRAPH_CLI_NO_ANALYTICS=1");
+      expect(start).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
+      expect(start).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
+      expect(wrapper).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
+      expect(wrapper).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
+      expect(patcher).toContain('os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
+      expect(patcher).toContain('env["LANGGRAPH_NO_VERSION_CHECK"] = "true"');
+      expect(patcher).toContain('env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
+    },
+  );
 
   it("does not serialize provider or optional-service secrets into the shell env file", () => {
     const start = readAgentFile("start.sh");
@@ -258,34 +261,33 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(fs.existsSync(disabledFixture.ranMarker)).toBe(false);
   });
 
-  it("fails closed for ambient, malformed, symlinked, and writable auto-approval state (#6478)", () => {
-    const cases = [
-      { label: "ambient only", prepare: (_path: string) => undefined },
-      {
-        label: "malformed",
-        prepare: (capabilityPath: string) => {
-          fs.writeFileSync(capabilityPath, "thread-opt-in");
-          fs.chmodSync(capabilityPath, 0o444);
-        },
+  it.each([
+    { label: "ambient only", prepare: (_path: string) => undefined },
+    {
+      label: "malformed",
+      prepare: (capabilityPath: string) => {
+        fs.writeFileSync(capabilityPath, "thread-opt-in");
+        fs.chmodSync(capabilityPath, 0o444);
       },
-      {
-        label: "writable",
-        prepare: (capabilityPath: string) => {
-          fs.writeFileSync(capabilityPath, "thread-opt-in\n");
-          fs.chmodSync(capabilityPath, 0o644);
-        },
+    },
+    {
+      label: "writable",
+      prepare: (capabilityPath: string) => {
+        fs.writeFileSync(capabilityPath, "thread-opt-in\n");
+        fs.chmodSync(capabilityPath, 0o644);
       },
-      {
-        label: "symlinked",
-        prepare: (capabilityPath: string) => {
-          const target = `${capabilityPath}-target`;
-          fs.writeFileSync(target, "thread-opt-in\n", { mode: 0o444 });
-          fs.symlinkSync(target, capabilityPath);
-        },
+    },
+    {
+      label: "symlinked",
+      prepare: (capabilityPath: string) => {
+        const target = `${capabilityPath}-target`;
+        fs.writeFileSync(target, "thread-opt-in\n", { mode: 0o444 });
+        fs.symlinkSync(target, capabilityPath);
       },
-    ];
-
-    for (const { label, prepare } of cases) {
+    },
+  ])(
+    "fails closed for ambient, malformed, symlinked, and writable auto-approval state [$label] (#6478)",
+    ({ label, prepare }) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-unsafe-"));
       const { wrapperPath, ranMarker, autoApprovalPath } = makeWrapperFixture(tempDir);
       prepare(autoApprovalPath);
@@ -301,8 +303,8 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
       expect(result.status, `${label}: ${result.stderr}`).not.toBe(0);
       expect(result.stderr).toContain("tool approval posture");
       expect(fs.existsSync(ranMarker)).toBe(false);
-    }
-  });
+    },
+  );
 
   it("removes an inherited OpenAI-specific proxy before the managed package starts", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-openai-proxy-"));

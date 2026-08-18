@@ -76,33 +76,31 @@ describe("Personal open internet policy preset", () => {
     expect(allowedIps).not.toContain("::/0");
   });
 
-  it.each([
-    80, 443,
-  ])("excludes normalized hard-blocked address classes at the connection boundary on port %i", (port) => {
-    const endpoint = loadPersonalInternetPolicy().endpoints[0]!;
-    expect(endpoint.ports).toContain(port);
-    const isAllowed = allowedAddressMatcher(endpoint.allowed_ips ?? []);
+  it.each([80, 443])(
+    "excludes normalized hard-blocked address classes at the connection boundary on port %i",
+    (port) => {
+      const endpoint = loadPersonalInternetPolicy().endpoints[0]!;
+      expect(endpoint.ports).toContain(port);
+      const isAllowed = allowedAddressMatcher(endpoint.allowed_ips ?? []);
 
-    for (const address of [
-      "0.0.0.0",
-      "127.0.0.1",
-      "127.1.2.3",
-      "169.254.169.254",
-      "::",
-      "::1",
-      "0:0:0:0:0:0:0:1",
-      "fe80::1",
-      "::ffff:127.0.0.1",
-      "0:0:0:0:0:ffff:7f00:1",
-      "::ffff:169.254.169.254",
-    ]) {
-      expect(isAllowed(address), address).toBe(false);
-    }
+      expect([
+            "0.0.0.0",
+            "127.0.0.1",
+            "127.1.2.3",
+            "169.254.169.254",
+            "::",
+            "::1",
+            "0:0:0:0:0:0:0:1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "0:0:0:0:0:ffff:7f00:1",
+            "::ffff:169.254.169.254",
+          ].every((address) => Object.is(isAllowed(address), false))).toBe(true);
 
-    for (const address of ["8.8.8.8", "10.0.0.1", "2001:4860:4860::8888", "fc00::1"]) {
-      expect(isAllowed(address), address).toBe(true);
-    }
-  });
+      expect(["8.8.8.8", "10.0.0.1", "2001:4860:4860::8888", "fc00::1"].every((address) =>
+          Object.is(isAllowed(address), true))).toBe(true);
+    },
+  );
 
   it("composes unchanged into the create-time sandbox policy", () => {
     const merged = policies.mergePresetNamesIntoPolicy("version: 1\nnetwork_policies: {}\n", [
