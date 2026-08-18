@@ -8,13 +8,17 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
   encodeDockerJsonArg,
   isValidProxyHost,
   isValidProxyPort,
   patchStagedDockerfile,
 } from "./dockerfile-patch";
+import {
+  buildMessagingPlan,
+  messagingChannel,
+  setMessagingPlanEnv,
+} from "./__test-helpers__/dockerfile-patch-fixtures";
 
 const tmpRoots: string[] = [];
 
@@ -32,34 +36,6 @@ function dockerfileWith(content: string): string {
   const file = path.join(dir, "Dockerfile");
   fs.writeFileSync(file, content, "utf-8");
   return file;
-}
-
-type TestMessagingPlan = Record<string, unknown>;
-
-function buildMessagingPlan(overrides: TestMessagingPlan = {}): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName: "my-assistant",
-    agent: "openclaw",
-    workflow: "onboard",
-    channels: [],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-    ...overrides,
-  } as SandboxMessagingPlan;
-}
-
-function setMessagingPlanEnv(overrides: TestMessagingPlan = {}): SandboxMessagingPlan {
-  const plan = buildMessagingPlan(overrides);
-  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(plan), "utf8").toString(
-    "base64",
-  );
-  return plan;
 }
 
 function readMessagingPlanArg(dockerfile: string): unknown {
@@ -214,8 +190,16 @@ describe("dockerfile patch helpers", () => {
     process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME = "nemoclaw-local";
     process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = "0.5";
     const messagingPlan = setMessagingPlanEnv({
-      channels: [{ channelId: "telegram", active: true }],
-      buildSteps: [{ channelId: "telegram", kind: "build-arg", target: "openclaw" }],
+      channels: [messagingChannel("telegram")],
+      buildSteps: [
+        {
+          channelId: "telegram",
+          kind: "build-arg",
+          outputId: "telegram-feature",
+          required: false,
+          value: "openclaw",
+        },
+      ],
     });
     const dockerfilePath = dockerfileWith(
       [
@@ -488,44 +472,47 @@ describe("dockerfile patch helpers", () => {
       "NEMOCLAW_UPSTREAM_ENDPOINT_URL must not contain control characters.",
       "[update]",
     ],
-  ])("rejects unsafe upstream endpoint URLs with %s before Dockerfile write", (_label, upstreamEndpointUrl, error, leakedValue) => {
-    const dockerfilePath = dockerfileWith(
-      [
-        "ARG NEMOCLAW_MODEL=old",
-        "ARG NEMOCLAW_PROVIDER_KEY=old",
-        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
-        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
-        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
-        "ARG CHAT_UI_URL=old",
-        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
-        "ARG NEMOCLAW_INFERENCE_API=old",
-        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
-        "ARG NEMOCLAW_BUILD_ID=old",
-        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
-      ].join("\n"),
-    );
+  ])(
+    "rejects unsafe upstream endpoint URLs with %s before Dockerfile write",
+    (_label, upstreamEndpointUrl, error, leakedValue) => {
+      const dockerfilePath = dockerfileWith(
+        [
+          "ARG NEMOCLAW_MODEL=old",
+          "ARG NEMOCLAW_PROVIDER_KEY=old",
+          "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+          "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
+          "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+          "ARG CHAT_UI_URL=old",
+          "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+          "ARG NEMOCLAW_INFERENCE_API=old",
+          "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+          "ARG NEMOCLAW_BUILD_ID=old",
+          "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+        ].join("\n"),
+      );
 
-    expect(() =>
-      patchStagedDockerfile(
-        dockerfilePath,
-        "nvidia/nemotron-3-ultra-550b-a55b",
-        "https://chat.example",
-        "build-1",
-        "compatible-endpoint",
-        null,
-        null,
-        null,
-        false,
-        null,
-        [],
-        { upstreamEndpointUrl },
-      ),
-    ).toThrow(error);
+      expect(() =>
+        patchStagedDockerfile(
+          dockerfilePath,
+          "nvidia/nemotron-3-ultra-550b-a55b",
+          "https://chat.example",
+          "build-1",
+          "compatible-endpoint",
+          null,
+          null,
+          null,
+          false,
+          null,
+          [],
+          { upstreamEndpointUrl },
+        ),
+      ).toThrow(error);
 
-    const dockerfile = fs.readFileSync(dockerfilePath, "utf-8");
-    expect(dockerfile).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old");
-    expect(dockerfile).not.toContain(leakedValue);
-  });
+      const dockerfile = fs.readFileSync(dockerfilePath, "utf-8");
+      expect(dockerfile).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old");
+      expect(dockerfile).not.toContain(leakedValue);
+    },
+  );
 
   it("falls back to the provider key when no upstream provider is supplied", () => {
     const dockerfilePath = dockerfileWith(
@@ -704,12 +691,17 @@ describe("dockerfile patch helpers", () => {
 
   it("patches the staged Dockerfile with the manifest messaging plan", () => {
     const messagingPlan = buildMessagingPlan({
-      channels: [
-        { channelId: "discord", active: true },
-        { channelId: "telegram", active: true },
-      ],
+      channels: [messagingChannel("discord"), messagingChannel("telegram")],
       agentRender: [
-        { channelId: "discord", target: "openclaw.json", path: ["channels", "discord"] },
+        {
+          channelId: "discord",
+          agent: "openclaw",
+          target: "openclaw.json",
+          kind: "json-fragment",
+          path: "channels.discord",
+          value: { enabled: true },
+          templateRefs: [],
+        },
       ],
     });
     vi.spyOn(MessagingSetupApplier, "readPlanFromEnv").mockReturnValue(messagingPlan);
@@ -775,7 +767,7 @@ describe("dockerfile patch helpers", () => {
   });
 
   it("fails when a messaging plan exists but the staged Dockerfile has no manifest ARG", () => {
-    setMessagingPlanEnv({ channels: [{ channelId: "telegram", active: true }] });
+    setMessagingPlanEnv({ channels: [messagingChannel("telegram")] });
     const dockerfilePath = dockerfileWith(
       [
         "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
