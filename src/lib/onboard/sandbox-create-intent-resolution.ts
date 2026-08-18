@@ -123,7 +123,6 @@ export function createSandboxCreateIntentResolver<
     const messaging = await prepareMessagingCapabilities(input);
     const { gpuRoutePlan, logMessage: sandboxGpuLogMessage } = deps.resolveGpuPlan(
       input.sandboxGpuConfig,
-      input.agent,
     );
     const resourceCreateArgs: string[] = [];
     deps.appendResourceCreateArgs(resourceCreateArgs, input.resourceProfile);

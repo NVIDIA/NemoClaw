@@ -35,10 +35,6 @@ results before it succeeds:
 - hosted and sandbox inference through the preinstalled full E2E suite; and
 - Brev workspace deletion and confirmed absence.
 
-For release tagging, require a successful job for the exact candidate. The maintainer's general E2E
-decision cannot waive this result. A successful `Release qualification` aggregate does not replace
-the exact job result.
-
 `Exact staging Brev Launchable` reads these credentials from repository Actions secrets:
 
 - `BREV_API_KEY` authenticates the trusted host-side Brev CLI for workspace operations in the
