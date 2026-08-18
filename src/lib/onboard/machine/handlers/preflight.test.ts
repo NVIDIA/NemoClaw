@@ -195,6 +195,35 @@ describe("handlePreflightState", () => {
     expect(result.resumePreflight).toBe(true);
   });
 
+  it("re-evaluates the headless credential-store warning on cached resume before the pull-capable probe (#9457)", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    session.gpuPassthrough = false;
+    const callOrder: string[] = [];
+    const warnIfHeadlessDockerDesktopCredentialStore = vi.fn(() => {
+      callOrder.push("credential-store-warning");
+      return false;
+    });
+    const assertDockerBridgeAndContainerDnsHealthy = vi.fn(() => {
+      callOrder.push("bridge-probe");
+    });
+    const harness = createDeps({
+      warnIfHeadlessDockerDesktopCredentialStore,
+      assertDockerBridgeAndContainerDnsHealthy,
+    });
+
+    await handlePreflightState({
+      ...baseOptions(harness.deps, session),
+      resume: true,
+      explicitSandboxGpuFlag: "disable",
+    });
+
+    expect(warnIfHeadlessDockerDesktopCredentialStore).toHaveBeenCalledWith({
+      cdiNvidiaGpuSpecMissing: false,
+    });
+    expect(callOrder).toEqual(["credential-store-warning", "bridge-probe"]);
+  });
+
   it("carries verified N1x intent through cached resume readiness (#9292)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";

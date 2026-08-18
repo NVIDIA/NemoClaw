@@ -84,7 +84,9 @@ export function warnIfHeadlessDockerDesktopCredentialStore(
 ): boolean {
   const advisory = dockerDesktopCredentialStoreHeadless.check(host);
   if (!advisory) return false;
-  warn(warnLine(advisory.reason));
+  // Name the advisory id so the troubleshooting docs section is findable from
+  // the terminal output, matching the remediation-list format.
+  warn(warnLine(`${advisory.title} (${advisory.id}): ${advisory.reason}`));
   for (const command of advisory.commands ?? []) {
     warn(`    ${command}`);
   }

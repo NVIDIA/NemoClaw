@@ -92,6 +92,41 @@ describe("Docker host advisories (#3213)", () => {
     expect(result.advisories[0]?.severity).toBe("warning");
   });
 
+  it("trusts the helper probe over session markers on WSL (#9457)", () => {
+    const result = runAdvisories(
+      DOCKER_HOST_ADVISORY_CHECKS,
+      host({
+        isWsl: true,
+        dockerReachable: true,
+        dockerCredsStore: "desktop.exe",
+        dockerCredentialHelperUnresponsive: true,
+        isHeadlessLikely: false,
+      }),
+      { phase: "preflight.host" },
+    );
+
+    expect(result.advisories.map((advisory) => advisory.id)).toEqual([
+      "docker_desktop_credential_store_headless",
+    ]);
+    expect(result.advisories[0]?.reason).toContain("did not answer a read-only probe");
+  });
+
+  it("stays silent on WSL when the helper answers, even without session markers (#9457)", () => {
+    const result = runAdvisories(
+      DOCKER_HOST_ADVISORY_CHECKS,
+      host({
+        isWsl: true,
+        dockerReachable: true,
+        dockerCredsStore: "desktop.exe",
+        dockerCredentialHelperUnresponsive: false,
+        isHeadlessLikely: true,
+      }),
+      { phase: "preflight.host" },
+    );
+
+    expect(result.advisories.map((advisory) => advisory.id)).toEqual([]);
+  });
+
   it("re-evaluates Docker state on resume", () => {
     const context = host({ dockerInstalled: false });
     const cachedResults = new Map([["install_docker", null]]);

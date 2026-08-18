@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -21,6 +23,7 @@ function raiseEnoent(filePath: string): never {
 function assessWithDockerConfig(
   env: NodeJS.ProcessEnv,
   configJson: string | undefined,
+  commandOutputs: Record<string, string> = {},
 ): HostAssessment {
   const files: Record<string, string | undefined> = {
     "/fake/docker-config/config.json": configJson,
@@ -32,7 +35,7 @@ function assessWithDockerConfig(
     procVersion: "",
     dockerInfoOutput: "",
     commandExistsImpl: (name: string) => name === "docker",
-    runCaptureImpl: () => "",
+    runCaptureImpl: (command: readonly string[]) => commandOutputs[command.join(" ")] ?? "",
     gpuProbeImpl: () => false,
     readFileImpl: (filePath: string) => files[filePath] ?? raiseEnoent(filePath),
   });
@@ -64,6 +67,10 @@ function headlessDockerDesktopHost(): HostAssessment {
 }
 
 describe("assessHost Docker credential store detection (#9457)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("records credsStore from the Docker client config under DOCKER_CONFIG", () => {
     const assessment = assessWithDockerConfig(
       { SSH_CONNECTION: "203.0.113.5 52014 203.0.113.9 22" },
@@ -82,6 +89,48 @@ describe("assessHost Docker credential store detection (#9457)", () => {
     const assessment = assessWithDockerConfig({}, configJson);
 
     expect(assessment.dockerCredsStore).toBeUndefined();
+  });
+
+  it("degrades to no credential store when the home directory is unresolvable (#9457)", () => {
+    vi.spyOn(os, "homedir").mockImplementation(() => {
+      throw new Error("uv_os_homedir returned ENOENT");
+    });
+
+    const assessment = assessHost({
+      platform: "linux",
+      env: {},
+      release: "5.15.0-generic",
+      procVersion: "",
+      dockerInfoOutput: "",
+      commandExistsImpl: (name: string) => name === "docker",
+      runCaptureImpl: () => "",
+      gpuProbeImpl: () => false,
+      readFileImpl: raiseEnoent,
+    });
+
+    expect(assessment.dockerCredsStore).toBeUndefined();
+  });
+
+  it.each([
+    ["an unresponsive helper", "", true],
+    ["a responding helper", '{"https://index.docker.io/v1/":"user"}', false],
+  ] as const)(
+    "probes the Docker Desktop credential helper on WSL with %s (#9457)",
+    (_label, probeOutput, unresponsive) => {
+      const assessment = assessWithDockerConfig(
+        { WSL_DISTRO_NAME: "Ubuntu", DISPLAY: ":0" },
+        JSON.stringify({ credsStore: "desktop.exe" }),
+        { "docker-credential-desktop.exe list": probeOutput },
+      );
+
+      expect(assessment.dockerCredentialHelperUnresponsive).toBe(unresponsive);
+    },
+  );
+
+  it("does not probe the credential helper outside WSL (#9457)", () => {
+    const assessment = assessWithDockerConfig({}, JSON.stringify({ credsStore: "desktop" }));
+
+    expect(assessment.dockerCredentialHelperUnresponsive).toBeUndefined();
   });
 });
 
@@ -103,6 +152,28 @@ describe("docker_desktop_credential_store_headless advisory (#9457)", () => {
 
     const ids = planHostAdvisories(assessment).map((advisory) => advisory.id);
     expect(ids).toContain(CREDENTIAL_STORE_ADVISORY_ID);
+  });
+
+  it("warns on WSL when the helper probe fails even though WSLg sets DISPLAY (#9457)", () => {
+    const assessment = assessWithDockerConfig(
+      { WSL_DISTRO_NAME: "Ubuntu", DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" },
+      JSON.stringify({ credsStore: "desktop.exe" }),
+      { "docker-credential-desktop.exe list": "" },
+    );
+
+    const ids = planHostAdvisories(assessment).map((advisory) => advisory.id);
+    expect(ids).toContain(CREDENTIAL_STORE_ADVISORY_ID);
+  });
+
+  it("stays silent on WSL when the helper answers, even in a console without GUI markers (#9457)", () => {
+    const assessment = assessWithDockerConfig(
+      { WSL_DISTRO_NAME: "Ubuntu" },
+      JSON.stringify({ credsStore: "desktop.exe" }),
+      { "docker-credential-desktop.exe list": "{}" },
+    );
+
+    const ids = planHostAdvisories(assessment).map((advisory) => advisory.id);
+    expect(ids).not.toContain(CREDENTIAL_STORE_ADVISORY_ID);
   });
 
   it.each([
@@ -144,6 +215,7 @@ describe("onboard preflight credential-store warning (#9457)", () => {
 
     const output = warn.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
     expect(output).toContain('credsStore "desktop.exe"');
+    expect(output).toContain("(docker_desktop_credential_store_headless)");
     expect(output).toContain("DOCKER_CONFIG=$(mktemp -d) docker pull");
     expect(bridge).toHaveBeenCalledOnce();
   });

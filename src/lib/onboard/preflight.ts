@@ -141,6 +141,11 @@ export interface HostAssessment {
   isSshSession?: boolean;
   /** `credsStore` credential-helper name from the Docker client config (#9457). */
   dockerCredsStore?: string;
+  /**
+   * True when the probed Docker Desktop credential helper did not answer a
+   * read-only `list` call; undefined when not probed (#9457).
+   */
+  dockerCredentialHelperUnresponsive?: boolean;
   hasNvidiaGpu: boolean;
   dockerCdiSpecDirs: string[];
   cdiNvidiaGpuSpecMissing: boolean;
@@ -465,8 +470,10 @@ function readDockerCredsStore(
   env: NodeJS.ProcessEnv,
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
 ): string | undefined {
-  const configDir = env.DOCKER_CONFIG || path.join(os.homedir(), ".docker");
   try {
+    // os.homedir() can throw on HOME-less containers; degrade like a missing
+    // config instead of failing the host assessment.
+    const configDir = env.DOCKER_CONFIG || path.join(os.homedir(), ".docker");
     const parsed: { credsStore?: unknown } = JSON.parse(
       readFileImpl(path.join(configDir, "config.json"), "utf-8"),
     );
@@ -475,6 +482,35 @@ function readDockerCredsStore(
       : undefined;
   } catch {
     return undefined;
+  }
+}
+
+// Only Docker Desktop writes these credential-helper names. Keep in sync with
+// DOCKER_DESKTOP_CREDENTIAL_STORES in advisories/checks/host/docker.ts; the
+// two stay separate because a value import in either direction would create a
+// require cycle through the advisory registry.
+const DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES = new Set(["desktop", "desktop.exe"]);
+
+/**
+ * True when the configured Docker Desktop credential helper answers a
+ * read-only `list` call from this session. In WSL the helper runs on the
+ * Windows side through interop, so session markers (DISPLAY, SSH variables)
+ * cannot see whether a usable Windows logon session exists — probe the helper
+ * instead (#9457). Probed only for the two exact Docker Desktop helper names.
+ */
+function dockerCredentialHelperResponds(
+  credsStore: string,
+  runCaptureImpl: RunCaptureFn,
+): boolean {
+  try {
+    const output = runCaptureImpl([`docker-credential-${credsStore}`, "list"], {
+      ignoreError: true,
+    });
+    return String(output || "")
+      .trim()
+      .startsWith("{");
+  } catch {
+    return false;
   }
 }
 
@@ -617,6 +653,16 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     runtime = "docker";
   }
   const isWslHost = detectWsl({ platform, env, release, procVersion });
+  const dockerCredsStore = readDockerCredsStore(env, readFileImpl);
+  // Session markers cannot see the Windows side of WSL interop, so probe the
+  // helper there; the advisory check consumes this instead of DISPLAY/SSH
+  // heuristics on WSL hosts (#9457).
+  const dockerCredentialHelperUnresponsive =
+    isWslHost &&
+    dockerCredsStore !== undefined &&
+    DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES.has(dockerCredsStore)
+      ? !dockerCredentialHelperResponds(dockerCredsStore, runCaptureImpl)
+      : undefined;
   const dockerCgroupVersion = dockerReachable
     ? parseDockerCgroupVersion(dockerInfoOutput)
     : "unknown";
@@ -712,7 +758,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     isUnsupportedRuntime: runtime === "podman",
     isHeadlessLikely: isHeadlessLikely(env),
     isSshSession: isSshSession(env),
-    dockerCredsStore: readDockerCredsStore(env, readFileImpl),
+    dockerCredsStore,
+    dockerCredentialHelperUnresponsive,
     hasNvidiaGpu,
     ...cdiAssessment,
     nvidiaContainerToolkitInstalled,

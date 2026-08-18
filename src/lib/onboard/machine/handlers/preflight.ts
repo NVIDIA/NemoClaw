@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import { warnIfHeadlessDockerDesktopCredentialStore } from "../../preflight-messages";
 import { withPreflightTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -71,6 +72,11 @@ export interface PreflightStateOptions<
      * that haven't been updated yet.
      */
     assertDockerBridgeAndContainerDnsHealthy?(host: Host): void;
+    /**
+     * Warn-and-proceed credential-store advisory re-evaluated per invocation
+     * on cached resume (#9457). Defaults to the production printer.
+     */
+    warnIfHeadlessDockerDesktopCredentialStore?(host: Host): boolean;
     resolveSandboxGpuConfig(
       gpu: Gpu,
       options: {
@@ -206,6 +212,15 @@ export async function handlePreflightState<
       });
     }
     deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
+    // Session state (SSH markers, DISPLAY, Docker client config) is a
+    // per-invocation fact a cached preflight cannot carry, so re-evaluate the
+    // credential-store warning before the pull-capable probe below (#9457).
+    // The default reads only optional advisory fields and no-ops when the
+    // host assessment does not carry them.
+    (
+      deps.warnIfHeadlessDockerDesktopCredentialStore ??
+      (warnIfHeadlessDockerDesktopCredentialStore as unknown as (host: Host) => boolean)
+    )(resumeHost);
     // Resume backstop for #3508/#3630. Cached preflight does not capture
     // host Docker/DNS state, and a session written by an older NemoClaw
     // may have skipped the new bridge/DNS fatal checks.

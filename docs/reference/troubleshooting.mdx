@@ -181,8 +181,9 @@ The Docker Desktop credential helper needs an interactive GUI session.
 Without one, the helper can fail and block every image pull, even for public images.
 A common failure message from Docker in this state is `A specified logon session does not exist`.
 
-Onboarding preflight prints this warning before the first image pull and then continues.
+Onboarding preflight prints this warning before the first image pull and then continues, on both fresh and resumed onboarding.
 NemoClaw reads the config from `$DOCKER_CONFIG/config.json` when `DOCKER_CONFIG` is set, and from `~/.docker/config.json` otherwise.
+On WSL, NemoClaw probes the credential helper with a read-only `list` call instead of relying on session markers, because WSLg can set `DISPLAY` in every WSL shell.
 
 To work around a failed pull, pull the image with an isolated Docker config, then resume:
 
@@ -191,7 +192,7 @@ DOCKER_CONFIG=$(mktemp -d) docker pull <image>
 $$nemoclaw onboard --resume
 ```
 
-Alternatively, temporarily remove the `credsStore` entry from `~/.docker/config.json`, then rerun `$$nemoclaw onboard`.
+Alternatively, temporarily remove the `credsStore` entry from the Docker client config named above, then rerun `$$nemoclaw onboard`.
 Restore the entry afterward if you use registries that need stored credentials in GUI sessions.
 
 ### macOS first-run failures
