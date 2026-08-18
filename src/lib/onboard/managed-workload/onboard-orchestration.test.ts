@@ -3,6 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+
 const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
 
 vi.mock("../workload/preparation", async (importOriginal) => ({
@@ -13,6 +15,7 @@ vi.mock("../workload/preparation", async (importOriginal) => ({
 vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
 
 import {
+  createManagedHermesStateVolumeOnboardLifecycle,
   createManagedWorkloadOnboardRuntime,
   prepareOnboardSandboxWorkloadLaunch,
 } from "./onboard-orchestration";
@@ -58,6 +61,36 @@ function createFreshOnboardingRuntime(environment: Readonly<Record<string, strin
 }
 
 describe("managed workload onboard orchestration", () => {
+  it("keeps failure cleanup armed until the caller commits registration", () => {
+    const docker = createHermesStateVolumeDockerHarness();
+    let exitCleanup: (() => void) | null = null;
+
+    const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+      {
+        agentName: "hermes",
+        runtimeProvider: { identity: { id: "docker" } } as never,
+        sandboxName: "alpha",
+        workloadKind: "managed-image",
+      },
+      {
+        runDocker: docker.runDocker as never,
+        registerExitCleanup: (cleanup) => {
+          exitCleanup = cleanup;
+          return vi.fn();
+        },
+      },
+    );
+
+    lifecycle.materializeSandboxCreatePlan({} as never, (input) => {
+      expect(input.managedStateMount).toMatchObject({ target: "/sandbox/.hermes" });
+      return {} as never;
+    });
+    exitCleanup!();
+
+    expect(docker.volume).toBeNull();
+    expect(docker.calls.some((args) => args[0] === "rm")).toBe(true);
+  });
+
   it("retains the live qualification catalog revision during fresh onboarding (#9385)", async () => {
     const catalogRevision = "a".repeat(40);
     const { prepared, runtime } = createFreshOnboardingRuntime({
@@ -78,9 +111,7 @@ describe("managed workload onboard orchestration", () => {
 
     await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
     expect(prepareSandboxWorkloadSource).toHaveBeenCalledOnce();
-    expect(prepareSandboxWorkloadSource.mock.calls[0]?.[0]).not.toHaveProperty(
-      "catalogRevision",
-    );
+    expect(prepareSandboxWorkloadSource.mock.calls[0]?.[0]).not.toHaveProperty("catalogRevision");
   });
 
   it("resolves final-image patch metadata after managed build-context staging", async () => {

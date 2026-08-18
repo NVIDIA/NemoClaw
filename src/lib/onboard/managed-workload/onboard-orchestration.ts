@@ -40,6 +40,7 @@ import type {
   MaterializeSandboxCreatePlanInput,
   SandboxCreateIntent,
 } from "../sandbox-create-intent-types";
+import type { SandboxCreatePlan } from "../sandbox-create-plan-materialization";
 import {
   OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   prepareSandboxCreateLaunch,
@@ -59,6 +60,11 @@ import {
   prepareSandboxWorkloadSourceFromRebuildHandoff,
 } from "../workload/rebuild";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
+import {
+  prepareManagedHermesStateVolume,
+  type ManagedHermesStateVolumeContext,
+  type ManagedHermesStateVolumeDeps,
+} from "./hermes-state-volume";
 
 type ManagedProfileInput = Omit<
   ManagedStartupOnboardProfileInput,
@@ -68,6 +74,39 @@ type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
 type SupportedBootstrap = Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
 type BootstrapProvider = RuntimeProviderBundle & { readonly bootstrap: SupportedBootstrap };
+
+export type ManagedHermesStateVolumeOnboardLifecycle = {
+  materializeSandboxCreatePlan(
+    input: MaterializeSandboxCreatePlanInput,
+    materialize: (input: MaterializeSandboxCreatePlanInput) => SandboxCreatePlan,
+  ): SandboxCreatePlan;
+  commit(): void;
+};
+
+export function createManagedHermesStateVolumeOnboardLifecycle(
+  input: Omit<ManagedHermesStateVolumeContext, "runtimeProviderId"> & {
+    readonly runtimeProvider: RuntimeProviderBundle | null;
+  },
+  deps: ManagedHermesStateVolumeDeps = {},
+): ManagedHermesStateVolumeOnboardLifecycle {
+  const scope = prepareManagedHermesStateVolume(
+    {
+      agentName: input.agentName,
+      runtimeProviderId: input.runtimeProvider?.identity.id,
+      sandboxName: input.sandboxName,
+      workloadKind: input.workloadKind,
+    },
+    deps,
+  );
+  return {
+    materializeSandboxCreatePlan(input, materialize) {
+      return materialize({ ...input, managedStateMount: scope?.mount });
+    },
+    commit() {
+      scope?.commit();
+    },
+  };
+}
 
 export interface ManagedWorkloadOnboardDependencies {
   readonly resolveAgentInferenceApi: typeof import("../../inference/config").resolveAgentInferenceApi;
@@ -384,9 +423,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
     input.dependencies.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
-    const patch = await (
-      input.dependencies.resolveSandboxBuildPatch ?? resolveSandboxBuildPatch
-    )({
+    const patch = await (input.dependencies.resolveSandboxBuildPatch ?? resolveSandboxBuildPatch)({
       // Build-context staging resolves managed-agent base-image provenance.
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
