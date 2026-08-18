@@ -140,7 +140,7 @@ describe("relaunchManagedSupervisorSession", () => {
     });
     const serialized = options?.openshellSandboxCommand.join(" ") ?? "";
     expect(serialized).toContain("NEMOCLAW_DASHBOARD_PORT=18789");
-    expect(serialized).toMatch(/nemoclaw-start$/);
+    expect(options?.openshellSandboxCommand.at(-1)).toBe("/usr/local/bin/nemoclaw-start");
     expect(serialized).not.toContain("s3cr3t-token");
     expect(serialized).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
     expect(serialized).not.toContain("proxypass");

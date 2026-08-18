@@ -14,6 +14,7 @@ import {
   finalizeDockerGpuPatchBackup,
 } from "../../onboard/docker-gpu-patch-finalize";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
+import { MANAGED_STARTUP_EXECUTABLE } from "../../onboard/managed-startup/hold";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
 import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
@@ -115,7 +116,7 @@ function reconstructSupervisorLaunchCommand(
     env: process.env,
     omitCredentialEnv: true,
   });
-  return ["env", ...envArgs, "nemoclaw-start"];
+  return ["env", ...envArgs, MANAGED_STARTUP_EXECUTABLE];
 }
 
 export function relaunchManagedSupervisorSession(
