@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -17,6 +19,7 @@ import {
 } from "../../../src/lib/onboard/managed-image/contract";
 import {
   assembleManagedImageCatalog,
+  main,
   managedImagePublicationRequired,
   parseManagedImagePullRequestPaths,
   selectManagedImagePublicationRun,
@@ -131,6 +134,29 @@ on:
     expect(assembleManagedImageCatalog(contracts, CANDIDATE_SHA)).toEqual(
       Object.fromEntries(contracts.map((value) => [value.agent, value])),
     );
+  });
+
+  it("writes a validated catalog through the shared assembly command", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-test-"));
+    try {
+      const contracts = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+        const contractPath = path.join(directory, `${agent}.json`);
+        fs.writeFileSync(contractPath, JSON.stringify(contract(agent, index)));
+        return contractPath;
+      });
+      const outputPath = path.join(directory, "catalog.json");
+
+      await main(["assemble", CANDIDATE_SHA, outputPath, ...contracts], {});
+
+      expect(JSON.parse(fs.readFileSync(outputPath, "utf8"))).toEqual(
+        Object.fromEntries(
+          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
+        ),
+      );
+      expect(fs.statSync(outputPath).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it.each([

@@ -186,7 +186,9 @@ export function assembleManagedImageCatalog(
 ): ManagedImageContractCatalog {
   if (!SHA_PATTERN.test(candidateSha)) throw new Error("candidate SHA is invalid");
   if (values.length !== SHIPPED_MANAGED_IMAGE_AGENTS.length) {
-    throw new Error("exact PR managed-image publication requires three contracts");
+    throw new Error(
+      `exact PR managed-image publication requires ${SHIPPED_MANAGED_IMAGE_AGENTS.length} contracts`,
+    );
   }
   const contracts = values.map((value) =>
     parseManagedImageContractV1(value, undefined, "linux/amd64"),
@@ -210,6 +212,24 @@ export function assembleManagedImageCatalog(
   return Object.fromEntries(
     SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => [agent, byAgent.get(agent)!]),
   );
+}
+
+/** Write one validated exact-candidate catalog from local contract paths. */
+export function writeManagedImageCatalog(
+  contractPaths: readonly string[],
+  candidateSha: string,
+  outputPath: string,
+): void {
+  const contracts = contractPaths.map(
+    (contractPath) => JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
+  );
+  const catalog = assembleManagedImageCatalog(contracts, candidateSha);
+  fs.mkdirSync(path.dirname(path.resolve(outputPath)), { mode: 0o700, recursive: true });
+  fs.writeFileSync(outputPath, `${JSON.stringify(catalog)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
 }
 
 function validateWorkflow(payload: unknown): number {
@@ -371,6 +391,14 @@ function requiredInteger(value: string | undefined, label: string): number {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
+  if (argv[0] === "assemble") {
+    if (argv.length < 4) {
+      throw new Error("expected candidate SHA, output path, and managed-image contract paths");
+    }
+    writeManagedImageCatalog(argv.slice(3), argv[1], argv[2]);
+    console.log("pr-managed-image-catalog outcome=assembled");
+    return;
+  }
   if (argv.length !== 1) throw new Error("expected one managed-image catalog output path");
   const candidateSha = env.CANDIDATE_SHA ?? "";
   if (!candidateSha) return;

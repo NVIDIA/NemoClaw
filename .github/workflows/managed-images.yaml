@@ -866,23 +866,11 @@ jobs:
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
-          [[ "${#contracts[@]}" -eq 3 ]] || {
-            echo "ERROR: exact all-agent activation requires three contracts" >&2
-            exit 1
-          }
-          jq -se \
-            --arg revision "$CANDIDATE_SHA" '
-              if (
-                length == 3 and
-                ([.[].agent] | sort) == ["hermes", "langchain-deepagents-code", "openclaw"] and
-                ([.[].source.revision] | unique) == [$revision] and
-                ([.[].source.cohort] | unique | length) == 1 and
-                ([.[].platform] | unique) == ["linux/amd64"]
-              )
-              then map({key: .agent, value: .}) | from_entries
-              else error("published PR contracts do not form one exact all-agent cohort")
-              end
-            ' "${contracts[@]}" > "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/pr-managed-image-publication.mts assemble \
+            "$CANDIDATE_SHA" \
+            "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
+            "${contracts[@]}"
 
       - name: Build exact candidate CLI
         run: |
@@ -904,7 +892,7 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell)"
           "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run \
+          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/managed-image-activation-e2e.test.ts
 
       - name: Upload managed runtime activation evidence
@@ -979,23 +967,11 @@ jobs:
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
-          [[ "${#contracts[@]}" -eq 3 ]] || {
-            echo "ERROR: exact OpenClaw MCP discovery requires three contracts" >&2
-            exit 1
-          }
-          jq -se \
-            --arg revision "$CANDIDATE_SHA" '
-              if (
-                length == 3 and
-                ([.[].agent] | sort) == ["hermes", "langchain-deepagents-code", "openclaw"] and
-                ([.[].source.revision] | unique) == [$revision] and
-                ([.[].source.cohort] | unique | length) == 1 and
-                ([.[].platform] | unique) == ["linux/amd64"]
-              )
-              then map({key: .agent, value: .}) | from_entries
-              else error("published PR contracts do not form one exact all-agent cohort")
-              end
-            ' "${contracts[@]}" > "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG"
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/pr-managed-image-publication.mts assemble \
+            "$CANDIDATE_SHA" \
+            "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG" \
+            "${contracts[@]}"
 
       - name: Build exact candidate CLI
         run: |
@@ -1037,22 +1013,16 @@ jobs:
             echo "ERROR: MCP discovery checkout does not match the exact PR head" >&2
             exit 1
           }
-          jq -e --arg revision "$CANDIDATE_SHA" \
-            '([.[].source.revision] | unique) == [$revision]' \
-            "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG" >/dev/null || {
-            echo "ERROR: MCP discovery catalog does not match the exact PR head" >&2
-            exit 1
-          }
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell)"
           "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run \
+          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/mcp-bridge.test.ts
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
         if: always()
-        run: npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"
+        run: npx --no-install tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"
 
       - name: Upload exact MCP discovery evidence
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}

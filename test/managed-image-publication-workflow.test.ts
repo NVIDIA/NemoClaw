@@ -795,6 +795,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
+    expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(/pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u);
     expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
     expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
     const run = step(activation, "Run real all-agent managed runtime activation").run ?? "";
@@ -830,12 +831,11 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
-    expect(assemble).toContain('([.[].source.revision] | unique) == [$revision]');
-    expect(assemble).toContain('([.[].source.cohort] | unique | length) == 1');
+    expect(assemble).toMatch(/pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u);
     const run = step(discovery, "Run exact OpenClaw trusted-private MCP discovery").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
-    expect(run).toContain('jq -e --arg revision "$CANDIDATE_SHA"');
-    expect(run).toContain("test/e2e/live/mcp-bridge.test.ts");
+    expect(JSON.stringify(discovery)).not.toContain("jq ");
+    expect(run).toMatch(/npx --no-install tsx[\s\S]*test\/e2e\/live\/mcp-bridge\.test\.ts/u);
     expect(run).not.toContain("--selector");
     expect(step(discovery, "Scan MCP artifacts for fixture credentials").if).toBe("always()");
   });
