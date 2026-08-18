@@ -72,10 +72,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     ): Promise<PortableOpenClawPairingSettlementResult>;
     portablePairingIncompleteMessage(
       sandboxName: string,
-      reason: Extract<
-        PortableOpenClawPairingSettlementResult,
-        { kind: "incomplete" }
-      >["reason"],
+      reason: Extract<PortableOpenClawPairingSettlementResult, { kind: "incomplete" }>["reason"],
     ): string;
     getChatUiUrl(): string;
     /**
@@ -141,7 +138,10 @@ function portableAgentDisposition(
   readRegistryAgent: (sandboxName: string) => string | null,
 ): PortableAgentDisposition {
   if (portableProfileSelected !== true) return "ordinary";
-  const selectedAgent = (agent as { readonly name?: unknown } | null)?.name;
+  // The onboarding model represents the default OpenClaw selection as null.
+  // Keep malformed/unknown objects invalid; only the canonical null sentinel
+  // receives default-OpenClaw semantics.
+  const selectedAgent = agent === null ? "openclaw" : (agent as { readonly name?: unknown })?.name;
   if (selectedAgent === "openclaw") return "strict-openclaw";
   if (
     typeof selectedAgent === "string" &&
@@ -292,9 +292,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
           } as const);
     if (pairing.kind !== "settled") {
       const reason =
-        pairing.kind === "incomplete"
-          ? pairing.reason
-          : "portable-runtime-identity-invalid";
+        pairing.kind === "incomplete" ? pairing.reason : "portable-runtime-identity-invalid";
       const message = deps.portablePairingIncompleteMessage(sandboxName, reason);
       deps.error(`  ${message}`);
       deps.reportDeploymentReadiness(false);
