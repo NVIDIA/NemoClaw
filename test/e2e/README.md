@@ -350,6 +350,12 @@ Each execution row declares three coverage fields:
 - `observableOutcome` names the behavior that produces the evidence. Catalogue targets use their outcome-oriented `displayName` as this value.
 - `environmentOrInferenceEndpoint` names the host boundary or inference endpoint that distinguishes the evidence.
 
+Typed registry tests derive each human-readable execution title as
+`<observableOutcome> [<agentRuntime>; <environmentOrInferenceEndpoint>]`.
+Typed registry tests prefix that title with the stable target ID. Workflows use
+the ID prefix for selection, while the semantic tuple makes the test purpose and
+evidence boundary visible in Vitest and GitHub Actions.
+
 Keep coverage metadata with the execution owner:
 
 - Catalogue targets declare it in `tools/e2e/target-catalogue.mts`.
@@ -365,7 +371,8 @@ multiple rows. `tools/e2e/workflow-plan.mts` composes and validates these source
 Do not add a separate hand-maintained execution list.
 
 The default coverage matrix excludes explicit-only jobs and inert typed-registry declarations.
-The rendered report lists those categories separately.
+The rendered report lists those categories separately and inventories every typed declaration,
+including declarations that have no executable matrix cell.
 Explicit-only rows keep their coverage dimensions but do not join the default release matrix.
 Inert declarations report unresolved coverage fields and the missing executable ownership.
 

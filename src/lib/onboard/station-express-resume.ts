@@ -802,6 +802,29 @@ export function parseStationExpressResumeIntent(value: unknown): StationExpressR
   };
 }
 
+export function isValidStationExpressProviderState(
+  intent: StationExpressResumeIntent,
+  providerStepStatus: string | null | undefined,
+  provider: unknown,
+  model: unknown,
+): boolean {
+  const providerComplete = providerStepStatus === "complete";
+  const providerBound = Boolean(
+    intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
+  );
+  if (providerComplete !== providerBound) return false;
+  if (providerComplete) {
+    return intent.kind !== "spark" && provider === "vllm-local" && model === intent.servedModel;
+  }
+  if (provider == null && model == null) return true;
+  if (provider !== "vllm-local" || typeof model !== "string" || model.trim().length === 0) {
+    return false;
+  }
+  return (
+    intent.kind === "spark" || (model.length <= MAX_SERVED_MODEL_LENGTH && isSafeModelId(model))
+  );
+}
+
 export function bindStationExpressProviderSelection(
   intentValue: unknown,
   provider: unknown,
@@ -1051,17 +1074,11 @@ function matchesRecordedStationExpressSelection(
   intent: StationExpressResumeIntent,
 ): boolean {
   if (session.sandboxName != null && session.sandboxName !== intent.sandboxName) return false;
-
-  const providerComplete = session.steps?.provider_selection?.status === "complete";
-  if (intent.kind === "spark") {
-    return !providerComplete && session.provider == null && session.model == null;
-  }
-  const providerBound = Boolean(intent.servedModel && intent.checkpointModel);
-  if (providerComplete !== providerBound) return false;
-  if (!providerComplete) return session.provider == null && session.model == null;
-
-  return Boolean(
-    intent.servedModel && session.provider === "vllm-local" && session.model === intent.servedModel,
+  return isValidStationExpressProviderState(
+    intent,
+    session.steps?.provider_selection?.status,
+    session.provider,
+    session.model,
   );
 }
 

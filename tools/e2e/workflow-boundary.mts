@@ -2531,6 +2531,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
+  if (liveTargets.name !== "${{ matrix.label }}") {
+    errors.push("live job name must expose the semantic matrix label");
+  }
   if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
     errors.push("live job must run on the matrix runner");
   }
@@ -2700,7 +2703,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
-  requireRunContains(errors, runVitest, '"^${TARGET_ID}$"');
+  requireRunContains(errors, runVitest, '"^${TARGET_ID}:"');
 
   const sanitizeTrace = requireStep(errors, steps, "Build trusted live E2E timing summary");
   const sanitizeTraceEnv = asRecord(sanitizeTrace?.env);
