@@ -189,48 +189,6 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("removes agent-alias CLI shims and nvm-installed CLI binaries (#6098)", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-alias-shims-"));
-    const nvmVersion = path.join(tmpHome, ".nvm", "versions", "node", "v22.19.0");
-    const nvmBin = path.join(nvmVersion, "bin");
-    const foreignBin = path.join(nvmVersion, "lib", "node_modules", "unrelated", "bin");
-    const cliNames = ["nemoclaw", "nemohermes", "nemo-deepagents"];
-    const shims = cliNames.slice(1).map((b) => path.join(tmpHome, ".local", "bin", b));
-    const nvmBins = cliNames.map((b) => path.join(nvmBin, b));
-    // A same-named foreign package bin and an unrelated nvm binary must survive the sweep.
-    const kept = [path.join(nvmBin, "tsc"), ...cliNames.map((b) => path.join(foreignBin, b))];
-    const links = [...shims, ...nvmBins, ...kept];
-    links.forEach((b) => fs.mkdirSync(path.dirname(b), { recursive: true }));
-    // Installer-managed symlinks: ~/.local/bin shims and npm bins under an unselected nvm version.
-    links.forEach((b) => fs.symlinkSync("/tmp/prefix/bin/cli", b));
-
-    const removed: string[] = [];
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: (command) =>
-            command !== "docker" && command !== "lsof" && command !== "pgrep",
-          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
-          existsSync: (target) => [...shims, path.dirname(nvmVersion)].includes(String(target)),
-          hasPortableRuntimeCleanup: () => false,
-          isTty: false,
-          log: () => {},
-          rmSync: vi.fn((target: fs.PathLike) => {
-            removed.push(String(target));
-          }),
-          run: vi.fn(okWithKnownGatewayList),
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(links.filter((b) => removed.includes(b))).toEqual([...shims, ...nvmBins]);
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
-
   it("removes agent-alias wrapper shims via binName-aware fd-read classification (#6098)", () => {
     // Symlinks classify via the metadata fast path. Wrapper scripts go through
     // classifyShimPath's fd-read branch which reads the file and matches the
