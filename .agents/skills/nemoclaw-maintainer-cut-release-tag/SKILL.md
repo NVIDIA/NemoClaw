@@ -32,6 +32,8 @@ Treat these as separate states:
 - Treat all E2E, including `Exact staging Brev Launchable`, as maintainer context rather than a tag
   gate. Show the newest full E2E result and let the maintainer run focused tests, run the full suite,
   or proceed with the displayed status.
+- Keep PR risk-plan jobs, including `managed-image-multiarch-startup`, in that E2E decision. Their
+  PR qualification role does not make them separate tag gates.
 - Record every displayed or requested E2E result and the decision in the release brief, the signed
   Markdown release record. Record a plain-language exception reason when the status is exceptional
   or a requested run remains unresolved.
@@ -168,11 +170,12 @@ Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 
 Resolve the brief's `Workspace cleanup` field with exactly one of these records:
 
-- `confirmed absent: <receipt and verification time>` after successful cleanup verification;
+- `confirmed absent: receipt=<artifact>; verified_at=<ISO 8601 UTC time>` after successful cleanup
+  verification;
 - `not applicable: no Launchable check ran` when the candidate has no Launchable check; or
-- `remediated: <workspace identity> was removed; BREV_API_KEY,
-  NEMOCLAW_IMAGE_DISPATCH_TOKEN, and NVIDIA_INFERENCE_API_KEY were rotated or revoked` after
-  completed failure remediation.
+- `remediated: workspace_removed=true;
+  credentials_rotated_or_revoked=BREV_API_KEY,NEMOCLAW_IMAGE_DISPATCH_TOKEN,NVIDIA_INFERENCE_API_KEY;
+  workspace_name=<name>; workspace_id=<id>` after completed failure remediation.
 
 Do not request confirmation while that field records unconfirmed or deferred cleanup.
 

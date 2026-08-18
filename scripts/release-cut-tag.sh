@@ -144,16 +144,17 @@ workspace_cleanup_count="$(awk '/^- Workspace cleanup: / { count++ } END { print
   || fail "Release brief must contain exactly one Launchable workspace cleanup record"
 workspace_cleanup="$(awk '/^- Workspace cleanup: / { sub(/^- Workspace cleanup: /, ""); print }' "$brief_snapshot")" \
   || fail "Could not read the Launchable workspace cleanup record"
+confirmed_cleanup_pattern='^confirmed absent: receipt=[A-Za-z0-9._/-]+; verified_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+remediated_cleanup_pattern='^remediated: workspace_removed=true; credentials_rotated_or_revoked=BREV_API_KEY,NEMOCLAW_IMAGE_DISPATCH_TOKEN,NVIDIA_INFERENCE_API_KEY; workspace_name=[A-Za-z0-9._-]+; workspace_id=[A-Za-z0-9._-]+$'
 case "$workspace_cleanup" in
-  confirmed\ absent:* | "not applicable: no Launchable check ran") ;;
+  confirmed\ absent:*)
+    [[ "$workspace_cleanup" =~ $confirmed_cleanup_pattern ]] \
+      || fail "Confirmed Launchable cleanup must record a receipt and UTC verification time"
+    ;;
+  "not applicable: no Launchable check ran") ;;
   remediated:*)
-    [[ "$workspace_cleanup" == *workspace* && "$workspace_cleanup" == *removed* ]] \
-      || fail "Launchable remediation must record completed workspace removal"
-    [[ "$workspace_cleanup" == *BREV_API_KEY* &&
-      "$workspace_cleanup" == *NEMOCLAW_IMAGE_DISPATCH_TOKEN* &&
-      "$workspace_cleanup" == *NVIDIA_INFERENCE_API_KEY* &&
-      "$workspace_cleanup" == *"rotated or revoked"* ]] \
-      || fail "Launchable remediation must record rotation or revocation of every exposed credential"
+    [[ "$workspace_cleanup" =~ $remediated_cleanup_pattern ]] \
+      || fail "Launchable remediation must use the affirmative workspace and credential record"
     ;;
   *) fail "Release brief has unresolved Launchable workspace cleanup" ;;
 esac

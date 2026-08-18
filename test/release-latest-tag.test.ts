@@ -740,7 +740,13 @@ describe("release-latest-tag.sh", () => {
     expect(result.stderr).toContain("is not reachable from refs/remotes/origin/main");
   });
 
-  it("rejects a Launchable exception before required cleanup remediation", () => {
+  it.each([
+    ["unconfirmed cleanup", "- Workspace cleanup: unconfirmed."],
+    [
+      "negated remediation wording",
+      "- Workspace cleanup: remediated: workspace was not removed; BREV_API_KEY, NEMOCLAW_IMAGE_DISPATCH_TOKEN, and NVIDIA_INFERENCE_API_KEY were not rotated or revoked.",
+    ],
+  ])("rejects a Launchable exception with %s", (_case, cleanup) => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
@@ -748,7 +754,7 @@ describe("release-latest-tag.sh", () => {
     const { plan } = createPlan(fixture, planPath, releaseCommit);
     const brief = failedLaunchableBrief(
       plan,
-      "- Workspace cleanup: unconfirmed.",
+      cleanup,
       "The maintainer accepted the failed result.",
     );
 
@@ -760,7 +766,7 @@ describe("release-latest-tag.sh", () => {
     );
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("unresolved Launchable workspace cleanup");
+    expect(result.stderr).toContain("Launchable");
     expect(localTagObject(fixture, "v0.0.2")).toBe("");
   });
 
@@ -772,7 +778,7 @@ describe("release-latest-tag.sh", () => {
     const { plan } = createPlan(fixture, planPath, releaseCommit);
     const completedBrief = failedLaunchableBrief(
       plan,
-      "- Workspace cleanup: remediated: workspace nclaw-e2e-1 was removed; BREV_API_KEY, NEMOCLAW_IMAGE_DISPATCH_TOKEN, and NVIDIA_INFERENCE_API_KEY were rotated or revoked.",
+      "- Workspace cleanup: remediated: workspace_removed=true; credentials_rotated_or_revoked=BREV_API_KEY,NEMOCLAW_IMAGE_DISPATCH_TOKEN,NVIDIA_INFERENCE_API_KEY; workspace_name=nclaw-e2e-1; workspace_id=qndmc83z0",
       "The maintainer accepted the failed Launchable result after completed cleanup remediation.",
     );
     const messageFile = writeBrief(fixture, completedBrief);
@@ -825,7 +831,7 @@ describe("release-latest-tag.sh", () => {
       )
       .replace(
         "- Workspace cleanup: not applicable: no Launchable check ran",
-        "- Workspace cleanup: confirmed absent: receipt verified at 2026-08-18T14:00:00Z",
+        "- Workspace cleanup: confirmed absent: receipt=cleanup.json; verified_at=2026-08-18T14:00:00Z",
       );
     const messageFile = writeBrief(fixture, brief);
     const mockBin = path.join(fixture.root, "mock-bin");
@@ -1314,6 +1320,24 @@ describe("release-latest-tag.sh", () => {
       "content after the exception record",
       (brief: string) => brief.replace("Exceptions: None", "Exceptions: None\n\nTrailing content"),
       "exactly one resolved Exceptions line",
+    ],
+    [
+      "confirmed cleanup without a receipt",
+      (brief: string) =>
+        brief.replace(
+          "- Workspace cleanup: not applicable: no Launchable check ran",
+          "- Workspace cleanup: confirmed absent: verified_at=2026-08-18T14:00:00Z",
+        ),
+      "must record a receipt and UTC verification time",
+    ],
+    [
+      "confirmed cleanup without a verification time",
+      (brief: string) =>
+        brief.replace(
+          "- Workspace cleanup: not applicable: no Launchable check ran",
+          "- Workspace cleanup: confirmed absent: receipt=cleanup.json",
+        ),
+      "must record a receipt and UTC verification time",
     ],
   ])("rejects a release brief with %s", (_case, mutate, expectedError) => {
     const fixture = createFixture();
