@@ -35,6 +35,7 @@ import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
+  OPENCLAW_PTY_MONITOR_KEY_WRITER_SCRIPT,
   OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
   OPENCLAW_SESSION_EVIDENCE_SCRIPT,
   runOpenClawLaunchSession,
@@ -929,23 +930,35 @@ it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as co
     expect(fixture.duplicate.status).toBe(73);
     expect(fixture.duplicate.stderr).toContain('"reason":"openshell_launch_intercept_duplicate"');
     expect(fixture.interceptMode).toBe(0o600);
-    expect(fixture.calls).toHaveLength(3);
-    expect(fixture.authorityNames).toEqual([[], [], []]);
+    expect(fixture.calls).toHaveLength(4);
+    expect(fixture.authorityNames).toEqual([[], [], [], []]);
     expect(fixture.calls[0]).toEqual(fixture.passThroughArgv);
     expect(fixture.calls[1]).toEqual(fixture.ttyPassThroughArgv);
-    expect(fixture.calls[2]?.slice(0, separator + 1)).toEqual(
+    const optionIndex = fixture.exactArgv.indexOf("--tty");
+    expect(fixture.calls[2]).toEqual([
+      ...fixture.exactArgv.slice(0, optionIndex),
+      "--",
+      "node",
+      "-e",
+      OPENCLAW_PTY_MONITOR_KEY_WRITER_SCRIPT,
+      fixture.runId,
+      fixture.monitorRoot,
+      fixture.publicKey,
+    ]);
+    expect(fixture.calls[3]?.slice(0, separator + 1)).toEqual(
       fixture.exactArgv.slice(0, separator + 1),
     );
-    expect(fixture.calls[2]?.slice(separator + 1)).toEqual([
+    expect(fixture.calls[3]?.slice(separator + 1)).toEqual([
       "node",
       "-e",
       OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
       fixture.runId,
       fixture.monitorRoot,
       fixture.publicKey,
-      fixture.privateKey,
+      `${fixture.monitorRoot}/pty-monitor-private-key`,
       ...expectedRemote,
     ]);
+    expect(fixture.calls.flat()).not.toContain(fixture.privateKey);
   },
 );
 
@@ -954,7 +967,10 @@ it.runIf(process.platform === "linux")(
   () => {
     const runId = randomUUID().replaceAll("-", "");
     const monitorRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
+    const privateKeyPath = join(monitorRoot, "pty-monitor-private-key");
     try {
+      mkdirSync(monitorRoot, { mode: 0o700 });
+      writeFileSync(privateKeyPath, TEST_PTY_MONITOR_PRIVATE_KEY, { mode: 0o600 });
       const result = spawnSync(
         process.execPath,
         [
@@ -963,7 +979,7 @@ it.runIf(process.platform === "linux")(
           runId,
           monitorRoot,
           TEST_PTY_MONITOR_PUBLIC_KEY,
-          TEST_PTY_MONITOR_PRIVATE_KEY,
+          privateKeyPath,
           "/usr/bin/env",
           "true",
         ],
@@ -1125,6 +1141,7 @@ it.runIf(process.platform === "linux").each([
     );
     expect(ptyMonitorRemoved, failureEvidence).toBe(monitorRemoved);
   },
+  15_000,
 );
 
 it.runIf(process.platform === "linux")(
@@ -1183,6 +1200,7 @@ it.runIf(process.platform === "linux")(
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('"reason":"pty_input_canonical"');
   },
+  15_000,
 );
 
 it.runIf(process.platform === "linux")(

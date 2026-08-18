@@ -306,6 +306,59 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 }
 `;
 
+// The host sends the private key through this process's standard input. The
+// starter opens and unlinks the resulting file before candidate code runs.
+export const OPENCLAW_PTY_MONITOR_KEY_WRITER_SCRIPT = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [runId, runRoot, publicKeyBase64] = process.argv.slice(1);
+const privateKeyPath = path.join(runRoot, "pty-monitor-private-key");
+
+function fail(reason) {
+  process.stderr.write(JSON.stringify({ reason }) + "\n");
+  process.exit(74);
+}
+
+function exactMode(stats, mode) {
+  return (stats.mode & 0o777) === mode;
+}
+
+if (!/^[0-9a-f]{32}$/.test(runId || "")) fail("pty_run_id_invalid");
+if (runRoot !== "/tmp/nemoclaw-launch-turn-" + runId) fail("pty_monitor_root_invalid");
+if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(publicKeyBase64 || "")) {
+  fail("pty_public_key_invalid");
+}
+
+let privateKeyBase64;
+try {
+  privateKeyBase64 = fs.readFileSync(0, "utf8");
+} catch {
+  fail("pty_private_key_read_failed");
+}
+if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(privateKeyBase64 || "")) {
+  fail("pty_private_key_invalid");
+}
+
+try {
+  fs.mkdirSync(runRoot, { mode: 0o700 });
+  fs.chmodSync(runRoot, 0o700);
+  const rootStats = fs.lstatSync(runRoot);
+  if (
+    !rootStats.isDirectory() ||
+    rootStats.isSymbolicLink() ||
+    rootStats.uid !== process.getuid() ||
+    !exactMode(rootStats, 0o700)
+  ) {
+    fail("pty_monitor_root_invalid");
+  }
+  fs.writeFileSync(privateKeyPath, privateKeyBase64, { flag: "wx", mode: 0o600 });
+  fs.chmodSync(privateKeyPath, 0o600);
+} catch {
+  fail("pty_private_key_write_failed");
+}
+`;
+
 // This starter and its monitor both inherit PTY fd 0. The starter then replaces
 // itself with the unchanged production command while the monitor retains its
 // descriptor.
@@ -316,7 +369,7 @@ const fs = require("node:fs");
 const monitorScript = ${JSON.stringify(OPENCLAW_PTY_INPUT_MODE_MONITOR_SCRIPT)};
 const termiosCommand = "/usr/bin/stty";
 
-const [runId, runRoot, publicKeyBase64, privateKeyBase64, ...originalArgv] =
+const [runId, runRoot, publicKeyBase64, privateKeyPath, ...originalArgv] =
   process.argv.slice(1);
 
 function fail(reason) {
@@ -349,20 +402,47 @@ if (!/^[0-9a-f]{32}$/.test(runId || "")) fail("pty_run_id_invalid");
 if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(publicKeyBase64 || "")) {
   fail("pty_public_key_invalid");
 }
-if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(privateKeyBase64 || "")) {
-  fail("pty_private_key_invalid");
-}
 if (runRoot !== "/tmp/nemoclaw-launch-turn-" + runId) fail("pty_monitor_root_invalid");
+if (privateKeyPath !== runRoot + "/pty-monitor-private-key") {
+  fail("pty_private_key_path_invalid");
+}
 if (originalArgv.length === 0) fail("pty_original_argv_invalid");
 if (typeof process.execve !== "function") fail("pty_execve_unavailable");
 
-try {
-  fs.mkdirSync(runRoot, { mode: 0o700 });
-  fs.chmodSync(runRoot, 0o700);
-} catch {
-  fail("pty_monitor_root_create_failed");
-}
 validateRunRoot();
+
+let privateKeyBase64;
+let privateKeyFd;
+try {
+  privateKeyFd = fs.openSync(
+    privateKeyPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  const privateKeyStats = fs.fstatSync(privateKeyFd);
+  if (
+    !privateKeyStats.isFile() ||
+    privateKeyStats.uid !== process.getuid() ||
+    !exactMode(privateKeyStats, 0o600) ||
+    privateKeyStats.nlink !== 1 ||
+    privateKeyStats.size < 40 ||
+    privateKeyStats.size > 256
+  ) {
+    fail("pty_private_key_file_invalid");
+  }
+  privateKeyBase64 = fs.readFileSync(privateKeyFd, "utf8");
+  fs.unlinkSync(privateKeyPath);
+} catch {
+  fail("pty_private_key_file_invalid");
+} finally {
+  if (privateKeyFd !== undefined) {
+    try {
+      fs.closeSync(privateKeyFd);
+    } catch {}
+  }
+}
+if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(privateKeyBase64 || "")) {
+  fail("pty_private_key_invalid");
+}
 
 let ttyPath;
 let ttyStats;
@@ -446,6 +526,7 @@ const interceptPath = process.env.OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH;
 const monitorStarterScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT;
 const runtimeEnvScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT;
 const keyPath = process.env.OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_KEY_PATH;
+const keyWriterScript = ${JSON.stringify(OPENCLAW_PTY_MONITOR_KEY_WRITER_SCRIPT)};
 
 function fail(reason) {
   process.stderr.write(JSON.stringify({ reason }) + "\n");
@@ -456,18 +537,23 @@ function arraysEqual(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function runRealOpenShell(nextArgv) {
+function invokeRealOpenShell(nextArgv, input) {
   const env = { ...process.env };
   for (const name of authorityNames) delete env[name];
   const result = childProcess.spawnSync(realOpenShell, nextArgv, {
     env,
-    stdio: "inherit",
+    input,
+    stdio: input === undefined ? "inherit" : ["pipe", "inherit", "inherit"],
     timeout: 240_000,
     killSignal: "SIGKILL",
   });
   if (result.error) fail("openshell_shim_invocation_failed");
   if (result.status === null) fail("openshell_shim_signaled");
-  process.exit(result.status);
+  return result.status;
+}
+
+function runRealOpenShell(nextArgv) {
+  process.exit(invokeRealOpenShell(nextArgv));
 }
 
 if (!path.isAbsolute(realOpenShell || "")) fail("openshell_shim_authority_invalid");
@@ -559,6 +645,20 @@ try {
 }
 
 const monitorRoot = "/tmp/nemoclaw-launch-turn-" + runId;
+const privateKeyPath = monitorRoot + "/pty-monitor-private-key";
+const keyWriterArgv = [
+  ...argv.slice(0, optionIndex),
+  "--",
+  "node",
+  "-e",
+  keyWriterScript,
+  runId,
+  monitorRoot,
+  publicKeyBase64,
+];
+if (invokeRealOpenShell(keyWriterArgv, privateKeyBase64) !== 0) {
+  fail("openshell_shim_private_key_write_failed");
+}
 const replacement = [
   ...argv.slice(0, separator + 1),
   "node",
@@ -567,7 +667,7 @@ const replacement = [
   runId,
   monitorRoot,
   publicKeyBase64,
-  privateKeyBase64,
+  privateKeyPath,
   ...remoteArgv,
 ];
 runRealOpenShell(replacement);
@@ -1059,9 +1159,32 @@ function removePtyMonitorRoot() {
   } catch {
     finish(2, "pty_monitor_cleanup_failed");
   }
-  const allowedNames = ["pty-input-mode.sock"];
+  const privateKeyName = "pty-monitor-private-key";
+  const allowedNames = ["pty-input-mode.sock", privateKeyName];
   if (names.some((name) => !allowedNames.includes(name))) {
     finish(2, "pty_monitor_cleanup_unknown_entry");
+  }
+  if (names.includes(privateKeyName)) {
+    const privateKeyPath = path.join(ptyMonitorRoot, privateKeyName);
+    try {
+      const stats = fs.lstatSync(privateKeyPath, { bigint: true });
+      if (
+        !stats.isFile() ||
+        stats.isSymbolicLink() ||
+        stats.uid !== BigInt(process.getuid()) ||
+        (stats.mode & 0o777n) !== 0o600n ||
+        stats.nlink !== 1n ||
+        stats.size < 40n ||
+        stats.size > 256n
+      ) {
+        finish(2, "pty_monitor_cleanup_failed");
+      }
+      fs.unlinkSync(privateKeyPath);
+      fsyncParent(privateKeyPath);
+      names = names.filter((name) => name !== privateKeyName);
+    } catch {
+      finish(2, "pty_monitor_cleanup_failed");
+    }
   }
   if (names.length !== 0) finish(2, "pty_monitor_cleanup_failed");
   let after;
@@ -1219,10 +1342,13 @@ remove_pty_monitor() {
 }
 
 wait_for_pty_monitor_exit() {
-  for _ in {1..100}; do
-    [[ ! -S "$pty_monitor_root/pty-input-mode.sock" ]] && return
+  for _ in {1..20}; do
+    if [[ ! -S "$pty_monitor_root/pty-input-mode.sock" ]]; then
+      return 0
+    fi
     sleep 0.05
   done
+  return 0
 }
 
 cleanup() {
