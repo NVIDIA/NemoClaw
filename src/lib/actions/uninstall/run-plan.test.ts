@@ -189,15 +189,20 @@ describe("uninstall run plan", () => {
     }
   });
 
-  it("removes agent-alias CLI shims (nemohermes, nemo-deepagents) (#6098)", () => {
+  it("removes agent-alias CLI shims and nvm-installed CLI binaries (#6098)", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-alias-shims-"));
     const userBin = path.join(tmpHome, ".local", "bin");
     fs.mkdirSync(userBin, { recursive: true });
     const hermesShim = path.join(userBin, "nemohermes");
     const deepagentsShim = path.join(userBin, "nemo-deepagents");
-    // Installer-managed symlinks → classified as managed-symlink → removed.
+    // Installer-managed symlinks: ~/.local/bin shims and npm bins under an unselected nvm version.
     fs.symlinkSync("/tmp/prefix/bin/nemohermes", hermesShim);
     fs.symlinkSync("/tmp/prefix/bin/nemo-deepagents", deepagentsShim);
+    const nvmNodes = path.join(tmpHome, ".nvm", "versions", "node");
+    const nvmBin = path.join(nvmNodes, "v22.19.0", "bin");
+    fs.mkdirSync(nvmBin, { recursive: true });
+    const nvmBins = ["nemoclaw", "nemohermes", "nemo-deepagents"].map((b) => path.join(nvmBin, b));
+    nvmBins.forEach((b) => fs.symlinkSync("../lib/node_modules/nemoclaw/bin/cli.js", b));
 
     const removed: string[] = [];
     try {
@@ -207,7 +212,7 @@ describe("uninstall run plan", () => {
           commandExists: (command) =>
             command !== "docker" && command !== "lsof" && command !== "pgrep",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
-          existsSync: (target) => target === hermesShim || target === deepagentsShim,
+          existsSync: (target) => [hermesShim, deepagentsShim, nvmNodes].includes(String(target)),
           hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: () => {},
@@ -220,7 +225,7 @@ describe("uninstall run plan", () => {
       );
 
       expect(result.exitCode).toBe(0);
-      expect(removed).toEqual(expect.arrayContaining([hermesShim, deepagentsShim]));
+      expect(removed).toEqual(expect.arrayContaining([hermesShim, deepagentsShim, ...nvmBins]));
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

@@ -76,6 +76,7 @@ import {
   stopOpenRouterRuntimeAdapter,
 } from "./openrouter-runtime-adapter-cleanup";
 import {
+  AGENT_ALIAS_CLI_BINARIES,
   buildUninstallPlan,
   classifyShimPath,
   defaultUninstallPaths,
@@ -1672,6 +1673,8 @@ function removeAliases(paths: UninstallPaths, runtime: UninstallRuntime): void {
 function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const nodeVersionsDir = path.join(paths.nvmDir, "versions", "node");
   if (!runtime.existsSync(nodeVersionsDir)) return;
+  // npm publishes every declared bin as a symlink, so `isFile()` never matched.
+  const cliBinNames: readonly string[] = ["nemoclaw", ...AGENT_ALIAS_CLI_BINARIES];
   const stack = [nodeVersionsDir];
   while (stack.length > 0) {
     const current = stack.pop();
@@ -1685,9 +1688,9 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
         } else {
           stack.push(target);
         }
-      } else if (entry.isFile() && target.endsWith(path.join("bin", "nemoclaw"))) {
+      } else if (path.basename(current) === "bin" && cliBinNames.includes(entry.name)) {
         runtime.rmSync(target, { force: true });
-        runtime.log(`Removed leftover nemoclaw binary at ${target}`);
+        runtime.log(`Removed leftover ${entry.name} binary at ${target}`);
       }
     }
   }
