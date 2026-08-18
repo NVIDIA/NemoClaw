@@ -567,7 +567,7 @@ function dockerLifecycleCapture(
   containerId = "c".repeat(64),
   overrides: { status?: string; paused?: boolean; restartCount?: number } = {},
 ) {
-  return vi.fn(() => ({
+  return vi.fn((_command: string, _args: string[], _timeout?: number) => ({
     status: 0,
     stdout: JSON.stringify([
       containerId,
@@ -579,6 +579,24 @@ function dockerLifecycleCapture(
     ]),
     stderr: "",
   }));
+}
+
+function dockerRestoreCapture(
+  restoreResult: {
+    status: number;
+    stdout: string;
+    stderr: string;
+    error?: Error;
+  } = {
+    status: 0,
+    stdout: "[managed-startup] verified profile completion\n",
+    stderr: "",
+  },
+) {
+  const lifecycleCapture = dockerLifecycleCapture();
+  return vi.fn((command: string, args: string[], timeout?: number) =>
+    args[0] === "exec" ? restoreResult : lifecycleCapture(command, args, timeout),
+  );
 }
 
 describe("Docker provider snapshot evidence", () => {
@@ -727,21 +745,19 @@ describe("Docker provider snapshot evidence", () => {
   });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
-    "runs the in-sandbox %s profile verifier and fails closed on refusal",
+    "runs the exact-container %s profile verifier and fails closed on refusal",
     (agent) => {
       const authority = {
         agent,
         profileFingerprint: managedProfile.profileFingerprint,
       };
-      const captureOpenShell = vi.fn(() => ({
+      const captureHostCommand = dockerRestoreCapture({
         status: 0,
-        output: `[managed-startup] verified ${agent} profile completion\n`,
-        stdout: "",
+        stdout: `[managed-startup] verified ${agent} profile completion\n`,
         stderr: "",
-      }));
+      });
       const dependencies = {
-        captureHostCommand: dockerLifecycleCapture(),
-        captureOpenShell: captureOpenShell as never,
+        captureHostCommand,
         queryRuntimeSnapshot: () => dockerSnapshot(),
       };
       const surface = requireSupportedSurface(
@@ -757,18 +773,19 @@ describe("Docker provider snapshot evidence", () => {
       });
       const receipt = surface.restore(target, preflight, source, authority);
       expect(receipt.managedProfile).toEqual(authority);
-      expect(captureOpenShell).toHaveBeenCalledWith(
+      expect(captureHostCommand).toHaveBeenCalledWith(
+        "docker",
         [
-          "sandbox",
           "exec",
-          "--name",
-          "alpha",
-          "-g",
-          "nemoclaw-18080",
-          "--no-tty",
-          "--timeout",
-          "10",
-          "--",
+          "--user",
+          "root",
+          "c".repeat(64),
+          "/usr/bin/env",
+          "-i",
+          "HOME=/root",
+          "LANG=C.UTF-8",
+          "LC_ALL=C.UTF-8",
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
           "/usr/local/bin/node",
           "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           "--verify-completion",
@@ -777,22 +794,17 @@ describe("Docker provider snapshot evidence", () => {
           "--profile-fingerprint",
           authority.profileFingerprint,
         ],
-        expect.objectContaining({
-          ignoreError: true,
-          includeStderr: true,
-          timeout: 15_000,
-        }),
+        15_000,
       );
 
       const denied = requireSupportedSurface(
         createDockerRuntimeProviderSnapshotSurface("docker", {
           ...dependencies,
-          captureOpenShell: (() => ({
+          captureHostCommand: dockerRestoreCapture({
             status: 1,
-            output: "profile mismatch",
             stdout: "",
-            stderr: "",
-          })) as never,
+            stderr: "profile mismatch",
+          }),
         }),
       );
       const deniedPreflight = denied.preflight("restore", target);
