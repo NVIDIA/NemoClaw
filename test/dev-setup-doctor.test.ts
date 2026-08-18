@@ -174,9 +174,13 @@ fi`,
     if [ "\${FAKE_GIT_IDENTITY_MISSING:-}" = "1" ]; then exit 1; fi
     echo "contributor@example.com"
     ;;
-  *" config --get commit.gpgsign "*)
+  *" config --get --type=bool commit.gpgsign "*)
     if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
     echo "true"
+    ;;
+  *" config --get commit.gpgsign "*)
+    if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
+    echo "1"
     ;;
   *" config --get gpg.format "*)
     if [ "\${FAKE_GIT_SIGN_FORMAT_UNSET:-}" = "1" ]; then exit 1; fi
