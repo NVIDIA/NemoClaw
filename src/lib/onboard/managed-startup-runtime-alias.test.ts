@@ -38,7 +38,6 @@ function wechatAccountBuildStep(): ManagedStartupJsonObject {
   const result = buildWechatSeedOpenClawAccountOutputs(
     {
       "wechatConfig.accountId": "wechat-account",
-      "credential.wechatBotToken.placeholder": "openshell:resolve:env:WECHAT_BOT_TOKEN",
     },
     { now: () => "2026-08-18T00:00:00.000Z" },
   ).openclawWeixinAccountFile!;
@@ -163,6 +162,36 @@ describe("managed startup messaging build files", () => {
               content: contentWithoutToken,
               metadata: { token },
             },
+          },
+        ]),
+      ),
+    ).toThrow(/credential-shaped/);
+  });
+
+  it.each([
+    ["another channel", { channelId: "slack" }],
+    ["another build kind", { kind: "build-arg" }],
+    ["another hook", { hookId: "another-hook" }],
+    ["another handler", { handler: "wechat.anotherHandler" }],
+    ["another output", { outputId: "openclawConfigPatch" }],
+    ["an optional output", { required: false }],
+  ])("rejects the WeChat token placeholder in %s (#9397)", (_label, change) => {
+    expect(() =>
+      validateManagedStartupProfile(
+        profileWithBuildSteps([{ ...wechatAccountBuildStep(), ...change }]),
+      ),
+    ).toThrow(/credential-shaped/);
+  });
+
+  it("rejects the WeChat token placeholder in another build file (#9397)", () => {
+    const step = wechatAccountBuildStep();
+    const value = step.value as ManagedStartupJsonObject;
+    expect(() =>
+      validateManagedStartupProfile(
+        profileWithBuildSteps([
+          {
+            ...step,
+            value: { ...value, path: "unrelated/accounts/wechat-account.json" },
           },
         ]),
       ),
