@@ -291,6 +291,32 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
+  it("retains warning remediation when a repeated readiness check blocks", () => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host: HostAssessment = {
+      ...hostWithRuntime("docker-desktop"),
+      dockerRunning: false,
+      dockerReachable: false,
+      isHeadlessLikely: true,
+      dockerCredsStore: "desktop",
+      dockerCredsStorePath: "~/.docker/config.json",
+    };
+
+    expect(() =>
+      assertOnboardHostReadiness(host, null, {
+        explicitlyOptedOutGpuPassthrough: false,
+        presentAdvisories: false,
+        exitProcess: exit,
+      }),
+    ).toThrow("exit");
+
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain("DOCKER_CONFIG=$(mktemp -d) nemoclaw onboard --resume");
+  });
+
   it("rejects an unsupported DOCKER_HOST before runtime probe effects (#7411)", async () => {
     const bridge = vi.fn();
     const validateGpu = vi.fn();

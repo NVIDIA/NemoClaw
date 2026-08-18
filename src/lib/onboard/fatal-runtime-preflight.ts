@@ -173,13 +173,9 @@ export function assertOnboardSystemReadiness(
       process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
   });
   const advisories = planHostAdvisories(host, { resuming: options.resuming });
-  const presentableAdvisories =
-    options.presentAdvisories === false
-      ? advisories.filter(({ severity }) => severity !== "warning")
-      : advisories;
   if (admission.admitted) {
     if (options.presentAdvisories === true) {
-      printRemediationActions(presentableAdvisories.filter(({ severity }) => severity === "warning"));
+      printRemediationActions(advisories.filter(({ severity }) => severity === "warning"));
     }
     return readinessReport;
   }
@@ -204,8 +200,8 @@ export function assertOnboardSystemReadiness(
   }
   printRemediationActions(
     jetsonRuntimeMissing
-      ? presentableAdvisories.filter(({ id }) => !JETSON_INAPPLICABLE_CDI_ADVISORY_IDS.has(id))
-      : presentableAdvisories,
+      ? advisories.filter(({ id }) => !JETSON_INAPPLICABLE_CDI_ADVISORY_IDS.has(id))
+      : advisories,
   );
   exitProcess(1);
   throw new Error("Onboarding continued after a blocking system readiness result.");
