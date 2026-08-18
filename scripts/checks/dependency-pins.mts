@@ -37,14 +37,6 @@ const OPENSHELL_RELEASE_MANIFESTS = [
   "openshell-sandbox-checksums-sha256.txt",
 ] as const;
 
-function expectedOpenShellE2eVersion(pins: OpenShellPins): string {
-  // Qualify the accepted 0.0.106 migration against the exact trusted release
-  // before the supported product pin moves from 0.0.101.
-  return pins.minVersion === "0.0.101" && pins.maxVersion === "0.0.101"
-    ? "0.0.106"
-    : pins.maxVersion;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -412,7 +404,7 @@ function verifyOpenShellPins(
       ".github/workflows/e2e.yaml gateway auth OpenShell version",
       failures,
     ),
-    expectedOpenShellE2eVersion(pins),
+    pins.maxVersion,
     ".github/workflows/e2e.yaml gateway auth OpenShell version",
     failures,
   );

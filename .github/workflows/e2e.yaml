@@ -3074,7 +3074,7 @@ jobs:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
-        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash tools/e2e/install-openshell-v00106-qualification.sh
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Pre-pull pinned gateway auth probe image
         run: docker pull "$DOCKER_GRPC_PROBE_IMAGE"
@@ -3392,9 +3392,11 @@ jobs:
         run: bash test/e2e/setup-mcp-test-tls.sh
 
       - name: Install OpenShell CLI
+        env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
         run: |
           set -euo pipefail
-          bash tools/e2e/install-openshell-v00106-qualification.sh
+          bash scripts/install-openshell.sh
           if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
             mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
             jq -n '{
@@ -3515,9 +3517,11 @@ jobs:
         run: bash test/e2e/setup-mcp-test-tls.sh
 
       - name: Install OpenShell CLI
+        env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
         run: |
           set -euo pipefail
-          bash tools/e2e/install-openshell-v00106-qualification.sh
+          bash scripts/install-openshell.sh
           mkdir -p "$E2E_ARTIFACT_DIR/openshell-credential-generation-window"
           jq -n '{
             schemaVersion: 1,

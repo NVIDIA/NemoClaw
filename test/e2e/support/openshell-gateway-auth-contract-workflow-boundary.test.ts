@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,45 +9,7 @@ import {
   validateOpenShellGatewayAuthContractWorkflowBoundary,
 } from "../../../tools/e2e/openshell-gateway-auth-contract-workflow-boundary.mts";
 
-const QUALIFICATION_INSTALLER_IDENTITIES = [
-  "openshell-x86_64-unknown-linux-musl.tar.gz",
-  "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0",
-  "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59",
-  "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
-  "b7760cb752a4363c2f21d32298dd0c683dc438f6edfd16c2e4242bc0baefbb7c",
-  "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c",
-  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
-  "559b8aaad3a8eeab45c511e7de531d9baa98a311282dcb0c2c5f38cc2d4ca355",
-  "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8",
-] as const;
-const QUALIFICATION_INSTALLER_PATH = "tools/e2e/install-openshell-v00106-qualification.sh";
-const QUALIFICATION_INSTALLER_SOURCE = readFileSync(QUALIFICATION_INSTALLER_PATH, "utf8");
-
 describe("OpenShell gateway auth contract workflow boundary", () => {
-  it.each(QUALIFICATION_INSTALLER_IDENTITIES)(
-    "binds the qualification installer identity exactly once [%s]",
-    (identity) => {
-      expect(
-        QUALIFICATION_INSTALLER_SOURCE.match(new RegExp(identity.replaceAll(".", "\\."), "gu")),
-      ).toHaveLength(1);
-    },
-  );
-
-  it("binds the qualification installer to one coherent OpenShell 0.0.106 release", () => {
-    expect(QUALIFICATION_INSTALLER_SOURCE).toContain('readonly release_tag="v0.0.106"');
-    expect(QUALIFICATION_INSTALLER_SOURCE).not.toMatch(/v0\.0\.(?:101|105|107)/u);
-    expect(QUALIFICATION_INSTALLER_SOURCE).toContain(
-      'printf \'%s  %s\\n\' "${archive_sha256[$index]}" "$archive" | sha256sum -c -',
-    );
-    expect(QUALIFICATION_INSTALLER_SOURCE).toContain(
-      'printf \'%s  %s\\n\' "${binary_sha256[$index]}" "${extracted}/${member}" | sha256sum -c -',
-    );
-    expect(QUALIFICATION_INSTALLER_SOURCE).toContain(
-      'printf \'%s  %s\\n\' "${binary_sha256[$index]}" "${target_dir}/${member}" | sha256sum -c -',
-    );
-    execFileSync("bash", ["-n", QUALIFICATION_INSTALLER_PATH]);
-  });
-
   it("accepts the checked-in workflow and rejects protected trust-boundary mutations", () => {
     expect(validateOpenShellGatewayAuthContractWorkflowBoundary()).toEqual([]);
 
@@ -77,7 +36,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
     prepare.uses = "./.github/actions/prepare-e2e";
 
     const install = steps.find((step) => step.name === "Install OpenShell CLI")!;
-    install.run = "bash scripts/install-openshell.sh";
+    install.run = "bash tools/e2e/unreviewed-installer.sh";
 
     const prePull = steps.find((step) => step.name === "Pre-pull pinned gateway auth probe image")!;
     prePull.run = "docker pull node:22-trixie-slim";
@@ -119,7 +78,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract action 'actions/checkout@v6' must pin a full SHA",
         "openshell-gateway-auth-contract checkout must disable persisted credentials",
         "openshell-gateway-auth-contract must use the reviewed prepare-e2e action",
-        "openshell-gateway-auth-contract must run only the exact credential-free OpenShell 0.0.106 install",
+        "openshell-gateway-auth-contract must run only the canonical credential-free OpenShell install",
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must run: docker pull \"$DOCKER_GRPC_PROBE_IMAGE\"",
         "openshell-gateway-auth-contract live test must not receive workflow credentials",
         "openshell-gateway-auth-contract final artifact safety scan must run unconditionally with a stable id",
@@ -130,18 +89,6 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must precede 'Run OpenShell gateway auth contract live test'",
         "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must precede 'Upload OpenShell gateway auth contract artifacts'",
       ]),
-    );
-  });
-
-  it("rejects a second product installer after the exact OpenShell 0.0.106 install", () => {
-    const workflow = readOpenShellGatewayAuthContractWorkflow();
-    const install = workflow.jobs["openshell-gateway-auth-contract"].steps!.find(
-      (step) => step.name === "Install OpenShell CLI",
-    )!;
-    install.run += " && bash scripts/install-openshell.sh";
-
-    expect(validateOpenShellGatewayAuthContractWorkflow(workflow)).toContain(
-      "openshell-gateway-auth-contract must run only the exact credential-free OpenShell 0.0.106 install",
     );
   });
 

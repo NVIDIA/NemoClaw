@@ -653,22 +653,6 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
-  it("routes the OpenShell 0.0.106 qualification installer to every consumer", () => {
-    const plan = buildE2eWorkflowPlan(
-      {},
-      { changedFiles: ["tools/e2e/install-openshell-v00106-qualification.sh"] },
-    );
-
-    expect([...plan.selectedJobs].sort()).toEqual(
-      [
-        "jetson-nvmap-gpu",
-        "mcp-bridge",
-        "openshell-credential-generation-window",
-        "openshell-gateway-auth-contract",
-      ].sort(),
-    );
-  });
-
   it.each([
     "test/e2e/live/openclaw-agent-assertion.ts",
     "test/e2e/live/personal-egress-live-proof.ts",

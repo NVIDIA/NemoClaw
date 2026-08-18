@@ -13,10 +13,8 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "openshell-gateway-auth-contract";
 const OPENSHELL_RELEASE_VERSION = "0.0.106";
-const OPENSHELL_QUALIFICATION_INSTALLER =
-  "tools/e2e/install-openshell-v00106-qualification.sh";
-const OPENSHELL_QUALIFICATION_INSTALL_RUN =
-  `env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash ${OPENSHELL_QUALIFICATION_INSTALLER}`;
+const OPENSHELL_INSTALL_RUN =
+  "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const TRUSTED_PLAN_CONDITION = `\${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_NAME}') }}`;
 const GATEWAY_PROBE_IMAGE =
@@ -144,8 +142,8 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
 
   const install = findStep(job, "Install OpenShell CLI");
-  if (install.run !== OPENSHELL_QUALIFICATION_INSTALL_RUN) {
-    errors.push(`${JOB_NAME} must run only the exact credential-free OpenShell 0.0.106 install`);
+  if (install.run !== OPENSHELL_INSTALL_RUN) {
+    errors.push(`${JOB_NAME} must run only the canonical credential-free OpenShell install`);
   }
 
   const prePull = findStep(job, "Pre-pull pinned gateway auth probe image");
