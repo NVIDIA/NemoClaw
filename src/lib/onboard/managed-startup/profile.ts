@@ -59,6 +59,10 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
   /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
+const MESSAGING_CREDENTIAL_ENV_ALIASES = [
+  ["MSTEAMS_APP_PASSWORD", "TEAMS_CLIENT_SECRET"],
+  ["WECHAT_BOT_TOKEN", "WEIXIN_TOKEN"],
+] as const;
 const JSON_ARRAY_INDEX_SEGMENT_RE = /^\[(?:0|[1-9][0-9]*)\]$/u;
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /nvapi-[A-Za-z0-9_-]{10,}/u,
@@ -1046,9 +1050,15 @@ function isMessagingCredentialPlaceholderAssignment(
   if (separator <= 0 || value.indexOf("=", separator + 1) !== -1) return false;
   const envKey = value.slice(0, separator);
   const placeholder = value.slice(separator + 1);
+  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(placeholder);
   return (
     CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&
-    MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(placeholder)
+    placeholderEnvKey !== null &&
+    (envKey === placeholderEnvKey ||
+      MESSAGING_CREDENTIAL_ENV_ALIASES.some(
+        ([sourceEnvKey, targetEnvKey]) =>
+          placeholderEnvKey === sourceEnvKey && envKey === targetEnvKey,
+      ))
   );
 }
 

@@ -731,7 +731,7 @@ describe("managed startup profile", () => {
     ).toThrow(/credential-shaped field name/);
   });
 
-  it("accepts schema-owned messaging pins, placeholders, and agent aliases (#9355)", () => {
+  it("accepts schema-owned messaging pins, placeholders, and credential environment aliases (#9355)", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
@@ -763,6 +763,7 @@ describe("managed startup profile", () => {
                   "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
                   "TELEGRAM_BOT_TOKEN=openshell:resolve:env:v1_TELEGRAM_BOT_TOKEN",
                   "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+                  "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
                 ],
                 templateRefs: ["credential.slackBotToken.placeholder"],
               },
@@ -787,6 +788,10 @@ describe("managed startup profile", () => {
     [
       "a placeholder with a noncanonical provider environment key",
       "SLACK_BOT_TOKEN=openshell:resolve:env:slack_bot_token",
+    ],
+    [
+      "a placeholder assigned to an unapproved credential environment key",
+      "AWS_SECRET_ACCESS_KEY=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
     ],
   ])("rejects %s in messaging environment lines (#9355)", (_label, line) => {
     expect(() =>
