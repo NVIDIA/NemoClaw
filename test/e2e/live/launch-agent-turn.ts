@@ -1535,6 +1535,10 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
+# Establish monitor and PTY identity availability without sending input. A
+# fresh noncanonical observation is still required after OpenClaw records its
+# startup-aware first turn.
+wait_for_pty_input_mode
 wait_for_turn_count 1
 wait_for_pty_input_mode
 if ! printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3; then
