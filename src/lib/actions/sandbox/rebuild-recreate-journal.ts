@@ -67,6 +67,7 @@ export function fingerprintRebuildRecreateTargetIntent(
     | "sandboxGpu"
     | "sandboxGpuDevice"
     | "controlUiPort"
+    | "hostMounts"
     | "targetGatewayName"
     | "targetGatewayPort"
     | "toolDisclosure"
@@ -86,6 +87,14 @@ export function fingerprintRebuildRecreateTargetIntent(
     sandboxGpu: options.sandboxGpu,
     sandboxGpuDevice: options.sandboxGpuDevice,
     controlUiPort: options.controlUiPort,
+    hostMounts: (options.hostMounts ?? []).map(({ source, target, readOnly, sourceIdentity }) => ({
+      source,
+      target,
+      readOnly,
+      sourceIdentity: sourceIdentity
+        ? { device: sourceIdentity.device, inode: sourceIdentity.inode }
+        : null,
+    })),
     gatewayName: options.targetGatewayName,
     gatewayPort: options.targetGatewayPort,
     toolDisclosure: options.toolDisclosure,
