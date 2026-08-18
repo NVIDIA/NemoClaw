@@ -85,8 +85,11 @@ last-updated timestamps, age at inspection, workflow URL, `Release qualification
 failed, cancelled, skipped, queued, or active results.
 
 Treat `Exact staging Brev Launchable` as part of this decision. Record its job status and available
-receipts. If workspace cleanup is not confirmed, record the workspace identity, credential
-exposure, and administrator follow-up without claiming absence.
+receipts. If workspace cleanup is not confirmed, require removal of the recorded workspace and
+rotation or revocation of `BREV_API_KEY`, `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and
+`NVIDIA_INFERENCE_API_KEY`. Record completed remediation before proceeding. If immediate
+remediation is unavailable, the signed brief must instead name the workspace, each credential, the
+responsible administrator, and the remediation deadline. Do not claim workspace absence.
 
 Offer three choices:
 

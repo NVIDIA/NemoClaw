@@ -218,8 +218,12 @@ retried without moving the semver tag. Do not call it promotion-only.
   with the general E2E proceed decision.
 - `Exact staging Brev Launchable` or its workspace cleanup fails: inspect the available `lane.log`,
   `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` artifacts. Offer a focused Launchable
-  rerun or let the maintainer proceed with the displayed status. If cleanup is not confirmed, record
-  the workspace identity, credential exposure, and administrator follow-up without claiming absence.
+  rerun or let the maintainer proceed with the displayed status. If cleanup is not confirmed,
+  require an administrator to remove the recorded workspace and rotate or revoke `BREV_API_KEY`,
+  `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and `NVIDIA_INFERENCE_API_KEY`. Record completed remediation
+  before proceeding. If immediate remediation is unavailable, the signed brief must instead name
+  the workspace, each credential, the responsible administrator, and the remediation deadline. Do
+  not claim workspace absence.
 - General E2E is old, incomplete, failed, or from another SHA: show it and offer focused, full, or
   proceed. Record the decision and reason in the brief.
 - Candidate is no longer on `origin/main`, the previous release changed, or the version is no longer

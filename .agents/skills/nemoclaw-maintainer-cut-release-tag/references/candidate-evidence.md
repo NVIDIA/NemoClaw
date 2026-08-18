@@ -198,12 +198,13 @@ run_or_stop "image check-run selection" jq -er '
       jobUrl: ($check.html_url // $check.details_url),
       status: $check.status,
       conclusion: $check.conclusion,
+      createdAt: $check.created_at,
       completedAt: $check.completed_at
     };
   def successful_check($name):
     ([.[].check_runs[]? |
       select(.name == $name and .status == "completed" and .conclusion == "success")] |
-      sort_by(.completed_at) | last) as $check |
+      sort_by([.created_at // "", .id // 0]) | last) as $check |
     if $check == null then
       error("No successful candidate check run named \($name) was found")
     else
@@ -211,7 +212,7 @@ run_or_stop "image check-run selection" jq -er '
     end;
   def latest_check($name):
     ([.[].check_runs[]? | select(.name == $name)] |
-      sort_by(.started_at // .completed_at // "") | last) as $check |
+      sort_by([.created_at // "", .id // 0]) | last) as $check |
     if $check == null then
       error("No candidate check run named \($name) was found")
     else
@@ -400,7 +401,11 @@ If the Launchable result is missing or non-successful, offer Launchable mode or 
 proceed with the displayed status. A new dispatch always tests current `origin/main`; it cannot
 create evidence for an older planned candidate. If the base-image aggregate is missing or failed,
 repair or rerun the affected publisher workflow and verifier. The E2E decision cannot replace the
-base-image result.
+base-image result. When workspace absence is not confirmed, require an administrator to remove the
+recorded workspace and rotate or revoke `BREV_API_KEY`, `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and
+`NVIDIA_INFERENCE_API_KEY`. Record completed remediation before proceeding. If immediate
+remediation is unavailable, the signed brief must instead name the workspace, each credential, the
+responsible administrator, and the remediation deadline. Do not claim workspace absence.
 
 ## Final Documentation Recheck
 

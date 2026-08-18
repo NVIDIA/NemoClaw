@@ -774,7 +774,7 @@ describe("release-latest-tag.sh", () => {
     expect(result.stderr).toContain("is not reachable from refs/remotes/origin/main");
   });
 
-  it("signs a release brief with a Launchable exception and pushes only the tag", () => {
+  it("signs a release brief with a Launchable exception reason and pushes only the tag", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
@@ -788,7 +788,7 @@ describe("release-latest-tag.sh", () => {
       .replace("- Decision: proceed.", "- Decision: proceed with recorded exception.")
       .replace(
         "Exceptions: None",
-        "Exceptions: The maintainer accepted the failed Launchable result and assigned workspace cleanup follow-up.",
+        "Exceptions: The maintainer accepted the failed Launchable result. Administrator Release Owner will remove workspace nclaw-e2e-1 and rotate or revoke BREV_API_KEY, NEMOCLAW_IMAGE_DISPATCH_TOKEN, and NVIDIA_INFERENCE_API_KEY by 2026-08-19T00:00:00Z.",
       );
     const messageFile = writeBrief(fixture, brief);
     const hookPath = path.join(fixture.work, ".git", "hooks", "pre-push");
@@ -1293,14 +1293,12 @@ describe("release-latest-tag.sh", () => {
     ],
     [
       "another version",
-      (brief: string) =>
-        brief.replace(/^# NemoClaw.*$/mu, "# NemoClaw v0.0.3 release brief"),
+      (brief: string) => brief.replace(/^# NemoClaw.*$/mu, "# NemoClaw v0.0.3 release brief"),
       "heading does not match planned tag",
     ],
     [
       "another candidate",
-      (brief: string) =>
-        brief.replace(/^- Candidate:.*$/mu, `- Candidate: \`${"f".repeat(40)}\``),
+      (brief: string) => brief.replace(/^- Candidate:.*$/mu, `- Candidate: \`${"f".repeat(40)}\``),
       "candidate does not match",
     ],
     [
@@ -1321,8 +1319,7 @@ describe("release-latest-tag.sh", () => {
     ],
     [
       "content after the exception record",
-      (brief: string) =>
-        brief.replace("Exceptions: None", "Exceptions: None\n\nTrailing content"),
+      (brief: string) => brief.replace("Exceptions: None", "Exceptions: None\n\nTrailing content"),
       "exactly one resolved Exceptions line",
     ],
   ])("rejects a release brief with %s", (_case, mutate, expectedError) => {
