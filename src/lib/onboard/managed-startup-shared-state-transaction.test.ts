@@ -115,18 +115,18 @@ describe("managed startup shared-state transaction", () => {
             : agent === "pi"
               ? []
               : [["config.toml", "dcode-original\n", 0o660] as const];
-      for (const [name, contents, fileMode] of originalFiles) {
+      originalFiles.forEach(([name, contents, fileMode]) => {
         const target = path.join(root, name);
         fs.writeFileSync(target, contents);
         fs.chmodSync(target, fileMode);
-      }
+      });
 
       beginManagedStartupSharedStateTransaction(managedStartupE2eProfile(agent), options);
-      for (const [name] of originalFiles) {
+      originalFiles.forEach(([name]) => {
         const target = path.join(root, name);
         fs.writeFileSync(target, "changed\n");
         fs.chmodSync(target, 0o600);
-      }
+      });
       const createManagedDrift: Record<ManagedStartupAgent, () => void> = {
         openclaw: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
         hermes: () => fs.writeFileSync(path.join(root, ".config-hash"), "new\n"),
@@ -142,13 +142,13 @@ describe("managed startup shared-state transaction", () => {
       createManagedDrift[agent]();
 
       expect(rollbackManagedStartupSharedStateTransaction(agent, options)).toBe(true);
-      for (const [name, contents, fileMode] of originalFiles) {
+      originalFiles.forEach(([name, contents, fileMode]) => {
         const target = path.join(root, name);
         expect(fs.readFileSync(target, "utf8")).toBe(contents);
         expect(mode(target)).toBe(fileMode);
         expect(fs.lstatSync(target).uid).toBe(effectiveUid());
         expect(fs.lstatSync(target).gid).toBe(effectiveGid());
-      }
+      });
       expect(mode(root)).toBe(0o750);
       const absentManagedPaths: Record<ManagedStartupAgent, readonly string[]> = {
         openclaw: [".config-hash"],

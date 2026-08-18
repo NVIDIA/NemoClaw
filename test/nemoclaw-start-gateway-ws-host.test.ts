@@ -588,9 +588,9 @@ describe("gateway dial-back base policy", () => {
   it("never targets loopback — the proxy always blocks loopback regardless of policy", () => {
     const endpoints = dialbackEndpoints();
     expect(endpoints.length).toBeGreaterThan(0);
-    for (const endpoint of endpoints) {
+    endpoints.forEach((endpoint) => {
       expect(endpoint.host).not.toBe("127.0.0.1");
       expect(endpoint.host).not.toBe("localhost");
-    }
+    });
   });
 });

@@ -135,7 +135,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
         "probe-not-running",
       ]);
       expect(runner.calls).toHaveLength(3);
-      for (const call of runner.calls) {
+      runner.calls.forEach((call) => {
         expect(call.command).toBe("docker");
         expect(call.args.slice(0, -1)).toEqual([
           "exec",
@@ -150,7 +150,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
           "probe",
         ]);
         expect(call.args.at(-1)).toMatch(/^[0-9a-f]{64}$/);
-      }
+      });
     });
 
     it("does not accept a composite missing-supervisor diagnostic", async () => {

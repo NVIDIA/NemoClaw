@@ -460,9 +460,9 @@ describe("CLI dispatch", () => {
       );
 
       const childEnv: Record<string, string> = {};
-      for (const [key, value] of Object.entries(process.env)) {
+      Object.entries(process.env).forEach(([key, value]) => {
         if (value !== undefined) childEnv[key] = value;
-      }
+      });
       delete childEnv.HF_TOKEN;
       delete childEnv.HUGGING_FACE_HUB_TOKEN;
       childEnv.HOME = home;

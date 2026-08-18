@@ -89,12 +89,12 @@ describe("PR merge conflict fixer workflow boundary", () => {
       actionReferences.every((reference) => /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}$/u.test(reference)),
     ).toBe(true);
 
-    for (const job of [scan, resolve, publish]) {
+    [scan, resolve, publish].forEach((job) => {
       expect(checkout(job).with).toMatchObject({
         "persist-credentials": false,
         ref: "${{ github.sha }}",
       });
-    }
+    });
     expect(namedStep(publish, "Validate and publish the merge commit").run).toContain(
       "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/publish.mts",
     );

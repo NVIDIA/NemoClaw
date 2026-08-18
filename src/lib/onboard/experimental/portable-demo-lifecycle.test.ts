@@ -648,7 +648,7 @@ describe("portable demo sandbox lifecycle", () => {
       },
     });
 
-    for (const [, commandEnv] of runtime.podman.mock.calls) {
+    runtime.podman.mock.calls.forEach(([, commandEnv]) => {
       expect(commandEnv).toMatchObject({
         HOME: RUNTIME_AUTHORITY.homeDir,
         XDG_CONFIG_HOME: RUNTIME_AUTHORITY.configHome,
@@ -657,7 +657,7 @@ describe("portable demo sandbox lifecycle", () => {
       expect(commandEnv).not.toHaveProperty("CONTAINER_CONNECTION");
       expect(commandEnv).not.toHaveProperty("CONTAINER_HOST");
       expect(commandEnv).not.toHaveProperty("CONTAINER_SSHKEY");
-    }
+    });
   });
 
   it("refuses socket replacement after portable workload inspection (#8584)", () => {

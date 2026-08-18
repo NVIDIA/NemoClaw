@@ -444,10 +444,10 @@ describe("state-validation phase fixture", () => {
 
       await fixture(runner).from("preflight-failure-no-sandbox", instance());
 
-      for (const call of runner.calls.slice(1)) {
+      runner.calls.slice(1).forEach((call) => {
         expect(call.options?.env).toEqual(expect.objectContaining({ PATH: expect.any(String) }));
         expect(call.options?.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
-      }
+      });
     } finally {
       if (original === undefined) {
         delete process.env.NVIDIA_INFERENCE_API_KEY;

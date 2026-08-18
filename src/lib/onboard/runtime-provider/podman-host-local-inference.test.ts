@@ -186,7 +186,7 @@ describe("Podman host-local inference lifecycle", () => {
         event.includes(`${PODMAN_INFERENCE_PROBE_MANAGED_LABEL}=true`),
     );
     expect(probeRuns).toHaveLength(2);
-    for (const run of probeRuns) {
+    probeRuns.forEach((run) => {
       expect(run).toContain("--detach");
       expect(run).toContain("--read-only");
       expect(run).toContain("--ipc private");
@@ -199,7 +199,7 @@ describe("Podman host-local inference lifecycle", () => {
       expect(run).not.toContain("host.containers.internal");
       expect(run).not.toContain("host.openshell.internal");
       expect(run).toContain(harness.input.networkGatewayIp);
-    }
+    });
     expect(harness.probe()).toBeNull();
     expect(harness.container()).toMatchObject({ running: true });
   });

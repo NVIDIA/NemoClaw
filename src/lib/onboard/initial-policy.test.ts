@@ -369,11 +369,11 @@ network_policies: {}
 
     expect(gpuDoc.filesystem_policy.read_only).not.toContain(writablePath);
     expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, writablePath);
-    for (const sysfsPath of STATION_GB300_SYSFS_READ_ONLY_PATHS.filter(
+    STATION_GB300_SYSFS_READ_ONLY_PATHS.filter(
       (candidate) => candidate !== writablePath,
-    )) {
+    ).forEach((sysfsPath) => {
       expectSingleOccurrence(gpuDoc.filesystem_policy.read_only, sysfsPath);
-    }
+    });
   });
 
   it.each(Array.from(STATION_GB300_SYSFS_READ_ONLY_PATHS, (value) => [value]))(
@@ -429,9 +429,9 @@ network_policies: {}
       "/sys/devices/system/cpu",
       "/sys/module/nvidia/initstate",
     ]);
-    for (const discoveredPath of discoveredPaths) {
+    discoveredPaths.forEach((discoveredPath) => {
       expectSingleOccurrence(preparedDoc.filesystem_policy.read_only, discoveredPath);
-    }
+    });
     expect(preparedDoc.filesystem_policy.read_only).not.toContain("/sys");
     expect(prepared.cleanup?.()).toBe(true);
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
@@ -464,9 +464,9 @@ network_policies: {}
     expect(commands[1].args.join(" ")).toContain("/proc/self/comm");
     expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
-    for (const command of commands) {
+    commands.forEach((command) => {
       expect(command.args.every((arg) => !/[\r\n]/.test(arg))).toBe(true);
-    }
+    });
   });
 
   it("returns network policy names from a policy document", () => {
