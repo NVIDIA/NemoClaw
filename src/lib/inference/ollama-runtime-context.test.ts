@@ -351,6 +351,25 @@ describe("Ollama runtime context helpers", () => {
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
   });
 
+  it("advises a larger model when the native cap sits above the auto-detect ceiling", () => {
+    const result = applyOllamaRuntimeContextWindow("qwen2.5:0.5b", getOllamaHost, {
+      env: {},
+      contextWindowFloor: 8_388_608,
+      logger: { log: () => {}, warn: () => {} },
+      runCaptureImpl: makeOllamaCapture(
+        JSON.stringify({ models: [{ name: "qwen2.5:0.5b", context_length: 4096 }] }),
+        JSON.stringify({
+          model_info: { "general.architecture": "qwen2", "qwen2.context_length": 6_291_456 },
+        }),
+      ),
+    });
+
+    const failure = expectOllamaRuntimeContextFailure(result);
+    expect(failure.message).toContain("native context is 6291456 tokens");
+    expect(failure.message).toContain("Select a model whose native context is at least 8388608");
+    expect(failure.message).not.toContain("OLLAMA_CONTEXT_LENGTH=8388608");
+  });
+
   it("parses the native context length for the declared model architecture (#9458)", () => {
     expect(
       parseOllamaNativeContextLength({
@@ -362,6 +381,11 @@ describe("Ollama runtime context helpers", () => {
         model_info: { "general.architecture": " llama ", "llama.context_length": "131072" },
       }),
     ).toBe(131_072);
+    expect(
+      parseOllamaNativeContextLength({
+        model_info: { "general.architecture": "qwen2", "qwen2.context_length": 6_291_456 },
+      }),
+    ).toBe(6_291_456);
   });
 
   it("rejects native context metadata without an exact architecture match (#9458)", () => {

@@ -270,8 +270,11 @@ export function parseOllamaNativeContextLength(payload: unknown): number | null 
   const architecture =
     typeof info["general.architecture"] === "string" ? info["general.architecture"].trim() : "";
   if (!architecture) return null;
-  const parsed = parsePositiveInteger(info[`${architecture}.context_length`]);
-  return parsed && parsed <= MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW ? parsed : null;
+  // No auto-detect ceiling here: it guards runtime adoption of /api/ps values,
+  // while this metadata only refines remediation wording. A safe-integer
+  // native value above the ceiling must still classify as model-limited when
+  // the required window is even larger.
+  return parsePositiveInteger(info[`${architecture}.context_length`]);
 }
 
 /**
