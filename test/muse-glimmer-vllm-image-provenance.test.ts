@@ -46,9 +46,9 @@ describe("Muse Glimmer vLLM image provenance", () => {
   ] as const)("rejects %s", (_name, pathParts, replacement) => {
     const changed = structuredClone(provenance) as JsonRecord;
     let target = changed;
-    for (const part of pathParts.slice(0, -1)) {
+    pathParts.slice(0, -1).forEach((part) => {
       target = target[part] as JsonRecord;
-    }
+    });
     const leaf = pathParts.at(-1)!;
     expect(Object.hasOwn(target, leaf)).toBe(true);
     const original = target[leaf];

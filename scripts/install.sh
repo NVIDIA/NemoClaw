@@ -230,7 +230,7 @@ resolve_nemoclaw_gateway_port() {
     error "NEMOCLAW_GATEWAY_PORT must not overlap the 18789-18799 dashboard port range."
   fi
   case "$port" in
-    8000 | 8081 | 11434 | 11435 | 11436 | 11437)
+    8000 | 8081 | 11434 | 11435 | 11436 | 11437 | 11438)
       error "NEMOCLAW_GATEWAY_PORT must not overlap a reserved inference or runtime-adapter port ($port)."
       ;;
   esac

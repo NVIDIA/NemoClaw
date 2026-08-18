@@ -252,16 +252,16 @@ describe("config-io", () => {
         "ollama-auth-proxy.pid",
         "usage-notice.json",
       ];
-      for (const name of siblings) {
+      siblings.forEach((name) => {
         writeFileWithMode(path.join(dir, name), "stale", 0o644);
-      }
+      });
 
       readConfigFile(target, null);
 
-      for (const name of siblings) {
+      siblings.forEach((name) => {
         const mode = fs.statSync(path.join(dir, name)).mode & 0o777;
         expect(mode, `${name} should be tightened to 600`).toBe(0o600);
-      }
+      });
     });
   });
 

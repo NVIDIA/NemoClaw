@@ -249,9 +249,9 @@ describe("simple global oclif adapters", () => {
     try {
       await expect(GatewayTokenCliCommand.run(["hermes"], rootDir)).resolves.toBeUndefined();
       expect(process.exitCode).toBe(1);
-      for (const line of hermesLines) {
+      hermesLines.forEach((line) => {
         expect(errorSpy).toHaveBeenCalledWith(line);
-      }
+      });
       const combined = errorSpy.mock.calls.map((args) => args.join(" ")).join("\n");
       expect(combined).not.toMatch(/ExitError|@oclif\/core|at Object\.exit/);
     } finally {

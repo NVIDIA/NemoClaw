@@ -410,26 +410,26 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
     await artifacts.writeJson("fake-openai-requests.json", fake.requests());
     await fake.close();
   });
-  for (const gateway of [gatewayA, gatewayB]) {
+  [gatewayA, gatewayB].forEach((gateway) => {
     cleanup.trackGateway(host, gateway, {
       artifactName: `cleanup-gateway-destroy-${gateway}`,
       env: openshellEnvForGateway(gateway),
       timeoutMs: 60_000,
     });
-  }
-  for (const port of [
+  });
+  [
     18799, 18798, 18797, 18796, 18795, 18794, 18793, 18792, 18791, 18790, 18789,
-  ]) {
+  ].forEach((port) => {
     cleanup.trackForward(host, port, {
       artifactName: `cleanup-forward-stop-${port}`,
       env: commandEnv(),
       timeoutMs: 15_000,
     });
-  }
-  for (const [name, gateway, port] of [
+  });
+  ([
     [SANDBOX_A, gatewayA, GATEWAY_PORT_A],
     [SANDBOX_B, gatewayB, GATEWAY_PORT_B],
-  ] as const) {
+  ] as const).forEach(([name, gateway, port]) => {
     cleanup.trackDisposable(`delete concurrent gateway OpenShell sandbox ${name}`, () =>
       sandbox.cleanupSandbox(name, {
         artifactName: `cleanup-openshell-delete-${name}`,
@@ -440,7 +440,7 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
     cleanup.trackDisposable(`destroy concurrent gateway sandbox ${name}`, () =>
       cleanupNemoClawSandbox(host, name, port),
     );
-  }
+  });
 
   await bestEffortPreclean(host, sandbox, gatewayA, gatewayB);
 

@@ -23,7 +23,7 @@ describe("serving profile discovery", () => {
     expect(entries.map(({ id }) => id)).toEqual(
       [...catalog.presets].map(({ metadata }) => metadata.id).sort(),
     );
-    for (const entry of entries) {
+    entries.forEach((entry) => {
       expect(entry).toMatchObject({
         id: expect.any(String),
         displayName: expect.any(String),
@@ -37,7 +37,7 @@ describe("serving profile discovery", () => {
       expect(
         entry.compatible ? entry.incompatibilityReason : typeof entry.incompatibilityReason,
       ).toBe(entry.compatible ? null : "string");
-    }
+    });
     expect(entries.some(({ compatible }) => compatible)).toBe(true);
     expect(entries.some(({ compatible }) => !compatible)).toBe(true);
   });

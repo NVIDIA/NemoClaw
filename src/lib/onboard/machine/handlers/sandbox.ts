@@ -1219,10 +1219,10 @@ class SandboxStateFlow<
     const recreate = state.session?.checkpoint?.sandboxRecreate;
     return Boolean(
       handoff &&
-        recreate &&
-        recreate.sandboxName === state.sandboxName &&
-        recreate.targetIntentFingerprint === handoff &&
-        sandboxRecreatePhaseReached(recreate.phase, "deleted"),
+      recreate &&
+      recreate.sandboxName === state.sandboxName &&
+      recreate.targetIntentFingerprint === handoff &&
+      sandboxRecreatePhaseReached(recreate.phase, "deleted"),
     );
   }
 
@@ -1916,8 +1916,11 @@ class SandboxStateFlow<
       }
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
-      const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
-        this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
+      const {
+        nemoclawVersion: _builtFingerprint,
+        agent: _registeredAgent,
+        ...agentRegistryFields
+      } = this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
       // Preserve the validated route and credential env-var name, never a credential value.
       this.deps.updateSandboxRegistry(sandboxName, {
         model: this.options.model,

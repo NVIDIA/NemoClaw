@@ -165,13 +165,13 @@ describe("managed-image failure diagnostic export", () => {
         sourceRoot,
         `2026-07-29T01-02-${String(index).padStart(2, "0")}-000Z-agent`,
       );
-      for (const name of [
+      [
         "openshell-gateway-relevant.log",
         "openshell-gateway-tail.log",
         "summary.txt",
-      ]) {
+      ].forEach((name) => {
         fs.writeFileSync(path.join(diagnosticBundle, name), largeButReadable);
-      }
+      });
       fs.writeFileSync(path.join(diagnosticBundle, "rootfs-console.log"), tooLarge);
     }
 

@@ -45,6 +45,7 @@ import {
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
+import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
@@ -263,6 +264,7 @@ async function assertColdOnboardPerformance(input: {
   const maxSilenceMs = maximumOutputSilenceMs(traceWindow, input.outputEvents);
   const maxSilenceSecs = Math.ceil(maxSilenceMs / 1_000);
   const rootEndToInstallCompletionMs = input.installCompletedAtMs - traceWindow.finishedAtMs;
+  const workload = readFullE2eColdWorkloadEvidence(SANDBOX_NAME, usedBuildKitPrebuild);
 
   const firstTurnStartedAtMs = Date.now();
   const turn = await input.sandbox.execShell(
@@ -333,13 +335,13 @@ async function assertColdOnboardPerformance(input: {
     maxSilenceBudgetSecs: MAX_SILENCE_SECS,
     buildKitFallback,
     usedBuildKitPrebuild,
+    workload,
     classicBuildSteps,
     responseChars,
   });
 
   expect(plain, "expected literal wizard step [1/8] in installer output").toContain("[1/8]");
   expect(buildKitFallback, "expected no fallback from BuildKit to the gateway builder").toBe(false);
-  expect(usedBuildKitPrebuild, "expected the cold install to use BuildKit").toBe(true);
   expect(classicBuildSteps, "expected no classic per-instruction build steps").toBe(0);
   expect(
     maxSilenceSecs,

@@ -126,7 +126,7 @@ function containsTestDefinition(node: ts.Node): boolean {
   return found;
 }
 
-function isFunctionLike(node: ts.Node): boolean {
+function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (
     ts.isFunctionDeclaration(node) ||
     ts.isFunctionExpression(node) ||
@@ -138,8 +138,40 @@ function isFunctionLike(node: ts.Node): boolean {
   );
 }
 
-function isLoop(node: ts.Node): boolean {
+function functionName(node: ts.FunctionLikeDeclaration): string | null {
+  if (ts.isFunctionDeclaration(node) && node.name) return node.name.text;
+  return ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)
+    ? node.parent.name.text
+    : null;
+}
+
+type LoopStatement = ts.ForStatement | ts.ForInStatement | ts.ForOfStatement;
+
+function isLoop(node: ts.Node): node is LoopStatement {
   return ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node);
+}
+
+function thinCallbackForwardingLoop(node: ts.FunctionLikeDeclaration): LoopStatement | null {
+  if (!node.body || !ts.isBlock(node.body) || node.body.statements.length !== 1) return null;
+  const statement = node.body.statements[0];
+  if (!statement || !isLoop(statement)) return null;
+  const parameters = new Set(
+    node.parameters.flatMap(({ name }) => (ts.isIdentifier(name) ? [name.text] : [])),
+  );
+  let invokesParameter = false;
+  function visit(child: ts.Node): void {
+    if (
+      ts.isCallExpression(child) &&
+      ts.isIdentifier(child.expression) &&
+      parameters.has(child.expression.text)
+    ) {
+      invokesParameter = true;
+      return;
+    }
+    ts.forEachChild(child, visit);
+  }
+  visit(statement);
+  return invokesParameter ? statement : null;
 }
 
 function countTestLoops(file: string, source: string | null): number {
@@ -151,24 +183,86 @@ function countTestLoops(file: string, source: string | null): number {
     true,
     scriptKind(file),
   );
-  const testContexts: boolean[] = [];
-  let count = 0;
+  type LexicalScope = ts.SourceFile | ts.Block;
+  const localFunctions = new Map<LexicalScope, Map<string, ts.FunctionLikeDeclaration>>();
+  function enclosingScope(node: ts.Node): LexicalScope | null {
+    let current: ts.Node | undefined = node.parent;
+    while (current && !ts.isSourceFile(current) && !ts.isBlock(current)) {
+      current = current.parent;
+    }
+    return current ?? null;
+  }
+  function collectFunctions(node: ts.Node): void {
+    if (isFunctionLike(node)) {
+      const name = functionName(node);
+      const scope = enclosingScope(node);
+      if (name && scope) {
+        const functions = localFunctions.get(scope) ?? new Map();
+        functions.set(name, node);
+        localFunctions.set(scope, functions);
+      }
+    }
+    ts.forEachChild(node, collectFunctions);
+  }
+  collectFunctions(sourceFile);
+
+  function resolveLocalFunction(name: string, node: ts.Node): ts.FunctionLikeDeclaration | null {
+    let current: ts.Node | undefined = node;
+    while (current) {
+      if (ts.isSourceFile(current) || ts.isBlock(current)) {
+        const helper = localFunctions.get(current)?.get(name);
+        if (helper) return helper;
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
+  const callCounts = new Map<ts.FunctionLikeDeclaration, number>();
+  function collectCalls(node: ts.Node): void {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const helper = resolveLocalFunction(node.expression.text, node);
+      if (helper) callCounts.set(helper, (callCounts.get(helper) ?? 0) + 1);
+    }
+    ts.forEachChild(node, collectCalls);
+  }
+  collectCalls(sourceFile);
+
+  const countedLoops = new Set<LoopStatement>();
+  function visitTestContext(
+    node: ts.Node,
+    activeFunctions = new Set<ts.FunctionLikeDeclaration>(),
+  ): void {
+    if (isLoop(node)) countedLoops.add(node);
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const helper = resolveLocalFunction(node.expression.text, node);
+      if (
+        helper &&
+        !activeFunctions.has(helper) &&
+        ((callCounts.get(helper) ?? 0) === 1 || thinCallbackForwardingLoop(helper) !== null)
+      ) {
+        visitTestContext(helper, new Set([...activeFunctions, helper]));
+      }
+    }
+    ts.forEachChild(node, (child) => visitTestContext(child, activeFunctions));
+  }
 
   function visit(node: ts.Node): void {
-    let enteredFunction = false;
-    if (isFunctionLike(node)) {
-      const call = ts.isCallExpression(node.parent) ? node.parent : null;
-      const name = call === null ? null : rootCallName(call.expression);
-      testContexts.push(name === "it" || name === "test" || testContexts.at(-1) === true);
-      enteredFunction = true;
+    if (isLoop(node) && containsTestDefinition(node)) countedLoops.add(node);
+    if (ts.isCallExpression(node) && ["it", "test"].includes(rootCallName(node.expression) ?? "")) {
+      for (const argument of node.arguments) {
+        if (isFunctionLike(argument)) visitTestContext(argument);
+        if (ts.isIdentifier(argument)) {
+          const callback = resolveLocalFunction(argument.text, argument);
+          if (callback) visitTestContext(callback, new Set([callback]));
+        }
+      }
     }
-    if (isLoop(node) && (testContexts.at(-1) === true || containsTestDefinition(node))) count += 1;
     ts.forEachChild(node, visit);
-    if (enteredFunction) testContexts.pop();
   }
 
   visit(sourceFile);
-  return count;
+  return countedLoops.size;
 }
 
 function formatList(heading: string, details: readonly string[], remediation: string): string {
@@ -340,9 +434,9 @@ export const diagnostics = {
     ),
   loops: (details: readonly string[]) =>
     formatList(
-      "Changed test files add loops inside test callbacks or around test definitions.",
+      "Changed test files add loops inside test callbacks, around test definitions, through one-use helpers, or through callback-forwarding helpers.",
       details,
-      "Move iteration for one behavior into a named helper, or use test.each for independent cases.",
+      "Keep one-scenario setup, sequence, retry, polling, and aggregate loops direct. Use test.each for independent cases. Do not move one test's loop into a named callback or one-use helper.",
     ),
 };
 

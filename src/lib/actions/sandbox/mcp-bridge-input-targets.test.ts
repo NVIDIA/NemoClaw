@@ -182,7 +182,7 @@ replace(adapters, "registerAgentAdapter", () => {});
 replace(policy, "applyGeneratedPolicy", (_sandbox, _entry, target) => { admittedTarget = target; });
 replace(state, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
-replace(provider, "assertNoAttachedProviderCredentialCollision", () => {});
+replace(provider, "assertNoAttachedProviderCredentialCollisions", () => {});
 replace(provider, "inspectMcpProvider", () => ({
   credentialKeys: null, exists: false, id: null, resourceVersion: null, type: null,
 }));

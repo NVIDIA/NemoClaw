@@ -31,6 +31,7 @@ import {
 } from "../../onboard/runtime-provider/access";
 import {
   emitProviderDetachResidualHint,
+  removeManagedHermesStateVolume,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
@@ -612,6 +613,28 @@ async function destroySandboxUnlocked(
   // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
   // not shut down services for a sandbox we never confirmed deleted (#6046).
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
+  if (deleteSucceededOrAlreadyGone && sandbox) {
+    const stateVolumeCleanup = removeManagedHermesStateVolume({
+      agentName: sandbox.agent,
+      runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
+      sandboxName,
+      workloadKind: sandbox.workload?.kind ?? "",
+    });
+    if (stateVolumeCleanup.status === "failed") {
+      console.error(
+        `  Sandbox '${sandboxName}' is gone, but its managed Hermes state volume '${stateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(stateVolumeCleanup.detail)}`,
+      );
+      console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
+      process.exit(1);
+    }
+    if (stateVolumeCleanup.status === "not-owned") {
+      console.warn(
+        `  ${YW}⚠${R} Left Docker volume '${stateVolumeCleanup.volumeName}' untouched because ${stateVolumeCleanup.detail}.`,
+      );
+    } else if (stateVolumeCleanup.status === "removed") {
+      console.log(`  Removed managed Hermes state volume for '${sandboxName}'.`);
+    }
+  }
   const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
     deleteSucceededOrAlreadyGone,
     registeredSandboxCount: registry.listSandboxes().sandboxes.length,

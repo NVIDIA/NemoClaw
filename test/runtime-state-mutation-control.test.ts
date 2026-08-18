@@ -1403,14 +1403,14 @@ describe("runtime state mutation controller", () => {
         "activation-cleanup.json",
       ].sort(),
     );
-    for (const result of Object.values(faults)) {
+    Object.values(faults).forEach((result) => {
       expect(result).toEqual({
         faulted: true,
         progressRecorded: true,
         pending: false,
         clean: true,
       });
-    }
+    });
   });
 
   it("records release intent before resuming PID1 last and resolves retry ambiguity (#7744)", () => {

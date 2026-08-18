@@ -736,7 +736,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       ].map(fingerprint);
       expect([...canonicalSamples.keys()]).toEqual(canonicalFingerprints);
 
-      for (const { name, sample, rawSecret } of [...canonicalSamples.values(), ...extraSamples]) {
+      [...canonicalSamples.values(), ...extraSamples].forEach(({ name, sample, rawSecret }) => {
         expect(detectsSecret(sample), `${name} should be detected`).toBe("secret");
         const redacted = redactsSecret(sample);
         expect(redacted, `${name} should include a redaction marker`).toContain(
@@ -745,7 +745,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         expect(redacted, `${name} should not retain the raw secret`).not.toContain(
           rawSecret ?? sample,
         );
-      }
+      });
       expect(redactsSecret(langsmithPt)).toBe("[REDACTED_SECRET]");
       expect(redactsSecret(langsmithSk)).toBe("[REDACTED_SECRET]");
 

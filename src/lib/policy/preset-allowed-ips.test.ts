@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyPresetContent, loadPresetFromFile, networkPoliciesHasAllowedIps } from ".";
 
@@ -209,6 +209,28 @@ describe("networkPoliciesHasAllowedIps prototype-chain guard (#6072)", () => {
 });
 
 describe("applyPresetContent allowed_ips guard (#6073)", () => {
+  it("rejects a custom preset when the full YAML document is invalid (#9406)", () => {
+    const content = `preset: corp
+preset: corp
+network_policies:
+  wide_open:
+    endpoints:
+      - allowed_ips: ["169.254.169.254"]
+`;
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(
+      applyPresetContent("test-sandbox", "invalid-full-document", content, {
+        custom: { sourcePath: "invalid.yaml" },
+      }),
+    ).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      "  Preset 'invalid-full-document' has invalid or missing network_policies.",
+    );
+
+    error.mockRestore();
+  });
+
   it("rejects custom preset content containing allowed_ips before any side effects", () => {
     const content = `\
 preset:

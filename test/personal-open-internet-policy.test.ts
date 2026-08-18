@@ -110,13 +110,13 @@ describe("Personal open internet policy preset", () => {
     expect(policy.binaries).toEqual([{ path: "/**" }]);
     expect(policy.endpoints).toHaveLength(1);
     expect(policy.endpoints?.[0]).toMatchObject({ ports: [80, 443] });
-    for (const endpoint of policy.endpoints ?? []) {
+    (policy.endpoints ?? []).forEach((endpoint) => {
       expect(endpoint.port).toBeUndefined();
       expect(endpoint.host).toBeUndefined();
       expect(endpoint.protocol).toBeUndefined();
       expect(endpoint.rules).toBeUndefined();
       expect(endpoint.allowed_ips?.length).toBeGreaterThan(0);
-    }
+    });
   });
 
   it("covers public and private networks without forbidden catch-all CIDRs", () => {

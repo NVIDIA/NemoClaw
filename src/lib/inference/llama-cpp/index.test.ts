@@ -104,10 +104,10 @@ describe("probeLlamaCppAttachment", () => {
       model: "team/model-alias",
     });
     expect(probe).toHaveBeenCalledTimes(5);
-    for (const [argv, options] of probe.mock.calls) {
+    probe.mock.calls.forEach(([argv, options]) => {
       expect(argv).toEqual(expect.arrayContaining(["--max-time", "5", "--max-filesize", "262144"]));
       expect(options).toEqual(expect.objectContaining({ maxResponseBytes: 262144 }));
-    }
+    });
   });
 
   it("accepts llama.cpp's native metrics-disabled response (#8161)", () => {
@@ -368,9 +368,9 @@ describe("probeLlamaCppAttachment", () => {
     const configModes: number[] = [];
     let index = 0;
     const probe = vi.fn((argv: string[], options?: CurlProbeOptions) => {
-      for (const configPath of options?.trustedConfigFiles ?? []) {
+      (options?.trustedConfigFiles ?? []).forEach((configPath) => {
         configModes.push(fs.statSync(configPath).mode & 0o777);
-      }
+      });
       const current = responses[index++];
       expect(current, `unexpected probe ${index}`).toBeDefined();
       return current!;
@@ -379,11 +379,11 @@ describe("probeLlamaCppAttachment", () => {
     const result = probeLlamaCppAttachment(token, { runCurlProbeImpl: probe });
 
     expect(JSON.stringify(result)).not.toContain(token);
-    for (const [argv, options] of probe.mock.calls) {
+    probe.mock.calls.forEach(([argv, options]) => {
       expect(JSON.stringify(argv)).not.toContain(token);
       expect((options?.trustedConfigFiles ?? []).every((configPath) =>
           Object.is(fs.existsSync(configPath), false))).toBe(true);
-    }
+    });
     expect(configModes).toEqual([0o600, 0o600, 0o600, 0o600]);
   });
 });

@@ -360,6 +360,25 @@ async function waitForFileText(filePath: string, text: string): Promise<void> {
   });
 }
 
+function readGatewayCommands(scope: FixtureScope): Record<string, unknown>[] {
+  return fs
+    .readFileSync(scope.gatewayCommandLog, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+async function waitForGatewayCommands(
+  scope: FixtureScope,
+  expectedKinds: string[],
+): Promise<Record<string, unknown>[]> {
+  return vi.waitFor(() => {
+    const commands = readGatewayCommands(scope);
+    expect(commands.map((command) => command.kind)).toEqual(expectedKinds);
+    return commands;
+  }, { timeout: 5_000 });
+}
+
 function pidIsActive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -655,12 +674,7 @@ describe("portable profile systemctl fixture", () => {
         expect(activeIdentity.stdout).toContain("ActiveState=active\n");
         expect(activeIdentity.stdout).toContain(`MainPID=${String(gatewayProcess.pid)}\n`);
 
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+        const commands = await waitForGatewayCommands(scope, ["generate-certs", "serve"]);
         expect(commands[0]).toMatchObject({
           args: [
             "generate-certs",
@@ -747,12 +761,7 @@ describe("portable profile systemctl fixture", () => {
         );
         expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
         expect(fs.existsSync(gatewayLaunchPidFile)).toBe(true);
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+        const commands = await waitForGatewayCommands(scope, ["generate-certs", "serve"]);
         const gatewayPid = commands[1]!.pid as number;
         expect(readFixtureProcessRecord(gatewayLaunchPidFile).pid).toBe(gatewayPid);
         expect(pidIsActive(gatewayPid)).toBe(true);
@@ -805,12 +814,7 @@ describe("portable profile systemctl fixture", () => {
         expect(launchedPid).not.toBeNull();
         const gatewayPid = Number(launchedPid![1]);
         await vi.waitFor(() => expect(pidIsActive(gatewayPid)).toBe(false));
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs"]);
+        await waitForGatewayCommands(scope, ["generate-certs"]);
       } finally {
         await cleanFixture(scope);
       }
@@ -1347,11 +1351,11 @@ describe("portable profile systemctl fixture", () => {
         ["--user", "start", "podman.socket", "trailing"],
         ["--user", "enable", "podman.socket"],
       ];
-      for (const args of driftedCommands) {
+      driftedCommands.forEach((args) => {
         const result = systemctl(scope, args);
         expect(result.status, args.join(" ")).toBe(64);
         expect(result.stderr).toContain("unexpected user-service command:");
-      }
+      });
     } finally {
       fs.rmSync(scope.directory, { force: true, recursive: true });
     }
@@ -1367,11 +1371,11 @@ describe("portable profile systemctl fixture", () => {
         ["--user", "enable", "--now", "nemoclaw-openshell-gateway"],
         ["--user", "is-active", "nemoclaw-openshell-gateway", "--quiet"],
       ];
-      for (const args of driftedCommands) {
+      driftedCommands.forEach((args) => {
         const result = systemctl(scope, args);
         expect(result.status, args.join(" ")).toBe(64);
         expect(result.stderr).toContain("unexpected user-service command:");
-      }
+      });
     } finally {
       fs.rmSync(scope.directory, { force: true, recursive: true });
     }
