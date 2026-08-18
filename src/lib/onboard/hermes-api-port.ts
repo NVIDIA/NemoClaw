@@ -226,10 +226,11 @@ export async function reserveCreateSandboxHermesApiPort(options: {
     return { effectivePort, reservation: await reservePort(effectivePort) };
   };
 
-  // Explicit and durable registered ports are identity, not allocation hints.
-  // Preserve them and report a bind collision instead of silently changing the
-  // sandbox's configured endpoint. Route-only inference reservations are not
-  // durable identity and must allocate like an unregistered name (#9291).
+  // Explicit and durable registered ports pin the sandbox endpoint, not
+  // allocation hints. Preserve them and report a bind collision instead of
+  // silently changing the sandbox's configured endpoint. Route-only inference
+  // reservations are not a durable sandbox and must allocate like an
+  // unregistered name (#9291).
   if (hasRequestedPort || registered) {
     const effectivePort = resolveOnboardHermesApiPort(options.sandboxName, {
       env,
@@ -361,8 +362,8 @@ export function retargetHermesApiPortInUrl(url: string, apiPort: number): string
  * actual create/recreate or created-sandbox registration boundary. Other
  * consumers reject a conflicting explicit value before they mutate a host
  * forward. A durable registered sandbox without a port predates this feature
- * and already runs on the default. A route-only inference reservation is not
- * durable identity and must allocate like an unregistered name (#9291).
+ * and already runs on the default. A route-only inference reservation is not a
+ * durable sandbox and must allocate like an unregistered name (#9291).
  *
  * A recreate keeps its source row, so its create and registration boundaries
  * may apply an explicit value. Without an explicit value, it preserves the

@@ -205,6 +205,31 @@ describe("reserveCreateSandboxHermesApiPort", () => {
     expect(env[HERMES_API_PORT_ENV]).toBe("8642");
   });
 
+  it("reports EADDRINUSE for a created sandbox that still has pendingRouteReservation (#9291)", async () => {
+    const reservePort = vi.fn().mockRejectedValueOnce(
+      Object.assign(new Error("port 8642 is already held"), { code: "EADDRINUSE" }),
+    );
+    const env: NodeJS.ProcessEnv = {};
+
+    await expect(
+      reserveCreateSandboxHermesApiPort({
+        sandboxName: "beta",
+        env,
+        getSandbox: () => ({
+          pendingRouteReservation: true,
+          createdAt: "2026-08-17T00:00:00.000Z",
+        }),
+        forwardListOutput: "",
+        isPortBoundCheck: noneBound,
+        registryOccupiedPorts: new Map(),
+        reservePort,
+      }),
+    ).rejects.toMatchObject({ code: "EADDRINUSE" });
+
+    expect(reservePort.mock.calls).toEqual([[8642]]);
+    expect(env[HERMES_API_PORT_ENV]).toBe("8642");
+  });
+
   it("releases a held port when sandbox preparation fails", async () => {
     const release = vi.fn(async () => undefined);
 
