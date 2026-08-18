@@ -1070,7 +1070,7 @@ cleanup() {
   local cleanup_status=0
   trap - EXIT
   set +e
-  exec 3>&- 2>/dev/null || true
+  exec 3>&- || true
   if [[ -n "$session_pid" ]] && kill -0 "$session_pid" 2>/dev/null; then
     kill -TERM "$session_pid" 2>/dev/null || true
     sleep 1

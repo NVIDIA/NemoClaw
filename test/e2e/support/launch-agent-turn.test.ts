@@ -1349,6 +1349,7 @@ it.runIf(process.platform === "linux")(
     expect(baselineRemoved).toBe(false);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(1);
+    expect(result.stderr).toContain("structured session baseline cleanup failed");
   },
 );
 
