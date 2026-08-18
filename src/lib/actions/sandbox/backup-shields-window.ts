@@ -32,11 +32,13 @@ export function openBackupShieldsWindow(
 
   console.log("");
   console.log(`  ${YW}Shields are UP${R} — temporarily unlocking for ${options.operation}...`);
+  let policySnapshotRecovery: shields.ShieldsPolicySnapshotRecovery | undefined;
   try {
-    shields.shieldsDown(sandboxName, {
+    policySnapshotRecovery = shields.shieldsDown(sandboxName, {
       reason: options.reason,
       timeout: "30m",
       throwOnError: true,
+      issuePolicySnapshotRecovery: true,
       ...(options.deferAutoRestoreWhileOwnerAlive ? { deferAutoRestoreWhileOwnerAlive: true } : {}),
       ...(options.allowLegacyHermesProtocol ? { allowLegacyHermesProtocol: true } : {}),
     });
@@ -51,12 +53,9 @@ export function openBackupShieldsWindow(
     );
     return null;
   }
-  try {
-    window.policySnapshotRecovery = shields.captureShieldsPolicySnapshotRecovery(sandboxName);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  if (!policySnapshotRecovery) {
     console.error("");
-    console.error(`  ${_RD}Failed to preserve Shields recovery authority:${R} ${message}`);
+    console.error(`  ${_RD}Failed to preserve Shields recovery authority.${R}`);
     try {
       shields.shieldsUp(sandboxName, {
         throwOnError: true,
@@ -64,7 +63,8 @@ export function openBackupShieldsWindow(
       });
       console.error("  Backup was not started; Shields were restored to UP.");
     } catch (restoreError) {
-      const restoreMessage = restoreError instanceof Error ? restoreError.message : String(restoreError);
+      const restoreMessage =
+        restoreError instanceof Error ? restoreError.message : String(restoreError);
       console.error(`  ${_RD}Shields recovery also failed:${R} ${restoreMessage}`);
       console.error(
         "  Recover from a trusted backup and recreate the sandbox; do not derive lockdown from the mutable live policy.",
@@ -72,6 +72,7 @@ export function openBackupShieldsWindow(
     }
     return null;
   }
+  window.policySnapshotRecovery = policySnapshotRecovery;
   return window;
 }
 

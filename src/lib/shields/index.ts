@@ -166,9 +166,9 @@ const OPENCLAW_CONFIG_GUARD_TIMEOUT_MS = 6 * 60 * 1000;
 // five-second termination grace, so the host never abandons a live recovery.
 const OPENCLAW_CONFIG_GUARD_RECOVERY_TIMEOUT_MS = 26 * 60 * 1000;
 const HERMES_CONFIG_GUARD_TIMEOUT_MS = 11 * 60 * 1000;
-const MAX_SHIELDS_FORWARD_POLICY_BYTES = 16 * 1024 * 1024;
+const MAX_SHIELDS_POLICY_ARTIFACT_BYTES = 16 * 1024 * 1024;
 
-type ShieldsDownForwardPolicy = {
+type BoundShieldsPolicyArtifact = {
   schemaVersion: 1;
   path: string;
   sha256: string;
@@ -190,7 +190,7 @@ type ShieldsDownTransition = {
   /** Exact generated MCP keys owned when snapshotPath was captured. */
   managedMcpPolicyKeys?: string[];
   /** Durable exact policy replay authority for interrupted forward recovery. */
-  forwardPolicy?: ShieldsDownForwardPolicy;
+  forwardPolicy?: BoundShieldsPolicyArtifact;
 };
 
 const transitionPollBuffer = new Int32Array(new SharedArrayBuffer(4));
@@ -283,7 +283,7 @@ function shieldsDownForwardPolicyPath(sandboxName: string, processToken: string)
   return path.join(STATE_DIR, `shields-forward-policy-${sandboxName}-${processToken}.yaml`);
 }
 
-function isShieldsDownForwardPolicy(value: unknown): value is ShieldsDownForwardPolicy {
+function isBoundShieldsPolicyArtifact(value: unknown): value is BoundShieldsPolicyArtifact {
   if (!isObjectRecord(value)) return false;
   return (
     value.schemaVersion === 1 &&
@@ -293,7 +293,7 @@ function isShieldsDownForwardPolicy(value: unknown): value is ShieldsDownForward
     typeof value.size === "number" &&
     Number.isSafeInteger(value.size) &&
     value.size > 0 &&
-    value.size <= MAX_SHIELDS_FORWARD_POLICY_BYTES &&
+    value.size <= MAX_SHIELDS_POLICY_ARTIFACT_BYTES &&
     value.mode === 0o600 &&
     typeof value.uid === "number" &&
     Number.isSafeInteger(value.uid) &&
@@ -322,7 +322,7 @@ function isShieldsDownTransition(value: unknown): value is ShieldsDownTransition
     typeof value.sandboxName === "string" &&
     typeof value.snapshotPath === "string" &&
     isOptionalManagedMcpPolicyKeys(value.managedMcpPolicyKeys) &&
-    (value.forwardPolicy === undefined || isShieldsDownForwardPolicy(value.forwardPolicy))
+    (value.forwardPolicy === undefined || isBoundShieldsPolicyArtifact(value.forwardPolicy))
   );
 }
 
@@ -334,9 +334,9 @@ function sameManagedMcpPolicyKeys(
   return left.length === right.length && left.every((key, index) => key === right[index]);
 }
 
-function sameShieldsDownForwardPolicy(
-  left: ShieldsDownForwardPolicy | undefined,
-  right: ShieldsDownForwardPolicy | undefined,
+function sameBoundShieldsPolicyArtifact(
+  left: BoundShieldsPolicyArtifact | undefined,
+  right: BoundShieldsPolicyArtifact | undefined,
 ): boolean {
   if (left === undefined || right === undefined) return left === right;
   return (
@@ -365,7 +365,7 @@ function sameShieldsDownTransitionAuthority(
     left.sandboxName === right.sandboxName &&
     left.snapshotPath === right.snapshotPath &&
     sameManagedMcpPolicyKeys(left.managedMcpPolicyKeys, right.managedMcpPolicyKeys) &&
-    sameShieldsDownForwardPolicy(left.forwardPolicy, right.forwardPolicy)
+    sameBoundShieldsPolicyArtifact(left.forwardPolicy, right.forwardPolicy)
   );
 }
 
@@ -416,17 +416,41 @@ function writeShieldsFileAtomicDurable(
   }
 }
 
+function describeBoundShieldsPolicyArtifact(
+  artifactPath: string,
+  content: string | Buffer,
+  metadata: import("fs").Stats,
+  label: string,
+): BoundShieldsPolicyArtifact {
+  const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content, "utf-8");
+  if (bytes.length === 0 || bytes.length > MAX_SHIELDS_POLICY_ARTIFACT_BYTES) {
+    throw new Error(`${label} must contain 1-${String(MAX_SHIELDS_POLICY_ARTIFACT_BYTES)} bytes`);
+  }
+  if (!metadata.isFile() || metadata.nlink !== 1 || (metadata.mode & 0o777) !== 0o600) {
+    throw new Error(`${label} was published with unsafe metadata`);
+  }
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : metadata.uid;
+  if (metadata.uid !== currentUid) {
+    throw new Error(`${label} is not owned by the current host identity`);
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    path: artifactPath,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    size: bytes.length,
+    mode: 0o600,
+    uid: metadata.uid,
+    gid: metadata.gid,
+    nlink: 1,
+  });
+}
+
 function publishShieldsDownForwardPolicy(
   sandboxName: string,
   processToken: string,
   sourcePath: string,
-): ShieldsDownForwardPolicy {
+): BoundShieldsPolicyArtifact {
   const content = fs.readFileSync(sourcePath);
-  if (content.length === 0 || content.length > MAX_SHIELDS_FORWARD_POLICY_BYTES) {
-    throw new Error(
-      `Shields-down forward policy must contain 1-${String(MAX_SHIELDS_FORWARD_POLICY_BYTES)} bytes`,
-    );
-  }
   const artifactPath = shieldsDownForwardPolicyPath(sandboxName, processToken);
   const flags =
     fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
@@ -439,26 +463,16 @@ function publishShieldsDownForwardPolicy(
     fs.fchmodSync(fd, 0o600);
     fs.fsyncSync(fd);
     const metadata = fs.fstatSync(fd);
-    if (!metadata.isFile() || metadata.nlink !== 1 || (metadata.mode & 0o777) !== 0o600) {
-      throw new Error("Shields-down forward policy was published with unsafe metadata");
-    }
-    const currentUid = typeof process.getuid === "function" ? process.getuid() : metadata.uid;
-    if (metadata.uid !== currentUid) {
-      throw new Error("Shields-down forward policy is not owned by the current host identity");
-    }
+    const binding = describeBoundShieldsPolicyArtifact(
+      artifactPath,
+      content,
+      metadata,
+      "Shields-down forward policy",
+    );
     fs.closeSync(fd);
     fd = undefined;
     fsyncShieldsStateDirectory();
-    return Object.freeze({
-      schemaVersion: 1,
-      path: artifactPath,
-      sha256: createHash("sha256").update(content).digest("hex"),
-      size: content.length,
-      mode: 0o600,
-      uid: metadata.uid,
-      gid: metadata.gid,
-      nlink: 1,
-    });
+    return binding;
   } catch (error) {
     if (fd !== undefined) fs.closeSync(fd);
     if (created) fs.rmSync(artifactPath, { force: true });
@@ -466,16 +480,13 @@ function publishShieldsDownForwardPolicy(
   }
 }
 
-function requireShieldsDownForwardPolicy(transition: ShieldsDownTransition): string {
-  const binding = transition.forwardPolicy;
-  const expectedPath = shieldsDownForwardPolicyPath(
-    transition.sandboxName,
-    transition.processToken,
-  );
-  if (!binding || binding.path !== expectedPath || path.normalize(binding.path) !== binding.path) {
-    throw new Error(
-      "Interrupted Shields down recovery is missing its exact forward-policy authority",
-    );
+function requireBoundShieldsPolicyArtifact(
+  binding: BoundShieldsPolicyArtifact,
+  expectedPath: string,
+  label: string,
+): string {
+  if (binding.path !== expectedPath || path.normalize(binding.path) !== binding.path) {
+    throw new Error(`${label} path no longer matches its authority`);
   }
   let fd: number | undefined;
   try {
@@ -493,7 +504,7 @@ function requireShieldsDownForwardPolicy(transition: ShieldsDownTransition): str
       before.size !== binding.size ||
       (typeof process.getuid === "function" && before.uid !== process.getuid())
     ) {
-      throw new Error("Interrupted Shields down forward policy has unsafe metadata");
+      throw new Error(`${label} has unsafe metadata`);
     }
     const content = fs.readFileSync(fd);
     const after = fs.fstatSync(fd);
@@ -505,16 +516,36 @@ function requireShieldsDownForwardPolicy(transition: ShieldsDownTransition): str
       content.length !== binding.size ||
       createHash("sha256").update(content).digest("hex") !== binding.sha256
     ) {
-      throw new Error("Interrupted Shields down forward policy no longer matches its binding");
+      throw new Error(`${label} no longer matches its binding`);
     }
     return binding.path;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function requireShieldsDownForwardPolicy(transition: ShieldsDownTransition): string {
+  const binding = transition.forwardPolicy;
+  const expectedPath = shieldsDownForwardPolicyPath(
+    transition.sandboxName,
+    transition.processToken,
+  );
+  if (!binding || binding.path !== expectedPath || path.normalize(binding.path) !== binding.path) {
+    throw new Error(
+      "Interrupted Shields down recovery is missing its exact forward-policy authority",
+    );
+  }
+  try {
+    return requireBoundShieldsPolicyArtifact(
+      binding,
+      expectedPath,
+      "Interrupted Shields down forward policy",
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot validate interrupted Shields down forward policy: ${message}`, {
       cause: error,
     });
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
   }
 }
 
@@ -555,7 +586,7 @@ function writeShieldsDownTransition(
       current.ownerStartIdentity !== transition.ownerStartIdentity ||
       current.snapshotPath !== transition.snapshotPath ||
       !sameManagedMcpPolicyKeys(current.managedMcpPolicyKeys, transition.managedMcpPolicyKeys) ||
-      !sameShieldsDownForwardPolicy(current.forwardPolicy, transition.forwardPolicy)
+      !sameBoundShieldsPolicyArtifact(current.forwardPolicy, transition.forwardPolicy)
     ) {
       throw new Error("Shields-down recovery ownership changed during the transition");
     }
@@ -685,7 +716,7 @@ function waitForShieldsDownForwardCommit(
       next.snapshotPath !== observed.snapshotPath ||
       next.processToken !== observed.processToken ||
       !sameManagedMcpPolicyKeys(next.managedMcpPolicyKeys, observed.managedMcpPolicyKeys) ||
-      !sameShieldsDownForwardPolicy(next.forwardPolicy, observed.forwardPolicy)
+      !sameBoundShieldsPolicyArtifact(next.forwardPolicy, observed.forwardPolicy)
     ) {
       throw new Error("Shields-down recovery ownership changed while waiting for forward commit");
     }
@@ -1388,12 +1419,13 @@ type LoadedShieldsState = ShieldsState & {
 
 export interface ShieldsPolicySnapshotRecovery {
   readonly sandboxName: string;
+  readonly processToken: string;
 }
 
 type ShieldsPolicySnapshotRecoveryData = {
-  readonly content: string;
-  readonly sha256: string;
-  readonly snapshotPath: string;
+  readonly content: Buffer;
+  readonly snapshotPolicy: BoundShieldsPolicyArtifact;
+  readonly transition: ShieldsDownTransition;
 };
 
 const backupPolicySnapshotRecoveries = new WeakMap<
@@ -1643,84 +1675,26 @@ function loadShieldsState(sandboxName: string): LoadedShieldsState {
   }
 }
 
-function assertGeneratedPolicySnapshotPath(sandboxName: string, snapshotPath: string): void {
-  const basename = path.basename(snapshotPath);
-  const prefix = `policy-snapshot-${sandboxName}-`;
-  const suffix = basename.slice(prefix.length);
-  if (
-    path.dirname(snapshotPath) !== STATE_DIR ||
-    !basename.startsWith(prefix) ||
-    !/^[0-9a-f]{32}-[0-9a-f]{16}[.]yaml$/u.test(suffix)
-  ) {
-    throw new Error("Shields state does not authorize a generated restrictive policy snapshot");
-  }
-}
-
-function readAuthorizedPolicySnapshot(
+function issueShieldsPolicySnapshotRecovery(
   sandboxName: string,
-  snapshotPath: string,
-): ShieldsPolicySnapshotRecoveryData {
-  assertGeneratedPolicySnapshotPath(sandboxName, snapshotPath);
-  const fd = fs.openSync(
-    snapshotPath,
-    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
-  );
-  try {
-    const before = fs.fstatSync(fd);
-    const currentUid = process.geteuid?.();
-    if (
-      !before.isFile() ||
-      before.nlink !== 1 ||
-      (before.mode & 0o777) !== 0o600 ||
-      (currentUid !== undefined && before.uid !== currentUid) ||
-      before.size < 1 ||
-      before.size > MAX_SHIELDS_FORWARD_POLICY_BYTES
-    ) {
-      throw new Error("Restrictive policy snapshot has unsafe metadata");
-    }
-    const contentBuffer = fs.readFileSync(fd);
-    const after = fs.fstatSync(fd);
-    if (
-      contentBuffer.length !== before.size ||
-      after.dev !== before.dev ||
-      after.ino !== before.ino ||
-      after.size !== before.size ||
-      after.mtimeMs !== before.mtimeMs ||
-      after.ctimeMs !== before.ctimeMs
-    ) {
-      throw new Error("Restrictive policy snapshot changed while it was being preserved");
-    }
-    const content = contentBuffer.toString("utf-8");
-    if (!parseCurrentPolicy(content)) {
-      throw new Error("Restrictive policy snapshot is not a valid policy document");
-    }
-    return {
-      content,
-      sha256: createHash("sha256").update(contentBuffer).digest("hex"),
-      snapshotPath,
-    };
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-/** Preserve the exact restrictive policy that a host-owned backup window must restore. */
-function captureShieldsPolicySnapshotRecovery(
-  sandboxName: string,
+  transition: ShieldsDownTransition,
+  snapshotPolicy: BoundShieldsPolicyArtifact,
+  content: string | Buffer,
 ): ShieldsPolicySnapshotRecovery {
-  validateName(sandboxName, "sandbox name");
-  return withShieldsTransitionLock(sandboxName, "preserve backup Shields policy", () => {
-    const state = loadShieldsState(sandboxName);
-    if (state._isCorrupt || state.shieldsDown !== true || !state.shieldsPolicySnapshotPath) {
-      throw new Error("Cannot preserve restrictive policy recovery outside Shields DOWN state");
-    }
-    const recovery = Object.freeze({ sandboxName });
-    backupPolicySnapshotRecoveries.set(
-      recovery,
-      readAuthorizedPolicySnapshot(sandboxName, state.shieldsPolicySnapshotPath),
-    );
-    return recovery;
+  if (
+    transition.phase !== "active" ||
+    transition.sandboxName !== sandboxName ||
+    transition.snapshotPath !== snapshotPolicy.path
+  ) {
+    throw new Error("Cannot issue backup recovery outside its active Shields transition");
+  }
+  const recovery = Object.freeze({ sandboxName, processToken: transition.processToken });
+  backupPolicySnapshotRecoveries.set(recovery, {
+    content: Buffer.isBuffer(content) ? Buffer.from(content) : Buffer.from(content, "utf-8"),
+    snapshotPolicy,
+    transition,
   });
+  return recovery;
 }
 
 function restoreShieldsPolicySnapshotRecoveryWithoutHostLock(
@@ -1728,26 +1702,37 @@ function restoreShieldsPolicySnapshotRecoveryWithoutHostLock(
   recovery: ShieldsPolicySnapshotRecovery,
 ): boolean {
   const preserved = backupPolicySnapshotRecoveries.get(recovery);
-  if (!preserved || recovery.sandboxName !== sandboxName) {
-    throw new Error("Backup Shields policy recovery authority is invalid");
-  }
+  if (!preserved) throw new Error("Backup Shields policy recovery authority is invalid");
   try {
+    if (
+      recovery.sandboxName !== sandboxName ||
+      recovery.processToken !== preserved.transition.processToken
+    ) {
+      throw new Error("Backup Shields policy recovery authority is invalid");
+    }
     const state = loadShieldsState(sandboxName);
     if (
       state._isCorrupt ||
       state.shieldsDown !== true ||
-      state.shieldsPolicySnapshotPath !== preserved.snapshotPath
+      state.shieldsPolicySnapshotPath !== preserved.snapshotPolicy.path
     ) {
       throw new Error("Shields state no longer authorizes the preserved restrictive policy");
     }
-    assertGeneratedPolicySnapshotPath(sandboxName, preserved.snapshotPath);
-    if (!fs.existsSync(preserved.snapshotPath)) {
-      writeShieldsFileAtomicDurable(preserved.snapshotPath, preserved.content, 0o600, false);
+    const transition = readShieldsDownTransition(sandboxName, recovery.processToken);
+    if (
+      !transition ||
+      !sameShieldsDownTransitionAuthority(transition, preserved.transition, "active")
+    ) {
+      throw new Error("Shields transition no longer authorizes backup policy recovery");
     }
-    const restored = readAuthorizedPolicySnapshot(sandboxName, preserved.snapshotPath);
-    if (restored.sha256 !== preserved.sha256) {
-      throw new Error("Restrictive policy snapshot no longer matches the preserved policy");
+    if (!fs.existsSync(preserved.snapshotPolicy.path)) {
+      writeShieldsFileAtomicDurable(preserved.snapshotPolicy.path, preserved.content, 0o600, false);
     }
+    requireBoundShieldsPolicyArtifact(
+      preserved.snapshotPolicy,
+      preserved.transition.snapshotPath,
+      "Restrictive policy snapshot",
+    );
     return true;
   } finally {
     backupPolicySnapshotRecoveries.delete(recovery);
@@ -4519,6 +4504,8 @@ interface ShieldsDownOpts {
   // owner defers while this exact process is alive and retries transient
   // restore failures after owner death. Interactive shields-down never sets it.
   deferAutoRestoreWhileOwnerAlive?: boolean;
+  /** Return a one-shot receipt bound to this exact transition for host backup relock. */
+  issuePolicySnapshotRecovery?: boolean;
   processToken?: string;
 }
 
@@ -4947,7 +4934,10 @@ function persistIncompleteShieldsDownPosture(
   return transition;
 }
 
-function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts = {}): void {
+function shieldsDownWithoutHostLock(
+  sandboxName: string,
+  opts: ShieldsDownOpts = {},
+): ShieldsPolicySnapshotRecovery | undefined {
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState(sandboxName);
@@ -5068,6 +5058,12 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     `policy-snapshot-${sandboxName}-${processToken}-${randomBytes(8).toString("hex")}.yaml`,
   );
   writeShieldsFileAtomicDurable(snapshotPath, policyYaml, 0o600, false);
+  const snapshotPolicy = describeBoundShieldsPolicyArtifact(
+    snapshotPath,
+    policyYaml,
+    fs.lstatSync(snapshotPath),
+    "Restrictive policy snapshot",
+  );
   console.log(`  Saved: ${snapshotPath}`);
 
   // 2. Determine and apply relaxed policy
@@ -5405,9 +5401,15 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   console.log("");
   console.log("  Sandbox is in default (mutable) state.");
   console.log(`  Run \`nemoclaw ${sandboxName} shields up\` to opt into lockdown.`);
+  return opts.issuePolicySnapshotRecovery
+    ? issueShieldsPolicySnapshotRecovery(sandboxName, transition, snapshotPolicy, policyYaml)
+    : undefined;
 }
 
-function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
+function shieldsDown(
+  sandboxName: string,
+  opts: ShieldsDownOpts = {},
+): ShieldsPolicySnapshotRecovery | undefined {
   validateName(sandboxName, "sandbox name");
   const processToken = opts.processToken ?? randomBytes(16).toString("hex");
   const effectiveOpts = { ...opts, processToken };
@@ -5436,10 +5438,7 @@ type ShieldsUpOpts = {
   policySnapshotRecovery?: ShieldsPolicySnapshotRecovery;
 };
 
-function shieldsUpWithoutHostLock(
-  sandboxName: string,
-  opts: ShieldsUpOpts = {},
-): void {
+function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState(sandboxName);
@@ -5456,10 +5455,7 @@ function shieldsUpWithoutHostLock(
   }
   if (opts.policySnapshotRecovery) {
     try {
-      restoreShieldsPolicySnapshotRecoveryWithoutHostLock(
-        sandboxName,
-        opts.policySnapshotRecovery,
-      );
+      restoreShieldsPolicySnapshotRecoveryWithoutHostLock(sandboxName, opts.policySnapshotRecovery);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`  Cannot recover the restrictive policy snapshot: ${message}`);
@@ -5737,10 +5733,7 @@ function shieldsUpWithoutHostLock(
   );
 }
 
-function shieldsUp(
-  sandboxName: string,
-  opts: ShieldsUpOpts = {},
-): void {
+function shieldsUp(sandboxName: string, opts: ShieldsUpOpts = {}): void {
   validateName(sandboxName, "sandbox name");
   try {
     return withExpiredAutoRestoreDeadlineFence(sandboxName, "shields up", () =>
@@ -6054,7 +6047,6 @@ function clearShieldsState(sandboxName: string): void {
 
 export {
   applyShieldsPolicySnapshot,
-  captureShieldsPolicySnapshotRecovery,
   clearShieldsState,
   completeAutoRestoreTransition,
   DEFAULT_TIMEOUT_SECONDS,

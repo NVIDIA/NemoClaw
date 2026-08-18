@@ -4,7 +4,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const shieldsMock = vi.hoisted(() => ({
-  captureShieldsPolicySnapshotRecovery: vi.fn(),
   isShieldsDown: vi.fn(),
   shieldsDown: vi.fn(),
   shieldsUp: vi.fn(),
@@ -31,8 +30,9 @@ describe("rebuild Shields window", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     timerMock.isShieldsTimerDeadlineExpired.mockReturnValue(false);
-    shieldsMock.captureShieldsPolicySnapshotRecovery.mockReturnValue({
+    shieldsMock.shieldsDown.mockReturnValue({
       sandboxName: "locked-sandbox",
+      processToken: "a".repeat(32),
     });
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -50,6 +50,7 @@ describe("rebuild Shields window", () => {
       reason: "auto-unlock for rebuild",
       timeout: "30m",
       throwOnError: true,
+      issuePolicySnapshotRecovery: true,
       deferAutoRestoreWhileOwnerAlive: true,
       allowLegacyHermesProtocol: true,
     });
@@ -74,16 +75,17 @@ describe("rebuild Shields window", () => {
       reason: "auto-unlock for backup-all",
       timeout: "30m",
       throwOnError: true,
+      issuePolicySnapshotRecovery: true,
     });
-    expect(shieldsMock.captureShieldsPolicySnapshotRecovery).toHaveBeenCalledWith(
-      "locked-sandbox",
-    );
 
     expect(relockBackupShieldsWindow("locked-sandbox", window!, true, options)).toBe(true);
     expect(shieldsMock.shieldsUp).toHaveBeenCalledWith(
       "locked-sandbox",
       expect.objectContaining({
-        policySnapshotRecovery: { sandboxName: "locked-sandbox" },
+        policySnapshotRecovery: {
+          sandboxName: "locked-sandbox",
+          processToken: "a".repeat(32),
+        },
         throwOnError: true,
       }),
     );

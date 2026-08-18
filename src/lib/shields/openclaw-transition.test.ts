@@ -575,76 +575,84 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     },
   );
 
-  it("rejects a Hermes repeated shieldsDown request with no options without changing state or timer authority (#8806)", {
-    timeout: 30_000,
-  }, () => {
-    const [, sandboxName, target] = retryAgentCases[1]!;
-    const harness = createRetryHarness(sandboxName, target);
+  it(
+    "rejects a Hermes repeated shieldsDown request with no options without changing state or timer authority (#8806)",
+    {
+      timeout: 30_000,
+    },
+    () => {
+      const [, sandboxName, target] = retryAgentCases[1]!;
+      const harness = createRetryHarness(sandboxName, target);
 
-    harness.shieldsDown(sandboxName, {
-      timeout: "5m",
-      reason: "retry-safe",
-      policy: "permissive",
-      throwOnError: true,
-    });
+      harness.shieldsDown(sandboxName, {
+        timeout: "5m",
+        reason: "retry-safe",
+        policy: "permissive",
+        throwOnError: true,
+      });
 
-    const before = readStateAndTimer(sandboxName);
-    harness.runCaptureSpy.mockClear();
-    harness.runSpy.mockClear();
-    harness.auditSpy.mockClear();
-    harness.errorSpy.mockClear();
+      const before = readStateAndTimer(sandboxName);
+      harness.runCaptureSpy.mockClear();
+      harness.runSpy.mockClear();
+      harness.auditSpy.mockClear();
+      harness.errorSpy.mockClear();
 
-    expect(() => harness.shieldsDown(sandboxName, { throwOnError: true })).toThrow(
-      /Config is already unlocked for hermes/u,
-    );
+      expect(() => harness.shieldsDown(sandboxName, { throwOnError: true })).toThrow(
+        /Config is already unlocked for hermes/u,
+      );
 
-    expect(fs.readFileSync(before.statePath, "utf-8")).toBe(before.state);
-    expect(fs.readFileSync(before.timerPath, "utf-8")).toBe(before.timer);
-    expect(harness.runCaptureSpy).not.toHaveBeenCalled();
-    expect(harness.runSpy).not.toHaveBeenCalled();
-    expect(harness.auditSpy).not.toHaveBeenCalled();
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("already unlocked");
-  });
+      expect(fs.readFileSync(before.statePath, "utf-8")).toBe(before.state);
+      expect(fs.readFileSync(before.timerPath, "utf-8")).toBe(before.timer);
+      expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+      expect(harness.runSpy).not.toHaveBeenCalled();
+      expect(harness.auditSpy).not.toHaveBeenCalled();
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("already unlocked");
+    },
+  );
 
-  it("rejects an equivalent repeated shieldsDown request with missing timer authority and restores lockdown (#8806)", {
-    timeout: 30_000,
-  }, () => {
-    const harness = createRetryHarness("openclaw", retryAgentCases[0]![2]);
+  it(
+    "rejects an equivalent repeated shieldsDown request with missing timer authority and restores lockdown (#8806)",
+    {
+      timeout: 30_000,
+    },
+    () => {
+      const harness = createRetryHarness("openclaw", retryAgentCases[0]![2]);
 
-    harness.shieldsDown("openclaw", {
-      timeout: "5m",
-      reason: "retry-safe",
-      policy: "permissive",
-      throwOnError: true,
-    });
-
-    const before = readStateAndTimer("openclaw");
-    fs.rmSync(before.timerPath, { force: true });
-    harness.runCaptureSpy.mockClear();
-    harness.auditSpy.mockClear();
-    harness.errorSpy.mockClear();
-
-    expect(() =>
       harness.shieldsDown("openclaw", {
         timeout: "5m",
         reason: "retry-safe",
         policy: "permissive",
         throwOnError: true,
-      }),
-    ).toThrow(/Cannot accept equivalent shields down request without live auto-restore timer/u);
+      });
 
-    expect(JSON.parse(fs.readFileSync(before.statePath, "utf-8"))).toMatchObject({
-      shieldsDown: false,
-      shieldsDownAt: null,
-    });
-    expect(fs.existsSync(before.timerPath)).toBe(false);
-    expect(harness.auditSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "shields_auto_restore", sandbox: "openclaw" }),
-    );
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "Cannot accept equivalent shields down request without live auto-restore timer authority.",
-    );
-  });
+      const before = readStateAndTimer("openclaw");
+      fs.rmSync(before.timerPath, { force: true });
+      harness.runCaptureSpy.mockClear();
+      harness.auditSpy.mockClear();
+      harness.errorSpy.mockClear();
+
+      expect(() =>
+        harness.shieldsDown("openclaw", {
+          timeout: "5m",
+          reason: "retry-safe",
+          policy: "permissive",
+          throwOnError: true,
+        }),
+      ).toThrow(/Cannot accept equivalent shields down request without live auto-restore timer/u);
+
+      expect(JSON.parse(fs.readFileSync(before.statePath, "utf-8"))).toMatchObject({
+        shieldsDown: false,
+        shieldsDownAt: null,
+      });
+      expect(fs.existsSync(before.timerPath)).toBe(false);
+      expect(harness.auditSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "shields_auto_restore", sandbox: "openclaw" }),
+      );
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+        "Cannot accept equivalent shields down request without live auto-restore timer authority.",
+      );
+    },
+  );
 
   it("shields down removes the permissive runtime temp directory when the auto-restore timer fails (#7964)", () => {
     const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
@@ -761,44 +769,98 @@ describe("OpenClaw shields flow rollback and recovery", () => {
 
   it("restores the exact preserved restrictive snapshot before backup relock (#9452)", () => {
     const harness = createHarness({ confirmOpenClawInodeFlags: true });
-    harness.shieldsDown("openclaw", {
+    const recovery = harness.shieldsDown("openclaw", {
       timeout: "5m",
       reason: "backup-all",
       throwOnError: true,
+      issuePolicySnapshotRecovery: true,
     });
     const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
     const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as {
       shieldsPolicySnapshotPath: string;
     };
     const expectedPolicy = fs.readFileSync(state.shieldsPolicySnapshotPath, "utf-8");
-    const recovery = harness.captureShieldsPolicySnapshotRecovery("openclaw");
+    expect(recovery).toBeDefined();
     fs.rmSync(state.shieldsPolicySnapshotPath);
 
     expect(() =>
-      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery!, throwOnError: true }),
     ).not.toThrow();
     expect(fs.readFileSync(state.shieldsPolicySnapshotPath, "utf-8")).toBe(expectedPolicy);
   });
 
   it("refuses to overwrite a changed restrictive snapshot during backup recovery (#9452)", () => {
     const harness = createHarness();
-    harness.shieldsDown("openclaw", {
+    const recovery = harness.shieldsDown("openclaw", {
       timeout: "5m",
       reason: "backup-all",
       throwOnError: true,
+      issuePolicySnapshotRecovery: true,
     });
     const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
     const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as {
       shieldsPolicySnapshotPath: string;
     };
-    const recovery = harness.captureShieldsPolicySnapshotRecovery("openclaw");
+    expect(recovery).toBeDefined();
     const changedPolicy = "version: 1\nnetwork_policies:\n  changed: {}\n";
     fs.writeFileSync(state.shieldsPolicySnapshotPath, changedPolicy, { mode: 0o600 });
 
     expect(() =>
-      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
-    ).toThrow(/Backup Shields policy recovery failed.*no longer matches the preserved policy/u);
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery!, throwOnError: true }),
+    ).toThrow(
+      /Backup Shields policy recovery failed.*(?:unsafe metadata|no longer matches its binding)/u,
+    );
     expect(fs.readFileSync(state.shieldsPolicySnapshotPath, "utf-8")).toBe(changedPolicy);
+  });
+
+  it("consumes a backup recovery receipt only once (#9452)", () => {
+    const harness = createHarness({ confirmOpenClawInodeFlags: true });
+    const recovery = harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "backup-all",
+      throwOnError: true,
+      issuePolicySnapshotRecovery: true,
+    });
+    expect(recovery).toBeDefined();
+
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery!, throwOnError: true }),
+    ).not.toThrow();
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery!, throwOnError: true }),
+    ).toThrow(/Backup Shields policy recovery failed.*authority is invalid/u);
+  });
+
+  it("rejects backup recovery after its Shields transition authority drifts (#9452)", () => {
+    const harness = createHarness();
+    const recovery = harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "backup-all",
+      throwOnError: true,
+      issuePolicySnapshotRecovery: true,
+    });
+    expect(recovery).toBeDefined();
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const transitionPath = fs
+      .readdirSync(stateDir)
+      .map((entry) => path.join(stateDir, entry))
+      .find((entry) => path.basename(entry).startsWith("shields-transition-openclaw-"));
+    expect(transitionPath).toBeDefined();
+    const transition = JSON.parse(fs.readFileSync(transitionPath!, "utf-8")) as {
+      ownerStartIdentity: string;
+    };
+    fs.writeFileSync(
+      transitionPath!,
+      JSON.stringify({
+        ...transition,
+        ownerStartIdentity: `${transition.ownerStartIdentity}-drift`,
+      }),
+      { mode: 0o600 },
+    );
+
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery!, throwOnError: true }),
+    ).toThrow(/Backup Shields policy recovery failed.*transition no longer authorizes/u);
   });
 
   it("reports staged driver-neutral recovery when shields-down rollback cannot re-lock (#6126)", () => {
