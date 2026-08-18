@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SpawnLikeResult } from "./exec";
+import { runConnectChildWithShieldsRelockNotice } from "./agent/connect-shields-relock-notice";
+import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   type GatewayRestartFailureLayer,
   gatewayIntegrityRepairLines,
@@ -12,9 +15,26 @@ import {
   sanitizeHermesMcpReconciliationDetail,
 } from "./mcp-bridge-hermes-reconciliation";
 
-export { startConnectShieldsRelockWatcher } from "./agent/connect-shields-relock-notice";
-
 type ConnectBoundaryContext = "Probe" | "Connect";
+type ConnectAgent = { name?: string } | null | undefined;
+
+export async function runInteractiveConnectSession(
+  binary: string,
+  sandboxName: string,
+  agent: ConnectAgent,
+  registeredAgent: string | null | undefined,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<SpawnLikeResult> {
+  prepareHermesLightTerminalSkin(sandboxName, agent, env);
+  return await runConnectChildWithShieldsRelockNotice(
+    binary,
+    ["sandbox", "connect", sandboxName],
+    { hostCwd: cwd, hostEnv: { ...env }, stdin: true },
+    sandboxName,
+    agent?.name === "openclaw" || registeredAgent === "openclaw",
+  );
+}
 
 /**
  * A managed recovery that failed on a deterministic integrity refusal cannot be

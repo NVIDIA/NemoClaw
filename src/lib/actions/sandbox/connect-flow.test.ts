@@ -60,19 +60,20 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalledTimes(1);
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw");
-    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
+    expect(harness.runConnectChildWithShieldsRelockNoticeSpy).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
-      expect.objectContaining({ stdio: "inherit" }),
+      expect.objectContaining({
+        hostCwd: expect.any(String),
+        hostEnv: expect.any(Object),
+        stdin: true,
+      }),
+      "alpha",
+      true,
     );
-    expect(harness.startConnectShieldsRelockWatcherSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.stopConnectShieldsRelockWatcherSpy).toHaveBeenCalledOnce();
-    expect(harness.spawnSyncSpy.mock.invocationCallOrder.at(-1)!).toBeLessThan(
-      harness.stopConnectShieldsRelockWatcherSpy.mock.invocationCallOrder[0]!,
-    );
-    expect(harness.stopConnectShieldsRelockWatcherSpy.mock.invocationCallOrder[0]!).toBeLessThan(
-      exitSpy.mock.invocationCallOrder[0]!,
-    );
+    expect(
+      harness.runConnectChildWithShieldsRelockNoticeSpy.mock.invocationCallOrder[0]!,
+    ).toBeLessThan(exitSpy.mock.invocationCallOrder[0]!);
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("existing SSH sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
@@ -90,8 +91,13 @@ describe("connectSandbox flow", () => {
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
-    expect(harness.startConnectShieldsRelockWatcherSpy).not.toHaveBeenCalled();
-    expect(harness.stopConnectShieldsRelockWatcherSpy).not.toHaveBeenCalled();
+    expect(harness.runConnectChildWithShieldsRelockNoticeSpy).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+      "alpha",
+      false,
+    );
   });
 
   it("uses the owning OpenShell gateway for auto-pair when an ambient gateway has the same sandbox name (#8942)", async () => {

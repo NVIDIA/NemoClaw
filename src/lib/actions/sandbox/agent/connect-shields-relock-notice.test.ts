@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import {
   type ConnectShieldsRelockNoticeState,
   pollConnectShieldsRelockNotice,
+  runConnectChildWithShieldsRelockNotice,
+  startConnectShieldsRelockWatcher,
 } from "./connect-shields-relock-notice";
 
 function state(startedAtMs: number): ConnectShieldsRelockNoticeState {
@@ -69,5 +72,73 @@ describe("connected-session Shields auto-relock notice", () => {
       ),
     ).toEqual(state(startedAtMs));
     expect(writeNotice).not.toHaveBeenCalled();
+  });
+
+  it("polls on the parent event loop and stops cleanly (#9453)", () => {
+    vi.useFakeTimers();
+    const startedAtMs = Date.parse("2026-08-18T17:00:00.000Z");
+    vi.setSystemTime(startedAtMs);
+    const readRecent = vi
+      .fn<(sandboxName: string) => ShieldsAutoRestoreReadResult>()
+      .mockReturnValueOnce({ kind: "none" })
+      .mockReturnValue({
+        kind: "event",
+        event: { timestamp: "2026-08-18T17:00:00.500Z", timeoutSeconds: 20 },
+      });
+    const writeNotice = vi.fn();
+
+    const watcher = startConnectShieldsRelockWatcher("alpha", readRecent, writeNotice);
+    expect(readRecent).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(1_000);
+    expect(writeNotice).toHaveBeenCalledOnce();
+
+    watcher?.stop();
+    vi.advanceTimersByTime(2_000);
+    expect(readRecent).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("stops the watcher after the shared child supervisor settles (#9453)", async () => {
+    const lifecycle: string[] = [];
+    const stop = vi.fn(() => lifecycle.push("stop"));
+    const startWatcher = vi.fn(() => {
+      lifecycle.push("start");
+      return { stop };
+    });
+    const runChild = vi.fn(async () => {
+      lifecycle.push("child");
+      return { status: 0 };
+    });
+
+    await expect(
+      runConnectChildWithShieldsRelockNotice(
+        "openshell",
+        ["sandbox", "connect", "alpha"],
+        { stdin: true },
+        "alpha",
+        true,
+        { runChild, startWatcher },
+      ),
+    ).resolves.toEqual({ status: 0 });
+
+    expect(lifecycle).toEqual(["start", "child", "stop"]);
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("skips the watcher for non-OpenClaw sessions (#9453)", async () => {
+    const startWatcher = vi.fn();
+    const runChild = vi.fn(async () => ({ status: 0 }));
+
+    await runConnectChildWithShieldsRelockNotice(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      {},
+      "alpha",
+      false,
+      { runChild, startWatcher },
+    );
+
+    expect(startWatcher).not.toHaveBeenCalled();
   });
 });

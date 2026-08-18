@@ -54,11 +54,10 @@ export type ConnectHarness = {
   resolveAgentConfigSpy: MockInstance;
   restoreSandboxStartupState: RestoreSandboxStartupState;
   runAutoPairSpy: MockInstance;
+  runConnectChildWithShieldsRelockNoticeSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
-  startConnectShieldsRelockWatcherSpy: MockInstance;
-  stopConnectShieldsRelockWatcherSpy: MockInstance;
   withGatewayRouteMutationLockSpy: MockInstance;
   writeSandboxConfigSpy: MockInstance;
 };
@@ -173,10 +172,12 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const shieldsRelockNotice = requireDist(
     "../../src/lib/actions/sandbox/agent/connect-shields-relock-notice.js",
   );
-  const stopConnectShieldsRelockWatcherSpy = vi.fn();
-  const startConnectShieldsRelockWatcherSpy = vi
-    .spyOn(shieldsRelockNotice, "startConnectShieldsRelockWatcher")
-    .mockReturnValue({ stop: stopConnectShieldsRelockWatcherSpy });
+  const runConnectChildWithShieldsRelockNoticeSpy = vi
+    .spyOn(shieldsRelockNotice, "runConnectChildWithShieldsRelockNotice")
+    .mockResolvedValue({
+      status: spawnStatusFromOptions(options),
+      signal: options.spawnSignal ?? null,
+    });
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -389,12 +390,11 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     resolveAgentConfigSpy,
     restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,
     runAutoPairSpy,
+    runConnectChildWithShieldsRelockNoticeSpy,
     settlePortablePairingSpy,
     runOpenshellSpy,
     runSetupDnsProxySpy,
     spawnSyncSpy,
-    startConnectShieldsRelockWatcherSpy,
-    stopConnectShieldsRelockWatcherSpy,
     withGatewayRouteMutationLockSpy,
     writeSandboxConfigSpy,
   };

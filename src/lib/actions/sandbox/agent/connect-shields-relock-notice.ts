@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { writeSync } from "node:fs";
-import { isMainThread, Worker, workerData } from "node:worker_threads";
 import {
   readRecentShieldsAutoRestore,
   type ShieldsAutoRestoreReadResult,
 } from "../../../shields/audit";
+import { runSandboxExecChild, type SandboxExecChildOptions, type SpawnLikeResult } from "../exec";
 import {
   formatShieldsDownRecoveryCommand,
   normalizeShieldsRelockTimeoutSeconds,
@@ -27,6 +26,12 @@ export interface ConnectShieldsRelockWatcher {
   stop(): void;
 }
 
+type ConnectChildRunner = (
+  binary: string,
+  args: readonly string[],
+  options: SandboxExecChildOptions,
+) => Promise<SpawnLikeResult>;
+
 function formatConnectShieldsRelockNotice(
   sandboxName: string,
   timeoutSeconds: number | null,
@@ -44,7 +49,7 @@ export function pollConnectShieldsRelockNotice(
   readRecent: ConnectShieldsRelockNoticeReader = (sandboxName) =>
     readRecentShieldsAutoRestore(sandboxName, CONNECT_SHIELDS_RELOCK_LOOKBACK_MS),
   writeNotice: (value: string) => void = (value) => {
-    writeSync(2, value);
+    process.stderr.write(value);
   },
 ): ConnectShieldsRelockNoticeState {
   const result = readRecent(state.sandboxName);
@@ -63,16 +68,32 @@ export function pollConnectShieldsRelockNotice(
 
 export function startConnectShieldsRelockWatcher(
   sandboxName: string,
+  readRecent: ConnectShieldsRelockNoticeReader = (name) =>
+    readRecentShieldsAutoRestore(name, CONNECT_SHIELDS_RELOCK_LOOKBACK_MS),
+  writeNotice: (value: string) => void = (value) => {
+    process.stderr.write(value);
+  },
 ): ConnectShieldsRelockWatcher | null {
   try {
-    const worker = new Worker(__filename, {
-      workerData: { sandboxName, startedAtMs: Date.now() },
-    });
-    worker.on("error", () => undefined);
-    worker.unref();
+    const startedAtMs = Date.now();
+    let state: ConnectShieldsRelockNoticeState = {
+      lastNotifiedRestoreMs: startedAtMs - 1,
+      sandboxName,
+      startedAtMs,
+    };
+    const poll = () => {
+      try {
+        state = pollConnectShieldsRelockNotice(state, readRecent, writeNotice);
+      } catch {
+        // Audit visibility is advisory. Keep the connected session available.
+      }
+    };
+    poll();
+    const timer = setInterval(poll, CONNECT_SHIELDS_RELOCK_POLL_MS);
+    timer.unref();
     return {
       stop(): void {
-        void worker.terminate().catch(() => undefined);
+        clearInterval(timer);
       },
     };
   } catch {
@@ -81,32 +102,23 @@ export function startConnectShieldsRelockWatcher(
   }
 }
 
-function runConnectShieldsRelockWatcher(): void {
-  const data = workerData as { sandboxName?: unknown; startedAtMs?: unknown };
-  if (
-    typeof data.sandboxName !== "string" ||
-    data.sandboxName.length < 1 ||
-    data.sandboxName.length > 255 ||
-    /[\0\r\n]/u.test(data.sandboxName) ||
-    typeof data.startedAtMs !== "number" ||
-    !Number.isFinite(data.startedAtMs)
-  ) {
-    return;
+export async function runConnectChildWithShieldsRelockNotice(
+  binary: string,
+  args: readonly string[],
+  options: SandboxExecChildOptions,
+  sandboxName: string,
+  watchShields: boolean,
+  deps: {
+    runChild?: ConnectChildRunner;
+    startWatcher?: typeof startConnectShieldsRelockWatcher;
+  } = {},
+): Promise<SpawnLikeResult> {
+  const watcher = watchShields
+    ? (deps.startWatcher ?? startConnectShieldsRelockWatcher)(sandboxName)
+    : null;
+  try {
+    return await (deps.runChild ?? runSandboxExecChild)(binary, args, options);
+  } finally {
+    watcher?.stop();
   }
-  let state: ConnectShieldsRelockNoticeState = {
-    lastNotifiedRestoreMs: data.startedAtMs - 1,
-    sandboxName: data.sandboxName,
-    startedAtMs: data.startedAtMs,
-  };
-  const poll = () => {
-    try {
-      state = pollConnectShieldsRelockNotice(state);
-    } catch {
-      // Audit visibility is advisory. Keep the connected session available.
-    }
-  };
-  poll();
-  setInterval(poll, CONNECT_SHIELDS_RELOCK_POLL_MS);
 }
-
-if (!isMainThread) runConnectShieldsRelockWatcher();
