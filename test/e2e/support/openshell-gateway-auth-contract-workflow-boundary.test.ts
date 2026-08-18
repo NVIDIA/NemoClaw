@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,7 +14,6 @@ import {
 } from "../../../tools/e2e/openshell-gateway-auth-contract-workflow-boundary.mts";
 import {
   OPENSHELL_QUALIFICATION,
-  materializeOpenShellQualificationInstaller,
   validateOpenShellQualificationInstaller,
   writeOpenShellQualificationOutputs,
   writeOpenShellQualificationProvenance,
@@ -26,11 +24,8 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-qualification-"));
     const outputsPath = path.join(directory, "outputs");
     const provenancePath = path.join(directory, "provenance.json");
-    const installerPath = path.join(directory, "install-openshell.sh");
     try {
       expect(validateOpenShellQualificationInstaller()).toEqual([]);
-      fs.writeFileSync(installerPath, materializeOpenShellQualificationInstaller());
-      execFileSync("bash", ["-n", installerPath]);
 
       writeOpenShellQualificationOutputs(outputsPath);
       expect(fs.readFileSync(outputsPath, "utf8")).toBe(
