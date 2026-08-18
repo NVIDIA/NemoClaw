@@ -381,7 +381,7 @@ export function applyOllamaRuntimeContextWindow(
       // raise it past the model card's max_position_embeddings. When the
       // native cap itself is below the requirement, telling the user to
       // raise OLLAMA_CONTEXT_LENGTH sends them through a rerun that must
-      // fail — advise a larger-context model instead (#9458).
+      // fail. Advise a larger-context model instead (#9458).
       const nativeStatus = probeOllamaModelNativeContextLength(
         selectedModel,
         getOllamaHost,
