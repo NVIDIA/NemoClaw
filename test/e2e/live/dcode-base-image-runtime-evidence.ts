@@ -8,7 +8,6 @@ import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbo
 import {
   DCODE_BASE_IMAGE_TARGET_PLATFORM,
   type DcodeBaseImageContract,
-  type DcodePlatform,
   parseDcodeBaseImageContract,
 } from "../../../tools/e2e/dcode-base-image-contract.mts";
 import { requireDcodeBaseImageReference } from "../fixtures/dcode-base-image.ts";
@@ -23,7 +22,7 @@ export interface DcodeBaseImageRuntimeEvidence {
   digest: string;
   image: string;
   imageId: string;
-  platform: DcodePlatform;
+  platform: typeof DCODE_BASE_IMAGE_TARGET_PLATFORM;
   reference: string;
   sandboxImage: string;
   source: "override";
@@ -107,14 +106,6 @@ export function loadDcodeBaseImagePublicationEvidence(
   );
 }
 
-function platformFor(metadata: SandboxBaseImageResolutionMetadata): DcodePlatform {
-  const platform = `${metadata.os}/${metadata.architecture}`;
-  if (platform !== "linux/amd64" && platform !== "linux/arm64") {
-    throw new Error(`Deep Agents Code base resolution used unsupported platform '${platform}'`);
-  }
-  return platform;
-}
-
 export function verifyDcodeBaseImageRuntimeEvidence(
   contract: DcodeBaseImageContract,
   sandboxImage: string,
@@ -126,14 +117,13 @@ export function verifyDcodeBaseImageRuntimeEvidence(
   if (!metadata) {
     throw new Error("Deep Agents Code sandbox image is missing base resolution metadata");
   }
-  const platform = platformFor(metadata);
-  if (platform !== DCODE_BASE_IMAGE_TARGET_PLATFORM) {
+  if (`${metadata.os}/${metadata.architecture}` !== DCODE_BASE_IMAGE_TARGET_PLATFORM) {
     throw new Error(
       `Deep Agents Code sandbox image did not use the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base digest`,
     );
   }
-  const expectedDigest = contract.platformDigests[platform];
-  const expectedReference = contract.platformReferences[platform];
+  const expectedDigest = contract.platformDigests[DCODE_BASE_IMAGE_TARGET_PLATFORM];
+  const expectedReference = contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
   if (
     metadata.schema !== 1 ||
     metadata.imageName !== contract.image ||
@@ -144,7 +134,7 @@ export function verifyDcodeBaseImageRuntimeEvidence(
     metadata.ref !== `${metadata.imageName}@${metadata.digest}`
   ) {
     throw new Error(
-      `Deep Agents Code sandbox image did not use the published ${platform} base digest`,
+      `Deep Agents Code sandbox image did not use the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base digest`,
     );
   }
   return {
@@ -152,7 +142,7 @@ export function verifyDcodeBaseImageRuntimeEvidence(
     digest: metadata.digest,
     image: metadata.imageName,
     imageId: metadata.imageId,
-    platform,
+    platform: DCODE_BASE_IMAGE_TARGET_PLATFORM,
     reference: metadata.ref,
     sandboxImage,
     source: metadata.source,

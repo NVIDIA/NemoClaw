@@ -142,7 +142,7 @@ export function validateDcodeBaseImageImports(
     "run",
     "--rm",
     "--platform",
-    "linux/amd64",
+    DCODE_BASE_IMAGE_TARGET_PLATFORM,
     "--network",
     "none",
     "--cap-drop",
