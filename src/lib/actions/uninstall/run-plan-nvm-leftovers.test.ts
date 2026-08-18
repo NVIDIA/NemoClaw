@@ -68,7 +68,9 @@ describe("uninstall NVM leftovers", () => {
     ];
     const links = [...shims, ...ownedBins, ...kept];
     links.forEach((entry) => fs.mkdirSync(path.dirname(entry), { recursive: true }));
-    new Set(Object.values(declaredBins)).forEach((relative) => {
+    const packageTargets = new Set(Object.values(declaredBins));
+    packageTargets.delete(declaredBins.nemohermes);
+    packageTargets.forEach((relative) => {
       const target = path.join(packageDir, relative);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, "#!/usr/bin/env node\n");
@@ -83,12 +85,51 @@ describe("uninstall NVM leftovers", () => {
     });
     fs.linkSync(packageTarget(ownedBins[2]), ownedBins[2]);
     kept.forEach((entry) => fs.symlinkSync("/tmp/foreign-package/bin/cli", entry));
+    expect(fs.lstatSync(ownedBins[1]).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(ownedBins[1])).toBe(false);
 
     const removed: string[] = [];
     try {
       const result = runNvmSweep(tmpHome, [...shims, nodeVersionsDir], removed);
       expect(result.exitCode).toBe(0);
       expect(links.filter((entry) => removed.includes(entry))).toEqual([...shims, ...ownedBins]);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a linked package while removing its package-owned CLI bins", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-nvm-link-"));
+    const versionDir = path.join(tmpHome, ".nvm", "versions", "node", "v22.19.0");
+    const packageLink = path.join(versionDir, "lib", "node_modules", "nemoclaw");
+    const linkedPackage = path.join(tmpHome, "linked-nemoclaw");
+    const declaredBins = {
+      nemoclaw: "bin/nemoclaw.js",
+      nemohermes: "bin/nemohermes.js",
+      "nemo-deepagents": "bin/nemo-deepagents.js",
+    } as const;
+    fs.mkdirSync(path.join(linkedPackage, "bin"), { recursive: true });
+    fs.mkdirSync(path.dirname(packageLink), { recursive: true });
+    fs.writeFileSync(
+      path.join(linkedPackage, "package.json"),
+      JSON.stringify({ bin: declaredBins }),
+    );
+    fs.symlinkSync(linkedPackage, packageLink);
+    const bins = Object.entries(declaredBins).map(([name, relativeTarget]) => {
+      const packageTarget = path.join(linkedPackage, relativeTarget);
+      fs.writeFileSync(packageTarget, "#!/usr/bin/env node\n");
+      const bin = path.join(versionDir, "bin", name);
+      fs.mkdirSync(path.dirname(bin), { recursive: true });
+      fs.symlinkSync(path.relative(path.dirname(bin), path.join(packageLink, relativeTarget)), bin);
+      return bin;
+    });
+
+    const removed: string[] = [];
+    try {
+      const nodeVersionsDir = path.join(tmpHome, ".nvm", "versions", "node");
+      expect(runNvmSweep(tmpHome, [nodeVersionsDir], removed).exitCode).toBe(0);
+      expect(new Set(removed)).toEqual(new Set(bins));
+      expect(fs.readlinkSync(packageLink)).toBe(linkedPackage);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

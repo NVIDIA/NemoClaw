@@ -1706,7 +1706,13 @@ function nvmBinBelongsToPackage(target: string, expectedTarget: string): boolean
     const expectedStat = fs.statSync(expectedTarget);
     return targetStat.dev === expectedStat.dev && targetStat.ino === expectedStat.ino;
   } catch {
-    return false;
+    try {
+      return (
+        path.resolve(path.dirname(target), fs.readlinkSync(target)) === path.resolve(expectedTarget)
+      );
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -1720,7 +1726,8 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
     const versionDir = path.join(nodeVersionsDir, version.name);
     const modulesDir = path.join(versionDir, "lib", "node_modules");
     const packageEntry = dirEntries(modulesDir).find(
-      (entry) => entry.isDirectory() && entry.name === "nemoclaw",
+      (entry) =>
+        (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
     );
     const packageDir = packageEntry ? path.join(modulesDir, packageEntry.name) : null;
     const packageBins = packageDir ? nvmPackageBinTargets(packageDir) : new Map<string, string>();
@@ -1740,7 +1747,7 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
       runtime.rmSync(target, { force: true });
       runtime.log(`Removed leftover ${entry.name} binary at ${target}`);
     }
-    if (packageDir) {
+    if (packageDir && packageEntry?.isDirectory()) {
       runtime.rmSync(packageDir, { force: true, recursive: true });
       runtime.log(`Removed leftover nemoclaw module at ${packageDir}`);
     }
