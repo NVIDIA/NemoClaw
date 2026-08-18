@@ -10,7 +10,7 @@ import type { HermesAuthMethod } from "../hermes-auth";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
-import type { PortableOnboardEnvironmentScope } from "../session-bootstrap";
+import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 
 type SandboxRecreateReasonInput = {
@@ -77,9 +77,7 @@ function reportSandboxRecreateReason(
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   return async function createSandboxWithBaseImageResolution(
     baseImageResolutionContext: import("../base-image-resolution-flow").BaseImageResolutionContext,
-    portableRuntimeAuthority:
-      | import("../../state/onboard-checkpoint-types").CheckpointPortableRuntimeAuthority
-      | null,
+    portableRuntimeContext: PortableOnboardRuntimeContext | null,
     computePlan: import("../compute/plan").OpenShellComputePlan,
     managedWorkloadRebuild: import("../workload/rebuild").ManagedWorkloadRebuildHandoff | null,
     tempManagedRuntime: boolean,
@@ -102,8 +100,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     hermesAuthMethod: HermesAuthMethod | null = null,
     createIntent: import("../types").SandboxCreateIntent | null = null,
     preparedBuildContext: PreparedSandboxBuildContext | null = null,
-    portableEnvironmentScope: PortableOnboardEnvironmentScope | null = null,
   ) {
+    const portableRuntimeAuthority = portableRuntimeContext?.authority ?? null;
     const {
       DASHBOARD_PORT,
       GATEWAY_NAME,
@@ -1069,7 +1067,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     });
 
     if (hermesPortableAuthority) {
-      if (!portableEnvironmentScope) {
+      if (!portableRuntimeContext?.environmentScope) {
         throw new Error("Hermes portable onboarding is missing runtime environment authority.");
       }
       if (managedBootstrap || !["none", "native-only"].includes(gpuRoutePlan)) {
@@ -1077,36 +1075,60 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
         );
       }
+      const routeReservationSession = onboardSession.loadSession();
+      if (
+        !routeReservationSession?.sessionId ||
+        routeReservationSession.sandboxName !== sandboxName ||
+        routeReservationSession.provider !== provider ||
+        routeReservationSession.model !== model
+      ) {
+        throw new Error(
+          "Hermes portable onboarding is missing current inference route reservation authority.",
+        );
+      }
+      const inferenceRouteReservation = {
+        sessionId: routeReservationSession.sessionId,
+        selection: sandboxRegistration.selection(
+          sandboxName,
+          provider,
+          model,
+          preferredInferenceApi,
+          createIntent?.endpointSource ?? null,
+        ),
+      };
       await sandboxGpuCreateFlow.runHermesPortableOnboardingFromOnboard<
         import("../sandbox-gpu-create-flow").SandboxGpuCreateFlowResult
-      >(
+      >({
         sandboxName,
-        GATEWAY_NAME,
-        createdSandboxLifecycle.generation,
-        hermesPortableAuthority.runtimeAuthority,
+        gatewayName: GATEWAY_NAME,
+        lifecycleGeneration: createdSandboxLifecycle.generation,
+        portableRuntime: portableRuntimeContext,
         createArgv,
-        initialSandboxPolicy.policyPath,
-        {
+        createPolicyPath: initialSandboxPolicy.policyPath,
+        startup: {
           agent: hermesPortableAuthority.agent,
           sandboxName,
           startupArgv: intendedSandboxStartupCommand,
         },
-        sandboxMutationLock.withMcpLifecycleLock,
-        sandboxEnv,
+        inferenceRouteReservation,
+        withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
+        childEnv: sandboxEnv,
         openshellArgv,
-        (attemptArgv, readyCapture, readyRunner, buildContextPath) =>
+        createSandbox: (attemptArgv, readyCapture, readyRunner, buildContextPath) =>
           runCreateFlow([...attemptArgv], readyCapture, readyRunner, buildContextPath),
-        () => registry.getSandbox(sandboxName),
-        (created, receipt, liveIdentityFingerprint, revalidate) =>
+        readRegistry: () => registry.getSandbox(sandboxName),
+        registerSandbox: (created, receipt, liveIdentityFingerprint, revalidate) =>
           completeCreatedSandboxRegistration(created, receipt, liveIdentityFingerprint, revalidate),
-        ROOT,
-        { model, provider, preferredInferenceApi, toolDisclosure: effectiveToolDisclosure },
-        portableEnvironmentScope.createHermesPortablePodmanSourceEnvironment(
-          hermesPortableAuthority.runtimeAuthority,
-        ),
-        cleanupInitialCreateSource,
-        initialSandboxPolicy.sourceBytes,
-      );
+        sourceRoot: ROOT,
+        buildContextSettings: {
+          model,
+          provider,
+          preferredInferenceApi,
+          toolDisclosure: effectiveToolDisclosure,
+        },
+        cleanupTemporaryPolicy: cleanupInitialCreateSource,
+        createPolicySourceBytes: initialSandboxPolicy.sourceBytes,
+      });
       cleanupBuildContext();
     } else {
       const created = await runCreateFlow(createArgv);

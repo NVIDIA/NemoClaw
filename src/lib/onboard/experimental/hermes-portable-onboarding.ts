@@ -6,6 +6,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import type { AgentDefinition } from "../../agent/defs";
+import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
 import {
   fingerprintOpenShellSandboxLiveIdentity,
   parseOpenShellSandboxId,
@@ -22,7 +23,12 @@ import {
   type PodmanSocketAuthority,
 } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
-import type { SandboxEntry } from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry/types";
+import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
+import {
+  isPendingReservationForSession,
+  isRouteOnlySandboxReservation,
+} from "../../state/registry/route-reservation";
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
   assertNoOpenShellGatewayEndpointOverride,
@@ -101,6 +107,12 @@ export interface HermesPortableOnboardingInput {
   readonly createPolicySourceBytes?: Buffer;
   readonly buildContext: HermesPortableBuildContextPlan;
   readonly startup: ResolveHermesPortableStartupContractInput;
+  readonly inferenceRouteReservation: HermesPortableInferenceRouteReservationAuthority;
+}
+
+export interface HermesPortableInferenceRouteReservationAuthority {
+  readonly sessionId: string;
+  readonly selection: InferenceSelection;
 }
 
 export interface HermesPortableOnboardingDeps<T> {
@@ -122,10 +134,7 @@ export interface HermesPortableOnboardingDeps<T> {
   ) => void;
   readonly observeSandbox: () => HermesPortableSandboxObservation;
   readonly createSandbox: (createArgv: readonly string[], buildContextPath: string) => Promise<T>;
-  readonly registryExists: () => boolean;
-  readonly registryDisposition: (
-    receipt: HermesPortableLifecycleReceipt,
-  ) => HermesPortableRegistryDisposition;
+  readonly readRegistry: () => SandboxEntry | null;
   readonly registerSandbox: (
     result: T | null,
     receipt: HermesPortableConfiguredReceipt,
@@ -477,6 +486,12 @@ function createHermesPortableCreateIntentSha256(
         podmanExecutableAuthority,
         args: canonicalArgs,
         createSourceAuthority,
+        inferenceRouteReservation: {
+          sessionId: input.inferenceRouteReservation.sessionId,
+          selection: normalizeHermesPortableRouteSelection(
+            input.inferenceRouteReservation.selection,
+          ),
+        },
         startupDescriptorSha256: startup.startupDescriptorSha256,
       }),
     )
@@ -554,11 +569,115 @@ export function observeHermesPortableSandbox(
     : { kind: "ambiguous", detail: "sandbox get did not prove exact sandbox absence" };
 }
 
+const HERMES_PORTABLE_ROUTE_RESERVATION_KEYS = new Set<string>([
+  "credentialEnv",
+  "endpointSource",
+  "endpointUrl",
+  "gatewayName",
+  "gatewayPort",
+  "hostLocalInferenceProvenance",
+  "hostLocalInferenceReceipt",
+  "model",
+  "name",
+  "openshellDriver",
+  "pendingRouteReservation",
+  "preferredInferenceApi",
+  "provider",
+  "reservationSessionId",
+]);
+
+type HermesPortableRouteReservationDisposition =
+  | { readonly kind: "missing" }
+  | { readonly kind: "owned"; readonly entry: SandboxEntry }
+  | { readonly kind: "not-reservation" }
+  | { readonly kind: "conflict"; readonly detail: string };
+
+function normalizeHermesPortableRouteSelection(input: InferenceSelection) {
+  const normalized = normalizeInferenceSelection(input);
+  return {
+    provider: normalized.provider,
+    model: normalized.model,
+    endpointUrl: normalized.endpointUrl,
+    endpointSource: normalized.endpointSource,
+    credentialEnv: normalized.credentialEnv,
+    preferredInferenceApi: normalized.preferredInferenceApi,
+  };
+}
+
+function classifyHermesPortableRouteReservation(
+  sandboxName: string,
+  gatewayName: string,
+  authority: HermesPortableInferenceRouteReservationAuthority,
+  entry: SandboxEntry | null,
+): HermesPortableRouteReservationDisposition {
+  if (!entry) return { kind: "missing" };
+  if (entry.pendingRouteReservation !== true) return { kind: "not-reservation" };
+  if (!isRouteOnlySandboxReservation(entry)) {
+    return { kind: "conflict", detail: "the inference route reservation is already completed" };
+  }
+  if (!isPendingReservationForSession(entry, authority.sessionId)) {
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation belongs to another onboarding session",
+    };
+  }
+  if (Object.keys(entry).some((key) => !HERMES_PORTABLE_ROUTE_RESERVATION_KEYS.has(key))) {
+    return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
+  }
+  if (entry.name !== sandboxName || entry.gatewayName !== gatewayName) {
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation has another sandbox or gateway",
+    };
+  }
+  const expectedSelection = normalizeHermesPortableRouteSelection(authority.selection);
+  if (
+    !authority.sessionId ||
+    authority.sessionId.length > 256 ||
+    CREATE_INTENT_CONTROL.test(authority.sessionId) ||
+    !expectedSelection.provider ||
+    !expectedSelection.model ||
+    !isDeepStrictEqual(
+      normalizeHermesPortableRouteSelection(normalizeInferenceSelection(entry)),
+      expectedSelection,
+    )
+  ) {
+    return { kind: "conflict", detail: "the inference route reservation has another route" };
+  }
+  if (
+    (entry.gatewayPort !== undefined &&
+      (typeof entry.gatewayPort !== "number" ||
+        !Number.isSafeInteger(entry.gatewayPort) ||
+        entry.gatewayPort < 1 ||
+        entry.gatewayPort > 65_535)) ||
+    (entry.openshellDriver !== undefined &&
+      (typeof entry.openshellDriver !== "string" || entry.openshellDriver.length === 0)) ||
+    (entry.hostLocalInferenceReceipt !== undefined &&
+      entry.hostLocalInferenceReceipt !== null &&
+      (typeof entry.hostLocalInferenceReceipt !== "string" ||
+        entry.hostLocalInferenceReceipt.length === 0)) ||
+    (entry.hostLocalInferenceProvenance !== undefined &&
+      (typeof entry.hostLocalInferenceProvenance !== "object" ||
+        entry.hostLocalInferenceProvenance === null ||
+        Array.isArray(entry.hostLocalInferenceProvenance) ||
+        typeof entry.hostLocalInferenceReceipt !== "string"))
+  ) {
+    return { kind: "conflict", detail: "the inference route reservation is malformed" };
+  }
+  return { kind: "owned", entry };
+}
+
 export function classifyHermesPortableRegistry(
   receipt: HermesPortableLifecycleReceipt,
   entry: SandboxEntry | null,
 ): HermesPortableRegistryDisposition {
   if (!entry) return { kind: "missing" };
+  if (entry.pendingRouteReservation === true) {
+    return {
+      kind: "conflict",
+      detail: "the saved row is an inference route reservation, not registered sandbox authority",
+    };
+  }
   if (
     entry.name !== receipt.sandboxName ||
     entry.agent !== "hermes" ||
@@ -836,8 +955,72 @@ export async function runHermesPortableOnboardingTransaction<T>(
         );
     if (authority.kind === "openclaw") fail("will not reinterpret OpenClaw lifecycle authority");
     let snapshot = authority.kind === "hermes" ? authority.snapshot : null;
+    const initialRegistryEntry = deps.readRegistry();
+    const initialRouteReservation = classifyHermesPortableRouteReservation(
+      input.sandboxName,
+      input.gatewayName,
+      input.inferenceRouteReservation,
+      initialRegistryEntry,
+    );
+    const admittedRouteReservation =
+      initialRouteReservation.kind === "owned"
+        ? structuredClone(initialRouteReservation.entry)
+        : null;
+    let registryCommitAccepted = Boolean(
+      snapshot &&
+      snapshot.receipt.phase !== "pending" &&
+      classifyHermesPortableRegistry(snapshot.receipt, initialRegistryEntry).kind === "matching",
+    );
+    const canClassifyCommittedRegistry = Boolean(
+      snapshot &&
+      snapshot.receipt.phase !== "pending" &&
+      initialRouteReservation.kind === "not-reservation",
+    );
+    if (
+      !registryCommitAccepted &&
+      initialRouteReservation.kind !== "owned" &&
+      !canClassifyCommittedRegistry
+    ) {
+      fail("inference route reservation is not owned by the current onboarding session");
+    }
+    const registryDisposition = (
+      receipt: HermesPortableLifecycleReceipt,
+    ): HermesPortableRegistryDisposition => {
+      const entry = deps.readRegistry();
+      const reservation = classifyHermesPortableRouteReservation(
+        receipt.sandboxName,
+        receipt.gatewayName,
+        input.inferenceRouteReservation,
+        entry,
+      );
+      if (reservation.kind === "conflict") return reservation;
+      if (reservation.kind === "owned") {
+        return admittedRouteReservation &&
+          isDeepStrictEqual(reservation.entry, admittedRouteReservation)
+          ? { kind: "missing" }
+          : {
+              kind: "conflict",
+              detail: "the inference route reservation changed after admission",
+            };
+      }
+      if (reservation.kind === "missing") {
+        return admittedRouteReservation
+          ? {
+              kind: "conflict",
+              detail: "the inference route reservation disappeared after admission",
+            }
+          : { kind: "missing" };
+      }
+      const committed = classifyHermesPortableRegistry(receipt, entry);
+      if (committed.kind === "matching" && !registryCommitAccepted) {
+        return {
+          kind: "conflict",
+          detail: "sandbox registry authority replaced the route reservation before registration",
+        };
+      }
+      return committed;
+    };
     if (!snapshot) {
-      if (deps.registryExists()) fail("registry authority already exists before reservation");
       const preexisting = observeSandbox();
       if (preexisting.kind === "present") {
         fail("live sandbox authority already exists before reservation");
@@ -908,7 +1091,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
       proveLivePolicy(activeSnapshot.receipt, capturePolicy);
       requireMatchingRegistry(
         activeSnapshot.receipt,
-        deps.registryDisposition(activeSnapshot.receipt),
+        registryDisposition(activeSnapshot.receipt),
         liveIdentity.liveIdentityFingerprint,
       );
       probeHermesPortableAuthenticatedHealth(activeSnapshot.receipt, containerDeps);
@@ -923,23 +1106,23 @@ export async function runHermesPortableOnboardingTransaction<T>(
       proveLivePolicy(activeSnapshot.receipt, capturePolicy);
       requireMatchingRegistry(
         activeSnapshot.receipt,
-        deps.registryDisposition(activeSnapshot.receipt),
+        registryDisposition(activeSnapshot.receipt),
         finalIdentity.liveIdentityFingerprint,
       );
       return { active: activeSnapshot, createResult, created };
     }
 
     if (snapshot.receipt.phase === "pending") {
+      assertRegistryMissingBeforeConfiguration(
+        snapshot.receipt,
+        registryDisposition(snapshot.receipt),
+      );
       const buildContext = input.buildContext.materialize({
         sandboxName: snapshot.receipt.sandboxName,
         transactionId: snapshot.receipt.transactionId,
         createIntentSha256: snapshot.receipt.createIntentSha256,
         stateDir: input.stateDir,
       });
-      assertRegistryMissingBeforeConfiguration(
-        snapshot.receipt,
-        deps.registryDisposition(snapshot.receipt),
-      );
       let observation = observeSandbox();
       if (observation.kind === "ambiguous")
         fail(`cannot classify create effects: ${observation.detail}`);
@@ -1031,11 +1214,11 @@ export async function runHermesPortableOnboardingTransaction<T>(
     );
     proveLivePolicy(configuringSnapshot.receipt, capturePolicy);
     requireRegistryBeforeConfigurationMutation(
-      deps.registryDisposition(configuringSnapshot.receipt),
+      registryDisposition(configuringSnapshot.receipt),
       liveIdentity.liveIdentityFingerprint,
     );
     configureHermesPortableRestartPolicy(configuringSnapshot.receipt, containerDeps);
-    const beforeRegistry = deps.registryDisposition(configuringSnapshot.receipt);
+    const beforeRegistry = registryDisposition(configuringSnapshot.receipt);
     if (beforeRegistry.kind === "conflict") {
       fail(`registry conflicts with configuring authority: ${beforeRegistry.detail}`);
     }
@@ -1057,6 +1240,10 @@ export async function runHermesPortableOnboardingTransaction<T>(
         requireConfiguredContainerReady(
           assertCurrentHermesPortableContainer(configuringSnapshot.receipt, containerDeps),
         );
+        assertRegistryMissingBeforeConfiguration(
+          configuringSnapshot.receipt,
+          registryDisposition(configuringSnapshot.receipt),
+        );
         return currentIdentity.liveIdentityFingerprint;
       };
       await deps.registerSandbox(
@@ -1065,6 +1252,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
         liveIdentity.liveIdentityFingerprint,
         revalidateRegistryBoundary,
       );
+      registryCommitAccepted = true;
       await deps.afterRegistryCommit?.();
     }
     assertCurrentTransaction(
@@ -1084,7 +1272,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
     requireConfiguredContainerReady(currentContainer);
     requireMatchingRegistry(
       configuringSnapshot.receipt,
-      deps.registryDisposition(configuringSnapshot.receipt),
+      registryDisposition(configuringSnapshot.receipt),
       liveIdentity.liveIdentityFingerprint,
     );
     probeHermesPortableAuthenticatedHealth(configuringSnapshot.receipt, containerDeps);
@@ -1096,7 +1284,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
     );
     requireMatchingRegistry(
       configuringSnapshot.receipt,
-      deps.registryDisposition(configuringSnapshot.receipt),
+      registryDisposition(configuringSnapshot.receipt),
       liveIdentity.liveIdentityFingerprint,
     );
     const active = publishHermesPortableLifecycleReceipt(
@@ -1107,32 +1295,63 @@ export async function runHermesPortableOnboardingTransaction<T>(
   });
 }
 
-/** Assemble the existing onboarding transaction without changing its lifecycle fence. */
-export async function runHermesPortableOnboardingFromOnboard<T>(
-  sandboxName: string,
-  gatewayName: string,
-  lifecycleGeneration: string,
-  runtimeAuthority: CheckpointPortableRuntimeAuthority,
-  createArgv: readonly string[],
-  createPolicyPath: string,
-  startup: ResolveHermesPortableStartupContractInput,
-  withLifecycleLock: HermesPortableOnboardingDeps<T>["withLifecycleLock"],
-  childEnv: NodeJS.ProcessEnv,
-  openshellArgv: (args: string[]) => string[],
-  createSandbox: (
+export interface HermesPortableOnboardingFromOnboardInput<T> {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly lifecycleGeneration: string;
+  readonly portableRuntime: PortableOnboardRuntimeContext;
+  readonly createArgv: readonly string[];
+  readonly createPolicyPath: string;
+  readonly startup: ResolveHermesPortableStartupContractInput;
+  readonly inferenceRouteReservation: HermesPortableInferenceRouteReservationAuthority;
+  readonly withLifecycleLock: HermesPortableOnboardingDeps<T>["withLifecycleLock"];
+  readonly childEnv: NodeJS.ProcessEnv;
+  readonly openshellArgv: (args: string[]) => string[];
+  readonly createSandbox: (
     createArgv: readonly string[],
     readyCapture: ReturnType<typeof createHermesPortableReadyCapture>,
     readyRunner: ReturnType<typeof createHermesPortableReadyRunner>,
     buildContextPath: string,
-  ) => Promise<T>,
-  readRegistry: () => SandboxEntry | null,
-  registerSandbox: HermesPortableOnboardingDeps<T>["registerSandbox"],
-  sourceRoot: string,
-  buildContextSettings: HermesPortableBuildContextSettings,
-  podmanSourceEnv: NodeJS.ProcessEnv,
-  cleanupTemporaryPolicy?: () => boolean,
-  createPolicySourceBytes?: Buffer,
+  ) => Promise<T>;
+  readonly readRegistry: () => SandboxEntry | null;
+  readonly registerSandbox: HermesPortableOnboardingDeps<T>["registerSandbox"];
+  readonly sourceRoot: string;
+  readonly buildContextSettings: HermesPortableBuildContextSettings;
+  readonly cleanupTemporaryPolicy?: () => boolean;
+  readonly createPolicySourceBytes?: Buffer;
+}
+
+/** Assemble the existing onboarding transaction without changing its lifecycle fence. */
+export async function runHermesPortableOnboardingFromOnboard<T>(
+  input: HermesPortableOnboardingFromOnboardInput<T>,
 ): Promise<HermesPortableOnboardingResult<T>> {
+  const {
+    sandboxName,
+    gatewayName,
+    lifecycleGeneration,
+    portableRuntime,
+    createArgv,
+    createPolicyPath,
+    startup,
+    inferenceRouteReservation,
+    withLifecycleLock,
+    childEnv,
+    openshellArgv,
+    createSandbox,
+    readRegistry,
+    registerSandbox,
+    sourceRoot,
+    buildContextSettings,
+    cleanupTemporaryPolicy,
+    createPolicySourceBytes,
+  } = input;
+  const runtimeAuthority = portableRuntime.authority;
+  const portableEnvironmentScope = portableRuntime.environmentScope;
+  if (!portableEnvironmentScope) {
+    throw new Error("Hermes portable onboarding is missing runtime environment authority.");
+  }
+  const podmanSourceEnv =
+    portableEnvironmentScope.createHermesPortablePodmanSourceEnvironment(runtimeAuthority);
   const scopedCreateArgv = scopeHermesPortableCreateGatewayArgv(createArgv, gatewayName);
   const buildContext = createHermesPortableBuildContextPlan(sourceRoot, buildContextSettings);
   const executablePath = scopedCreateArgv[0];
@@ -1170,6 +1389,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
       ...(createPolicySourceBytes ? { createPolicySourceBytes } : {}),
       buildContext,
       startup,
+      inferenceRouteReservation,
     },
     {
       withLifecycleLock,
@@ -1197,8 +1417,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
           readyRunner,
           buildContextPath,
         ),
-      registryExists: () => readRegistry() !== null,
-      registryDisposition: (receipt) => classifyHermesPortableRegistry(receipt, readRegistry()),
+      readRegistry,
       registerSandbox,
       ...(cleanupTemporaryPolicy ? { cleanupTemporaryPolicy } : {}),
     },

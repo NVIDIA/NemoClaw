@@ -125,6 +125,12 @@ export interface PortableOnboardEnvironmentScope {
   restore(): void;
 }
 
+/** Keep one prepared portable runtime authority with the environment scope that installed it. */
+export interface PortableOnboardRuntimeContext {
+  readonly authority: CheckpointPortableRuntimeAuthority;
+  readonly environmentScope: PortableOnboardEnvironmentScope | null;
+}
+
 export function createDefaultResumeProfileEnvironmentScope(
   env: NodeJS.ProcessEnv,
 ): PortableOnboardEnvironmentScope {

@@ -1673,11 +1673,13 @@ const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
     createBaseImageResolutionContext: () =>
       baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
     createSandboxWithBaseImageResolution,
-    resolvePortableRuntimeAuthority: () =>
-      sandboxGpuCreateFlow.resolveExportedPortableRuntimeAuthority(
+    resolvePortableRuntimeContext: () => {
+      const authority = sandboxGpuCreateFlow.resolveExportedPortableRuntimeAuthority(
         process.env,
         onboardSession.loadSession,
-      ),
+      );
+      return authority ? { authority, environmentScope: null } : null;
+    },
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
 
@@ -2852,7 +2854,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
             servingProfileProvenance: opts.servingProfileProvenance ?? null,
             checkpointProfile: lockedRuntime.checkpointProfile,
-            portableRuntimeAuthority: lockedRuntime.preparedPortableAuthority,
+            portableRuntimeAuthority: lockedRuntime.portableRuntimeContext?.authority ?? null,
             agentFlag: opts.agent || null,
             envAgent: process.env.NEMOCLAW_AGENT || null,
             requestedHostMounts: opts.hostMounts,
@@ -3302,7 +3304,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               withSandboxPortReservationScope((dashboardPortReservationScope) =>
                 createSandboxWithBaseImageResolution(
                   baseImageResolutionContext,
-                  lockedRuntime.preparedPortableAuthority,
+                  lockedRuntime.portableRuntimeContext,
                   onboardingComputePlan,
                   opts.managedWorkloadRebuild ?? null,
                   opts.tempManagedRuntime === true,
@@ -3310,7 +3312,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   dashboardPortReservationScope,
                   hermesApiPortReservationScope,
                   ...createArgs,
-                  lockedRuntime.environmentScope,
                 ),
               ),
             ),

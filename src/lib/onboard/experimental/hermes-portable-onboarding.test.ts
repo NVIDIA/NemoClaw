@@ -12,6 +12,7 @@ import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/
 import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-podman-authority";
 import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import type { SandboxEntry } from "../../state/registry";
 import {
   captureHermesPortablePolicySource,
   createHermesPortableTransactionId,
@@ -37,6 +38,7 @@ const ID = "a".repeat(64);
 const IMAGE = "b".repeat(64);
 const SANDBOX_ID = "sandbox-id-1";
 const LIVE_IDENTITY_FINGERPRINT = "live-identity-1";
+const ROUTE_SESSION_ID = "session-alpha";
 const POLICY = "version: 1\nnetwork_policies: {}\n";
 const LABELS = {
   "openshell.managed": "true",
@@ -186,6 +188,52 @@ function podmanExecutableAuthority(): HermesPortablePodmanExecutableAuthority {
   };
 }
 
+function routeSelection() {
+  return {
+    provider: "ollama-local",
+    model: "qwen3-vl:4b",
+    endpointUrl: null,
+    endpointSource: null,
+    credentialEnv: null,
+    preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
+    nimContainer: null,
+  } as const;
+}
+
+function routeReservation(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
+  const selection = routeSelection();
+  return {
+    name: "alpha",
+    pendingRouteReservation: true,
+    reservationSessionId: ROUTE_SESSION_ID,
+    provider: selection.provider,
+    model: selection.model,
+    endpointUrl: selection.endpointUrl,
+    endpointSource: selection.endpointSource,
+    credentialEnv: selection.credentialEnv,
+    preferredInferenceApi: selection.preferredInferenceApi,
+    gatewayName: "nemoclaw",
+    hostLocalInferenceReceipt: "receipt-1",
+    ...overrides,
+  };
+}
+
+function matchingRegistryEntry(
+  options: { openshellVersion?: string | null; liveFingerprint?: string } = {},
+): SandboxEntry {
+  return {
+    name: "alpha",
+    agent: "hermes",
+    gatewayName: "nemoclaw",
+    lifecycleGeneration: "generation-1",
+    openshellDriver: "docker",
+    lifecycleLiveIdentityFingerprint: options.liveFingerprint ?? LIVE_IDENTITY_FINGERPRINT,
+    openshellVersion: "openshellVersion" in options ? options.openshellVersion : "0.0.101",
+  };
+}
+
 function input() {
   const uid = process.getuid!();
   const sourceDockerfilePath = `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`;
@@ -243,6 +291,10 @@ function input() {
       sandboxName: "alpha",
       startupArgv: startupArgv(),
     },
+    inferenceRouteReservation: {
+      sessionId: ROUTE_SESSION_ID,
+      selection: routeSelection(),
+    },
   };
 }
 
@@ -262,12 +314,24 @@ function deps(
     registryOpenShellVersion?: string | null;
     registryLiveFingerprint?: string;
     existingRegistry?: boolean;
+    registryEntry?: SandboxEntry | null;
+    replaceRegistryBeforeRegistration?: SandboxEntry | null;
     podmanAuthority?: HermesPortablePodmanExecutableAuthority;
   } = {},
 ) {
   let present = options.existingSandbox === true;
   let restartPolicy = "no";
-  let registry = options.existingRegistry === true;
+  let registryEntry =
+    "registryEntry" in options
+      ? (options.registryEntry ?? null)
+      : options.existingRegistry === true
+        ? matchingRegistryEntry({
+            ...("registryOpenShellVersion" in options
+              ? { openshellVersion: options.registryOpenShellVersion }
+              : {}),
+            liveFingerprint: options.registryLiveFingerprint,
+          })
+        : routeReservation();
   const registryFailures = options.failAfterRegistry
     ? [new Error("simulated registry-to-active exit")]
     : [];
@@ -352,29 +416,15 @@ function deps(
       present = true;
       return { ready: true };
     },
-    registryExists: () => registry,
-    registryDisposition: (receipt) =>
-      classifyHermesPortableRegistry(
-        receipt,
-        registry
-          ? ({
-              name: "alpha",
-              agent: "hermes",
-              gatewayName: "nemoclaw",
-              lifecycleGeneration: "generation-1",
-              openshellDriver: "docker",
-              lifecycleLiveIdentityFingerprint:
-                options.registryLiveFingerprint ?? LIVE_IDENTITY_FINGERPRINT,
-              openshellVersion:
-                "registryOpenShellVersion" in options
-                  ? options.registryOpenShellVersion
-                  : "0.0.101",
-            } as never)
-          : null,
-      ),
-    registerSandbox: () => {
+    readRegistry: () => registryEntry,
+    registerSandbox: (_result, _receipt, _liveIdentityFingerprint, revalidate) => {
+      registryEntry =
+        "replaceRegistryBeforeRegistration" in options
+          ? (options.replaceRegistryBeforeRegistration ?? null)
+          : registryEntry;
+      revalidate();
       events.push("registry");
-      registry = true;
+      registryEntry = matchingRegistryEntry();
     },
     afterRegistryCommit: async () => {
       const failure = registryFailures.shift();
@@ -528,12 +578,68 @@ describe("Hermes portable onboarding transaction", () => {
     const fixture = deps({ existingRegistry: true });
 
     await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
-      "registry authority already exists before reservation",
+      "inference route reservation is not owned by the current onboarding session",
     );
     expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
     expect(fixture.events).not.toContain("create");
     expect(fixture.podman).not.toHaveBeenCalled();
   });
+
+  it("admits the current session's exact inference route reservation before registration (#9203)", async () => {
+    const fixture = deps({ registryEntry: routeReservation() });
+
+    const completed = await runHermesPortableOnboardingTransaction(input(), fixture.value);
+
+    expect(completed.active.receipt.phase).toBe("active");
+    expect(completed.created).toBe(true);
+    expect(fixture.events).toContain("registry");
+  });
+
+  it.each([
+    ["ownerless", routeReservation({ reservationSessionId: undefined })],
+    ["missing", null],
+    ["another session", routeReservation({ reservationSessionId: "session-beta" })],
+    ["completed", routeReservation({ createdAt: "2026-08-18T00:00:00.000Z" })],
+    ["sandbox authority", routeReservation({ agent: "hermes" })],
+    ["malformed", routeReservation({ gatewayPort: 0 })],
+    ["another sandbox", routeReservation({ name: "beta" })],
+    ["another route", routeReservation({ model: "qwen3:8b" })],
+    ["another gateway", routeReservation({ gatewayName: "other-gateway" })],
+  ])(
+    "rejects %s inference reservation before publishing Hermes receipt authority (#9203)",
+    async (_label, row) => {
+      const fixture = deps({ registryEntry: row });
+
+      await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+        "inference route reservation is not owned by the current onboarding session",
+      );
+      expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
+      expect(fixture.events).not.toContain("create");
+      expect(fixture.podman).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["changes", routeReservation({ model: "qwen3:8b" })],
+    ["disappears", null],
+    ["becomes completed", matchingRegistryEntry()],
+  ])(
+    "rejects when the admitted inference reservation %s immediately before registration (#9203)",
+    async (_label, replacement) => {
+      const fixture = deps({
+        registryEntry: routeReservation(),
+        replaceRegistryBeforeRegistration: replacement,
+      });
+
+      await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+        /inference route reservation|replaced the route reservation/u,
+      );
+      expect(fixture.events).not.toContain("registry");
+      expect(
+        fs.existsSync(path.join(hermesPortableReceiptDirectory("alpha", stateDir), "active.json")),
+      ).toBe(false);
+    },
+  );
 
   it("resumes identical pending authority with effects without a duplicate create (#9203)", async () => {
     const first = deps({ updateFails: true });
@@ -566,6 +672,26 @@ describe("Hermes portable onboarding transaction", () => {
     const changed = input();
     changed.createArgv.splice(changed.createArgv.indexOf("--"), 0, "--gpu");
     const second = deps();
+
+    await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
+      "saved transaction disagrees",
+    );
+    expect(second.events).not.toContain("create");
+  });
+
+  it("rejects a new onboarding session taking over an existing pending receipt (#9203)", async () => {
+    const first = deps({ cleanupFails: true });
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "temporary policy cleanup did not complete",
+    );
+    const changed = input();
+    changed.inferenceRouteReservation = {
+      ...changed.inferenceRouteReservation,
+      sessionId: "session-beta",
+    };
+    const second = deps({
+      registryEntry: routeReservation({ reservationSessionId: "session-beta" }),
+    });
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
       "saved transaction disagrees",
@@ -706,7 +832,7 @@ describe("Hermes portable onboarding transaction", () => {
     const changed = input();
     changed.gatewayName = "other-gateway";
     changed.createArgv[changed.createArgv.indexOf("-g") + 1] = "other-gateway";
-    const second = deps();
+    const second = deps({ registryEntry: routeReservation({ gatewayName: "other-gateway" }) });
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
       "saved transaction disagrees",
