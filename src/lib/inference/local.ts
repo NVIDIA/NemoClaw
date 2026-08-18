@@ -363,7 +363,7 @@ export function probeVllmModels(
 // `{ "models": [...] }`. An empty array is fine — that just means no models
 // pulled yet — but a body that doesn't parse as JSON-with-array-`models` did
 // not come from Ollama and the probe should not call it healthy. (#4275)
-function isValidOllamaTagsResponseBody(body: string): boolean {
+export function isValidOllamaTagsResponseBody(body: string): boolean {
   if (!body) return false;
   try {
     const parsed = JSON.parse(body);
