@@ -8,6 +8,7 @@ import {
   buildSnapshotCommandEnv,
   classifySnapshotGatewayProbe,
   classifySnapshotRestoreResult,
+  verifySnapshotCloneResult,
 } from "../live/snapshot-commands-helpers.ts";
 
 const HOSTED_FLAG = "NEMOCLAW_E2E_USE_HOSTED_INFERENCE";
@@ -145,6 +146,15 @@ describe("snapshot restore result classification", () => {
     ],
     [
       {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "restoring 'source' as 'clone' requires managed-profile clone rebind. Destination 'clone' was not changed. secret-output",
+      },
+      "managed-clone-rebind-required",
+    ],
+    [
+      {
         exitCode: null,
         stdout: "State restored into 'clone', but gateway pairing could not be verified.",
         stderr: "scope-upgrade-pending secret-output",
@@ -158,5 +168,34 @@ describe("snapshot restore result classification", () => {
 
     expect(classification).toBe(expected);
     expect(classification).not.toContain("secret-output");
+  });
+});
+
+describe("snapshot clone verification routing", () => {
+  it.each([
+    ["managed-clone-rebind-required", "managed"],
+    ["restored", "legacy"],
+  ] as const)("routes %s to its exact supported branch", async (classification, expected) => {
+    const invoked: string[] = [];
+
+    await verifySnapshotCloneResult(classification, {
+      managedCloneDormancy: async () => {
+        invoked.push("managed");
+      },
+      restoredLegacyClone: async () => {
+        invoked.push("legacy");
+      },
+    });
+
+    expect(invoked).toEqual([expected]);
+  });
+
+  it("rejects every other restore result", async () => {
+    await expect(
+      verifySnapshotCloneResult("command-failure", {
+        managedCloneDormancy: async () => undefined,
+        restoredLegacyClone: async () => undefined,
+      }),
+    ).rejects.toThrow(/Unexpected snapshot clone result classification: command-failure/u);
   });
 });
