@@ -67,6 +67,16 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
       expectedStatus: 0,
       expectedStderr: "",
     },
+    {
+      title: "rejects a valid hash that names another file in a root-owned directory (#9530)",
+      initialHash: (configPath: string) => {
+        const decoyPath = path.join(path.dirname(configPath), "decoy.json");
+        fs.writeFileSync(decoyPath, '{"decoy":true}\n');
+        return `${sha256Hex(decoyPath)}  decoy.json\n`;
+      },
+      expectedStatus: 15,
+      expectedStderr: "root-owned OpenClaw config hash does not match openclaw.json\n",
+    },
   ])("$title", ({ initialHash, expectedStatus, expectedStderr }) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-root-hash-"));
     const configDir = path.join(tmpDir, ".openclaw");

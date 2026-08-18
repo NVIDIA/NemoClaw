@@ -17,7 +17,7 @@ export function buildRefreshMutableOpenClawConfigHashCommand(
     'owner="$(stat -c "%U" "$config_dir" 2>/dev/null || echo unknown)"',
     '[ -f "$config_file" ] || exit 0',
     'cd "$config_dir" || exit 13',
-    '[ "$owner" != "root" ] || { sha256sum -c .config-hash --status || { echo "root-owned OpenClaw config hash does not match openclaw.json" >&2; exit 15; }; exit 0; }',
+    '[ "$owner" != "root" ] || { expected_hash="$(sha256sum openclaw.json 2>/dev/null)" && actual_hash="$(cat .config-hash 2>/dev/null)" && [ "$actual_hash" = "$expected_hash" ] || { echo "root-owned OpenClaw config hash does not match openclaw.json" >&2; exit 15; }; exit 0; }',
     "sha256sum openclaw.json > .config-hash || exit 14",
     "chmod 660 .config-hash 2>/dev/null || true",
   ].join("; ");
