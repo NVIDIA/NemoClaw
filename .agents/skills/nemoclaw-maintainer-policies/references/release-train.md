@@ -104,10 +104,11 @@ requires repository `maintain` or `admin` permission before the Launchable sourc
 
 ## General E2E Decision
 
-General E2E informs the maintainer; it does not decide whether a tag can exist. Show the newest full
-run's full SHA, status, conclusion, attempt, created, started, and last-updated timestamps, age at
-inspection, workflow URL, `Release qualification` URL, and any failed, cancelled, skipped, queued,
-or active results.
+The general E2E decision records whether the maintainer chooses focused tests, the full suite, or the
+displayed general E2E status. General E2E informs the maintainer; it does not decide whether a tag
+can exist. Show the newest full run's full SHA, status, conclusion, attempt, created, started, and
+last-updated timestamps, age at inspection, workflow URL, `Release qualification` URL, and any
+failed, cancelled, skipped, queued, or active results.
 
 Offer three choices:
 

@@ -3,10 +3,11 @@
 
 # Candidate Evidence
 
-Use the exact version and candidate from `plan.json`. These are read-only checks. Run every section
-except [Final Documentation Recheck](#final-documentation-recheck) before the general E2E decision.
-Keep the first shell only until its evidence is copied into the release brief. It does not need to
-remain open while waiting for tag confirmation.
+Candidate evidence is the release-specific evidence required for the planned candidate. Use the
+exact version and candidate from `plan.json`. These are read-only checks. Run every section except
+[Final Documentation Recheck](#final-documentation-recheck) before the general E2E decision. Keep
+the first shell only until its evidence is copied into the release brief. It does not need to remain
+open while waiting for tag confirmation.
 
 ```bash
 set -euo pipefail

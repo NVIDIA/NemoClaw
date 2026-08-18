@@ -33,9 +33,9 @@ Treat these as separate states:
   workspace cleanup. The general E2E decision cannot waive these requirements.
 - Treat general E2E as maintainer context, not a tag gate. Show the newest full E2E result and let the
   maintainer run focused tests, run the full suite, or proceed with the displayed status.
-- Record every displayed or requested E2E result and the decision in the release brief. Record a
-  plain-language exception reason when the status is exceptional or a requested run remains
-  unresolved.
+- Record every displayed or requested E2E result and the decision in the release brief, the signed
+  Markdown release record. Record a plain-language exception reason when the status is exceptional
+  or a requested run remains unresolved.
 - Pass the exact final release brief to `release:cut` with `--message-file`. The file becomes the
   signed tag annotation; do not maintain another exception record.
 - Ask the maintainer to paste the plan's full confirmation phrase before cutting.
