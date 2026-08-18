@@ -518,7 +518,7 @@ async function resolveManagedImageContractAtReferenceFromGhcr(options: {
     return invalid(`'${agent}' image publication cohort does not match the OpenClaw cohort`);
   }
   if (options.expectedRevision !== undefined && identity.revision !== options.expectedRevision) {
-    return invalid(`'${agent}' image source revision does not match the OpenClaw revision`);
+    return invalid(`'${agent}' image source revision does not match the expected revision`);
   }
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
   return {
@@ -572,19 +572,27 @@ export async function resolveManagedImageContractFromGhcr(options: {
 
 export async function resolveManagedImageCatalogFromGhcr(options: {
   readonly release: string;
+  /** Immutable source revision selected by a live qualification run. */
+  readonly revision?: string;
   readonly platform?: ManagedImagePlatform;
   readonly nodeArchitecture?: string;
   readonly fetchImpl?: Fetch;
   readonly environment?: NodeJS.ProcessEnv;
 }): Promise<ManagedImageContractCatalog> {
   const release = normalizeManagedImageRelease(options.release);
+  const revision = options.revision;
+  if (revision !== undefined && !REVISION_PATTERN.test(revision)) {
+    return invalid(`managed image revision '${revision}' is not a full lowercase SHA`);
+  }
   const platform = resolveCatalogPlatform(options);
   return withRegistryFetch(options.fetchImpl, options.environment, async (fetchImpl) => {
-    const openclaw = await resolveManagedImageContractFromGhcr({
+    const openclaw = await resolveManagedImageContractAtReferenceFromGhcr({
       agent: "openclaw",
+      reference: revision ?? release,
       release,
       platform,
       fetchImpl,
+      ...(revision === undefined ? {} : { expectedRevision: revision }),
     });
     const cohortReference = `cohort-${openclaw.source.cohort}`;
     const dependentResults = await Promise.allSettled(
