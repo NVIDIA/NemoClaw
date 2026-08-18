@@ -4,7 +4,7 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import type { E2eAgentRuntime } from "../../../tools/e2e/execution-coverage.mts";
+import type { E2eExecutionMetadata } from "../../../tools/e2e/execution-coverage.mts";
 
 import { listTargets, requireTargets } from "./registry.ts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
@@ -22,12 +22,13 @@ interface Args {
   targets: string[];
 }
 
-export interface LiveTargetMatrixEntry {
+export interface LiveTargetInventoryEntry extends E2eExecutionMetadata {
   id: string;
-  agentRuntime: E2eAgentRuntime;
-  observableOutcome: string;
-  environmentOrInferenceEndpoint: string;
-  unresolvedReason: string;
+  supported: boolean;
+  supportReasons: string[];
+}
+
+export interface LiveTargetMatrixEntry extends LiveTargetInventoryEntry {
   runner: string;
   label: string;
   platform: string;
@@ -37,8 +38,6 @@ export interface LiveTargetMatrixEntry {
   expectedStateId: string;
   suites: string[];
   requiredSecrets: string[];
-  supported: boolean;
-  supportReasons: string[];
   pendingRuntimeSuites: string[];
 }
 
@@ -87,10 +86,8 @@ function liveMatrixEntry(
   support: LiveTargetSupport,
 ): LiveTargetMatrixEntry {
   const { runner } = resolveRunnerForTarget(target);
-  const executionCoverage = liveTargetExecutionCoverage(target, support);
   return {
-    id: target.id,
-    ...executionCoverage,
+    ...liveTargetInventoryEntry(target, support),
     runner,
     label: liveTargetTestTitle(target, support),
     platform: target.environment?.platform ?? "unknown",
@@ -100,19 +97,32 @@ function liveMatrixEntry(
     expectedStateId: target.expectedStateId ?? "",
     suites: target.suiteIds ?? [],
     requiredSecrets: target.requiredSecrets ?? [],
-    supported: support.supported,
-    supportReasons: support.reasons,
     pendingRuntimeSuites: support.pendingRuntimeSuites,
   };
 }
 
-export function buildLiveTargetInventory(): LiveTargetMatrixEntry[] {
-  return listTargets().map((target) => liveMatrixEntry(target, liveTargetSupport(target)));
+export function liveTargetInventoryEntry(
+  target: TargetDefinition,
+  support = liveTargetSupport(target),
+): LiveTargetInventoryEntry {
+  return {
+    id: target.id,
+    ...liveTargetExecutionCoverage(target, support),
+    supported: support.supported,
+    supportReasons: support.reasons,
+  };
+}
+
+export function buildLiveTargetInventory(): LiveTargetInventoryEntry[] {
+  return listTargets().map((target) => liveTargetInventoryEntry(target));
 }
 
 export function buildLiveTargetMatrix(ids: string[] = []): LiveTargetMatrixEntry[] {
   if (ids.length === 0) {
-    return buildLiveTargetInventory().filter((entry) => entry.supported);
+    return listTargets().flatMap((target) => {
+      const support = liveTargetSupport(target);
+      return support.supported ? [liveMatrixEntry(target, support)] : [];
+    });
   }
   return requireTargets(ids).map((target) => liveMatrixEntry(target, liveTargetSupport(target)));
 }
