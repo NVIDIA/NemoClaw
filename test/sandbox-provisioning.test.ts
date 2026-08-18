@@ -846,13 +846,13 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       expect(fs.statSync(openclawDir).isDirectory()).toBe(true);
       expect(fs.statSync(path.join(openclawDir, "exec-approvals.json")).isFile()).toBe(true);
       expect(fs.existsSync(path.join(openclawDir, "update-check.json"))).toBe(false);
-      for (const dir of ["credentials", "devices", "identity", "logs", "state", "telegram"]) {
+      ["credentials", "devices", "identity", "logs", "state", "telegram"].forEach((dir) => {
         const stateDir = path.join(openclawDir, dir);
         expect(fs.statSync(stateDir).isDirectory()).toBe(true);
         expect(fs.lstatSync(stateDir).isSymbolicLink()).toBe(false);
         expect(fs.statSync(stateDir).mode & 0o020).toBe(0o020);
         expect(fs.statSync(stateDir).mode & 0o2000).toBe(0o2000);
-      }
+      });
       expect(fs.existsSync(path.join(sandboxRoot, ".openclaw-data"))).toBe(false);
       expect(fs.lstatSync(path.join(openclawDir, "exec-approvals.json")).isSymbolicLink()).toBe(
         false,
@@ -868,13 +868,13 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         sandboxRoot,
       );
       expect(rc.result.status).toBe(0);
-      for (const rcName of [".bashrc", ".profile"]) {
+      [".bashrc", ".profile"].forEach((rcName) => {
         const rcPath = path.join(sandboxRoot, rcName);
         const content = fs.readFileSync(rcPath, "utf-8");
         expect(content.toLowerCase()).not.toContain("proxy");
         expect(content).not.toContain("/tmp/nemoclaw-proxy-env.sh");
         expect((fs.statSync(rcPath).mode & 0o777).toString(8)).toBe("444");
-      }
+      });
       expect(rc.calls).toContain(
         `chown root:root ${path.join(sandboxRoot, ".bashrc")} ${path.join(sandboxRoot, ".profile")}`,
       );
@@ -1130,7 +1130,9 @@ describe("Hermes sandbox provisioning", () => {
       fs.mkdirSync(path.dirname(stateLockPlanPath), { recursive: true });
       fs.mkdirSync(etcDir, { recursive: true });
       fs.writeFileSync(bashrcPath, "# fixture\n", { mode: 0o600 });
-      for (const file of files) fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
+      files.forEach((file) => {
+        fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
+      });
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
       ]);
@@ -1321,11 +1323,11 @@ describe("Hermes sandbox provisioning", () => {
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
     fs.writeFileSync(path.join(hermesWebDir, "package-lock.json"), "{}\n");
     fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
-    for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
+    ["npm", "electron", "node-gyp", "uv"].forEach((cache) => {
       const cachePath = path.join(rootCache, cache);
       fs.mkdirSync(cachePath, { recursive: true });
       fs.writeFileSync(path.join(cachePath, "build-only-cache"), "unused after image assembly\n");
-    }
+    });
     const command = dockerRunCommandBetween(
       dockerfile,
       "# Published base images can lag Dockerfile.base",
@@ -1346,9 +1348,9 @@ describe("Hermes sandbox provisioning", () => {
       expect(calls).toContain(`npm run build --prefix ${hermesWebDir}`);
       expect(fs.existsSync(hermesWebDist)).toBe(true);
       expect(fs.existsSync(path.join(hermesWebDir, "node_modules"))).toBe(false);
-      for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
+      ["npm", "electron", "node-gyp", "uv"].forEach((cache) => {
         expect(() => fs.lstatSync(path.join(rootCache, cache))).toThrow();
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1371,6 +1373,25 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+  it("creates the Hermes lazy dependency target with sandbox ownership (#8613)", () => {
+    const layout = runHermesLayoutBlock(
+      HERMES_DOCKERFILE_BASE,
+      "# Create .hermes with mutable integration dirs",
+      "# Pre-create shell init files",
+    );
+    try {
+      expect(layout.result.status, layout.result.stderr).toBe(0);
+      const lazyPackages = path.join(layout.sandboxRoot, ".hermes", "lazy-packages");
+      const metadata = fs.statSync(lazyPackages);
+      expect(metadata.mode & 0o777).toBe(0o750);
+      expect(layout.calls).toContain(
+        `chown -R sandbox:sandbox ${path.join(layout.sandboxRoot, ".hermes")}`,
+      );
+    } finally {
+      fs.rmSync(layout.tmp, { recursive: true, force: true });
+    }
+  });
+
   it("grants the Hermes gateway group write access to runtime state directories", () => {
     const runs = [
       runHermesLayoutBlock(
@@ -1386,21 +1407,12 @@ describe("Hermes sandbox provisioning", () => {
       ),
     ];
     try {
-      for (const run of runs) {
+      runs.forEach((run) => {
         expect(run.result.status).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
         expect((fs.statSync(hermesDir).mode & 0o7777).toString(8)).toBe("3770");
-        for (const dir of [
-          "logs",
-          "logs/curator",
-          "cache",
-          "hooks",
-          "image_cache",
-          "audio_cache",
-          "platforms",
-        ]) {
-          expect((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8)).toBe("770");
-        }
+        expect(["logs", "logs/curator", "cache", "hooks", "image_cache", "audio_cache", "platforms"].every((dir) =>
+              Object.is((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8), "770"))).toBe(true);
         expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
           "2770",
         );
@@ -1423,11 +1435,11 @@ describe("Hermes sandbox provisioning", () => {
             "gateway",
           )} ${path.join(hermesDir, "runtime")}`,
         );
-      }
+      });
     } finally {
-      for (const run of runs) {
+      runs.forEach((run) => {
         fs.rmSync(run.tmp, { recursive: true, force: true });
-      }
+      });
     }
   });
 });

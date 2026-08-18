@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createOnboardOpenShellInstallBindings,
   ensureOpenshellForOnboard,
   type OpenShellInstallDeps,
   type OpenShellInstallResult,
@@ -48,6 +49,44 @@ function makeDeps(overrides: Partial<OpenShellInstallDeps> = {}) {
 }
 
 describe("ensureOpenshellForOnboard", () => {
+  it("binds lazy install dependencies and forwards trusted-owner persistence", () => {
+    const installResult: OpenShellInstallResult = {
+      installed: true,
+      localBin: "/tmp/openshell",
+      futureShellPathHint: null,
+    };
+    const getInstallDeps = vi.fn((exit?: (code: number) => never) =>
+      makeDeps({
+        isOpenshellInstalled: () => false,
+        installOpenshell: () => installResult,
+        exit: exit ?? makeDeps().exit,
+      }),
+    );
+    const afterSuccessfulInstall = vi.fn();
+    const bindings = createOnboardOpenShellInstallBindings({
+      getInstallDeps,
+      afterSuccessfulInstall,
+    });
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    });
+    const persistTrustedGatewayOwner = vi.fn();
+
+    expect(
+      bindings.areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/gateway",
+        sandboxBin: "/tmp/sandbox",
+      }),
+    ).toBe(true);
+    expect(bindings.ensureOpenshellForOnboard(exitProcess, persistTrustedGatewayOwner)).toEqual(
+      installResult,
+    );
+
+    expect(getInstallDeps).toHaveBeenNthCalledWith(1);
+    expect(getInstallDeps).toHaveBeenNthCalledWith(2, exitProcess);
+    expect(afterSuccessfulInstall).toHaveBeenCalledWith(persistTrustedGatewayOwner);
+  });
+
   it("runs trusted post-install reconciliation only after a successful install", () => {
     const afterSuccessfulInstall = vi.fn();
     const deps = makeDeps({

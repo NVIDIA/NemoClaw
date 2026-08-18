@@ -100,10 +100,10 @@ describe("getServiceStatuses", () => {
   it("returns stopped status when no PID files exist", () => {
     const statuses = getServiceStatuses({ pidDir });
     expect(statuses).toHaveLength(1);
-    for (const s of statuses) {
+    statuses.forEach((s) => {
       expect(s.running).toBe(false);
       expect(s.pid).toBeNull();
-    }
+    });
   });
 
   it("returns service name cloudflared", () => {

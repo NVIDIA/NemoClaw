@@ -16,6 +16,9 @@ The exact request depends on the provider API that the agent uses.
 
 When credential validation fails, the onboarding wizard lets you re-enter the API key, choose another provider, retry, or exit.
 NemoClaw retries transient upstream failures before it reports a provider failure.
+After a fatal provider or inference-validation failure before sandbox creation, NemoClaw attempts to release an unowned NemoClaw-managed OpenShell gateway and remove its registration so provider credentials do not remain in a live process.
+It preserves a gateway that another registered sandbox uses, an external supervisor owns, or whose teardown authority cannot be proven.
+If listener release cannot be confirmed, NemoClaw keeps the gateway registration for recovery and reports the remaining listener.
 
 The `nvapi-` prefix check applies only to `NVIDIA_INFERENCE_API_KEY`.
 OpenRouter keys must be non-empty and begin with `sk-or-`.
@@ -39,10 +42,10 @@ Set `NEMOCLAW_PREFERRED_API=openai-responses` before onboarding to select `/v1/r
 Set `NEMOCLAW_PREFERRED_API=openai-completions` to skip the Responses probe and validate Chat Completions only.
 The Responses streaming check waits up to 5 seconds for `response.output_text.delta` before onboarding falls back to Chat Completions.
 Some Chat Completions validation requests require a structured tool call.
-If such a request reaches the output-token limit after producing only reasoning content, NemoClaw retries once with a larger token budget.
+If such a request reaches the output-token limit after producing only reasoning content, NemoClaw retries with a 1024-token output limit and then, when reasoning still uses the full limit, with a 4096-token output limit and a doubled request deadline.
 This applies to local runtimes such as Ollama and vLLM.
-Onboarding continues only when the retry returns a structured tool call.
-If the retry fails or times out, validation stops without another Chat Completions attempt.
+Onboarding continues only when a retry returns a structured tool call.
+If the last retry fails or times out, validation stops without another Chat Completions attempt.
 
 <AgentOnly variant="deepagents">
 
@@ -57,9 +60,13 @@ The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat 
 
 For OpenClaw, NemoClaw sends a non-streaming request to `/v1/messages`, then sends a streaming request to the same path.
 The streaming check requires exactly one `message_start`, at least one `content_block_delta`, and one `message_stop` event.
+The streaming request also forces the `emit_ok` tool through Anthropic's `tool_choice` field.
+Validation requires a native `tool_use` content block named `emit_ok` and a later `message_delta` with `stop_reason: tool_use`.
+Text that merely contains JSON shaped like a tool request remains assistant text and fails validation.
+The corresponding diagnostics are `anthropic-streaming-missing-tool-use` and `anthropic-streaming-missing-tool-use-stop-reason`.
 
-Set `NEMOCLAW_REASONING=true` to skip the streaming check for a reasoning-only endpoint.
-Agent runs still use streaming, so this setting moves a streaming defect from onboarding to runtime.
+Set `NEMOCLAW_REASONING=true` to skip both the streaming sequence and forced tool-call checks for a reasoning-only endpoint.
+Agent runs still use streaming and native tool calls, so this setting moves either defect from onboarding to runtime.
 
 </AgentOnly>
 
@@ -67,13 +74,14 @@ Agent runs still use streaming, so this setting moves a streaming defect from on
 
 For Hermes and other agents that use only OpenAI-compatible inference, NemoClaw validates `/v1/chat/completions` for a custom Anthropic selection.
 This is the API surface that the managed OpenAI frontend uses at runtime.
+These routes keep their existing Chat Completions tool-call validation and do not run the OpenClaw native Anthropic `emit_ok` streaming check.
 
 </AgentOnly>
 
 ## Compatible Endpoint Probes
 
 Compatible endpoint validation sends a real inference request because many proxies do not expose `/models`.
-For an OpenAI-compatible endpoint, a reasoning model that returns only reasoning content can receive a retry with a larger response budget before NemoClaw reports failure.
+For an OpenAI-compatible endpoint, a reasoning model that returns only reasoning content can receive retries with larger output token limits before NemoClaw reports failure.
 Route, configuration, and authentication failures still fail immediately.
 
 During one onboarding invocation, NemoClaw can reuse one successful Chat Completions validation instead of sending the same immediate host-side request.
@@ -101,5 +109,6 @@ Verify that route from inside the sandbox after onboarding.
 - [Verify the Sandbox Inference Route](verify-inference-route) to test the route the agent uses.
 <AgentOnly variant="openclaw">
 - [Troubleshooting](../../reference/troubleshooting#tool-calls-appear-as-assistant-text) when a local server returns tool calls as text.
+- [Troubleshooting Anthropic-compatible tool-call validation](../../reference/troubleshooting#onboarding-rejects-an-anthropic-compatible-tool-call) when the forced native tool probe fails during onboarding.
 </AgentOnly>
 - [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint) for custom endpoint setup.

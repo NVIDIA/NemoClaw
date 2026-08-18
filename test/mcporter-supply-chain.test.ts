@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -25,11 +26,29 @@ const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tg
 const expectedHonoNodeServerVersion = "2.0.11";
 const expectedHonoNodeServerTarball =
   "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
+const expectedHonoVersion = "4.12.34";
+const expectedHonoTarball = "https://registry.npmjs.org/hono/-/hono-4.12.34.tgz";
 const expectedFastUriVersion = "3.1.5";
 const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz";
 const expectedIpAddressVersion = "10.3.1";
 const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
+const reviewedAuditConfig = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, "ci", "reviewed-npm-audit.json"), "utf8"),
+) as {
+  lockedGraphs: Array<{
+    directory: string;
+    id: string;
+    integrity: string;
+    lockSha256: string;
+    packageSpec: string;
+    tarballUrl: string;
+  }>;
+};
+const reviewedAuditDriver = fs.readFileSync(
+  path.join(repoRoot, "scripts", "audit-reviewed-npm-graph.mts"),
+  "utf8",
+);
 
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
@@ -86,6 +105,9 @@ describe("mcporter image supply-chain controls", () => {
     expect(dependencyReview).toContain("`GHSA-v2hh-gcrm-f6hx`");
     expect(dependencyReview).toContain("`GHSA-7p8r-x3mc-p8w7`");
     expect(dependencyReview).toContain("exact `3.1.5`");
+    expect(dependencyReview).toContain("`hono@4.12.34`");
+    expect(dependencyReview).toContain("`GHSA-54fx-42gc-7vw4`");
+    expect(dependencyReview).toContain("exact `4.12.34`");
     expect(dependencyReview).toContain("`ip-address@10.3.1`");
     expect(dependencyReview).toContain("`GHSA-mwp4-54f8-5fhr`");
     expect(dependencyReview).toContain("exact `10.3.1`");
@@ -106,6 +128,13 @@ describe("mcporter image supply-chain controls", () => {
         overridden: true,
         resolved: expectedHonoNodeServerTarball,
         version: expectedHonoNodeServerVersion,
+      }),
+    );
+    expect(findDependency(graph, "hono")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedHonoTarball,
+        version: expectedHonoVersion,
       }),
     );
     expect(findDependency(graph, "fast-uri")).toEqual(
@@ -175,7 +204,7 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(
       flattenedContents.includes(
-        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
       ) ||
         contents.includes(
           "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
@@ -185,10 +214,28 @@ describe("mcporter image supply-chain controls", () => {
       "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
     );
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
-    expect(contents).toContain(`${runtimePrefix} audit signatures`);
+    expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
-      `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter`,
+      `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk hono mcporter`,
     );
     expect(contents).toContain("StreamableHTTPServerTransport");
+  });
+
+  it("verifies the exact committed dependency graph signatures in trusted CI (#8925)", () => {
+    const graph = reviewedAuditConfig.lockedGraphs.find(
+      (candidate) => candidate.id === "mcporter-runtime",
+    );
+    expect(graph).toMatchObject({
+      directory: "agents/openclaw/mcporter-runtime",
+      integrity: expectedIntegrity,
+      packageSpec: `mcporter@${expectedVersion}`,
+      tarballUrl: expectedTarball,
+    });
+
+    const lockfile = fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"));
+    expect(createHash("sha256").update(lockfile).digest("hex")).toBe(graph?.lockSha256);
+    expect(reviewedAuditDriver).toContain(
+      'run("npm", ["audit", "signatures", "--omit=dev"], directory);',
+    );
   });
 });

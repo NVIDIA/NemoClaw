@@ -91,15 +91,17 @@ describe("private-networks.yaml schema", () => {
     );
   });
 
-  it("requires a non-empty purpose on every entry", () => {
-    const doc = cliHelper.getNetworkEntries();
-    for (const family of ["ipv4", "ipv6", "names"] as const) {
-      for (const entry of doc[family]) {
+  it.each(["ipv4", "ipv6", "names"] as const)(
+    "requires a non-empty purpose on every entry [%s]",
+    (family) => {
+      const doc = cliHelper.getNetworkEntries();
+
+      doc[family].forEach((entry) => {
         expect(entry.purpose, `${family} ${entryLabel(entry)}`).toBeTypeOf("string");
         expect(entry.purpose.trim().length, `${family} ${entryLabel(entry)}`).toBeGreaterThan(0);
-      }
-    }
-  });
+      });
+    },
+  );
 
   it("rejects duplicate entries", () => {
     const doc = cliHelper.getNetworkEntries();
@@ -361,12 +363,13 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
     ["ffc0::", true, "ff00::/8 three-quarter"],
   ];
 
-  for (const [addr, expected, label] of vectors) {
-    it(`classifies ${label} at ${addr} as ${String(expected)}`, () => {
+  it.each(vectors.map(([addr, expected, label]) => ({ addr, expected, label })))(
+    "classifies $label at $addr as $expected",
+    ({ addr, expected }) => {
       expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
       expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
-    });
-  }
+    },
+  );
 });
 
 // ── Wrapper-level cases (bracket handling, cross-family, DNS) ───────
@@ -401,10 +404,15 @@ describe("CLI and plugin isPrivateHostname agree on wrapper-level cases", () => 
     ["", false, "empty"],
   ];
 
-  for (const [addr, expected, label] of extras) {
-    it(`classifies ${label} at ${JSON.stringify(addr)} as ${String(expected)}`, () => {
-      expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
-      expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
-    });
-  }
+  it.each(
+    extras.map(([addr, expected, label]) => ({
+      addr,
+      expected,
+      label,
+      displayedAddr: JSON.stringify(addr),
+    })),
+  )("classifies $label at $displayedAddr as $expected", ({ addr, expected }) => {
+    expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
+    expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
+  });
 });

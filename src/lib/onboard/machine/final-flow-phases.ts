@@ -90,6 +90,9 @@ export function createFinalOnboardFlowPhases<
       authoritativePolicyTier: options.authoritativePolicyTier,
       sandboxName: context.sandboxName,
       provider: context.provider,
+      hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
+      hostLocalInferenceSandboxProofAuthority:
+        context.hostLocalInferenceSandboxProofAuthority ?? null,
       model: context.model,
       endpointUrl: context.endpointUrl,
       credentialEnv: context.credentialEnv,
@@ -128,6 +131,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       deps: finalizationDeps,
     });
     return { result: finalizationResult.stateResult };
@@ -151,6 +155,7 @@ export function createFinalOnboardFlowPhases<
         webSearchEnabled && context.webSearchConfig
           ? options.finalization.webSearchProvider(context.webSearchConfig)
           : null,
+      portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };

@@ -560,16 +560,18 @@ describe("legacy Hermes shields compatibility", () => {
       .map(commandFromCall)
       .filter((cmd) => cmd.includes(HERMES_GUARD));
     expect(guardCommands.length).toBeGreaterThan(0);
-    for (const command of guardCommands) {
-      const pythonIndex = command.indexOf(HERMES_PYTHON);
-      expect(pythonIndex).toBeGreaterThanOrEqual(0);
-      expect(command[pythonIndex + 1]).toBe("-I");
-      expect(command[pythonIndex + 2]).toBe(HERMES_GUARD);
-    }
+    expect(
+      guardCommands.every((command) => {
+        const pythonIndex = command.indexOf(HERMES_PYTHON);
+        return (
+          pythonIndex >= 0 &&
+          command[pythonIndex + 1] === "-I" &&
+          command[pythonIndex + 2] === HERMES_GUARD
+        );
+      }),
+    ).toBe(true);
     expect(privilegedExecArgvSpy).toHaveBeenCalled();
-    for (const call of privilegedExecArgvSpy.mock.calls) {
-      expect(call[3]).toBe(true);
-    }
+    expect(privilegedExecArgvSpy.mock.calls.every((call) => call[3] === true)).toBe(true);
   });
 
   it("pins one capability decision across policy and config mutation", () => {
@@ -588,39 +590,40 @@ describe("legacy Hermes shields compatibility", () => {
     expect(commands.some((cmd) => isGuardAction(cmd, "begin-shields-transition"))).toBe(true);
   });
 
-  it.each([
-    401, 403, 404,
-  ])("rolls back Shields down when Hermes returns unusable HTTP %i", (httpStatus) => {
-    installExecResponses(CURRENT_GUARD_HELP, "3770", undefined, true);
-    inferenceConvergenceSpy.mockReturnValue({
-      ok: false,
-      attempts: 4,
-      httpStatus,
-    });
+  it.each([401, 403, 404])(
+    "rolls back Shields down when Hermes returns unusable HTTP %i",
+    (httpStatus) => {
+      installExecResponses(CURRENT_GUARD_HELP, "3770", undefined, true);
+      inferenceConvergenceSpy.mockReturnValue({
+        ok: false,
+        attempts: 4,
+        httpStatus,
+      });
 
-    expect(() =>
-      shields.shieldsDown("current-hermes", {
-        throwOnError: true,
-      }),
-    ).toThrow(
-      new RegExp(`inference route did not converge.*HTTP ${String(httpStatus)}.*4 attempts`, "i"),
-    );
+      expect(() =>
+        shields.shieldsDown("current-hermes", {
+          throwOnError: true,
+        }),
+      ).toThrow(
+        new RegExp(`inference route did not converge.*HTTP ${String(httpStatus)}.*4 attempts`, "i"),
+      );
 
-    const errors = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(errors).toContain(
-      "Recover the Hermes inference route, then re-run `nemoclaw current-hermes shields down`.",
-    );
-    expect(errors).not.toContain("after correcting file ownership");
-    const stateDir = path.join(homeDir, ".nemoclaw", "state");
-    const state = JSON.parse(
-      fs.readFileSync(path.join(stateDir, "shields-current-hermes.json"), "utf-8"),
-    );
-    expect(state).toMatchObject({ shieldsDown: false });
-    expect(
-      fs.readdirSync(stateDir).filter((entry) => entry.startsWith("shields-transition-")),
-    ).toEqual([]);
-    expect(auditSpy).not.toHaveBeenCalled();
-  });
+      const errors = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errors).toContain(
+        "Recover the Hermes inference route, then re-run `nemoclaw current-hermes shields down`.",
+      );
+      expect(errors).not.toContain("after correcting file ownership");
+      const stateDir = path.join(homeDir, ".nemoclaw", "state");
+      const state = JSON.parse(
+        fs.readFileSync(path.join(stateDir, "shields-current-hermes.json"), "utf-8"),
+      );
+      expect(state).toMatchObject({ shieldsDown: false });
+      expect(
+        fs.readdirSync(stateDir).filter((entry) => entry.startsWith("shields-transition-")),
+      ).toEqual([]);
+      expect(auditSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("descriptor-safely protects and verifies the sandbox parent when a failed rebuild relocks an old image", () => {
     dockerExecSpy.mockImplementation((cmd: string[]) => {
@@ -824,126 +827,141 @@ describe("legacy Hermes shields compatibility", () => {
       });
     });
 
-    it("completes a timed retained unlock once and leaves its retry side effects idempotent", () => {
-      const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
-      const stateDir = statePaths.resolveNemoclawStateDir();
-      const processToken = "d".repeat(32);
-      const snapshotPath = path.join(stateDir, "shields-policy-before-provider-crash.yaml");
-      const timerPath = path.join(stateDir, `shields-timer-${sandbox.name}.json`);
-      const transitionPath = path.join(
-        stateDir,
-        `shields-transition-${sandbox.name}-${processToken}.json`,
-      );
-      fs.mkdirSync(path.join(stateDir, "runtime-provider-lifecycle"), {
-        recursive: true,
-        mode: 0o700,
-      });
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
-      const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
-      fs.writeFileSync(
-        path.join(stateDir, `shields-${sandbox.name}.json`),
-        JSON.stringify({
-          shieldsDown: true,
-          shieldsDownAt: "2026-08-09T00:00:00.000Z",
-          shieldsDownTimeout: 300,
-          shieldsDownReason: "crash retry",
-          shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath,
-        }),
-      );
-      fs.writeFileSync(
-        timerPath,
-        JSON.stringify({
-          pid: 4242,
-          sandboxName: sandbox.name,
-          snapshotPath,
-          restoreAt: new Date(Date.now() + 60_000).toISOString(),
-          processToken,
-          timerProcessStartIdentity: "live-timer-start",
-          allowLegacyHermesProtocol: false,
-          agentName: "hermes",
-          configPath: target.configPath,
-          configDir: target.configDir,
-        }),
-      );
-      writeTimerAuthorizationProof(requireSource, sandbox.name);
-      fs.writeFileSync(
-        transitionPath,
-        JSON.stringify({
-          version: 1,
-          phase: "preparing",
-          ownerPid: 4242,
-          ownerStartIdentity: "dead-provider-owner",
-          processToken,
-          sandboxName: sandbox.name,
-          snapshotPath,
-          forwardPolicy,
-        }),
-      );
-      const events: string[] = [];
-      const simulation = createRetainedUnlockSimulation(events, commands);
-      runSpy.mockImplementation(simulation.run);
-      lifecycleGateSpy.mockImplementation(simulation.hasActiveClaim);
-      transitionSpy.mockImplementation(simulation.transition);
-      dockerExecSpy.mockImplementation(simulation.dockerExec);
-      routeSpy.mockImplementation(() => {
-        expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("preparing");
-        events.push("route");
-        return { ok: true, attempts: 1, httpStatus: 200 };
-      });
-      auditSpy.mockImplementation(() => {
+    it.each(
+      [
+          "provider:mutable/locked",
+          "verified-mutable",
+          "policy",
+          "provider:locked/locked",
+          "route",
+          "audit",
+        ],
+    )(
+      "completes a timed retained unlock once and leaves its retry side effects idempotent [%s]",
+      (event) => {
+        const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
+        const stateDir = statePaths.resolveNemoclawStateDir();
+        const processToken = "d".repeat(32);
+        const snapshotPath = path.join(stateDir, "shields-policy-before-provider-crash.yaml");
+        const timerPath = path.join(stateDir, `shields-timer-${sandbox.name}.json`);
+        const transitionPath = path.join(
+          stateDir,
+          `shields-transition-${sandbox.name}-${processToken}.json`,
+        );
+        fs.mkdirSync(path.join(stateDir, "runtime-provider-lifecycle"), {
+          recursive: true,
+          mode: 0o700,
+        });
+        fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
+        const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
+        fs.writeFileSync(
+          path.join(stateDir, `shields-${sandbox.name}.json`),
+          JSON.stringify({
+            shieldsDown: true,
+            shieldsDownAt: "2026-08-09T00:00:00.000Z",
+            shieldsDownTimeout: 300,
+            shieldsDownReason: "crash retry",
+            shieldsDownPolicy: "permissive",
+            shieldsPolicySnapshotPath: snapshotPath,
+          }),
+        );
+        fs.writeFileSync(
+          timerPath,
+          JSON.stringify({
+            pid: 4242,
+            sandboxName: sandbox.name,
+            snapshotPath,
+            restoreAt: new Date(Date.now() + 60_000).toISOString(),
+            processToken,
+            timerProcessStartIdentity: "live-timer-start",
+            allowLegacyHermesProtocol: false,
+            agentName: "hermes",
+            configPath: target.configPath,
+            configDir: target.configDir,
+          }),
+        );
+        writeTimerAuthorizationProof(requireSource, sandbox.name);
+        fs.writeFileSync(
+          transitionPath,
+          JSON.stringify({
+            version: 1,
+            phase: "preparing",
+            ownerPid: 4242,
+            ownerStartIdentity: "dead-provider-owner",
+            processToken,
+            sandboxName: sandbox.name,
+            snapshotPath,
+            forwardPolicy,
+          }),
+        );
+        const events: string[] = [];
+        const simulation = createRetainedUnlockSimulation(events, commands);
+        runSpy.mockImplementation(simulation.run);
+        lifecycleGateSpy.mockImplementation(simulation.hasActiveClaim);
+        transitionSpy.mockImplementation(simulation.transition);
+        dockerExecSpy.mockImplementation(simulation.dockerExec);
+        routeSpy.mockImplementation(() => {
+          expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("preparing");
+          events.push("route");
+          return { ok: true, attempts: 1, httpStatus: 200 };
+        });
+        auditSpy.mockImplementation(() => {
+          expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
+          events.push("audit");
+        });
+
+        shields.shieldsDown(sandbox.name, { timeout: "not-a-duration", throwOnError: true });
+
+        expect(
+          transitionSpy.mock.calls.map(([input]) => ({
+            target: (input as { target: string }).target,
+            rollback: (input as { rollback: string }).rollback,
+          })),
+        ).toEqual([
+          { target: "locked", rollback: "locked" },
+          { target: "mutable", rollback: "mutable" },
+          { target: "mutable", rollback: "locked" },
+        ]);
+        expect(simulation.livePosture()).toBe("mutable");
+        expect(simulation.activeClaim()).toBe(false);
         expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
-        events.push("audit");
-      });
+        expect(
+          JSON.parse(fs.readFileSync(path.join(stateDir, `shields-${sandbox.name}.json`), "utf-8")),
+        ).toMatchObject({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath });
 
-      shields.shieldsDown(sandbox.name, { throwOnError: true });
+        expect(events).toContain(event);
 
-      expect(
-        transitionSpy.mock.calls.map(([input]) => ({
-          target: (input as { target: string }).target,
-          rollback: (input as { rollback: string }).rollback,
-        })),
-      ).toEqual([
-        { target: "locked", rollback: "locked" },
-        { target: "mutable", rollback: "mutable" },
-        { target: "mutable", rollback: "locked" },
-      ]);
-      expect(simulation.livePosture()).toBe("mutable");
-      expect(simulation.activeClaim()).toBe(false);
-      expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
-      expect(
-        JSON.parse(fs.readFileSync(path.join(stateDir, `shields-${sandbox.name}.json`), "utf-8")),
-      ).toMatchObject({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath });
-      expect(events.indexOf("provider:mutable/locked")).toBeLessThan(
-        events.indexOf("verified-mutable"),
-      );
-      expect(events.indexOf("policy")).toBeLessThan(events.indexOf("provider:locked/locked"));
-      expect(events.indexOf("verified-mutable")).toBeLessThan(events.indexOf("route"));
-      expect(events.indexOf("route")).toBeLessThan(events.indexOf("audit"));
-      expect(routeSpy).toHaveBeenCalledTimes(1);
-      expect(auditSpy).toHaveBeenCalledWith({
-        action: "shields_down",
-        sandbox: sandbox.name,
-        timestamp: "2026-08-09T00:00:00.000Z",
-        timeout_seconds: 300,
-        reason: "crash retry",
-        policy_applied: "permissive",
-        policy_snapshot: snapshotPath,
-      });
-      expect(auditSpy).toHaveBeenCalledTimes(1);
-      expect(transitionSpy.mock.invocationCallOrder[0]).toBeLessThan(
-        dockerExecSpy.mock.invocationCallOrder[0] as number,
-      );
-      expect(commands.some((command) => command.includes(CAPABILITY_PATH))).toBe(false);
-      expect(commands.some((command) => command.includes("--help"))).toBe(false);
+        expect(events.indexOf("provider:mutable/locked")).toBeLessThan(
+          events.indexOf("verified-mutable"),
+        );
+        expect(events.indexOf("policy")).toBeLessThan(events.indexOf("provider:locked/locked"));
+        expect(events.indexOf("verified-mutable")).toBeLessThan(events.indexOf("route"));
+        expect(events.indexOf("route")).toBeLessThan(events.indexOf("audit"));
+        expect(routeSpy).toHaveBeenCalledTimes(1);
+        expect(auditSpy).toHaveBeenCalledWith({
+          action: "shields_down",
+          sandbox: sandbox.name,
+          timestamp: "2026-08-09T00:00:00.000Z",
+          timeout_seconds: 300,
+          reason: "crash retry",
+          policy_applied: "permissive",
+          policy_snapshot: snapshotPath,
+        });
+        expect(auditSpy).toHaveBeenCalledTimes(1);
+        expect(transitionSpy.mock.invocationCallOrder[0]).toBeLessThan(
+          dockerExecSpy.mock.invocationCallOrder[0] as number,
+        );
+        expect(commands.some((command) => command.includes(CAPABILITY_PATH))).toBe(false);
+        expect(commands.some((command) => command.includes("--help"))).toBe(false);
 
-      expect(() => shields.shieldsDown(sandbox.name, { throwOnError: true })).toThrow(
-        /already unlocked/u,
-      );
-      expect(routeSpy).toHaveBeenCalledTimes(1);
-      expect(auditSpy).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
-    });
+        expect(() => shields.shieldsDown(sandbox.name, { throwOnError: true })).toThrow(
+          /already unlocked/u,
+        );
+        expect(routeSpy).toHaveBeenCalledTimes(1);
+        expect(auditSpy).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
+      },
+    );
 
     it("completes timed DOWN bookkeeping after provider release removed the durable claim", () => {
       const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
@@ -1027,70 +1045,71 @@ describe("legacy Hermes shields compatibility", () => {
       expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
     });
 
-    it.each(
-      forwardPolicyFailureFixtures,
-    )("fails closed when the recovered forward policy is %s", (_failureMode, arrangeFailure, expectedError, assertSideEffects) => {
-      const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
-      const stateDir = statePaths.resolveNemoclawStateDir();
-      const processToken = "f".repeat(32);
-      const snapshotPath = path.join(stateDir, "shields-policy-invalid-forward.yaml");
-      const transitionPath = path.join(
-        stateDir,
-        `shields-transition-${sandbox.name}-${processToken}.json`,
-      );
-      fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
-      const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
-      fs.writeFileSync(
-        path.join(stateDir, `shields-${sandbox.name}.json`),
-        JSON.stringify({
-          shieldsDown: true,
-          shieldsDownAt: new Date().toISOString(),
-          shieldsDownTimeout: 300,
-          shieldsDownReason: "invalid forward policy",
-          shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath,
-        }),
-      );
-      const timerPath = path.join(stateDir, `shields-timer-${sandbox.name}.json`);
-      fs.writeFileSync(
-        timerPath,
-        JSON.stringify({
-          pid: 4444,
-          sandboxName: sandbox.name,
-          snapshotPath,
-          restoreAt: new Date(Date.now() + 60_000).toISOString(),
-          processToken,
-          timerProcessStartIdentity: "live-timer-start",
-          allowLegacyHermesProtocol: false,
-          agentName: "hermes",
-          configPath: target.configPath,
-          configDir: target.configDir,
-        }),
-      );
-      writeTimerAuthorizationProof(requireSource, sandbox.name);
-      fs.writeFileSync(
-        transitionPath,
-        JSON.stringify({
-          version: 1,
-          phase: "preparing",
-          ownerPid: 4444,
-          ownerStartIdentity: "dead-forward-owner",
-          processToken,
-          sandboxName: sandbox.name,
-          snapshotPath,
-          forwardPolicy,
-        }),
-      );
-      arrangeFailure({ forwardPolicyPath: forwardPolicy.path, routeSpy, timerPath });
-      lifecycleGateSpy.mockReturnValue(false);
+    it.each(forwardPolicyFailureFixtures)(
+      "fails closed when the recovered forward policy is %s",
+      (_failureMode, arrangeFailure, expectedError, assertSideEffects) => {
+        const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
+        const stateDir = statePaths.resolveNemoclawStateDir();
+        const processToken = "f".repeat(32);
+        const snapshotPath = path.join(stateDir, "shields-policy-invalid-forward.yaml");
+        const transitionPath = path.join(
+          stateDir,
+          `shields-transition-${sandbox.name}-${processToken}.json`,
+        );
+        fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
+        const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
+        fs.writeFileSync(
+          path.join(stateDir, `shields-${sandbox.name}.json`),
+          JSON.stringify({
+            shieldsDown: true,
+            shieldsDownAt: new Date().toISOString(),
+            shieldsDownTimeout: 300,
+            shieldsDownReason: "invalid forward policy",
+            shieldsDownPolicy: "permissive",
+            shieldsPolicySnapshotPath: snapshotPath,
+          }),
+        );
+        const timerPath = path.join(stateDir, `shields-timer-${sandbox.name}.json`);
+        fs.writeFileSync(
+          timerPath,
+          JSON.stringify({
+            pid: 4444,
+            sandboxName: sandbox.name,
+            snapshotPath,
+            restoreAt: new Date(Date.now() + 60_000).toISOString(),
+            processToken,
+            timerProcessStartIdentity: "live-timer-start",
+            allowLegacyHermesProtocol: false,
+            agentName: "hermes",
+            configPath: target.configPath,
+            configDir: target.configDir,
+          }),
+        );
+        writeTimerAuthorizationProof(requireSource, sandbox.name);
+        fs.writeFileSync(
+          transitionPath,
+          JSON.stringify({
+            version: 1,
+            phase: "preparing",
+            ownerPid: 4444,
+            ownerStartIdentity: "dead-forward-owner",
+            processToken,
+            sandboxName: sandbox.name,
+            snapshotPath,
+            forwardPolicy,
+          }),
+        );
+        arrangeFailure({ forwardPolicyPath: forwardPolicy.path, routeSpy, timerPath });
+        lifecycleGateSpy.mockReturnValue(false);
 
-      expect(() => shields.shieldsDown(sandbox.name, { throwOnError: true })).toThrow(
-        expectedError,
-      );
-      assertSideEffects({ routeSpy, runSpy, transitionPath, transitionSpy });
-      expect(auditSpy).not.toHaveBeenCalled();
-    });
+        expect(() => shields.shieldsDown(sandbox.name, { throwOnError: true })).toThrow(
+          expectedError,
+        );
+        assertSideEffects({ routeSpy, runSpy, transitionPath, transitionSpy });
+        expect(auditSpy).not.toHaveBeenCalled();
+      },
+    );
 
     it("recovers a retained lock before verifying an already-UP Shields record", () => {
       const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");

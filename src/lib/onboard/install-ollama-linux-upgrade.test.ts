@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MIN_OLLAMA_VERSION } from "../inference/ollama-version";
 import {
   decideInstallOllamaLinuxMode,
   type InstallOllamaLinuxOptions,
@@ -211,6 +212,68 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
     expect(killIndex).toBeGreaterThanOrEqual(0);
     expect(launchIndex).toBeGreaterThan(killIndex);
     expect(sleepSecondsImpl).toHaveBeenCalled();
+  });
+
+  it("asks the official installer for the required version on an upgrade (#9276)", () => {
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const opts = makeOpts({
+      modeOverride: "system",
+      runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
+      runShellImpl,
+      isUpgrade: true,
+    });
+    expect(installOllamaOnLinux(opts).ok).toBe(true);
+    const installer = findRunShellCall(runShellImpl, "ollama.com/install.sh");
+    expect(installer).toContain(`OLLAMA_VERSION=${MIN_OLLAMA_VERSION} sh`);
+  });
+
+  it("restarts the daemon for an already-current binary without running the pinned installer", () => {
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const ensureOverride = vi.fn().mockReturnValue("ready");
+    const log = vi.fn();
+    const opts = makeOpts({
+      modeOverride: "system",
+      runShellImpl,
+      ensureManagedOllamaLoopbackSystemdOverrideImpl: ensureOverride,
+      isUpgrade: true,
+      restartOnly: true,
+      log,
+    });
+    expect(installOllamaOnLinux(opts).ok).toBe(true);
+    expect(findRunShellCall(runShellImpl, "ollama.com/install.sh")).toBeUndefined();
+    expect(ensureOverride).toHaveBeenCalledWith(expect.objectContaining({ isUpgrade: true }));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("without replacing the binary"));
+  });
+
+  it("leaves a fresh install unpinned so it takes the latest Ollama", () => {
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const opts = makeOpts({
+      modeOverride: "system",
+      runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
+      runShellImpl,
+    });
+    expect(installOllamaOnLinux(opts).ok).toBe(true);
+    const installer = findRunShellCall(runShellImpl, "ollama.com/install.sh");
+    expect(installer).toContain("| sh");
+    expect(installer).not.toContain("OLLAMA_VERSION=");
+  });
+
+  it("tells the systemd override that this run replaced the binary (#9276)", () => {
+    const ensureOverride = vi.fn().mockReturnValue("ready");
+    const opts = makeOpts({
+      modeOverride: "system",
+      runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
+      ensureManagedOllamaLoopbackSystemdOverrideImpl: ensureOverride,
+      isUpgrade: true,
+    });
+    expect(installOllamaOnLinux(opts).ok).toBe(true);
+    expect(ensureOverride).toHaveBeenCalledWith(expect.objectContaining({ isUpgrade: true }));
   });
 
   it("re-probes loopback fresh instead of trusting the cached findReachableOllamaHost result", () => {

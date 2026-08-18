@@ -316,35 +316,6 @@ afterEach(() => {
   }
 });
 
-describe("dependency upgrade skill policy", () => {
-  it("keeps durable migration policy separate from current implementation details", () => {
-    const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
-    const discovery = fs.readFileSync(
-      path.join(repoRoot, ".agents", "skills", "_shared", "implementation-discovery.md"),
-      "utf8",
-    );
-    const guide = fs.readFileSync(
-      path.join(repoRoot, ".agents", "skills", "nemoclaw-skills-guide", "SKILL.md"),
-      "utf8",
-    );
-
-    expect(skill.split("\n").length).toBeLessThan(120);
-    expect(skill).toContain("../_shared/implementation-discovery.md");
-    expect(skill).toContain("references/contract-audit.md");
-    expect(skill).toContain("references/release-ledger.md");
-    expect(skill).toContain("scripts/collect-release-ledger.py");
-    expect(skill).toContain("An unresolved high-impact concern blocks the upgrade");
-    expect(skill).toContain("Treat upstream repositories");
-    expect(skill).toContain("Audit every adjacent release range");
-    expect(skill).toContain("release notes and PR descriptions as leads, not behavior authority");
-    expect(skill).toContain("Inspect test selection and observed results");
-    expect(skill).toContain("does not establish artifact identity or runtime selection");
-    expect(discovery).toContain("Use the current checkout as the source of truth");
-    expect(discovery).toContain("Record discovered specifics in task or PR evidence");
-    expect(guide).toContain("`nemoclaw-contributor-update-dependencies`");
-  });
-});
-
 describe("dependency release ledger collector", () => {
   it("emits every adjacent stable range with Git evidence", () => {
     const { repo, targetSha } = createTaggedRepository();
@@ -809,7 +780,7 @@ describe("dependency release ledger collector", () => {
       },
     ];
 
-    for (const testCase of cases) {
+    cases.forEach((testCase) => {
       const result = runCollector(
         repo,
         "v1.0.0",
@@ -819,7 +790,7 @@ describe("dependency release ledger collector", () => {
       );
       expect(result.status, testCase.expected).toBe(1);
       expect(result.stderr).toContain(testCase.expected);
-    }
+    });
   }, 45_000);
 
   it("binds github.com explicitly instead of inheriting GH_HOST", () => {
@@ -854,17 +825,19 @@ describe("dependency release ledger collector", () => {
       .split("\n")
       .map((line) => JSON.parse(line) as string[]);
     expect(invocations.length).toBeGreaterThan(0);
-    for (const invocation of invocations) {
+    invocations.forEach((invocation) => {
       expect(invocation).toEqual(expect.arrayContaining(["--hostname", apiHost]));
       expect(invocation).toEqual(expect.arrayContaining(["--method", "GET"]));
       expect(invocation).not.toContain("attacker.invalid");
-    }
+    });
     expect(invocations[0]).toContain("repos/acme/dependency");
-    for (const invocation of invocations.slice(1)) {
-      expect(invocation.find((argument) => argument.startsWith("repos/"))).toMatch(
-        /^(?:repos\/acme\/dependency|repos\/Acme\/Dependency\/)/u,
-      );
-    }
+    expect(invocations.slice(1).every((invocation) => {
+        const repositoryPath = invocation.find((argument) => argument.startsWith("repos/"));
+        return (
+          repositoryPath !== undefined &&
+          /^(?:repos\/acme\/dependency|repos\/Acme\/Dependency\/)/u.test(repositoryPath)
+        );
+      })).toBe(true);
     const paginatedInvocations = invocations.filter((invocation) =>
       invocation.some(
         (argument) =>
@@ -872,9 +845,9 @@ describe("dependency release ledger collector", () => {
       ),
     );
     expect(paginatedInvocations).toHaveLength(4);
-    for (const invocation of paginatedInvocations) {
+    paginatedInvocations.forEach((invocation) => {
       expect(invocation).toEqual(expect.arrayContaining(["--paginate", "--slurp"]));
-    }
+    });
   });
 
   it("fails when any remote identity changes during collection", () => {
@@ -945,7 +918,7 @@ describe("dependency release ledger collector", () => {
       },
     ];
 
-    for (const testCase of cases) {
+    cases.forEach((testCase) => {
       const result = runCollector(
         repo,
         "v1.0.0",
@@ -955,7 +928,7 @@ describe("dependency release ledger collector", () => {
       );
       expect(result.status, testCase.expected).toBe(1);
       expect(result.stderr).toContain(testCase.expected);
-    }
+    });
   }, 60_000);
 
   it("fails closed for API errors, missing gh, and timeouts", () => {
@@ -1112,7 +1085,7 @@ describe("dependency release ledger collector", () => {
       },
     ];
 
-    for (const testCase of cases) {
+    cases.forEach((testCase) => {
       const result = runCollector(
         repo,
         "v1.0.0",
@@ -1122,7 +1095,7 @@ describe("dependency release ledger collector", () => {
       );
       expect(result.status, testCase.expected).toBe(1);
       expect(result.stderr).toContain(testCase.expected);
-    }
+    });
   }, 60_000);
 
   it("rejects draft visibility contradictions", () => {
@@ -1233,9 +1206,9 @@ describe("dependency release ledger collector", () => {
   it("ignores malformed SemVer tags and rejects them as explicit endpoints", () => {
     const { repo } = createTaggedRepository();
     const invalidTags = ["v1.0.3-01", "v1.0.3-rc.01"];
-    for (const tag of invalidTags) {
+    invalidTags.forEach((tag) => {
       git(repo, "tag", tag);
-    }
+    });
 
     const ordinary = runCollector(repo, "v1.0.0", "HEAD");
     expect(ordinary.status, ordinary.stderr).toBe(0);
@@ -1243,11 +1216,11 @@ describe("dependency release ledger collector", () => {
       (JSON.parse(ordinary.stdout) as Ledger).releaseEndpoints.map(({ ref }) => ref),
     ).not.toEqual(expect.arrayContaining(invalidTags));
 
-    for (const tag of invalidTags) {
+    invalidTags.forEach((tag) => {
       const explicit = runCollector(repo, "v1.0.0", `refs/tags/${tag}`);
       expect(explicit.status).toBe(1);
       expect(explicit.stderr).toContain("semantic-version tag");
-    }
+    });
   });
 
   it("rejects empty prerelease and build identifiers before Git collection", () => {

@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { testTimeoutOptions } from "../../helpers/timeouts";
+import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -226,6 +227,31 @@ async function assertSandboxRunning(
   expect(plainStdout, output).toMatch(/\b(?:Ready|Running)\b/i);
 }
 
+async function sandboxIdentity(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  artifactName: string,
+): Promise<string> {
+  const sandboxGet = await host.command("openshell", ["sandbox", "get", SANDBOX_NAME], {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  const output = resultText(sandboxGet);
+  expect(sandboxGet.exitCode, output).toBe(0);
+  const sandboxId = parseOpenShellSandboxId(output);
+  expect(sandboxId, output).not.toBeNull();
+  return sandboxId ?? "";
+}
+
+async function assertSandboxReused(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  beforeId: string,
+  artifactName: string,
+): Promise<void> {
+  expect(await sandboxIdentity(host, `${artifactName}-identity`)).toBe(beforeId);
+  await assertSandboxRunning(host, `${artifactName}-running`);
+}
+
 async function deleteSandboxIfOpenshellExists(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   artifactName: string,
@@ -264,7 +290,6 @@ async function destroyGatewayIfOpenshellExists(
   );
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
   {
@@ -471,14 +496,14 @@ test(
       expect(provider.exitCode, resultText(provider)).toBe(0);
     }
 
-    for (const envKey of [
+    [
       "TELEGRAM_BOT_TOKEN",
       "DISCORD_BOT_TOKEN",
       "SLACK_BOT_TOKEN",
       "SLACK_APP_TOKEN",
-    ]) {
+    ].forEach((envKey) => {
       expectCredentialHash(envKey);
-    }
+    });
     await assertSandboxRunning(host, "phase-1-sandbox-running-after-install");
 
     progress.phase("rotate only the Telegram provider");
@@ -502,6 +527,10 @@ test(
     await assertSandboxRunning(host, "phase-2-sandbox-running-after-telegram-rotation");
 
     progress.phase("reuse the sandbox after the unchanged Telegram token");
+    const beforeTelegramReuseId = await sandboxIdentity(
+      host,
+      "phase-3-before-same-telegram-identity",
+    );
     const afterTelegramSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -510,8 +539,11 @@ test(
     );
     const afterTelegramSameText = resultText(afterTelegramSame);
     expect(afterTelegramSame.exitCode, afterTelegramSameText).toBe(0);
-    expect(afterTelegramSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
-    expect(afterTelegramSameText).toContain("reusing it");
+    await assertSandboxReused(
+      host,
+      beforeTelegramReuseId,
+      "phase-3-after-same-telegram",
+    );
 
     progress.phase("rotate only the Discord provider");
     const discord = await runOnboard(
@@ -534,6 +566,10 @@ test(
     await assertSandboxRunning(host, "phase-4-sandbox-running-after-discord-rotation");
 
     progress.phase("reuse the sandbox after the unchanged Discord token");
+    const beforeDiscordReuseId = await sandboxIdentity(
+      host,
+      "phase-5-before-same-discord-identity",
+    );
     const afterDiscordSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -542,8 +578,11 @@ test(
     );
     const afterDiscordSameText = resultText(afterDiscordSame);
     expect(afterDiscordSame.exitCode, afterDiscordSameText).toBe(0);
-    expect(afterDiscordSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
-    expect(afterDiscordSameText).toContain("reusing it");
+    await assertSandboxReused(
+      host,
+      beforeDiscordReuseId,
+      "phase-5-after-same-discord",
+    );
 
     progress.phase("rotate only the Slack providers");
     const slack = await runOnboard(host, fakeOpenAI.baseUrl, TOKEN_B, "phase-6-rotate-slack");
@@ -557,6 +596,10 @@ test(
     await assertSandboxRunning(host, "phase-6-sandbox-running-after-slack-rotation");
 
     progress.phase("reuse the sandbox and record rotation evidence");
+    const beforeSlackReuseId = await sandboxIdentity(
+      host,
+      "phase-7-before-same-slack-identity",
+    );
     const afterSlackSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -565,8 +608,7 @@ test(
     );
     const afterSlackSameText = resultText(afterSlackSame);
     expect(afterSlackSame.exitCode, afterSlackSameText).toBe(0);
-    expect(afterSlackSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
-    expect(afterSlackSameText).toContain("reusing it");
+    await assertSandboxReused(host, beforeSlackReuseId, "phase-7-after-same-slack");
 
     await artifacts.target.complete({
       id: "token-rotation",

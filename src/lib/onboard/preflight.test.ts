@@ -509,7 +509,7 @@ describe("assessHost", () => {
   //
   // The fixtures here explicitly pin `release` and override `readFileImpl`
   // for /proc/version so the underlying `detectWsl` heuristic does not
-  // pick up the test runner's actual environment (e.g. the wsl-e2e job
+  // pick up the test runner's actual environment (e.g. the platform WSL job
   // running on real WSL would otherwise see kernel 5.15.x-microsoft-WSL
   // and flip isWsl true, gating off the conflict).
   it("flags Docker 26+ containerd-snapshotter overlayfs as a nested overlay conflict", () => {
@@ -1272,20 +1272,20 @@ describe("probeContainerDns", () => {
     expect(seenScript).toContain("nslookup pinned-test.invalid");
   });
 
-  it("rejects shell metacharacters in probeName to prevent sh -c injection per CodeRabbit review (#3630)", () => {
-    const injections = [
-      "x; touch /tmp/pwned",
-      "x && touch /tmp/pwned",
-      "x`whoami`",
-      "x$(whoami)",
-      "x|whoami",
-      "x\nwhoami",
-      'x "; rm -rf /"',
-    ];
-    for (const probeName of injections) {
+  it.each([
+    "x; touch /tmp/pwned",
+    "x && touch /tmp/pwned",
+    "x`whoami`",
+    "x$(whoami)",
+    "x|whoami",
+    "x\nwhoami",
+    'x "; rm -rf /"',
+  ])(
+    "rejects shell metacharacters in probeName to prevent sh -c injection per CodeRabbit review [%s] (#3630)",
+    (probeName) => {
       expect(() => probeContainerDns({ probeName })).toThrow(/probeName must be a plain DNS name/);
-    }
-  });
+    },
+  );
 
   it("accepts plain DNS labels (RFC 1035 chars only) as probeName", () => {
     expect(() =>

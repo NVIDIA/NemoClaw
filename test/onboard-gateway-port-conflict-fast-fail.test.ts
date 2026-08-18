@@ -116,6 +116,13 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       expect(combined).toMatch(
         /The gateway port is held by an incompatible or ambiguous owner|OpenShell gateway needs this port/,
       );
+      expect(combined).not.toMatch(/occupied by unknown/);
+      expect(combined).toMatch(/\(PID \d+\)/);
+      expect(combined).toContain(
+        `sudo lsof -i :${String(gatewayPort)} -sTCP:LISTEN -P -n`,
+      );
+      expect(combined).toContain("signal only the matching PID from that fresh result");
+      expect(combined).not.toMatch(/sudo kill \d+/);
     },
   );
 
@@ -141,7 +148,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
         "",
       ].join("\n");
 
-      for (const component of ["openshell", "openshell-gateway", "openshell-sandbox"]) {
+      ["openshell", "openshell-gateway", "openshell-sandbox"].forEach((component) => {
         workspace.writeExecutable(
           component,
           [
@@ -155,7 +162,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
             "exit 1",
           ].join("\n"),
         );
-      }
+      });
 
       const containerName = getGatewayClusterContainerName(gatewayName);
       const portBindings = JSON.stringify({
@@ -202,13 +209,13 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
         gatewayPort: () => gatewayPort,
       });
       const owner = readiness.resolveOwner();
-      for (const result of [
+      [
         await readiness.observeManagedGateway(owner),
         await readiness.observeManagedGateway(owner),
-      ]) {
+      ].forEach((result) => {
         expect(result.reuseState).toBe("healthy");
         expect(result.portConflictState).toBe("none");
-      }
+      });
     },
   );
 });

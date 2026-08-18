@@ -16,20 +16,24 @@ import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   prepareDockerDriverGatewayConfigEnv,
 } from "../../src/lib/onboard/docker-driver-gateway-config";
+import {
+  buildDockerDriverGatewayRuntimeMarker,
+  writeDockerDriverGatewayRuntimeMarker,
+} from "../../src/lib/onboard/docker-driver-gateway-runtime-marker";
 
 export { DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS };
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 export const GATEWAY_AUTH_REVIEW_NOTE = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openshell-0.0.72-compatibility-review.mdx",
 );
 export const GATEWAY_MIGRATION_REVIEW_NOTE = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openshell-0.0.85-migration-review.md",
 );
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
@@ -55,6 +59,20 @@ export function writeGatewayConfig(stateDir: string): Record<string, string> {
     baseGatewayEnv(stateDir),
     stateDir,
     "/usr/bin/openshell-sandbox",
+  );
+}
+
+export function writeOpenShell0044PreAuthState(stateDir: string): void {
+  fs.writeFileSync(path.join(stateDir, "openshell.db"), "legacy-database", { mode: 0o600 });
+  writeDockerDriverGatewayRuntimeMarker(
+    path.join(stateDir, "runtime.json"),
+    buildDockerDriverGatewayRuntimeMarker({
+      pid: 12_345,
+      desiredEnv: { OPENSHELL_DISABLE_GATEWAY_AUTH: "true" },
+      endpoint: "http://127.0.0.1:8080",
+      gatewayBin: "/usr/local/bin/openshell-gateway",
+      openshellVersion: "0.0.44",
+    }),
   );
 }
 

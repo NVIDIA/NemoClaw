@@ -3,6 +3,14 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/portable-cpu-delegation-proof.test.ts",
+      "fast": [
+        "src/lib/onboard/experimental/portable-cpu-delegation-preflight.test.ts",
+        "src/lib/onboard/experimental/portable-host-preparation.test.ts",
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "fast": [
         "src/lib/onboard/command.test.ts",
@@ -70,8 +78,24 @@
         "src/lib/onboard/runtime-provider/podman-lifecycle.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
-        "test/e2e/support/podman-cpu-proof-workflow.test.ts",
-        "test/runtime-provider-source-shape.test.ts"
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
+      "fast": [
+        "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
+        "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
+        "test/e2e/support/native-runtime-qualification.test.ts",
+        "test/install-native-runtime-qualification.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/podman-portable-uninstall.test.ts",
+      "fast": [
+        "src/lib/actions/uninstall/portable-runtime-cleanup.test.ts",
+        "src/lib/actions/uninstall/run-plan-portable-runtime.test.ts",
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
       ]
     },
     {
@@ -107,6 +131,16 @@
         "test/e2e/support/onboard-performance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/launch-readiness-lease-acceptance.test.ts",
+      "fast": [
+        "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
+        "src/lib/actions/sandbox/launch-readiness.test.ts",
+        "src/lib/state/launch-readiness-lease.test.ts",
+        "test/e2e/support/launch-agent-turn.test.ts",
+        "test/launch-readiness-forward-observation.test.ts"
       ]
     },
     {
@@ -159,9 +193,7 @@
     },
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
-      "fast": [
-        "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"
-      ]
+      "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
     },
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
@@ -185,9 +217,7 @@
     },
     {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
-      "fast": [
-        "test/e2e/support/workflow-plan.test.ts"
-      ]
+      "fast": ["test/e2e/support/workflow-plan.test.ts"]
     },
     {
       "live": "test/e2e/live/sandbox-operations.test.ts",
@@ -219,6 +249,10 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
+    },
+    {
+      "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
+      "fast": ["test/e2e/support/onboard-interactive-pty.test.ts"]
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
@@ -277,7 +311,8 @@
       "live": "test/e2e/live/common-egress-agent.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/common-egress-agent-helpers.test.ts"
       ]
     },
     {
@@ -340,6 +375,8 @@
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
       "fast": [
+        "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -424,6 +461,8 @@
     {
       "live": "test/e2e/live/openclaw-inference-switch.test.ts",
       "fast": [
+        "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

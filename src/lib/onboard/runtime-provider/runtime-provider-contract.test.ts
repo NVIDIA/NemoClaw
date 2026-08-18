@@ -41,6 +41,7 @@ import {
   RuntimeProviderRegistrationError,
   RuntimeProviderSelectionError,
   requireRuntimeProviderHostLocalInferenceOperation,
+  requireRuntimeProviderReadOnlyHostMounts,
   requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
 } from "./registry";
@@ -115,26 +116,24 @@ function expectSupportedSurface<T extends { readonly supported: boolean }>(
 describe("RuntimeProviderBundle registry contract", () => {
   it("keeps the production selectable set limited to complete Docker and Kubernetes bundles", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
-    for (const [providerId, bundle] of Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES)) {
+    Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES).forEach(([providerId, bundle]) => {
       expect(bundle.identity.id).toBe(providerId);
-      for (const surface of [
-        "plan",
-        "capabilities",
-        "preflightDoctor",
-        "gateway",
-        "workload",
-        "hostLocalInference",
-        "lifecycle",
-        "mutationAuthority",
-        "stateMutation",
-        "bootstrap",
-        "snapshot",
-        "recovery",
-        "cleanup",
-        "containerEngine",
-      ] as const) {
-        expect(bundle[surface].providerId, `${providerId}.${surface}`).toBe(providerId);
-      }
+      expect(([
+            "plan",
+            "capabilities",
+            "preflightDoctor",
+            "gateway",
+            "workload",
+            "hostLocalInference",
+            "lifecycle",
+            "mutationAuthority",
+            "stateMutation",
+            "bootstrap",
+            "snapshot",
+            "recovery",
+            "cleanup",
+            "containerEngine",
+          ] as const).every((surface) => Object.is(bundle[surface].providerId, providerId))).toBe(true);
       expect(bundle.bootstrap).toMatchObject({ supported: providerId === "docker" });
       expect(bundle.stateMutation).toMatchObject({
         supported: providerId === "docker",
@@ -153,7 +152,7 @@ describe("RuntimeProviderBundle registry contract", () => {
           : { supported: false },
       );
       expect(bundle.recovery).toMatchObject({ supported: false });
-    }
+    });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.capabilities.hostLocalInference).toBe(true);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.hostLocalInference).toMatchObject({
       supported: true,
@@ -171,6 +170,29 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(() =>
       requireRuntimeProviderStateMutationSurface(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes!),
     ).toThrow(/no state-mutation implementation/u);
+  });
+
+  it("declares and enforces read-only host-mount support per runtime provider", () => {
+    const docker = CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
+    const kubernetes = CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes!;
+
+    expect(docker.capabilities.readOnlyHostMounts).toEqual({
+      supported: true,
+      hostPlatforms: ["linux"],
+    });
+    expect(kubernetes.capabilities.readOnlyHostMounts).toMatchObject({
+      supported: false,
+      reason: expect.stringMatching(/Kubernetes hostPath semantics/u),
+    });
+    expect(requireRuntimeProviderReadOnlyHostMounts(docker, "linux")).toBe(
+      docker.capabilities.readOnlyHostMounts,
+    );
+    expect(() => requireRuntimeProviderReadOnlyHostMounts(docker, "darwin")).toThrow(
+      /provider 'docker'.*not qualified.*'darwin'/u,
+    );
+    expect(() => requireRuntimeProviderReadOnlyHostMounts(kubernetes, "linux")).toThrow(
+      /provider 'kubernetes'.*Kubernetes hostPath semantics/u,
+    );
   });
 
   it("registers the production Docker bootstrap surface through the same bundle registry", () => {
@@ -317,41 +339,39 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(resolveRuntimeProviderBundle("future-runtime", registry)).toBeNull();
   });
 
-  it("rejects a missing surface and every surface identity mismatch", () => {
+  it.each([
+    "plan",
+    "capabilities",
+    "preflightDoctor",
+    "gateway",
+    "workload",
+    "hostLocalInference",
+    "lifecycle",
+    "mutationAuthority",
+    "stateMutation",
+    "bootstrap",
+    "snapshot",
+    "recovery",
+    "cleanup",
+    "containerEngine",
+  ] as const)("rejects a missing surface and every surface identity mismatch [%s]", (surface) => {
     const bundle = mxcBundle();
     const { cleanup: _cleanup, ...missingCleanup } = bundle;
     expect(() =>
       createRuntimeProviderBundleRegistry([["mxc", missingCleanup as RuntimeProviderBundle]]),
     ).toThrow(/missing cleanup surface/u);
 
-    for (const surface of [
-      "plan",
-      "capabilities",
-      "preflightDoctor",
-      "gateway",
-      "workload",
-      "hostLocalInference",
-      "lifecycle",
-      "mutationAuthority",
-      "stateMutation",
-      "bootstrap",
-      "snapshot",
-      "recovery",
-      "cleanup",
-      "containerEngine",
-    ] as const) {
-      expect(() =>
-        createRuntimeProviderBundleRegistry([
-          [
-            "mxc",
-            replaceSurface(bundle, surface, {
-              ...bundle[surface],
-              providerId: "other",
-            }),
-          ],
-        ]),
-      ).toThrow(new RegExp(`${surface} identity`, "u"));
-    }
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, surface, {
+            ...bundle[surface],
+            providerId: "other",
+          }),
+        ],
+      ]),
+    ).toThrow(new RegExp(`${surface} identity`, "u"));
   });
 
   it.each([
@@ -463,41 +483,64 @@ describe("RuntimeProviderBundle registry contract", () => {
         ],
       }),
     ],
-  ] as const)("rejects a runtime-cast incomplete or invalid supported %s surface", (surface, mutate) => {
-    const bundle = mxcBundle();
-    expect(() =>
-      createRuntimeProviderBundleRegistry([
-        ["mxc", replaceSurface(bundle, surface, mutate(bundle))],
-      ]),
-    ).toThrow(RuntimeProviderRegistrationError);
-  });
+  ] as const)(
+    "rejects a runtime-cast incomplete or invalid supported %s surface",
+    (surface, mutate) => {
+      const bundle = mxcBundle();
+      expect(() =>
+        createRuntimeProviderBundleRegistry([
+          ["mxc", replaceSurface(bundle, surface, mutate(bundle))],
+        ]),
+      ).toThrow(RuntimeProviderRegistrationError);
+    },
+  );
+
+  it.each(["publish", "rollback", "release"] as const)(
+    "rejects state-mutation v2 without %s",
+    (operation) => {
+      const bundle = mxcBundle();
+      const supported = {
+        providerId: "mxc",
+        supported: true,
+        contractVersion: 2,
+        acquire: vi.fn(),
+        assertFenced: vi.fn(),
+        publish: vi.fn(),
+        rollback: vi.fn(),
+        activate: vi.fn(),
+        release: vi.fn(),
+        recover: vi.fn(),
+      };
+      const incomplete = { ...supported } as Record<string, unknown>;
+      Reflect.deleteProperty(incomplete, operation);
+
+      expect(() =>
+        createRuntimeProviderBundleRegistry([
+          ["mxc", replaceSurface(bundle, "stateMutation", incomplete)],
+        ]),
+      ).toThrow(new RegExp(`stateMutation\\.${operation} must be a function`, "u"));
+    },
+  );
 
   it.each([
-    "publish",
-    "rollback",
-    "release",
-  ] as const)("rejects state-mutation v2 without %s", (operation) => {
+    [undefined, /missing readOnlyHostMounts surface/u],
+    [{ supported: false, reason: "" }, /reason must be a non-empty string/u],
+    [{ supported: true, hostPlatforms: [] }, /hostPlatforms must list unique/u],
+    [{ supported: true, hostPlatforms: ["linux", "linux"] }, /hostPlatforms must list unique/u],
+    [{ supported: true, hostPlatforms: ["plan9"] }, /hostPlatforms must list unique/u],
+  ])("rejects an invalid read-only host-mount capability %#", (readOnlyHostMounts, message) => {
     const bundle = mxcBundle();
-    const supported = {
-      providerId: "mxc",
-      supported: true,
-      contractVersion: 2,
-      acquire: vi.fn(),
-      assertFenced: vi.fn(),
-      publish: vi.fn(),
-      rollback: vi.fn(),
-      activate: vi.fn(),
-      release: vi.fn(),
-      recover: vi.fn(),
-    };
-    const incomplete = { ...supported } as Record<string, unknown>;
-    Reflect.deleteProperty(incomplete, operation);
-
     expect(() =>
       createRuntimeProviderBundleRegistry([
-        ["mxc", replaceSurface(bundle, "stateMutation", incomplete)],
+        [
+          "mxc",
+          replaceSurface(bundle, "capabilities", {
+            ...bundle.capabilities,
+            readOnlyHostMounts,
+          }),
+        ],
       ]),
-    ).toThrow(new RegExp(`stateMutation\\.${operation} must be a function`, "u"));
+    ).toThrow(message);
   });
 
   it("rejects a lifecycle surface without provider-owned post-start verification", () => {
@@ -899,149 +942,151 @@ describe("sandbox workload ownership receipt", () => {
 describe("socket-free MXC action contract", () => {
   const agents = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
-  it.each(
-    agents,
-  )("routes %s registration, lifecycle, inference authority, destroy, and cleanup through one injected bundle", async (agent) => {
-    const state = {
-      events: [] as string[],
-      running: new Set<string>(),
-      workloads: new Set<string>(),
-    };
-    const recordEvent = vi.fn((value: string) => state.events.push(value));
-    const bundle = createInMemoryRuntimeProviderBundle({
-      providerId: "mxc",
-      workloadProfile: PORTABLE_PROFILE,
-      state,
-      recordEvent,
-    });
-    const providers = createRuntimeProviderBundleRegistry([["mxc", bundle]]);
-    const sandboxName =
-      agent === "langchain-deepagents-code" ? "dcode-sandbox" : `${agent}-sandbox`;
-    const imageTag = `mxc-memory:${agent}`;
-    const registerSandbox = vi.fn();
-    const entry = registerCreatedSandbox({
-      sandboxName,
-      inferenceSelection: {
-        model: "test/model",
-        provider: "nvidia-prod",
-        endpointUrl: null,
-        endpointSource: null,
-        credentialEnv: null,
-        preferredInferenceApi: null,
-        compatibleEndpointReasoning: null,
-        compatibleEndpointReasoningEffort: null,
-        nimContainer: null,
-      },
-      runtimeFields: {
-        gpuEnabled: false,
-        hostGpuDetected: false,
-        sandboxGpuEnabled: false,
-        sandboxGpuMode: "auto",
-        sandboxGpuDevice: null,
-        openshellDriver: "mxc",
-        openshellVersion: "test",
-      },
-      agent: loadAgent(agent),
-      agentVersionKnown: false,
-      imageTag,
-      workload: {
-        schemaVersion: 1,
-        kind: "legacy-dockerfile",
-        reference: imageTag,
-        shared: false,
-      },
-      appliedPolicies: [],
-      plannedMessagingState: undefined,
-      hermesToolGateways: [],
-      hermesDashboardState: { enabled: false, config: null },
-      dashboardPort: 18789,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      registerSandbox,
-      runtimeProviders: providers,
-    });
-    state.workloads.add(imageTag);
-    const getSandbox = vi.fn(() => entry);
-    const stopSandboxChannels = vi.fn();
-    const teardownSandboxDashboardForward = vi.fn();
-    const cleanupShieldsArtifacts = vi.fn();
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
-
-    await expect(
-      startSandbox(sandboxName, {
-        getSandbox,
-        runtimeProviders: providers,
-        log: vi.fn(),
-      }),
-    ).resolves.toEqual({ exitCode: 0 });
-    expect(
-      stopSandbox(sandboxName, {
-        getSandbox,
-        runtimeProviders: providers,
-        stopSandboxChannels,
-        teardownSandboxDashboardForward,
-        log: vi.fn(),
-        warn: vi.fn(),
-      }),
-    ).toEqual({ exitCode: 0 });
-    expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
-    await expect(
-      executeSandboxDestroy({
-        cleanupShieldsArtifacts,
-        force: false,
-        runOpenshell,
-        sandbox: entry,
-        sandboxConfirmedAbsent: false,
+  it.each(agents)(
+    "routes %s registration, lifecycle, inference authority, destroy, and cleanup through one injected bundle",
+    async (agent) => {
+      const state = {
+        events: [] as string[],
+        running: new Set<string>(),
+        workloads: new Set<string>(),
+      };
+      const recordEvent = vi.fn((value: string) => state.events.push(value));
+      const bundle = createInMemoryRuntimeProviderBundle({
+        providerId: "mxc",
+        workloadProfile: PORTABLE_PROFILE,
+        state,
+        recordEvent,
+      });
+      const providers = createRuntimeProviderBundleRegistry([["mxc", bundle]]);
+      const sandboxName =
+        agent === "langchain-deepagents-code" ? "dcode-sandbox" : `${agent}-sandbox`;
+      const imageTag = `mxc-memory:${agent}`;
+      const registerSandbox = vi.fn();
+      const entry = registerCreatedSandbox({
         sandboxName,
-        runtimeProviders: providers,
-        deps: {
-          readTimerMarker: () => null,
-          wipeSandboxState: vi.fn(),
+        inferenceSelection: {
+          model: "test/model",
+          provider: "nvidia-prod",
+          endpointUrl: null,
+          endpointSource: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
         },
-      }),
-    ).resolves.toMatchObject({ ok: true });
-    expect(
-      removeSandboxImage(sandboxName, {
-        getSandbox,
+        runtimeFields: {
+          gpuEnabled: false,
+          hostGpuDetected: false,
+          sandboxGpuEnabled: false,
+          sandboxGpuMode: "auto",
+          sandboxGpuDevice: null,
+          openshellDriver: "mxc",
+          openshellVersion: "test",
+        },
+        agent: loadAgent(agent),
+        agentVersionKnown: false,
+        imageTag,
+        workload: {
+          schemaVersion: 1,
+          kind: "legacy-dockerfile",
+          reference: imageTag,
+          shared: false,
+        },
+        appliedPolicies: [],
+        plannedMessagingState: undefined,
+        hermesToolGateways: [],
+        hermesDashboardState: { enabled: false, config: null },
+        dashboardPort: 18789,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        registerSandbox,
         runtimeProviders: providers,
-        log: vi.fn(),
-        warn: vi.fn(),
-      }),
-    ).toEqual({
-      status: "removed",
-      engineDisplayName: "In-memory",
-      reference: imageTag,
-    });
+      });
+      state.workloads.add(imageTag);
+      const getSandbox = vi.fn(() => entry);
+      const stopSandboxChannels = vi.fn();
+      const teardownSandboxDashboardForward = vi.fn();
+      const cleanupShieldsArtifacts = vi.fn();
+      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
 
-    expect(registerSandbox).toHaveBeenCalledWith(entry);
-    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", sandboxName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const prepareDestroyIndex = state.events.indexOf(`prepare-destroy:${sandboxName}`);
-    expect(prepareDestroyIndex).toBeGreaterThanOrEqual(0);
-    expect(recordEvent.mock.invocationCallOrder[prepareDestroyIndex]).toBeLessThan(
-      runOpenshell.mock.invocationCallOrder.at(-1)!,
-    );
-    expect(cleanupShieldsArtifacts).toHaveBeenCalledWith(sandboxName);
-    expect(stopSandboxChannels).toHaveBeenCalledWith(
-      sandboxName,
-      expect.objectContaining({
-        channelStopTransport: "openshell",
-        info: expect.any(Function),
-        warn: expect.any(Function),
-      }),
-    );
-    expect(state.events).toEqual([
-      `start:${sandboxName}`,
-      `verify-started:${sandboxName}`,
-      `stop:${sandboxName}`,
-      `prepare-destroy:${sandboxName}`,
-      `cleanup:${sandboxName}`,
-    ]);
-    expect(state.running).not.toContain(sandboxName);
-    expect(state.workloads).not.toContain(imageTag);
-  });
+      await expect(
+        startSandbox(sandboxName, {
+          getSandbox,
+          runtimeProviders: providers,
+          log: vi.fn(),
+        }),
+      ).resolves.toEqual({ exitCode: 0 });
+      expect(
+        stopSandbox(sandboxName, {
+          getSandbox,
+          runtimeProviders: providers,
+          stopSandboxChannels,
+          teardownSandboxDashboardForward,
+          log: vi.fn(),
+          warn: vi.fn(),
+        }),
+      ).toEqual({ exitCode: 0 });
+      expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
+      await expect(
+        executeSandboxDestroy({
+          cleanupShieldsArtifacts,
+          force: false,
+          runOpenshell,
+          sandbox: entry,
+          sandboxConfirmedAbsent: false,
+          sandboxName,
+          stopInferenceResources: vi.fn(),
+          runtimeProviders: providers,
+          deps: {
+            readTimerMarker: () => null,
+            wipeSandboxState: vi.fn(),
+          },
+        }),
+      ).resolves.toMatchObject({ ok: true });
+      expect(
+        removeSandboxImage(sandboxName, {
+          getSandbox,
+          runtimeProviders: providers,
+          log: vi.fn(),
+          warn: vi.fn(),
+        }),
+      ).toEqual({
+        status: "removed",
+        engineDisplayName: "In-memory",
+        reference: imageTag,
+      });
+
+      expect(registerSandbox).toHaveBeenCalledWith(entry);
+      expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", sandboxName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const prepareDestroyIndex = state.events.indexOf(`prepare-destroy:${sandboxName}`);
+      expect(prepareDestroyIndex).toBeGreaterThanOrEqual(0);
+      expect(recordEvent.mock.invocationCallOrder[prepareDestroyIndex]).toBeLessThan(
+        runOpenshell.mock.invocationCallOrder.at(-1)!,
+      );
+      expect(cleanupShieldsArtifacts).toHaveBeenCalledWith(sandboxName);
+      expect(stopSandboxChannels).toHaveBeenCalledWith(
+        sandboxName,
+        expect.objectContaining({
+          channelStopTransport: "openshell",
+          info: expect.any(Function),
+          warn: expect.any(Function),
+        }),
+      );
+      expect(state.events).toEqual([
+        `start:${sandboxName}`,
+        `verify-started:${sandboxName}`,
+        `stop:${sandboxName}`,
+        `prepare-destroy:${sandboxName}`,
+        `cleanup:${sandboxName}`,
+      ]);
+      expect(state.running).not.toContain(sandboxName);
+      expect(state.workloads).not.toContain(imageTag);
+    },
+  );
 
   it("blocks cleanup when an in-memory legacy receipt names a different image", () => {
     const bundle = createInMemoryRuntimeProviderBundle({

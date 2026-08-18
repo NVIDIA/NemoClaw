@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
+import path from "node:path";
+
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import { normalizeRebuildSandboxOptions } from "../../domain/lifecycle/options";
 import { BRAVE_API_KEY_ENV, TAVILY_API_KEY_ENV } from "../../inference/web-search";
@@ -8,9 +11,10 @@ import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
 import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-config";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
+import { withPortableOnboardRetirementBoundary } from "../../onboard/portable-retirement-authority";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
-import { load as loadRegistry } from "../../state/registry/persistence";
+import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
 import { normalizeRebuildTargetPolicyPresets, runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
@@ -80,7 +84,15 @@ export async function rebuildSandbox(
   options: string[] | RebuildSandboxOptions = {},
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, async () => {
+  const homeDir = process.env.HOME || os.homedir();
+  return withPortableOnboardRetirementBoundary(
+    {
+      homeDir,
+      registryFile: REGISTRY_FILE,
+      sessionFile: onboardSession.SESSION_FILE,
+      stateDir: path.dirname(onboardSession.SESSION_FILE),
+    },
+    () => withMcpLifecycleLock(sandboxName, async () => {
     const scopedEnvKeys = [
       BRAVE_API_KEY_ENV,
       TAVILY_API_KEY_ENV,
@@ -102,7 +114,9 @@ export async function rebuildSandbox(
         ),
       );
     }
-  });
+    }),
+    { loadRegistry, withLifecycleLock: withMcpLifecycleLock },
+  );
 }
 
 async function rebuildSandboxUnlocked(

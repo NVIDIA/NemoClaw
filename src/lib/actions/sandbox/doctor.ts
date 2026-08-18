@@ -49,7 +49,10 @@ import {
   type DoctorInferenceRoute,
   resolveDoctorReasoningEffort,
 } from "./doctor-inference";
-import { buildLifecycleRegistrationCheck } from "./doctor-lifecycle-registration";
+import {
+  buildLifecycleRegistrationCheck,
+  buildPortableRuntimeCheck,
+} from "./doctor-lifecycle-registration";
 import { collectMessagingDoctorChecks } from "./doctor-messaging";
 import {
   buildDoctorReport,
@@ -136,25 +139,25 @@ function cliBuildCheck(): DoctorCheck {
   };
 }
 
-function collectHostChecks(sb: SandboxEntry | null | undefined): {
-  checks: DoctorCheck[];
-  openshellBin: ReturnType<typeof resolveOpenshell>;
-} {
-  const cli = cliBuildCheck();
-  const openshellBin = resolveOpenshell();
-  let runtimeCheck: DoctorCheck;
+function inspectRuntimeHost(sb: SandboxEntry | null | undefined): DoctorCheck {
+  const portable = sb ? buildPortableRuntimeCheck(sb.name) : null;
+  if (portable) return portable;
+  const recorded = sb?.openshellDriver?.trim();
+  const provider = recorded
+    ? requireRuntimeProviderBundle(recorded, CURRENT_RUNTIME_PROVIDER_BUNDLES)
+    : resolveCurrentRuntimeProviderBundle();
+  return provider.preflightDoctor.inspectHost();
+}
+
+function runtimeHostCheck(sb: SandboxEntry | null | undefined): DoctorCheck {
   try {
-    const recorded = sb?.openshellDriver?.trim();
-    const provider = recorded
-      ? requireRuntimeProviderBundle(recorded, CURRENT_RUNTIME_PROVIDER_BUNDLES)
-      : resolveCurrentRuntimeProviderBundle();
-    runtimeCheck = provider.preflightDoctor.inspectHost();
+    return inspectRuntimeHost(sb);
   } catch (error) {
     const detail =
       error instanceof RuntimeProviderSelectionError
         ? error.message
         : `Runtime provider inspection failed: ${error instanceof Error ? error.message : String(error)}`;
-    runtimeCheck = {
+    return {
       group: "Host",
       label: "Runtime provider",
       status: "fail",
@@ -162,10 +165,18 @@ function collectHostChecks(sb: SandboxEntry | null | undefined): {
       hint: "restore a supported durable runtime provider identity before retrying",
     };
   }
+}
+
+function collectHostChecks(sb: SandboxEntry | null | undefined): {
+  checks: DoctorCheck[];
+  openshellBin: ReturnType<typeof resolveOpenshell>;
+} {
+  const cli = cliBuildCheck();
+  const openshellBin = resolveOpenshell();
   return {
     checks: [
       cli,
-      runtimeCheck,
+      runtimeHostCheck(sb),
       {
         group: "Host",
         label: "OpenShell CLI",

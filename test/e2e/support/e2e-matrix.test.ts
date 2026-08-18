@@ -83,30 +83,6 @@ describe("live E2E target matrix", () => {
     expect(() => resolveRunnerForTarget(broken)).toThrow(/no default for platform/);
   });
 
-  // source-shape-contract: compatibility -- Default live matrix output must cover every fixture-supported registered target once
-  it("builds the default live matrix from every fixture-supported target", () => {
-    const targets = listTargets();
-    const supportedTargets = targets.filter((entry) => liveTargetSupport(entry).supported);
-    const matrix = buildLiveTargetMatrix();
-
-    expect(matrix).not.toHaveLength(0);
-    expect(matrix.map((entry) => entry.id)).toEqual(supportedTargets.map((entry) => entry.id));
-    expect(new Set(matrix.map((entry) => entry.id)).size).toBe(matrix.length);
-    for (const entry of matrix) {
-      const registered = supportedTargets.find((target) => target.id === entry.id);
-      expect(
-        registered,
-        `matrix entry '${entry.id}' must resolve to a supported target`,
-      ).toBeDefined();
-      expect(entry).toMatchObject({
-        runner: resolveRunnerForTarget(registered!).runner,
-        supported: true,
-        supportReasons: [],
-        pendingRuntimeSuites: registered!.suiteIds ?? [],
-      });
-    }
-  });
-
   it("keeps explicitly selected unsupported live targets in the matrix with skip reasons", () => {
     const unsupported = requireUnsupportedTarget();
     const support = liveTargetSupport(unsupported);

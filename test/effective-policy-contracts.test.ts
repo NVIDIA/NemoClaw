@@ -45,7 +45,7 @@ const EXISTING_POLICY = YAML.stringify({
   network_policies: {
     existing: {
       name: "existing",
-      endpoints: [{ host: "existing.example", port: 443, access: "full", tls: "skip" }],
+      endpoints: [{ host: "existing.example", port: 8443, access: "full", tls: "skip" }],
     },
   },
 });
@@ -111,36 +111,37 @@ function expectInspectedWebSocket(endpoint: Endpoint): void {
 }
 
 describe("effective built-in policy contracts", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-  ] as const)("composes every preset advertised for %s without replacing the existing policy", (agent) => {
-    const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
-    const effective = composePresets(presetNames, agent);
+  it.each(["openclaw", "hermes"] as const)(
+    "composes every preset advertised for %s while retaining existing non-web policy",
+    (agent) => {
+      const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
+      const effective = composePresets(presetNames, agent);
 
-    expect(Object.keys(effective.network_policies ?? {}).length).toBeGreaterThan(
-      presetNames.length,
-    );
-  });
+      const policyKeys = Object.keys(effective.network_policies ?? {});
+      expect(policyKeys).toEqual(expect.arrayContaining(["existing", "personal_open_internet"]));
+      expect(policyKeys).not.toContain("npm_yarn");
+      expect(policyKeys).not.toContain("tavily");
+    },
+  );
 
-  it.each([
-    "openclaw",
-    "hermes",
-  ] as const)("keeps %s effective policy methods explicit and avoids deprecated REST TLS mode", (agent) => {
-    const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
-    const effective = composePresets(presetNames, agent);
+  it.each(["openclaw", "hermes"] as const)(
+    "keeps %s effective policy methods explicit and avoids deprecated REST TLS mode",
+    (agent) => {
+      const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
+      const effective = composePresets(presetNames, agent);
 
-    for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
-      expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
-      const endpoints = policy.endpoints ?? [];
-      for (const endpoint of endpoints) {
-        expect(methods(endpoint), `${policyName}:${endpoint.host}`).not.toContain("*");
-      }
-      for (const endpoint of endpoints.filter(({ protocol }) => protocol === "rest")) {
-        expect(endpoint.tls, `${policyName}:${endpoint.host}`).not.toBe("terminate");
-      }
-    }
-  });
+      Object.entries(effective.network_policies ?? {}).forEach(([policyName, policy]) => {
+        expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
+        const endpoints = policy.endpoints ?? [];
+        expect(endpoints.every((endpoint) => !methods(endpoint).includes("*"))).toBe(true);
+        expect(
+          endpoints
+            .filter(({ protocol }) => protocol === "rest")
+            .every((endpoint) => !Object.is(endpoint.tls, "terminate")),
+        ).toBe(true);
+      });
+    },
+  );
 
   it("keeps package and public-data access read-only after composition", () => {
     const effective = composePresets(["pypi", "weather", "public-reference"]);
@@ -148,13 +149,13 @@ describe("effective built-in policy contracts", () => {
     const weather = requireNetworkPolicy(effective, "weather");
     const publicReference = requireNetworkPolicy(effective, "public_reference");
 
-    for (const policy of [pypi, weather, publicReference]) {
+    [pypi, weather, publicReference].forEach((policy) => {
       for (const endpoint of policy.endpoints ?? []) {
         expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
         expect(endpoint).not.toHaveProperty("access");
         expect(new Set(methods(endpoint))).toEqual(new Set(["GET", "HEAD"]));
       }
-    }
+    });
 
     expect((pypi.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "files.pythonhosted.org",
@@ -174,7 +175,7 @@ describe("effective built-in policy contracts", () => {
       { method: "GET", path: "/**" },
       { method: "HEAD", path: "/**" },
     ]);
-    for (const policy of [weather, publicReference]) {
+    [weather, publicReference].forEach((policy) => {
       expect(binaries(policy)).toEqual(
         expect.arrayContaining([
           "/usr/local/bin/node",
@@ -182,7 +183,7 @@ describe("effective built-in policy contracts", () => {
           "/usr/bin/curl",
         ]),
       );
-    }
+    });
 
     expect(
       loadAgent("openclaw").expectedVersion,
@@ -196,11 +197,11 @@ describe("effective built-in policy contracts", () => {
     const gmail = requireNetworkPolicy(effective, "gmail_mail");
     const whatsapp = requireNetworkPolicy(effective, "whatsapp");
 
-    for (const endpoint of npm.endpoints ?? []) {
+    (npm.endpoints ?? []).forEach((endpoint) => {
       expect(endpoint).toMatchObject({ port: 443, access: "full", tls: "skip" });
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("rules");
-    }
+    });
     expect(binaries(npm)).toEqual(
       expect.arrayContaining(["/usr/local/bin/npm*", "/usr/local/bin/node*", "/usr/bin/node*"]),
     );
@@ -211,17 +212,17 @@ describe("effective built-in policy contracts", () => {
     ]);
     expect(binaries(gmail)).toEqual(["/usr/bin/python3"]);
 
-    for (const host of ["web.whatsapp.com", "*.web.whatsapp.com"]) {
+    ["web.whatsapp.com", "*.web.whatsapp.com"].forEach((host) => {
       const endpoint = requireEndpoint(whatsapp, host);
       expect(endpoint).toMatchObject({ port: 443, access: "full", tls: "skip" });
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("rules");
-    }
-    for (const host of ["whatsapp.net", "*.whatsapp.net"]) {
+    });
+    ["whatsapp.net", "*.whatsapp.net"].forEach((host) => {
       const endpoint = requireEndpoint(whatsapp, host);
       expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
-    }
+    });
     expect(rules(requireEndpoint(whatsapp, "raw.githubusercontent.com"))).toEqual([
       {
         method: "GET",
@@ -277,19 +278,19 @@ describe("effective built-in policy contracts", () => {
       "outlook.office365.com",
     ]);
     expect(methods(graph)).toEqual(["GET", "PATCH", "POST"]);
-    for (const host of ["graph.microsoft.com", "login.microsoftonline.com"]) {
+    ["graph.microsoft.com", "login.microsoftonline.com"].forEach((host) => {
       expect(requireEndpoint(outlook, host).request_body_credential_rewrite).toBe(true);
       expect(requireEndpoint(outlook, host).request_body_credential_rewrite).toBe(
         requireEndpoint(teams, host).request_body_credential_rewrite,
       );
-    }
-    for (const host of [
+    });
+    [
       "login.microsoftonline.com",
       "outlook.office365.com",
       "outlook.office.com",
-    ]) {
+    ].forEach((host) => {
       expect(methods(requireEndpoint(outlook, host))).toEqual(["GET", "POST"]);
-    }
+    });
 
     expect((pricing.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "openrouter.ai",
@@ -348,6 +349,26 @@ describe("effective built-in policy contracts", () => {
     );
   });
 
+  it("allows only the approved local Hindsight endpoint (#8613)", () => {
+    const effective = composePresets(["local-memory"], "hermes");
+    const localMemory = requireNetworkPolicy(effective, "local_memory");
+    const endpoint = requireEndpoint(localMemory, "host.openshell.internal");
+    const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+
+    expect(endpoint).toMatchObject({
+      port: 8888,
+      protocol: "rest",
+      enforcement: "enforce",
+      allowed_ips: privateRanges,
+    });
+    expect(rules(endpoint)).toEqual([
+      { method: "GET", path: "/**" },
+      { method: "POST", path: "/**" },
+    ]);
+    expect(binaries(localMemory)).toEqual(["/opt/hermes/.venv/bin/python"]);
+    expect((localMemory.endpoints ?? []).some((entry) => entry.host === "10.0.0.1")).toBe(false);
+  });
+
   it("keeps host-local inference and managed tools on their broker boundaries", () => {
     const matrix = loadManagedToolGatewayMatrix();
     const managedPresetNames = Object.keys(matrix);
@@ -355,7 +376,7 @@ describe("effective built-in policy contracts", () => {
     const localInference = requireNetworkPolicy(effective, "local_inference");
     const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
 
-    for (const port of [8000, 11434, 11435]) {
+    [8000, 11434, 11435].forEach((port) => {
       const endpoint = (localInference.endpoints ?? []).find(
         (candidate) => candidate.host === "host.openshell.internal" && candidate.port === port,
       );
@@ -365,7 +386,7 @@ describe("effective built-in policy contracts", () => {
         allowed_ips: privateRanges,
       });
       expect(methods(endpoint ?? {})).toEqual(["GET", "POST"]);
-    }
+    });
     const llamaCpp = (localInference.endpoints ?? []).find(
       (candidate) => candidate.host === "host.openshell.internal" && candidate.port === 8081,
     );
@@ -388,24 +409,29 @@ describe("effective built-in policy contracts", () => {
       "browser-use-gateway.nousresearch.com",
       "modal-gateway.nousresearch.com",
     ];
-    for (const [presetName, entry] of Object.entries(matrix)) {
+    Object.entries(matrix).forEach(([presetName, entry]) => {
       const policyName = presetName.replace("-", "_");
       const policy = requireNetworkPolicy(effective, policyName);
       const broker = (policy.endpoints ?? []).find(
         (endpoint) => endpoint.host === "host.openshell.internal" && endpoint.port === 11436,
       );
       expect(JSON.stringify(broker), presetName).toContain(new URL(entry.envValue).pathname);
-      for (const host of vendorHosts) {
-        expect((policy.endpoints ?? []).some((endpoint) => endpoint.host === host)).toBe(false);
-      }
+      expect(
+        vendorHosts.every((host) =>
+          Object.is(
+            (policy.endpoints ?? []).some((endpoint) => endpoint.host === host),
+            false,
+          ),
+        ),
+      ).toBe(true);
       const browserHosts = (policy.endpoints ?? []).filter((endpoint) =>
         endpoint.host?.endsWith(".browser-use.com"),
       );
       expect(browserHosts.length > 0).toBe(presetName === "nous-browser");
-    }
+    });
   });
 
-  it("keeps OpenClaw messaging credentials and WebSockets inside inspected endpoints", () => {
+  function verifyOpenClawMessagingPolicyBoundaries() {
     const effective = composePresets(["discord", "slack", "teams", "telegram", "wechat"]);
 
     for (const policyName of ["discord", "slack", "teams", "telegram_bot", "wechat_bridge"]) {
@@ -442,9 +468,14 @@ describe("effective built-in policy contracts", () => {
       expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
     }
-  });
+  }
 
-  it("composes Hermes-specific messaging mutation and runtime identity rules", () => {
+  it(
+    "keeps OpenClaw messaging credentials and WebSockets inside inspected endpoints",
+    verifyOpenClawMessagingPolicyBoundaries,
+  );
+
+  function verifyHermesMessagingPolicyComposition() {
     const effective = composePresets(["discord", "slack", "wechat"], "hermes");
     const discord = requireNetworkPolicy(effective, "discord");
     const slack = requireNetworkPolicy(effective, "slack");
@@ -495,7 +526,12 @@ describe("effective built-in policy contracts", () => {
       ].sort((a, b) => `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`)),
     );
     expect(discordMutations.some((rule) => rule.path === "/**")).toBe(false);
-  });
+  }
+
+  it(
+    "composes Hermes-specific messaging mutation and runtime identity rules",
+    verifyHermesMessagingPolicyComposition,
+  );
 
   it("keeps tool installers and optional Claude egress on explicit binary and host scopes", () => {
     const effective = composePresets(["brew", "claude-code"]);
@@ -511,28 +547,28 @@ describe("effective built-in policy contracts", () => {
         "/usr/local/bin/brew",
       ].sort(),
     );
-    for (const host of ["github.com", "raw.githubusercontent.com"]) {
+    ["github.com", "raw.githubusercontent.com"].forEach((host) => {
       const endpoint = requireEndpoint(brew, host);
       expect(endpoint).toMatchObject({ port: 443, access: "full" });
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("tls");
-    }
-    for (const endpoint of (brew.endpoints ?? []).filter(
+    });
+    (brew.endpoints ?? []).filter(
       (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
-    )) {
+    ).forEach((endpoint) => {
       expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
-    }
+    });
     expect((claude.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "api.anthropic.com",
       "platform.claude.com",
       "sentry.io",
       "statsig.anthropic.com",
     ]);
-    for (const endpoint of claude.endpoints ?? []) {
+    (claude.endpoints ?? []).forEach((endpoint) => {
       expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
       expect(endpoint).not.toHaveProperty("access");
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
-    }
+    });
     expect(binaries(claude)).not.toContain("/**");
     // OpenShell enforces on the resolved /proc/<pid>/exe, so the npm-installed
     // launcher (not just the bin/claude shim) must be allowlisted or egress is

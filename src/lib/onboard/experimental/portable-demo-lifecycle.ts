@@ -2,23 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import {
   assertPodmanSocketAuthority,
-  capturePodmanSocketAuthority,
   createPodmanContainerEngine,
   hardenPodmanSocketDirectory,
-  localPodmanEnvironment,
   type PodmanSocketAuthorityDeps,
 } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
-import { isPortableExperimentalProfile } from "../docker-driver-platform";
+import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
+import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
+import { isPortableExperimentalProfile } from "./portable-profile";
 import {
   PODMAN_MANAGED_LABEL,
   PODMAN_SANDBOX_CONTAINER_PREFIX,
@@ -34,12 +34,26 @@ import {
   OLLAMA_PORT,
   recordUserLocalOllamaOwnership,
 } from "./ollama-user-local-runtime";
+import {
+  inspectPortablePodmanReadiness,
+  portablePodmanCommandEnvironment,
+  portablePodmanReadinessError,
+  type PortablePodmanReadinessDeps,
+  type PortablePodmanReadinessResult,
+} from "./portable-runtime-readiness";
+import {
+  defaultPortableDemoStateDir,
+  inspectPortableRuntimeReceiptReadiness,
+  portableDemoReceiptDirectory,
+  portableDemoReceiptPath,
+} from "./portable-runtime-receipt-readiness";
 
-const RECEIPT_DIRECTORY = "portable-demo-lifecycle";
 const MAX_RECEIPT_BYTES = 4096;
+const MAX_RECEIPT_DIRECTORY_ENTRIES = 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const EXEC_READY_TIMEOUT_MS = 90_000;
+const STOP_RECONCILIATION_TIMEOUT_MS = 30_000;
 const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
 const OLLAMA_STARTUP_TIMEOUT_MS = 30_000;
@@ -50,25 +64,50 @@ const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 const OPENSHELL_RUNTIME_CA_CERT = "/etc/openshell-tls/openshell-ca.pem";
 const OPENSHELL_RUNTIME_CA_BUNDLE = "/etc/openshell-tls/ca-bundle.pem";
-const CURRENT_RECEIPT_SCHEMA_VERSION = 3;
+const CURRENT_RECEIPT_SCHEMA_VERSION = 4;
 const STARTUP_PROCESS_PATTERN =
   "^(/usr/local/bin/nemoclaw-start|(bash|/bin/bash|/usr/bin/bash) /usr/local/bin/nemoclaw-start)( |$)";
 const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 
-type CommandResult = {
+export type PortablePodmanLifecycleCommandResult = {
   status: number | null;
   stdout?: string | Buffer | null;
   stderr?: string | Buffer | null;
   error?: Error;
 };
 
+type CommandResult = PortablePodmanLifecycleCommandResult;
+
 interface PortableDemoLifecycleReceipt {
-  schemaVersion: 1 | 2 | 3;
+  schemaVersion: 1 | 2 | 3 | 4;
   sandboxName: string;
   sandboxId: string;
   containerId: string;
   dashboardPort: number;
   registryGeneration?: string;
+  runtimeAuthority?: CheckpointPortableRuntimeAuthority;
+}
+
+export interface PortableDemoLifecycleReceiptRecord {
+  readonly sandboxName: string;
+  readonly sandboxId: string;
+  readonly containerId: string;
+  readonly dashboardPort: number;
+  readonly registryGeneration: string;
+  readonly runtimeAuthority: CheckpointPortableRuntimeAuthority;
+}
+
+export interface PortablePodmanLifecycleTransport {
+  readonly assertRuntimeAuthority: () => void;
+  readonly dockerHost: string;
+  readonly podman: (args: readonly string[]) => PortablePodmanLifecycleCommandResult;
+}
+
+export interface PreparedPortableDemoSandboxRemoval {
+  readonly present: boolean;
+  readonly receipt: PortableDemoLifecycleReceiptRecord;
+  removeAndVerify(): void;
+  verifyAbsent(): void;
 }
 
 interface PodmanContainerInspection {
@@ -90,7 +129,9 @@ export interface PortableDemoLifecycleDeps {
   openshellBinary?: string;
   podman?: (args: readonly string[], env?: NodeJS.ProcessEnv) => CommandResult;
   podmanSocketAuthorityDeps?: PodmanSocketAuthorityDeps;
-  hardenSocketDirectory?: (socketPath: string) => void;
+  runtimeAuthority?: CheckpointPortableRuntimeAuthority | null;
+  runtimeReadiness?: PortablePodmanReadinessDeps;
+  hardenSocketDirectory?: (socketPath: string, uid: number) => void;
   registryGeneration?: string;
   backfillRegistryGeneration?: (registryGeneration: string) => boolean;
   captureOpenshell?: (args: readonly string[], timeoutMs: number) => CommandResult;
@@ -113,6 +154,11 @@ export type PortableDemoLifecycleRecoveryResult =
   | { kind: "already-running" }
   | { kind: "recovered" };
 
+export type PortableDemoLifecycleStopResult =
+  | { kind: "not-installed" }
+  | { kind: "already-stopped" }
+  | { kind: "stopped" };
+
 export interface PortableDemoLifecycleContext {
   agent?: string | null;
   gatewayName: string;
@@ -121,13 +167,21 @@ export interface PortableDemoLifecycleContext {
   provider?: string | null;
 }
 
-function defaultPodman(args: readonly string[], env: NodeJS.ProcessEnv): CommandResult {
-  return spawnSync("podman", [...args], {
-    encoding: "utf-8",
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: COMMAND_TIMEOUT_MS,
-  });
+function defaultPodmanCapture(env: NodeJS.ProcessEnv): ContainerEngineCommandCapture {
+  return (_executable, args, timeoutMs) => {
+    const result = spawnSync("podman", [...args], {
+      encoding: "utf-8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: timeoutMs,
+    });
+    return {
+      status: result.status ?? 1,
+      stdout: String(result.stdout ?? ""),
+      stderr: String(result.stderr ?? ""),
+      ...(result.error ? { error: result.error } : {}),
+    };
+  };
 }
 
 function defaultCaptureOpenshell(
@@ -205,18 +259,16 @@ function requireCommand(result: CommandResult, action: string): void {
   throw new Error(`${action} failed: ${commandDetail(result)}`);
 }
 
+function isCommandTimeout(result: CommandResult): boolean {
+  return (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function receiptPath(sandboxName: string, stateDir: string): string {
-  const fileName = `${createHash("sha256").update(sandboxName).digest("hex")}.json`;
-  return path.join(stateDir, RECEIPT_DIRECTORY, fileName);
-}
-
-function defaultStateDir(env: NodeJS.ProcessEnv): string {
-  return path.join(env.HOME ?? os.homedir(), ".nemoclaw");
-}
+const receiptPath = portableDemoReceiptPath;
+const defaultStateDir = defaultPortableDemoStateDir;
 
 function writeReceipt(receipt: PortableDemoLifecycleReceipt, stateDir: string): void {
   const filePath = receiptPath(receipt.sandboxName, stateDir);
@@ -243,14 +295,17 @@ function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycl
   const keys = Object.keys(receipt).sort();
   const expectedKeys =
     receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION
-      ? "containerId,dashboardPort,registryGeneration,sandboxId,sandboxName,schemaVersion"
-      : "containerId,dashboardPort,sandboxId,sandboxName,schemaVersion";
+      ? "containerId,dashboardPort,registryGeneration,runtimeAuthority,sandboxId,sandboxName,schemaVersion"
+      : receipt.schemaVersion === 3
+        ? "containerId,dashboardPort,registryGeneration,sandboxId,sandboxName,schemaVersion"
+        : "containerId,dashboardPort,sandboxId,sandboxName,schemaVersion";
   if (keys.join(",") !== expectedKeys) {
     throw new Error("Portable demo lifecycle receipt fields are invalid");
   }
   if (
     (receipt.schemaVersion !== 1 &&
       receipt.schemaVersion !== 2 &&
+      receipt.schemaVersion !== 3 &&
       receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION) ||
     receipt.sandboxName !== sandboxName ||
     typeof receipt.containerId !== "string" ||
@@ -260,11 +315,19 @@ function parseReceipt(value: unknown, sandboxName: string): PortableDemoLifecycl
     !Number.isInteger(receipt.dashboardPort) ||
     Number(receipt.dashboardPort) < 1024 ||
     Number(receipt.dashboardPort) > 65535 ||
-    (receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION &&
+    ((receipt.schemaVersion === 3 || receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION) &&
       (typeof receipt.registryGeneration !== "string" ||
-        !SANDBOX_ID_PATTERN.test(receipt.registryGeneration)))
+        !SANDBOX_ID_PATTERN.test(receipt.registryGeneration))) ||
+    (receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION &&
+      parsePortableRuntimeAuthority(receipt.runtimeAuthority) === null)
   ) {
     throw new Error("Portable demo lifecycle receipt values are invalid");
+  }
+  if (receipt.schemaVersion === CURRENT_RECEIPT_SCHEMA_VERSION) {
+    return {
+      ...(receipt as unknown as PortableDemoLifecycleReceipt),
+      runtimeAuthority: parsePortableRuntimeAuthority(receipt.runtimeAuthority)!,
+    };
   }
   return receipt as unknown as PortableDemoLifecycleReceipt;
 }
@@ -277,8 +340,8 @@ function requireCurrentRegistryGeneration(
   // container ID may claim a missing registry generation only after exact
   // local runtime validation; an existing generation must already match.
   const receiptGeneration =
-    receipt.schemaVersion === 3 ? receipt.registryGeneration : receipt.containerId;
-  if (registryGeneration === undefined && receipt.schemaVersion !== 3) return true;
+    receipt.schemaVersion >= 3 ? receipt.registryGeneration : receipt.containerId;
+  if (registryGeneration === undefined && receipt.schemaVersion < 3) return true;
   if (receiptGeneration !== registryGeneration) {
     throw new Error(
       `Portable demo lifecycle receipt for sandbox '${receipt.sandboxName}' does not belong to the current registry generation`,
@@ -304,6 +367,97 @@ function loadReceipt(sandboxName: string, stateDir: string): PortableDemoLifecyc
   } finally {
     file.close();
   }
+}
+
+function currentReceipt(receipt: PortableDemoLifecycleReceipt): PortableDemoLifecycleReceiptRecord {
+  if (
+    receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION ||
+    !receipt.registryGeneration ||
+    !receipt.runtimeAuthority
+  ) {
+    throw new Error(
+      `Portable demo lifecycle receipt for sandbox '${receipt.sandboxName}' predates recorded runtime authority`,
+    );
+  }
+  return {
+    sandboxName: receipt.sandboxName,
+    sandboxId: receipt.sandboxId,
+    containerId: receipt.containerId,
+    dashboardPort: receipt.dashboardPort,
+    registryGeneration: receipt.registryGeneration,
+    runtimeAuthority: receipt.runtimeAuthority,
+  };
+}
+
+/** Enumerate every strict current portable lifecycle receipt without following links. */
+export function listPortableDemoSandboxLifecycleReceipts(
+  stateDir = defaultStateDir(process.env),
+): PortableDemoLifecycleReceiptRecord[] {
+  const directory = portableDemoReceiptDirectory(stateDir);
+  let opened: fs.Dir;
+  try {
+    const stat = fs.lstatSync(directory);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(
+        `Portable demo lifecycle receipt path '${directory}' is not a real directory`,
+      );
+    }
+    opened = fs.opendirSync(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+
+  const receipts: PortableDemoLifecycleReceiptRecord[] = [];
+  const names = new Set<string>();
+  let inspected = 0;
+  try {
+    let entry: fs.Dirent | null;
+    while ((entry = opened.readSync()) !== null) {
+      inspected += 1;
+      if (inspected > MAX_RECEIPT_DIRECTORY_ENTRIES) {
+        throw new Error(
+          `Portable demo lifecycle receipt directory exceeds ${String(MAX_RECEIPT_DIRECTORY_ENTRIES)} entries`,
+        );
+      }
+      if (entry.isSymbolicLink() || !entry.isFile() || !/^[a-f0-9]{64}\.json$/u.test(entry.name)) {
+        throw new Error(
+          `Portable demo lifecycle receipt directory contains an unsafe entry '${entry.name}'`,
+        );
+      }
+      const filePath = path.join(directory, entry.name);
+      let file;
+      try {
+        file = openRegularFileNoFollow(filePath);
+        const raw: unknown = JSON.parse(file.readUtf8(MAX_RECEIPT_BYTES));
+        const sandboxName = isRecord(raw) ? raw.sandboxName : null;
+        if (typeof sandboxName !== "string") {
+          throw new Error("Portable demo lifecycle receipt is malformed");
+        }
+        const receipt = currentReceipt(parseReceipt(raw, sandboxName));
+        if (
+          receiptPath(receipt.sandboxName, stateDir) !== filePath ||
+          names.has(receipt.sandboxName)
+        ) {
+          throw new Error(
+            `Portable demo lifecycle receipt identity is ambiguous for sandbox '${receipt.sandboxName}'`,
+          );
+        }
+        names.add(receipt.sandboxName);
+        receipts.push(receipt);
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          throw new Error(`Portable demo lifecycle receipt '${filePath}' is malformed`);
+        }
+        throw error;
+      } finally {
+        file?.close();
+      }
+    }
+  } finally {
+    opened.closeSync();
+  }
+  return receipts.sort((left, right) => left.sandboxName.localeCompare(right.sandboxName));
 }
 
 function removeReceipt(sandboxName: string, stateDir: string): void {
@@ -422,23 +576,6 @@ function discoverPodmanContainer(
   return inspectPodmanContainer(matches[0]!, sandboxName, podman);
 }
 
-function podmanSocketPath(
-  podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
-  env: NodeJS.ProcessEnv,
-): string {
-  const result = podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], env);
-  requireCommand(result, "Resolving the portable Podman socket");
-  const socket = String(result.stdout ?? "").trim();
-  if (/[\u0000-\u001f\u007f-\u009f]/u.test(socket)) {
-    throw new Error("The portable Podman socket path is invalid");
-  }
-  const socketPath = socket.startsWith("unix://") ? socket.slice("unix://".length) : socket;
-  if (!path.posix.isAbsolute(socketPath)) {
-    throw new Error("The portable Podman socket path is invalid");
-  }
-  return socketPath;
-}
-
 function podmanCapture(
   podman: NonNullable<PortableDemoLifecycleDeps["podman"]>,
   env: NodeJS.ProcessEnv,
@@ -454,23 +591,178 @@ function podmanCapture(
   };
 }
 
-function qualifiedPodmanAuthority(commandEnv: NodeJS.ProcessEnv, deps: PortableDemoLifecycleDeps) {
-  const podman = deps.podman ?? ((args, env = commandEnv) => defaultPodman(args, env));
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const socketPath = podmanSocketPath(podman, podmanEnv);
-  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath);
-  const socketAuthority = capturePodmanSocketAuthority(socketPath, deps.podmanSocketAuthorityDeps);
+function qualifiedPodmanAuthority(
+  receipt: PortableDemoLifecycleReceipt,
+  commandEnv: NodeJS.ProcessEnv,
+  deps: PortableDemoLifecycleDeps,
+) {
+  if (receipt.schemaVersion !== CURRENT_RECEIPT_SCHEMA_VERSION || !receipt.runtimeAuthority) {
+    throw new Error(
+      "The lifecycle receipt predates recorded portable Podman authority; rerun onboarding.",
+    );
+  }
+  return createPortablePodmanLifecycleTransport(receipt.runtimeAuthority, {
+    ...deps,
+    env: commandEnv,
+  });
+}
+
+/** Bind portable lifecycle commands to one revalidated current-user Podman socket. */
+export function createPortablePodmanLifecycleTransport(
+  runtimeAuthority: CheckpointPortableRuntimeAuthority,
+  deps: PortableDemoLifecycleDeps = {},
+): PortablePodmanLifecycleTransport {
+  const commandEnv = deps.env ?? process.env;
+  const podmanEnv = portablePodmanCommandEnvironment(runtimeAuthority, commandEnv);
+  const capture = deps.podman
+    ? podmanCapture(deps.podman, podmanEnv)
+    : defaultPodmanCapture(podmanEnv);
+  const readiness = inspectPortablePodmanReadiness(runtimeAuthority, {
+    platform: deps.platform,
+    env: commandEnv,
+    socketAuthorityDeps: deps.podmanSocketAuthorityDeps,
+    hardenSocketDirectory: deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory,
+    podmanCapture: capture,
+    ...deps.runtimeReadiness,
+  });
+  if (!readiness.ok) throw portablePodmanReadinessError(readiness);
+  (deps.log ?? console.log)(
+    `  Portable Podman readiness: ${readiness.timing.mode}; activation ${String(readiness.timing.activationMs)} ms; API ${String(readiness.timing.apiMs)} ms; total ${String(readiness.timing.totalMs)} ms.`,
+  );
+  const socketAuthority = readiness.authority;
   const provider = createPodmanContainerEngine({
     operation: "sandbox-lifecycle",
     socketAuthority,
     authorityDeps: deps.podmanSocketAuthorityDeps,
-    ...(deps.podman ? { capture: podmanCapture(podman, podmanEnv) } : {}),
+    capture,
+    assertAuthority: deps.runtimeReadiness?.assertSocketAuthority,
   });
   return {
     assertRuntimeAuthority: () =>
-      assertPodmanSocketAuthority(socketAuthority, deps.podmanSocketAuthorityDeps),
-    dockerHost: `unix://${socketAuthority.socketPath}`,
+      (deps.runtimeReadiness?.assertSocketAuthority ?? assertPodmanSocketAuthority)(
+        socketAuthority,
+        deps.podmanSocketAuthorityDeps,
+      ),
+    dockerHost: readiness.dockerHost,
     podman: (args: readonly string[]) => provider.capture(args, COMMAND_TIMEOUT_MS),
+  };
+}
+
+function matchingPortableSandboxContainerIds(
+  sandboxName: string,
+  podman: PortablePodmanLifecycleTransport["podman"],
+): string[] {
+  const result = podman([
+    "ps",
+    "-a",
+    "--no-trunc",
+    "--filter",
+    `label=${PODMAN_MANAGED_LABEL}=true`,
+    "--filter",
+    `label=${PODMAN_SANDBOX_NAME_LABEL}=${sandboxName}`,
+    "--filter",
+    `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
+    "--format",
+    "{{.ID}}",
+  ]);
+  requireCommand(result, `Finding portable sandbox '${sandboxName}'`);
+  const ids = String(result.stdout ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (ids.some((id) => !CONTAINER_ID_PATTERN.test(id))) {
+    throw new Error(`Finding portable sandbox '${sandboxName}' returned an invalid container ID`);
+  }
+  return ids;
+}
+
+/** Prevalidate one exact receipt-owned sandbox before a full uninstall mutates Podman. */
+export function preparePortableDemoSandboxRemoval(
+  receiptRecord: PortableDemoLifecycleReceiptRecord,
+  transport: PortablePodmanLifecycleTransport,
+  stateDir = defaultStateDir(process.env),
+): PreparedPortableDemoSandboxRemoval {
+  const loaded = loadReceipt(receiptRecord.sandboxName, stateDir);
+  if (!loaded || !isDeepStrictEqual(currentReceipt(loaded), receiptRecord)) {
+    throw new Error(
+      `Portable demo lifecycle receipt changed for sandbox '${receiptRecord.sandboxName}'`,
+    );
+  }
+  requireCurrentRegistryGeneration(loaded, receiptRecord.registryGeneration);
+  transport.assertRuntimeAuthority();
+  const matches = matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport.podman);
+  if (matches.length > 1 || (matches.length === 1 && matches[0] !== receiptRecord.containerId)) {
+    throw new Error(
+      `Portable demo lifecycle found a replaced or ambiguous container for sandbox '${receiptRecord.sandboxName}'`,
+    );
+  }
+  const initial = transport.podman(["inspect", receiptRecord.containerId]);
+  let present = true;
+  if (isMissingPodmanContainer(initial)) {
+    present = false;
+    if (matches.length !== 0) {
+      throw new Error(
+        `Portable demo lifecycle found a replacement container for sandbox '${receiptRecord.sandboxName}'`,
+      );
+    }
+  } else {
+    const inspection = inspectPodmanContainer(
+      receiptRecord.containerId,
+      receiptRecord.sandboxName,
+      transport.podman,
+      initial,
+    );
+    requireReceiptOwnedInspection(loaded, inspection);
+    if (matches.length !== 1) {
+      throw new Error(
+        `Portable demo lifecycle could not prove the label index for sandbox '${receiptRecord.sandboxName}'`,
+      );
+    }
+  }
+
+  const assertReceiptAndAuthority = (): void => {
+    const current = loadReceipt(receiptRecord.sandboxName, stateDir);
+    if (!current || !isDeepStrictEqual(currentReceipt(current), receiptRecord)) {
+      throw new Error(
+        `Portable demo lifecycle receipt changed for sandbox '${receiptRecord.sandboxName}'`,
+      );
+    }
+    transport.assertRuntimeAuthority();
+  };
+  const verifyAbsent = (): void => {
+    assertReceiptAndAuthority();
+    const inspected = transport.podman(["inspect", receiptRecord.containerId]);
+    if (!isMissingPodmanContainer(inspected)) {
+      if (inspected.status !== 0 || inspected.error) {
+        requireCommand(
+          inspected,
+          `Verifying portable sandbox '${receiptRecord.sandboxName}' removal`,
+        );
+      }
+      throw new Error(
+        `Portable sandbox '${receiptRecord.sandboxName}' still has its recorded Podman container`,
+      );
+    }
+    const remaining = matchingPortableSandboxContainerIds(
+      receiptRecord.sandboxName,
+      transport.podman,
+    );
+    if (remaining.length !== 0) {
+      throw new Error(
+        `Portable demo lifecycle found a replacement container for sandbox '${receiptRecord.sandboxName}'`,
+      );
+    }
+    transport.assertRuntimeAuthority();
+  };
+  return {
+    present,
+    receipt: receiptRecord,
+    removeAndVerify: () => {
+      assertReceiptAndAuthority();
+      if (present) transport.podman(["rm", "--force", receiptRecord.containerId]);
+      verifyAbsent();
+    },
+    verifyAbsent,
   };
 }
 
@@ -490,29 +782,20 @@ function requireReceiptOwnedInspection(
   }
 }
 
-function backfillLegacyReceiptGeneration(
-  receipt: PortableDemoLifecycleReceipt,
-  stateDir: string,
-  backfillRequired: boolean,
-  deps: PortableDemoLifecycleDeps,
-): PortableDemoLifecycleReceipt {
-  if (receipt.schemaVersion === 3) return receipt;
-  if (
-    backfillRequired &&
-    (!deps.backfillRegistryGeneration || !deps.backfillRegistryGeneration(receipt.containerId))
-  ) {
-    throw new Error(
-      `Portable demo lifecycle receipt for sandbox '${receipt.sandboxName}' could not claim the current registry generation`,
-    );
-  }
-  if (receipt.schemaVersion === 1) return receipt;
-  const migrated: PortableDemoLifecycleReceipt = {
-    ...receipt,
-    schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
-    registryGeneration: receipt.containerId,
-  };
-  writeReceipt(migrated, stateDir);
-  return migrated;
+/** Inspect the receipt-owned portable runtime, or return null for an ordinary sandbox. */
+export function inspectPortableDemoRuntimeReadiness(
+  sandboxName: string,
+  deps: PortableDemoLifecycleDeps = {},
+): PortablePodmanReadinessResult | null {
+  return inspectPortableRuntimeReceiptReadiness(sandboxName, deps);
+}
+
+/** Whether the sandbox has a receipt that requires authority-bound lifecycle operations. */
+export function hasPortableDemoSandboxLifecycleReceipt(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return loadReceipt(sandboxName, defaultStateDir(env)) !== null;
 }
 
 /** Resolve the receipt-owned portable container for a host-side privileged exec. */
@@ -527,15 +810,14 @@ export function resolvePortableDemoPrivilegedExecTarget(
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
-  const backfillRequired = requireCurrentRegistryGeneration(receipt, deps.registryGeneration);
-  const authority = qualifiedPodmanAuthority(commandEnv, deps);
+  requireCurrentRegistryGeneration(receipt, deps.registryGeneration);
+  const authority = qualifiedPodmanAuthority(receipt, commandEnv, deps);
   const inspection = discoverPodmanContainer(sandboxName, authority.podman);
   requireReceiptOwnedInspection(receipt, inspection);
   if (!inspection.running) {
     throw new Error(`Portable sandbox '${sandboxName}' is not running`);
   }
   authority.assertRuntimeAuthority();
-  backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
   return {
     assertRuntimeAuthority: authority.assertRuntimeAuthority,
     containerId: inspection.containerId,
@@ -804,8 +1086,36 @@ export function installPortableDemoSandboxLifecycle(
     throw new Error("Portable demo lifecycle requires Linux");
   }
   const commandEnv = deps.env ?? env;
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
+  const runtimeAuthority = deps.runtimeAuthority;
+  if (!runtimeAuthority || !parsePortableRuntimeAuthority(runtimeAuthority)) {
+    throw new Error(
+      "Portable demo lifecycle requires the checkpoint-owned Podman runtime authority",
+    );
+  }
+  const podmanEnv = portablePodmanCommandEnvironment(runtimeAuthority, commandEnv);
+  const readinessCapture = deps.podman
+    ? podmanCapture(deps.podman, podmanEnv)
+    : defaultPodmanCapture(podmanEnv);
+  const readiness = inspectPortablePodmanReadiness(runtimeAuthority, {
+    platform: deps.platform,
+    env: commandEnv,
+    socketAuthorityDeps: deps.podmanSocketAuthorityDeps,
+    hardenSocketDirectory: deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory,
+    podmanCapture: readinessCapture,
+    ...deps.runtimeReadiness,
+  });
+  if (!readiness.ok) throw portablePodmanReadinessError(readiness);
+  (deps.log ?? console.log)(
+    `  Portable Podman readiness: ${readiness.timing.mode}; activation ${String(readiness.timing.activationMs)} ms; API ${String(readiness.timing.apiMs)} ms; total ${String(readiness.timing.totalMs)} ms.`,
+  );
+  const provider = createPodmanContainerEngine({
+    operation: "sandbox-lifecycle",
+    socketAuthority: readiness.authority,
+    authorityDeps: deps.podmanSocketAuthorityDeps,
+    capture: readinessCapture,
+    assertAuthority: deps.runtimeReadiness?.assertSocketAuthority,
+  });
+  const podman = (args: readonly string[]) => provider.capture(args, COMMAND_TIMEOUT_MS);
   const inspection = discoverPodmanContainer(sandboxName, podman);
   const registryGeneration = deps.registryGeneration ?? inspection.containerId;
   if (!SANDBOX_ID_PATTERN.test(registryGeneration)) {
@@ -818,6 +1128,7 @@ export function installPortableDemoSandboxLifecycle(
     containerId: inspection.containerId,
     dashboardPort: parseDashboardPort(createdStartupArgv, sandboxName),
     registryGeneration,
+    runtimeAuthority,
   };
   requireCommand(
     podman(["update", "--restart=unless-stopped", inspection.containerId]),
@@ -848,21 +1159,14 @@ export function recoverPortableDemoSandboxLifecycle(
   if (context.openshellDriver !== "docker") return { kind: "not-installed" };
   const commandEnv = deps.env ?? process.env;
   const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
-  let receipt = loadReceipt(sandboxName, stateDir);
+  const receipt = loadReceipt(sandboxName, stateDir);
   if (!receipt) return { kind: "not-installed" };
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
-  const backfillRequired = requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
-  if (backfillRequired || receipt.schemaVersion === 2) {
-    const authority = qualifiedPodmanAuthority(commandEnv, deps);
-    const migrationInspection = discoverPodmanContainer(sandboxName, authority.podman);
-    requireReceiptOwnedInspection(receipt, migrationInspection);
-    authority.assertRuntimeAuthority();
-    receipt = backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
-  }
-  const podmanEnv = localPodmanEnvironment(commandEnv);
-  const podman = deps.podman ?? ((args) => defaultPodman(args, podmanEnv));
+  requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
+  const authority = qualifiedPodmanAuthority(receipt, commandEnv, deps);
+  const podman = authority.podman;
   const initialInspection = podman(["inspect", receipt.containerId]);
   if (isMissingPodmanContainer(initialInspection)) {
     removeReceipt(sandboxName, stateDir);
@@ -975,18 +1279,75 @@ export function recoverPortableDemoSandboxLifecycle(
       `Portable sandbox '${sandboxName}' startup did not start its agent gateway; inspect /tmp/nemoclaw-start.log inside the sandbox`,
     );
   }
-  if (refreshStartup) {
-    writeReceipt(
-      {
-        ...receipt,
-        schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
-        registryGeneration: context.lifecycleGeneration ?? receipt.containerId,
-      },
-      deps.stateDir ?? defaultStateDir(commandEnv),
-    );
-  }
   (deps.log ?? console.log)(`  Portable demo lifecycle recovered sandbox '${sandboxName}'.`);
   return { kind: "recovered" };
+}
+
+/** Stop the exact receipt-owned portable container through its recorded Podman authority. */
+export function stopPortableDemoSandboxLifecycle(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  beforeStop: () => void,
+  deps: PortableDemoLifecycleDeps = {},
+): PortableDemoLifecycleStopResult {
+  if ((context.agent ?? "openclaw") !== "openclaw") return { kind: "not-installed" };
+  if (context.openshellDriver !== "docker") return { kind: "not-installed" };
+  const commandEnv = deps.env ?? process.env;
+  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
+  const receipt = loadReceipt(sandboxName, stateDir);
+  if (!receipt) return { kind: "not-installed" };
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable demo lifecycle receipt is only valid on Linux");
+  }
+  requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
+  const authority = qualifiedPodmanAuthority(receipt, commandEnv, deps);
+  const initialInspection = authority.podman(["inspect", receipt.containerId]);
+  if (isMissingPodmanContainer(initialInspection)) {
+    throw new Error(
+      `Portable sandbox '${sandboxName}' no longer has its recorded Podman container`,
+    );
+  }
+  const inspection = inspectPodmanContainer(
+    receipt.containerId,
+    sandboxName,
+    authority.podman,
+    initialInspection,
+  );
+  requireReceiptOwnedInspection(receipt, inspection);
+  if (!inspection.running) return { kind: "already-stopped" };
+
+  beforeStop();
+  const stop = authority.podman(["stop", receipt.containerId]);
+  const inspectStoppedState = (): boolean => {
+    const result = authority.podman(["inspect", receipt.containerId]);
+    if (isMissingPodmanContainer(result)) {
+      throw new Error(
+        `Portable sandbox '${sandboxName}' no longer has its recorded Podman container`,
+      );
+    }
+    const stopped = inspectPodmanContainer(
+      receipt.containerId,
+      sandboxName,
+      authority.podman,
+      result,
+    );
+    requireReceiptOwnedInspection(receipt, stopped);
+    return !stopped.running;
+  };
+  if (isCommandTimeout(stop)) {
+    // The rootless Podman service can continue an accepted stop after its CLI
+    // client times out. Reconcile only the exact receipt-owned container; do
+    // not retry the mutation or weaken socket and container identity checks.
+    const timing = { now: deps.now ?? Date.now, sleep: deps.sleep ?? defaultSleep };
+    if (waitFor(STOP_RECONCILIATION_TIMEOUT_MS, timing, inspectStoppedState)) {
+      return { kind: "stopped" };
+    }
+  }
+  requireCommand(stop, `Stopping portable sandbox '${sandboxName}'`);
+  if (!inspectStoppedState()) {
+    throw new Error(`Portable sandbox '${sandboxName}' did not enter the stopped state`);
+  }
+  return { kind: "stopped" };
 }
 
 export const portableDemoLifecycleInternals = { receiptPath };

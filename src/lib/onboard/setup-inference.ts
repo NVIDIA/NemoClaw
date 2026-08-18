@@ -14,8 +14,21 @@ import {
   formatGatewayRouteImpactWarning,
   isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
-import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
+import {
+  withGatewayRouteMutationLock,
+  withModelRouterPortLifecycleLock,
+} from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding } from "../inference/local";
+import {
+  type OllamaModelHolder,
+  supersededOllamaModel,
+} from "../inference/ollama/model-ownership";
+import {
+  getOllamaProxyToken,
+  persistAndProbeOllamaProxy,
+  startOllamaAuthProxy,
+  withOllamaModelOwnershipLock,
+} from "../inference/ollama/proxy";
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
   assertNoOpenShellGatewayEndpointOverride,
@@ -23,6 +36,9 @@ import {
 } from "../openshell-gateway-endpoint-guard";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
+import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
+import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
+import { resolveModelRouterPort } from "./model-router";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
@@ -61,6 +77,24 @@ export function createProviderReviewDeps(
   };
 }
 
+export function createDefaultProviderReviewDeps(
+  updateSession: Parameters<typeof createProviderReviewDeps>[0],
+  checkpointSandboxName: Parameters<typeof createProviderReviewDeps>[1],
+) {
+  return createProviderReviewDeps(
+    updateSession,
+    checkpointSandboxName,
+    {
+      shouldFrontOllamaWithProxy,
+      startOllamaAuthProxy,
+      getOllamaProxyToken,
+      persistAndProbeOllamaProxy,
+    },
+    process.exit,
+    console.error,
+  );
+}
+
 import type { HermesAuthMethod } from "./hermes-auth";
 
 function matchesOnboardEndpoint(
@@ -86,6 +120,24 @@ import type {
 import * as inferenceProviders from "./inference-providers";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
+import {
+  hostLocalInferenceRollbackStatus,
+  normalizeHostLocalInferenceReceipt,
+  normalizeHostLocalOllamaModelRef,
+  serializeHostLocalInferenceReceipt,
+} from "./runtime-provider/host-local-inference";
+import {
+  type HostLocalInferenceGatewayMutation,
+  type HostLocalInferenceStartupRoute,
+  hostLocalInferenceGatewayPort,
+  hostLocalInferenceGatewayProvider,
+  hostLocalInferenceOperationEnvironment,
+  prepareHostLocalInferenceStartup,
+  hostLocalInferenceRequestModel,
+  hostLocalInferenceRequestToolCalling,
+  hostLocalInferenceRuntimeOwnerSandboxName,
+} from "./runtime-provider/host-local-inference-routing";
+import { requireRuntimeProviderHostLocalInferenceOperation } from "./runtime-provider/registry";
 
 type ProviderBranchDeps = Pick<
   CommonDeps,
@@ -137,6 +189,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   trustedPrivateEndpointHosts?: readonly string[];
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
+  withModelRouterPortLifecycleLock?: typeof withModelRouterPortLifecycleLock;
+  getModelRouterPort?: () => number;
   withSandboxMutationLock: typeof withSandboxMutationLock;
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
@@ -153,6 +207,12 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   providerExistsInGateway: (name: string, gatewayName: string) => boolean;
   run: typeof import("../runner").run;
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
+  // #9110 optional GPU-release seams; omitted by test literals that build deps
+  // by hand, so every read below must stay optional-chained.
+  getSandbox?: typeof import("../state/registry").getSandbox;
+  listSandboxes?: typeof import("../state/registry").listSandboxes;
+  unloadOllamaModels?: (onlyModels: readonly string[]) => void;
+  withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
   localInferenceTimeoutSecs: number;
   vllmLocalCredentialEnv: string;
   getManagedVllmProviderBinding?: () => {
@@ -258,6 +318,141 @@ function resolveLocalInferenceRouteApplier(
   );
 }
 
+const HOST_LOCAL_INFERENCE_DIAGNOSTIC_LIMIT = 240;
+const RUNTIME_PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
+
+class HostLocalInferenceBranchExit extends Error {
+  constructor(readonly code: number) {
+    super(`Host-local inference provider branch requested exit ${String(code)}.`);
+  }
+}
+
+function hostLocalInferenceProviderLabel(value: string): string {
+  return RUNTIME_PROVIDER_ID.test(value) ? value : "invalid-runtime-provider";
+}
+
+function stripHostLocalInferenceUrlSecrets(value: string): string {
+  return value.replace(/https?:\/\/[^\s]+/giu, (candidate) => {
+    try {
+      const parsed = new URL(candidate);
+      return `${parsed.protocol}//${parsed.host}/[redacted]`;
+    } catch {
+      return "[redacted-url]";
+    }
+  });
+}
+
+function hostLocalInferenceFailureDetail(error: unknown, deps: SetupInferenceDeps): string {
+  try {
+    const raw = error instanceof Error ? error.message : String(error);
+    const redacted = stripHostLocalInferenceUrlSecrets(deps.redact(raw));
+    const detail = deps.compactText(redacted).slice(0, HOST_LOCAL_INFERENCE_DIAGNOSTIC_LIMIT);
+    return detail || "provider-native failure detail unavailable";
+  } catch {
+    return "provider-native failure detail unavailable";
+  }
+}
+
+function emitHostLocalInferenceFailure(
+  providerId: string,
+  error: unknown,
+  deps: SetupInferenceDeps,
+): void {
+  deps.error(
+    `  Host-local inference failure [runtime provider '${hostLocalInferenceProviderLabel(providerId)}']: ${hostLocalInferenceFailureDetail(error, deps)}`,
+  );
+}
+
+function assertHostLocalInferenceRollback(
+  route: HostLocalInferenceStartupRoute,
+  result: ReturnType<HostLocalInferenceStartupRoute["prepared"]["rollback"]>,
+): void {
+  if (
+    serializeHostLocalInferenceReceipt(normalizeHostLocalInferenceReceipt(result.receipt)) !==
+    serializeHostLocalInferenceReceipt(route.receipt)
+  ) {
+    throw new Error("Host-local inference rollback returned a different runtime authority.");
+  }
+  const expectedStatus = hostLocalInferenceRollbackStatus(result.priorState);
+  if (result.status !== expectedStatus || result.priorState !== route.prepared.rollbackPriorState) {
+    throw new Error("Host-local inference rollback returned ambiguous prior-runtime evidence.");
+  }
+}
+
+async function rollbackHostLocalInferenceStartup(
+  providerId: string,
+  route: HostLocalInferenceStartupRoute,
+  gatewayMutation: HostLocalInferenceGatewayMutation | null,
+  deps: SetupInferenceDeps,
+): Promise<void> {
+  if (gatewayMutation) {
+    try {
+      await gatewayMutation.rollback();
+    } catch (error) {
+      emitHostLocalInferenceFailure(providerId, error, deps);
+      throw new Error(
+        "Host-local inference gateway rollback is indeterminate; retaining the exact runtime for recovery.",
+      );
+    }
+  }
+  try {
+    assertHostLocalInferenceRollback(route, route.prepared.rollback());
+  } catch (error) {
+    emitHostLocalInferenceFailure(providerId, error, deps);
+    throw new Error("Host-local inference rollback evidence is incomplete or indeterminate.");
+  }
+}
+
+function resolveHostLocalInferenceRoute(
+  sandboxName: string | null,
+  model: string,
+  provider: string,
+  requireToolCalling: boolean,
+  selection: NonNullable<ProviderInferenceSetupOptions["hostLocalInference"]>,
+): HostLocalInferenceStartupRoute {
+  const { request } = selection;
+  const expectedProvider = hostLocalInferenceGatewayProvider(request);
+  if (expectedProvider !== provider) {
+    throw new Error(`Host-local ${request.service} cannot configure provider '${provider}'.`);
+  }
+  if (!sandboxName) {
+    throw new Error("Host-local inference requires a sandbox-bound runtime provider.");
+  }
+  if (!RUNTIME_PROVIDER_ID.test(selection.runtimeProviderId)) {
+    throw new Error("Host-local inference selected a malformed runtime-provider identity.");
+  }
+  const selectedModel =
+    request.service === "ollama" ? normalizeHostLocalOllamaModelRef(model) : model;
+  const requestedModel = hostLocalInferenceRequestModel(request);
+  if (
+    requestedModel !== selectedModel ||
+    hostLocalInferenceRequestToolCalling(request) !== requireToolCalling
+  ) {
+    throw new Error("Host-local inference request drifted from the accepted model proof.");
+  }
+  const providerBundle = selection.resolveRuntimeProvider(sandboxName);
+  if (!providerBundle) {
+    throw new Error(`Sandbox '${sandboxName}' has no host-local inference runtime provider.`);
+  }
+  if (providerBundle.identity.id !== selection.runtimeProviderId) {
+    throw new Error("Sandbox-bound host-local inference runtime-provider identity drifted.");
+  }
+  const operation =
+    request.service === "llama-cpp"
+      ? requireRuntimeProviderHostLocalInferenceOperation(
+          providerBundle,
+          request.service,
+          { env: hostLocalInferenceOperationEnvironment(request.service) },
+          request.adapter.operation,
+        )
+      : requireRuntimeProviderHostLocalInferenceOperation(providerBundle, request.service, {
+          env: hostLocalInferenceOperationEnvironment(request.service),
+          acceleration:
+            request.service === "ollama" ? request.endpoint.acceleration : "nvidia-gpu",
+        });
+  return prepareHostLocalInferenceStartup(operation, request);
+}
+
 export type SetupInference = (
   sandboxName: string | null,
   model: string,
@@ -268,6 +463,38 @@ export type SetupInference = (
   hermesToolGateways?: string[],
   options?: ProviderInferenceSetupOptions,
 ) => Promise<SetupInferenceResult>;
+
+/**
+ * Release the GPU memory an Ollama-backed sandbox held before this onboarding
+ * moved it to a different model (#9110).
+ *
+ * Runs after the route mutation, so the new route is already proven by
+ * `verifyOnboardInferenceSmoke` before the old memory is freed. Best-effort:
+ * the route is committed by this point, so GPU cleanup must never change the
+ * result or the exit code.
+ */
+function releaseSupersededOllamaModel(
+  previous: OllamaModelHolder | null,
+  nextModel: string,
+  result: SetupInferenceResult,
+  deps: SetupInferenceDeps,
+): void {
+  // A reselection retry left the recorded route untouched, so the sandbox
+  // still owns its model.
+  if (!previous || result.retry) return;
+  try {
+    const withOwnershipLock =
+      deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
+    withOwnershipLock(() => {
+      const peers = deps.listSandboxes?.().sandboxes ?? [];
+      const superseded = supersededOllamaModel(previous, nextModel, peers);
+      if (!superseded) return;
+      deps.unloadOllamaModels?.([superseded]);
+    });
+  } catch {
+    /* Best-effort: a failed unload must not fail an onboarding that already committed its route. */
+  }
+}
 
 export function createSetupInference(
   defaults: SetupInferenceDeps,
@@ -288,8 +515,18 @@ export function createSetupInference(
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
+    const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
+    const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
+      deps.withGatewayRouteMutationLock(gatewayName, () => {
+        if (!routedProvider) return operation();
+        const withRouterPortLock =
+          deps.withModelRouterPortLifecycleLock ?? withModelRouterPortLifecycleLock;
+        const port = (deps.getModelRouterPort ?? resolveModelRouterPort)();
+        return withRouterPortLock(port, operation);
+      });
     const mutateGatewayRoute = (): Promise<SetupInferenceResult> =>
-      deps.withGatewayRouteMutationLock(gatewayName, async () => {
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding centralizes route and two-phase transaction ordering.
+      withInferenceMutationLocks(async () => {
         if (
           options.isRecordedProviderRecoveryAuthorized &&
           !options.isRecordedProviderRecoveryAuthorized()
@@ -361,18 +598,38 @@ export function createSetupInference(
           deps.runOpenshell,
           gatewayName,
         );
+        let hostLocalRoute: HostLocalInferenceStartupRoute | null = null;
+        let hostLocalGatewayMutation: HostLocalInferenceGatewayMutation | null = null;
+        let hostLocalRollbackAttempted = false;
+        let hostLocalRegistryPublicationEntered = false;
+        const hostLocalProviderErrors: string[] = [];
+        const hostLocalSelection = options.hostLocalInference;
         let routeReserved = false;
+        let hostLocalInferenceReceipt: string | null = null;
+        let hostLocalInferenceProvenance:
+          | import("../state/registry/types").SandboxEntry["hostLocalInferenceProvenance"]
+          | undefined;
+        let hostLocalInferenceGatewayPortAuthority: number | undefined;
+        let hostLocalInferenceRuntimeProviderId: string | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           const reserved = deps.updateSandbox(name, {
             provider: selectedProvider,
             model: selectedModel,
-            endpointUrl,
-            endpointSource,
+            endpointUrl: hostLocalRoute?.applicationBaseUrl ?? endpointUrl,
+            endpointSource: hostLocalRoute ? "inference-set" : endpointSource,
             credentialEnv,
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
             reservationSessionId: options.reservationSessionId,
+            hostLocalInferenceReceipt,
+            ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+            ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
+              ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
+              : {}),
+            ...(hostLocalInferenceProvenance && hostLocalInferenceRuntimeProviderId
+              ? { openshellDriver: hostLocalInferenceRuntimeProviderId }
+              : {}),
           });
           routeReserved = reserved;
           return reserved;
@@ -382,7 +639,9 @@ export function createSetupInference(
           runOpenshell: runGatewayOpenshell,
           upsertProvider: bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
           verifyInferenceRoute: (selectedProvider: string, selectedModel: string) => {
-            if (sandboxName) reserveRoute(sandboxName, selectedProvider, selectedModel);
+            if (!hostLocalRoute && sandboxName) {
+              reserveRoute(sandboxName, selectedProvider, selectedModel);
+            }
             deps.verifyInferenceRoute(gatewayName, selectedProvider, selectedModel);
           },
           verifyOnboardInferenceSmoke: (
@@ -398,159 +657,393 @@ export function createSetupInference(
           registry: {
             updateSandbox: (name: string) => reserveRoute(name, provider, model),
           },
-          exitProcess: deps.exitProcess,
-          error: deps.error,
+          exitProcess: hostLocalSelection
+            ? (code: number): never => {
+                throw new HostLocalInferenceBranchExit(code);
+              }
+            : deps.exitProcess,
+          error: hostLocalSelection
+            ? (message: string) => {
+                hostLocalProviderErrors.push(message);
+              }
+            : deps.error,
           log: deps.log,
         } satisfies CommonDeps;
 
-        if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
-          return inferenceProviders.setupHermesProviderInference(
-            {
+        if (options.hostLocalInference) {
+          try {
+            hostLocalRoute = resolveHostLocalInferenceRoute(
               sandboxName,
               model,
               provider,
-              endpointUrl,
-              credentialEnv,
-              hermesAuthMethod,
-              hermesToolGateways,
-            },
-            {
-              ...commonDeps,
-              hermesProviderAuth: deps.hermesProviderAuth,
-              getHermesToolGatewayBroker: deps.getHermesToolGatewayBroker,
-              providerExistsInGateway: (name: string) =>
-                deps.providerExistsInGateway(name, gatewayName),
-              normalizeHermesAuthMethod: deps.normalizeHermesAuthMethod,
-              resolveHermesNousApiKey: deps.resolveHermesNousApiKey,
-              checkHermesProviderStoreReachable: deps.checkHermesProviderStoreReachable,
-              hermesAuthMethodLabel: deps.hermesAuthMethodLabel,
-              hermesConstants: deps.hermesConstants,
-              requireValue: deps.requireValue,
-              redact: deps.redact,
-              compactText: deps.compactText,
-              lookup: deps.lookup,
-            },
-          );
+              options.allowToolsIncompatible !== true,
+              options.hostLocalInference,
+            );
+            hostLocalInferenceReceipt = serializeHostLocalInferenceReceipt(hostLocalRoute.receipt);
+            if (options.hostLocalInference.request.service === "llama-cpp") {
+              hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(
+                hostLocalInferenceRuntimeOwnerSandboxName(
+                  options.hostLocalInference.request,
+                  sandboxName!,
+                ),
+                hostLocalInferenceReceipt,
+              );
+              hostLocalInferenceGatewayPortAuthority = hostLocalInferenceGatewayPort(
+                options.hostLocalInference.request,
+              );
+              hostLocalInferenceRuntimeProviderId = options.hostLocalInference.runtimeProviderId;
+            }
+            hostLocalGatewayMutation = await options.hostLocalInference.prepareGatewayMutation({
+              gatewayName,
+              sandboxName: sandboxName!,
+              provider: hostLocalRoute.gatewayProvider,
+              model,
+              providerBaseUrl: hostLocalRoute.gatewayProviderBaseUrl,
+            });
+            if (
+              !hostLocalGatewayMutation ||
+              typeof hostLocalGatewayMutation.commit !== "function" ||
+              typeof hostLocalGatewayMutation.rollback !== "function"
+            ) {
+              throw new Error(
+                "Host-local inference gateway mutation authority is missing or malformed.",
+              );
+            }
+          } catch (error) {
+            emitHostLocalInferenceFailure(
+              options.hostLocalInference.runtimeProviderId,
+              error,
+              deps,
+            );
+            if (hostLocalRoute) {
+              try {
+                await rollbackHostLocalInferenceStartup(
+                  options.hostLocalInference.runtimeProviderId,
+                  hostLocalRoute,
+                  hostLocalGatewayMutation,
+                  deps,
+                );
+              } catch {
+                // The rollback helper already emitted bounded provider-labelled evidence.
+              }
+            }
+            return deps.exitProcess(1);
+          }
         }
 
-        if (inferenceProviders.isRemoteProviderName(provider)) {
-          const outcome = await inferenceProviders.setupRemoteProviderInference(
-            {
-              sandboxName,
-              model,
+        const setupSelectedProvider = async (): Promise<SetupInferenceResult | null> => {
+          if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
+            return inferenceProviders.setupHermesProviderInference(
+              {
+                sandboxName,
+                model,
+                provider,
+                endpointUrl,
+                credentialEnv,
+                hermesAuthMethod,
+                hermesToolGateways,
+              },
+              {
+                ...commonDeps,
+                hermesProviderAuth: deps.hermesProviderAuth,
+                getHermesToolGatewayBroker: deps.getHermesToolGatewayBroker,
+                providerExistsInGateway: (name: string) =>
+                  deps.providerExistsInGateway(name, gatewayName),
+                normalizeHermesAuthMethod: deps.normalizeHermesAuthMethod,
+                resolveHermesNousApiKey: deps.resolveHermesNousApiKey,
+                checkHermesProviderStoreReachable: deps.checkHermesProviderStoreReachable,
+                hermesAuthMethodLabel: deps.hermesAuthMethodLabel,
+                hermesConstants: deps.hermesConstants,
+                requireValue: deps.requireValue,
+                redact: deps.redact,
+                compactText: deps.compactText,
+                lookup: deps.lookup,
+              },
+            );
+          }
+
+          if (inferenceProviders.isRemoteProviderName(provider)) {
+            const outcome = await inferenceProviders.setupRemoteProviderInference(
+              {
+                sandboxName,
+                model,
+                provider,
+                endpointUrl,
+                credentialEnv,
+                reuseGatewayCredentialWithoutLocalKey:
+                  options.reuseGatewayCredentialWithoutLocalKey === true,
+                skipHostInferenceSmoke: options.skipHostInferenceSmoke === true,
+                preferredInferenceApi: options.preferredInferenceApi ?? null,
+                pinnedAddresses: endpointPinnedAddresses,
+                trustedPrivateCapability: endpointTrustedPrivateCapability,
+                capabilityCache: options.inferenceCapabilityCache,
+              },
+              {
+                ...commonDeps,
+                REMOTE_PROVIDER_CONFIG: deps.REMOTE_PROVIDER_CONFIG,
+                hydrateCredentialEnv: deps.hydrateCredentialEnv,
+                promptValidationRecovery: deps.promptValidationRecovery,
+                classifyApplyFailure: deps.classifyApplyFailure,
+                LOCAL_INFERENCE_TIMEOUT_SECS: deps.localInferenceTimeoutSecs,
+                bedrockRuntimeOnboard: deps.bedrockRuntimeOnboard,
+                openrouterRuntimeOnboard: deps.openrouterRuntimeOnboard,
+                redact: deps.redact,
+                compactText: deps.compactText,
+                probeOpenAiLikeEndpoint: deps.probeOpenAiLikeEndpoint,
+                readGatewayProviderMetadata: deps.readGatewayProviderMetadata,
+                deleteGatewayProvider: deps.deleteGatewayProvider,
+              },
+            );
+            if (outcome.done) return outcome.result;
+          } else if (provider === "vllm-local") {
+            const outcome = await inferenceProviders.setupVllmLocalInference(
+              { model, provider },
+              {
+                ...commonDeps,
+                validateLocalProvider: hostLocalRoute
+                  ? () => ({ ok: true as const })
+                  : deps.validateLocalProvider,
+                getLocalProviderHealthCheck: deps.getLocalProviderHealthCheck,
+                getLocalProviderBaseUrl: hostLocalRoute
+                  ? () => hostLocalRoute.gatewayProviderBaseUrl
+                  : deps.getLocalProviderBaseUrl,
+                applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
+                  hostLocalRoute
+                    ? {
+                        ...deps,
+                        exitProcess: commonDeps.exitProcess,
+                        error: commonDeps.error,
+                      }
+                    : deps,
+                  runGatewayOpenshell,
+                ),
+                run: deps.run,
+                VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
+                getManagedVllmProviderBinding: hostLocalRoute
+                  ? () => null
+                  : (deps.getManagedVllmProviderBinding ?? getManagedVllmProviderBinding),
+              },
+            );
+            if (outcome.done) {
+              if (hostLocalRoute && hostLocalGatewayMutation && hostLocalSelection) {
+                emitHostLocalInferenceFailure(
+                  hostLocalSelection.runtimeProviderId,
+                  hostLocalProviderErrors.at(-1) ?? "gateway route requested provider reselection",
+                  deps,
+                );
+                hostLocalRollbackAttempted = true;
+                await rollbackHostLocalInferenceStartup(
+                  hostLocalSelection.runtimeProviderId,
+                  hostLocalRoute,
+                  hostLocalGatewayMutation,
+                  deps,
+                );
+              }
+              return outcome.result;
+            }
+          } else if (provider === "ollama-local") {
+            const outcome = await inferenceProviders.setupOllamaLocalInference(
+              {
+                model,
+                provider,
+                allowToolsIncompatible: options.allowToolsIncompatible === true,
+                ...(hostLocalRoute ? {} : { preparedProxyToken: options.preparedOllamaProxyToken }),
+              },
+              {
+                ...commonDeps,
+                validateLocalProvider: hostLocalRoute
+                  ? () => ({ ok: true as const })
+                  : deps.validateLocalProvider,
+                getLocalProviderBaseUrl: hostLocalRoute
+                  ? () => hostLocalRoute.gatewayProviderBaseUrl
+                  : deps.getLocalProviderBaseUrl,
+                applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
+                  hostLocalRoute
+                    ? {
+                        ...deps,
+                        exitProcess: commonDeps.exitProcess,
+                        error: commonDeps.error,
+                      }
+                    : deps,
+                  runGatewayOpenshell,
+                ),
+                getOllamaWarmupCommand: deps.getOllamaWarmupCommand,
+                run: deps.run,
+                shouldFrontOllamaWithProxy: hostLocalRoute
+                  ? () => false
+                  : deps.shouldFrontOllamaWithProxy,
+                ensureOllamaAuthProxy: deps.ensureOllamaAuthProxy,
+                isProxyHealthy: deps.isProxyHealthy,
+                getOllamaProxyToken: deps.getOllamaProxyToken,
+                persistAndProbeOllamaProxy: deps.persistAndProbeOllamaProxy,
+                localInference: deps.localInference,
+                providerOwnedInferenceProof: hostLocalRoute?.receipt.inference,
+                OLLAMA_PROXY_CREDENTIAL_ENV: deps.ollamaProxyCredentialEnv,
+              },
+            );
+            if (outcome.done) {
+              if (hostLocalRoute && hostLocalGatewayMutation && hostLocalSelection) {
+                emitHostLocalInferenceFailure(
+                  hostLocalSelection.runtimeProviderId,
+                  hostLocalProviderErrors.at(-1) ?? "gateway route requested provider reselection",
+                  deps,
+                );
+                hostLocalRollbackAttempted = true;
+                await rollbackHostLocalInferenceStartup(
+                  hostLocalSelection.runtimeProviderId,
+                  hostLocalRoute,
+                  hostLocalGatewayMutation,
+                  deps,
+                );
+              }
+              return outcome.result;
+            }
+          } else if (routedProvider) {
+            await inferenceProviders.setupRoutedInference(
+              { model, provider, endpointUrl, credentialEnv },
+              {
+                ...commonDeps,
+                reconcileModelRouter: deps.reconcileModelRouter,
+                routedInference: deps.routedInference,
+                hydrateCredentialEnv: deps.hydrateCredentialEnv,
+                redact: deps.redact,
+                compactText: deps.compactText,
+              },
+            );
+          } else {
+            commonDeps.error(`  Unsupported provider configuration: ${provider}`);
+            commonDeps.exitProcess(1);
+          }
+
+          return null;
+        };
+
+        try {
+          const providerResult = await setupSelectedProvider();
+          if (providerResult) return providerResult;
+          commonDeps.verifyInferenceRoute(provider, model);
+          if (hostLocalRoute) {
+            deps.log(
+              "  Deferring inference.local smoke to the sandbox runtime after sandbox readiness.",
+            );
+          } else if (options.skipHostInferenceSmoke === true) {
+            deps.log("  Reusing existing gateway credential; skipping host inference smoke.");
+          } else {
+            await deps.verifyOnboardInferenceSmoke({
               provider,
+              model,
               endpointUrl,
               credentialEnv,
-              reuseGatewayCredentialWithoutLocalKey:
-                options.reuseGatewayCredentialWithoutLocalKey === true,
-              skipHostInferenceSmoke: options.skipHostInferenceSmoke === true,
-              preferredInferenceApi: options.preferredInferenceApi ?? null,
               pinnedAddresses: endpointPinnedAddresses,
               trustedPrivateCapability: endpointTrustedPrivateCapability,
               capabilityCache: options.inferenceCapabilityCache,
-            },
-            {
-              ...commonDeps,
-              REMOTE_PROVIDER_CONFIG: deps.REMOTE_PROVIDER_CONFIG,
-              hydrateCredentialEnv: deps.hydrateCredentialEnv,
-              promptValidationRecovery: deps.promptValidationRecovery,
-              classifyApplyFailure: deps.classifyApplyFailure,
-              LOCAL_INFERENCE_TIMEOUT_SECS: deps.localInferenceTimeoutSecs,
-              bedrockRuntimeOnboard: deps.bedrockRuntimeOnboard,
-              openrouterRuntimeOnboard: deps.openrouterRuntimeOnboard,
-              redact: deps.redact,
-              compactText: deps.compactText,
-              probeOpenAiLikeEndpoint: deps.probeOpenAiLikeEndpoint,
-              readGatewayProviderMetadata: deps.readGatewayProviderMetadata,
-              deleteGatewayProvider: deps.deleteGatewayProvider,
-            },
+            });
+          }
+          if (sandboxName && !hostLocalRoute) {
+            commonDeps.registry.updateSandbox(sandboxName);
+          }
+          if (hostLocalRoute) {
+            if (!hostLocalGatewayMutation || !hostLocalSelection) {
+              throw new Error("Host-local inference commit authority is incomplete.");
+            }
+            const validatePreparedReceipt = () => {
+              const validated = normalizeHostLocalInferenceReceipt(
+                hostLocalRoute.prepared.validateBeforeCommit(),
+              );
+              if (
+                serializeHostLocalInferenceReceipt(validated) !==
+                serializeHostLocalInferenceReceipt(hostLocalRoute.receipt)
+              ) {
+                throw new Error(
+                  "Host-local inference pre-commit validation returned a different receipt authority.",
+                );
+              }
+            };
+            validatePreparedReceipt();
+            await hostLocalGatewayMutation.commit();
+            // The awaited gateway commit is the only async gap between provider
+            // proof and publication. Close it before registry or receipt entry.
+            validatePreparedReceipt();
+            if (sandboxName) {
+              // The registry writer may complete its atomic replacement before
+              // returning false or throwing. From entry onward there is no
+              // exact prior-registry restoration authority, so gateway/runtime
+              // rollback could leave a durable inference.local reservation
+              // pointing at a removed runtime. Retain the proven pair and fail
+              // closed instead.
+              hostLocalRegistryPublicationEntered = true;
+              if (!reserveRoute(sandboxName, provider, model)) {
+                throw new Error("Host-local inference lost sandbox route reservation authority.");
+              }
+            }
+            const committed = normalizeHostLocalInferenceReceipt(hostLocalRoute.prepared.commit());
+            if (
+              serializeHostLocalInferenceReceipt(committed) !==
+              serializeHostLocalInferenceReceipt(hostLocalRoute.receipt)
+            ) {
+              throw new Error(
+                "Host-local inference commit returned a different receipt authority.",
+              );
+            }
+          }
+          deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+          return { ok: true as const };
+        } catch (error) {
+          if (!hostLocalRoute || !hostLocalSelection) throw error;
+          emitHostLocalInferenceFailure(
+            hostLocalSelection.runtimeProviderId,
+            error instanceof HostLocalInferenceBranchExit
+              ? (hostLocalProviderErrors.at(-1) ?? error)
+              : error,
+            deps,
           );
-          if (outcome.done) return outcome.result;
-        } else if (provider === "vllm-local") {
-          const outcome = await inferenceProviders.setupVllmLocalInference(
-            { model, provider },
-            {
-              ...commonDeps,
-              validateLocalProvider: deps.validateLocalProvider,
-              getLocalProviderHealthCheck: deps.getLocalProviderHealthCheck,
-              getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
-              applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
+          let publicationState: ReturnType<
+            HostLocalInferenceStartupRoute["prepared"]["publicationState"]
+          > = "indeterminate";
+          try {
+            publicationState = hostLocalRoute.prepared.publicationState();
+          } catch {
+            // Missing or malformed publication evidence is not rollback authority.
+          }
+          if (
+            publicationState === "unpublished" &&
+            !hostLocalRegistryPublicationEntered &&
+            !hostLocalRollbackAttempted
+          ) {
+            try {
+              await rollbackHostLocalInferenceStartup(
+                hostLocalSelection.runtimeProviderId,
+                hostLocalRoute,
+                hostLocalGatewayMutation,
                 deps,
-                runGatewayOpenshell,
-              ),
-              run: deps.run,
-              VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
-              getManagedVllmProviderBinding:
-                deps.getManagedVllmProviderBinding ?? getManagedVllmProviderBinding,
-            },
-          );
-          if (outcome.done) return outcome.result;
-        } else if (provider === "ollama-local") {
-          const outcome = await inferenceProviders.setupOllamaLocalInference(
-            {
-              model,
-              provider,
-              allowToolsIncompatible: options.allowToolsIncompatible === true,
-              preparedProxyToken: options.preparedOllamaProxyToken,
-            },
-            {
-              ...commonDeps,
-              validateLocalProvider: deps.validateLocalProvider,
-              getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
-              applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
-                deps,
-                runGatewayOpenshell,
-              ),
-              getOllamaWarmupCommand: deps.getOllamaWarmupCommand,
-              run: deps.run,
-              shouldFrontOllamaWithProxy: deps.shouldFrontOllamaWithProxy,
-              ensureOllamaAuthProxy: deps.ensureOllamaAuthProxy,
-              isProxyHealthy: deps.isProxyHealthy,
-              getOllamaProxyToken: deps.getOllamaProxyToken,
-              persistAndProbeOllamaProxy: deps.persistAndProbeOllamaProxy,
-              localInference: deps.localInference,
-              OLLAMA_PROXY_CREDENTIAL_ENV: deps.ollamaProxyCredentialEnv,
-            },
-          );
-          if (outcome.done) return outcome.result;
-        } else if (deps.isRoutedInferenceProvider(provider)) {
-          await inferenceProviders.setupRoutedInference(
-            { model, provider, endpointUrl, credentialEnv },
-            {
-              ...commonDeps,
-              reconcileModelRouter: deps.reconcileModelRouter,
-              routedInference: deps.routedInference,
-              hydrateCredentialEnv: deps.hydrateCredentialEnv,
-              redact: deps.redact,
-              compactText: deps.compactText,
-            },
-          );
-        } else {
-          deps.error(`  Unsupported provider configuration: ${provider}`);
-          deps.exitProcess(1);
+              );
+            } catch {
+              // The rollback helper already emitted bounded provider-labelled evidence.
+            }
+          }
+          return deps.exitProcess(error instanceof HostLocalInferenceBranchExit ? error.code : 1);
         }
-
-        commonDeps.verifyInferenceRoute(provider, model);
-        if (options.skipHostInferenceSmoke === true)
-          deps.log("  Reusing existing gateway credential; skipping host inference smoke.");
-        else
-          await deps.verifyOnboardInferenceSmoke({
-            provider,
-            model,
-            endpointUrl,
-            credentialEnv,
-            pinnedAddresses: endpointPinnedAddresses,
-            trustedPrivateCapability: endpointTrustedPrivateCapability,
-            capabilityCache: options.inferenceCapabilityCache,
-          });
-        if (sandboxName) {
-          commonDeps.registry.updateSandbox(sandboxName);
-        }
-        deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
-        return { ok: true as const };
       });
+    // Both the prior-route read and the GPU release stay inside the sandbox
+    // mutation lock: the read happens before `reserveRoute` rewrites the row
+    // (after which the previous selection is unrecoverable), and the release
+    // happens before the lock opens, so a serialized re-onboard can neither
+    // replace the row under the read nor select the captured model before
+    // this cleanup runs.
+    const mutateGatewayRouteAndReleaseSupersededModel =
+      async (): Promise<SetupInferenceResult> => {
+        let previousSandbox: OllamaModelHolder | null = null;
+        try {
+          previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
+        } catch {
+          /* An unreadable registry skips GPU release; it must not fail onboarding. */
+        }
+        const result = await mutateGatewayRoute();
+        releaseSupersededOllamaModel(previousSandbox, model, result, deps);
+        return result;
+      };
     return sandboxName
-      ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRoute)
-      : mutateGatewayRoute();
+      ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRouteAndReleaseSupersededModel)
+      : mutateGatewayRouteAndReleaseSupersededModel();
   };
 }

@@ -76,6 +76,10 @@ async function finalizeMigration(
       checkAndRecoverSandboxProcesses: () => undefined,
       warmupScopeUpgrade: () => undefined,
       autoPairScopeApproval: () => undefined,
+      readRegistryAgent: () => "openclaw",
+      settlePortablePairing: async () => ({ kind: "settled" }),
+      portablePairingIncompleteMessage: () =>
+        "Portable onboarding is incomplete; resume onboarding.",
       getChatUiUrl: () => "",
       buildVerifyChain: () => null,
       verifyDeployment: async () => null,
@@ -135,6 +139,7 @@ describe("legacy credential reconciliation", () => {
               runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
             redact: (input) => input,
             getGatewayName: () => "nemoclaw",
+            getCredential: (name) => process.env[name] ?? null,
             normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
             updateSession: (mutator) => mutator(session) ?? session,
             stagedLegacyValues,

@@ -34,13 +34,17 @@ export interface ManagedStartupRootOwnedFileMaterial {
     | "NEMOCLAW_INFERENCE_BASE_URL"
     | "NEMOCLAW_PROXY_HOST"
     | "NEMOCLAW_PROXY_PORT"
-    | "NEMOCLAW_REASONING_EFFORT";
+    | "NEMOCLAW_REASONING_EFFORT"
+    | "NEMOCLAW_UPSTREAM_PROVIDER";
   readonly path:
     | "/usr/local/share/nemoclaw/dcode-auto-approval"
     | "/usr/local/share/nemoclaw/dcode-inference-base-url"
     | "/usr/local/share/nemoclaw/dcode-proxy-host"
     | "/usr/local/share/nemoclaw/dcode-proxy-port"
-    | "/usr/local/share/nemoclaw/dcode-reasoning-effort";
+    | "/usr/local/share/nemoclaw/dcode-reasoning-effort"
+    | "/usr/local/share/nemoclaw/dcode-upstream-provider"
+    | "/usr/local/share/nemoclaw/pi-proxy-host"
+    | "/usr/local/share/nemoclaw/pi-proxy-port";
   readonly contents: string;
   readonly owner: "root";
   readonly group: "root";
@@ -76,15 +80,13 @@ interface ManagedStartupApplyMessagingActionBase {
   readonly phase: "runtime-setup" | "post-agent-install";
 }
 
-export interface ManagedStartupApplyMessagingRuntimeAction
-  extends ManagedStartupApplyMessagingActionBase {
+export interface ManagedStartupApplyMessagingRuntimeAction extends ManagedStartupApplyMessagingActionBase {
   readonly phase: "runtime-setup";
   /** Writes the reduced, root-owned messaging runtime-plan artifact. */
   readonly runAs: "root";
 }
 
-export interface ManagedStartupApplyMessagingConfigAction
-  extends ManagedStartupApplyMessagingActionBase {
+export interface ManagedStartupApplyMessagingConfigAction extends ManagedStartupApplyMessagingActionBase {
   readonly phase: "post-agent-install";
   /** Renders only sandbox-owned agent configuration from preinstalled assets. */
   readonly runAs: "sandbox";
@@ -495,6 +497,7 @@ function mapDcodeProfile(
   // consumed by managed-dcode-runtime.py.
   delete runtimeEnvironment.NEMOCLAW_INFERENCE_BASE_URL;
   delete runtimeEnvironment.NEMOCLAW_REASONING_EFFORT;
+  delete runtimeEnvironment.NEMOCLAW_UPSTREAM_PROVIDER;
   for (const name of [
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -518,6 +521,11 @@ function mapDcodeProfile(
       profile.inference.routedBaseUrl,
     ),
     rootOwnedFile(
+      "NEMOCLAW_UPSTREAM_PROVIDER",
+      "/usr/local/share/nemoclaw/dcode-upstream-provider",
+      profile.inference.upstreamProvider,
+    ),
+    rootOwnedFile(
       "NEMOCLAW_PROXY_HOST",
       "/usr/local/share/nemoclaw/dcode-proxy-host",
       profile.proxy.managedHost,
@@ -531,6 +539,68 @@ function mapDcodeProfile(
       "NEMOCLAW_REASONING_EFFORT",
       "/usr/local/share/nemoclaw/dcode-reasoning-effort",
       reasoningEffort,
+    ),
+  ]);
+
+  return Object.freeze({
+    schemaVersion: profile.schemaVersion,
+    agent: profile.agent,
+    configurationEnvironment: sortedEnvironment(configurationEnvironment),
+    runtimeEnvironment: sortedEnvironment(runtimeEnvironment),
+    applicationRuntime: applicationRuntimePlan(profile, environment),
+    materials,
+    actions: applicationActions(profile, null),
+  });
+}
+
+function mapPiProfile(
+  profile: ManagedStartupProfile,
+  environment: ApplicationEnvironment,
+): ManagedStartupAgentEnvironment {
+  if (
+    profile.agent !== "pi" ||
+    profile.agentConfig.agent !== "pi" ||
+    profile.dashboard.agent !== "pi" ||
+    profile.messaging.plan !== null
+  ) {
+    throw new ManagedStartupAgentEnvironmentError("Pi profile state is inconsistent");
+  }
+
+  const configurationEnvironment: MutableEnvironment = {
+    ...commonConfigurationEnvironment(profile),
+    NEMOCLAW_CONTEXT_WINDOW:
+      profile.tuning.contextWindow === null ? "" : String(profile.tuning.contextWindow),
+    NEMOCLAW_MAX_TOKENS: profile.tuning.maxTokens === null ? "" : String(profile.tuning.maxTokens),
+    NEMOCLAW_REASONING:
+      profile.tuning.reasoning === null ? "" : String(profile.tuning.reasoning),
+  };
+  appendHostProxyEnvironment(configurationEnvironment, profile);
+  const runtimeEnvironment: MutableEnvironment = { ...configurationEnvironment };
+  delete runtimeEnvironment.NEMOCLAW_INFERENCE_BASE_URL;
+  delete runtimeEnvironment.NEMOCLAW_CONTEXT_WINDOW;
+  delete runtimeEnvironment.NEMOCLAW_MAX_TOKENS;
+  delete runtimeEnvironment.NEMOCLAW_REASONING;
+  for (const name of [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+  ]) {
+    delete runtimeEnvironment[name];
+  }
+  const materials: readonly ManagedStartupAgentMaterial[] = Object.freeze([
+    corporateCaMaterial(profile),
+    rootOwnedFile(
+      "NEMOCLAW_PROXY_HOST",
+      "/usr/local/share/nemoclaw/pi-proxy-host",
+      profile.proxy.managedHost,
+    ),
+    rootOwnedFile(
+      "NEMOCLAW_PROXY_PORT",
+      "/usr/local/share/nemoclaw/pi-proxy-port",
+      String(profile.proxy.managedPort),
     ),
   ]);
 
@@ -563,5 +633,7 @@ export function mapManagedStartupProfileToAgentEnvironment(
       return mapHermesProfile(validated, environment);
     case "langchain-deepagents-code":
       return mapDcodeProfile(validated, environment);
+    case "pi":
+      return mapPiProfile(validated, environment);
   }
 }

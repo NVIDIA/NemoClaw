@@ -137,29 +137,27 @@ describe("llama.cpp image PR workflow", () => {
       source_archive_sha256: "${{ steps.manifest.outputs.source_archive_sha256 }}",
       source_revision: "${{ steps.manifest.outputs.source_revision }}",
     });
-    for (const output of [
-      "publication_allowed_ref",
-      "publication_anonymous_exact_digest_pull",
-      "publication_candidate_tag_template",
-      "publication_enabled",
-      "publication_platforms",
-      "publication_provenance_predicate_type",
-      "publication_qualification",
-      "publication_receipt_retention_days",
-      "publication_receipt_schema_version",
-      "publication_repository",
-      "publication_sbom_format",
-      "publication_signature_identity",
-      "publication_signature_issuer",
-      "publication_signature_mode",
-      "publication_signature_transparency_log",
-      "publication_trigger",
-      "publication_vulnerability_only_fixed",
-      "publication_vulnerability_scanner",
-      "publication_vulnerability_severity_cutoff",
-    ]) {
-      expect(config.outputs?.[output]).toBe(`\${{ steps.manifest.outputs.${output} }}`);
-    }
+    expect([
+          "publication_allowed_ref",
+          "publication_anonymous_exact_digest_pull",
+          "publication_candidate_tag_template",
+          "publication_enabled",
+          "publication_platforms",
+          "publication_provenance_predicate_type",
+          "publication_qualification",
+          "publication_receipt_retention_days",
+          "publication_receipt_schema_version",
+          "publication_repository",
+          "publication_sbom_format",
+          "publication_signature_identity",
+          "publication_signature_issuer",
+          "publication_signature_mode",
+          "publication_signature_transparency_log",
+          "publication_trigger",
+          "publication_vulnerability_only_fixed",
+          "publication_vulnerability_scanner",
+          "publication_vulnerability_severity_cutoff",
+        ].every((output) => Object.is(config.outputs?.[output], `\${{ steps.manifest.outputs.${output} }}`))).toBe(true);
     expect(namedStep(config, "Compile image manifest").run).toBe(
       "node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
     );
@@ -168,20 +166,18 @@ describe("llama.cpp image PR workflow", () => {
     expect(build.strategy?.matrix).toBe("${{ fromJSON(needs.config.outputs.matrix) }}");
 
     const args = String(buildStep.with?.["build-args"] ?? "");
-    for (const output of [
-      "backend_directory",
-      "compiler_c",
-      "compiler_cuda_host_cxx",
-      "compiler_cxx",
-      "cuda_dev_image",
-      "cuda_runtime_image",
-      "runtime_gid",
-      "runtime_uid",
-      "source_archive_sha256",
-      "source_revision",
-    ]) {
-      expect(args).toContain(`needs.config.outputs.${output}`);
-    }
+    expect([
+          "backend_directory",
+          "compiler_c",
+          "compiler_cuda_host_cxx",
+          "compiler_cxx",
+          "cuda_dev_image",
+          "cuda_runtime_image",
+          "runtime_gid",
+          "runtime_uid",
+          "source_archive_sha256",
+          "source_revision",
+        ].every((output) => args.includes(`needs.config.outputs.${output}`))).toBe(true);
     expect(args).toContain("CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}");
     expect(args).toContain("TARGETPLATFORM=${{ matrix.platform }}");
     expect(args).not.toMatch(/sha256:[0-9a-f]{64}/u);
@@ -378,17 +374,17 @@ describe("llama.cpp image PR workflow", () => {
       "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
     ]);
     expect(namedStep(attest, "Attest SLSA build provenance").uses).toBe(
-      "actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373",
+      "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8",
     );
     expect(namedStep(attest, "Sign exact candidate index").run).toContain(
       'cosign sign --yes "$IMAGE@$DIGEST"',
     );
     expect(JSON.stringify(attestationWorkflow)).not.toContain("secrets.");
-    for (const action of (attest.steps ?? [])
+    (attest.steps ?? [])
       .map((step) => step.uses)
-      .filter((uses): uses is string => uses !== undefined)) {
+      .filter((uses): uses is string => uses !== undefined).forEach((action) => {
       expect(action).toMatch(fullShaAction);
-    }
+    });
   });
 
   it("pins actions and validates the native non-root read-only image (#8231)", () => {
@@ -396,9 +392,9 @@ describe("llama.cpp image PR workflow", () => {
       .flatMap((job) => job.steps ?? [])
       .map((step) => step.uses)
       .filter((uses): uses is string => uses !== undefined);
-    for (const action of actions) {
+    actions.forEach((action) => {
       expect(action).toMatch(fullShaAction);
-    }
+    });
 
     expect(buildStep.with?.platforms).toBe("${{ matrix.platform }}");
     expect(buildStep.with?.provenance).toBe(false);

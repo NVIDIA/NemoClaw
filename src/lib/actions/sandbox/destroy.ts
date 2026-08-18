@@ -36,7 +36,6 @@ import {
 import { validateName } from "../../runner";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
-import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
@@ -48,10 +47,19 @@ import {
 } from "./destroy-execution";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
-import { prepareSandboxDestroy } from "./destroy-preflight";
+import {
+  assertUnambiguousDestroyContainerIdentity,
+  classifyDestroySandboxPresence,
+  isSameDestroyContainerIdentityProof,
+} from "./destroy-presence";
+import {
+  prepareSandboxDestroy,
+  stopModelRouterForDestroyedSandbox,
+  stopSandboxInferenceResources,
+} from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
-export { classifyDestroySandboxPresence } from "./destroy-presence";
+export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
 
 type RemoveSandboxImageDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -464,19 +472,58 @@ async function destroySandboxUnlocked(
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
+  const destroySession = onboardSession.loadSession();
+
+  const inspectContainerIdentity = () =>
+    assertUnambiguousDestroyContainerIdentity(sandboxName, {
+      cliName: CLI_NAME,
+      providerId: normalizeRuntimeProviderIdentity(
+        registry.getSandbox(sandboxName)?.openshellDriver,
+      ),
+      redact: redactDestroyError,
+    });
+  const initialIdentity = inspectContainerIdentity();
+  if (initialIdentity === false) {
+    process.exit(1);
+  }
 
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);
+  // Recheck identity after read-only preflight and before local mutation.
+  const preMutationIdentity = inspectContainerIdentity();
+  if (
+    preMutationIdentity === false ||
+    !isSameDestroyContainerIdentityProof(initialIdentity, preMutationIdentity)
+  ) {
+    if (preMutationIdentity !== false) {
+      console.error(
+        `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox resources were removed.`,
+      );
+    }
+    process.exit(1);
+  }
   const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);
   const destructiveResult = await executeSandboxDestroy({
     cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
     force: normalized.force === true,
+    getSandbox: registry.getSandbox,
+    listSandboxes: registry.listSandboxes,
     runOpenshell,
     sandbox,
     sandboxConfirmedAbsent,
     sandboxName,
+    expectedContainerIdentity: initialIdentity.identity,
+    stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
   });
   if (!destructiveResult.ok) {
+    if (destructiveResult.hostLocalInferenceCleanupFailure) {
+      console.error(
+        `  Sandbox '${sandboxName}' is gone, but its exact host-local inference cleanup failed: ${destructiveResult.hostLocalInferenceCleanupFailure}`,
+      );
+      console.error(
+        `  Local ownership state was preserved. Re-run '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile only the recorded provider runtime.`,
+      );
+    }
     if (destructiveResult.deleteOutput) {
       console.error(`  ${destructiveResult.deleteOutput}`);
     }
@@ -497,6 +544,13 @@ async function destroySandboxUnlocked(
         console.error(
           `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard a record whose config lock is unconfirmed.`,
         );
+      } else if (destructiveResult.hostLocalInferenceOwnershipRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable. Local state was preserved because it contains the exact host-local inference ownership required to retire the managed runtime.`,
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard host-local inference ownership.`,
+        );
       } else if (destructiveResult.mcpOwnershipRequiresGateway) {
         console.error(
           `  The OpenShell gateway is unreachable. Local state was preserved because it contains MCP ownership required for exact provider cleanup.`,
@@ -515,16 +569,22 @@ async function destroySandboxUnlocked(
     }
     process.exit(destructiveResult.exitCode);
   }
-  const { detachOutcome, deleteResult, alreadyGone, forcedLocalCleanup, deleteOutput } =
-    destructiveResult;
+  const {
+    detachOutcome,
+    deleteResult,
+    alreadyGone,
+    forcedLocalCleanup,
+    deleteOutput,
+    commonLlamaCppAuthorityRetired,
+  } = destructiveResult;
 
   /**
    * SOURCE_OF_TRUTH
    * Invalid state: the OpenShell gateway is unreachable while a local sandbox
    * record still exists, so a normal destroy cannot confirm remote deletion.
    * Source boundary: destroySandbox -> executeSandboxDestroy -> `openshell
-   * sandbox delete`; only an explicit --force and no retained MCP ownership may
-   * select forcedLocalCleanup.
+   * sandbox delete`; only an explicit --force and no retained MCP or host-local
+   * inference ownership may select forcedLocalCleanup.
    * Source-fix constraint: NemoClaw cannot make an unreachable remote gateway
    * delete or attest the sandbox, so this path discards local state only.
    * Regression proof: destroy-flow.test.ts and the CLI integration test
@@ -561,7 +621,7 @@ async function destroySandboxUnlocked(
   cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
   });
-  if (deleteSucceededOrAlreadyGone) {
+  if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired !== true) {
     const managedLlamaCppCleanup = cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
       ...(typeof sandbox?.gatewayPort === "number" ? { gatewayPort: sandbox.gatewayPort } : {}),
     });
@@ -628,12 +688,52 @@ async function destroySandboxUnlocked(
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
   }
-  const session = onboardSession.loadSession();
-  if (session && session.sandboxName === sandboxName) {
-    onboardSession.updateSession((s: Session) => {
-      s.sandboxName = null;
-      return s;
-    });
+  let routedSessionCleanupHandled = false;
+  if (deleteSucceededOrAlreadyGone && removed) {
+    try {
+      // The gateway route lock nests the current-user router-port lock inside
+      // stopModelRouterForDestroyedSandbox. Routed onboarding takes the same
+      // lock order and holds both through registry publication, including
+      // when the competing sandbox belongs to another gateway.
+      routedSessionCleanupHandled = await withGatewayRouteMutationLock(cleanupGatewayName, () =>
+        stopModelRouterForDestroyedSandbox(sandbox, {
+          acquireOnboardLock: onboardSession.acquireOnboardLock,
+          compareAndSwapSession: onboardSession.compareAndSwapSession,
+          expectedSession: destroySession,
+          loadSession: onboardSession.loadSession,
+          releaseOnboardLock: onboardSession.releaseOnboardLock,
+          warn: defaultDestroyWarn,
+        }),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      defaultDestroyWarn(
+        `Sandbox deletion succeeded, but the Model Router teardown did not complete: ${detail}. ` +
+          `Inspect the listener before the next Model Router onboarding and stop only a process ` +
+          `that still owns the matching port and model-router command line.`,
+      );
+    }
+  }
+  if (!routedSessionCleanupHandled && destroySession?.sandboxName === sandboxName) {
+    const cleanupResult = onboardSession.compareAndSwapSession(
+      (current) =>
+        current.sessionId === destroySession.sessionId &&
+        current.updatedAt === destroySession.updatedAt &&
+        current.sandboxName === destroySession.sandboxName &&
+        current.endpointUrl === destroySession.endpointUrl &&
+        current.routerPid === destroySession.routerPid &&
+        current.routerCredentialHash === destroySession.routerCredentialHash,
+      (current) => {
+        current.sandboxName = null;
+        return current;
+      },
+      "nemoclaw destroy sandbox session cleanup",
+    );
+    if (cleanupResult === "busy") {
+      defaultDestroyWarn(
+        "Another onboarding run owns the session lock. Keeping its replacement session unchanged.",
+      );
+    }
   }
   if (
     shouldCleanupGatewayAfterConfirmedFinalDestroy({

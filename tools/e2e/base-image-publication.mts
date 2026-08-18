@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ const RUN_URL_ROOT = `https://github.com/${REPOSITORY}/actions/runs`;
 const WORKFLOW_URL = `https://github.com/${REPOSITORY}/blob/${MAIN_BRANCH}/${WORKFLOW_PATH}`;
 const PAGE_SIZE = 100;
 const MAX_API_PAGES = 10;
+const PAGINATION_ATTEMPTS = 3;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RETRY_DELAY_MS = 10_000;
@@ -103,6 +104,17 @@ export interface PublicationWaitOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   notice?: (message: string) => void;
+}
+
+export function writePublicationRunOutputs(path: string, run: PublicationRun): void {
+  if (!path || path.includes("\r") || path.includes("\n")) {
+    throw new Error("GITHUB_OUTPUT must be a non-empty single-line path");
+  }
+  appendFileSync(
+    path,
+    [`run_id=${run.id}`, `run_attempt=${run.attempt}`, `head_sha=${run.headSha}`, ""].join("\n"),
+    "utf8",
+  );
 }
 
 export interface GithubRequestOptions {
@@ -505,16 +517,13 @@ export function validateBoundRun(payload: unknown, expected: PublicationRun): vo
   }
 }
 
-export async function collectPaginated(
+async function collectPaginationAttempt(
   request: (path: string) => Promise<unknown>,
   basePath: string,
   collectionKey: "workflow_runs" | "jobs",
-  maxPages = MAX_API_PAGES,
-): Promise<JsonRecord> {
-  if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
-    throw new Error("pagination page cap must be a positive integer");
-  }
-  const label = collectionKey === "workflow_runs" ? "workflow run" : "publisher job";
+  maxPages: number,
+  label: string,
+): Promise<JsonRecord | undefined> {
   const values: unknown[] = [];
   const ids = new Set<number>();
   let totalCount: number | undefined;
@@ -528,7 +537,7 @@ export async function collectPaginated(
     }
     if (totalCount === undefined) totalCount = pageTotal;
     if (pageTotal !== totalCount) {
-      throw new Error(`${label} total_count changed during pagination`);
+      return undefined;
     }
     const pageValues = response[collectionKey];
     if (!Array.isArray(pageValues) || pageValues.length > PAGE_SIZE) {
@@ -550,6 +559,29 @@ export async function collectPaginated(
   }
 
   throw new Error(`${label} pagination exceeded the ${maxPages}-page safety cap`);
+}
+
+export async function collectPaginated(
+  request: (path: string) => Promise<unknown>,
+  basePath: string,
+  collectionKey: "workflow_runs" | "jobs",
+  maxPages = MAX_API_PAGES,
+): Promise<JsonRecord> {
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
+    throw new Error("pagination page cap must be a positive integer");
+  }
+  const label = collectionKey === "workflow_runs" ? "workflow run" : "publisher job";
+  for (let attempt = 1; attempt <= PAGINATION_ATTEMPTS; attempt += 1) {
+    const result = await collectPaginationAttempt(
+      request,
+      basePath,
+      collectionKey,
+      maxPages,
+      label,
+    );
+    if (result) return result;
+  }
+  throw new Error(`${label} total_count changed during ${PAGINATION_ATTEMPTS} pagination attempts`);
 }
 
 function annotationValue(value: string): string {
@@ -740,6 +772,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
 
   const token = env.GITHUB_TOKEN ?? "";
   const expectedSha = env.EXPECTED_SHA ?? "";
+  const outputPath = env.GITHUB_OUTPUT ?? "";
   const workspace = env.GITHUB_WORKSPACE ?? process.cwd();
   if (token.length === 0 || token.includes("\r") || token.includes("\n")) {
     throw new Error("GITHUB_TOKEN must be a non-empty single-line value");
@@ -767,6 +800,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     waitMs: waitSeconds * 1000,
     pollMs: pollSeconds * 1000,
   });
+  writePublicationRunOutputs(outputPath, run);
   console.log(
     `::notice title=Base-image publication verified::${annotationValue(
       `All required publishers succeeded for ${run.headSha}; ${run.url}`,

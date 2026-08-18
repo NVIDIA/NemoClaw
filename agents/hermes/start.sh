@@ -270,8 +270,33 @@ else
   fi
 fi
 
-if [ "$_dashboard_port" -eq 8642 ]; then
-  echo "[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API" >&2
+# The API port is a per-sandbox host resource: the host forwards the same
+# number it is exposed on here, so two sandboxes on one host need two values.
+# NemoClaw allocates the port and passes it in; the default keeps a sandbox
+# whose create environment carries no value on the original port.
+HERMES_DEFAULT_API_PORT=8642
+HERMES_API_PORT_RANGE_END=8652
+HERMES_RUNTIME_DIR=/run/nemoclaw
+_api_port_raw="${NEMOCLAW_HERMES_API_PORT:-}"
+if [ -z "$_api_port_raw" ]; then
+  PUBLIC_PORT="$HERMES_DEFAULT_API_PORT"
+else
+  PUBLIC_PORT="$(printf '%s' "$_api_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  _api_port_valid=1
+  case "$PUBLIC_PORT" in
+    *[!0-9]* | '') _api_port_valid=0 ;;
+  esac
+  if [ "$_api_port_valid" -eq 1 ] && { [ "$PUBLIC_PORT" -lt "$HERMES_DEFAULT_API_PORT" ] || [ "$PUBLIC_PORT" -gt "$HERMES_API_PORT_RANGE_END" ]; }; then
+    _api_port_valid=0
+  fi
+  if [ "$_api_port_valid" -ne 1 ]; then
+    echo "[SECURITY] Invalid NEMOCLAW_HERMES_API_PORT='${NEMOCLAW_HERMES_API_PORT}' - must be an integer from ${HERMES_DEFAULT_API_PORT} through ${HERMES_API_PORT_RANGE_END}" >&2
+    exit 1
+  fi
+fi
+
+if [ "$_dashboard_port" -eq "$PUBLIC_PORT" ]; then
+  echo "[SECURITY] Invalid Hermes dashboard port ${_dashboard_port} - reserved for the Hermes OpenAI-compatible API" >&2
   exit 1
 fi
 
@@ -281,7 +306,6 @@ else
   CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_dashboard_port}}"
 fi
 
-PUBLIC_PORT=8642
 # Hermes binds the API server to 127.0.0.1. Run it on an internal port and
 # use socat to expose the OpenAI-compatible API on PUBLIC_PORT.
 INTERNAL_PORT=18642
@@ -456,6 +480,54 @@ verify_hermes_config_integrity() {
     HERMES_RESTART_FAILURE_CODE=mcp-integrity
     return 1
   fi
+}
+
+prepare_hermes_lazy_dependencies() {
+  local -a installer=(
+    env
+    HOME=/sandbox
+    UV_CACHE_DIR=/sandbox/.hermes/cache/uv
+    UV_NO_CACHE=1
+    HERMES_HOME="$HERMES_DIR"
+    HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
+  )
+
+  # The separated gateway identity deliberately has no write access to the
+  # durable dependency tree. Route the allowlisted installer through sandbox;
+  # same-UID OpenShell startup is already running under that identity.
+  if [ "$(id -u)" -eq 0 ]; then
+    installer+=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
+  fi
+  installer+=("$_HERMES_PYTHON" -I -c)
+
+  "${installer[@]}" '
+import os
+from pathlib import Path
+
+import yaml
+
+config_path = Path(os.environ["HERMES_HOME"]) / "config.yaml"
+try:
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+except Exception as exc:
+    raise SystemExit(f"[SECURITY] Unable to inspect Hermes memory configuration: {exc}") from exc
+
+memory = config.get("memory") if isinstance(config, dict) else None
+provider = memory.get("provider") if isinstance(memory, dict) else None
+if provider != "hindsight":
+    raise SystemExit(0)
+
+from tools.lazy_deps import activate_durable_lazy_target, ensure
+
+activate_durable_lazy_target()
+try:
+    ensure("memory.hindsight", prompt=False)
+except Exception as exc:
+    raise SystemExit(
+        "[SECURITY] Unable to prepare the approved Hindsight dependency "
+        f"under the sandbox-owned lazy-install target: {exc}"
+    ) from exc
+'
 }
 
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
@@ -1757,134 +1829,26 @@ export no_proxy="$_NO_PROXY_VAL"
 # #1828 OpenShell CA behavior stays intact) — and repoint SSL_CERT_FILE at the
 # merged bundle before the CURL/REQUESTS/GIT derivation below picks it up.
 _NEMOCLAW_CORPORATE_CA_FILE="/usr/local/share/nemoclaw/corporate-ca.pem"
-# Concise, secret-free warning when a baked corporate CA fails to merge at
-# runtime. Names the failed step + target path only (never certificate bytes)
-# so an operator can distinguish "no CA was baked" from "runtime merge failed".
-_nemoclaw_ca_merge_warn() {
-  echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
-}
-merge_corporate_proxy_ca() {
-  # Trust-anchor tampering (#8650): replacing the baked corporate CA file with a
-  # symlink makes the merge below read the link target instead, adding
-  # attacker-selected bytes to the trust bundle that curl, python, git, and node
-  # verify against. The image bakes this path as a root-owned 0444 regular file,
-  # so a symlink here is never a legitimate state. This is not the recoverable
-  # "merge failed" case below, which safely keeps OpenShell-only trust, so it
-  # fails closed instead of warning.
-  if [ -L "$_NEMOCLAW_CORPORATE_CA_FILE" ]; then
-    echo "[nemoclaw] refusing symlinked corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file (#8650)" >&2
-    exit 1
+_NEMOCLAW_CORPORATE_CA_HELPER="/usr/local/lib/nemoclaw/corporate-ca-runtime.sh"
+if [ ! -f "$_NEMOCLAW_CORPORATE_CA_HELPER" ]; then
+  _HERMES_START_SOURCE="${BASH_SOURCE[0]}"
+  _HERMES_START_DIR="${_HERMES_START_SOURCE%/*}"
+  if [ "$_HERMES_START_DIR" = "$_HERMES_START_SOURCE" ]; then
+    _HERMES_START_DIR="."
   fi
-  [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
-  _base_bundle=""
-  if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
-    _base_bundle="$SSL_CERT_FILE"
-  elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
-    _base_bundle="/etc/ssl/certs/ca-certificates.crt"
-  fi
-  _merged="/tmp/nemoclaw-ca-bundle.pem"
-  # Trust-anchor path safety (#6210): in the normal container start this
-  # entrypoint runs as root (the step-down prefix wraps only the later agent
-  # commands, not this top-level merge), so the merged bundle is written
-  # root-owned 0444 — the non-root sandbox user that the agent later runs as
-  # inherits SSL_CERT_FILE but cannot rewrite it. The predictable /tmp path is
-  # still handled safely: it is built in a fresh mktemp sibling and atomically
-  # renamed into place; a pre-planted symlink at the target is dropped first
-  # (below); and rename(2) replaces the target link/file rather than writing
-  # through it, so a pre-planted symlink or file cannot redirect the write. On a
-  # non-root start the whole entrypoint (and the agent) is the same sandbox user,
-  # so there is no privilege boundary to cross.
-  # Build the bundle in a private temp file next to the target, verifying every
-  # write, then atomically rename into place. If any step fails we bail without
-  # exporting anything, leaving the OpenShell-only trust intact rather than
-  # pointing tools at a partial/empty bundle.
-  _tmp="$(mktemp "${_merged}.XXXXXX" 2>/dev/null)" || {
-    _nemoclaw_ca_merge_warn "create temp bundle (${_merged})"
-    return 0
-  }
-  if [ -n "$_base_bundle" ]; then
-    cat "$_base_bundle" >>"$_tmp" 2>/dev/null || {
-      rm -f "$_tmp"
-      _nemoclaw_ca_merge_warn "append OpenShell bundle"
-      return 0
-    }
-    printf '\n' >>"$_tmp" 2>/dev/null || {
-      rm -f "$_tmp"
-      _nemoclaw_ca_merge_warn "append OpenShell bundle"
-      return 0
-    }
-  fi
-  # Append through a descriptor opened with O_NOFOLLOW and verified as a regular
-  # file (#8650). The check above rejects a planted symlink; this rejects one
-  # swapped in afterwards, because the type check and the read share one
-  # descriptor and no path is resolved twice. Status 2 means the source was
-  # rejected as a trust anchor; any other non-zero status is an ordinary read
-  # failure that keeps the existing warn-and-continue behavior.
-  _ca_append_status=0
-  python3 -I - "$_NEMOCLAW_CORPORATE_CA_FILE" "$_tmp" <<'PY_APPEND_CORPORATE_CA' || _ca_append_status=$?
-import errno
-import os
-import stat
-import sys
-
-source, target = sys.argv[1], sys.argv[2]
-try:
-    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
-except OSError as error:
-    raise SystemExit(2 if error.errno == errno.ELOOP else 3)
-try:
-    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-        raise SystemExit(2)
-    with open(target, "ab") as merged:
-        while True:
-            chunk = os.read(descriptor, 65536)
-            if not chunk:
-                break
-            merged.write(chunk)
-finally:
-    os.close(descriptor)
-PY_APPEND_CORPORATE_CA
-  if [ "$_ca_append_status" -eq 2 ]; then
-    rm -f "$_tmp"
-    echo "[nemoclaw] refusing corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file, not a symlink (#8650)" >&2
-    exit 1
-  fi
-  if [ "$_ca_append_status" -ne 0 ]; then
-    rm -f "$_tmp"
-    _nemoclaw_ca_merge_warn "append corporate CA"
-    return 0
-  fi
-  chmod 0444 "$_tmp" 2>/dev/null || {
-    rm -f "$_tmp"
-    _nemoclaw_ca_merge_warn "set merged bundle permissions (${_merged})"
-    return 0
-  }
-  # Defense-in-depth for the predictable /tmp path (#6210): if a co-tenant
-  # pre-planted a symlink at the target, drop it first so we rename into a fresh
-  # regular file we own rather than through an attacker-controlled link.
-  if [ -L "$_merged" ]; then
-    rm -f "$_merged" 2>/dev/null || true
-  fi
-  mv -f "$_tmp" "$_merged" 2>/dev/null || {
-    rm -f "$_tmp"
-    _nemoclaw_ca_merge_warn "install merged bundle (${_merged})"
-    return 0
-  }
-  # Export all CA env vars explicitly (not via the ${VAR:-…} defaulting below,
-  # which would keep an OpenShell-preset CURL/REQUESTS/GIT value pointing at the
-  # OpenShell-only bundle instead of the merged one).
-  export SSL_CERT_FILE="$_merged"
-  export CURL_CA_BUNDLE="$_merged"
-  export REQUESTS_CA_BUNDLE="$_merged"
-  export GIT_SSL_CAINFO="$_merged"
-  export NODE_EXTRA_CA_CERTS="$_merged"
-  export _NEMOCLAW_CORPORATE_CA_MERGED=1
-  echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2
-}
+  _NEMOCLAW_CORPORATE_CA_HELPER="$(cd "$_HERMES_START_DIR" && pwd)/../../scripts/lib/corporate-ca-runtime.sh"
+  unset _HERMES_START_SOURCE _HERMES_START_DIR
+fi
+if [ ! -f "$_NEMOCLAW_CORPORATE_CA_HELPER" ] || [ -L "$_NEMOCLAW_CORPORATE_CA_HELPER" ]; then
+  echo "[nemoclaw] required corporate CA runtime helper is missing or unsafe" >&2
+  exit 1
+fi
+# shellcheck source=scripts/lib/corporate-ca-runtime.sh
+source "$_NEMOCLAW_CORPORATE_CA_HELPER"
 if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then
   merge_corporate_proxy_ca
 fi
-
+unset _NEMOCLAW_CORPORATE_CA_HELPER
 # OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA. Persist
 # them into connect-session shells so Python Slack probes and Hermes tools trust
 # the same proxy CA that the entrypoint received at startup.
@@ -1920,6 +1884,7 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
+export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"
 PROXYEOF
     cat <<'TUIENVEOF'
 if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
@@ -2332,7 +2297,8 @@ prepare_hermes_gateway_restart() {
   # sandboxes instead of chowning attacker-controlled paths or adopting a new
   # hash here.
   HERMES_RESTART_FAILURE_CODE=hash-mismatch
-  verify_hermes_config_integrity
+  verify_hermes_config_integrity || return 1
+  prepare_hermes_lazy_dependencies
 }
 
 hermes_restart_unseal_on_exit() {
@@ -3028,6 +2994,7 @@ prepare_hermes_nonroot_runtime() {
   # startup mutations below so their outputs remain covered as well.
   validate_hermes_env_secret_boundary || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
+  prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_runtime_api_server_key compat || return 1
   apply_shields_up_runtime_env || return 1
   validate_hermes_env_secret_boundary || return 1
@@ -3039,8 +3006,70 @@ prepare_hermes_nonroot_runtime() {
   prepare_tirith_marker_retry || return 1
 }
 
+prepare_hermes_root_runtime_dir() {
+  local runtime_metadata
+  if [ -L "$HERMES_RUNTIME_DIR" ]; then
+    echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR is a symbolic link" >&2
+    return 1
+  fi
+  if [ ! -e "$HERMES_RUNTIME_DIR" ]; then
+    install -d -m 0755 -o root -g root -- "$HERMES_RUNTIME_DIR" || {
+      echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR could not be created safely" >&2
+      return 1
+    }
+  fi
+  if [ ! -d "$HERMES_RUNTIME_DIR" ] || [ -L "$HERMES_RUNTIME_DIR" ]; then
+    echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR is not a real directory" >&2
+    return 1
+  fi
+  runtime_metadata="$(stat -c '%u:%g:%a' -- "$HERMES_RUNTIME_DIR" 2>/dev/null)" || {
+    echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR metadata is unavailable" >&2
+    return 1
+  }
+  if [ "$runtime_metadata" != "0:0:755" ]; then
+    # The managed runtime can present this directory before the root-separated
+    # gateway starts. Restore the trust boundary from root, and refuse when the
+    # restore is not permitted.
+    chown root:root -- "$HERMES_RUNTIME_DIR" 2>/dev/null
+    chmod 0755 -- "$HERMES_RUNTIME_DIR" 2>/dev/null
+    runtime_metadata="$(stat -c '%u:%g:%a' -- "$HERMES_RUNTIME_DIR" 2>/dev/null)" || runtime_metadata=""
+  fi
+  if [ "$runtime_metadata" != "0:0:755" ]; then
+    echo "[SECURITY] Refusing Hermes startup because $HERMES_RUNTIME_DIR must be root-owned with mode 0755" >&2
+    return 1
+  fi
+  return 0
+}
+
+publish_hermes_root_runtime_marker() {
+  local marker_name="$1"
+  local marker_value="$2"
+  local marker_path temporary_marker
+  case "$marker_name" in
+    '' | *[!A-Za-z0-9_-]*)
+      echo "[SECURITY] Refusing Hermes startup because the runtime marker name is invalid" >&2
+      return 1
+      ;;
+  esac
+  prepare_hermes_root_runtime_dir || return 1
+  marker_path="${HERMES_RUNTIME_DIR}/${marker_name}"
+  temporary_marker="$(mktemp "${HERMES_RUNTIME_DIR}/.${marker_name}.XXXXXX")" || {
+    echo "[SECURITY] Refusing Hermes startup because ${marker_path} could not be prepared" >&2
+    return 1
+  }
+  if ! printf '%s\n' "$marker_value" >"$temporary_marker" \
+    || ! chown root:root "$temporary_marker" \
+    || ! chmod 0444 "$temporary_marker" \
+    || ! mv -f -- "$temporary_marker" "$marker_path"; then
+    rm -f -- "$temporary_marker"
+    echo "[SECURITY] Refusing Hermes startup because ${marker_path} could not be published atomically" >&2
+    return 1
+  fi
+}
+
 prepare_hermes_root_runtime() {
   verify_hermes_config_integrity || return 1
+  prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_config_root_mode || return 1
   ensure_hermes_runtime_api_server_key both || return 1
   apply_shields_up_runtime_env || return 1
@@ -3439,10 +3468,12 @@ fi
 # add when the root-lifecycle marker identifies the legacy topology.
 # removalCondition: remove this marker stamp when OpenShell unifies the topology
 # or exposes an attested execution-identity capability.
-install -d -m 0755 -o root -g root /run/nemoclaw
-printf '%s\n' 'root-separated' >/run/nemoclaw/hermes-root-lifecycle
-chown root:root /run/nemoclaw/hermes-root-lifecycle
-chmod 0444 /run/nemoclaw/hermes-root-lifecycle
+publish_hermes_root_runtime_marker hermes-root-lifecycle root-separated || exit 1
+
+# SECURITY: publish the resolved API port as a root-owned read-only marker.
+# Root-separated helpers read this marker. The temporary file receives its
+# final ownership and mode before one atomic rename replaces any stale entry.
+publish_hermes_root_runtime_marker hermes-api-port "$PUBLIC_PORT" || exit 1
 
 # SECURITY: Protect gateway log from sandbox user tampering
 prepare_restricted_log /tmp/gateway.log gateway:gateway 600

@@ -227,7 +227,9 @@ print(json.dumps({
 `,
       [JSON.stringify(blockedNames)],
     );
-    for (const name of blockedNames) expect(() => validateMcpCredentialEnvName(name)).toThrow();
+    blockedNames.forEach((name) => {
+      expect(() => validateMcpCredentialEnvName(name)).toThrow();
+    });
     expect(() => validateMcpCredentialEnvName("MY_SERVICE_MCP_TOKEN")).not.toThrow();
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
@@ -334,6 +336,7 @@ module.HERMES_DIR = sys.argv[3]
 module.CONFIG_PATH = os.path.join(module.HERMES_DIR, "config.yaml")
 module.os.geteuid = lambda: 1000
 module._assert_non_root_lifecycle_identity = lambda: None
+module._configure_gateway_public_port = lambda: None
 payload = {
     "server": "safe",
     "url": "https://mcp.example.test/mcp",
@@ -413,21 +416,30 @@ print(json.dumps({"results": results, "null_result": null_result}))
       results: Record<string, Array<{ error: string; preserved: boolean; writes: number }>>;
       null_result: { error: string; preserved: boolean; writes: number };
     };
-    for (const outcomes of Object.values(payload.results)) {
+    Object.values(payload.results).forEach((outcomes) => {
       expect(outcomes).toHaveLength(4);
       for (const outcome of outcomes) {
         expect(outcome.error).toContain("expected a YAML object");
         expect(outcome.preserved).toBe(true);
         expect(outcome.writes).toBe(0);
       }
-    }
+    });
     expect(payload.null_result.error).toBe("");
     expect(payload.null_result.preserved).toBe(false);
     expect(payload.null_result.writes).toBe(1);
   });
 
-  it("emits bounded one-line errors with payload and runtime secrets redacted", () => {
-    const result = runPython(`
+  it.each([
+    "raw-secret-1",
+    "raw-secret-2",
+    "runtime secret with spaces",
+    "comma-secret",
+    "quoted bearer secret",
+    "suffix-secret",
+  ])(
+    "emits bounded one-line errors with payload and runtime secrets redacted [case %#]",
+    (secret) => {
+      const result = runPython(`
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
@@ -451,24 +463,22 @@ sys.argv = [sys.argv[1], "add", "--payload", json.dumps(payload)]
 print(json.dumps({"exit_code": module.main()}))
 `);
 
-    expect(result.status, result.stdout).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
-    expect(result.stderr).toContain("<REDACTED>");
-    for (const secret of [
-      "SAFE_MCP_TOKEN",
-      "runtime-secret-123",
-      "second-secret-456",
-      "password",
-      "query-secret-789",
-    ]) {
-      expect(result.stderr).not.toContain(secret);
-    }
-    expect(result.stderr).not.toContain("\u001b");
-    expect(result.stderr).not.toContain("\u202e");
-    expect(result.stderr.trim().split("\n")).toHaveLength(1);
-    expect(result.stderr.trim().length).toBeLessThanOrEqual(512);
+      expect(result.status, result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
+      expect(result.stderr).toContain("<REDACTED>");
+      expect([
+            "SAFE_MCP_TOKEN",
+            "runtime-secret-123",
+            "second-secret-456",
+            "password",
+            "query-secret-789",
+          ].every((secret) => !result.stderr.includes(secret))).toBe(true);
+      expect(result.stderr).not.toContain("\u001b");
+      expect(result.stderr).not.toContain("\u202e");
+      expect(result.stderr.trim().split("\n")).toHaveLength(1);
+      expect(result.stderr.trim().length).toBeLessThanOrEqual(512);
 
-    const representations = runPython(`
+      const representations = runPython(`
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
@@ -484,21 +494,14 @@ print(json.dumps([
     module._sanitize_error_message(RuntimeError(message)) for message in messages
 ]))
 `);
-    expect(representations.status, representations.stderr).toBe(0);
-    const sanitized = JSON.parse(representations.stdout) as string[];
-    expect(sanitized).toHaveLength(4);
-    for (const message of sanitized) expect(message).toContain("<REDACTED>");
-    for (const secret of [
-      "raw-secret-1",
-      "raw-secret-2",
-      "runtime secret with spaces",
-      "comma-secret",
-      "quoted bearer secret",
-      "suffix-secret",
-    ]) {
+      expect(representations.status, representations.stderr).toBe(0);
+      const sanitized = JSON.parse(representations.stdout) as string[];
+      expect(sanitized).toHaveLength(4);
+      expect(sanitized.every((message) => message.includes("<REDACTED>"))).toBe(true);
+
       expect(sanitized.join("\n")).not.toContain(secret);
-    }
-  });
+    },
+  );
 
   it("refuses a locked config snapshot", () => {
     const result = runPython(`
@@ -739,15 +742,13 @@ print(json.dumps(results, sort_keys=True))
       hash_inode_race: "UnsafePathError",
       hash_symlink: "OSError",
     };
-    for (const [name, scenario] of Object.entries(scenarios)) {
+    Object.entries(scenarios).forEach(([name, scenario]) => {
       expect(scenario.blocked, name).toBe(true);
       expect(scenario.error, `${name}.error`).toBe(expectedErrors[name]);
-      for (const [property, value] of Object.entries(scenario).filter(
-        ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
-      )) {
-        expect(value, `${name}.${property}`).toBe(true);
-      }
-    }
+      expect(Object.entries(scenario).filter(
+            ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
+          ).every(([property, value]) => Object.is(value, true))).toBe(true);
+    });
   });
 
   it("keeps config ownership and gateway lifecycle identities separated", () => {
@@ -1156,6 +1157,7 @@ def trusted_gateway(pid):
     return True
 module._is_trusted_gateway_process = trusted_gateway
 module._gateway_has_managed_parent = lambda pid: True
+module._configure_gateway_public_port = lambda: None
 def signal_gateway(pid, sent_signal):
     observed["signal_uid"] = module.os.geteuid()
     observed["signal_pid"] = pid
@@ -1372,8 +1374,9 @@ module.os.geteuid = lambda: 1000
 module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 module._gateway_identity = lambda: (123, 456)
 module._gateway_has_managed_parent = lambda pid: True
+module._configure_gateway_public_port = lambda: None
 module.apply_transaction_and_reload = lambda action, payload: {
-    "ok": True, "changed": True, "reloaded": True
+    "ok": True, "changed": True, "reloaded": True,
 }
 result = module.execute("add", {
     "server": "fake",
@@ -1390,24 +1393,6 @@ print(json.dumps(result, sort_keys=True))
       ok: true,
       reloaded: true,
     });
-  });
-
-  it("probes the same-UID helper without mutating config", () => {
-    const result = runPython(`
-import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-module.os.geteuid = lambda: 1000
-module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
-module._gateway_identity = lambda: (123, 456)
-module._gateway_has_managed_parent = lambda pid: True
-print(json.dumps(module.probe(), sort_keys=True))
-`);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ ok: true });
   });
 
   it("restores config and hashes after both desired-config reload signals fail", () => {

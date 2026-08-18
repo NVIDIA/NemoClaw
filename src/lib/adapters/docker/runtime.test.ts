@@ -11,6 +11,7 @@ vi.mock("../../runner", () => ({
 
 import {
   DOCKER_INFO_RUNTIME_PROBE_ATTEMPTS,
+  DOCKER_INFO_RUNTIME_PROBE_RETRY_DELAY_MS,
   DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS,
   detectContainerRuntimeFromDockerInfo,
 } from "./runtime";
@@ -20,11 +21,13 @@ describe("docker runtime detection", () => {
     const calls: unknown[] = [];
     const outputs = ["", "", "Operating System: Docker Desktop"];
 
+    const sleep = vi.fn();
     const runtime = detectContainerRuntimeFromDockerInfo({
       dockerInfoImpl: (opts) => {
         calls.push(opts);
         return outputs.shift() ?? "";
       },
+      sleep,
     });
 
     expect(runtime).toBe("docker-desktop");
@@ -35,11 +38,17 @@ describe("docker runtime detection", () => {
         timeout: DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS,
       })),
     );
+
+    expect(sleep.mock.calls).toEqual([
+      [DOCKER_INFO_RUNTIME_PROBE_RETRY_DELAY_MS],
+      [DOCKER_INFO_RUNTIME_PROBE_RETRY_DELAY_MS],
+    ]);
   });
 
   it("returns unknown after all attempts are indeterminate", () => {
     const calls: unknown[] = [];
 
+    const sleep = vi.fn();
     const runtime = detectContainerRuntimeFromDockerInfo({
       attempts: 2,
       dockerInfoImpl: (opts) => {
@@ -47,6 +56,7 @@ describe("docker runtime detection", () => {
         return "";
       },
       timeoutMs: 1234,
+      sleep,
     });
 
     expect(runtime).toBe("unknown");
@@ -54,5 +64,8 @@ describe("docker runtime detection", () => {
       { ignoreError: true, timeout: 1234 },
       { ignoreError: true, timeout: 1234 },
     ]);
+
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(DOCKER_INFO_RUNTIME_PROBE_RETRY_DELAY_MS);
   });
 });

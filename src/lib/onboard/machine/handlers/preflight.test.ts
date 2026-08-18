@@ -195,6 +195,33 @@ describe("handlePreflightState", () => {
     expect(result.resumePreflight).toBe(true);
   });
 
+  it("carries verified N1x intent through cached resume readiness (#9292)", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    const assertOnboardHostReadiness = vi.fn();
+    const harness = createDeps({ assertOnboardHostReadiness });
+
+    await handlePreflightState({
+      ...baseOptions(harness.deps, session),
+      resume: true,
+      allowDeferredN1xManagedVllm: true,
+    });
+
+    expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(2);
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+    );
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+    );
+  });
+
   it("rejects changed gateway ownership before cached resume probe effects (#7411)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";

@@ -175,7 +175,7 @@ function resolveRealOpenClawNodeRuntime(
   supportedNode22 ||
     runtimeMismatch(
       version,
-      "Node >=22.22.3 <23 (the Dockerfile runtime is Node 22.23.1)",
+      "Node >=22.22.3 <23 (the Dockerfile runtime is Node 22.23.2)",
       REAL_OPENCLAW_NODE_ENV,
     );
 
@@ -317,11 +317,11 @@ describe("OpenClaw real patched-dist materialization guard", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-node-runtime-"));
     try {
       const fakeNode = path.join(tmp, "node");
-      fs.writeFileSync(fakeNode, "#!/bin/sh\nprintf 'v22.23.1\\n'\n", { mode: 0o700 });
+      fs.writeFileSync(fakeNode, "#!/bin/sh\nprintf 'v22.23.2\\n'\n", { mode: 0o700 });
 
       expect(resolveRealOpenClawNodeRuntime({ [REAL_OPENCLAW_NODE_ENV]: fakeNode })).toEqual({
         executable: fakeNode,
-        version: "v22.23.1",
+        version: "v22.23.2",
       });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -444,16 +444,16 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "Patch 6",
         );
 
-        for (const marker of [
+        [
           "nemoclaw: env-gated bypass",
           "nemoclaw: OpenShell host gateway for web_fetch trusted env proxy",
           "nemoclaw: route unconfigured strict fetch through sandbox egress proxy",
           'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"',
-        ]) {
+        ].forEach((marker) => {
           const grep = grepRealDist(dist, marker);
           requireSpawnSuccess(grep, `find real-dist marker ${marker}`);
           grep.stdout.trim().length > 0 || runtimeMismatch("empty", "non-empty", marker);
-        }
+        });
 
         const retryPersistencePreimage = [
           "\t\t\tlet suppressNextUserMessagePersistence = params.suppressNextUserMessagePersistence ?? false;",
@@ -742,7 +742,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "1",
           "generated models file mode patch target count",
         );
-        for (const target of [
+        [
           ...gatewayDialbackTargets,
           ...gatewayToolTarget,
           ...sharedStateTargets,
@@ -751,13 +751,13 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           ...stateMigrationTargets,
           ...fileStoreTargets,
           ...modelsConfigTargets,
-        ]) {
+        ].forEach((target) => {
           const syntax = spawnSync(nodeRuntime.executable, ["--check", target], {
             encoding: "utf-8",
             timeout: PATCH_COMMAND_TIMEOUT_MS,
           });
           requireSpawnSuccess(syntax, `validate reviewed OpenClaw dist syntax: ${target}`);
-        }
+        });
 
         // These proofs install the reviewed shrinkwrapped runtime dependencies
         // with lifecycle scripts disabled. Keep them after every shape-only

@@ -260,8 +260,12 @@ function conflictPromptShown(): boolean {
   );
 }
 
+let stdinIsTty: PropertyDescriptor | undefined;
+
 beforeEach(() => {
   spies = [];
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
   delete process.env.TELEGRAM_BOT_TOKEN;
   delete process.env.TELEGRAM_ALLOWED_IDS;
@@ -368,6 +372,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   for (const s of spies) s.mockRestore();
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
   delete process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY;
   delete process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION;

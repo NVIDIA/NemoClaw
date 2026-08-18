@@ -182,14 +182,26 @@ describe("openshell helpers", () => {
     expect(observedEnv?.PATH).toBe(process.env.PATH);
   });
 
-  it("passes timeout and maxBuffer options through to OpenShell spawn calls", () => {
-    const observedOptions: Array<{ timeout?: number; maxBuffer?: number }> = [];
+  it("passes timeout, kill signal, and maxBuffer options through to OpenShell spawn calls", () => {
+    const observedOptions: Array<{
+      timeout?: number;
+      killSignal?: NodeJS.Signals | number;
+      maxBuffer?: number;
+    }> = [];
     const spawnSyncImpl: OpenshellSpawnSync = (_command, _args, options) => {
-      observedOptions.push({ timeout: options.timeout, maxBuffer: options.maxBuffer });
+      observedOptions.push({
+        timeout: options.timeout,
+        killSignal: options.killSignal,
+        maxBuffer: options.maxBuffer,
+      });
       return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
     };
 
-    runOpenshellCommand("openshell", ["status"], { timeout: 4321, spawnSyncImpl });
+    runOpenshellCommand("openshell", ["status"], {
+      timeout: 4321,
+      killSignal: "SIGKILL",
+      spawnSyncImpl,
+    });
     captureOpenshellCommand("openshell", ["status"], {
       timeout: 9876,
       maxBuffer: 123456,
@@ -197,8 +209,8 @@ describe("openshell helpers", () => {
     });
 
     expect(observedOptions).toEqual([
-      { timeout: 4321, maxBuffer: undefined },
-      { timeout: 9876, maxBuffer: 123456 },
+      { timeout: 4321, killSignal: "SIGKILL", maxBuffer: undefined },
+      { timeout: 9876, killSignal: undefined, maxBuffer: 123456 },
     ]);
   });
 

@@ -338,7 +338,7 @@ describe("privileged sandbox exec routing", () => {
     ]);
   });
 
-  it("uses the receipt-owned Podman socket when the default Docker daemon has no container (#8584)", () => {
+  it("uses numeric container UID 0 on the receipt-owned portable target (#9054)", () => {
     let dockerPsCalls = 0;
     const assertRuntimeAuthority = vi.fn();
     let backfillRegistryGeneration: ((generation: string) => boolean) | undefined;
@@ -372,7 +372,8 @@ describe("privileged sandbox exec routing", () => {
         resolvePortableDemoPrivilegedExecTarget,
       },
       ({ privilegedSandboxExecArgv }) => {
-        expect(privilegedSandboxExecArgv("alpha", ["id"], false, true)).toEqual([
+        const argv = privilegedSandboxExecArgv("alpha", ["id"], false, true);
+        expect(argv).toEqual([
           "--host",
           "unix:///run/user/1001/podman/podman.sock",
           "exec",
@@ -411,10 +412,11 @@ describe("privileged sandbox exec routing", () => {
           "--env",
           "RUBYOPT=",
           "--user",
-          "root",
+          "0",
           "a".repeat(64),
           "id",
         ]);
+        expect(argv).not.toContain("root");
       },
     );
     expect(dockerPsCalls).toBe(0);
@@ -450,7 +452,7 @@ describe("privileged sandbox exec routing", () => {
     expect(resolvePortableDemoPrivilegedExecTarget).not.toHaveBeenCalled();
   });
 
-  it("bounds direct sandbox container discovery", () => {
+  it("keeps ordinary Docker discovery bounded and uses symbolic root (#9054)", () => {
     const discoveryCalls: Array<{
       args: readonly string[];
       timeout: number | undefined;

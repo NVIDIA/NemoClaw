@@ -3,7 +3,11 @@
 
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
-import type { SandboxWorkloadReceipt } from "../../state/registry/types";
+import type {
+  SandboxEntry,
+  SandboxHostLocalInferenceProvenance,
+  SandboxWorkloadReceipt,
+} from "../../state/registry/types";
 import { dcodeProbeOutput } from "./dcode-probe-test-fixture";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
@@ -43,12 +47,20 @@ export type SandboxRecord = {
   }>;
   fromDockerfile?: string | null;
   gatewayName?: string | null;
+  gatewayPort?: number | null;
   imageTag?: string | null;
   workload?: SandboxWorkloadReceipt;
   openshellDriver?: string | null;
   observabilityEnabled?: boolean;
   provider?: string | null;
   model?: string | null;
+  endpointUrl?: string | null;
+  endpointSource?: SandboxEntry["endpointSource"];
+  credentialEnv?: string | null;
+  preferredInferenceApi?: string | null;
+  lifecycleGeneration?: string;
+  hostLocalInferenceReceipt?: string | null;
+  hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   dashboardPort?: number | null;
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
@@ -73,10 +85,19 @@ export function openshellResponses(
   args: string[],
   responses: Record<string, OpenshellCaptureResult>,
 ): OpenshellCaptureResult {
-  const result = responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? {
-    status: 0,
-    output: "",
-  };
+  const command = `${args[0] ?? ""} ${args[1] ?? ""}`;
+  const sandboxName = String(args.at(-1) ?? "sandbox");
+  const result =
+    responses[command] ??
+    (command === "sandbox get"
+      ? {
+          status: 0,
+          output: `Name: ${sandboxName}\nId: ${sandboxName}-live-id\nPhase: Ready\n`,
+        }
+      : {
+          status: 0,
+          output: "",
+        });
   return captureOpenshellStreams(args, result);
 }
 
@@ -176,6 +197,7 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   }),
 );
 export const registerSandboxMock = vi.fn();
+export const reserveSandboxInferenceRouteMock = vi.fn(() => true);
 export const updateSandboxMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
 export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
@@ -300,6 +322,7 @@ vi.mock("../../state/registry", () => ({
     defaultSandbox: "alpha",
   }),
   registerSandbox: registerSandboxMock,
+  reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
   removeSandbox: vi.fn(),
   updateSandbox: updateSandboxMock,
 }));
@@ -374,6 +397,7 @@ export function resetSnapshotRestoreMocks(): void {
     appliedPresets: [],
   }));
   registerSandboxMock.mockReset();
+  reserveSandboxInferenceRouteMock.mockReset().mockReturnValue(true);
   removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
   updateSandboxMock.mockReset();
   restoreSandboxStateMock.mockReturnValue({

@@ -121,16 +121,17 @@ describe("DGX Station Express resume (#7048)", () => {
     });
   });
 
-  it("rejects the dual-Station served alias without both qualified pair signals", () => {
-    for (const missing of ["NEMOCLAW_DGX_STATION_PEER", "NEMOCLAW_DGX_STATION_SSH_BINDING"]) {
+  it.each(["NEMOCLAW_DGX_STATION_PEER", "NEMOCLAW_DGX_STATION_SSH_BINDING"])(
+    "rejects the dual-Station served alias without both qualified pair signals [case %#]",
+    (missing) => {
       const env = dualExpressEnv();
       delete env[missing];
       expect(getStationExpressResumeIntent(env, "my-assistant")).toEqual({
         ok: false,
         message: "DGX Station Express has a conflicting NEMOCLAW_MODEL value.",
       });
-    }
-  });
+    },
+  );
 
   it("carries the installer receipt generation in the persisted intent", () => {
     const env = expressEnv();
@@ -282,38 +283,37 @@ describe("DGX Station Express resume (#7048)", () => {
       model: "nvidia/nemotron-3-ultra-550b-a55b",
       sandboxName: "other-assistant",
     },
-  ])("fails closed when recorded state conflicts with Station Express intent", async ({
-    provider,
-    model,
-    sandboxName = "my-assistant",
-  }) => {
-    const session = createSession({
-      mode: "non-interactive",
-      stationExpressIntent: boundUltraIntent,
-      sandboxName,
-      provider,
-      model,
-      steps: {
-        provider_selection: {
-          status: "complete",
-          startedAt: "2026-07-16T00:00:00.000Z",
-          completedAt: "2026-07-16T00:01:00.000Z",
-          error: null,
+  ])(
+    "fails closed when recorded state conflicts with Station Express intent",
+    async ({ provider, model, sandboxName = "my-assistant" }) => {
+      const session = createSession({
+        mode: "non-interactive",
+        stationExpressIntent: boundUltraIntent,
+        sandboxName,
+        provider,
+        model,
+        steps: {
+          provider_selection: {
+            status: "complete",
+            startedAt: "2026-07-16T00:00:00.000Z",
+            completedAt: "2026-07-16T00:01:00.000Z",
+            error: null,
+          },
         },
-      },
-    });
-    session.status = "failed";
-    const env: NodeJS.ProcessEnv = {};
-    const deps = resumeDeps(session);
-    const run = vi.fn(async () => undefined);
+      });
+      session.status = "failed";
+      const env: NodeJS.ProcessEnv = {};
+      const deps = resumeDeps(session);
+      const run = vi.fn(async () => undefined);
 
-    await expect(
-      withStationExpressResumeEnvironment(run, deps, env)({ resume: true }),
-    ).rejects.toThrow("exit 1");
+      await expect(
+        withStationExpressResumeEnvironment(run, deps, env)({ resume: true }),
+      ).rejects.toThrow("exit 1");
 
-    expect(run).not.toHaveBeenCalled();
-    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("state is invalid"));
-  });
+      expect(run).not.toHaveBeenCalled();
+      expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("state is invalid"));
+    },
+  );
 
   it.each([
     {
@@ -529,7 +529,7 @@ describe("DGX Station Express resume (#7048)", () => {
     fs.chmodSync(stateDir, 0o777);
 
     try {
-      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("expected 0700");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -558,7 +558,7 @@ describe("DGX Station Express resume (#7048)", () => {
     fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
 
     try {
-      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("expected 0700");
       expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText());
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -577,7 +577,7 @@ describe("DGX Station Express resume (#7048)", () => {
 
     try {
       expect(() => cleanupStationExpressReceiptRetirementClaims({ HOME: home })).toThrow(
-        "non-owner-only",
+        "expected 0700",
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -610,7 +610,9 @@ describe("DGX Station Express resume (#7048)", () => {
     ).rejects.toThrow("exit 1");
 
     expect(run).not.toHaveBeenCalled();
-    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("unsafe receipt"));
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Could not discard NemoClaw installer resume state: unsafe receipt",
+    );
   });
 
   it("refuses a symbolic-link Station installer resume receipt", () => {
@@ -639,9 +641,41 @@ describe("DGX Station Express resume (#7048)", () => {
     fs.chmodSync(stateDir, 0o750);
 
     try {
-      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("expected 0700");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a non-directory NemoClaw state path before receipt cleanup (#8795)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-file-"));
+    const statePath = path.join(home, ".nemoclaw");
+    fs.writeFileSync(statePath, "keep", { mode: 0o755 });
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow(
+        `Refusing NemoClaw installer resume path that is not a directory: ${statePath}`,
+      );
+      expect(fs.readFileSync(statePath, "utf8")).toBe("keep");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the required mode and recovery command for unsafe fresh cleanup (#8795)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fresh-state-mode-"));
+    const home = path.join(root, "home-$(touch injected)");
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(stateDir, 0o775);
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow(
+        `NemoClaw installer resume directory has mode 0775; expected 0700: ${stateDir}. ` +
+          'After you verify ownership, run `chmod 700 -- "$HOME/.nemoclaw"` for the default state directory.',
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -1144,8 +1178,14 @@ describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
     expect(reloaded?.stationExpressIntent).toEqual(sparkIntent);
     // A spark Express run is inherently non-interactive.
     expect(normalizeSession({ ...base, mode: "interactive" } as never)).toBeNull();
-    // provider/model must stay null until provider_selection completes.
+    // Provider and model must remain complete and use the Spark Express provider.
     expect(normalizeSession({ ...base, provider: "vllm-local" } as never)).toBeNull();
+    expect(normalizeSession({ ...base, model: "llama3.1" } as never)).toBeNull();
+    expect(
+      normalizeSession({ ...base, provider: "ollama-local", model: "llama3.1" } as never),
+    ).toBeNull();
+    expect(normalizeSession({ ...base, provider: "vllm-local", model: "" } as never)).toBeNull();
+    expect(normalizeSession({ ...base, provider: "vllm-local", model: "   " } as never)).toBeNull();
   });
 
   it("carries the intent through capture, reload normalization, and resume restore", async () => {

@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
+import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import {
   type DcodeProbeState,
   dcodeProbeOutput,
@@ -461,35 +463,35 @@ describe("runSandboxSnapshot", () => {
 
     const probeScript = capturedDcodeProbeScript();
     const shellCommandLine = probeScript.replace(/\s+/g, " ");
-    for (const processLine of [
+    [
       "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
       "123 /opt/venv/bin/python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
       "123 /opt/venv/bin/python3 -I -m deepagents_code --sandbox none --no-mcp -n work\n",
       "124 /usr/local/bin/dcode task\n",
       "125 /opt/bin/deepagents_code task\n",
       "126 /opt/bin/deepagents-code task\n",
-    ]) {
+    ].forEach((processLine) => {
       expect(runProbeScriptWithProcesses(probeScript, processLine)).toMatchObject({
         status: 0,
         output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=active"),
       });
-    }
+    });
     expect(
       runProbeScriptWithProcesses(probeScript, `999 sh -c ${shellCommandLine}\n`),
     ).toMatchObject({
       status: 0,
       output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=no-runtime"),
     });
-    for (const processLine of [
+    [
       "127 cat /tmp/dcode\n",
       "128 grep deepagents-code notes.txt\n",
       "129 sh -lc python3 -m deepagents_code\n",
-    ]) {
+    ].forEach((processLine) => {
       expect(runProbeScriptWithProcesses(probeScript, processLine)).toMatchObject({
         status: 0,
         output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=no-runtime"),
       });
-    }
+    });
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   }, 15_000);
 
@@ -742,6 +744,101 @@ describe("runSandboxSnapshot", () => {
       }),
     );
     expect(f.applyPresetMock).toHaveBeenCalledTimes(enabled ? 1 : 0);
+    },
+  );
+
+  it("reserves an explicit llama.cpp clone with the original owner and exact gateway authority", async () => {
+    const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
+    const hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(
+      "alpha",
+      hostLocalInferenceReceipt,
+    );
+    let registeredClone: f.SandboxRecord | null = null;
+    f.registerSandboxMock.mockImplementation(
+      (entry) => (registeredClone = entry as f.SandboxRecord),
+    );
+    const source: f.SandboxRecord = {
+      name: "alpha",
+      agent: "openclaw",
+      imageTag: "nemoclaw-alpha:test",
+      openshellDriver: "docker",
+      provider: "llama-cpp-local",
+      model: "nemotron-llama-cpp",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "alpha-generation-1",
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance,
+    };
+    f.getSandboxMock.mockImplementation((name) => (name === "alpha" ? source : registeredClone));
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
+      agentType: "openclaw",
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance,
+    });
+    f.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
+      options?.validateBeforeMutation?.();
+      return {
+        success: true,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      };
+    });
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    const dependencies = await import("./snapshot/dependencies");
+    const prepare = vi.spyOn(dependencies, "prepareHostLocalInferenceAuthority").mockImplementation(
+      (_provider, candidate, serializedReceipt) =>
+        ({
+          providerId: "docker",
+          sandboxName: candidate.name,
+          serializedReceipt,
+        }) as never,
+    );
+    const confirm = vi
+      .spyOn(dependencies, "confirmHostLocalInferenceAuthority")
+      .mockImplementation(() => undefined);
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+
+    expect(f.reserveSandboxInferenceRouteMock).toHaveBeenCalledWith("beta", {
+      provider: "llama-cpp-local",
+      model: "nemotron-llama-cpp",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      openshellDriver: "docker",
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance,
+    });
+    expect(registeredClone).toMatchObject({
+      name: "beta",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance,
+    });
+    expect(
+      (registeredClone as f.SandboxRecord | null)?.hostLocalInferenceProvenance
+        ?.runtimeOwnerSandboxName,
+    ).toBe("alpha");
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(confirm).toHaveBeenCalledTimes(2);
   });
 
   it.each([

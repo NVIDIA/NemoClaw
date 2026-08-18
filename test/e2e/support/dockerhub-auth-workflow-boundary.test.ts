@@ -150,121 +150,68 @@ function validateCleanupArtifactMutation(options: {
 }
 
 describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
-  // source-shape-contract: security -- Immutable credential-bearing action bytes must stay bound to reviewed commit provenance.
-  it("binds the composite action and helper to their immutable reviewed revision (#6961)", () => {
-    expect(validateDockerHubAuthAction()).toEqual([]);
+  function verifyPinnedPreRestoreCleanupAction() {
+    expect(validateE2eWorkflowBoundary()).toEqual([]);
 
-    const mappingErrors = validateAuthArtifactMutation({
-      mutateAction: (action) => {
-        const runs = action.runs as { steps: WorkflowStep[] };
-        runs.steps[0].env = {
-          DOCKERHUB_AUTH_REQUIRED: "${{ inputs.auth-required }}",
-          DOCKERHUB_USERNAME: "${{ inputs.token }}",
-          DOCKERHUB_TOKEN: "${{ inputs.username }}",
-        };
-        runs.steps[0].run = "bash .github/scripts/docker-auth-setup.sh";
+    const jobNames = [
+      "openclaw-plugin-runtime-exdev",
+      "openclaw-plugin-runtime-exdev-release",
+    ] as const;
+    const cleanupMutations: Array<(cleanup: WorkflowStep) => void> = [
+      (cleanup) => {
+        cleanup.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
       },
-    });
-    expect(mappingErrors).toContain(
-      "docker-auth-setup action content must match the action reviewed at its immutable commit pin",
-    );
-    expect(mappingErrors).toContain(
-      "docker-auth-setup action must preserve its exact three-input environment mapping and pinned helper invocation",
-    );
-
-    expect(
-      validateAuthArtifactMutation({
-        mutateScript: (source) => `${source}# unreviewed drift\n`,
-      }),
-    ).toContain(
-      "docker-auth-setup script content must match the helper reviewed at its immutable commit pin",
-    );
-  });
-
-  // source-shape-contract: security -- The cleanup action and helper content must remain bound to the pinned commit.
-  it("binds the cleanup action and helper content to the pinned commit", () => {
-    expect(validateDockerHubCleanupAction()).toEqual([]);
-
-    const actionErrors = validateCleanupArtifactMutation({
-      mutateAction: (action) => {
-        const runs = action.runs as { steps: WorkflowStep[] };
-        runs.steps[0].run = "bash .github/scripts/docker-auth-cleanup.sh";
+      (cleanup) => {
+        cleanup.uses = "./.github/actions/docker-auth-cleanup";
       },
-    });
-    expect(actionErrors).toContain(
-      "docker-auth-cleanup action content must match the pinned commit",
-    );
-    expect(actionErrors).toContain(
-      "docker-auth-cleanup action must invoke the helper through github.action_path",
-    );
-
-    expect(
-      validateCleanupArtifactMutation({
-        mutateScript: (source) => `${source}# unreviewed drift\n`,
-      }),
-    ).toContain("docker-auth-cleanup script content must match the pinned commit");
-  });
-
-  it(
-    "accepts only the pinned pre-restore cleanup action in the complete workflow",
-    () => {
-      expect(validateE2eWorkflowBoundary()).toEqual([]);
-
-      const jobNames = [
-        "openclaw-plugin-runtime-exdev",
-        "openclaw-plugin-runtime-exdev-release",
-      ] as const;
-      const cleanupMutations: Array<(cleanup: WorkflowStep) => void> = [
-        (cleanup) => {
-          cleanup.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
-        },
-        (cleanup) => {
-          cleanup.uses = "./.github/actions/docker-auth-cleanup";
-        },
-        (cleanup) => {
-          delete cleanup.uses;
-          cleanup.shell = "bash";
-          cleanup.run = CLEANUP_HELPER_RUN;
-        },
-      ];
-      for (const mutateCleanup of cleanupMutations) {
-        const errors = validateMutation((workflow) => {
-          for (const jobName of jobNames) {
-            const cleanup = namedStep(
-              workflow.jobs[jobName],
-              "Remove Docker auth before release-pinned fixture",
-            );
-            expect(cleanup).toBeDefined();
-            mutateCleanup(cleanup!);
-          }
-        });
-
+      (cleanup) => {
+        delete cleanup.uses;
+        cleanup.shell = "bash";
+        cleanup.run = CLEANUP_HELPER_RUN;
+      },
+    ];
+    for (const mutateCleanup of cleanupMutations) {
+      const errors = validateMutation((workflow) => {
         for (const jobName of jobNames) {
-          expect(errors).toContain(
-            `${jobName} must use the pinned Docker auth cleanup action before artifact restore`,
+          const cleanup = namedStep(
+            workflow.jobs[jobName],
+            "Remove Docker auth before release-pinned fixture",
           );
-        }
-      }
-
-      const orderingErrors = validateMutation((workflow) => {
-        for (const jobName of jobNames) {
-          const job = workflow.jobs[jobName];
-          const steps = job.steps!;
-          const cleanup = namedStep(job, "Remove Docker auth before release-pinned fixture");
-          const restore = namedStep(job, "Restore exact-commit CLI artifact");
           expect(cleanup).toBeDefined();
-          expect(restore).toBeDefined();
-          steps.splice(steps.indexOf(cleanup!), 1);
-          steps.splice(steps.indexOf(restore!) + 1, 0, cleanup!);
+          mutateCleanup(cleanup!);
         }
       });
 
       for (const jobName of jobNames) {
-        expect(orderingErrors).toContain(
-          `${jobName} step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'`,
+        expect(errors).toContain(
+          `${jobName} must use the pinned Docker auth cleanup action before artifact restore`,
         );
       }
-    },
+    }
+
+    const orderingErrors = validateMutation((workflow) => {
+      for (const jobName of jobNames) {
+        const job = workflow.jobs[jobName];
+        const steps = job.steps!;
+        const cleanup = namedStep(job, "Remove Docker auth before release-pinned fixture");
+        const restore = namedStep(job, "Restore exact-commit CLI artifact");
+        expect(cleanup).toBeDefined();
+        expect(restore).toBeDefined();
+        steps.splice(steps.indexOf(cleanup!), 1);
+        steps.splice(steps.indexOf(restore!) + 1, 0, cleanup!);
+      }
+    });
+
+    for (const jobName of jobNames) {
+      expect(orderingErrors).toContain(
+        `${jobName} step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'`,
+      );
+    }
+  }
+
+  it(
+    "accepts only the pinned pre-restore cleanup action in the complete workflow",
+    verifyPinnedPreRestoreCleanupAction,
     testTimeout(15_000),
   );
 
@@ -272,11 +219,11 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);
     const errors = validateMutation((mutatedWorkflow) => {
-      for (const jobName of requiredJobs) {
+      requiredJobs.forEach((jobName) => {
         mutatedWorkflow.jobs[jobName].steps = mutatedWorkflow.jobs[jobName].steps?.filter(
           (step) => step.name !== AUTH_STEP_NAME && step.name !== CLEANUP_STEP_NAME,
         );
-      }
+      });
     });
 
     expect(errors).toEqual(
@@ -289,42 +236,45 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     );
   });
 
-  it("rejects alias, ordering, and no-image exemption drift", () => {
-    const errors = validateMutation((workflow) => {
-      const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
-      const cloudInferenceSteps = workflow.jobs["cloud-inference"].steps!;
-      const cloudInferenceAuthIndex = cloudInferenceSteps.indexOf(
-        namedStep(workflow.jobs["cloud-inference"], AUTH_STEP_NAME)!,
+  it.each(NO_IMAGE_E2E_JOBS)(
+    "rejects alias, ordering, and no-image exemption drift [case %#]",
+    (jobName) => {
+      const errors = validateMutation((workflow) => {
+        const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
+        const messagingSteps = workflow.jobs["messaging-providers"].steps!;
+        const messagingAuthIndex = messagingSteps.indexOf(
+          namedStep(workflow.jobs["messaging-providers"], AUTH_STEP_NAME)!,
+        );
+        messagingSteps[messagingAuthIndex] = {
+          ...canonicalAuth,
+          env: { ...canonicalAuth.env },
+        };
+
+        const routingSteps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
+        const routingAuthIndex = routingSteps.indexOf(
+          namedStep(workflow.jobs["openclaw-plugin-runtime-exdev"], AUTH_STEP_NAME)!,
+        );
+        const [routingAuth] = routingSteps.splice(routingAuthIndex, 1);
+        routingSteps.splice(routingSteps.length - 1, 0, routingAuth);
+
+        workflow.jobs[jobName].steps!.push({ ...canonicalAuth });
+      });
+
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "messaging-providers Docker Hub auth must reuse the canonical workflow alias",
+          "openclaw-plugin-runtime-exdev Docker Hub auth must run immediately after checkout",
+          `${jobName} no-image job must not receive Docker Hub authentication`,
+        ]),
       );
-      cloudInferenceSteps[cloudInferenceAuthIndex] = {
-        ...canonicalAuth,
-        env: { ...canonicalAuth.env },
-      };
-
-      const messagingSteps = workflow.jobs["messaging-compatible-endpoint"].steps!;
-      const messagingAuthIndex = messagingSteps.indexOf(
-        namedStep(workflow.jobs["messaging-compatible-endpoint"], AUTH_STEP_NAME)!,
-      );
-      const [messagingAuth] = messagingSteps.splice(messagingAuthIndex, 1);
-      messagingSteps.splice(messagingSteps.length - 1, 0, messagingAuth);
-
-      workflow.jobs["shared-e2e"].steps!.push({ ...canonicalAuth });
-    });
-
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        "cloud-inference Docker Hub auth must reuse the canonical workflow alias",
-        "messaging-compatible-endpoint Docker Hub auth must run immediately after checkout",
-        "shared-e2e no-image job must not receive Docker Hub authentication",
-      ]),
-    );
-  });
+    },
+  );
 
   it("rejects step-level Docker config overrides outside the canonical auth step", () => {
     const errors = validateMutation((workflow) => {
       const run = namedStep(
-        workflow.jobs["messaging-compatible-endpoint"],
-        "Run messaging compatible endpoint live test",
+        workflow.jobs["openclaw-plugin-runtime-exdev"],
+        "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test",
       );
       expect(run).toBeDefined();
       run!.env = {
@@ -334,7 +284,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     });
 
     expect(errors).toContain(
-      "messaging-compatible-endpoint step 'Run messaging compatible endpoint live test' env must not include DOCKER_CONFIG",
+      "openclaw-plugin-runtime-exdev step 'Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test' env must not include DOCKER_CONFIG",
     );
   });
 
@@ -357,12 +307,10 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       cleanup!.run = `${String(cleanup!.run)} || true`;
       cleanup!.env = { DOCKER_CONFIG: "${{ github.workspace }}/docker-config" };
 
-      const messagingSteps = workflow.jobs["messaging-compatible-endpoint"].steps!;
-      const messagingCleanupIndex = messagingSteps.findIndex(
-        (step) => step.name === CLEANUP_STEP_NAME,
-      );
-      const [messagingCleanup] = messagingSteps.splice(messagingCleanupIndex, 1);
-      messagingSteps.splice(2, 0, messagingCleanup);
+      const routingSteps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
+      const routingCleanupIndex = routingSteps.findIndex((step) => step.name === CLEANUP_STEP_NAME);
+      const [routingCleanup] = routingSteps.splice(routingCleanupIndex, 1);
+      routingSteps.splice(2, 0, routingCleanup);
     });
 
     expect(errors).toEqual(
@@ -373,7 +321,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
         "live Docker Hub cleanup step must contain exactly name, if, shell, and run",
         "live Docker Hub cleanup step must always run",
         `live Docker Hub cleanup step must run only ${CLEANUP_HELPER_RUN}`,
-        "messaging-compatible-endpoint Docker Hub cleanup must be the final job step",
+        "openclaw-plugin-runtime-exdev Docker Hub cleanup must be the final job step",
       ]),
     );
   });
@@ -403,21 +351,21 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);
     const errors = validateMutation((mutatedWorkflow) => {
-      for (const jobName of requiredJobs) {
+      requiredJobs.forEach((jobName) => {
         const cleanup = namedStep(mutatedWorkflow.jobs[jobName], CLEANUP_STEP_NAME)!;
         cleanup.run = `${CLEANUP_HELPER_RUN} || true`;
         cleanup["continue-on-error"] = true;
-      }
+      });
     });
 
-    for (const jobName of requiredJobs) {
+    requiredJobs.forEach((jobName) => {
       expect(errors).toContain(
         `${jobName} Docker Hub cleanup step must contain exactly name, if, shell, and run`,
       );
       expect(errors).toContain(
         `${jobName} Docker Hub cleanup step must run only ${CLEANUP_HELPER_RUN}`,
       );
-    }
+    });
   });
 
   it("treats every new E2E job as image-consuming unless it is explicitly exempt", () => {

@@ -26,6 +26,9 @@ _MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
 _INFERENCE_BASE_URL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-inference-base-url"
 )
+_UPSTREAM_PROVIDER_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-upstream-provider"
+)
 _MANAGED_PROXY_HOST_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-proxy-host"
 )
@@ -1115,21 +1118,21 @@ def managed_fetch_proxy_url() -> str | None:
     return value
 
 
-def _read_managed_proxy_value(path: Path, label: str) -> str:
-    """Read one immutable proxy component from the managed image."""
+def _read_managed_file_value(path: Path, label: str) -> str:
+    """Read one root-owned, read-only value from the managed image."""
     if not path.is_file() or path.is_symlink():
-        raise RuntimeError(f"managed proxy {label} file is missing or unsafe")
+        raise RuntimeError(f"managed {label} file is missing or unsafe")
     try:
         metadata = path.stat()
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise RuntimeError(f"managed proxy {label} file is unreadable") from exc
+        raise RuntimeError(f"managed {label} file is unreadable") from exc
     if (
         metadata.st_uid != _MANAGED_FILE_OWNER_UID
         or stat.S_IMODE(metadata.st_mode) != 0o444
     ):
         raise RuntimeError(
-            f"managed proxy {label} file has unsafe ownership or mode"
+            f"managed {label} file has unsafe ownership or mode"
         )
     value = raw.rstrip("\n")
     if (
@@ -1139,14 +1142,14 @@ def _read_managed_proxy_value(path: Path, label: str) -> str:
         or value != value.strip()
         or any(ord(character) < 32 for character in value)
     ):
-        raise RuntimeError(f"managed proxy {label} file has invalid contents")
+        raise RuntimeError(f"managed {label} file has invalid contents")
     return value
 
 
 def _managed_fetch_proxy_url_from_files() -> str:
     """Derive the trusted proxy URL independently from root-owned files."""
-    host = _read_managed_proxy_value(_MANAGED_PROXY_HOST_FILE, "host")
-    port = _read_managed_proxy_value(_MANAGED_PROXY_PORT_FILE, "port")
+    host = _read_managed_file_value(_MANAGED_PROXY_HOST_FILE, "proxy host")
+    port = _read_managed_file_value(_MANAGED_PROXY_PORT_FILE, "proxy port")
     if _MANAGED_PROXY_HOST.fullmatch(host) is None:
         raise RuntimeError("managed proxy host file has invalid contents")
     if (
@@ -1155,6 +1158,16 @@ def _managed_fetch_proxy_url_from_files() -> str:
     ):
         raise RuntimeError("managed proxy port file has invalid contents")
     return f"http://{host}:{port}"
+
+
+def _managed_upstream_provider() -> str:
+    """Return the root-owned upstream provider."""
+    value = _read_managed_file_value(
+        _UPSTREAM_PROVIDER_FILE, "upstream provider"
+    )
+    if _DISPLAY_PROVIDER_NAME.fullmatch(value) is None:
+        raise RuntimeError("managed upstream provider file has invalid contents")
+    return value
 
 
 def _managed_fetch_ca_bundle() -> tuple[int, str]:
@@ -1472,6 +1485,7 @@ def assert_safe_runtime() -> None:
     """Reject unmanaged runtime credentials before dcode bootstraps settings."""
     _assert_safe_environment()
     _assert_safe_auth_state()
+    os.environ[_UPSTREAM_PROVIDER_ENV] = _managed_upstream_provider()
     managed_fetch_proxy_url()
     base_url = managed_inference_base_url()
     os.environ["OPENAI_BASE_URL"] = base_url

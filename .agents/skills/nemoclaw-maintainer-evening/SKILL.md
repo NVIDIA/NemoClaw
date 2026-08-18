@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff, including the pre-tag dated changelog PR, version progress, straggler planning, QA summary, tag cut, and announcement draft. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day, pre-tag release notes.
+description: Runs the end-of-day NemoClaw release handoff, including the documentation PR, version progress, straggler planning, QA summary, tag cut, and announcement draft. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day, pre-tag release notes.
 user_invocable: true
 ---
 
@@ -42,11 +42,7 @@ This lists commits since the last tag, identifies risky areas touched, and sugge
 
 ## Pre-Tag Docs
 
-Run `/nemoclaw-contributor-update-docs for <version>` before loading `cut-release-tag`.
-Confirm that the release-prep docs PR creates or updates one direct child of `docs/changelog/` for the planned date and contains the exact `## <version>` heading, a parser-safe MDX SPDX comment, the summary, and the detailed release bullets.
-An ordinary docs refresh or a post-tag Discussion draft does not satisfy this step.
-The release-prep docs PR, including the dated changelog entry, must be merged, or explicitly waived with a reason that names the missing changelog entry, before `release:plan` captures the release commit.
-If a docs PR or any other intended PR merges after `release:plan`, regenerate the plan before cutting the tag.
+Follow [Release-Prep Docs](../nemoclaw-maintainer-policies/references/release-train.md#release-prep-docs).
 
 ## Step 4: Cut the Tag and Publish Release Notes
 
@@ -55,12 +51,10 @@ The version is already known, so use a patch bump unless the maintainer selects 
 Show the commit, changelog, carry-forward plan, label-retirement plan, and release notes draft.
 
 After the release plan captures the candidate SHA, load `nemoclaw-maintainer-e2e`.
-Run full mode unless one existing full run for the candidate SHA contains complete workflow E2E and `Exact staging Brev Launchable` evidence.
-Review the pre-tag E2E evidence ledger from `.github/workflows/e2e.yaml` at that commit.
-Require the accepted workflow run to conclude with `success`. Require successful `Exact staging Brev Launchable` evidence with matching Launchable E2E identity and verified workspace absence, or record the permitted itemized exception described below.
-Each missing or skipped execution in that successful run requires its own itemized maintainer exception.
-Missing or invalid Launchable E2E evidence in that successful run requires a separate itemized exception with run and job URLs, the missing or invalid receipt, and rationale.
-Do not ask for the release confirmation phrase until the run succeeds and each required execution has successful evidence or a permitted exception.
+Use an existing qualifying full manual run at the candidate SHA, or run full mode when none exists.
+Require its `Release qualification` check to pass.
+Record the workflow and check URLs.
+Do not ask for the release confirmation phrase until `scripts/release-cut-tag.sh` accepts the canonical check at the current candidate SHA.
 
 Tag the confirmed release commit with `vX.Y.Z`.
 Let the workflow move `latest`, carry open work forward, and delete the released label.
@@ -71,7 +65,7 @@ Prepare the Announcement draft for the maintainer to post.
 After the tag is cut and release notes are drafted or posted by the maintainer, present the final summary:
 
 - **Tag**: `v0.0.8` at commit `abc1234`
-- **Pre-tag E2E evidence**: 12/13 tests and exact Brev Launchable E2E passing for the candidate SHA; 1 itemized maintainer exception
+- **Pre-tag E2E evidence**: `Release qualification` passing for the candidate SHA
 - **Release notes draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
 - **Shipped**: 4 items (#1234, #1235, #1236, #1237)
 - **Moved to v0.0.9**: 1 item (#1238 — still needs CI fix)

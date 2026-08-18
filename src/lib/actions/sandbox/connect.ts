@@ -3,12 +3,9 @@
 
 import { spawnSync } from "node:child_process";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import {
-  captureOpenshell,
-  getOpenshellBinary,
-  runOpenshell,
-} from "../../adapters/openshell/runtime";
-import {
+
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -17,9 +14,12 @@ import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import { retryUntil } from "../../core/retry";
+
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
   formatInferenceRouteDriftForDisplay,
   parseGatewayInference,
@@ -76,9 +76,18 @@ import {
   ensureLiveSandboxOrExit,
   printGatewayLifecycleHint,
   recoverPortableDemoSandboxLifecycleForConnect,
+  startStoppedSandboxContainerForProbeRecovery,
 } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
+import {
+  inspectLaunchReadiness,
+  portableOpenClawPairingIncompleteMessage,
+  publicationFromDecision,
+  publishLaunchReadiness,
+  settlePortableOpenClawPairing,
+  withLaunchReadinessMutationGate,
+} from "./launch-readiness";
 import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
@@ -94,6 +103,7 @@ export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
+  requireLaunchReadinessPublication?: boolean;
 };
 
 export type SandboxStartupRecoveryResult = ReturnType<typeof checkAndRecoverSandboxProcesses> & {
@@ -119,6 +129,7 @@ type SandboxListProbe = {
   output: string;
 };
 
+
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
   broken: boolean;
@@ -126,14 +137,14 @@ export type SandboxInferenceRouteProbe = {
   detail: string;
 };
 
-type SandboxInferenceRouteEnsureResult = {
-  sandbox: SandboxEntry | null;
-  routeHealthy: boolean | null;
-};
-
 type InferenceRouteProbeOptions = {
   attempts?: number;
   delayMs?: number;
+};
+
+type SandboxInferenceRouteEnsureResult = {
+  sandbox: SandboxEntry | null;
+  routeHealthy: boolean | null;
 };
 
 export type SandboxInferenceRouteRepairResult = {
@@ -249,6 +260,15 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
+async function settlePortablePairingOrExit(sandboxName: string): Promise<boolean> {
+  const result = await settlePortableOpenClawPairing(sandboxName);
+  if (result.kind === "incomplete") {
+    console.error(`  ${portableOpenClawPairingIncompleteMessage(sandboxName, result.reason)}`);
+    process.exit(1);
+  }
+  return result.kind === "settled";
+}
+
 async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
@@ -303,7 +323,9 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
-    runConnectAutoPairApprovalPass(sandboxName);
+    if (!(await settlePortablePairingOrExit(sandboxName))) {
+      runConnectAutoPairApprovalPass(sandboxName);
+    }
     if (processCheck.forwardRecovered) {
       console.log(
         `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
@@ -316,7 +338,9 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   if (processCheck.recovered) {
     await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
-    runConnectAutoPairApprovalPass(sandboxName);
+    if (!(await settlePortablePairingOrExit(sandboxName))) {
+      runConnectAutoPairApprovalPass(sandboxName);
+    }
     const managedControlCompletion =
       "managedControlCompletion" in processCheck
         ? (processCheck.managedControlCompletion as ManagedGatewayControlCompletion)
@@ -343,15 +367,6 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   process.exit(1);
 }
 
-function sleepSync(ms: number): void {
-  if (ms <= 0) return;
-  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
-  spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${ms})`], {
-    stdio: "ignore",
-    timeout: ms + 1_000,
-  });
-}
-
 const GATEWAY_UNAVAILABLE_RE =
   /No gateway configured|No active gateway|Connection refused|client error \(Connect\)|tcp connect error|Status:\s*Disconnected/i;
 
@@ -374,11 +389,8 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
     printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
-  console.error(
-    `    1. Run: openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}`,
-  );
-  console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
-  console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
+  console.error(`    1. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
+  console.error(`    2. Retry: ${CLI_NAME} ${sandboxName} connect`);
   process.exit(1);
 }
 
@@ -406,42 +418,48 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
   }
 }
 
-function probeSandboxInferenceRoute(
+
+function sleepSync(milliseconds: number): void {
+  if (milliseconds <= 0) return;
+  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
+  spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${milliseconds})`], {
+    stdio: "ignore",
+    timeout: milliseconds + 1_000,
+  });
+}
+
+export function probeSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},
 ): SandboxInferenceRouteProbe {
-  let lastProbe: SandboxInferenceRouteProbe | null = null;
-  const boundedAttempts = Math.max(1, attempts);
-
-  for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
-    // Keep the shell string inside the sandbox: curl write-out, body capture,
-    // and status classification must run as one bounded probe. sandboxName
-    // remains an argv value, so no user input is interpolated into the script.
-    const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
-      ignoreError: true,
-      includeStreams: true,
-      timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-    });
-    const parsed = parseSandboxInferenceRouteProbeResult(probe);
-    lastProbe = {
-      healthy: parsed.healthy,
-      broken: parsed.broken,
-      httpStatus: parsed.httpStatus,
-      detail: parsed.detail,
-    };
-    if (lastProbe.healthy || attempt === boundedAttempts) return lastProbe;
-    sleepSync(delayMs);
-  }
-
-  return (
-    lastProbe ?? {
-      healthy: false,
-      broken: false,
-      detail: "inference route probe did not run",
-    }
+  const attemptCount = Math.max(1, Math.floor(attempts));
+  return retryUntil(
+    () => {
+      // Keep the shell string inside the sandbox: curl write-out, body capture,
+      // and status classification must run as one bounded probe. sandboxName
+      // remains an argv value, so no user input is interpolated into the script.
+      const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
+        ignoreError: true,
+        includeStreams: true,
+        timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+      });
+      const parsed = parseSandboxInferenceRouteProbeResult(probe);
+      return {
+        healthy: parsed.healthy,
+        broken: parsed.broken,
+        httpStatus: parsed.httpStatus,
+        detail: parsed.detail,
+      };
+    },
+    {
+      accept: (result) => result.healthy,
+      retryDelaysMs: Array.from({ length: attemptCount - 1 }, () => delayMs),
+      sleep: sleepSync,
+    },
   );
 }
+
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`
@@ -994,7 +1012,13 @@ type WaitForSandboxReadyOptions = {
   successLogs?: readonly string[];
 };
 
-function waitForSandboxReadyOrExit(
+// Readiness budget for the repair paths that wait for a restarted sandbox
+// before they touch in-sandbox processes or host forwards. A cold agent boot on
+// a constrained host can exceed the interactive budget, and `start` and
+// `connect --probe-only` prove the same readiness for the same sandbox.
+export const SANDBOX_REPAIR_READY_TIMEOUT_SEC = 300;
+
+export function waitForSandboxReadyOrExit(
   sandboxName: string,
   {
     defaultTimeoutSec = 120,
@@ -1168,19 +1192,8 @@ async function runConnectEntryPreflight(
   }
 }
 
-/**
- * Everything an interactive sandbox session needs before SSH is spawned:
- * the shared connect entry preflight plus process recovery, readiness wait,
- * inference-route reconcile, and the auto-pair approval pass. Shared by
- * `connect` and `launch`; both are always non-probe-only. Any
- * `process.exit(...)` reached here ends the process exactly as it does on the
- * connect path.
- */
-export async function prepareInteractiveSession(
-  sandboxName: string,
-): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
-  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
-
+/** Print version and active-session hints on both interactive launch paths. */
+export function printInteractiveSessionHints(sandboxName: string): void {
   // Version staleness check — warn but don't block
   try {
     const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
@@ -1208,6 +1221,43 @@ export async function prepareInteractiveSession(
   } catch {
     /* non-fatal — don't block connect on session detection failure */
   }
+}
+
+/** Preserve session setup after the complete preflight or lease acceptance. */
+export function completeInteractiveSessionSetup(
+  sandboxName: string,
+  sb: SandboxEntry | null,
+  runApprovalPass = runConnectAutoPairApprovalPass,
+): void {
+  maybeEnsureHermesToolGatewayBroker(sb);
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : getSandboxTargetGatewayName(sandboxName);
+  runApprovalPass(sandboxName, gatewayName);
+}
+
+/** Preserve session setup after launch readiness accepts a trusted agent identity. */
+export function completeReadinessQualifiedInteractiveSessionSetup(
+  sandboxName: string,
+  agent: AgentDefinition,
+  sb: SandboxEntry | null,
+  runApprovalPass = runConnectAutoPairApprovalPass,
+  resolveFallbackGateway = getSandboxTargetGatewayName,
+): void {
+  maybeEnsureHermesToolGatewayBroker(sb);
+  if (sb && agent.name === "openclaw") return;
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : resolveFallbackGateway(sandboxName);
+  runApprovalPass(sandboxName, gatewayName);
+}
+
+/**
+ * Run the complete interactive preflight before SSH or agent launch, including
+ * process recovery, readiness polling, inference-route repair, and session
+ * setup. Any `process.exit(...)` ends the process as it does on `connect`.
+ */
+export async function prepareInteractiveSession(
+  sandboxName: string,
+): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
+  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
+  printInteractiveSessionHints(sandboxName);
 
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName);
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
@@ -1233,36 +1283,97 @@ export async function prepareInteractiveSession(
   // After the sandbox is Ready, verify and recover the route before SSH.
   const agent = agentRuntime.getSessionAgent(sandboxName);
   sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
-  maybeEnsureHermesToolGatewayBroker(sb);
-
-  // ── Auto-pair late scope-upgrade approval (#4263) ───────────────
-  // Defense in depth: even with the in-sandbox watcher running in
-  // slow-mode keepalive, a brief approval pass before opening SSH
-  // catches any pending allowlisted CLI/webchat scope upgrades that
-  // piled up between startup and now (e.g., watcher crashed, watcher
-  // deadline exhausted, multi-sandbox gateway contention). The same pass
-  // is reachable without SSH via `doctor --fix` for dashboard-only users
-  // (#4616). Uses the tight connect budget (#4504).
-  runConnectAutoPairApprovalPass(sandboxName);
+  if (!(await settlePortablePairingOrExit(sandboxName))) {
+    completeInteractiveSessionSetup(sandboxName, sb);
+  }
 
   return { agent, sb };
 }
 
 export async function connectSandbox(
   sandboxName: string,
-  { probeOnly = false }: SandboxConnectOptions = {},
+  { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions = {},
 ): Promise<void> {
   if (probeOnly) {
-    await runConnectEntryPreflight(sandboxName, { probeOnly: true });
-    waitForSandboxReadyOrExit(sandboxName, {
-      defaultTimeoutSec: 300,
-      retryCommand: "connect --probe-only",
-    });
-    // Re-pin and re-observe the owning gateway after a potentially long wait
-    // before any in-sandbox process or host-forward mutation. The readiness
-    // polls are already owner-scoped; this also catches registry changes.
-    await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    return await runSandboxConnectProbe(sandboxName);
+    let readiness = await inspectLaunchReadiness(sandboxName);
+    let publication: Awaited<ReturnType<typeof publishLaunchReadiness>>;
+    while (true) {
+      if (readiness.kind === "accepted") {
+        console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
+        return;
+      }
+      // Refuse recovery only when a prior epoch might exist and could not be
+      // durably rotated. When the authority and receipt are both securely
+      // absent but new authority creation fails (fenceFailed without
+      // recoveryBlocked), the documented contract runs the complete preflight
+      // and recovery and reports the publication failure afterwards, exactly
+      // as `launch` does for the same decision (#9280).
+      if (
+        readiness.fenceFailed &&
+        readiness.authorityUnsupported !== true &&
+        readiness.recoveryBlocked
+      ) {
+        console.error(
+          "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+        );
+        process.exit(1);
+      }
+      const publicationRequest = publicationFromDecision(sandboxName, readiness);
+      const gated = await withLaunchReadinessMutationGate(publicationRequest, async () => {
+        await runConnectEntryPreflight(sandboxName, { probeOnly: true });
+        // Restart a stopped container before the readiness wait. Without this step,
+        // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
+        startStoppedSandboxContainerForProbeRecovery(sandboxName);
+        waitForSandboxReadyOrExit(sandboxName, {
+          defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
+          retryCommand: "connect --probe-only",
+        });
+        // Re-pin and re-observe the owning gateway after a potentially long wait
+        // before any in-sandbox process or host-forward mutation. The readiness
+        // polls are already scoped to the owning gateway; this also catches
+        // registry changes.
+        await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
+        await runSandboxConnectProbe(sandboxName);
+        return publishLaunchReadiness(publicationRequest);
+      });
+      if (gated.kind === "changed") {
+        readiness = await inspectLaunchReadiness(sandboxName);
+        continue;
+      }
+      if (gated.kind === "unsafe") {
+        console.error(
+          "  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+        );
+        process.exit(1);
+      }
+      publication = gated.value;
+      break;
+    }
+    if (publication.kind === "validation-failed") {
+      console.error(
+        `  Probe failed: final launch-readiness validation failed due to ${publication.category}.`,
+      );
+      process.exit(1);
+    }
+    if (publication.kind === "evidence-failed") {
+      if (!requireLaunchReadinessPublication) return;
+      // A platform without a per-user runtime authority (macOS) can never
+      // store launch-readiness evidence. The probe and recovery still
+      // succeeded, and `launch` runs the complete preflight without the
+      // evidence, so a permanent platform gap must not turn a successful
+      // probe into a nonzero exit (#9278).
+      if (readiness.kind === "fallback" && readiness.authorityUnsupported === true) {
+        console.log(
+          "  Note: launch-readiness evidence is unavailable on this platform; the next launch runs the complete preflight.",
+        );
+        return;
+      }
+      console.error(
+        "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
+      );
+      process.exit(1);
+    }
+    return;
   }
 
   const { agent, sb } = await prepareInteractiveSession(sandboxName);

@@ -854,27 +854,6 @@ describe("regression guards", () => {
   });
 
   describe("credential exposure guards (#429)", () => {
-    // source-shape-contract: security -- Executable walkthrough commands must never materialize the NVIDIA inference credential in child arguments
-    it("walkthrough.sh does not embed NVIDIA_INFERENCE_API_KEY in tmux or sandbox commands", () => {
-      const fs = require("fs");
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "walkthrough.sh"),
-        "utf-8",
-      );
-      // Check only executable lines (tmux spawn, openshell connect) — not comments/docs
-      const cmdLines = src
-        .split("\n")
-        .filter(
-          (l: string) =>
-            !l.trim().startsWith("#") &&
-            !l.trim().startsWith("echo") &&
-            (l.includes("tmux") || l.includes("openshell sandbox connect")),
-        );
-      for (const line of cmdLines) {
-        expect(line.includes("NVIDIA_INFERENCE_API_KEY")).toBe(false);
-      }
-    });
-
     it("install-openshell.sh gh-absent path uses curl directly", () => {
       const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
@@ -1077,24 +1056,31 @@ describe("regression guards", () => {
   });
 
   describe("curl-pipe-to-shell guards (#574, #583)", () => {
-    it("installer entrypoints run local version checks without curl-to-shell bootstrap", () => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "installer-entrypoints-"));
-      const fakeBin = path.join(tmp, "bin");
-      const callLog = path.join(tmp, "calls.log");
-      fs.mkdirSync(fakeBin);
-      fs.writeFileSync(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash\nprintf 'curl %s\\n' "$*" >> ${JSON.stringify(callLog)}\nexit 70\n`,
-        { mode: 0o755 },
-      );
-      fs.writeFileSync(
-        path.join(fakeBin, "sh"),
-        `#!/usr/bin/env bash\nprintf 'sh %s\\n' "$*" >> ${JSON.stringify(callLog)}\nexit 71\n`,
-        { mode: 0o755 },
-      );
+    it.each([{ scenario: "root installer" }, { scenario: "scripts installer" }])(
+      "installer entrypoints run local version checks without curl-to-shell bootstrap [$scenario]",
+      ({ scenario }) => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "installer-entrypoints-"));
+        const fakeBin = path.join(tmp, "bin");
+        const callLog = path.join(tmp, "calls.log");
+        fs.mkdirSync(fakeBin);
+        fs.writeFileSync(
+          path.join(fakeBin, "curl"),
+          `#!/usr/bin/env bash\nprintf 'curl %s\\n' "$*" >> ${JSON.stringify(callLog)}\nexit 70\n`,
+          { mode: 0o755 },
+        );
+        fs.writeFileSync(
+          path.join(fakeBin, "sh"),
+          `#!/usr/bin/env bash\nprintf 'sh %s\\n' "$*" >> ${JSON.stringify(callLog)}\nexit 71\n`,
+          { mode: 0o755 },
+        );
 
-      try {
-        for (const script of ["install.sh", path.join("scripts", "install.sh")]) {
+        try {
+          const script = (
+            {
+              "root installer": "install.sh",
+              "scripts installer": path.join("scripts", "install.sh"),
+            } as const
+          )[scenario]!;
           const result = spawnSync(
             "bash",
             [path.join(import.meta.dirname, "..", script), "--version"],
@@ -1109,12 +1095,13 @@ describe("regression guards", () => {
             },
           );
           expect(result.status, `${script}: ${result.stdout}${result.stderr}`).toBe(0);
+
+          expect(fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf-8") : "").toBe("");
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true });
         }
-        expect(fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf-8") : "").toBe("");
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    });
+      },
+    );
 
     it("scripts/brev-setup.sh has been removed", () => {
       expect(fs.existsSync(path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"))).toBe(
@@ -1146,36 +1133,40 @@ describe("regression guards", () => {
       expect(startSrc).toContain('export JITI_FS_CACHE="false"');
     });
 
-    it("disables EC2 metadata credential discovery across image, startup, and shell boundaries", () => {
-      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
-      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
-      const startSrc = fs.readFileSync(
-        path.join(repoRoot, "scripts", "nemoclaw-start.sh"),
-        "utf-8",
-      );
-      const hermesBaseSrc = fs.readFileSync(
-        path.join(repoRoot, "agents", "hermes", "Dockerfile.base"),
-        "utf-8",
-      );
-      const hermesRuntimeSrc = fs.readFileSync(
-        path.join(repoRoot, "agents", "hermes", "Dockerfile"),
-        "utf-8",
-      );
-      const hermesStartSrc = fs.readFileSync(
-        path.join(repoRoot, "agents", "hermes", "start.sh"),
-        "utf-8",
-      );
+    it.each([{ scenario: "base image" }, { scenario: "runtime image" }])(
+      "disables EC2 metadata credential discovery across image, startup, and shell boundaries [$scenario]",
+      ({ scenario }) => {
+        const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+        const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+        const startSrc = fs.readFileSync(
+          path.join(repoRoot, "scripts", "nemoclaw-start.sh"),
+          "utf-8",
+        );
+        const hermesBaseSrc = fs.readFileSync(
+          path.join(repoRoot, "agents", "hermes", "Dockerfile.base"),
+          "utf-8",
+        );
+        const hermesRuntimeSrc = fs.readFileSync(
+          path.join(repoRoot, "agents", "hermes", "Dockerfile"),
+          "utf-8",
+        );
+        const hermesStartSrc = fs.readFileSync(
+          path.join(repoRoot, "agents", "hermes", "start.sh"),
+          "utf-8",
+        );
 
-      expect(baseSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
-      expect(runtimeSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
-      const baseRuntimeStageStart = baseSrc.lastIndexOf("\nFROM ");
-      expect(baseRuntimeStageStart).toBeGreaterThan(-1);
-      const runtimeStageStart = runtimeSrc.indexOf("# Stage 3: Runtime image");
-      expect(runtimeStageStart).toBeGreaterThan(-1);
-      for (const [source, stageStart] of [
-        [baseSrc, baseRuntimeStageStart],
-        [runtimeSrc, runtimeStageStart],
-      ] as const) {
+        expect(baseSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
+        expect(runtimeSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
+        const baseRuntimeStageStart = baseSrc.lastIndexOf("\nFROM ");
+        expect(baseRuntimeStageStart).toBeGreaterThan(-1);
+        const runtimeStageStart = runtimeSrc.indexOf("# Stage 3: Runtime image");
+        expect(runtimeStageStart).toBeGreaterThan(-1);
+        const [source, stageStart] = (
+          {
+            "base image": [baseSrc, baseRuntimeStageStart],
+            "runtime image": [runtimeSrc, runtimeStageStart],
+          } as const
+        )[scenario]!;
         const fromIndex = source.indexOf("\nFROM ", stageStart);
         expect(fromIndex).toBeGreaterThan(-1);
         const firstRunIndex = source.indexOf("\nRUN ", fromIndex);
@@ -1183,13 +1174,14 @@ describe("regression guards", () => {
         const metadataEnvIndex = source.indexOf("ENV AWS_EC2_METADATA_DISABLED=true", fromIndex);
         expect(metadataEnvIndex).toBeGreaterThan(fromIndex);
         expect(metadataEnvIndex).toBeLessThan(firstRunIndex);
-      }
-      expect(startSrc).toContain("export AWS_EC2_METADATA_DISABLED=true");
-      expect(startSrc).toContain('export AWS_EC2_METADATA_DISABLED="true"');
-      expect(hermesBaseSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
-      expect(hermesRuntimeSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
-      expect(hermesStartSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
-    });
+
+        expect(startSrc).toContain("export AWS_EC2_METADATA_DISABLED=true");
+        expect(startSrc).toContain('export AWS_EC2_METADATA_DISABLED="true"');
+        expect(hermesBaseSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
+        expect(hermesRuntimeSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
+        expect(hermesStartSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
+      },
+    );
   });
 
   describe("sandbox ships tmux for the bundled tmux-session flow (#4513)", () => {

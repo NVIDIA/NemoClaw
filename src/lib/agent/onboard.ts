@@ -6,6 +6,7 @@
 // NEMOCLAW_AGENT env var. The OpenClaw path never touches this module.
 
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
@@ -25,7 +26,18 @@ import { getProviderSelectionConfig } from "../inference/config";
 import { normalizeInferenceSelection } from "../inference/selection";
 import { runSandboxConfigSync, sandboxConfigSyncArgs } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
+import { resolveSandboxHermesApiPort } from "../onboard/hermes-api-port";
+
+export {
+  createHermesApiPortScopedSandboxEntryPoints,
+  createHermesApiPortReservationScope,
+  type HermesApiPortReservationScope,
+  reserveCreateSandboxHermesApiPort,
+  withHermesApiPortReservationScope,
+} from "../onboard/hermes-api-port";
+
 import { redact, run } from "../runner";
+import * as registry from "../state/registry";
 import type { SandboxEntry } from "../state/registry/types";
 import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
@@ -35,6 +47,7 @@ import {
   isTerminalAgent,
   loadAgent,
   requireAgentPolicyAdditionsPath,
+  requireCandidateQualificationEnabled,
   resolveAgentName,
 } from "./defs";
 import { waitForAgentGatewayReady } from "./gateway-readiness";
@@ -50,6 +63,10 @@ export interface OnboardContext {
     args: string[],
     opts?: { ignoreError?: boolean; timeout?: number },
   ) => string | null;
+  captureOpenshell?: (
+    args: string[],
+    opts?: { ignoreError?: boolean; timeout?: number },
+  ) => CaptureOpenshellResult;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
   startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
@@ -168,6 +185,7 @@ export function resolveAgent({
   if (name === "nemocua" && !isCuaQualificationEnabled()) {
     throw new Error("NemoCUA candidate onboarding requires exact qualification authority");
   }
+  requireCandidateQualificationEnabled(name);
   return loadAgent(name);
 }
 
@@ -411,6 +429,7 @@ export async function handleAgentSetup(
   const {
     step,
     runCaptureOpenshell,
+    captureOpenshell,
     openshellBinary: openshellBin,
     startRecordedStep,
     recordStepComplete,
@@ -427,6 +446,11 @@ export async function handleAgentSetup(
     cuaObserveLiveAppliedPolicy,
     cuaWithGatewayRouteMutationLock,
   } = ctx;
+
+  const runSmokeCapture =
+    agent.name === "langchain-deepagents-code" && captureOpenshell
+      ? captureOpenshell
+      : runCaptureOpenshell;
 
   const syncNemoClawConfig = (): void => {
     runSandboxConfigSync(sandboxName, {
@@ -452,7 +476,7 @@ export async function handleAgentSetup(
       );
       if (binaryAvailability.available) {
         syncNemoClawConfig();
-        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
         if (smokeResult.ok) {
           await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
             beforeFailure: () => startRecordedStep("agent_setup", { sandboxName, provider, model }),
@@ -522,7 +546,7 @@ export async function handleAgentSetup(
   syncNemoClawConfig();
 
   if (isTerminalAgent(agent)) {
-    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
     if (!smokeResult.ok) {
       await failAgentSetup(
         sandboxName,
@@ -658,7 +682,7 @@ export function printDashboardUi(
     }
     printBearerTokenApiAccess(sandboxName, agent, cliName);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
-    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
+    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls, sandboxName);
     return;
   }
 
@@ -674,7 +698,12 @@ export function printDashboardUi(
       effectiveDashboardPort,
       redactUrl: dashboardUrlForDisplay,
     });
-    printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
+    printAdditionalForwardPorts(
+      agent,
+      effectiveDashboardPort,
+      deps.buildControlUiUrls,
+      sandboxName,
+    );
     return;
   }
 
@@ -699,7 +728,7 @@ export function printDashboardUi(
     effectiveDashboardPort,
     redactUrl: dashboardUrlForDisplay,
   });
-  printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
+  printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls, sandboxName);
 }
 
 /**
@@ -726,14 +755,25 @@ function printAdditionalForwardPorts(
   agent: AgentDefinition,
   primaryPort: number,
   buildControlUiUrls: (token: string | null, port: number) => string[],
+  sandboxName?: string,
 ): void {
   const declared = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
   if (declared.length === 0) return;
-  const apiPort = agent.healthProbe?.port;
-  for (const port of declared) {
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) continue;
-    if (port === primaryPort || port === agent.forwardPort) continue;
-    const isApi = port === apiPort;
+  const declaredApiPort = agent.healthProbe?.port;
+  // The manifest names Hermes' default API port. This sandbox owns its own, so
+  // announce the port the operator actually has to forward. Only Hermes
+  // allocates a per-sandbox API port; every other agent keeps its declared one.
+  const sandboxApiPort =
+    agent.name === "hermes"
+      ? resolveSandboxHermesApiPort(
+          (sandboxName ? registry.getSandbox(sandboxName) : undefined) ?? {},
+        )
+      : 0;
+  for (const declaredPort of declared) {
+    if (!Number.isInteger(declaredPort) || declaredPort < 1024 || declaredPort > 65535) continue;
+    if (declaredPort === primaryPort || declaredPort === agent.forwardPort) continue;
+    const isApi = declaredPort === declaredApiPort;
+    const port = isApi && agent.name === "hermes" ? sandboxApiPort : declaredPort;
     const sectionLabel = isApi ? "OpenAI-compatible API" : "additional port";
     console.log("");
     console.log(`  ${agent.displayName} ${sectionLabel}`);

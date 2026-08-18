@@ -184,7 +184,7 @@ other literal identifiers.
 | `custom endpoint` | Technical noun | A user-supplied inference endpoint that is not one of NemoClaw's named provider choices. | compatible endpoint before compatibility is validated |
 | `hosted inference` | Technical noun | Inference served by a remote provider-operated service. | local inference, cloud model |
 | `inference` | Technical noun | Model execution that produces a response from an input. | AI, generation when model execution is intended |
-| `inference health` | Technical noun | The complete classification from the named `inference.local` `/v1/models` status probe: `reachable` for HTTP `200` through `499`, `unhealthy` for HTTP `500` through `599`, or `unreachable` when no qualifying HTTP response arrives. | model health, successful inference, validation request |
+| `inference health` | Technical noun | The classification reported for a sandbox's inference route: the `inference.local` `/v1/models` probe result, and, when that route is reachable and the sandbox records a provider and a model, the result of one inference request sent over the same route. Values are `healthy`, `unauthorized`, `reachable`, `unhealthy`, `unreachable`, and `not probed`. | model health, successful inference |
 | `inference profile` | Technical noun | A blueprint selection that defines an inference provider type, provider name, endpoint, model, credential input, and route settings. | provider profile, model profile |
 | `inference request` | Technical noun | One request sent through an inference route to a model. | API call when the inference purpose matters |
 | `inference route reachability` | Technical noun | The `reachable` inference-health result produced when `https://inference.local/v1/models` returns HTTP `200` through `499`. It does not establish valid credentials, successful model invocation, readiness, compatibility, or support. | inference health, successful inference, validation request |
@@ -341,7 +341,7 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `contributor` | Technical noun | A person or agent that proposes or authors a repository change. | developer, submitter |
 | `docs build` | Technical noun | The repository command and result that validate and render the documentation source. | docs test, site build |
 | `documentation-only PR` | Technical noun | A PR whose diff changes explanatory documentation but no executable or behavior-affecting source. | docs PR when scope is not clear |
-| `documentation writer review` | Technical noun | The required review that determines documentation impact for a code change and checks changed explanatory text against repository writing and documentation rules. | docs review, writing pass |
+| `documentation writer review` | Technical noun | The independent review that checks a workflow-produced documentation candidate or direct documentation-only change against repository writing and documentation rules. | docs review, writing pass |
 | `E2E test` | Technical noun | A test that exercises a complete user journey across integrated components. | integration test when the full journey is not exercised |
 | `evidence` | Technical noun | A reproducible result or artifact tied to the revision, environment, and claim it supports. | proof without the supporting result, observation |
 | `feature branch` | Technical noun | A non-default Git branch that contains one proposed change. | working branch, PR branch before a PR exists |
@@ -391,7 +391,7 @@ A result can support more than one claim only when its evidence meets each defin
 | Class | Claim | Establishes | Does not establish |
 |---|---|---|---|
 | Operational | `inference route reachability` | The named `/v1/models` route returned HTTP `200` through `499`. | Valid credentials, successful model invocation, readiness, compatibility, or support. |
-| Operational | `inference health` | The named `/v1/models` probe produced a `reachable`, `unhealthy`, or `unreachable` classification. | Valid credentials, successful model invocation, readiness, compatibility, or support. |
+| Operational | `inference health` | The named `/v1/models` probe classification, plus the result of one inference request over the same route when NemoClaw sent one. | Broader API conformance, other requests or models, readiness, compatibility, or support. |
 | Operational | `readiness check` | A service or resource meets named criteria to begin its intended work. | Broader reliability, compatibility, or support. |
 | Operational | `validation request` | One authenticated request succeeded for the named endpoint, API family, model, and request shape. | Broader API conformance, other requests or models, reliability, or support. |
 | Evidence | `verification` | Evidence confirms the stated result for the named revision and environment. | Compatibility or support unless the evidence and decision establish them. |

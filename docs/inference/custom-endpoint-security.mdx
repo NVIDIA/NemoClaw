@@ -32,7 +32,17 @@ Blocked special-purpose targets include documentation, translation, benchmarking
 It also rejects public hostnames that resolve to a blocked address.
 
 A direct blueprint run rejects endpoint URLs that contain userinfo, such as an embedded username or password, before DNS resolution.
+Custom endpoint onboarding rejects endpoint URLs that contain userinfo, query, or fragment components instead of stripping those components.
+NemoClaw does not forward those components to the endpoint.
 Configure the provider credential separately instead of putting it in the endpoint URL.
+
+Custom endpoint onboarding also rejects an endpoint URL that contains control characters, percent-encoded control characters, spaces within the URL, shell metacharacters, or other characters outside the URL-safe ASCII set.
+The URL-safe ASCII set is ASCII letters, digits, and the characters `_ . / : = , @ % + - [ ] ~`.
+NemoClaw trims ASCII spaces at the start and end of the URL before it applies these checks.
+It also rejects an input that is not an absolute HTTP or HTTPS URL.
+This rejection happens before any network request, provider registration, registry write, or sandbox and image mutation, so a rejected input changes no NemoClaw state.
+The `inference set` command applies the same rejection classes to `--endpoint-url` before DNS resolution.
+Sandbox rebuild applies the same rejection classes to recorded custom endpoint metadata and treats a violating value as unknown.
 
 Managed provider defaults that do not provide an explicit custom endpoint through these paths are unaffected.
 

@@ -12,6 +12,8 @@ import {
 } from "./definition";
 import type { OnboardMachineContext, OnboardMachineEventType, OnboardMachineState } from "./types";
 
+export { redactSensitiveText };
+
 type OnboardSessionStepDefinition = OnboardMachineStateWithStepDefinition;
 
 export type OnboardSessionStepName = OnboardSessionStepDefinition["stepName"];

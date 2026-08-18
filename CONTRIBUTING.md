@@ -98,21 +98,6 @@ Install the following before you begin.
 - Docker (running)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
-### Windows Line Endings
-
-`.gitattributes` pins the files whose exact bytes the repository checks assert, so a new clone keeps LF even when `core.autocrlf` is `true`.
-
-Git does not rewrite a file that is already in your working tree.
-If you cloned before that rule existed, the file keeps CRLF, `git status` reports no change, and `npm run checks:repository` reports `use LF line endings`.
-
-Commit or stash your work first, because the next commands discard uncommitted changes.
-Then normalize the checkout once:
-
-```bash
-git rm --cached -r .
-git reset --hard
-```
-
 ## Getting Started
 
 From the repository root, prepare the checkout with one command:
@@ -221,7 +206,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run check` | Run the broad repo-wide pre-commit and full CLI/plugin coverage baseline |
 | `npm run check:diff` | Compatibility alias for `npm run validate:pr` |
 | `npm run checks` | Compatibility alias for `npm run checks:repository`; prints scope guidance before delegating |
-| `npm run format` | Auto-format Biome-supported source files |
+| `npm run format` | Auto-format added JavaScript and TypeScript files that Oxfmt does not exclude |
 | `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
 | `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
@@ -276,6 +261,34 @@ child cannot ignore that bound; write child contents only through the redacted
 artifact sink. Pass the auto fixture's frozen, canonical `progress` capability
 through unchanged; custom, copied, or no-op progress adapters are rejected at
 audited subprocess boundaries.
+
+Use live E2E only when the behavior needs a real shell, installer, process,
+Docker, OpenShell, `/proc`, sandbox, external service, or GitHub Actions
+boundary. Prefer unit, integration, package-contract, or `e2e-support` tests for
+deterministic code and workflow-planner logic. Select or extend coverage by
+semantic dimension, not by incidental output. Migrated targets such as
+`dashboard-remote-bind`, `credential-sanitization`, `telegram-injection`,
+`messaging-providers`, `messaging-compatible-endpoint`, and `gpu-e2e` show the
+expected shape: each target owns a behavior contract, while the typed registry
+keeps environment, onboarding profile, expected state, lifecycle, and `suiteIds`
+as matrix metadata. Extend that metadata only to select existing behavior; do
+not duplicate behavior logic in workflows, lists, or catalogues. When a
+combination is missing but not ready for a test, record a combinatorial gap with
+the missing dimension, nearest existing coverage, why a new test would duplicate
+or overreach current behavior, the follow-up owner, and the issue or PR that will
+make the gap testable. Do not add speculative coverage or change release judgment.
+
+E2E assertions should check outcomes, state, artifacts, and redacted diagnostics.
+Do not assert incidental terminal output, progress wording, ANSI escape
+sequences, spinner frames, or timing text unless that text is the product
+contract. A retry must have a checked-in bounded policy, a narrow transient
+signature, idempotence or reconciliation evidence, per-attempt artifacts, and a
+matching [`test/e2e/RETRY_INVENTORY.md`](test/e2e/RETRY_INVENTORY.md) entry. Do
+not add unproven retries, ambiguous mutation retries, or broad failed-job
+reruns. Keep operation-level retries separate from complete workflow reruns:
+`E2E / Main Retry` records attempt evidence without requesting a broad rerun,
+and Hosted Runner Recovery owns at most one full rerun only for authenticated
+GitHub-hosted runner-loss evidence.
 
 ### macOS Test Dependencies
 
@@ -398,6 +411,11 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
 
+The Oxfmt hook formats added JavaScript and TypeScript files that its configuration does not exclude.
+The hook reads its base ref from `NEMOCLAW_FORMAT_BASE_REF`, which defaults to `origin/main`.
+A file is added when the selected base commit has no file at that path.
+If Git cannot resolve the ref named by `NEMOCLAW_FORMAT_BASE_REF`, the Oxfmt hook exits with status 2 before invoking Oxfmt.
+
 For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
 If hooks were skipped, missing, failed, or uncertain, refresh the remote-tracking base with `git fetch origin main`, then run `npm run validate:pr` once to reproduce those checks for the current diff.
 
@@ -406,6 +424,27 @@ The `validate:pr` command applies the same path selection, so do not rerun type 
 CI runs the complete type-check gates independently; local path selection is a fast-feedback optimization, not the authoritative trust boundary.
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
+
+If you cloned this repo on Windows before `.gitattributes` set `* text=auto eol=lf`, your working tree can still contain CRLF line endings.
+The rule now keeps every tracked text file on LF while Git continues to detect binary files automatically.
+These line endings cause repository checks to fail.
+
+Warning: `git reset --hard` discards tracked changes.
+Commit all changes, or stash tracked and untracked changes with `git stash push --include-untracked`.
+Run `git status --short`, and continue only if the command produces no output.
+From the root of this repo, remove tracked files from the Git index:
+
+```bash
+git rm --cached -r .
+```
+
+Then restore the Git index and working tree from the current commit:
+
+```bash
+git reset --hard
+```
+
+Git checks out tracked text files with LF line endings.
 
 `npm run checks:repository` runs only the custom checks collected under `scripts/checks`; lint and the repository-check hook use it internally. The `npm run checks` alias remains available for compatibility and prints the canonical routine and narrow command names before delegating.
 
@@ -451,82 +490,20 @@ The repository is organized as follows.
 
 All new source files must be TypeScript. Do not add new `.js` files to the project. When modifying an existing JavaScript file, prefer migrating it to TypeScript in the same PR.
 
-Only a small CommonJS launcher/compatibility layer remains in `bin/`, while the main CLI implementation now lives in `src/lib/` and compiles to `dist/`. Tests in `test/` may remain ESM JavaScript for now but new test files should use TypeScript where practical.
+Only a small CommonJS launcher/compatibility layer remains in `bin/`, while the main CLI implementation now lives in `src/lib/` and compiles to `dist/`. Existing tests in `test/` may remain ESM JavaScript, but new test files must use TypeScript.
 
 Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 
 ## Documentation
 
-If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
+The [documentation contributor guide](docs/CONTRIBUTING.md) owns public-facing documentation procedure and rules.
 
-The [documentation contributor guide](docs/CONTRIBUTING.md) owns public-facing documentation
-procedure and rules.
+Ordinary code PRs may defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**` changes to the post-merge workflow.
+Each code PR must include required changes to owning repository guidance outside those paths.
+Direct documentation PRs still follow [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md), run the applicable documentation validation, and receive an independent documentation writer review.
 
-If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
-During release prep, run that skill first, make any doc version bumps, then open the docs refresh PR.
-
-### Documentation Writer Review Receipt
-
-After you complete a code or documentation change, a documentation writer subagent must review the completed changes.
-For a documentation-only change, the subagent must verify the changed pages against [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) and [WRITING.md](WRITING.md).
-The review must cover terminology, structure, voice, and code-sample presentation.
-Complete the Documentation Writer Review section in the PR description after that review.
-Keep one review completion checkbox and one instance of each visible or hidden field.
-
-Record one result:
-
-- `docs-updated` when the reviewed pull request changes documentation.
-  List the changed documentation paths as evidence.
-  For a documentation-only change, state that the subagent reviewed the writing rules and documentation style.
-- `no-docs-needed` when a code change does not require documentation and the evidence explains why.
-- `blocked` when a named decision, dependency, access problem, or input prevents the review.
-
-Record the product and surface that ran the review, such as `Codex Desktop`, `Codex CLI`, `Claude Code`, or `Cursor`.
-Use the same name for the same surface across PRs so the report groups its data correctly.
-
-Commit all changes from the final review.
-Then run these commands and put their values in the receipt's hidden HTML metadata comments:
-
-```bash
-git rev-parse --short HEAD
-git rev-parse --short HEAD:AGENTS.md
-```
-
-GitHub supplies the pull-request identity to the workflow and report.
-The hidden head SHA identifies the pull-request revision that the review covered.
-Rerun the review after any new commit changes the pull-request head.
-Pushing a new commit runs the receipt check again and reports the review as stale until the hidden metadata is refreshed.
-The Documentation Writer Review check reports an advisory finding when the receipt is missing, incomplete, or stale.
-The check compares the hidden head SHA with the current PR head and the hidden `AGENTS.md` blob SHA with the current PR's file.
-
-Maintainers can export receipt data from PR descriptions:
-
-```bash
-npm run docs-review:report -- --since 2026-06-12 --format csv > /tmp/nemoclaw-docs-review.csv
-```
-
-The report uses the authenticated GitHub CLI session and returns JSON by default.
-It measures receipt coverage, head-revision freshness, review results, and agent-surface counts.
-The `eligiblePrs` JSON metric reports the total eligible pull requests.
-The `eligibleCodePrs` and `eligibleDocsOnlyPrs` metrics report the code and documentation-only counts.
-It records the `AGENTS.md` blob SHA, but only the PR check compares that SHA with the current PR's file.
-It does not prove that an agent loaded `AGENTS.md`; it records observable workflow compliance.
-The retrospective report classifies code and documentation changes from the checked Type of Change field.
-It reports a PR as unclassified when that field is incomplete or contradictory.
-Use `--format summary` to print only aggregate metrics.
-Use `--until YYYY-MM-DD` to set the end of the reporting period.
-
-To build and preview docs locally:
-
-```console
-$ npm run docs                 # validate Fern docs with the pinned Fern CLI version
-$ npm run docs:live            # serve Fern docs locally with auto-rebuild
-$ npm run docs:preview:watch   # publish branch-based Fern previews on file changes
-```
-
-Use these npm scripts when validating docs for a PR.
-
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
+Repository administrators retain the `POST_MERGE_DOCS_API_KEY` Actions secret until rotation or removal.
+GitHub exposes it only to the author job's `Configure isolated inference` step; hosted-runner teardown removes the gateway runtime copy, and sandboxes, artifacts, and publisher never receive it.
 
 ### Markdown Docs for AI Agents
 

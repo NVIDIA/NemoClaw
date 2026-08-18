@@ -20,6 +20,9 @@ export interface OllamaInstallMenuInput {
    *  routing covers nothing, so the WSL-local install entry stays on offer.
    *  Only read when `hasWindowsOllama` is set; defaults to reachable. */
   windowsHostOllamaSupported?: boolean;
+  /** True when the responding daemon is known to run on Windows, including
+   *  WSL mirrored networking where it is observed through distro loopback. */
+  isWindowsHostOllama?: boolean;
   platform: NodeJS.Platform;
   isWsl: boolean;
   /** Resolved host for the running Ollama daemon. `host.docker.internal`
@@ -103,6 +106,8 @@ export interface OllamaInstallMenuEntry {
 export interface OllamaInstallMenuResult {
   entry: OllamaInstallMenuEntry | null;
   hasUpgradableOllama: boolean;
+  /** Whether recovery must install or replace the binary, rather than only restart its daemon. */
+  binaryNeedsUpgrade?: boolean;
 }
 
 function osTagFor(platform: NodeJS.Platform, isWsl: boolean): string | null {
@@ -118,9 +123,9 @@ function osTagFor(platform: NodeJS.Platform, isWsl: boolean): string | null {
  *   1. No usable Ollama anywhere (host, running, or a Windows install the
  *      sandbox can reach) — offer a fresh install as a fallback (e.g. when the
  *      NVIDIA API server is down and cloud keys are unavailable).
- *   2. Host Ollama exists but its version is below `MIN_OLLAMA_VERSION` —
- *      offer an explicit upgrade so the express setup path doesn't reuse a
- *      daemon that crashes loading newer starter models.
+ *   2. Host Ollama exists but its version is unavailable or below
+ *      `MIN_OLLAMA_VERSION` — offer an explicit upgrade so onboarding does
+ *      not reuse a daemon that can return tool calls as message text.
  */
 export function resolveOllamaInstallMenuEntry(
   input: OllamaInstallMenuInput,
@@ -136,7 +141,9 @@ export function resolveOllamaInstallMenuEntry(
   // 127.0.0.1/localhost. A Windows-host daemon reached via
   // `host.docker.internal` is handled by separate menu entries
   // (`install-windows-ollama` / `start-windows-ollama`).
-  const daemonProbeApplies = input.ollamaRunning && isLocalOllamaHost(input.ollamaHost);
+  const localUpgradeApplies = input.isWindowsHostOllama !== true;
+  const daemonProbeApplies =
+    localUpgradeApplies && input.ollamaRunning && isLocalOllamaHost(input.ollamaHost);
   const runningOllamaVersion =
     input.runningOllamaVersion !== undefined
       ? input.runningOllamaVersion
@@ -147,10 +154,19 @@ export function resolveOllamaInstallMenuEntry(
   // put a fresh `ollama` on `PATH` while the system daemon keeps `:11434`
   // on the old version (and vice versa). Upgrade when either source is below
   // the minimum.
-  const binaryNeedsUpgrade =
-    input.hasOllama && !isOllamaVersionAtLeast(installedOllamaVersion, MIN_OLLAMA_VERSION);
+  const installedBinaryMeetsMinimum =
+    localUpgradeApplies &&
+    input.hasOllama &&
+    isOllamaVersionAtLeast(installedOllamaVersion, MIN_OLLAMA_VERSION);
   const daemonNeedsUpgrade =
     daemonProbeApplies && !isOllamaVersionAtLeast(runningOllamaVersion, MIN_OLLAMA_VERSION);
+  // Restart-only recovery is safe only with positive evidence that the
+  // installed binary meets the floor. A stale daemon without a local binary
+  // still needs the installer to provide one.
+  const binaryNeedsUpgrade =
+    localUpgradeApplies &&
+    !installedBinaryMeetsMinimum &&
+    (input.hasOllama || daemonNeedsUpgrade);
   const hasUpgradableOllama = binaryNeedsUpgrade || daemonNeedsUpgrade;
   // A Windows-host install only covers the local-inference need when the
   // sandbox can route to it. Under a container runtime without that routing,
@@ -160,11 +176,11 @@ export function resolveOllamaInstallMenuEntry(
   const showEntry =
     (!input.hasOllama && !input.ollamaRunning && !usableWindowsOllama) || hasUpgradableOllama;
   if (!showEntry) {
-    return { entry: null, hasUpgradableOllama };
+    return { entry: null, hasUpgradableOllama, binaryNeedsUpgrade };
   }
   const osTag = osTagFor(input.platform, input.isWsl);
   if (osTag === null) {
-    return { entry: null, hasUpgradableOllama };
+    return { entry: null, hasUpgradableOllama, binaryNeedsUpgrade };
   }
   const labelPrefix = hasUpgradableOllama ? "Upgrade Ollama" : "Install Ollama";
   // Name the stale source explicitly: "running daemon" when the daemon is
@@ -189,6 +205,7 @@ export function resolveOllamaInstallMenuEntry(
   return {
     entry: { key: "install-ollama", label: `${labelPrefix} (${osTag})${upgradeSuffix}` },
     hasUpgradableOllama,
+    binaryNeedsUpgrade,
   };
 }
 
@@ -200,14 +217,11 @@ export interface OllamaUpgradeApplied {
 }
 
 /**
- * After the install/upgrade command, confirm the running Ollama daemon
- * actually advanced past `MIN_OLLAMA_VERSION`. The CLI binary on `PATH`
- * is not sufficient: a user-local install can put a newer binary on
- * `${HOME}/.local/bin` while the system daemon still owns `:11434`, and
- * `brew upgrade ollama` can fail silently with no daemon restart. Probe
- * `/api/version` on the daemon so the verdict matches what NemoClaw will
- * actually use for inference. The binary version is captured alongside
- * for diagnostics only.
+ * After an upgrade command, confirm that the running Ollama daemon and the
+ * installed binary both meet `MIN_OLLAMA_VERSION`. A user-local install
+ * can put a newer binary on `PATH` while the system daemon still owns `:11434`.
+ * The reverse mismatch can leave an older binary on `PATH` after the daemon
+ * restarts. Probe both versions so onboarding rejects either incomplete state.
  */
 export function assertOllamaUpgradeApplied(
   menu: { hasUpgradableOllama: boolean },
@@ -218,17 +232,47 @@ export function assertOllamaUpgradeApplied(
   }
   const detectedDaemonVersion = getRunningOllamaDaemonVersion(runCaptureImpl);
   const detectedBinaryVersion = getInstalledOllamaVersion(runCaptureImpl);
-  if (isOllamaVersionAtLeast(detectedDaemonVersion, MIN_OLLAMA_VERSION)) {
+  if (
+    isOllamaVersionAtLeast(detectedDaemonVersion, MIN_OLLAMA_VERSION) &&
+    isOllamaVersionAtLeast(detectedBinaryVersion, MIN_OLLAMA_VERSION)
+  ) {
     return { ok: true, detectedDaemonVersion, detectedBinaryVersion };
   }
   const daemonLabel = detectedDaemonVersion ?? "unreachable";
   const binaryLabel = detectedBinaryVersion ?? "unknown";
+  const state = `running daemon reports ${daemonLabel} (binary: ${binaryLabel}), need ≥ ${MIN_OLLAMA_VERSION}`;
   return {
     ok: false,
     detectedDaemonVersion,
     detectedBinaryVersion,
-    message:
-      `Ollama upgrade did not take effect — running daemon reports ${daemonLabel} (binary: ${binaryLabel}), need ≥ ${MIN_OLLAMA_VERSION}. ` +
-      "Restart the system daemon and rerun, or upgrade Ollama manually (https://ollama.com/download).",
+    message: `Ollama upgrade did not take effect — ${state}. ${resolveUpgradeRemedy(detectedDaemonVersion, detectedBinaryVersion)}`,
   };
+}
+
+function resolveUpgradeRemedy(
+  detectedDaemonVersion: string | null,
+  detectedBinaryVersion: string | null,
+): string {
+  if (isOllamaVersionAtLeast(detectedBinaryVersion, MIN_OLLAMA_VERSION)) {
+    return (
+      "The installed binary meets the minimum, so the service is still serving the old one. " +
+      "Restart it with 'sudo systemctl restart ollama' and rerun."
+    );
+  }
+  if (!detectedBinaryVersion) {
+    if (!detectedDaemonVersion) {
+      return (
+        "Neither the daemon nor the binary could be read. Check that Ollama is installed and " +
+        "running, then rerun, or install it manually (https://ollama.com/download)."
+      );
+    }
+    return (
+      "The installed binary version could not be read. Check that the Ollama binary is installed " +
+      "and available on PATH, then rerun, or install it manually (https://ollama.com/download)."
+    );
+  }
+  return (
+    `The installer did not deliver ${MIN_OLLAMA_VERSION} on this host. Install it directly with ` +
+    `'curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=${MIN_OLLAMA_VERSION} sh' and rerun.`
+  );
 }

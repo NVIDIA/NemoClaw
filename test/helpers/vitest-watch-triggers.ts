@@ -7,7 +7,6 @@ export type VitestWatchTriggerPattern = {
 };
 
 const E2E_WORKFLOW_CONTRACTS = [
-  "test/e2e/support/channels-add-remove-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
@@ -15,7 +14,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/e2e-report-to-pr-workflow-boundary.test.ts",
   "test/e2e/support/e2e-workflow.test.ts",
   "test/e2e/support/e2e-workflow-trace.test.ts",
-  "test/e2e/support/gateway-guard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-dashboard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-workflow-boundary.test.ts",
   "test/hosted-runner-recovery-workflow.test.ts",
@@ -24,20 +22,16 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/jetson-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
-  "test/e2e/support/openclaw-discord-workflow-boundary.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
-  "test/e2e/support/openclaw-slack-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
   "test/e2e/support/runner-pressure-workflow-boundary.test.ts",
   "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
-  "test/e2e/support/sandbox-operations-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
   "test/e2e/support/shared-e2e-workflow-boundary.test.ts",
-  "test/e2e/support/spark-install-workflow-boundary.test.ts",
+  "test/e2e/support/standard-profile-workflow-boundary.test.ts",
   "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
-  "test/e2e/support/tunnel-lifecycle-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
   "test/e2e/support/workflow-plan.test.ts",
 ] as const;
@@ -56,8 +50,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
-    testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
+    pattern: /(?:^|\/)(agents\/(?:hermes|langchain-deepagents-code)\/)?Dockerfile$/,
+    testsToRun: (_file, match) =>
+      match[1]
+        ? ["src/lib/onboard/managed-startup-profile.test.ts"]
+        : [
+            "src/lib/onboard/managed-startup-profile.test.ts",
+            "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+          ],
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,
@@ -65,6 +65,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "src/lib/onboard/initial-policy-real-policy.test.ts",
       "src/lib/onboard/initial-policy.test.ts",
     ),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:agents\/pi\/(?:Dockerfile(?:\.base)?|dependency-review\.md|generate-config\.ts|manifest\.yaml|policy-additions\.yaml|start\.sh|pi-runtime\/package(?:-lock)?\.json)|\.github\/workflows\/(?:managed-images|base-image)\.yaml)$/,
+    testsToRun: runTests("test/pi-candidate-runtime-artifacts.test.ts"),
   },
   {
     pattern: /(?:^|\/)src\/lib\/messaging\/channels\/[^/]+\/policy\/(?:hermes|openclaw)\.yaml$/,
@@ -75,6 +80,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
     ),
+  },
+  {
+    pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/local-memory\.yaml$/,
+    testsToRun: runTests("test/effective-policy-contracts.test.ts"),
   },
   {
     pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/claude-code\.yaml$/,
@@ -93,20 +102,8 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/setup-jetson.test.ts"),
   },
   {
-    pattern: /(?:^|\/)tools\/e2e\/jetson-dispatch-cleanup\.sh$/,
-    testsToRun: runTests("test/e2e/support/jetson-dispatch-worker.test.ts"),
-  },
-  {
-    pattern: /(?:^|\/)tools\/e2e\/colossus-jetson-dispatch-deploy\.sh$/,
-    testsToRun: runTests("test/e2e/support/colossus-jetson-dispatch-deploy.test.ts"),
-  },
-  {
-    pattern:
-      /(?:^|\/)tools\/e2e\/(?:colossus-jetson-dispatch\.environment|nemoclaw-jetson-dispatch\.service)$/,
-    testsToRun: runTests(
-      "test/e2e/support/colossus-jetson-dispatch-deploy.test.ts",
-      "test/e2e/support/jetson-dispatch-worker.test.ts",
-    ),
+    pattern: /(?:^|\/)tools\/e2e\/contracts\/v1\/jetson-dispatch\.json$/,
+    testsToRun: runTests("test/e2e/support/jetson-dispatch-client.test.ts"),
   },
   {
     pattern:
@@ -115,6 +112,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/actions\/build-base-image-platform\/action\.yaml$/,
+    testsToRun: runTests(
+      "test/dcode-base-image-workflow.test.ts",
+      "test/openclaw-dependency-review.test.ts",
     ),
   },
   {
@@ -142,12 +146,23 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/e2e-manifests.test.ts"),
   },
   {
-    pattern: /(?:^|\/)test\/e2e\/docs\/parity-inventory\.generated\.json$/,
-    testsToRun: runTests("test/e2e/support/e2e-migration-policy.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/workflows\/e2e\.yaml$/,
     testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/e2e-standard-profile\.yaml$/,
+    testsToRun: runTests("test/e2e/support/standard-profile-workflow-boundary.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/portable-profile-e2e\.yaml$/,
+    testsToRun: runTests(
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)test\/e2e\/fixtures\/portable-profile-systemctl-shim\.sh$/,
+    testsToRun: runTests("test/e2e/support/portable-profile-systemctl-shim.test.ts"),
   },
   {
     pattern:
@@ -167,6 +182,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
   },
   {
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/post-merge-docs\.yaml|tools\/post-merge-docs\/(?:review-policy\.yaml|[^/]+\.mts))$/,
+    testsToRun: runTests("test/post-merge-docs.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
     testsToRun: runTests(
       "test/pr-review-advisor-workflow-boundary.test.ts",
@@ -182,13 +202,12 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e-main-retry-workflow.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|wsl-e2e|macos-e2e|platform-vitest-main)\.yaml$/,
+    pattern: /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|platform-vitest-main)\.yaml$/,
     testsToRun: runTests("test/hosted-runner-recovery-workflow.test.ts"),
   },
   {
     pattern:
-      /(?:^|\/)(?:\.github\/workflows\/(?:platform-vitest-main|wsl-e2e)\.yaml|tools\/wsl\/ci-helper\.ps1)$/,
+      /(?:^|\/)(?:\.github\/workflows\/platform-vitest-main\.yaml|tools\/wsl\/ci-helper\.ps1)$/,
     testsToRun: runTests(
       "test/platform-vitest-main-workflow.test.ts",
       "test/wsl-ci-helper.test.ts",

@@ -21,6 +21,9 @@ const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2E = shouldRunLiveE2E();
 const canonicalBannerBoundary = path.resolve("nemoclaw/src/shared/banner-boundary.cts");
+const canonicalCredentialFilterBoundary = path.resolve(
+  "nemoclaw/src/shared/credential-filter-boundary.cts",
+);
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
@@ -35,6 +38,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*banner-boundary\.cjs$/,
     replacement: canonicalBannerBoundary,
+  },
+  {
+    find: /^.*credential-filter-boundary\.cjs$/,
+    replacement: canonicalCredentialFilterBoundary,
   },
   {
     find: /^.*openshell-policy-boundary\.cjs$/,
@@ -163,6 +170,8 @@ export default defineConfig({
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
+            "test/install-forward-restore-diagnostics.test.ts",
+            "test/install-hermes-forward-restore.test.ts",
             "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
@@ -174,6 +183,7 @@ export default defineConfig({
             "test/install-station-host-preparation.test.ts",
             "test/install-station-package-state.test.ts",
             "test/install-station-package-transaction.test.ts",
+            "test/install-openshell-e2e-artifact.test.ts",
             "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
@@ -193,6 +203,8 @@ export default defineConfig({
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
+            "test/install-forward-restore-diagnostics.test.ts",
+            "test/install-hermes-forward-restore.test.ts",
             "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
@@ -204,6 +216,7 @@ export default defineConfig({
             "test/install-station-host-preparation.test.ts",
             "test/install-station-package-state.test.ts",
             "test/install-station-package-transaction.test.ts",
+            "test/install-openshell-e2e-artifact.test.ts",
             "test/install-openshell-version-pin.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],

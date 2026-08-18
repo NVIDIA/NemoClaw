@@ -6,12 +6,20 @@ import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provi
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
 
+export {
+  confirmHostLocalInferenceAuthority,
+  type PreparedHostLocalInferenceAuthority,
+  prepareHostLocalInferenceAuthority,
+  prepareSandboxHostLocalInferenceDestroyAuthority,
+  retirePreparedHostLocalInferenceAuthority,
+} from "../../../onboard/runtime-provider/host-local-inference-lifecycle";
 export type {
   ManagedWorkloadCloneSnapshot,
   PreparedManagedWorkloadCloneHandoff,
   PrepareManagedWorkloadCloneHandoffInput,
 } from "../../../onboard/workload/clone";
 export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
+export { createSnapshotCloneLifecycle, fingerprintSandboxLiveIdentity } from "./clone-lifecycle";
 export type {
   ManagedCloneProviderBinding,
   ManagedCloneProviderCleanupResult,
@@ -38,6 +46,7 @@ export {
   prepareSandboxRuntimeRestore,
   SandboxSnapshotProviderError,
 } from "./provider-lifecycle";
+export type { RuntimeProviderBundle };
 
 /**
  * Resolve the one already-registered provider bundle for a durable sandbox.

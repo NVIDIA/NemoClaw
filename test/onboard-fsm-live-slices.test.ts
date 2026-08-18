@@ -282,6 +282,8 @@ function seedResumeSession(state, sandboxComplete = true) {
     session.steps[step].status = "complete";
   }
   if (sandboxComplete) session.steps.sandbox.status = "complete";
+  session.checkpoint = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"))})
+    .deriveCheckpointFromSession(session, { profile: "default" });
   onboardSession.saveSession(session);
 }
 
@@ -599,14 +601,15 @@ describe("live onboard FSM slice boundaries", () => {
     ]);
   });
 
-  it("leaves ordinary policy tiers non-authoritative in the runOnboard machine", () => {
-    for (const policyTier of ["balanced", "restricted"] as const) {
+  it.each(["balanced", "restricted"] as const)(
+    "leaves ordinary policy tiers non-authoritative in the runOnboard machine [case %#]",
+    (policyTier) => {
       assert.deepEqual(runSliceProbe({ slice: "core", mode: "ordinary-policy-tier", policyTier }), [
         "initial:init",
         "authoritative-policy-tier:undefined",
       ]);
-    }
-  });
+    },
+  );
 
   it("preserves an explicit null policy tier for authoritative rebuilds", () => {
     const called = runSliceProbe({

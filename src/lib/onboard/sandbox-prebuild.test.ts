@@ -53,51 +53,53 @@ describe("sandbox BuildKit prebuild", () => {
     }
   });
 
-  it("keeps Docker runtime settings while dropping secrets and control-plane state", () => {
-    vi.stubEnv("PATH", "/usr/bin");
-    vi.stubEnv("HOME", "/home/user");
-    vi.stubEnv("CONTAINERS_CONF", "/home/user/.config/nemoclaw/portable/containers.conf");
-    vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
-    vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
-    vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
-    vi.stubEnv("BUILDX_BUILDER", "external-builder");
-    vi.stubEnv("XDG_CONFIG_HOME", "/home/user/.config");
-    vi.stubEnv("HTTPS_PROXY", "http://proxy:8080");
-    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "secret");
-    vi.stubEnv("GITHUB_TOKEN", "secret");
-    vi.stubEnv("KUBECONFIG", "/home/user/.kube/config");
-    vi.stubEnv("SSH_AUTH_SOCK", "/tmp/agent.sock");
-    vi.stubEnv("RUST_LOG", "debug");
-    vi.stubEnv("RUST_BACKTRACE", "1");
-    vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw");
-    vi.stubEnv("GRPC_VERBOSITY", "debug");
+  it.each([
+    "NVIDIA_INFERENCE_API_KEY",
+    "GITHUB_TOKEN",
+    "KUBECONFIG",
+    "SSH_AUTH_SOCK",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    "OPENSHELL_GATEWAY",
+    "GRPC_VERBOSITY",
+    "BUILDX_BUILDER",
+  ])(
+    "keeps Docker runtime settings while dropping secrets and control-plane state [case %#]",
+    (key) => {
+      vi.stubEnv("PATH", "/usr/bin");
+      vi.stubEnv("HOME", "/home/user");
+      vi.stubEnv("CONTAINERS_CONF", "/home/user/.config/nemoclaw/portable/containers.conf");
+      vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
+      vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
+      vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+      vi.stubEnv("BUILDX_BUILDER", "external-builder");
+      vi.stubEnv("XDG_CONFIG_HOME", "/home/user/.config");
+      vi.stubEnv("HTTPS_PROXY", "http://proxy:8080");
+      vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "secret");
+      vi.stubEnv("GITHUB_TOKEN", "secret");
+      vi.stubEnv("KUBECONFIG", "/home/user/.kube/config");
+      vi.stubEnv("SSH_AUTH_SOCK", "/tmp/agent.sock");
+      vi.stubEnv("RUST_LOG", "debug");
+      vi.stubEnv("RUST_BACKTRACE", "1");
+      vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw");
+      vi.stubEnv("GRPC_VERBOSITY", "debug");
 
-    const env = dockerBuildSubprocessEnv();
+      const env = dockerBuildSubprocessEnv();
 
-    expect(env).toMatchObject({
-      PATH: "/usr/bin",
-      HOME: "/home/user",
-      CONTAINERS_CONF: "/home/user/.config/nemoclaw/portable/containers.conf",
-      DOCKER_HOST: "unix:///var/run/docker.sock",
-      DOCKER_CONFIG: "/home/user/.docker-ci",
-      DOCKER_CONTEXT: "remote-builder",
-      XDG_CONFIG_HOME: "/home/user/.config",
-      HTTPS_PROXY: "http://proxy:8080",
-    });
-    for (const key of [
-      "NVIDIA_INFERENCE_API_KEY",
-      "GITHUB_TOKEN",
-      "KUBECONFIG",
-      "SSH_AUTH_SOCK",
-      "RUST_LOG",
-      "RUST_BACKTRACE",
-      "OPENSHELL_GATEWAY",
-      "GRPC_VERBOSITY",
-      "BUILDX_BUILDER",
-    ]) {
+      expect(env).toMatchObject({
+        PATH: "/usr/bin",
+        HOME: "/home/user",
+        CONTAINERS_CONF: "/home/user/.config/nemoclaw/portable/containers.conf",
+        DOCKER_HOST: "unix:///var/run/docker.sock",
+        DOCKER_CONFIG: "/home/user/.docker-ci",
+        DOCKER_CONTEXT: "remote-builder",
+        XDG_CONFIG_HOME: "/home/user/.config",
+        HTTPS_PROXY: "http://proxy:8080",
+      });
+
       expect(env[key], key).toBeUndefined();
-    }
-  });
+    },
+  );
 
   it("never enables a local-image handoff for a remote gateway", () => {
     expect(resolveSandboxPrebuildEnabled({}, false)).toBe(false);

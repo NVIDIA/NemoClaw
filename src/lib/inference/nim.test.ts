@@ -4,7 +4,6 @@
 import { createRequire } from "module";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 // Import source directly so tests cannot pass against a stale build.
 import * as nim from "./nim";
 
@@ -98,13 +97,11 @@ describe("nim", () => {
       expect(nim.listModels().length).toBe(5);
     });
 
-    it("each model has name, image, and minGpuMemoryMB", () => {
-      for (const m of nim.listModels()) {
-        expect(m.name).toBeTruthy();
-        expect(m.image).toBeTruthy();
-        expect(typeof m.minGpuMemoryMB === "number").toBeTruthy();
-        expect(m.minGpuMemoryMB > 0).toBeTruthy();
-      }
+    it.each(nim.listModels())("model $name has an image and positive GPU memory", (model) => {
+      expect(model.name).toBeTruthy();
+      expect(model.image).toBeTruthy();
+      expect(typeof model.minGpuMemoryMB === "number").toBeTruthy();
+      expect(model.minGpuMemoryMB > 0).toBeTruthy();
     });
   });
 
@@ -406,25 +403,23 @@ describe("nim", () => {
       }
     }
 
-    it("classifies explicit DGX Station identifiers as station", () => {
-      for (const model of ["NVIDIA DGX Station GB300", "DGX-Station", "P3830"]) {
+    it.each(["NVIDIA DGX Station GB300", "DGX-Station", "P3830"])(
+      "classifies explicit DGX Station identifier %s as station",
+      (model) => {
         withFirmwareModel(model, () => {
           expect(nim.detectNvidiaPlatform()).toBe("station");
         });
-      }
-    });
+      },
+    );
 
-    it("does not classify unrelated Galaxy or P3830 substrings as Station", () => {
-      for (const model of [
-        "Samsung Galaxy Book4 Ultra",
-        "Acme Galaxy Rack Server",
-        "Acme XP3830 Workstation",
-      ]) {
+    it.each(["Samsung Galaxy Book4 Ultra", "Acme Galaxy Rack Server", "Acme XP3830 Workstation"])(
+      "does not classify unrelated model %s as DGX Station",
+      (model) => {
         withFirmwareModel(model, () => {
           expect(nim.detectNvidiaPlatform()).toBe("linux");
         });
-      }
-    });
+      },
+    );
 
     it("falls back to devicetree when DMI is unreadable", () => {
       withDmiUnavailableAndDevicetreeModel("NVIDIA DGX Spark", () => {
@@ -809,10 +804,10 @@ describe("nim", () => {
 
     // Trust-tier gate: on ARM64 Linux with generic firmware, the absence of
     // `/proc/driver/nvidia/` is the Windows-on-ARM WSL shim profile and must
-    // be rejected even when the nvidia-smi probe returns a plausible-looking
-    // NVIDIA name. The shim was QA-confirmed to emit format-valid
-    // `uuid`/`compute_cap`/`vbios_version` triples but never populates the
-    // kernel-driver path.
+    // be rejected on a plausible-looking NVIDIA name; the only escape is a
+    // passing bounded CUDA proof (#9000), so with no prover available the
+    // gate stays fail-closed. The QA-confirmed shim emits format-valid
+    // triples but never populates the kernel-driver path.
     it("rejects when /proc/driver/nvidia/ is absent on ARM64 generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -827,7 +822,7 @@ describe("nim", () => {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
           withLinuxArm64(() => {
             withNvidiaKernelInterface(false, () => {
-              expect(nimModule.detectGpu()).toBeNull();
+              expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: null })).toBeNull();
             });
           });
         });
@@ -838,8 +833,8 @@ describe("nim", () => {
 
     // Fail-closed contract: the trust-tier helper wraps the `fs.existsSync`
     // probe in a try/catch so a hardened sandbox or seccomp policy that
-    // refuses the syscall cannot mask the gate. When the probe throws on
-    // ARM64 generic firmware, the host must be rejected — never trusted.
+    // refuses the syscall cannot mask the gate. A probe that throws on ARM64
+    // generic firmware with no CUDA proof available must be rejected.
     it("rejects when /proc/driver/nvidia/ probe throws on ARM64 generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -860,7 +855,7 @@ describe("nim", () => {
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
           withLinuxArm64(() => {
-            expect(nimModule.detectGpu()).toBeNull();
+            expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: null })).toBeNull();
           });
         });
       } finally {
@@ -1826,8 +1821,9 @@ describe("nim", () => {
       }
     });
 
-    it("uses published docker port when no port is provided", () => {
-      for (const mapping of ["0.0.0.0:9000", "127.0.0.1:9000", "[::]:9000", ":::9000"]) {
+    it.each(["0.0.0.0:9000", "127.0.0.1:9000", "[::]:9000", ":::9000"])(
+      "uses published Docker port mapping %s when no port is provided",
+      (mapping) => {
         const runCapture = vi.fn((cmd: string | string[]) => {
           if (!Array.isArray(cmd)) throw new Error("expected argv array");
           if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
@@ -1865,8 +1861,8 @@ describe("nim", () => {
         } finally {
           restore();
         }
-      }
-    });
+      },
+    );
 
     it("falls back to 8000 when docker port lookup fails", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {

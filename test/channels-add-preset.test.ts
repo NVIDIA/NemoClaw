@@ -166,8 +166,12 @@ function setSession(
   sessionState = { sandboxName, policyPresets } as onboardSession.Session;
 }
 
+let stdinIsTty: PropertyDescriptor | undefined;
+
 beforeEach(() => {
   for (const key of TEST_ENV_KEYS) delete process.env[key];
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
   testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-channels-add-preset-"));
   process.env.HOME = testHome;
   process.env.NEMOCLAW_NON_INTERACTIVE = "1";
@@ -323,6 +327,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
   fs.rmSync(testHome, { recursive: true, force: true });
   for (const key of Object.keys(process.env)) delete process.env[key];
   Object.assign(process.env, originalProcessEnv);
@@ -395,8 +402,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     );
   });
 
-  for (const channel of ["telegram", "slack", "discord"]) {
-    it(`applies the '${channel}' preset before triggering rebuild`, async () => {
+  it.each(["telegram", "slack", "discord"])(
+    "applies the '%s' preset before triggering rebuild",
+    async (channel) => {
       await addSandboxChannel("test-sb", { channel });
 
       expect(applyPresetSpy).toHaveBeenCalledOnce();
@@ -407,8 +415,8 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       expect(callOrder.indexOf(`applyPreset:${channel}`)).toBeLessThan(
         callOrder.indexOf("promptAndRebuild"),
       );
-    });
-  }
+    },
+  );
 
   it("applies the tokenless WhatsApp preset for Hermes before triggering rebuild", async () => {
     sandboxAgent = "hermes";

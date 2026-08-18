@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
+import { listTargets } from "../registry/registry.ts";
+import { liveTargetSupport } from "../registry/runtime-support.ts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const SPECIAL_GATE_ENV = ["NEMOCLAW_ISSUE_4434_LIVE", "NEMOCLAW_MCP_BRIDGE_AGENT"] as const;
@@ -60,6 +62,21 @@ function listLiveTests(options: {
 
 function linesForFile(lines: readonly string[], file: string): string[] {
   return lines.filter((line) => line.startsWith(`[e2e-live] test/e2e/live/${file} >`));
+}
+
+/**
+ * A registered target ID. `wired: true` selects one the live fixtures support;
+ * `wired: false` selects a declared placeholder the live matrix skips.
+ */
+function declaredTargetId({ wired }: { wired: boolean }): string {
+  const match = listTargets().find(
+    (registered) => liveTargetSupport(registered).supported === wired,
+  );
+  return match?.id ?? missingDeclaredTarget(wired);
+}
+
+function missingDeclaredTarget(wired: boolean): never {
+  throw new Error(`registry declares no ${wired ? "wired" : "not wired"} target`);
 }
 
 describe("live E2E target gating", () => {
@@ -114,38 +131,32 @@ describe("live E2E target gating", () => {
     expect(collected).toEqual(discovered);
   });
 
-  it(
-    "applies each special target's explicit opt-in at real Vitest collection",
+  it.each([["issue-4434-tui-unreachable-inference.test.ts", "NEMOCLAW_ISSUE_4434_LIVE"]] as const)(
+    "applies the %s special target's %s opt-in at real Vitest collection",
     testTimeoutOptions(15_000),
-    () => {
-      const gatedFiles = [
-        ["issue-4434-tui-unreachable-inference.test.ts", "NEMOCLAW_ISSUE_4434_LIVE"],
-      ] as const;
-      const files = gatedFiles.map(([file]) => file);
-      const disabled = listLiveTests({ enabled: true, files });
+    (file, gate) => {
+      const disabled = listLiveTests({ enabled: true, files: [file] });
 
       expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
-      for (const [file, gate] of gatedFiles) {
-        const enabled = listLiveTests({ enabled: true, env: { [gate]: "1" }, files: [file] });
+      const enabled = listLiveTests({ enabled: true, env: { [gate]: "1" }, files: [file] });
 
-        expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
-        expect(
-          linesForFile(enabled.lines, file).length,
-          `${file} should collect more tests when ${gate}=1`,
-        ).toBeGreaterThan(linesForFile(disabled.lines, file).length);
-      }
+      expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
+      expect(
+        linesForFile(enabled.lines, file).length,
+        `${file} should collect more tests when ${gate}=1`,
+      ).toBeGreaterThan(linesForFile(disabled.lines, file).length);
     },
   );
 
-  it("collects exactly one reviewed MCP bridge agent shard", testTimeoutOptions(30_000), () => {
-    const file = "mcp-bridge.test.ts";
-    const expectedTestByShard = {
-      deepagents: "mcp-bridge-deepagents",
-      hermes: "mcp-bridge-hermes",
-      openclaw: "mcp-bridge",
-    } as const;
-
-    for (const [shard, expectedTest] of Object.entries(expectedTestByShard)) {
+  it.each([
+    ["deepagents", "mcp-bridge-deepagents"],
+    ["hermes", "mcp-bridge-hermes"],
+    ["openclaw", "mcp-bridge"],
+  ] as const)(
+    "collects exactly the reviewed %s MCP bridge agent shard",
+    testTimeoutOptions(30_000),
+    (shard, expectedTest) => {
+      const file = "mcp-bridge.test.ts";
       const result = listLiveTests({
         enabled: true,
         env: { NEMOCLAW_MCP_BRIDGE_AGENT: shard },
@@ -156,8 +167,11 @@ describe("live E2E target gating", () => {
       expect(linesForFile(result.lines, file)).toEqual([
         `[e2e-live] test/e2e/live/${file} > ${expectedTest}`,
       ]);
-    }
+    },
+  );
 
+  it("rejects an unreviewed MCP bridge agent shard", testTimeoutOptions(30_000), () => {
+    const file = "mcp-bridge.test.ts";
     const invalid = listLiveTests({
       enabled: true,
       env: { NEMOCLAW_MCP_BRIDGE_AGENT: "all" },
@@ -167,27 +181,75 @@ describe("live E2E target gating", () => {
     expect(invalid.stderr).toContain("Unsupported NEMOCLAW_MCP_BRIDGE_AGENT: all");
   });
 
-  it("applies Linux gates at real Vitest collection", () => {
-    const linuxTests = [
-      [
-        "spark-install.test.ts",
-        "spark install path: standard non-interactive install leaves NemoClaw and OpenShell usable",
-      ],
-      [
-        "openshell-gateway-upgrade.test.ts",
-        "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",
-      ],
-    ] as const;
+  it("rejects a TARGET_ID no registry target declares (#8286)", testTimeoutOptions(30_000), () => {
+    const file = "registry-targets.test.ts";
+
+    // The workflow selects one target with `-t "^${TARGET_ID}$"`. An id no
+    // target declares matches nothing, and an empty id builds `-t "^$"`,
+    // which also matches nothing, so the run would collect no test and
+    // exit 0 having executed no target.
+    const unknown = listLiveTests({
+      enabled: true,
+      env: { TARGET_ID: "does-not-exist" },
+      files: [file],
+    });
+
+    expect(unknown.status, unknown.stdout).not.toBe(0);
+    expect(`${unknown.stdout}${unknown.stderr}`).toContain("Unknown target 'does-not-exist'");
+
+    const empty = listLiveTests({ enabled: true, env: { TARGET_ID: "" }, files: [file] });
+
+    expect(empty.status, empty.stdout).not.toBe(0);
+    expect(`${empty.stdout}${empty.stderr}`).toContain("Selected target ID ''");
+
+    const unsafe = listLiveTests({
+      enabled: true,
+      env: { TARGET_ID: "unsafe/id" },
+      files: [file],
+    });
+
+    expect(unsafe.status, unsafe.stdout).not.toBe(0);
+    expect(`${unsafe.stdout}${unsafe.stderr}`).toContain("Selected target ID 'unsafe/id'");
+  });
+
+  it.each([true, false])(
+    "collects registry targets when wired is %s for a declared TARGET_ID (#8286)",
+    testTimeoutOptions(30_000),
+    (wired) => {
+      const file = "registry-targets.test.ts";
+
+      // The check rejects only ids the registry does not declare, so a wired id
+      // and a declared placeholder both still collect. Collecting at least one
+      // test proves the file was evaluated rather than skipped outright.
+      const result = listLiveTests({
+        enabled: true,
+        env: { TARGET_ID: declaredTargetId({ wired }) },
+        files: [file],
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(linesForFile(result.lines, file).length).toBeGreaterThan(0);
+    },
+  );
+
+  it.each([
+    [
+      "spark-install.test.ts",
+      "spark install path: standard non-interactive install leaves NemoClaw and OpenShell usable",
+    ],
+    [
+      "openshell-gateway-upgrade.test.ts",
+      "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",
+    ],
+  ] as const)("applies the Linux gate to %s at real Vitest collection", (file, testName) => {
     const result = listLiveTests({
       enabled: true,
-      files: linuxTests.map(([file]) => file),
+      files: [file],
     });
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
-    for (const [file, testName] of linuxTests) {
-      expect(linesForFile(result.lines, file).some((line) => line.endsWith(testName))).toBe(
-        process.platform === "linux",
-      );
-    }
+    expect(linesForFile(result.lines, file).some((line) => line.endsWith(testName))).toBe(
+      process.platform === "linux",
+    );
   });
 });

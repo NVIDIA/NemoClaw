@@ -30,3 +30,33 @@ export function resolveOpenShellSandboxId(
   }
   return sandboxId;
 }
+
+/**
+ * Read sandbox IDs from the OpenShell CLI, memoized per process.
+ *
+ * Session detection needs the durable ID because newer OpenShell connects every
+ * sandbox through one fixed SSH alias and names the target only on its proxy
+ * command (#9316). Keeping the host-boundary call here leaves the state layer
+ * to parsing and classification. A sandbox whose ID cannot be read yields null,
+ * which leaves detection on SSH-host matching rather than failing the
+ * surrounding command.
+ */
+export function createOpenshellSandboxIdReader(
+  openshellBinary: string,
+  runCommand: (binary: string, args: string[]) => { status: number | null; stdout: string },
+): (sandboxName: string) => string | null {
+  const cache = new Map<string, string | null>();
+  return (sandboxName: string): string | null => {
+    const cached = cache.get(sandboxName);
+    if (cached !== undefined) return cached;
+    let resolved: string | null = null;
+    try {
+      const result = runCommand(openshellBinary, ["sandbox", "get", sandboxName]);
+      resolved = result.status === 0 ? parseOpenShellSandboxId(result.stdout || "") : null;
+    } catch {
+      resolved = null;
+    }
+    cache.set(sandboxName, resolved);
+    return resolved;
+  };
+}

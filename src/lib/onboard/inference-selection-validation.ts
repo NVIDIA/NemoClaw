@@ -14,6 +14,7 @@ const { probeAnthropicEndpoint, probeOpenAiLikeEndpointOptimized } =
       apiKey: string | null | undefined,
       options?: {
         probeStreaming?: boolean;
+        requireStreamingToolCalling?: boolean;
         pinnedAddresses?: readonly string[];
         trustedPrivateCapability?: TrustedPrivateEndpointCapability;
       },
@@ -55,6 +56,27 @@ export type EndpointValidationResult =
     }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
 
+export interface OpenAiSelectionValidationOptions {
+  /** In-memory credential for managed local endpoints; never read from ambient env. */
+  apiKey?: string | null;
+  /** Approved no-DNS endpoint pin; [] also disables ambient proxies for managed IP URLs. */
+  pinnedAddresses?: readonly string[];
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability;
+  authMode?: "bearer" | "query-param";
+  extraHeaders?: readonly string[];
+  requireResponsesToolCalling?: boolean;
+  requireChatCompletionsToolCalling?: boolean;
+  retryChatCompletionsToolReadiness?: boolean;
+  /** Provider identity used only for safe, provider-specific diagnostics. */
+  provider?: string;
+
+  skipResponsesProbe?: boolean;
+  probeStreaming?: boolean;
+  allowHostDockerInternal?: boolean;
+  probeFromDocker?: { expectedPort: number } | null;
+  capabilityCache?: OnboardInferenceCapabilityCache;
+}
+
 export interface InferenceSelectionValidationDeps {
   isNonInteractive(): boolean;
   agentProductName(): string;
@@ -65,6 +87,11 @@ export interface InferenceSelectionValidationDeps {
   resolveEndpointHost?: EndpointDnsLookupFn;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
   trustedPrivateEndpointHosts?: readonly string[];
+  /**
+   * Optional abort teardown hook for tests. Production loads the helper lazily
+   * so openshell binaries stay out of the validation unit graph.
+   */
+  teardownOrphanManagedGatewayOnAbort?: () => void;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -81,24 +108,7 @@ export interface InferenceSelectionValidationHelpers {
     credentialEnv?: string | null,
     retryMessage?: string,
     helpUrl?: string | null,
-    options?: {
-      /** In-memory credential for managed local endpoints; never read from ambient env. */
-      apiKey?: string | null;
-      /** Approved no-DNS endpoint pin; [] also disables ambient proxies for managed IP URLs. */
-      pinnedAddresses?: readonly string[];
-      trustedPrivateCapability?: TrustedPrivateEndpointCapability;
-      authMode?: "bearer" | "query-param";
-      extraHeaders?: readonly string[];
-      requireResponsesToolCalling?: boolean;
-      requireChatCompletionsToolCalling?: boolean;
-      retryChatCompletionsToolReadiness?: boolean;
-
-      skipResponsesProbe?: boolean;
-      probeStreaming?: boolean;
-      allowHostDockerInternal?: boolean;
-      probeFromDocker?: { expectedPort: number } | null;
-      capabilityCache?: OnboardInferenceCapabilityCache;
-    },
+    options?: OpenAiSelectionValidationOptions,
   ): Promise<EndpointValidationResult>;
   validateAnthropicSelectionWithRetryMessage(
     label: string,
@@ -147,6 +157,22 @@ export function createInferenceSelectionValidationHelpers(
     deps.trustedPrivateEndpointHosts ?? parseTrustedPrivateInferenceHostsFromEnv(process.env);
 
   function exitNonInteractiveValidationFailure(): never {
+    // #8952: tear down an unowned managed gateway before fatal exit.
+    try {
+      const teardown =
+        deps.teardownOrphanManagedGatewayOnAbort ??
+        (() => {
+          const { teardownOrphanManagedGatewayOnAbort } =
+            require("./gateway-destroy") as typeof import("./gateway-destroy");
+          teardownOrphanManagedGatewayOnAbort();
+        });
+      teardown();
+    } catch (error) {
+      // Helper never throws; this covers require/load / inject failures.
+      console.error(
+        `  Gateway teardown after onboard abort failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     process.exitCode = 1;
     (process.exit as (code?: number) => void)(1);
     throw new Error("Non-interactive endpoint validation failed.");
@@ -159,6 +185,29 @@ export function createInferenceSelectionValidationHelpers(
     console.error(`  ${label} endpoint validation failed.`);
     if (probe) console.error(`  Validation probe summary: ${summarizeProbeForDisplay(probe)}.`);
     console.error("  Validation details were omitted to avoid exposing credentials.");
+  }
+
+  function printGeminiRuntimeNotFoundGuidance(
+    provider: string | undefined,
+    probe: { failures?: unknown[] },
+  ): void {
+    if (provider !== "gemini-api" || !Array.isArray(probe.failures)) return;
+    const chatNotFound = probe.failures.some((failure) => {
+      if (!failure || typeof failure !== "object") return false;
+      const { name, httpStatus } = failure as Record<string, unknown>;
+      return (
+        typeof name === "string" &&
+        name.startsWith("Chat Completions API") &&
+        httpStatus === 404
+      );
+    });
+    if (!chatNotFound) return;
+    console.error(
+      "  This 404 came from Google's OpenAI-compatible Chat Completions runtime route, not the native /v1beta/models catalog.",
+    );
+    console.error(
+      "  NemoClaw cannot continue from catalog availability alone because the sandbox uses that Chat Completions route at runtime.",
+    );
   }
 
   // DNS-backed SSRF preflight for user-supplied custom endpoints. Resolves the
@@ -252,24 +301,9 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string | null = null,
     retryMessage = "Please choose a provider/model again.",
     helpUrl: string | null = null,
-    options: {
-      apiKey?: string | null;
-      pinnedAddresses?: readonly string[];
-      trustedPrivateCapability?: TrustedPrivateEndpointCapability;
-      authMode?: "bearer" | "query-param";
-      extraHeaders?: readonly string[];
-      requireResponsesToolCalling?: boolean;
-      requireChatCompletionsToolCalling?: boolean;
-      retryChatCompletionsToolReadiness?: boolean;
-
-      skipResponsesProbe?: boolean;
-      probeStreaming?: boolean;
-      allowHostDockerInternal?: boolean;
-      probeFromDocker?: { expectedPort: number } | null;
-      capabilityCache?: OnboardInferenceCapabilityCache;
-    } = {},
+    options: OpenAiSelectionValidationOptions = {},
   ): Promise<EndpointValidationResult> {
-    const { apiKey: explicitApiKey, ...probeOptions } = options;
+    const { apiKey: explicitApiKey, provider, ...probeOptions } = options;
     const apiKey =
       explicitApiKey !== undefined
         ? explicitApiKey
@@ -283,6 +317,7 @@ export function createInferenceSelectionValidationHelpers(
     if (!probe.ok) {
       probeOptions.capabilityCache?.invalidate();
       printValidationFailure(label, probe);
+      printGeminiRuntimeNotFoundGuidance(provider, probe);
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
       }
@@ -442,7 +477,8 @@ export function createInferenceSelectionValidationHelpers(
     // Validate the protocol surface that the selected agent will actually use.
     // Hermes routes custom Anthropic providers through the managed OpenAI
     // frontend, while native Anthropic consumers require strict SSE validation
-    // for duplicate/missing/out-of-order events (#6289).
+    // for duplicate/missing/out-of-order events (#6289) and a native tool_use
+    // result rather than JSON-shaped assistant text (#7967).
     const probe =
       intendedApi === "openai-completions"
         ? await runOpenAiLikeProbe(
@@ -460,6 +496,7 @@ export function createInferenceSelectionValidationHelpers(
             // Reasoning-only compatible endpoints often reject streaming probes,
             // so mirror the custom OpenAI-compatible path and skip streaming.
             probeStreaming: !reasoningEnabled,
+            requireStreamingToolCalling: !reasoningEnabled,
             pinnedAddresses,
             trustedPrivateCapability,
           });

@@ -324,7 +324,7 @@ const { setupNim } = require(${onboardPath});
     assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
   });
 
-  it("surfaces managed vLLM by default on DGX Spark and Station only", () => {
+  it("surfaces managed vLLM by default on accepted NVIDIA platforms", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-platform-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -343,6 +343,7 @@ const { setupNim } = require(${onboardPath});
           gpu: { type: string; platform: string };
           vllmExpected: true;
           platformLabel: string;
+          deferredPreviewExpected: boolean;
         }
       | {
           name: string;
@@ -355,12 +356,21 @@ const { setupNim } = require(${onboardPath});
         gpu: { type: "nvidia", platform: "spark" },
         vllmExpected: true,
         platformLabel: "DGX Spark",
+        deferredPreviewExpected: false,
       },
       {
         name: "station",
         gpu: { type: "nvidia", platform: "station" },
         vllmExpected: true,
         platformLabel: "DGX Station",
+        deferredPreviewExpected: false,
+      },
+      {
+        name: "n1x",
+        gpu: { type: "nvidia", platform: "n1x" },
+        vllmExpected: true,
+        platformLabel: "N1x",
+        deferredPreviewExpected: true,
       },
       {
         name: "linux",
@@ -472,7 +482,7 @@ async function runScenario(scenario) {
     assert.notEqual(result.stdout.trim(), "");
     const payload = JSON.parse(result.stdout.trim());
 
-    for (const scenario of scenarios) {
+    scenarios.forEach((scenario) => {
       const scenarioResult = payload.results.find(
         (entry: { name: string }) => entry.name === scenario.name,
       );
@@ -490,11 +500,16 @@ async function runScenario(scenario) {
             menuOutput.includes(`Start vLLM (${scenario.platformLabel})`),
           scenario.name,
         );
+        assert.equal(
+          /\[Deferred preview\]/.test(menuOutput),
+          scenario.deferredPreviewExpected,
+          scenario.name,
+        );
       } else {
         assert.doesNotMatch(menuOutput, /Install vLLM \(/);
         assert.doesNotMatch(menuOutput, /Start vLLM \(/);
       }
-    }
+    });
   });
 
   it("surfaces a precise error when NEMOCLAW_PROVIDER=install-vllm but no vLLM profile is detected (#3765)", () => {

@@ -81,6 +81,16 @@ function writeProductionSourceGraph(
   return { sourceLock, sourcePackage };
 }
 
+function writePackageManifests(
+  root: string,
+  entries: ReadonlyArray<readonly [directory: string, manifest: object]>,
+): void {
+  for (const [directory, manifest] of entries) {
+    fs.mkdirSync(path.join(root, directory), { recursive: true });
+    fs.writeFileSync(path.join(root, directory, "package.json"), `${JSON.stringify(manifest)}\n`);
+  }
+}
+
 describe("trusted reviewed npm audit workflow (#5896)", () => {
   it("accepts only an explicitly reviewed lock during a dependency transition", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
@@ -119,7 +129,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
           replacementLockSha256: digest,
         },
       ],
-      nodeVersion: "22.23.1",
+      nodeVersion: "22.23.2",
       registryOrigin: "https://registry.npmjs.org/",
       schemaVersion: 2,
       severityThreshold: "high",
@@ -810,16 +820,11 @@ esac
       },
     };
     try {
-      for (const [directory, manifest] of [
+      writePackageManifests(root, [
         [aliasPath, aliasManifest],
         [requesterPath, requesterManifest],
-      ] as const) {
-        fs.mkdirSync(path.join(root, directory), { recursive: true });
-        fs.writeFileSync(
-          path.join(root, directory, "package.json"),
-          `${JSON.stringify(manifest)}\n`,
-        );
-      }
+      ]);
+
       fs.writeFileSync(path.join(root, "package-lock.json"), `${JSON.stringify(lock)}\n`);
 
       normalizeOpenClawSignatureAlias(root);

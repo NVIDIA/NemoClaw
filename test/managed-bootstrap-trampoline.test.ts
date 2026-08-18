@@ -329,6 +329,7 @@ describe.skipIf(process.platform !== "linux")("managed bootstrap image trampolin
         fs.rmSync(directory, { force: true, recursive: true });
       }
     },
+    30_000,
   );
 
   it("removes inherited shell controls before the root Bash interpreter starts", () => {
@@ -494,7 +495,7 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
         },
       ];
 
-      for (const testCase of cases) {
+      cases.forEach((testCase) => {
         const result = spawnSync(entrypoint, ["/bin/true"], {
           encoding: "utf8",
           env: testCase.environment(),
@@ -503,7 +504,7 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
           testCase.accepted ? 0 : 126,
         );
         expect(result.stderr, testCase.name).toContain(testCase.error ?? "");
-      }
+      });
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
@@ -585,7 +586,7 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
         },
       ];
 
-      for (const testCase of cases) {
+      cases.forEach((testCase) => {
         const result = spawnSync(
           launcher,
           [testCase.mode, entrypoint, testCase.count, testCase.bytes, "/bin/true"],
@@ -595,7 +596,7 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
           testCase.error === undefined ? 0 : 126,
         );
         expect(result.stderr, testCase.name).toContain(testCase.error ?? "");
-      }
+      });
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }

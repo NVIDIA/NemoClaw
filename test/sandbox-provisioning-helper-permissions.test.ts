@@ -122,10 +122,10 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       fs.mkdirSync(nestedPluginDir, { recursive: true });
       fs.mkdirSync(path.dirname(applierPath), { recursive: true });
       fs.mkdirSync(path.dirname(messagingHookPath), { recursive: true });
-      for (const file of files) {
+      files.forEach((file) => {
         fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
         fs.chmodSync(file, 0o600);
-      }
+      });
 
       const command = dockerRunCommandBetween(
         dockerfile,

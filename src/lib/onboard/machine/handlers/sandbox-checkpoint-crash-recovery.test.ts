@@ -21,14 +21,18 @@ import { baseOptions, createDeps, makeMinimalPlan } from "./sandbox-test-fixture
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
 vi.mocked(detectMessagingChannelsFromEnv).mockReturnValue([]);
 
-function defaultCreateFingerprint(sandboxName = "my-assistant"): string {
+function defaultCreateFingerprint(
+  builtFingerprint = "my-assistant",
+  policyFingerprint = "default",
+): string {
   return [
-    sandboxName,
-    "default",
+    builtFingerprint,
+    policyFingerprint,
     "provider",
     "model",
     "openai-completions",
@@ -41,6 +45,8 @@ function defaultCreateFingerprint(sandboxName = "my-assistant"): string {
 function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoint {
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    profile: { kind: "selected", value: "default" },
+    runtimeAuthority: { kind: "unset" },
     sessionId: "sess-1",
     machineState: "sandbox",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -117,6 +123,7 @@ function realStageSandboxCredentialProviders(
     runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
     redact: (input) => input,
     getGatewayName: () => "nemoclaw",
+    getCredential: () => null,
     normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
     updateSession: (mutator) => (mutator(registrationSession) ?? registrationSession) as Session,
     stagedLegacyValues: new Map(),
@@ -184,6 +191,44 @@ function discordMessagingPlan(): ReturnType<typeof makeMinimalPlan> {
 }
 
 describe("sandbox crash-recovery replay (#5961, #6228)", () => {
+  it("reuses the selected Ready portable sandbox without recreation or forward cleanup (#9068)", async () => {
+    const checkpoint = crashedCheckpoint({
+      profile: { kind: "selected", value: "portable" },
+      effectGroups: {},
+    });
+    const session = sessionWithCheckpoint(checkpoint);
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      checkGatewayRouteCompatibility: () => ({ ok: true }),
+      getSandboxRegistryEntry: () => ({
+        name: "my-assistant",
+        agent: null,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        pendingRouteReservation: true,
+        reservationSessionId: session.sessionId,
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+    });
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.stopStale).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).toHaveBeenCalledWith("my-assistant", {
+      pendingRouteReservation: undefined,
+    });
+    expect(calls.recordSkip).toHaveBeenCalled();
+  });
+
   it("reuses a surviving sandbox with a legacy pre-reasoning fingerprint", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
     const session = sessionWithCheckpoint(crashedCheckpoint());
@@ -883,6 +928,34 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
+  it.each([
+    ["build", defaultCreateFingerprint("v0.0.108")],
+    ["policy", defaultCreateFingerprint("my-assistant", "previous-policy")],
+  ] as const)("recreates after %s drift when explicitly requested (#9297)", async (_drift, fingerprint) => {
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        effectGroups: {
+          sandbox_create: { completedAt: "2026-01-01T00:00:00.000Z", fingerprint },
+        },
+      }),
+    );
+    session.machine.state = "openclaw";
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" }, session);
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      recreateSandbox: () => true,
+    });
+
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual(
+      expect.objectContaining({ recreate: true }),
+    );
+    expect(calls.error).not.toHaveBeenCalled();
+  });
+
   it("rejects reuse when a resolved policy or package input drifted despite an unchanged build version and policy tier (#7022)", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
     const session = sessionWithCheckpoint(crashedCheckpoint());
@@ -977,6 +1050,45 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     expect(resumedRun.calls.createSandbox).not.toHaveBeenCalled();
     expect(resumedRun.calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
+  });
+
+  it("recreates after stable resolved create-intent drift when explicitly requested (#9297)", async () => {
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const firstRun = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+
+    await handleSandboxState({
+      ...baseOptions(firstRun.deps, session),
+      resume: false,
+      sandboxName: "my-assistant",
+    });
+
+    const resumedRun = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+    const defaultResolve = resumedRun.calls.resolveCreateIntent.getMockImplementation();
+    expect(defaultResolve).toBeDefined();
+    resumedRun.calls.resolveCreateIntent.mockImplementation(async (input) => {
+      const resolved = await defaultResolve!(input);
+      return {
+        ...resolved,
+        policy: { ...resolved.policy, basePolicyPath: "/repo/changed-policy.yaml" },
+      };
+    });
+
+    await handleSandboxState({
+      ...baseOptions(resumedRun.deps, session),
+      resume: true,
+      recreateSandbox: () => true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(resumedRun.calls.createSandbox).toHaveBeenCalledOnce();
+    expect(resumedRun.calls.createSandbox.mock.calls[0]?.at(-1)).toEqual(
+      expect.objectContaining({ recreate: true }),
+    );
+    expect(resumedRun.calls.error).not.toHaveBeenCalled();
   });
 
   it("rejects reasoning capability drift before replaying a recorded sandbox create (#7570)", async () => {

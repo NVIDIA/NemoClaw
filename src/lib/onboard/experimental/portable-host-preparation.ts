@@ -2,14 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import { hardenPodmanSocketDirectory, localPodmanEnvironment } from "../../adapters/podman";
+import {
+  assertPodmanSocketAuthority,
+  capturePodmanSocketAuthority,
+  hardenPodmanSocketDirectory,
+  type PodmanSocketAuthority,
+} from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
+import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "../docker-driver-platform";
+import {
+  inspectPortablePodmanReadiness,
+  portablePodmanCommandEnvironment,
+  portablePodmanReadinessError,
+  type PortablePodmanReadinessDeps,
+} from "./portable-runtime-readiness";
+import {
+  inspectPortableCpuDelegation,
+  portableCpuDelegationError,
+  type CpuDelegationPreflight,
+  type CpuDelegationPreflightDeps,
+} from "./portable-cpu-delegation-preflight";
 
 const REGISTRY_CONTAINER = "nemoclaw-portable-registry";
 const REGISTRY_LABEL = "com.nvidia.nemoclaw.portable=1";
@@ -28,6 +47,11 @@ firewall_driver = "iptables"
 [engine]
 env = ["NETAVARK_FW=iptables"]
 `;
+const PORTABLE_CONFIG_RELATIVE_FILES = [
+  "containers/registries.conf.d/99-nemoclaw-portable.conf",
+  "containers/containers.conf.d/99-nemoclaw-portable.conf",
+  "nemoclaw/portable/containers.conf",
+] as const;
 
 type SpawnResult = ReturnType<typeof spawnSync>;
 
@@ -35,10 +59,28 @@ export interface PortableHostPreparationDeps {
   platform?: NodeJS.Platform;
   home?: string;
   uid?: number;
-  systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
-  podman?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
+  podman?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   hardenSocketDirectory?: (socketPath: string, uid: number) => void;
+  captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
+  assertSocketAuthority?: (authority: PodmanSocketAuthority) => void;
+  qualifyPodman?: (authority: PodmanSocketAuthority) => void;
+  runtimeReadiness?: PortablePodmanReadinessDeps;
+  validateConfigAuthority?: (input: {
+    homeDir: string;
+    configHome: string;
+    runtimeDir: string;
+    socketPath: string | null;
+    uid: number;
+  }) => void;
+  cpuDelegationPreflight?: (deps: CpuDelegationPreflightDeps) => CpuDelegationPreflight;
+}
+
+export interface PortableHostPreparationResult {
+  readonly authority: CheckpointPortableRuntimeAuthority;
+  readonly socketAuthority: PodmanSocketAuthority | null;
+  readonly containersConf: string;
 }
 
 function commandDetail(result: SpawnResult): string {
@@ -85,6 +127,18 @@ function resolvePodmanDockerHost(result: SpawnResult): string {
   );
 }
 
+function assertSocketInsideRuntime(runtimeDir: string, socketPath: string): void {
+  const relativeSocket = path.relative(runtimeDir, socketPath);
+  if (
+    relativeSocket === "" ||
+    path.isAbsolute(relativeSocket) ||
+    relativeSocket === ".." ||
+    relativeSocket.startsWith(`..${path.sep}`)
+  ) {
+    throw new Error("Portable Podman socket is outside the current user runtime directory.");
+  }
+}
+
 function writePrivateConfig(filePath: string, value: string): void {
   ensureConfigDir(path.dirname(filePath));
   let file;
@@ -105,8 +159,7 @@ function writePrivateConfig(filePath: string, value: string): void {
   }
 }
 
-function writePortableRuntimeConfig(home: string, env: NodeJS.ProcessEnv): string {
-  const configHome = env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config");
+function writePortableRuntimeConfig(configHome: string): string {
   writePrivateConfig(
     path.join(configHome, "containers", "registries.conf.d", "99-nemoclaw-portable.conf"),
     REGISTRY_FRAGMENT,
@@ -124,6 +177,117 @@ function writePortableRuntimeConfig(home: string, env: NodeJS.ProcessEnv): strin
   return containersConf;
 }
 
+function canonicalAbsolute(value: string, label: string): string {
+  const resolved = path.resolve(value);
+  if (resolved !== value || !path.isAbsolute(value) || /[\0\r\n]/u.test(value)) {
+    throw new Error(`Portable runtime ${label} must be a normalized absolute path.`);
+  }
+  return resolved;
+}
+
+function validateOwnedConfigAuthority(input: {
+  homeDir: string;
+  configHome: string;
+  runtimeDir: string;
+  socketPath: string | null;
+  uid: number;
+}): void {
+  const { homeDir, configHome, runtimeDir, socketPath, uid } = input;
+  const assertDirectory = (directory: string, owner: number | null): fs.Stats => {
+    const stat = fs.lstatSync(directory);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`Portable runtime path '${directory}' is not a real directory.`);
+    }
+    if (owner !== null && stat.uid !== owner) {
+      throw new Error(`Portable runtime path '${directory}' is not owned by the current user.`);
+    }
+    if ((stat.mode & 0o022) !== 0) {
+      throw new Error(`Portable runtime path '${directory}' has unsafe write permissions.`);
+    }
+    return stat;
+  };
+  const assertSystemAncestors = (directory: string): void => {
+    for (let current = path.dirname(directory); ; current = path.dirname(current)) {
+      assertDirectory(current, null);
+      const parent = path.dirname(current);
+      if (parent === current) break;
+    }
+  };
+  const assertOwnedRoot = (directory: string): void => {
+    assertDirectory(directory, uid);
+    assertSystemAncestors(directory);
+  };
+  const assertOwnedDescendants = (root: string, target: string): void => {
+    const relative = path.relative(root, target);
+    if (
+      relative === "" ||
+      path.isAbsolute(relative) ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`)
+    ) {
+      if (relative === "") return;
+      throw new Error(`Portable runtime path '${target}' is outside '${root}'.`);
+    }
+    let current = root;
+    for (const component of relative.split(path.sep)) {
+      current = path.join(current, component);
+      try {
+        assertDirectory(current, uid);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+    }
+  };
+  const assertConfigRoot = (): void => {
+    try {
+      assertOwnedRoot(configHome);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    let anchor = path.dirname(configHome);
+    while (true) {
+      try {
+        assertOwnedRoot(anchor);
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const parent = path.dirname(anchor);
+      if (parent === anchor) break;
+      anchor = parent;
+    }
+    throw new Error("Portable runtime config root has no validated owned ancestor.");
+  };
+  const assertExistingConfigFile = (filePath: string): void => {
+    try {
+      const stat = fs.lstatSync(filePath);
+      if (
+        stat.isSymbolicLink() ||
+        !stat.isFile() ||
+        stat.uid !== uid ||
+        stat.nlink !== 1 ||
+        (stat.mode & 0o022) !== 0
+      ) {
+        throw new Error(`Portable runtime config '${filePath}' is not a safe owned file.`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  };
+
+  assertOwnedRoot(homeDir);
+  assertOwnedRoot(runtimeDir);
+  assertConfigRoot();
+  for (const relative of PORTABLE_CONFIG_RELATIVE_FILES) {
+    const filePath = path.join(configHome, relative);
+    assertOwnedDescendants(configHome, path.dirname(filePath));
+    assertExistingConfigFile(filePath);
+  }
+  if (socketPath) assertOwnedDescendants(runtimeDir, path.dirname(socketPath));
+}
+
 function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
@@ -132,7 +296,7 @@ function ensureRegistryContainer(
     [
       "inspect",
       "--format",
-      '{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }}',
+      '{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}}',
       REGISTRY_CONTAINER,
     ],
     env,
@@ -141,11 +305,15 @@ function ensureRegistryContainer(
     requireCommand(inspection, "Inspecting the managed portable registry");
   }
   const exists = inspection.status === 0;
-  if (exists && String(inspection.stdout ?? "").trim() !== "1") {
+  const [owner, running] = String(inspection.stdout ?? "")
+    .trim()
+    .split(/\s+/u);
+  if (exists && owner !== "1") {
     throw new Error(
       `Refusing to replace existing unmanaged container '${REGISTRY_CONTAINER}'. Rename or remove it and retry.`,
     );
   }
+  if (exists && running === "true") return;
   if (exists) {
     requireCommand(
       docker(["rm", "-f", REGISTRY_CONTAINER], env),
@@ -176,26 +344,105 @@ function ensureRegistryContainer(
 export function preparePortableExperimentalHost(
   env: NodeJS.ProcessEnv = process.env,
   deps: PortableHostPreparationDeps = {},
-): void {
-  if (!isPortableExperimentalProfile(env)) return;
+  expectedAuthority?: CheckpointPortableRuntimeAuthority | null,
+): PortableHostPreparationResult | null {
+  if (!isPortableExperimentalProfile(env)) return null;
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("The portable experimental profile requires Linux.");
   }
-  const uid = deps.uid ?? process.getuid?.();
+  const uid = deps.uid ?? process.geteuid?.() ?? process.getuid?.();
   if (!Number.isInteger(uid) || Number(uid) < 0) {
     throw new Error("The portable experimental profile could not resolve the current user ID.");
   }
-  const home = deps.home ?? env.HOME ?? os.homedir();
+  // Fail early, before any config write or service activation, when the
+  // current user's systemd/cgroup hierarchy cannot enforce the sandbox CPU
+  // limit (gh #9188). The diagnostic is credential-free and never edits
+  // systemd units or weakens isolation.
+  const cpuDelegation = deps.cpuDelegationPreflight ?? inspectPortableCpuDelegation;
+  const cpuPreflight = cpuDelegation({ platform: deps.platform, uid: Number(uid) });
+  if (!cpuPreflight.ok) throw portableCpuDelegationError(cpuPreflight);
+  const currentHome = canonicalAbsolute(deps.home ?? os.userInfo().homedir, "home directory");
+  const home = canonicalAbsolute(expectedAuthority?.homeDir ?? currentHome, "home directory");
+  const configHome = path.join(home, ".config");
+  const runtimeDir = canonicalAbsolute(
+    expectedAuthority?.runtimeDir ?? path.join("/run/user", String(uid)),
+    "user runtime directory",
+  );
+  const expectedSocketPath = expectedAuthority
+    ? canonicalAbsolute(expectedAuthority.socketPath, "socket path")
+    : null;
+  if (expectedAuthority) {
+    if (expectedAuthority.configHome !== configHome) {
+      throw new Error(
+        "Portable runtime authority configuration root does not match the current OS user home.",
+      );
+    }
+    if (
+      expectedAuthority.uid !== Number(uid) ||
+      expectedAuthority.kind !== "podman" ||
+      expectedAuthority.ownership !== "current-user" ||
+      home !== currentHome ||
+      runtimeDir !== path.join("/run/user", String(uid))
+    ) {
+      throw new Error(
+        "Portable runtime authority does not match the current user or runtime kind.",
+      );
+    }
+  }
+  const validateConfigAuthority = deps.validateConfigAuthority ?? validateOwnedConfigAuthority;
+  validateConfigAuthority({
+    homeDir: home,
+    configHome,
+    runtimeDir,
+    socketPath: expectedSocketPath,
+    uid: Number(uid),
+  });
+  if (expectedSocketPath) {
+    try {
+      (
+        deps.captureSocketAuthority ??
+        ((socketPath, ownerUid) => capturePodmanSocketAuthority(socketPath, { uid: ownerUid }))
+      )(expectedSocketPath, Number(uid));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
+  const podman =
+    deps.podman ??
+    ((args, childEnv, timeoutMs = HOST_COMMAND_TIMEOUT_MS) =>
+      spawnSync("podman", [...args], {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: timeoutMs,
+      }));
+  const admissionSocketPath = expectedSocketPath ?? path.join(runtimeDir, "podman", "podman.sock");
+  assertSocketInsideRuntime(runtimeDir, admissionSocketPath);
+  if (expectedAuthority && admissionSocketPath !== expectedAuthority.socketPath) {
+    throw new Error("Portable Podman socket path does not match the onboarding checkpoint.");
+  }
+
   env.NETAVARK_FW = "iptables";
-  env.CONTAINERS_CONF = writePortableRuntimeConfig(home, env);
+  env.CONTAINERS_CONF = writePortableRuntimeConfig(configHome);
+  const runtimeAuthority: CheckpointPortableRuntimeAuthority = {
+    schemaVersion: 1,
+    kind: "podman",
+    ownership: "current-user",
+    uid: Number(uid),
+    homeDir: home,
+    configHome,
+    runtimeDir,
+    socketPath: admissionSocketPath,
+  };
+  const serviceEnv = portablePodmanCommandEnvironment(runtimeAuthority, env);
 
   const systemctl =
     deps.systemctl ??
-    ((args, childEnv) =>
+    ((args, childEnv, timeoutMs = HOST_COMMAND_TIMEOUT_MS) =>
       spawnSync("systemctl", [...args], {
         encoding: "utf-8",
         env: childEnv,
-        timeout: HOST_COMMAND_TIMEOUT_MS,
+        timeout: timeoutMs,
       }));
   requireCommand(
     systemctl(
@@ -205,33 +452,67 @@ export function preparePortableExperimentalHost(
         "NETAVARK_FW=iptables",
         `CONTAINERS_CONF=${env.CONTAINERS_CONF}`,
       ],
-      env,
+      serviceEnv,
     ),
     "Configuring the rootless container service environment",
   );
   requireCommand(
-    systemctl(["--user", "try-restart", "podman.service"], env),
+    systemctl(["--user", "try-restart", "podman.service"], serviceEnv),
     "Refreshing the rootless container service",
   );
-  requireCommand(
-    systemctl(["--user", "enable", "--now", "podman.socket"], env),
-    "Starting the rootless container socket",
+  const podmanEnv = portablePodmanCommandEnvironment(runtimeAuthority, env);
+  const readiness = inspectPortablePodmanReadiness(runtimeAuthority, {
+    ...deps.runtimeReadiness,
+    platform: deps.platform,
+    uid: Number(uid),
+    home,
+    env,
+    systemctl: (args, childEnv, timeoutMs) => systemctl(args, childEnv, timeoutMs),
+    hardenSocketDirectory:
+      deps.hardenSocketDirectory ??
+      deps.runtimeReadiness?.hardenSocketDirectory ??
+      hardenPodmanSocketDirectory,
+    captureSocketAuthority: deps.captureSocketAuthority
+      ? (socketPath) => deps.captureSocketAuthority!(socketPath, Number(uid))
+      : (deps.runtimeReadiness?.captureSocketAuthority ?? capturePodmanSocketAuthority),
+    assertSocketAuthority:
+      deps.assertSocketAuthority ??
+      deps.runtimeReadiness?.assertSocketAuthority ??
+      assertPodmanSocketAuthority,
+    podmanCapture: deps.runtimeReadiness?.podmanCapture
+      ? deps.runtimeReadiness.podmanCapture
+      : deps.podman
+        ? (_executable, args, timeoutMs) => {
+            const result = podman(args, podmanEnv, timeoutMs);
+            return {
+              status: result.status ?? 1,
+              stdout: String(result.stdout ?? ""),
+              stderr: String(result.stderr ?? ""),
+              ...(result.error ? { error: result.error } : {}),
+            };
+          }
+        : (_executable, args, timeoutMs) => {
+            const result = spawnSync("podman", [...args], {
+              encoding: "utf-8",
+              env: podmanEnv,
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: timeoutMs,
+            });
+            return {
+              status: result.status ?? 1,
+              stdout: String(result.stdout ?? ""),
+              stderr: String(result.stderr ?? ""),
+              ...(result.error ? { error: result.error } : {}),
+            };
+          },
+  });
+  if (!readiness.ok) throw portablePodmanReadinessError(readiness);
+  const socketAuthority = readiness.authority;
+  deps.qualifyPodman?.(socketAuthority);
+  const dockerHost = readiness.dockerHost;
+  console.log(
+    `  Portable Podman readiness: ${readiness.timing.mode}; activation ${String(readiness.timing.activationMs)} ms; API ${String(readiness.timing.apiMs)} ms; total ${String(readiness.timing.totalMs)} ms.`,
   );
-
-  const podman =
-    deps.podman ??
-    ((args, childEnv) =>
-      spawnSync("podman", [...args], {
-        encoding: "utf-8",
-        env: childEnv,
-        timeout: HOST_COMMAND_TIMEOUT_MS,
-      }));
-  const podmanEnv = localPodmanEnvironment(env);
-  const dockerHost = resolvePodmanDockerHost(
-    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], podmanEnv),
-  );
-  const socketPath = dockerHost.slice("unix://".length);
-  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath, Number(uid));
   env.DOCKER_HOST = dockerHost;
   podmanEnv.DOCKER_HOST = dockerHost;
 
@@ -245,6 +526,18 @@ export function preparePortableExperimentalHost(
       }));
   requireDockerCompatibleCli(docker, podmanEnv);
   ensureRegistryContainer(podmanEnv, docker);
+  if (socketAuthority) {
+    (
+      deps.assertSocketAuthority ??
+      deps.runtimeReadiness?.assertSocketAuthority ??
+      assertPodmanSocketAuthority
+    )(socketAuthority);
+  }
+  return {
+    authority: runtimeAuthority,
+    socketAuthority,
+    containersConf: env.CONTAINERS_CONF,
+  };
 }
 
 export const portableHostPreparationInternals = {
@@ -252,5 +545,6 @@ export const portableHostPreparationInternals = {
   REGISTRY_IMAGE,
   REGISTRY_FRAGMENT,
   PORTABLE_CONTAINERS_CONF,
+  validateOwnedConfigAuthority,
   resolvePodmanDockerHost,
 };

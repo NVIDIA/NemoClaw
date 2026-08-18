@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { writeOpenShell0044PreAuthState } from "../../../test/support/openshell-gateway-config-helpers";
+
 import {
   buildDockerDriverGatewayEnv,
   buildDockerGatewayDebEnvFile,
@@ -16,6 +18,22 @@ import {
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
   return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
+}
+
+function trustedPackageServiceOptions(home: string) {
+  return {
+    env: homeEnv(home),
+    getUpstreamGatewayVersion: () => "openshell-gateway 0.0.85",
+    getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
+    platform: "linux" as const,
+    spawnSyncImpl: () => ({
+      status: 0,
+      stdout: [
+        "FragmentPath=/usr/lib/systemd/user/openshell-gateway.service",
+        "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
+      ].join("\n"),
+    }),
+  };
 }
 
 describe("buildDockerDriverGatewayEnv", () => {
@@ -64,6 +82,50 @@ describe("buildDockerDriverGatewayEnv", () => {
     expect(env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBeUndefined();
     expect(env.OPENSHELL_VM_DRIVER_STATE_DIR).toBeUndefined();
     expect(env.OPENSHELL_DRIVER_DIR).toBeUndefined();
+  });
+
+  it("admits a prepared v0.0.44 pre-auth database only under installer restore authority", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-v0-0-44-"));
+    vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
+    try {
+      writeOpenShell0044PreAuthState(stateDir);
+
+      const env = buildDockerDriverGatewayEnv({
+        platform: "linux",
+        stateDir,
+        getDockerSupervisorImage: () => "supervisor:test",
+        resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+      });
+
+      expect(fs.existsSync(env.OPENSHELL_GATEWAY_CONFIG)).toBe(true);
+      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe(
+        "legacy-database",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a prepared v0.0.44 pre-auth database without installer restore authority", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-denied-"));
+    vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "0");
+    try {
+      writeOpenShell0044PreAuthState(stateDir);
+
+      expect(() =>
+        buildDockerDriverGatewayEnv({
+          platform: "linux",
+          stateDir,
+          getDockerSupervisorImage: () => "supervisor:test",
+          resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+        }),
+      ).toThrow(/durable gateway state exists without a config/);
+      expect(fs.existsSync(path.join(stateDir, "openshell-gateway.toml"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("builds the exact rootless gateway network contract for the portable profile", () => {
@@ -208,7 +270,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         () => ({
           OPENSHELL_BIND_ADDRESS: "127.0.0.1",
         }),
-        { env: homeEnv(tempHome), platform: "linux" },
+        trustedPackageServiceOptions(tempHome),
       );
 
       const envFileContent = fs.readFileSync(envFile, "utf-8");
@@ -253,7 +315,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
           () => ({
             OPENSHELL_BIND_ADDRESS: "127.0.0.1",
           }),
-          { env: homeEnv(tempHome), platform: "linux" },
+          trustedPackageServiceOptions(tempHome),
         ),
       ).toThrow("regular file changed during validation");
 
@@ -304,7 +366,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         () => ({
           OPENSHELL_BIND_ADDRESS: "127.0.0.1",
         }),
-        { env: homeEnv(tempHome), platform: "linux" },
+        trustedPackageServiceOptions(tempHome),
       );
 
       expect(wrote).toBe(true);

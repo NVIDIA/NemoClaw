@@ -18,58 +18,90 @@ function fencedBlocks(text: string, language: string): string[] {
 }
 
 describe("credential rotation documentation", () => {
-  it("keeps every non-interactive onboard example executable", () => {
-    const examples = [
-      ...fencedBlocks(readGuide(), "bash"),
-      ...fencedBlocks(readGuide(), "yaml"),
-    ].filter((block) => block.includes("onboard") && block.includes("--non-interactive"));
+  const nonInteractiveOnboardExamples = [
+    ...fencedBlocks(readGuide(), "bash"),
+    ...fencedBlocks(readGuide(), "yaml"),
+  ].filter((block) => block.includes("onboard") && block.includes("--non-interactive"));
 
-    expect(examples.length).toBeGreaterThan(0);
-    for (const example of examples) {
+  it("includes a non-interactive onboard example", () => {
+    expect(nonInteractiveOnboardExamples.length).toBeGreaterThan(0);
+  });
+
+  it.each(nonInteractiveOnboardExamples)(
+    "keeps non-interactive onboard example %# executable",
+    (example) => {
       expect(example).toContain("--name <sandbox>");
       expect(example).toContain("--yes-i-accept-third-party-software");
-    }
-  });
+    },
+  );
 
   it("uses normal onboarding instead of interrupted-session resume", () => {
     expect(readGuide()).not.toContain("--resume");
   });
 
-  it("keeps replacement credentials out of command text (#6266)", () => {
+  it.each([
+    "NVIDIA_INFERENCE_API_KEY",
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+    "DISCORD_BOT_TOKEN",
+    "BRAVE_API_KEY",
+    "TAVILY_API_KEY",
+  ])("keeps replacement credential %s out of command text (#6266)", (variable) => {
     const guide = readGuide();
-    const credentialVariables = [
-      "NVIDIA_INFERENCE_API_KEY",
-      "SLACK_BOT_TOKEN",
-      "SLACK_APP_TOKEN",
-      "TELEGRAM_BOT_TOKEN",
-      "DISCORD_BOT_TOKEN",
-      "BRAVE_API_KEY",
-      "TAVILY_API_KEY",
-    ];
-
-    for (const variable of credentialVariables) {
-      expect(guide).toMatch(new RegExp(`IFS= read -r -s ${variable}`));
-      expect(guide).toMatch(new RegExp(`unset [^\\n]*\\b${variable}\\b`));
-      expect(guide).not.toMatch(new RegExp(`${variable}=[^\\s$]`));
-    }
+    expect(guide).toMatch(new RegExp(`IFS= read -r -s ${variable}`));
+    expect(guide).toMatch(new RegExp(`unset [^\\n]*\\b${variable}\\b`));
+    expect(guide).not.toMatch(new RegExp(`${variable}=[^\\s$]`));
   });
 
-  it("documents messaging rebuilds and web search recreation", () => {
+  it.each(["SLACK_BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN"])(
+    "documents onboarding-managed recreation for %s",
+    (credential) => {
+      const guide = readGuide();
+      const bash = fencedBlocks(guide, "bash");
+      const example = bash.find(
+        (block) => block.includes(credential) && block.includes("onboard --name <sandbox>"),
+      );
+      expect(example, credential).toBeDefined();
+      expect(example, credential).toContain("--yes-i-accept-third-party-software");
+      expect(example, credential).not.toContain("channels add");
+      expect(example, credential).not.toContain("rebuild --yes");
+    },
+  );
+
+  it("documents messaging and web search recreation boundaries", () => {
     const guide = readGuide();
     const bash = fencedBlocks(guide, "bash");
+    expect(guide).toContain("WECHAT_BOT_TOKEN");
+    expect(guide).toContain("MSTEAMS_APP_PASSWORD");
+    expect(guide).toContain("Telegram, Discord, Slack, WeChat, or Microsoft Teams");
+    expect(guide).toContain("backs up supported workspace and manifest-declared state");
+    expect(guide).toContain("Files outside those state paths are not preserved.");
+    expect(guide).toContain("If the recorded channel state changes during rotation");
+    expect(guide).toContain("A channel stopped with `channels stop` remains inactive");
+    expect(guide).toContain("The sandbox registry stores the credential hash");
+    expect(guide).toContain("OpenShell retains the registered credential");
+    expect(guide).toContain(
+      "Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation.",
+    );
+    expect(guide).toContain("verify a live messaging request after onboarding finishes");
+    expect(guide).not.toContain("validates each changed value");
+    expect(guide).not.toContain("restores the sandbox");
+    expect(guide).toContain(
+      "Plan for recreation downtime when automating messaging or web search rotation.",
+    );
+    expect(guide).not.toContain("rebuild downtime");
 
-    for (const channel of ["slack", "telegram", "discord"]) {
-      const example = bash.find((block) => block.includes(`channels add ${channel}`));
-      expect(example, channel).toBeDefined();
-      expect(example, channel).toContain("rebuild --yes");
-    }
+    expect(bash.some((block) => block.includes("NEMOCLAW_WEB_SEARCH_PROVIDER"))).toBe(true);
+  });
 
-    const searchExamples = bash.filter((block) => block.includes("NEMOCLAW_WEB_SEARCH_PROVIDER"));
-    expect(searchExamples.length).toBeGreaterThan(0);
-    for (const example of searchExamples) {
-      expect(example).toContain("--fresh");
-      expect(example).toContain("--recreate-sandbox");
-    }
+  it.each(
+    fencedBlocks(readGuide(), "bash").filter((block) =>
+      block.includes("NEMOCLAW_WEB_SEARCH_PROVIDER"),
+    ),
+  )("uses recreation flags in web search example %#", (example) => {
+    expect(example).toContain("--fresh");
+    expect(example).toContain("--recreate-sandbox");
   });
 
   it("uses real provider names and separates configuration checks from live proof", () => {

@@ -10,14 +10,21 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
-import { DASHBOARD_PORT } from "../../core/ports";
-import { waitUntil } from "../../core/wait";
+import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  waitForForwardRecoveryState,
+  waitForStoppedForwardPortRelease,
+} from "../../onboard/forward-cleanup";
+import {
+  resolveSandboxHermesApiPort,
+  retargetHermesApiPortInUrl,
+} from "../../onboard/hermes-api-port";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../state/paths";
 import * as registry from "../../state/registry";
@@ -52,9 +59,6 @@ type DashboardForwardStopRunner = (
   options: { ignoreError: true; stdio: "ignore"; timeout: number },
 ) => { status?: number | null };
 
-const FORWARD_RELEASE_TIMEOUT_MS = 5_000;
-const FORWARD_RELEASE_POLL_MS = 250;
-
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
@@ -79,20 +83,6 @@ function runDashboardForwardStopBestEffort(
   }
 }
 
-function confirmDashboardForwardReleased(
-  port: number,
-  isForwardReachable: (port: number) => boolean,
-): boolean {
-  const now = Date.now;
-  return waitUntil(() => !isForwardReachable(port), {
-    deadlineMs: now() + FORWARD_RELEASE_TIMEOUT_MS,
-    initialIntervalMs: FORWARD_RELEASE_POLL_MS,
-    maxIntervalMs: FORWARD_RELEASE_POLL_MS,
-    backoffFactor: 1,
-    now,
-  });
-}
-
 export function resolveSandboxDashboardPort(
   sandboxName: string,
   deps: SandboxPortDeps = {},
@@ -110,6 +100,24 @@ export function resolveSandboxDashboardPort(
   }
 
   return DASHBOARD_PORT;
+}
+
+/**
+ * Resolve the health endpoint to probe inside the sandbox.
+ *
+ * Manifest probe URLs name the agent's default API port. Retarget them at this
+ * sandbox's own port so the probe reaches its relay rather than reporting the
+ * default port as unreachable.
+ */
+export function resolveSandboxHealthProbeUrl(sandboxName: string): string {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  if (agent && agentRuntime.hasGatewayRuntime(agent)) {
+    return retargetHermesApiPortInUrl(
+      agentRuntime.getHealthProbeUrl(agent),
+      resolveSandboxHermesApiPort(registry.getSandbox(sandboxName) ?? {}),
+    );
+  }
+  return `http://127.0.0.1:${resolveSandboxDashboardPort(sandboxName)}/health`;
 }
 
 /**
@@ -148,7 +156,10 @@ export function teardownSandboxDashboardForward(
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     if (result.status !== 0) return;
-    confirmDashboardForwardReleased(port, deps.isLocalForwardReachable ?? isLocalForwardReachable);
+    waitForStoppedForwardPortRelease(
+      port,
+      deps.isLocalForwardReachable ?? isLocalForwardReachable,
+    );
   } catch {
     // Defense in depth for injected or future runners: teardown is best-effort.
   }
@@ -306,7 +317,7 @@ export function ensureSandboxPortForwardForPort(
       health: forwardHealth,
       portReleased: false,
     };
-    waitUntil(
+    waitForForwardRecoveryState(
       () => {
         stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
         stopState.portReleased = !isLocalForwardReachable(port);
@@ -316,12 +327,7 @@ export function ensureSandboxPortForwardForPort(
           stopState.portReleased
         );
       },
-      {
-        deadlineMs: Date.now() + waitMs,
-        initialIntervalMs: 100,
-        maxIntervalMs: 500,
-        backoffFactor: 1.5,
-      },
+      waitMs,
     );
     if (stopState.health === true && !forceRestart) return acceptSuccessfulForward();
     if (stopState.health === "occupied") return false;
@@ -360,7 +366,7 @@ export function ensureSandboxPortForwardForPort(
   if (waitMs === 0) return false;
 
   let occupied = false;
-  const settled = waitUntil(
+  const settled = waitForForwardRecoveryState(
     () => {
       health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
       if (health === "occupied") {
@@ -369,12 +375,7 @@ export function ensureSandboxPortForwardForPort(
       }
       return health === true;
     },
-    {
-      deadlineMs: Date.now() + waitMs,
-      initialIntervalMs: 100,
-      maxIntervalMs: 500,
-      backoffFactor: 1.5,
-    },
+    waitMs,
   );
   return settled && !occupied && acceptSuccessfulForward();
 }
@@ -421,6 +422,14 @@ export function recoverMessagingHostForward(
  * primary dashboard port is owned by `ensureSandboxPortForward`; the
  * optional Hermes web dashboard port is owned by
  * `ensureHermesDashboardPortForwardIfEnabled`.
+ *
+ * Manifest entries name the agent's default ports, not this sandbox's. Both
+ * the dashboard port and the Hermes API port are per-sandbox host resources, so
+ * a second sandbox owns neither manifest default. Skip the manifest dashboard
+ * entry, which `ensureSandboxPortForward` already recovers at this sandbox's
+ * dashboard port, and resolve the manifest API entry against the sandbox's
+ * recorded API port, or recovery demands a port that belongs to a sibling
+ * sandbox and reports a failure the sandbox cannot repair.
  */
 export function ensureDeclaredAgentForwardPortsHealthy(
   sandboxName: string,
@@ -431,7 +440,12 @@ export function ensureDeclaredAgentForwardPortsHealthy(
   const declared = (agent as { forward_ports?: unknown }).forward_ports;
   if (!Array.isArray(declared) || declared.length === 0) return null;
   const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
+  const sandbox = registry.getSandbox(sandboxName);
   const skipSet = new Set<number>([primaryPort]);
+  // The manifest's own primary entry is the default dashboard port. This
+  // sandbox's dashboard forward lives at primaryPort and is recovered by
+  // ensureSandboxPortForward, so the default must not be probed again.
+  if (isValidPort(agent.forwardPort)) skipSet.add(agent.forwardPort);
   if (hermesDashboard && Number.isInteger(hermesDashboard.publicPort)) {
     skipSet.add(hermesDashboard.publicPort);
   }
@@ -441,19 +455,73 @@ export function ensureDeclaredAgentForwardPortsHealthy(
     if (typeof candidate !== "number") continue;
     if (!Number.isInteger(candidate) || candidate < 1024 || candidate > 65535) continue;
     if (skipSet.has(candidate)) continue;
+    const port =
+      candidate === HERMES_OPENAI_API_PORT ? resolveSandboxHermesApiPort(sandbox ?? {}) : candidate;
     sawCovered = true;
-    const health = isSandboxPortForwardHealthy(sandboxName, candidate);
+    const health = isSandboxPortForwardHealthy(sandboxName, port);
     if (health === true) continue;
     if (health === "occupied") {
       allHealthy = false;
       continue;
     }
-    if (!ensureSandboxPortForwardForPort(sandboxName, candidate)) {
+    if (!ensureSandboxPortForwardForPort(sandboxName, port)) {
       allHealthy = false;
     }
   }
   if (!sawCovered) return null;
   return allHealthy;
+}
+
+/**
+ * Observe every host forward that the interactive preflight would recover,
+ * without starting, stopping, or rebinding one.
+ */
+export function areSandboxLaunchForwardsHealthy(
+  sandboxName: string,
+  gatewayName?: string,
+): boolean | null {
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) return false;
+  const owningGatewayName = resolveSandboxGatewayName(sandbox);
+  if (gatewayName && gatewayName !== owningGatewayName) return false;
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  if (agent && !agentRuntime.hasGatewayRuntime(agent)) return true;
+
+  const primaryPort = resolveSandboxDashboardPort(sandboxName);
+  const requiredPorts = new Set<number>([primaryPort]);
+  const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
+  if (hermesDashboard) requiredPorts.add(hermesDashboard.publicPort);
+  const messagingForward = getSandboxMessagingHostForward(sandboxName);
+  if (messagingForward) requiredPorts.add(messagingForward.port);
+  const declared = (agent as { forward_ports?: unknown } | null)?.forward_ports;
+  if (Array.isArray(declared)) {
+    for (const candidate of declared) {
+      if (
+        typeof candidate === "number" &&
+        Number.isInteger(candidate) &&
+        candidate >= 1024 &&
+        candidate <= 65535
+      ) {
+        requiredPorts.add(candidate);
+      }
+    }
+  }
+  const result = captureOpenshell(["forward", "list", "--gateway", owningGatewayName], {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (!result || isCommandTimeout(result) || result.status !== 0) return null;
+  const entries = parseForwardList(result.output) as SandboxForwardListEntry[];
+  for (const port of requiredPorts) {
+    if (
+      classifyForwardHealthWithReachability(entries, sandboxName, String(port), () =>
+        isLocalForwardReachable(port),
+      ) !== true
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function recoverDeclaredAgentForwardPorts(

@@ -120,16 +120,24 @@ describe("managed snapshot restore authority", () => {
     expect(sandboxState.captureSnapshotRestoreAuthority(manifest.backupPath, selected!)).toBeNull();
   });
 
-  it("requires both content and runtime fences at each raw state entry point", () => {
-    const manifest = writeBackup(managedAuthority());
-    const contentAuthority = sandboxState.captureSnapshotRestoreAuthority(manifest.backupPath);
-    expect(contentAuthority).not.toBeNull();
+  it.each([
+    { scenario: "missing authority and validator" },
+    { scenario: "missing validator" },
+    { scenario: "missing authority" },
+  ])(
+    "requires both content and runtime fences at each raw state entry point [$scenario]",
+    ({ scenario }) => {
+      const manifest = writeBackup(managedAuthority());
+      const contentAuthority = sandboxState.captureSnapshotRestoreAuthority(manifest.backupPath);
+      expect(contentAuthority).not.toBeNull();
 
-    for (const partialAuthority of [
-      {},
-      { authority: contentAuthority! },
-      { validateBeforeMutation: vi.fn() },
-    ]) {
+      const partialAuthority = (
+        {
+          "missing authority and validator": {},
+          "missing validator": { authority: contentAuthority! },
+          "missing authority": { validateBeforeMutation: vi.fn() },
+        } as const
+      )[scenario]!;
       expect(
         sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
           targetAgentType: "openclaw",
@@ -139,23 +147,23 @@ describe("managed snapshot restore authority", () => {
         success: false,
         error: sandboxState.MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
       });
-    }
 
-    writeOpenClawRegistry();
-    expect(sandboxState.restoreSandboxState("alpha", manifest.backupPath)).toMatchObject({
-      success: false,
-      error: sandboxState.MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
-    });
+      writeOpenClawRegistry();
+      expect(sandboxState.restoreSandboxState("alpha", manifest.backupPath)).toMatchObject({
+        success: false,
+        error: sandboxState.MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
+      });
 
-    const validateBeforeMutation = vi.fn();
-    expect(
-      sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
-        targetAgentType: "openclaw",
-        freshOpenClawImagePluginInstalls: [],
-        authority: contentAuthority!,
-        validateBeforeMutation,
-      }),
-    ).toMatchObject({ success: true });
-    expect(validateBeforeMutation).toHaveBeenCalledOnce();
-  });
+      const validateBeforeMutation = vi.fn();
+      expect(
+        sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
+          targetAgentType: "openclaw",
+          freshOpenClawImagePluginInstalls: [],
+          authority: contentAuthority!,
+          validateBeforeMutation,
+        }),
+      ).toMatchObject({ success: true });
+      expect(validateBeforeMutation).toHaveBeenCalledOnce();
+    },
+  );
 });

@@ -110,19 +110,17 @@ describe("rebuild replacement target fingerprint", () => {
     );
   });
 
-  it("changes when a recorded replacement input changes", () => {
-    for (const drift of [
-      { dcodeAutoApprovalMode: "thread-opt-in" },
-      { endpointSource: "onboard" },
-      { policyTier: "balanced" },
-      { recreateProvider: "compatible-endpoint" },
-      { recreateModel: "model-b" },
-      { recreatePreferredInferenceApi: "anthropic" },
-    ] as const) {
-      expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
-        fingerprintRebuildRecreateTargetIntent(recreateOptions),
-      );
-    }
+  it.each([
+    { dcodeAutoApprovalMode: "thread-opt-in" },
+    { endpointSource: "onboard" },
+    { policyTier: "balanced" },
+    { recreateProvider: "compatible-endpoint" },
+    { recreateModel: "model-b" },
+    { recreatePreferredInferenceApi: "anthropic" },
+  ] as const)("changes when a recorded replacement input changes [case %#]", (drift) => {
+    expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
+      fingerprintRebuildRecreateTargetIntent(recreateOptions),
+    );
   });
 
   it("changes when the replacement targets another gateway", () => {
@@ -269,16 +267,17 @@ describe("rebuild replacement journal", () => {
     expect(authority?.kind === "selected" && authority.value).toBe(journal.gatewayAuthority);
   });
 
-  it("refuses an authority change after preflight before writing the journal (#7411)", () => {
+  it("refuses the standalone to package-managed authority change after preflight (#7411)", () => {
     const onAuthorityRefusal = vi.fn();
+    mocks.resolveGatewayRebuildAuthority.mockReturnValue({
+      ...STANDALONE_GATEWAY_AUTHORITY,
+      source: "packaged-service",
+    });
 
     expect(() =>
       openRebuildRecreateJournal({
         target: NON_DEFAULT_TARGET,
-        expectedGatewayAuthority: {
-          ...STANDALONE_GATEWAY_AUTHORITY,
-          source: "packaged-service",
-        },
+        expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
         agentName: "langchain-deepagents-code",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
         log: vi.fn(),
@@ -289,6 +288,29 @@ describe("rebuild replacement journal", () => {
     expect(onAuthorityRefusal).toHaveBeenCalledOnce();
     expect(onboardSession.updateSession).not.toHaveBeenCalled();
     expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+  });
+
+  it("adopts the package-managed to standalone migration and journals standalone (#9088)", () => {
+    const onAuthorityRefusal = vi.fn();
+
+    const journal = openRebuildRecreateJournal({
+      target: NON_DEFAULT_TARGET,
+      expectedGatewayAuthority: {
+        ...STANDALONE_GATEWAY_AUTHORITY,
+        source: "packaged-service",
+      },
+      agentName: "langchain-deepagents-code",
+      targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+      log: vi.fn(),
+      onAuthorityRefusal,
+    });
+
+    expect(onAuthorityRefusal).not.toHaveBeenCalled();
+    expect(journal.gatewayAuthority.source).toBe("standalone");
+    expect(session.checkpoint?.gatewayAuthority).toMatchObject({
+      kind: "selected",
+      value: { source: "standalone" },
+    });
   });
 
   it("starts at deleted when the source sandbox is already absent", () => {

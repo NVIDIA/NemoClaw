@@ -188,10 +188,10 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     const stateLocks = helperCalls(result.calls, STATE_DIR_GUARD, "lock");
     expect(configLocks).toHaveLength(1);
     expect(stateLocks).toHaveLength(1);
-    for (const command of [...configLocks, ...stateLocks]) {
+    [...configLocks, ...stateLocks].forEach((command) => {
       expect(command).toEqual(expect.arrayContaining(["python3", "-I"]));
       expect(command).toEqual(expect.arrayContaining(["--config-dir", "/sandbox/.openclaw"]));
-    }
+    });
   });
 
   it("freezes the canonical config before recursive state containment", () => {
@@ -216,7 +216,8 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(OPENCLAW_STATE_LOCK_PLAN.writableSubpaths).toEqual(["agents/*/sessions"]);
   });
 
-  it("uses the Hermes manifest plan for pairing and the private dashboard profile", () => {
+  it("keeps Hermes lazy dependencies gateway-readable while locking writes (#8613)", () => {
+    expect(HERMES_STATE_LOCK_PLAN.readOnlyRoots).toContain("lazy-packages");
     expect(HERMES_STATE_LOCK_PLAN.confidentialRoots).toEqual(["pairing"]);
     expect(HERMES_STATE_LOCK_PLAN.writableSubpaths).toEqual(["profiles/dashboard-home"]);
   });

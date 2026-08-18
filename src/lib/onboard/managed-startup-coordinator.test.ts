@@ -78,6 +78,9 @@ function adaptersFor(order: string[] = []): {
     "langchain-deepagents-code": vi.fn(async () => {
       order.push("apply:langchain-deepagents-code");
     }),
+    pi: vi.fn(async () => {
+      order.push("apply:pi");
+    }),
   };
   return {
     adapters: [
@@ -87,6 +90,7 @@ function adaptersFor(order: string[] = []): {
         agent: "langchain-deepagents-code",
         apply: applyByAgent["langchain-deepagents-code"],
       },
+      { agent: "pi", apply: applyByAgent.pi },
     ],
     applyByAgent,
   };
@@ -119,9 +123,9 @@ describe("managed startup coordinator", () => {
         fingerprint: prepared.fingerprint,
       }),
     );
-    for (const otherAgent of ["openclaw", "hermes", "langchain-deepagents-code"] as const) {
+    (["openclaw", "hermes", "langchain-deepagents-code"] as const).forEach((otherAgent) => {
       expect(applyByAgent[otherAgent]).toHaveBeenCalledTimes(otherAgent === agent ? 1 : 0);
-    }
+    });
     expect(dependencies.commitApplication).toHaveBeenCalledWith(prepared);
   });
 
@@ -138,9 +142,9 @@ describe("managed startup coordinator", () => {
 
     expect(result.adapterApplied).toBe(false);
     expect(dependencies.commitApplication).toHaveBeenCalledExactlyOnceWith(prepared);
-    for (const apply of Object.values(applyByAgent)) {
+    Object.values(applyByAgent).forEach((apply) => {
       expect(apply).not.toHaveBeenCalled();
-    }
+    });
   });
 
   it("rejects a missing adapter before preparing state", async () => {
@@ -200,9 +204,9 @@ describe("managed startup coordinator", () => {
       coordinateManagedStartupApplication(inputFor("openclaw"), adapters, dependencies),
     ).rejects.toThrow(/targets hermes, expected openclaw/u);
     expect(dependencies.commitApplication).not.toHaveBeenCalled();
-    for (const apply of Object.values(applyByAgent)) {
+    Object.values(applyByAgent).forEach((apply) => {
       expect(apply).not.toHaveBeenCalled();
-    }
+    });
   });
 
   it("does not commit an adapter failure and can retry the pending profile", async () => {

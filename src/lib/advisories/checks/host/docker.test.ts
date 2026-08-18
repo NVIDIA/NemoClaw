@@ -37,20 +37,16 @@ function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
 }
 
 describe("Docker host advisories (#3213)", () => {
-  it("preserves the mutually exclusive Docker reachability actions", () => {
-    const cases: Array<[HostAssessment, string]> = [
-      [host({ dockerInstalled: false }), "install_docker"],
-      [host({ dockerServiceActive: true }), "docker_group_permission"],
-      [host(), "start_docker"],
-      [host({ isWsl: true }), "enable_docker_desktop_wsl_integration"],
-    ];
-
-    for (const [context, expectedId] of cases) {
-      const result = runAdvisories(DOCKER_HOST_ADVISORY_CHECKS, context, {
-        phase: "preflight.host",
-      });
-      expect(result.advisories.map((advisory) => advisory.id)).toEqual([expectedId]);
-    }
+  it.each([
+    { context: host({ dockerInstalled: false }), expectedId: "install_docker" },
+    { context: host({ dockerServiceActive: true }), expectedId: "docker_group_permission" },
+    { context: host(), expectedId: "start_docker" },
+    { context: host({ isWsl: true }), expectedId: "enable_docker_desktop_wsl_integration" },
+  ])("preserves the $expectedId Docker reachability action", ({ context, expectedId }) => {
+    const result = runAdvisories(DOCKER_HOST_ADVISORY_CHECKS, context, {
+      phase: "preflight.host",
+    });
+    expect(result.advisories.map((advisory) => advisory.id)).toEqual([expectedId]);
   });
 
   it("reports an invalid DOCKER_HOST instead of a docker-group remediation (#7731)", () => {

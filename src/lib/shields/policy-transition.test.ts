@@ -45,6 +45,8 @@ describe("shields policy transition", () => {
 
     const runner = requireSource("../runner.js");
     const agentConfig = requireSource("../sandbox/agent-config.js");
+    const privilegedExec = requireSource("../sandbox/privileged-exec.js");
+    const dockerExec = requireSource("../adapters/docker/exec.js");
     vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
     runCaptureSpy = vi.spyOn(runner, "runCapture").mockImplementation(() => {
@@ -66,6 +68,10 @@ describe("shields policy transition", () => {
       },
       stateLockPlanInImage: false,
     });
+    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
+      (_sandboxName: unknown, cmd: unknown) => cmd as string[],
+    );
+    vi.spyOn(dockerExec, "dockerExecFileSync").mockReturnValue("");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
@@ -672,7 +678,7 @@ describe("shields config lock without a shipped config hash", () => {
       sandboxCommandFailure(`${"x".repeat(100_000)}${lockFailure("config-root")}`, hostileMessage),
     ];
 
-    for (const failure of failures) {
+    failures.forEach((failure) => {
       errorSpy.mockClear();
       commandHandlers.set("python3", rejectConfigLock(failure));
 
@@ -687,7 +693,7 @@ describe("shields config lock without a shipped config hash", () => {
       expect((caught as Error).message.length).toBeLessThan(128);
       expect((caught as Error).message).not.toContain("python3");
       expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("CRITICAL"));
-    }
+    });
   });
 
   it("keeps the fresh seal when a nested entry blocks recursive containment (#7977)", () => {

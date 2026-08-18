@@ -110,6 +110,39 @@ function createListenerFailureRecoveryHarness(targetPort: number) {
 }
 
 describe("onboard dashboard helpers", () => {
+  it("builds a Hermes verification chain with the sandbox's allocated API port (#9290)", () => {
+    const getSandbox = vi.fn(() => ({ hermesApiPort: 8643 }));
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemohermes",
+      agentProductName: () => "NemoHermes",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+      getSandbox,
+    });
+
+    expect(
+      helpers.buildAgentVerifyChain(
+        "http://127.0.0.1:18789",
+        "my-hermes",
+        loadAgent("hermes"),
+      ),
+    ).toMatchObject({
+      port: 18789,
+      dashboardHealthEndpoint: "/api/status",
+      gatewayPort: 8643,
+      gatewayHealthEndpoint: "/health",
+    });
+    expect(getSandbox).toHaveBeenCalledWith("my-hermes");
+  });
+
   it("prints platform-appropriate service hints for port conflicts", () => {
     expect(getPortConflictServiceHints("darwin").join("\n")).toMatch(/launchctl unload/);
     expect(getPortConflictServiceHints("darwin").join("\n")).not.toMatch(/systemctl --user/);
@@ -215,6 +248,80 @@ describe("onboard dashboard helpers", () => {
     ).toBe(false);
   });
 
+  it("waits for a stopped same-sandbox listener before reusing a fixed agent port", () => {
+    const sandboxName = "my-sandbox";
+    const targetPort = 8642;
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const forwardRow = `${sandboxName} 127.0.0.1 ${targetPort} 42001 running`;
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(`SANDBOX BIND PORT PID STATUS\n${forwardRow}`)
+      .mockReturnValueOnce(`SANDBOX BIND PORT PID STATUS\n${forwardRow}`)
+      .mockReturnValueOnce("")
+      .mockReturnValue(`SANDBOX BIND PORT PID STATUS\n${forwardRow}`);
+    const isPortBoundOnHost = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+    const sleep = vi.fn();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell,
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep,
+      isPortBoundOnHost,
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    expect(
+      helpers.ensureDashboardForward(sandboxName, `http://127.0.0.1:${targetPort}`, {
+        allowPortReallocation: false,
+      }),
+    ).toBe(targetPort);
+
+    expect(isPortBoundOnHost).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(0.25);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(1, ["forward", "list"], {
+      ignoreError: true,
+    });
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(2, ["forward", "list"], {
+      timeout: 15_000,
+    });
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(3, ["forward", "list"], {
+      ignoreError: true,
+    });
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(4, ["forward", "list"], {
+      timeout: 15_000,
+    });
+  });
+
+  it("uses the default dashboard URL when an empty environment override is passed", () => {
+    const forwardList =
+      "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => forwardList),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    expect(helpers.ensureDashboardForward("my-sandbox", "")).toBe(18789);
+  });
+
   it("retries dashboard forward cleanup when the first owner lookup fails", () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";
@@ -282,7 +389,7 @@ describe("onboard dashboard helpers", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {
+  it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", async () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" +
       "my-sandbox 127.0.0.1 18789 12345 running\n" +
@@ -309,7 +416,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(
-      helpers.ensureAgentDashboardForward("my-sandbox", {
+      await helpers.ensureAgentDashboardForward("my-sandbox", {
         forwardPort: 18789,
         forward_ports: [18789, 8642],
       }),
@@ -323,7 +430,7 @@ describe("onboard dashboard helpers", () => {
     ).toHaveLength(1);
   });
 
-  it("skips dashboard forwarding for terminal agents without declared ports", () => {
+  it("skips dashboard forwarding for terminal agents without declared ports", async () => {
     const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
       status: 0,
     }));
@@ -342,7 +449,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(
-      helpers.ensureAgentDashboardForward("my-sandbox", {
+      await helpers.ensureAgentDashboardForward("my-sandbox", {
         runtime: { kind: "terminal" },
         forwardPort: 0,
         forward_ports: [],

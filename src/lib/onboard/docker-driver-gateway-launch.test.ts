@@ -5,7 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { writeOpenShell0044PreAuthState } from "../../../test/support/openshell-gateway-config-helpers";
 import {
   gatewayIdForStateDir,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
@@ -14,6 +15,7 @@ import {
   buildDockerDriverGatewayConfigToml,
   buildDockerDriverGatewayLaunch,
   buildDockerDriverGatewayRuntimeIdentity,
+  openDockerDriverGatewayLog,
   parseGlibcVersionsFromBinaryText,
   resolveDriftGatewayBin,
   shouldUseContainerizedGateway,
@@ -36,6 +38,20 @@ function withTempBinaries<T>(
 }
 
 describe("docker-driver-gateway-launch", () => {
+  it("records the current-launch offset before appending gateway output (#8797)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-"));
+    const logPath = path.join(dir, "openshell-gateway.log");
+    const previousLog = "previous gateway launch\n";
+    fs.writeFileSync(logPath, previousLog);
+    try {
+      const gatewayLog = openDockerDriverGatewayLog(logPath);
+      expect(gatewayLog.startOffset).toBe(Buffer.byteLength(previousLog));
+      fs.closeSync(gatewayLog.fd);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("extracts GLIBC versions from binary text", () => {
     expect(parseGlibcVersionsFromBinaryText("GLIBC_2.35\0GLIBC_2.39\0GLIBC_2.39")).toEqual([
       "2.35",
@@ -226,6 +242,58 @@ describe("docker-driver-gateway-launch", () => {
         processGatewayBin: gatewayBin,
       });
     });
+  });
+
+  it("admits a prepared v0.0.44 pre-auth database only under installer restore authority", () => {
+    vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
+    try {
+      withTempBinaries(({ dir, gatewayBin }) => {
+        const stateDir = path.join(dir, "state");
+        fs.mkdirSync(stateDir, { mode: 0o700 });
+        writeOpenShell0044PreAuthState(stateDir);
+
+        const launch = buildDockerDriverGatewayLaunch({
+          gatewayBin,
+          stateDir,
+          platform: "linux",
+          env: {},
+          hostGlibcVersion: "2.39",
+          requiredGlibcVersions: ["2.39"],
+          gatewayEnv: { OPENSHELL_DRIVERS: "docker" },
+        });
+
+        expect(launch.mode).toBe("host");
+        expect(fs.existsSync(path.join(stateDir, "openshell-gateway.toml"))).toBe(true);
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects a prepared v0.0.44 pre-auth database without installer restore authority", () => {
+    vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "0");
+    try {
+      withTempBinaries(({ dir, gatewayBin }) => {
+        const stateDir = path.join(dir, "state");
+        fs.mkdirSync(stateDir, { mode: 0o700 });
+        writeOpenShell0044PreAuthState(stateDir);
+
+        expect(() =>
+          buildDockerDriverGatewayLaunch({
+            gatewayBin,
+            stateDir,
+            platform: "linux",
+            env: {},
+            hostGlibcVersion: "2.39",
+            requiredGlibcVersions: ["2.39"],
+            gatewayEnv: { OPENSHELL_DRIVERS: "docker" },
+          }),
+        ).toThrow(/durable gateway state exists without a config/);
+        expect(fs.existsSync(path.join(stateDir, "openshell-gateway.toml"))).toBe(false);
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("binds the real no-argument host launch identity to its gateway target", () => {

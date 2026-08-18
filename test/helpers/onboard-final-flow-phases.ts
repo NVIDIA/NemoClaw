@@ -214,6 +214,7 @@ export function createPhases(
       getActiveSandbox: () => null,
       mergePolicyMessagingChannels:
         recorders.mergePolicyMessagingChannels ?? ((selected) => selected),
+      detectUnconfiguredMessagingChannels: () => [],
       verifyCompatibleEndpointSandboxSmoke: vi.fn(),
       preparePolicyPresetResumeSelection: () => ({
         policyPresets: ["balanced"],
@@ -259,6 +260,11 @@ export function createPhases(
       checkAndRecoverSandboxProcesses: vi.fn(),
       warmupScopeUpgrade: vi.fn(),
       autoPairScopeApproval: vi.fn(),
+      readRegistryAgent: vi.fn(() => "openclaw"),
+      settlePortablePairing: vi.fn(async () => ({ kind: "settled" as const })),
+      portablePairingIncompleteMessage: vi.fn(
+        () => "Portable onboarding is incomplete; resume onboarding.",
+      ),
       isDeploymentHealthy:
         recorders.isDeploymentHealthy ?? ((result: VerifyDeploymentResult) => result.healthy),
       reportDeploymentReadiness: vi.fn(),
@@ -287,6 +293,7 @@ export function createPhases(
               gatewayVersion: "test",
               inferenceRouteWorking: true,
               dashboardReachable: true,
+              agentApiReachable: null,
               messagingBridgesHealthy: true,
               messagingRuntimeChannelsMissing: null,
               messagingConfigChannelsMissing: null,

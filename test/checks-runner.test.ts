@@ -25,11 +25,35 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the onboarding entry composition check", () => {
+    expect(CHECKS).toContainEqual({
+      name: "onboard-entry-composition",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/onboard-entry-composition.mts"],
+    });
+  });
+
   it("registers the test registration boundary check", () => {
     expect(CHECKS).toContainEqual({
       name: "test-registration-boundary",
       command: process.platform === "win32" ? "tsx.cmd" : "tsx",
       args: ["scripts/checks/test-registration-boundary.mts"],
+    });
+  });
+
+  it("registers the defaulted dependent flag check (#8883)", () => {
+    expect(CHECKS).toContainEqual({
+      name: "no-defaulted-dependent-flags",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/no-defaulted-dependent-flags.mts"],
+    });
+  });
+
+  it("registers the optimized build-context source check", () => {
+    expect(CHECKS).toContainEqual({
+      name: "optimized-build-context-copy-sources",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
     });
   });
 

@@ -34,7 +34,7 @@ jobs:
 
       - name: Detect changed paths
         id: filter
-        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           predicate-quantifier: every
           filters: |
@@ -42,6 +42,8 @@ jobs:
               - '**'
               - '!**/*.md'
               - '!docs/**'
+              - '!fern/docs.yml'
+              - '!fern/assets/**'
 
   docs-only-checks:
     needs: changes
@@ -89,6 +91,9 @@ jobs:
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
+
+      - name: Validate documentation
+        run: npm run docs
 
   static-checks:
     needs: changes

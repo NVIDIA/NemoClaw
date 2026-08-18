@@ -29,7 +29,7 @@
 
 import net from "node:net";
 
-export type VllmPlatform = "spark" | "station" | "linux";
+export type VllmPlatform = "spark" | "station" | "n1x" | "linux";
 
 export interface VllmRuntimeOverride {
   /** Model-specific runtime image, pinned by digest. */
@@ -307,7 +307,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     maxModelLen: 262144,
     // Additive flags on top of the shared serving defaults. The shared flags
     // already cover --tensor-parallel-size/--pipeline-parallel-size/
-    // --data-parallel-size (all 1 — harmless on a single Spark node),
+    // --data-parallel-size (all 1 — harmless on one Spark or N1x host),
     // --port 8000, and --trust-remote-code; --max-model-len comes from
     // maxModelLen above.
     modelArgs: [
@@ -353,7 +353,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "fastsafetensors",
     ],
     gated: false,
-    platforms: ["spark"],
+    platforms: ["spark", "n1x"],
     minComputeCapability: 121,
   },
   {
@@ -384,8 +384,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     minComputeCapability: 121,
     runtime: {
       image:
-        "vllm/vllm-openai@sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25",
-      imageDownloadSizeBytes: 10_507_991_780,
+        "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+      imageDownloadSizeBytes: 9_699_710_136,
       modelDownloadSizeBytes: 25_447_097_878,
     },
     installFastSafetensors: false,

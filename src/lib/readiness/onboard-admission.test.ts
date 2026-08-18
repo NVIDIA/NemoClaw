@@ -235,49 +235,53 @@ describe("onboarding readiness admission (#7411)", () => {
     });
   });
 
-  it("admits only the pre-mutation facts that portable host preparation can replace", () => {
-    let capabilities = withCapabilityState(
-      requiredCapabilities(),
-      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable,
-      "absent",
-    );
-    for (const id of [
-      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
-      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
-      ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
-    ]) {
+  it.each(
+    [
+        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
+        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+      ],
+  )(
+    "admits only the pre-mutation facts that portable host preparation can replace [case %#]",
+    (id) => {
+      let capabilities = withCapabilityState(
+        requiredCapabilities(),
+        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerDaemonReachable,
+        "absent",
+      );
+
       capabilities = withCapabilityState(capabilities, id, "unknown");
-    }
 
-    expect(
-      evaluateOnboardReadinessAdmission(
-        report({
-          capabilities,
-          findings: [finding(ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable)],
-          status: "incompatible",
-        }),
-        { ...DEFAULT_OPTIONS, allowPortableHostPreparation: true },
-      ),
-    ).toEqual({
-      admitted: true,
-      waivedFindingIds: [ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable],
-    });
-
-    expect(
-      evaluateOnboardReadinessAdmission(
-        report({
-          capabilities: withCapabilityState(
+      expect(
+        evaluateOnboardReadinessAdmission(
+          report({
             capabilities,
-            ONBOARD_REQUIRED_CAPABILITY_IDS.dockerAvailable,
-            "absent",
-          ),
-          findings: [finding("host.docker.unavailable")],
-          status: "incompatible",
-        }),
-        { ...DEFAULT_OPTIONS, allowPortableHostPreparation: true },
-      ),
-    ).toMatchObject({ admitted: false, findingIds: ["host.docker.unavailable"] });
-  });
+            findings: [finding(ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable)],
+            status: "incompatible",
+          }),
+          { ...DEFAULT_OPTIONS, allowPortableHostPreparation: true },
+        ),
+      ).toEqual({
+        admitted: true,
+        waivedFindingIds: [ONBOARD_READINESS_FINDING_IDS.dockerDaemonUnreachable],
+      });
+
+      expect(
+        evaluateOnboardReadinessAdmission(
+          report({
+            capabilities: withCapabilityState(
+              capabilities,
+              ONBOARD_REQUIRED_CAPABILITY_IDS.dockerAvailable,
+              "absent",
+            ),
+            findings: [finding("host.docker.unavailable")],
+            status: "incompatible",
+          }),
+          { ...DEFAULT_OPTIONS, allowPortableHostPreparation: true },
+        ),
+      ).toMatchObject({ admitted: false, findingIds: ["host.docker.unavailable"] });
+    },
+  );
 
   it("admits the documented storage exception only when remediation is present", () => {
     let capabilities = withCapabilityState(
@@ -328,6 +332,37 @@ describe("onboarding readiness admission (#7411)", () => {
       admitted: true,
       waivedFindingIds: [],
     });
+  });
+
+  it("admits only explicit managed-vLLM intent through the Deferred N1x validation gate (#8574)", () => {
+    const capabilities = [
+      ...withCapabilityState(
+        requiredCapabilities(),
+        ONBOARD_REQUIRED_CAPABILITY_IDS.platformSupported,
+        "absent",
+      ),
+      capability("host.platform.n1x", "present"),
+    ];
+    const pending = finding(ONBOARD_READINESS_FINDING_IDS.n1xValidationPending);
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities, findings: [pending], status: "incompatible" }),
+        DEFAULT_OPTIONS,
+      ),
+    ).toMatchObject({ admitted: false, findingIds: [pending.id] });
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities, findings: [pending], status: "incompatible" }),
+        { ...DEFAULT_OPTIONS, allowDeferredN1xManagedVllm: true },
+      ),
+    ).toEqual({ admitted: true, waivedFindingIds: [pending.id] });
+    expect(
+      evaluateOnboardReadinessAdmission(report({ findings: [pending], status: "incompatible" }), {
+        ...DEFAULT_OPTIONS,
+        allowDeferredN1xManagedVllm: true,
+      }),
+    ).toMatchObject({ admitted: false, findingIds: [pending.id] });
   });
 
   it("fails closed when a required capability is unknown or missing", () => {

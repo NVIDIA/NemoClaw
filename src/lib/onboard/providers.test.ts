@@ -494,16 +494,17 @@ describe("onboard provider helpers", () => {
     expect(isProviderKeyCredentialCandidate(value)).toBe(expected);
   });
 
-  it("rejects every supported non-interactive provider selector and alias as a provider-key credential", () => {
-    const selectors = new Set([
-      "inference",
-      ...Object.keys(NON_INTERACTIVE_PROVIDER_ALIASES),
-      ...Array.from(NON_INTERACTIVE_PROVIDER_KEYS),
-    ]);
-
-    for (const selector of selectors) {
-      expect(isProviderKeyCredentialCandidate(selector)).toBe(false);
-    }
+  it.each(
+    Array.from(
+      new Set([
+        "inference",
+        ...Object.keys(NON_INTERACTIVE_PROVIDER_ALIASES),
+        ...Array.from(NON_INTERACTIVE_PROVIDER_KEYS),
+      ]),
+      (value) => [value],
+    ),
+  )("rejects provider selector %s as a provider-key credential", (selector) => {
+    expect(isProviderKeyCredentialCandidate(selector)).toBe(false);
   });
 
   it.each([
@@ -521,19 +522,22 @@ describe("onboard provider helpers", () => {
     "openai",
     "routed",
     "vllm",
-  ])("keeps Deep Agents provider-key selector %s from being staged as a credential", (providerKey) => {
-    withProviderEnv(
-      {
-        NEMOCLAW_AGENT: "langchain-deepagents-code",
-        NEMOCLAW_PROVIDER_KEY: providerKey,
-      },
-      () => {
-        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
-        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
-        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
-      },
-    );
-  });
+  ])(
+    "keeps Deep Agents provider-key selector %s from being staged as a credential",
+    (providerKey) => {
+      withProviderEnv(
+        {
+          NEMOCLAW_AGENT: "langchain-deepagents-code",
+          NEMOCLAW_PROVIDER_KEY: providerKey,
+        },
+        () => {
+          expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+          expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+          expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+        },
+      );
+    },
+  );
 
   it("keeps generic NEMOCLAW_PROVIDER_KEY from implying hosted custom inference", () => {
     withProviderEnv(

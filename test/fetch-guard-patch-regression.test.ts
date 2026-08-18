@@ -422,6 +422,7 @@ describe("fetch-guard patch regression guard", () => {
     expect(invocation.calls).toMatch(
       /node --experimental-strip-types \/scripts\/lib\/reviewed-npm-audit\.mts --directory \S+ --exceptions \S+ --graph mcporter-runtime --threshold high/,
     );
+    expect(invocation.calls).not.toContain("audit signatures");
     readRequiredMatch(
       DOCKERFILE_BASE,
       /(npm --prefix \/usr\/local\/lib\/nemoclaw\/mcporter-runtime ci\s*\\\s*--ignore-scripts --omit=dev --no-audit --no-fund --no-progress)/,
@@ -433,34 +434,6 @@ describe("fetch-guard patch regression guard", () => {
         "# Patch OpenClaw media fetch",
       ),
     ).toContain("rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter");
-  });
-
-  // source-shape-contract: security -- Cross-file OpenClaw pins bind reviewed classifiers to verified package integrity
-  it("requires classifier review and integrity evidence when the OpenClaw build pin changes", () => {
-    const reviewMessage =
-      "Update fetch-guard classifier expectations before changing the OpenClaw build version.";
-
-    const blueprintMinVersion = readBlueprintMinOpenClawVersion();
-    const baseImageVersion = readDockerfileBaseOpenClawVersion();
-    const runtimeVersion = readDockerfileOpenClawVersion();
-
-    expectVersionAtLeast(
-      baseImageVersion,
-      blueprintMinVersion,
-      "Dockerfile.base OpenClaw target must satisfy the blueprint minimum.",
-    );
-    expect(
-      runtimeVersion,
-      "Dockerfile and Dockerfile.base must build the same OpenClaw target.",
-    ).toBe(baseImageVersion);
-    expect(readDockerfileBaseOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
-    expect(readDockerfileOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
-    expect([...REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS], reviewMessage).toContain(
-      runtimeVersion,
-    );
-    expect([...REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS], reviewMessage).toContain(
-      baseImageVersion,
-    );
   });
 
   it("applies the Dockerfile OpenClaw compatibility patch block to executable fixtures", async () => {

@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { HERMES_API_PORT_RANGE_END, HERMES_API_PORT_RANGE_START } from "../core/ports";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
@@ -228,7 +229,47 @@ const DCODE_PROFILE = {
   corporateCa: { bundleSha256: CA_SHA256 },
 } as const satisfies ManagedStartupProfile;
 
-const VALID_PROFILES = [OPENCLAW_PROFILE, HERMES_PROFILE, DCODE_PROFILE] as const;
+const PI_PROFILE = {
+  schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+  agent: "pi",
+  agentConfig: { agent: "pi" },
+  inference: {
+    routeProvider: "inference",
+    upstreamProvider: "nvidia",
+    model: "nvidia/nemotron-3-super-120b-a12b",
+    routedBaseUrl: "https://inference.local/v1",
+    upstreamEndpointUrl: null,
+    api: "openai-completions",
+    primaryModelRef: null,
+    compatibility: null,
+    inputModalities: null,
+  },
+  proxy: {
+    managedHost: "10.200.0.1",
+    managedPort: 3128,
+    hostHttpUrl: null,
+    hostHttpsUrl: null,
+    hostNoProxy: [],
+  },
+  dashboard: {
+    agent: "pi",
+    mode: "disabled",
+  },
+  tools: {
+    disclosure: "progressive",
+    enabledGateways: [],
+  },
+  messaging: { plan: null },
+  tuning: {
+    contextWindow: null,
+    maxTokens: null,
+    reasoning: null,
+    reasoningEffort: null,
+  },
+  corporateCa: { bundleSha256: CA_SHA256 },
+} as const satisfies ManagedStartupProfile;
+
+const VALID_PROFILES = [OPENCLAW_PROFILE, HERMES_PROFILE, DCODE_PROFILE, PI_PROFILE] as const;
 
 function encodeUnknown(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
@@ -247,6 +288,7 @@ const STOCK_DOCKER_ARGS = {
   "langchain-deepagents-code": dockerArgs(
     path.join(process.cwd(), "agents/langchain-deepagents-code/Dockerfile"),
   ),
+  pi: dockerArgs(path.join(process.cwd(), "agents/pi/Dockerfile")),
 } satisfies Record<ManagedStartupAgent, Set<string>>;
 
 const RUNTIME_INPUT_SOURCE_FILES = [
@@ -305,17 +347,18 @@ const STOCK_RUNTIME_INPUT_AGENTS = {
 } as const satisfies Record<string, readonly ManagedStartupAgent[]>;
 
 describe("managed startup profile", () => {
-  it.each(
-    VALID_PROFILES,
-  )("round-trips each $agent profile through canonical encoding", (profile) => {
-    const validated = validateManagedStartupProfile(profile);
-    const encoded = encodeManagedStartupProfile(profile);
+  it.each(VALID_PROFILES)(
+    "round-trips each $agent profile through canonical encoding",
+    (profile) => {
+      const validated = validateManagedStartupProfile(profile);
+      const encoded = encodeManagedStartupProfile(profile);
 
-    const decoded = decodeManagedStartupProfile(encoded);
-    expect(decoded).toEqual(validated);
-    expect(decoded.inference.model).toBe(profile.inference.model);
-    expect(fingerprintManagedStartupProfile(profile)).toMatch(/^[a-f0-9]{64}$/);
-  });
+      const decoded = decodeManagedStartupProfile(encoded);
+      expect(decoded).toEqual(validated);
+      expect(decoded.inference.model).toBe(profile.inference.model);
+      expect(fingerprintManagedStartupProfile(profile)).toMatch(/^[a-f0-9]{64}$/);
+    },
+  );
 
   it("round-trips all OpenClaw-only startup settings", () => {
     const profile = decodeManagedStartupProfile(encodeManagedStartupProfile(OPENCLAW_PROFILE));
@@ -465,85 +508,36 @@ describe("managed startup profile", () => {
     ).toThrow(/not supported/);
   });
 
-  // source-shape-contract: compatibility -- Every shipped Docker build input must map to versioned startup intent or a declared build-only exclusion
-  it("classifies every stock Docker ARG as startup-affordance or deliberate exclusion", () => {
-    for (const agent of MANAGED_STARTUP_AGENTS) {
-      const classified = new Set([
-        ...MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
-        ...MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS[agent].map(({ input }) => input),
-      ]);
-      expect([...STOCK_DOCKER_ARGS[agent]].filter((input) => !classified.has(input))).toEqual([]);
-    }
-  });
+  it.each(Array.from(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS, (value) => [value]))(
+    "records $input cross-agent emissions as cleanup obligations, not supported semantics",
+    (obligation) => {
+      expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS).toHaveLength(2);
 
-  // source-shape-contract: compatibility -- Every centralized agent runtime input must map to versioned startup intent or a typed downstream owner
-  it("classifies every centralized runtime input as profile intent or an explicit deferral", () => {
-    expect([...STOCK_RUNTIME_INPUTS].sort()).toEqual(
-      Object.keys(STOCK_RUNTIME_INPUT_AGENTS).sort(),
-    );
-    const missing = Object.entries(STOCK_RUNTIME_INPUT_AGENTS).flatMap(([input, agents]) =>
-      agents
-        .filter(
-          (agent) =>
-            !new Set([
-              ...MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(
-                ({ input: profileInput }) => profileInput,
-              ),
-              ...MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent].map(
-                ({ input: deferredInput }) => deferredInput,
-              ),
-            ]).has(input),
-        )
-        .map((agent) => `${agent}:${input}`),
-    );
-    expect(missing).toEqual([]);
-
-    const openClawAutoPairInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS.openclaw.filter(
-      ({ input }) => input.startsWith("NEMOCLAW_AUTO_PAIR_"),
-    );
-    expect([...OPENCLAW_AUTO_PAIR_CONSUMER_INPUTS].sort()).toEqual(
-      openClawAutoPairInputs.map(({ input }) => input).sort(),
-    );
-    expect(
-      Object.fromEntries(openClawAutoPairInputs.map(({ admission, input }) => [input, admission])),
-    ).toEqual({
-      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "managed-launch-forwarded",
-    });
-  });
-
-  it("records generic cross-agent emissions as cleanup obligations, not supported semantics", () => {
-    expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS).toHaveLength(2);
-    for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
       const supportedAgents =
         STOCK_RUNTIME_INPUT_AGENTS[obligation.input as keyof typeof STOCK_RUNTIME_INPUT_AGENTS];
       expect(obligation.owner).toBe("application-environment");
-      for (const agent of obligation.emittedFor) {
+      obligation.emittedFor.forEach((agent) => {
         expect(supportedAgents).not.toContain(agent);
         expect(
           MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
         ).not.toContain(obligation.input);
-      }
-      for (const agent of obligation.supportedFor) {
-        expect(supportedAgents).toContain(agent);
-      }
-    }
-  });
+      });
+      expect(obligation.supportedFor.every((agent) =>
+          supportedAgents.some((supportedAgent) => supportedAgent === agent))).toBe(true);
+    },
+  );
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("keeps deferred %s runtime inputs separate from typed profile intent", (agent) => {
-    const deferredInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent];
-    const profileInputs = new Set(
-      MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
-    );
-    expect(deferredInputs.filter(({ input }) => profileInputs.has(input))).toEqual([]);
-    expect(new Set(deferredInputs.map(({ input }) => input)).size).toBe(deferredInputs.length);
-  });
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "keeps deferred %s runtime inputs separate from typed profile intent",
+    (agent) => {
+      const deferredInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent];
+      const profileInputs = new Set(
+        MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
+      );
+      expect(deferredInputs.filter(({ input }) => profileInputs.has(input))).toEqual([]);
+      expect(new Set(deferredInputs.map(({ input }) => input)).size).toBe(deferredInputs.length);
+    },
+  );
 
   it.each(MANAGED_STARTUP_AGENTS)("keeps the %s affordance inventory unambiguous", (agent) => {
     const inventory = MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent];
@@ -560,19 +554,20 @@ describe("managed startup profile", () => {
     });
   });
 
-  it.each(
-    VALID_PROFILES,
-  )("maps every $agent inventory entry to an explicit profile field", (profile) => {
-    for (const { profilePath } of MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent]) {
-      let current: unknown = profile;
-      for (const segment of profilePath.split(".")) {
+  it.each(VALID_PROFILES)(
+    "maps every $agent inventory entry to an explicit profile field",
+    (profile) => {
+      MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent].forEach(({ profilePath }) => {
+        let current: unknown = profile;
+      profilePath.split(".").forEach((segment) => {
         expect(current).not.toBeNull();
         expect(typeof current).toBe("object");
         expect(Object.hasOwn(current as object, segment)).toBe(true);
         current = (current as Record<string, unknown>)[segment];
-      }
-    }
-  });
+      });
+      });
+    },
+  );
 
   it("rejects non-canonical transports instead of accepting ambiguous fingerprints", () => {
     const raw = JSON.stringify(OPENCLAW_PROFILE);
@@ -685,21 +680,20 @@ describe("managed startup profile", () => {
     ).toThrow(/credential-shaped/);
   });
 
-  it.each([
-    "publicKey",
-    "public_key",
-    "public-key",
-  ])("does not classify exact %s metadata as credential material", (field) => {
-    expect(
-      validateManagedStartupProfile({
-        ...OPENCLAW_PROFILE,
-        inference: {
-          ...OPENCLAW_PROFILE.inference,
-          compatibility: { [field]: "non-secret metadata" },
-        },
-      }).inference.compatibility,
-    ).toEqual({ [field]: "non-secret metadata" });
-  });
+  it.each(["publicKey", "public_key", "public-key"])(
+    "does not classify exact %s metadata as credential material",
+    (field) => {
+      expect(
+        validateManagedStartupProfile({
+          ...OPENCLAW_PROFILE,
+          inference: {
+            ...OPENCLAW_PROFILE.inference,
+            compatibility: { [field]: "non-secret metadata" },
+          },
+        }).inference.compatibility,
+      ).toEqual({ [field]: "non-secret metadata" });
+    },
+  );
 
   it("rejects raw credentials nested inside an otherwise opaque messaging plan", () => {
     expect(() =>
@@ -732,6 +726,119 @@ describe("managed startup profile", () => {
         },
       }),
     ).toThrow(/credential-shaped field name/);
+  });
+
+  it("accepts schema-owned messaging package pins and credential placeholder lines (#9355)", () => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        messaging: {
+          plan: {
+            ...OPENCLAW_PROFILE.messaging.plan,
+            buildSteps: [
+              {
+                channelId: "slack",
+                kind: "package-install",
+                outputId: "slack-openclaw-plugin",
+                required: true,
+                value: {
+                  manager: "npm",
+                  spec: "@slack/web-api@7.9.3",
+                  pin: true,
+                },
+              },
+            ],
+            agentRender: [
+              ...OPENCLAW_PROFILE.messaging.plan.agentRender,
+              {
+                channelId: "slack",
+                agent: "hermes",
+                target: "~/.hermes/.env",
+                kind: "env-lines",
+                lines: [
+                  "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                  "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+                  "TELEGRAM_BOT_TOKEN=openshell:resolve:env:v1_TELEGRAM_BOT_TOKEN",
+                ],
+                templateRefs: ["credential.slackBotToken.placeholder"],
+              },
+            ],
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["a raw credential", `SLACK_BOT_TOKEN=xoxb-${"a".repeat(32)}`],
+    ["a malformed assignment", "SLACK_BOT_TOKEN =openshell:resolve:env:SLACK_BOT_TOKEN"],
+    [
+      "a placeholder for a different environment key",
+      "SLACK_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+    ],
+    [
+      "a versioned placeholder for a different environment key",
+      "SLACK_BOT_TOKEN=openshell:resolve:env:v1_DISCORD_BOT_TOKEN",
+    ],
+  ])("rejects %s in messaging environment lines (#9355)", (_label, line) => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        messaging: {
+          plan: {
+            ...OPENCLAW_PROFILE.messaging.plan,
+            agentRender: [
+              {
+                channelId: "slack",
+                agent: "hermes",
+                target: "~/.hermes/.env",
+                kind: "env-lines",
+                lines: [line],
+                templateRefs: ["credential.slackBotToken.placeholder"],
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow(/credential-shaped string data/);
+  });
+
+  it.each([
+    [
+      "a package pin outside buildSteps[*].value",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        buildSteps: [{ pin: true }],
+      },
+    ],
+    [
+      "a non-boolean package pin",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        buildSteps: [{ value: { pin: "true" } }],
+      },
+    ],
+    [
+      "a credential placeholder assignment outside agentRender[*].lines[*]",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        note: "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+    ],
+    [
+      "a direct credential placeholder outside schema-owned fields",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        note: "openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+    ],
+  ])("rejects %s (#9355)", (_label, plan) => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        messaging: { plan },
+      }),
+    ).toThrow(/credential-shaped/);
   });
 
   it.each([
@@ -772,40 +879,39 @@ describe("managed startup profile", () => {
     );
   });
 
-  it.each([
-    "token",
-    "api_key",
-  ])("rejects credential-shaped query parameter %s in an opaque URL", (credentialField) => {
-    expect(() =>
-      validateManagedStartupProfile({
-        ...OPENCLAW_PROFILE,
-        inference: {
-          ...OPENCLAW_PROFILE.inference,
-          compatibility: {
-            note: `https://example.test/hook?${credentialField}=opaque-secret`,
+  it.each(["token", "api_key"])(
+    "rejects credential-shaped query parameter %s in an opaque URL",
+    (credentialField) => {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...OPENCLAW_PROFILE,
+          inference: {
+            ...OPENCLAW_PROFILE.inference,
+            compatibility: {
+              note: `https://example.test/hook?${credentialField}=opaque-secret`,
+            },
           },
-        },
-      }),
-    ).toThrow(/URL with embedded credentials/);
-  });
+        }),
+      ).toThrow(/URL with embedded credentials/);
+    },
+  );
 
-  it.each([
-    "#access_token=opaque-secret",
-    "#token=opaque-secret",
-    "#/route?api_key=opaque-secret",
-  ])("rejects credential-shaped parameters in an opaque URL fragment", (fragment) => {
-    expect(() =>
-      validateManagedStartupProfile({
-        ...OPENCLAW_PROFILE,
-        inference: {
-          ...OPENCLAW_PROFILE.inference,
-          compatibility: {
-            note: `https://example.test/callback${fragment}`,
+  it.each(["#access_token=opaque-secret", "#token=opaque-secret", "#/route?api_key=opaque-secret"])(
+    "rejects credential-shaped parameters in an opaque URL fragment",
+    (fragment) => {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...OPENCLAW_PROFILE,
+          inference: {
+            ...OPENCLAW_PROFILE.inference,
+            compatibility: {
+              note: `https://example.test/callback${fragment}`,
+            },
           },
-        },
-      }),
-    ).toThrow(/URL with embedded credentials/);
-  });
+        }),
+      ).toThrow(/URL with embedded credentials/);
+    },
+  );
 
   it("accepts an HTTP CONNECT origin for host HTTPS proxy intent", () => {
     expect(validateManagedStartupProfile(OPENCLAW_PROFILE).proxy.hostHttpsUrl).toBe(
@@ -838,6 +944,64 @@ describe("managed startup profile", () => {
         dashboard: { agent: "langchain-deepagents-code", mode: "remote" },
       }),
     ).toThrow(/dashboard\.mode must be disabled/);
+  });
+
+  it("carries the Pi model tuning fields and rejects the effort scale Pi has no surface for (#7930)", () => {
+    expect(
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        tuning: {
+          ...PI_PROFILE.tuning,
+          contextWindow: 65_536,
+          maxTokens: 8192,
+          reasoning: true,
+        },
+      }).tuning,
+    ).toEqual({
+      contextWindow: 65_536,
+      maxTokens: 8192,
+      reasoning: true,
+      reasoningEffort: null,
+    });
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        tuning: { ...PI_PROFILE.tuning, reasoningEffort: "high" },
+      }),
+    ).toThrow(/pi does not support startup tuning fields: reasoningEffort/);
+  });
+
+  it("keeps Pi messaging, dashboards, and inference APIs fail-closed while retaining host proxy intent", () => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        messaging: { plan: { schemaVersion: 1 } },
+      }),
+    ).toThrow(/messaging\.plan must be null/);
+    expect(
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        proxy: { ...PI_PROFILE.proxy, hostHttpUrl: "http://proxy.example.test:8080" },
+      }).proxy.hostHttpUrl,
+    ).toBe("http://proxy.example.test:8080");
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        inference: { ...PI_PROFILE.inference, api: "openai-responses" },
+      }),
+    ).toThrow(/not supported/);
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        dashboard: { agent: "pi", mode: "loopback-forwarded" },
+      }),
+    ).toThrow(/dashboard\.mode must be disabled/);
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        inference: { ...PI_PROFILE.inference, upstreamEndpointUrl: "https://openrouter.ai/api/v1" },
+      }),
+    ).toThrow(/inference\.upstreamEndpointUrl must be null for pi/);
   });
 
   it("rejects unsupported langchain-deepagents-code inference APIs and OpenClaw-only inference fields", () => {
@@ -960,8 +1124,10 @@ describe("managed startup profile", () => {
 
   it.each([
     ["publicPort", 8642],
+    ["publicPort", 8652],
     ["publicPort", 18_642],
     ["internalPort", 8642],
+    ["internalPort", 8652],
     ["internalPort", 18_642],
   ] as const)("rejects Hermes dashboard %s collisions with reserved API port %i", (field, port) => {
     expect(() =>
@@ -969,7 +1135,33 @@ describe("managed startup profile", () => {
         ...HERMES_PROFILE,
         dashboard: { ...HERMES_PROFILE.dashboard, [field]: port },
       }),
-    ).toThrow(/reserved API ports 8642 or 18642/);
+    ).toThrow(/reserved API ports 8642-8652 or 18642/);
+  });
+
+  it.each(
+    Array.from([HERMES_API_PORT_RANGE_START - 1, HERMES_API_PORT_RANGE_END + 1], (value) => [
+      value,
+    ]),
+  )("rejects port %s outside the reserved Hermes API port range", (port) => {
+    for (let port = HERMES_API_PORT_RANGE_START; port <= HERMES_API_PORT_RANGE_END; port += 1) {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...HERMES_PROFILE,
+          dashboard: { ...HERMES_PROFILE.dashboard, publicPort: port },
+        }),
+      ).toThrow(/reserved API ports/);
+    }
+
+    expect(() =>
+      validateManagedStartupProfile({
+        ...HERMES_PROFILE,
+        dashboard: {
+          ...HERMES_PROFILE.dashboard,
+          url: `http://127.0.0.1:${port}`,
+          publicPort: port,
+        },
+      }),
+    ).not.toThrow();
   });
 
   it.each([

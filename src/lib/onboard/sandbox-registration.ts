@@ -16,10 +16,17 @@ import type {
   SandboxMessagingState,
 } from "../state/registry";
 import * as registry from "../state/registry";
+import {
+  cloneSandboxHostLocalInferenceProvenance,
+  cloneSandboxHostLocalInferenceReceipt,
+  requireSandboxHostLocalInferenceProvenance,
+} from "../state/registry/host-local-inference";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
+import { resolveOnboardHermesApiPort } from "./hermes-api-port";
+import { isManagedImageAgent, MANAGED_IMAGE_REPOSITORIES } from "./managed-image/contract";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -31,7 +38,7 @@ import {
   requireRuntimeProviderBundleForSandbox,
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
-import { getSandboxAgentRegistryFields } from "./sandbox-agent";
+import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
 
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
@@ -53,6 +60,8 @@ export interface CreatedSandboxRegistryEntryInput {
   agentVersionKnown: boolean;
   imageTag: string | null;
   workload?: SandboxEntry["workload"];
+  hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
+  hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
@@ -72,6 +81,8 @@ export interface CreatedSandboxRegistryEntryInput {
   preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
+  /** Host port this sandbox exposes its OpenAI-compatible API on. */
+  hermesApiPort?: number | null;
   dashboardPort: number;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
@@ -189,15 +200,55 @@ export function buildCreatedSandboxRegistryEntry(
       "Sandbox workload ownership receipt failed closed validation.",
     );
   }
+  const hostLocalInferenceReceipt = cloneSandboxHostLocalInferenceReceipt(
+    input.hostLocalInferenceReceipt,
+  );
+  if (input.hostLocalInferenceReceipt !== undefined && hostLocalInferenceReceipt === undefined) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox host-local inference receipt failed closed validation.",
+    );
+  }
+  const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
+    input.hostLocalInferenceProvenance,
+  );
+  if (
+    input.hostLocalInferenceProvenance !== undefined &&
+    (!hostLocalInferenceProvenance || typeof hostLocalInferenceReceipt !== "string")
+  ) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox host-local inference provenance failed closed validation.",
+    );
+  }
+  if (hostLocalInferenceProvenance && typeof hostLocalInferenceReceipt === "string") {
+    requireSandboxHostLocalInferenceProvenance(
+      hostLocalInferenceProvenance,
+      hostLocalInferenceReceipt,
+    );
+  }
+  const agentFields = getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown);
+  if (workload?.kind === "managed-image") {
+    const requestedAgent = getRequestedSandboxAgentName(input.agent);
+    if (
+      !isManagedImageAgent(requestedAgent) ||
+      !workload.reference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[requestedAgent]}@sha256:`)
+    ) {
+      throw new RuntimeProviderSelectionError(
+        "Sandbox agent identity does not match its managed workload receipt.",
+      );
+    }
+    agentFields.agent = requestedAgent;
+  }
 
   return {
     name: input.sandboxName,
     servingProfileProvenance,
     ...inferenceSelectionRegistryFields(input.inferenceSelection),
     ...input.runtimeFields,
-    ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
+    ...agentFields,
     imageTag: input.imageTag,
     workload,
+    ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
+    ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(input.openclawImagePluginInstalls !== undefined
       ? {
           openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
@@ -224,6 +275,14 @@ export function buildCreatedSandboxRegistryEntry(
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
+    hermesApiPort:
+      input.agent?.name === "hermes"
+        ? (input.hermesApiPort ??
+          resolveOnboardHermesApiPort(input.sandboxName, {
+            // Registration follows a successful create/recreate that applied this environment.
+            allowRegisteredOverride: true,
+          }))
+        : undefined,
     dashboardPort: input.dashboardPort,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
@@ -245,7 +304,24 @@ export function loadServingProfileResumeSession(): {
 }
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
-  const entry = buildCreatedSandboxRegistryEntry(input);
+  const pending = registry.getSandbox(input.sandboxName);
+  const pendingHostLocalInferenceReceipt =
+    input.hostLocalInferenceReceipt !== undefined
+      ? input.hostLocalInferenceReceipt
+      : pending?.hostLocalInferenceReceipt;
+  const pendingHostLocalInferenceProvenance =
+    input.hostLocalInferenceProvenance !== undefined
+      ? input.hostLocalInferenceProvenance
+      : pending?.hostLocalInferenceProvenance;
+  const entry = buildCreatedSandboxRegistryEntry({
+    ...input,
+    ...(pendingHostLocalInferenceReceipt === undefined
+      ? {}
+      : { hostLocalInferenceReceipt: pendingHostLocalInferenceReceipt }),
+    ...(pendingHostLocalInferenceProvenance === undefined
+      ? {}
+      : { hostLocalInferenceProvenance: pendingHostLocalInferenceProvenance }),
+  });
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,
     input.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,

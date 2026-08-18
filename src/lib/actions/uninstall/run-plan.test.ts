@@ -161,8 +161,10 @@ describe("uninstall run plan", () => {
             command !== "docker" && command !== "lsof" && command !== "pgrep",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => existing.has(target),
+          hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: (line) => logs.push(line),
+          platform: "linux",
           rmSync: vi.fn((target: fs.PathLike) => {
             removed.push(String(target));
           }),
@@ -206,6 +208,7 @@ describe("uninstall run plan", () => {
             command !== "docker" && command !== "lsof" && command !== "pgrep",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => target === hermesShim || target === deepagentsShim,
+          hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: () => {},
           rmSync: vi.fn((target: fs.PathLike) => {
@@ -251,6 +254,7 @@ describe("uninstall run plan", () => {
             command !== "docker" && command !== "lsof" && command !== "pgrep",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => target === hermesShim || target === deepagentsShim,
+          hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: () => {},
           rmSync: vi.fn((target: fs.PathLike) => {
@@ -538,7 +542,7 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("No Ollama auth proxy processes found");
   });
 
-  it("scans the custom NEMOCLAW_OLLAMA_PROXY_PORT for orphan auth proxies", () => {
+  it("uses the persisted Ollama proxy port for orphan cleanup (#8704)", () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
@@ -551,9 +555,9 @@ describe("uninstall run plan", () => {
         env: {
           HOME: "/tmp/nemoclaw-uninstall-test-2759-custom-port",
           LOGNAME: "testuser",
-          NEMOCLAW_OLLAMA_PROXY_PORT: "12000",
+          NEMOCLAW_OLLAMA_PROXY_PORT: "13000",
         } as NodeJS.ProcessEnv,
-        existsSync: () => false,
+        existsSync: (target) => target.endsWith("/ollama-proxy-port"),
         isTty: false,
         kill: (pid, _signal) => {
           killed.push(pid);
@@ -561,6 +565,12 @@ describe("uninstall run plan", () => {
           return true;
         },
         log: (line) => logs.push(line),
+        openRegularFile: () => ({
+          close: () => {},
+          readBytes: () => Buffer.from("12000\n"),
+          readUtf8: () => "12000\n",
+          replaceUtf8: () => {},
+        }),
         rmSync: vi.fn(),
         run: (command, args) => {
           if (command === "lsof" && args[0] === "-ti") {
@@ -583,7 +593,7 @@ describe("uninstall run plan", () => {
 
     expect(result.exitCode).toBe(0);
     expect(lsofPorts).toContain(":12000");
-    expect(lsofPorts).not.toContain(":11435");
+    expect(lsofPorts).not.toContain(":13000");
     expect(killed).toContain(33333);
     expect(logs).toContain("Stopped Ollama auth proxy 33333");
   });
@@ -1447,6 +1457,7 @@ describe("uninstall run plan", () => {
         commandExists: () => true,
         env: { HOME: "/tmp/nemoclaw-uninstall-test-3516" } as NodeJS.ProcessEnv,
         existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
         isTty: false,
         kill: (pid) => {
           killed.push(pid);

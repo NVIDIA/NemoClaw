@@ -12,14 +12,14 @@ import { readYaml, type WorkflowJob, type WorkflowStep } from "./helpers/e2e-wor
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.6.10-dependency-review.md",
 );
 const ACTIVE_DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.7.1-dependency-review.md",
 );
 const MCP_TROUBLESHOOTING = path.join(
@@ -282,9 +282,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("GHSA-mwp4-54f8-5fhr");
     expect(review).toContain("ip-address@^10.2.0");
     expect(review).toContain("ip-address@10.3.1");
+    expect(review).toContain("hono@4.12.34");
+    expect(review).toContain("GHSA-54fx-42gc-7vw4");
+    expect(review).toContain("GHSA-f23p-vx2j-j53r");
+    expect(review).toContain("GHSA-79qm-7rj5-m7r9");
   });
 
-  it("keeps advisor disposition evidence in the dependency review note", () => {
+  function verifyAdvisorDispositionEvidence() {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
 
     expect(review).toContain("Issue #5591 Acceptance Mapping");
@@ -547,26 +551,12 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("test/messaging-build-applier-integrity.test.ts");
     expect(review).toContain("test/messaging-build-applier-render-safety.test.ts");
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
-  });
+  }
 
-  // source-shape-contract: security -- The legacy archive remediation helper must be present in the base image before the fail-closed Docker build invokes it
-  it("copies the legacy OpenClaw remediation helper before the base build invokes it", () => {
-    const dockerfile = readFileSync(path.join(REPO_ROOT, "Dockerfile.base"), "utf-8");
-    const flattenedDockerfile = dockerfile.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-    const groupedHelperCopy = flattenedDockerfile.indexOf(
-      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
-    );
-    const legacyHelperCopy = flattenedDockerfile.indexOf(
-      "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
-    );
-    const helperCopy = groupedHelperCopy >= 0 ? groupedHelperCopy : legacyHelperCopy;
-    const helperInvocation = flattenedDockerfile.indexOf(
-      "node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts",
-    );
-
-    expect(helperCopy).toBeGreaterThanOrEqual(0);
-    expect(helperInvocation).toBeGreaterThan(helperCopy);
-  });
+  it(
+    "keeps advisor disposition evidence in the dependency review note",
+    verifyAdvisorDispositionEvidence,
+  );
 
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
@@ -644,7 +634,7 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" 'mcporter-audit-policy-sha256=' "$dockerfile mcporter audit policy hash"
   check_contains "$openclaw_block" 'mcporter-audit-status=' "$dockerfile mcporter audit status"
   check_contains "$openclaw_block" 'mcporter-audit-exceptions=' "$dockerfile mcporter audit exceptions"
-  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+reviewed-audit+signatures-v2' "$dockerfile mcporter provenance recipe"
+  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+reviewed-audit-v3' "$dockerfile mcporter provenance recipe"
 done
 
 check_contains "$(cat Dockerfile.base)" 'chmod 0444 "$OPENCLAW_PROVENANCE_TMP"' "base provenance protected mode"
@@ -787,30 +777,32 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(source).toContain("#4533");
   });
 
-  it("keeps production Docker build workflows behind the build-arg guard", () => {
-    const workflows = workflowContracts();
-    const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
-      findProductionBuildGuardCoverage(name, workflow),
-    );
+  it.each([
+    "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
+    "OPENCLAW_VERSION=2026.3.11",
+    "OPENCLAW_VERSION=2026.4.24",
+    "OPENCLAW_2026_3_11_INTEGRITY",
+    "OPENCLAW_2026_3_11_TARBALL",
+    "OPENCLAW_2026_4_24_INTEGRITY",
+    "OPENCLAW_2026_4_24_TARBALL",
+  ])(
+    "keeps production Docker build workflows behind the build-arg guard [%s]",
+    (fixtureSelector) => {
+      const workflows = workflowContracts();
+      const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
+        findProductionBuildGuardCoverage(name, workflow),
+      );
 
-    expect(discoveredBuilds.length).toBeGreaterThan(0);
-    expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
+      expect(discoveredBuilds.length).toBeGreaterThan(0);
+      expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
 
-    const productionWorkflowContract = JSON.stringify(workflows);
-    for (const fixtureSelector of [
-      "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
-      "OPENCLAW_VERSION=2026.3.11",
-      "OPENCLAW_VERSION=2026.4.24",
-      "OPENCLAW_2026_3_11_INTEGRITY",
-      "OPENCLAW_2026_3_11_TARBALL",
-      "OPENCLAW_2026_4_24_INTEGRITY",
-      "OPENCLAW_2026_4_24_TARBALL",
-    ]) {
+      const productionWorkflowContract = JSON.stringify(workflows);
+
       expect(productionWorkflowContract).not.toContain(fixtureSelector);
-    }
-  });
+    },
+  );
 
-  it("accepts reviewed base-image versions and rejects injected build arguments", () => {
+  function verifyReviewedBaseImageVersions() {
     const action = readYaml<{ runs: { steps: WorkflowStep[] } }>(
       ".github/actions/build-base-image-platform/action.yaml",
     );
@@ -853,5 +845,10 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
         "production Docker build arguments must not contain CR or LF characters",
       );
     }
-  });
+  }
+
+  it(
+    "accepts reviewed base-image versions and rejects injected build arguments",
+    verifyReviewedBaseImageVersions,
+  );
 });

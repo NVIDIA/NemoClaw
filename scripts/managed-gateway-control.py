@@ -1121,6 +1121,30 @@ def _openclaw_port(reader: ProcReader, supervisor: ProcessIdentity) -> int:
     return port
 
 
+def _hermes_api_port(reader: ProcReader, supervisor: ProcessIdentity) -> int:
+    """Resolve the public API port from the managed supervisor environment.
+
+    The host fixes this environment when it creates the sandbox. Reading it
+    through the pinned supervisor identity binds lifecycle health to a source
+    the same-UID sandbox user cannot replace with a filesystem entry.
+    """
+    environment = _parse_environment(
+        reader.read_stable_file(supervisor, "environ", MAX_ENV_BYTES)
+    )
+    raw = environment.get("NEMOCLAW_HERMES_API_PORT", "").strip()
+    if not raw:
+        return 8642
+    if re.fullmatch(r"[0-9]+", raw) is None:
+        raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH")
+    try:
+        port = int(raw, 10)
+    except ValueError as exc:
+        raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH") from exc
+    if port < 8642 or port > 8652:
+        raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH")
+    return port
+
+
 def _agent_spec(
     name: str, reader: ProcReader, supervisor: ProcessIdentity
 ) -> AgentSpec:
@@ -1128,7 +1152,7 @@ def _agent_spec(
         return AgentSpec(
             name="hermes",
             port=18642,
-            readiness_checks=((8642, "/health"),),
+            readiness_checks=((_hermes_api_port(reader, supervisor), "/health"),),
         )
     return AgentSpec(name="openclaw", port=_openclaw_port(reader, supervisor))
 
