@@ -45,7 +45,7 @@ import {
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
-import { resolveFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
+import { readFullE2eColdWorkloadEvidence } from "./full-e2e-workload-evidence.ts";
 import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
@@ -264,13 +264,7 @@ async function assertColdOnboardPerformance(input: {
   const maxSilenceMs = maximumOutputSilenceMs(traceWindow, input.outputEvents);
   const maxSilenceSecs = Math.ceil(maxSilenceMs / 1_000);
   const rootEndToInstallCompletionMs = input.installCompletedAtMs - traceWindow.finishedAtMs;
-  const workload = resolveFullE2eColdWorkloadEvidence({
-    registry: JSON.parse(
-      fs.readFileSync(path.join(os.homedir(), ".nemoclaw", "sandboxes.json"), "utf8"),
-    ) as unknown,
-    sandboxName: SANDBOX_NAME,
-    usedBuildKitPrebuild,
-  });
+  const workload = readFullE2eColdWorkloadEvidence(SANDBOX_NAME, usedBuildKitPrebuild);
 
   const firstTurnStartedAtMs = Date.now();
   const turn = await input.sandbox.execShell(
