@@ -12,6 +12,33 @@ import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-wor
 import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
+  it("rejects a product reinstall after either exact OpenShell 0.0.106 qualification install", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      for (const jobName of ["mcp-bridge", "openshell-credential-generation-window"]) {
+        const install = workflow.jobs[jobName].steps.find(
+          (step) => step.name === "Install OpenShell CLI",
+        );
+        requireFixture(install?.run, `${jobName} qualification installer fixture is missing`);
+        install.run += "bash scripts/install-openshell.sh\n";
+      }
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge must run only the exact OpenShell 0.0.106 qualification install and provenance step",
+          "openshell-credential-generation-window must run only the exact OpenShell 0.0.106 qualification install and provenance step",
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     "mcp-bridge",
     "mcp-bridge-dev",
