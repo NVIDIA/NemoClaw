@@ -294,6 +294,7 @@ describe("inference health", () => {
         '{"choices":[{"message":{"content":"OK","tool_calls":"none"}}]}',
       ],
       ["numeric streaming delta", 'data: {"choices":[{"delta":{"content":123}}]}\n'],
+      ["a null content field and no tool call", '{"choices":[{"message":{"content":null}}]}'],
     ])("rejects a Chat Completions response with %s", (_description, body) => {
       const result = probeRemoteProviderHealth("openai-api", {
         model: "gpt-4o-mini",
