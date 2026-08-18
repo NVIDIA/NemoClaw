@@ -54,6 +54,7 @@ const RUNTIME_INVENTORY_FILES = [
   "tools/advisors/e2e-text.mts",
   "tools/advisors/json.mts",
   "tools/advisors/risk-plan.mts",
+  "tools/e2e/execution-coverage.mts",
   "tools/e2e/target-catalogue.mts",
   "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
   "scripts/checks/protected-managed-image-contract.ts",
