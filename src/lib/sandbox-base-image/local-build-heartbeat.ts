@@ -7,21 +7,20 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 
 type HeartbeatActivity = "build" | "pull";
 
-function heartbeatChildScript(activity: HeartbeatActivity): string {
-  return [
-    "const intervalMs = Number(process.argv[1]);",
-    "const parentPid = Number(process.argv[2]);",
-    "const startedAt = Date.now();",
-    "const stop = () => process.exit(0);",
-    'process.on("SIGINT", stop);',
-    'process.on("SIGTERM", stop);',
-    "setInterval(() => {",
-    "  try { process.kill(parentPid, 0); } catch { stop(); return; }",
-    "  const elapsedSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));",
-    `  process.stdout.write(\`  ⏳ Still working on sandbox base image ${activity}… (\${elapsedSeconds}s elapsed)\\n\`);`,
-    "}, intervalMs);",
-  ].join("\n");
-}
+const HEARTBEAT_CHILD_SCRIPT = [
+  "const intervalMs = Number(process.argv[1]);",
+  "const parentPid = Number(process.argv[2]);",
+  "const activity = process.argv[3];",
+  "const startedAt = Date.now();",
+  "const stop = () => process.exit(0);",
+  'process.on("SIGINT", stop);',
+  'process.on("SIGTERM", stop);',
+  "setInterval(() => {",
+  "  try { process.kill(parentPid, 0); } catch { stop(); return; }",
+  "  const elapsedSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));",
+  "  process.stdout.write(`  ⏳ Still working on sandbox base image ${activity}… (${elapsedSeconds}s elapsed)\\n`);",
+  "}, intervalMs);",
+].join("\n");
 
 type SpawnHeartbeat = typeof spawn;
 
@@ -48,9 +47,10 @@ export function withLocalBuildHeartbeat<T>(
       options.nodeExecutable ?? process.execPath,
       [
         "-e",
-        heartbeatChildScript(options.activity ?? "build"),
+        HEARTBEAT_CHILD_SCRIPT,
         String(intervalMs),
         String(options.parentPid ?? process.pid),
+        options.activity ?? "build",
       ],
       { env: {}, stdio: ["ignore", "inherit", "inherit"] },
     );

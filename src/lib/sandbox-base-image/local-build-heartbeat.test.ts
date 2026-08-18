@@ -38,11 +38,8 @@ describe("local sandbox base-image build heartbeat", () => {
       Record<string, unknown>,
     ];
     expect(executable).toBe("/node");
-    expect(args.slice(0, 2)).toEqual([
-      "-e",
-      expect.stringContaining("Still working on sandbox base image build"),
-    ]);
-    expect(args.slice(2)).toEqual(["25000", "42"]);
+    expect(args.slice(0, 2)).toEqual(["-e", expect.any(String)]);
+    expect(args.slice(2)).toEqual(["25000", "42", "build"]);
     expect(options).toEqual({ env: {}, stdio: ["ignore", "inherit", "inherit"] });
     expect(fixture.child.unref).toHaveBeenCalledOnce();
     expect(fixture.child.kill).toHaveBeenCalledWith("SIGTERM");
