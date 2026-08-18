@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { E2eExecutionMetadata } from "../../../tools/e2e/execution-coverage.mts";
+
 export type PhaseName = "environment" | "onboarding" | "state-validation" | "lifecycle" | "runtime";
 
 // Synthetic phase appended by the target runner when a target
@@ -195,6 +197,7 @@ export interface TargetEnvironment {
 export interface TargetDefinition {
   id: string;
   description?: string;
+  executionCoverage?: E2eExecutionMetadata;
   manifestPath?: string;
   environment?: TargetEnvironment;
   assertionGroups: AssertionGroup[];
