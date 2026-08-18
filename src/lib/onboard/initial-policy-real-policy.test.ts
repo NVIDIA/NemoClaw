@@ -7,6 +7,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { SHIPPED_MANAGED_IMAGE_AGENTS } from "./managed-image/contract";
+import { MANAGED_STARTUP_MERGED_CA_FILE } from "./managed-startup/image-runtime";
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 
 type PolicyRule = {
@@ -50,6 +52,20 @@ function repoPath(...segments: string[]): string {
   return path.join(import.meta.dirname, "..", "..", "..", ...segments);
 }
 
+function normalizeFilesystemPolicyPath(policyPath: string): string {
+  return path.posix.normalize(policyPath).replace(/\/+$/, "") || "/";
+}
+
+function filesystemPolicyAncestors(policyPath: string): string[] {
+  const segments = normalizeFilesystemPolicyPath(policyPath).split("/").filter(Boolean);
+  return [
+    "/",
+    ...segments
+      .slice(0, -1)
+      .map((_, index) => `/${segments.slice(0, index + 1).join("/")}`),
+  ];
+}
+
 function readPreparedPolicy(prepared: {
   policyPath: string;
   cleanup?: () => boolean;
@@ -59,16 +75,68 @@ function readPreparedPolicy(prepared: {
 }
 
 describe("initial sandbox policy real preset merge", () => {
-  const shippingPolicyCases = [
-    { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },
-    {
-      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
-      agent: "openclaw",
+  const managedImagePolicyPathsByAgent = {
+    openclaw: [
+      ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
+      ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
+      ["agents", "openclaw", "policy-permissive.yaml"],
+    ],
+    hermes: [
+      ["agents", "hermes", "policy-additions.yaml"],
+      ["agents", "hermes", "policy-permissive.yaml"],
+    ],
+    "langchain-deepagents-code": [
+      ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+    ],
+  } as const satisfies Record<
+    (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number],
+    readonly (readonly string[])[]
+  >;
+
+  const managedImagePolicyCases = SHIPPED_MANAGED_IMAGE_AGENTS.flatMap((agent) =>
+    managedImagePolicyPathsByAgent[agent].map((policyPath) => ({ path: policyPath, agent })),
+  );
+  const shippingPolicyCases = managedImagePolicyCases.filter(
+    ({ agent }) => agent !== "langchain-deepagents-code",
+  );
+
+  it("covers the complete shipped managed startup CA policy matrix", () => {
+    const policyIdentities = managedImagePolicyCases.map(
+      ({ path: policyPath, agent }) => `${agent}:${policyPath.join("/")}`,
+    );
+
+    expect(Object.keys(managedImagePolicyPathsByAgent)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
+    expect(policyIdentities).toHaveLength(6);
+    expect(new Set(policyIdentities).size).toBe(policyIdentities.length);
+  });
+
+  it.each(managedImagePolicyCases)(
+    "grants $agent policy $path exact read-only access to the managed startup CA bundle (#9360)",
+    (policyCase) => {
+      const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
+        agentName: policyCase.agent,
+      });
+      const policy = readPreparedPolicy(prepared);
+      const readOnly = policy.filesystem_policy?.read_only ?? [];
+      const readWrite = policy.filesystem_policy?.read_write ?? [];
+      const normalizedReadOnly = readOnly.map(normalizeFilesystemPolicyPath);
+      const normalizedReadWrite = readWrite.map(normalizeFilesystemPolicyPath);
+      const managedCaAncestors = filesystemPolicyAncestors(MANAGED_STARTUP_MERGED_CA_FILE);
+
+      expect(readOnly, policyCase.path.join("/")).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(
+        MANAGED_STARTUP_MERGED_CA_FILE,
+      );
+      expect(
+        normalizedReadOnly.filter((candidate) => managedCaAncestors.includes(candidate)),
+        policyCase.path.join("/"),
+      ).toEqual([]);
+      expect(
+        normalizedReadWrite.filter((candidate) => managedCaAncestors.includes(candidate)),
+        policyCase.path.join("/"),
+      ).toEqual([]);
     },
-    { path: ["agents", "openclaw", "policy-permissive.yaml"], agent: "openclaw" },
-    { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
-    { path: ["agents", "hermes", "policy-permissive.yaml"], agent: "hermes" },
-  ] as const;
+  );
 
   it.each([
     {
@@ -178,16 +246,8 @@ describe("initial sandbox policy real preset merge", () => {
     },
   );
 
-  const packageDatabasePolicyCases = [
-    ...shippingPolicyCases,
-    {
-      path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
-      agent: "langchain-deepagents-code",
-    },
-  ] as const;
-
   it.each(
-    packageDatabasePolicyCases.flatMap((policyCase) =>
+    managedImagePolicyCases.flatMap((policyCase) =>
       ["/", "/var", "/var/lib", "/var/lib/dpkg"].map((writableAncestor) => ({
         policyCase,
         writableAncestor,
