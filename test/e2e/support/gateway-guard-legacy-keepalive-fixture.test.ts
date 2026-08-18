@@ -211,6 +211,24 @@ describe("gateway guard legacy keepalive fixture", () => {
 
   it.each([
     {
+      name: "a missing managed startup command",
+      environment: [],
+    },
+    {
+      name: "an arbitrary startup workload",
+      environment: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"],
+    },
+  ])("rejects a raw managed-image source with $name (#9364)", ({ environment }) => {
+    const inspect = JSON.parse(managedImageInspect());
+    inspect[0].Config.Env = environment;
+
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(JSON.stringify(inspect), OLD_CONTAINER_ID),
+    ).toThrow("requires the reviewed managed startup workload");
+  });
+
+  it.each([
+    {
       name: "an unreviewed OpenShell supervisor",
       inspect: managedRuntimeInspect({ entrypoint: ["/unreviewed/openshell-sandbox"] }),
     },
