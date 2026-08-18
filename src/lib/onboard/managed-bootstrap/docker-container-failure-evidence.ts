@@ -59,6 +59,20 @@ export function formatDockerContainerState(
   return lines;
 }
 
+/**
+ * SOURCE_OF_TRUTH_REVIEW
+ * invalidState: Docker created a replacement that failed before managed control accepted it;
+ *   rollback would erase the replacement's transient state and log evidence.
+ * sourceBoundary: this shared collector is the sole Docker inspect/log redaction boundary used
+ *   immediately before managed-bootstrap or GPU rollback.
+ * whyNotSourceFix: evidence capture cannot repair the external supervisor and must remain best
+ *   effort, bounded to 2-second calls, 120 log lines, and a 1,200-character redacted tail so it
+ *   can never obstruct rollback.
+ * regressionTest: managed-bootstrap/docker.test.ts proves post-wait state and redaction;
+ *   docker-gpu-pre-rollback-diagnostics.test.ts proves bounded capture before rollback.
+ * removalCondition: remove only when every replacement path emits equivalent bounded, redacted
+ *   evidence before rollback, or no longer replaces a Docker container.
+ */
 export function captureDockerContainerFailureEvidence(
   containerId: string,
   deps: DockerContainerFailureEvidenceDeps,
