@@ -212,22 +212,19 @@ describe("runCapture with argv array", () => {
 });
 
 describe("shell injection regression tests", () => {
-  it("sandbox names with shell metacharacters are safe with argv arrays", () => {
+  it.each([
+    "my-sandbox; rm -rf /",
+    "test$(whoami)",
+    "sandbox`id`",
+    "sandbox' || echo pwned",
+    'sandbox" && echo pwned',
+    "sandbox\necho pwned",
+  ])("sandbox names with shell metacharacters are safe with argv arrays [%s]", (name) => {
     // These names would cause injection if passed through bash -c
-    const dangerousNames = [
-      "my-sandbox; rm -rf /",
-      "test$(whoami)",
-      "sandbox`id`",
-      "sandbox' || echo pwned",
-      'sandbox" && echo pwned',
-      "sandbox\necho pwned",
-    ];
 
-    for (const name of dangerousNames) {
-      const output = runner.runCapture(["echo", name], { ignoreError: true });
-      // Each name should be passed literally, not interpreted
-      expect(output).toContain(name.split("\n")[0]);
-    }
+    const output = runner.runCapture(["echo", name], { ignoreError: true });
+    // Each name should be passed literally, not interpreted
+    expect(output).toContain(name.split("\n")[0]);
   });
 
   it("model names with shell metacharacters are safe with argv arrays", () => {

@@ -18,17 +18,15 @@ describe("CUA candidate environment", () => {
     expect(parseCuaQualificationEnvironment(candidate)).toEqual(candidate);
   });
 
-  it("rejects later-slice qualification and lifecycle evidence", () => {
-    for (const extra of [
-      { gpu: { count: 1 } },
-      { scenarios: ["browser"] },
-      { receipt: { status: "passed" } },
-      { targetChannel: { endpoint: "private.invalid" } },
-    ]) {
-      expect(() => parseCuaQualificationEnvironment({ ...candidate, ...extra })).toThrow(
-        /contain exactly/,
-      );
-    }
+  it.each([
+    { gpu: { count: 1 } },
+    { scenarios: ["browser"] },
+    { receipt: { status: "passed" } },
+    { targetChannel: { endpoint: "private.invalid" } },
+  ])("rejects later-slice qualification and lifecycle evidence [case %#]", (extra) => {
+    expect(() => parseCuaQualificationEnvironment({ ...candidate, ...extra })).toThrow(
+      /contain exactly/,
+    );
   });
 
   it("rejects malformed build and receipt identities", () => {

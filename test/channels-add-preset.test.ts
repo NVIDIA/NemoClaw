@@ -402,8 +402,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     );
   });
 
-  for (const channel of ["telegram", "slack", "discord"]) {
-    it(`applies the '${channel}' preset before triggering rebuild`, async () => {
+  it.each(["telegram", "slack", "discord"])(
+    "applies the '%s' preset before triggering rebuild",
+    async (channel) => {
       await addSandboxChannel("test-sb", { channel });
 
       expect(applyPresetSpy).toHaveBeenCalledOnce();
@@ -414,8 +415,8 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       expect(callOrder.indexOf(`applyPreset:${channel}`)).toBeLessThan(
         callOrder.indexOf("promptAndRebuild"),
       );
-    });
-  }
+    },
+  );
 
   it("applies the tokenless WhatsApp preset for Hermes before triggering rebuild", async () => {
     sandboxAgent = "hermes";
@@ -860,19 +861,15 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
 });
 
 describe("channel preset source-of-truth", () => {
-  it("every channel registered in KNOWN_CHANNELS ships a preset YAML that parsePresetPolicyKeys() accepts", () => {
-    const failures: string[] = [];
-    for (const name of knownChannelNames()) {
+  it.each(knownChannelNames())(
+    "channel $name ships a preset that parsePresetPolicyKeys accepts",
+    (name) => {
       const content = policies.loadPreset(name);
-      if (content === null) {
-        failures.push(`${name}: preset YAML not found on disk`);
-        continue;
-      }
-      if (policies.parsePresetPolicyKeys(content).length === 0) {
-        failures.push(`${name}: parsePresetPolicyKeys returned no entries`);
-      }
-    }
-
-    expect(failures).toEqual([]);
-  });
+      expect(content, `${name}: preset YAML not found on disk`).not.toBeNull();
+      expect(
+        policies.parsePresetPolicyKeys(content!).length,
+        `${name}: parsePresetPolicyKeys returned no entries`,
+      ).toBeGreaterThan(0);
+    },
+  );
 });

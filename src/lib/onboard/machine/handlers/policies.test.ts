@@ -100,6 +100,47 @@ describe("handlePoliciesState", () => {
     );
   });
 
+  it("disables a channel whose preset is applied but which no plan still names (#9283)", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: null,
+        policies: ["npm", "pypi", "discord"],
+      })),
+      detectUnconfiguredMessagingChannels: vi.fn(
+        (planChannels: readonly string[]) => [...planChannels],
+      ),
+    });
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: [] });
+
+    expect(deps.detectUnconfiguredMessagingChannels).toHaveBeenCalledWith(["discord"], [], null);
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ enabledChannels: [], disabledChannels: ["discord"] }),
+    );
+  });
+
+  it("leaves a still-configured channel enabled when its preset is applied (#9283)", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: null,
+        policies: ["npm", "discord"],
+      })),
+    });
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: ["discord"] });
+
+    expect(deps.detectUnconfiguredMessagingChannels).toHaveBeenCalledWith(
+      ["discord"],
+      ["discord"],
+      null,
+    );
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ enabledChannels: ["discord"], disabledChannels: [] }),
+    );
+  });
+
   it("keeps a still-configured channel enabled", async () => {
     const { deps, calls } = createDeps({
       getActiveSandbox: vi.fn(() => ({

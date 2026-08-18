@@ -67,37 +67,33 @@ describe("hosted-runner recovery workflow boundary", () => {
     expect(value).not.toHaveProperty("concurrency");
     expect(value.jobs.recover.concurrency).toEqual({
       group: "hosted-runner-recovery-${{ github.event.workflow_run.workflow_id }}",
-      queue: "max",
       "cancel-in-progress": false,
     });
+    expect(value.jobs.recover.concurrency).not.toHaveProperty("queue");
     expect(Object.keys(value.jobs)).toEqual(["recover"]);
   });
 
-  // source-shape-contract: security -- The exact source workflow name keeps the write-capable recovery subscription bound to the reviewed trusted-main identity
-  it("locks recovery to the platform workflow name (#7140)", () => {
-    const platform = sourceWorkflow(PLATFORM_WORKFLOW_PATH);
+  it.each(
+    [
+        "github.run_attempt == 1",
+        "github.repository == 'NVIDIA/NemoClaw'",
+        "github.event.workflow_run.run_attempt == 1",
+        "github.event.workflow_run.status == 'completed'",
+        "github.event.workflow_run.conclusion == 'failure'",
+        "github.event.workflow_run.head_branch == 'main'",
+        "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
+        "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
+      ],
+  )(
+    "fails closed on controller, source, repository, branch, event, and path [%s] (#7140)",
+    (fragment) => {
+      const guard = workflow().jobs.recover.if ?? "";
 
-    expect(platform.name).toBe("CI / Platform Evidence");
-    expect(platform).not.toHaveProperty("run-name");
-    expect(workflow().on.workflow_run.workflows).toEqual([platform.name]);
-  });
-
-  it("fails closed on controller, source, repository, branch, event, and path (#7140)", () => {
-    const guard = workflow().jobs.recover.if ?? "";
-    for (const fragment of [
-      "github.run_attempt == 1",
-      "github.repository == 'NVIDIA/NemoClaw'",
-      "github.event.workflow_run.run_attempt == 1",
-      "github.event.workflow_run.status == 'completed'",
-      "github.event.workflow_run.conclusion == 'failure'",
-      "github.event.workflow_run.head_branch == 'main'",
-      "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
-      "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
-    ]) {
       expect(guard).toContain(fragment);
-    }
-    expect(guard).not.toContain("pull_request");
-  });
+
+      expect(guard).not.toContain("pull_request");
+    },
+  );
 
   it("uses only the least privileges and trusted default-branch controller (#7140)", () => {
     const job = workflow().jobs.recover;

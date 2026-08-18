@@ -522,23 +522,30 @@ describe("list shows live gateway inference", () => {
     expect(r.out).toContain("status");
   });
 
-  it("share help uses native oclif usage", testTimeoutOptions(15_000), () => {
-    const env = createShareTestEnv("nemoclaw-cli-share-help-");
+  it.each(
+    Array.from(
+      [
+        ["mount", "share mount <name> [sandbox-path] [local-mount-point]"],
+        ["unmount", "share unmount <name> [local-mount-point]"],
+        ["status", "share status <name> [local-mount-point]"],
+      ],
+      ([subcommand, usage]) => ({ subcommand, usage }),
+    ),
+  )(
+    "$subcommand share help uses native oclif usage",
+    testTimeoutOptions(15_000),
+    ({ subcommand, usage }) => {
+      const env = createShareTestEnv("nemoclaw-cli-share-help-");
 
-    const parent = runWithEnv("alpha share --help", env);
-    expect(parent.code).toBe(0);
-    expect(parent.out).toContain("$ nemoclaw sandbox share <mount|unmount|status> <name>");
+      const parent = runWithEnv("alpha share --help", env);
+      expect(parent.code).toBe(0);
+      expect(parent.out).toContain("$ nemoclaw sandbox share <mount|unmount|status> <name>");
 
-    for (const [subcommand, usage] of [
-      ["mount", "share mount <name> [sandbox-path] [local-mount-point]"],
-      ["unmount", "share unmount <name> [local-mount-point]"],
-      ["status", "share status <name> [local-mount-point]"],
-    ]) {
       const result = runWithEnv(`alpha share ${subcommand} --help`, env);
       expect(result.code).toBe(0);
       expect(result.out).toContain(`$ nemoclaw sandbox ${usage}`);
-    }
-  });
+    },
+  );
 
   it(
     "share is recognized as a valid sandbox action (not 'Unknown action')",

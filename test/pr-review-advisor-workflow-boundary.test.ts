@@ -366,12 +366,17 @@ describe("PR review advisor workflow boundary", () => {
         const triggers = workflowTriggers(workflow);
         triggers.pull_request = triggers.pull_request_target;
         delete triggers.pull_request_target;
-        for (const job of [workflow.jobs.review, workflow.jobs.publish]) {
-          const checkout = job.steps.find((step: { with?: Record<string, unknown> }) =>
+
+        const reviewCheckout = workflow.jobs.review.steps.find(
+          (step: { with?: Record<string, unknown> }) =>
             JSON.stringify(step.with ?? {}).includes("${{ github.workflow_sha }}"),
-          );
-          checkout.with.ref = "main";
-        }
+        );
+        const publishCheckout = workflow.jobs.publish.steps.find(
+          (step: { with?: Record<string, unknown> }) =>
+            JSON.stringify(step.with ?? {}).includes("${{ github.workflow_sha }}"),
+        );
+        reviewCheckout.with.ref = "main";
+        publishCheckout.with.ref = "main";
       }),
     );
     expect(errors).toEqual(
@@ -440,10 +445,12 @@ describe("PR review advisor workflow boundary", () => {
       "github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null",
     );
     expect(workflow.concurrency?.["cancel-in-progress"]).toBe(true);
-    for (const jobName of ["review", "publish"]) {
-      expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.action != 'edited'");
-      expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.changes.base != null");
-    }
+
+    expect(workflow.jobs?.review?.if).toContain("github.event.action != 'edited'");
+    expect(workflow.jobs?.publish?.if).toContain("github.event.action != 'edited'");
+    expect(workflow.jobs?.review?.if).toContain("github.event.changes.base != null");
+    expect(workflow.jobs?.publish?.if).toContain("github.event.changes.base != null");
+
     expect(noPrimary).toContain("advisor matrix must identify one primary artifact lane");
     expect(twoPrimaries).toContain("advisor matrix must identify one primary artifact lane");
     expect(extraReviewPermission).toContain("review job permissions.id-token is not allowed");
@@ -573,106 +580,104 @@ describe("PR review advisor workflow boundary", () => {
     },
   );
 
+  type MutableReviewWorkflow = {
+    jobs: { review: { steps: Array<{ name?: string; run?: string; shell?: string }> } };
+  };
   // source-shape-contract: security -- Symlink cleanup must remove only intended links after every untrusted workspace selection and before model credentials
-  it("rejects deleting or weakening analysis-workspace symlink removal", () => {
-    type MutableWorkflow = {
-      jobs: { review: { steps: Array<{ name?: string; run?: string; shell?: string }> } };
-    };
-    const source = YAML.parse(workflowSource()) as MutableWorkflow;
-    const cases: Array<{
-      expected: string;
-      mutate: (workflow: MutableWorkflow) => void;
-    }> = [
-      {
-        expected: "missing workflow step: Remove symlinks from analysis workspace",
-        mutate: (workflow) => {
-          workflow.jobs.review.steps = workflow.jobs.review.steps.filter(
-            (step) => step.name !== "Remove symlinks from analysis workspace",
-          );
-        },
+  it.each([
+    {
+      expected: "missing workflow step: Remove symlinks from analysis workspace",
+      mutate: (workflow) => {
+        workflow.jobs.review.steps = workflow.jobs.review.steps.filter(
+          (step) => step.name !== "Remove symlinks from analysis workspace",
+        );
       },
-      {
-        expected: "Remove symlinks from analysis workspace must use the bash shell",
-        mutate: (workflow) => {
-          const step = workflow.jobs.review.steps.find(
-            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
-          );
-          step!.shell = "sh";
-        },
+    },
+    {
+      expected: "Remove symlinks from analysis workspace must use the bash shell",
+      mutate: (workflow) => {
+        const step = workflow.jobs.review.steps.find(
+          (candidate) => candidate.name === "Remove symlinks from analysis workspace",
+        );
+        step!.shell = "sh";
       },
-      {
-        expected:
-          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
-        mutate: (workflow) => {
-          const step = workflow.jobs.review.steps.find(
-            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
-          );
-          step!.run = step!.run!.replace("-type l -print0", "-type f -print0");
-        },
+    },
+    {
+      expected:
+        "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
+      mutate: (workflow) => {
+        const step = workflow.jobs.review.steps.find(
+          (candidate) => candidate.name === "Remove symlinks from analysis workspace",
+        );
+        step!.run = step!.run!.replace("-type l -print0", "-type f -print0");
       },
-      {
-        expected:
-          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
-        mutate: (workflow) => {
-          const step = workflow.jobs.review.steps.find(
-            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
-          );
-          step!.run = step!.run!.replace('rm -- "$link"', 'rm -- "$link" || true');
-        },
+    },
+    {
+      expected:
+        "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
+      mutate: (workflow) => {
+        const step = workflow.jobs.review.steps.find(
+          (candidate) => candidate.name === "Remove symlinks from analysis workspace",
+        );
+        step!.run = step!.run!.replace('rm -- "$link"', 'rm -- "$link" || true');
       },
-      {
-        expected:
-          "Remove symlinks from analysis workspace must run after workspace-selection step 'Prepare isolated analysis workspace'",
-        mutate: (workflow) => {
-          const steps = workflow.jobs.review.steps;
-          const cleanupIndex = steps.findIndex(
-            (step) => step.name === "Remove symlinks from analysis workspace",
-          );
-          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
-          const prepareIndex = steps.findIndex(
-            (step) => step.name === "Prepare isolated analysis workspace",
-          );
-          steps.splice(prepareIndex, 0, cleanup);
-        },
+    },
+    {
+      expected:
+        "Remove symlinks from analysis workspace must run after workspace-selection step 'Prepare isolated analysis workspace'",
+      mutate: (workflow) => {
+        const steps = workflow.jobs.review.steps;
+        const cleanupIndex = steps.findIndex(
+          (step) => step.name === "Remove symlinks from analysis workspace",
+        );
+        const cleanup = steps.splice(cleanupIndex, 1)[0]!;
+        const prepareIndex = steps.findIndex(
+          (step) => step.name === "Prepare isolated analysis workspace",
+        );
+        steps.splice(prepareIndex, 0, cleanup);
       },
-      {
-        expected:
-          "analysis workspace symlinks must be removed before the model credential is exposed",
-        mutate: (workflow) => {
-          const steps = workflow.jobs.review.steps;
-          const cleanupIndex = steps.findIndex(
-            (step) => step.name === "Remove symlinks from analysis workspace",
-          );
-          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
-          const configureIndex = steps.findIndex(
-            (step) => step.name === "Configure OpenShell inference",
-          );
-          steps.splice(configureIndex + 1, 0, cleanup);
-        },
+    },
+    {
+      expected:
+        "analysis workspace symlinks must be removed before the model credential is exposed",
+      mutate: (workflow) => {
+        const steps = workflow.jobs.review.steps;
+        const cleanupIndex = steps.findIndex(
+          (step) => step.name === "Remove symlinks from analysis workspace",
+        );
+        const cleanup = steps.splice(cleanupIndex, 1)[0]!;
+        const configureIndex = steps.findIndex(
+          (step) => step.name === "Configure OpenShell inference",
+        );
+        steps.splice(configureIndex + 1, 0, cleanup);
       },
-      {
-        expected:
-          "Remove symlinks from analysis workspace must run after workspace-selection step 'Set default advisor workdir'",
-        mutate: (workflow) => {
-          const steps = workflow.jobs.review.steps;
-          const cleanupIndex = steps.findIndex(
-            (step) => step.name === "Remove symlinks from analysis workspace",
-          );
-          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
-          const defaultIndex = steps.findIndex(
-            (step) => step.name === "Set default advisor workdir",
-          );
-          steps.splice(defaultIndex, 0, cleanup);
-        },
+    },
+    {
+      expected:
+        "Remove symlinks from analysis workspace must run after workspace-selection step 'Set default advisor workdir'",
+      mutate: (workflow) => {
+        const steps = workflow.jobs.review.steps;
+        const cleanupIndex = steps.findIndex(
+          (step) => step.name === "Remove symlinks from analysis workspace",
+        );
+        const cleanup = steps.splice(cleanupIndex, 1)[0]!;
+        const defaultIndex = steps.findIndex((step) => step.name === "Set default advisor workdir");
+        steps.splice(defaultIndex, 0, cleanup);
       },
-    ];
+    },
+  ] satisfies ReadonlyArray<{
+    expected: string;
+    mutate: (workflow: MutableReviewWorkflow) => void;
+  }>)(
+    "rejects deleting or weakening analysis-workspace symlink removal",
+    ({ expected, mutate }) => {
+      const source = YAML.parse(workflowSource()) as MutableReviewWorkflow;
 
-    for (const { expected, mutate } of cases) {
       const workflow = structuredClone(source);
       mutate(workflow);
       expect(validateMutation(() => YAML.stringify(workflow))).toContain(expected);
-    }
-  });
+    },
+  );
 
   it.skipIf(!CAN_RUN_BASH)("installs and verifies the pinned search tools", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-install-"));
@@ -1124,7 +1129,7 @@ process.exitCode = valid ? 0 : 1;`,
         validated: false,
       },
     ];
-    for (const { name, options, validated } of cases) {
+    cases.forEach(({ name, options, validated }) => {
       const result = runArtifactValidation(validPrimaryResult(), options);
       try {
         expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(0);
@@ -1132,7 +1137,7 @@ process.exitCode = valid ? 0 : 1;`,
       } finally {
         result.cleanup();
       }
-    }
+    });
   });
 
   it("rejects malformed, wrong-head, stale, and symlinked primary artifacts", () => {
@@ -1184,14 +1189,14 @@ process.exitCode = valid ? 0 : 1;`,
       ({ options }) =>
         CAN_CREATE_SYMLINKS || (!options?.symlinkAnalysisResult && !options?.symlinkResult),
     );
-    for (const { name, artifact, options } of runnableCases) {
+    runnableCases.forEach(({ name, artifact, options }) => {
       const result = runArtifactValidation(artifact, options);
       try {
         expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(1);
       } finally {
         result.cleanup();
       }
-    }
+    });
   });
 
   it("withholds every invalid secondary artifact without suppressing the primary", () => {
@@ -1242,7 +1247,7 @@ process.exitCode = valid ? 0 : 1;`,
     const runnableCases = cases.filter(
       ({ options }) => CAN_CREATE_SYMLINKS || !options.symlinkSecondaryResult,
     );
-    for (const { name, options } of runnableCases) {
+    runnableCases.forEach(({ name, options }) => {
       const result = runArtifactValidation(validPrimaryResult(), options);
       try {
         expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(0);
@@ -1251,7 +1256,7 @@ process.exitCode = valid ? 0 : 1;`,
       } finally {
         result.cleanup();
       }
-    }
+    });
   });
 
   it("rejects an unrecognized trusted secondary download outcome", () => {

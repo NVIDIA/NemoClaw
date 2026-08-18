@@ -61,6 +61,28 @@ Subscribe to notifications on that page to receive alerts when new bulletins are
 
 Component-level threat models for security-critical NemoClaw subsystems are documented here so a reviewer or auditor can understand what each subsystem is designed to prevent, which surfaces it protects, and where its guarantees end.
 
+### Portable Uninstall Retirement Record (`#9189`)
+
+**Summary.** Portable uninstall retains `~/.nemoclaw/portable-uninstall-retirement.json` after `--destroy-user-data`.
+The current user owns its mode-`0700` parent and the mode-`0600` record.
+A later completed onboarding removes the record only after its new authority is durable.
+
+**Threat.** A host crash can interrupt receipt, sandbox registry, or portable configuration removal.
+Without a durable discriminator, a retry can enter generic Docker, OpenShell, or model cleanup and remove resources outside the portable receipts.
+
+**Guarantee.** The record keeps every retry on receipt-owned portable cleanup.
+It contains a random cleanup ID, receipt basenames derived from SHA-256 hashes of sandbox names, safe relative target identities, and length-framed transaction-scoped SHA-256 content fingerprints.
+The fingerprints are dictionary-testable pseudonymous local data.
+The record contains no raw sandbox or gateway names, absolute paths, environment values, configuration bytes, credentials, or secrets.
+NemoClaw holds one process-bound host fence across every cooperative onboarding, rebuild, and uninstall writer while it publishes or supersedes the record.
+
+**Where the guarantee ends.** NemoClaw state owned by the same operating-system user is not a trust boundary against a malicious process running as that user.
+Such a process can change the state before or after a checked filesystem operation.
+NemoClaw detects mismatched file identities and fingerprints and exits without restoring or removing the ambiguous generation.
+This control covers cooperating NemoClaw processes, crashes, retries, and recycled process IDs.
+
+**Enforced by:** `src/lib/state/portable-uninstall-retirement.test.ts`, `src/lib/actions/uninstall/portable-runtime-cleanup.test.ts`, `src/lib/onboard/portable-resume-lock-boundary.test.ts`, and `src/lib/state/registry-lock.test.ts` cover crash boundaries, async ownership, lock generations, record contents, and completed-onboarding supersession.
+
 ### Ollama Auth Proxy Loopback Bind Probe (`#6014`)
 
 **Summary.** The Ollama auth proxy is the token-authenticated network gate in front of a locally-running Ollama backend on every topology where `shouldFrontOllamaWithProxy()` returns true (native Linux, macOS, WSL with a native dockerd runtime). Ollama itself has no built-in authentication. The proxy adds a bearer-token check on its own listen port and forwards to Ollama on the backend port.

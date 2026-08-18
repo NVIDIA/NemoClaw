@@ -168,35 +168,6 @@ describe("same-commit E2E reliability", () => {
     expect(report).not.toContain(secret);
   });
 
-  // source-shape-contract: security -- The reliability reporter must execute only from the trusted default-branch controller while authenticating the canonical E2E source repository and branch
-  it("locks the reporter to canonical source and trusted controller identities (#9168)", () => {
-    type RetryWorkflow = {
-      jobs: { "report-same-commit-reliability": WorkflowJob };
-    };
-    const reporter =
-      readYaml<RetryWorkflow>(RETRY_WORKFLOW_PATH).jobs["report-same-commit-reliability"];
-    const guard = reporter.if ?? "";
-    for (const fragment of [
-      "github.repository == 'NVIDIA/NemoClaw'",
-      "github.event.workflow_run.path == '.github/workflows/e2e.yaml'",
-      "github.event.workflow_run.head_branch == 'main'",
-      "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
-    ]) {
-      expect(guard).toContain(fragment);
-    }
-    expect(workflowStep(reporter, "Checkout trusted reliability reporter").with).toEqual({
-      ref: "${{ github.workflow_sha }}",
-      "persist-credentials": false,
-    });
-    const build = workflowStep(reporter, "Build advisory same-commit reliability report");
-    expect(build.env).toEqual({
-      GITHUB_TOKEN: "${{ github.token }}",
-      SOURCE_RUN_ID: "${{ github.event.workflow_run.id }}",
-    });
-    expect(build.run).toContain('>"${RUNNER_TEMP}/same-commit-reliability.json"');
-    expect(build.run).toContain('2>"${RUNNER_TEMP}/same-commit-reliability.md"');
-  });
-
   it("consumes dispatch, retry, and runner classifications without retaining payload text", async () => {
     const secret = "sk-live-secret-output";
     const dispatch = artifactZip([

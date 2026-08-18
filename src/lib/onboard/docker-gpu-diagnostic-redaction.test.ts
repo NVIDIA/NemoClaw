@@ -155,7 +155,7 @@ describe("Docker GPU diagnostic redaction", () => {
         ]),
       );
       const published = `${diagnostics?.summaryLines.join("\n")}\n${Object.values(contents).join("\n")}`;
-      for (const canary of Object.values(canaries)) expect(published).not.toContain(canary);
+      expect(Object.values(canaries).every((canary) => !published.includes(canary))).toBe(true);
       expect(published).not.toContain(suffixCanary);
 
       expect(contents["summary.txt"]).toContain("failure_kind=patched_container_failed");

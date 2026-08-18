@@ -7,6 +7,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
+import { type E2eAgentRuntime, validateE2eExecutionMetadata } from "./execution-coverage.mts";
+
 export const E2E_EXECUTION_PROFILES = [
   "standard",
   "nvidia-api",
@@ -43,6 +45,9 @@ export interface E2eCatalogueTarget {
   id: string;
   targetId: string;
   displayName: string;
+  agentRuntime: E2eAgentRuntime;
+  environmentOrInferenceEndpoint: string;
+  unresolvedReason: string;
   testFile: string;
   profile: E2eExecutionProfile;
   runner: string;
@@ -71,6 +76,10 @@ export interface E2eCatalogueMatrixRow {
   id: string;
   target_id: string;
   display_name: string;
+  agent_runtime: E2eAgentRuntime;
+  observable_outcome: string;
+  environment_or_inference_endpoint: string;
+  unresolved_reason: string;
   runner: string;
   runner_key: string;
   test_file: string;
@@ -94,6 +103,9 @@ type TargetOptions = Omit<
   | "testFile"
   | "owningPaths"
   | "releaseRequired"
+  | "agentRuntime"
+  | "environmentOrInferenceEndpoint"
+  | "unresolvedReason"
   | "environment"
   | "hostPackages"
   | "cloudflared"
@@ -109,6 +121,9 @@ type TargetOptions = Omit<
   | "shard"
   | "artifactLayout"
 > & {
+  agentRuntime: E2eAgentRuntime;
+  environmentOrInferenceEndpoint: string;
+  unresolvedReason?: string;
   owningPaths?: readonly string[];
   environment?: Readonly<Record<string, string>>;
   hostPackages?: readonly E2eHostPackage[];
@@ -130,6 +145,9 @@ type TargetOptions = Omit<
 function target(id: string, options: TargetOptions): E2eCatalogueTarget {
   const {
     displayName,
+    agentRuntime,
+    environmentOrInferenceEndpoint,
+    unresolvedReason = "",
     owningPaths = [],
     environment = {},
     hostPackages = [],
@@ -151,6 +169,9 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
   return {
     id,
     displayName,
+    agentRuntime,
+    environmentOrInferenceEndpoint,
+    unresolvedReason,
     testFile,
     owningPaths: [testFile, ...owningPaths],
     releaseRequired: true,
@@ -183,14 +204,21 @@ const nonInteractive = {
 
 function commonEgressTarget(options: {
   displayName: string;
+  environment?: Readonly<Record<string, string>>;
+  environmentOrInferenceEndpoint: string;
   hermes?: boolean;
+  owningPaths?: readonly string[];
+  profile?: E2eExecutionProfile;
+  runnerComparison?: boolean;
   selector: string;
   shard: string;
 }): E2eCatalogueTarget {
   return target(`common-egress-agent-${options.shard}`, {
     targetId: "common-egress-agent",
     displayName: options.displayName,
-    profile: "brave-nvidia-inference",
+    agentRuntime: options.hermes ? "hermes" : "openclaw",
+    environmentOrInferenceEndpoint: options.environmentOrInferenceEndpoint,
+    profile: options.profile ?? "brave-nvidia-inference",
     testFile: "test/e2e/live/common-egress-agent.test.ts",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -199,15 +227,20 @@ function commonEgressTarget(options: {
     exposeCliBin: true,
     runnerKey: "common-egress-agent",
     hostPreparation: options.hermes ? "hermes-swap" : "none",
-    runnerComparison: true,
+    runnerComparison: options.runnerComparison ?? true,
     shard: options.shard,
     selector: options.selector,
-    owningPaths: ["test/e2e/live/common-egress-agent-helpers.ts"],
+    owningPaths: [
+      "test/e2e/live/common-egress-agent-helpers.ts",
+      ...(options.hermes ? [] : ["test/e2e/live/openclaw-agent-assertion.ts"]),
+      ...(options.owningPaths ?? []),
+    ],
     environment: {
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_RECREATE_SANDBOX: "1",
       OPENSHELL_GATEWAY: "nemoclaw",
+      ...options.environment,
     },
   });
 }
@@ -230,6 +263,11 @@ function gatewayUpgradeTarget(options: GatewayUpgradeTargetOptions): E2eCatalogu
   return target(`openshell-gateway-upgrade-${options.shard}`, {
     targetId: "openshell-gateway-upgrade",
     displayName: options.displayName,
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint:
+      options.runner === "ubuntu-24.04-arm"
+        ? "Arm64 Ubuntu; GitHub release artifacts; no inference endpoint"
+        : "x86-64 Ubuntu; GitHub release artifacts; no inference endpoint",
     profile: "github-read",
     runner: options.runner ?? "ubuntu-latest",
     testFile: "test/e2e/live/openshell-gateway-upgrade.test.ts",
@@ -340,6 +378,8 @@ export function catalogueExclusionReason(id: string): string | undefined {
 export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("agent-turn-latency", {
     displayName: "Performance: bounds hosted inference turns for OpenClaw and Hermes",
+    agentRuntime: "openclaw + hermes",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     timeoutMinutes: 110,
@@ -365,6 +405,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("bedrock-runtime-compatible-anthropic-openclaw", {
     targetId: "bedrock-runtime-compatible-anthropic",
     displayName: "Inference: OpenClaw routes an Anthropic request through Amazon Bedrock",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; Amazon Bedrock Anthropic-compatible endpoint",
     profile: "standard",
     testFile: "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
     timeoutMinutes: 60,
@@ -383,6 +425,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("bedrock-runtime-compatible-anthropic-hermes", {
     targetId: "bedrock-runtime-compatible-anthropic",
     displayName: "Inference: Hermes routes an Anthropic request through Amazon Bedrock",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint: "Ubuntu; Amazon Bedrock Anthropic-compatible endpoint",
     profile: "standard",
     testFile: "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
     timeoutMinutes: 60,
@@ -401,6 +445,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("bootstrap-install-smoke", {
     displayName: "Install: bootstraps NemoClaw and completes hosted inference",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     timeoutMinutes: 30,
@@ -422,6 +468,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("brave-search", {
     displayName: "Search: OpenClaw returns a Brave result without exposing its key",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Brave Search",
     profile: "brave-nvidia-inference",
     timeoutMinutes: 45,
     installMode: "authenticated",
@@ -437,6 +485,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("channels-add-remove", {
     displayName: "Messaging: adds and removes Telegram configuration",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; no inference endpoint",
     profile: "standard",
     timeoutMinutes: 75,
     installMode: "credential-free",
@@ -454,6 +504,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("channels-stop-start-openclaw", {
     targetId: "channels-stop-start",
     displayName: "Messaging: OpenClaw preserves channels across stop and start",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     testFile: "test/e2e/live/channels-stop-start.test.ts",
@@ -480,6 +532,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("channels-stop-start-hermes", {
     targetId: "channels-stop-start",
     displayName: "Messaging: Hermes preserves channels across stop and start",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     testFile: "test/e2e/live/channels-stop-start.test.ts",
@@ -508,6 +562,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("cloud-inference", {
     displayName: "Inference: OpenClaw uses hosted inference",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 50,
     installMode: "none",
@@ -521,22 +577,49 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw answers through balanced egress",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public weather endpoint",
     shard: "openclaw-balanced-weather",
     selector: "^common-egress.+C1.+$",
   }),
   commonEgressTarget({
     displayName: "Networking: OpenClaw reaches a public reference through open egress",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public reference endpoint",
     shard: "openclaw-open-reference",
     selector: "^common-egress.+C2.+$",
   }),
   commonEgressTarget({
     displayName: "Networking: Hermes reaches a public reference through open egress",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public reference endpoint",
     hermes: true,
     shard: "hermes-open-reference",
     selector: "^common-egress.+C3.+$",
   }),
+  commonEgressTarget({
+    displayName: "Networking: Personal permits a keyless public stock fetch",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and public stock endpoint",
+    profile: "nvidia-inference",
+    runnerComparison: false,
+    owningPaths: [
+      "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
+      "nemoclaw-blueprint/policies/tiers.yaml",
+      "src/lib/onboard/policy-selection.ts",
+      "src/lib/onboard/policy-tier-suppression.ts",
+      "src/lib/policy/index.ts",
+      "test/e2e/live/personal-egress-live-proof.ts",
+    ],
+    shard: "openclaw-personal-stock-price",
+    selector: "^common-egress.+C4.+$",
+    environment: {
+      BRAVE_API_KEY: "",
+      NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+      TAVILY_API_KEY: "",
+    },
+  }),
   target("concurrent-gateway-ports", {
     displayName: "Gateway: isolates ports for concurrent sandboxes",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; local gateway; no inference endpoint",
     profile: "standard",
     timeoutMinutes: 90,
     installMode: "authenticated",
@@ -546,6 +629,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("cron-preflight-inference-local", {
     displayName: "Preflight: reaches managed inference without DNS failure",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; local managed inference",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "authenticated",
@@ -561,6 +646,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("dashboard-remote-bind", {
     displayName: "Dashboard: retains audit findings when bound remotely",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 65,
     installMode: "none",
@@ -576,6 +663,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("device-auth-health", {
     displayName: "Health: treats a 401 authentication response as reachable",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; local authentication fixture; no inference endpoint",
     profile: "standard",
     timeoutMinutes: 40,
     installMode: "authenticated",
@@ -590,6 +679,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("double-onboard", {
     displayName: "Onboarding: reuses the gateway and preserves sibling sandboxes",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; local gateway fixtures",
     profile: "standard",
     timeoutMinutes: 90,
     installMode: "authenticated",
@@ -599,6 +690,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("gpu-double-onboard", {
     displayName: "Onboarding: preserves Ollama authentication after GPU re-onboarding",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
     timeoutMinutes: 100,
@@ -615,6 +708,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("gpu-e2e", {
     displayName: "Inference: routes an agent turn through GPU Ollama",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
     timeoutMinutes: 90,
@@ -633,6 +728,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("full-e2e", {
     displayName: "OpenClaw: installs, onboards, and completes an agent turn",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 75,
     installMode: "authenticated",
@@ -651,6 +748,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("gateway-guard-recovery", {
     displayName: "Gateway: restores the guard chain after recreation",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "authenticated",
@@ -666,6 +765,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("hermes-discord", {
     displayName: "Messaging: Hermes preserves Discord configuration across rebuild",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Discord",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     timeoutMinutes: 90,
@@ -689,6 +790,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("hermes-inference-switch", {
     displayName: "Inference: Hermes switches to an Anthropic-compatible endpoint",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint: "Ubuntu; Anthropic-compatible inference fixture",
     profile: "standard",
     timeoutMinutes: 55,
     installMode: "authenticated",
@@ -712,6 +815,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("hermes-shields-config", {
     displayName: "Shields: restores stopped Hermes across posture changes",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; no inference endpoint",
     profile: "standard",
     timeoutMinutes: 60,
     installMode: "none",
@@ -729,6 +834,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("hermes-slack", {
     displayName: "Messaging: isolates Hermes Slack credentials and reaches Slack APIs",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Slack",
     profile: "nvidia-inference",
     runner: "linux-amd64-cpu4",
     testFile: "test/e2e/live/hermes-slack-e2e.test.ts",
@@ -751,6 +858,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("issue-2478-crash-loop-recovery", {
     displayName: "Gateway: recovers after process termination and remains stable",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; local gateway; no inference endpoint",
     profile: "standard",
     timeoutMinutes: 30,
     installMode: "authenticated",
@@ -764,6 +873,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("issue-4462-scope-upgrade-approval", {
     displayName: "Authorization: approves a write-scope upgrade without operator.admin",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 90,
     installMode: "authenticated",
@@ -777,6 +888,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("inference-routing", {
     displayName: "Inference: rejects unsafe routes and proves runtime identities",
+    agentRuntime: "openclaw + langchain-deepagents-code",
+    environmentOrInferenceEndpoint: "Ubuntu; local compatible and HTTPS inference fixtures",
     profile: "standard",
     timeoutMinutes: 45,
     installMode: "none",
@@ -786,6 +899,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("kimi-inference-compat", {
     displayName: "Inference: configures a Kimi-compatible endpoint",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; Kimi-compatible inference fixture",
     profile: "standard",
     timeoutMinutes: 50,
     installMode: "authenticated",
@@ -800,6 +915,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("llama-cpp-generic-gpu", {
     displayName: "Inference: completes an agent turn with llama.cpp on a generic NVIDIA GPU",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "NVIDIA GPU runner; local llama.cpp",
     profile: "standard",
     runner: "linux-amd64-gpu-rtxpro6000-latest-1",
     timeoutMinutes: 120,
@@ -816,6 +933,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("messaging-compatible-endpoint", {
     displayName: "Messaging: routes Telegram through a compatible endpoint",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; compatible inference and Telegram fixtures",
     profile: "standard",
     timeoutMinutes: 45,
     installMode: "none",
@@ -831,6 +950,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("model-router-provider-routed-inference", {
     displayName: "Inference: Model Router returns a provider-routed response",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA API and Model Router",
     profile: "nvidia-api",
     timeoutMinutes: 45,
     installMode: "none",
@@ -840,6 +961,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("network-policy", {
     displayName: "Network policy: enforces restricted allow and deny rules",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and network probes",
     profile: "nvidia-inference",
     timeoutMinutes: 90,
     installMode: "credential-free",
@@ -866,6 +989,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("ollama-auth-proxy", {
     displayName: "Inference: Ollama proxy enforces and preserves authentication",
+    agentRuntime: "none",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; local Ollama proxy",
     profile: "standard",
     timeoutMinutes: 45,
     installMode: "none",
@@ -878,6 +1003,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("onboard-repair", {
     displayName: "Onboarding: repairs a missing sandbox and rejects conflicting resume input",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; local onboarding fixtures",
     profile: "standard",
     timeoutMinutes: 75,
     installMode: "authenticated",
@@ -887,6 +1014,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("onboard-policy-preset-sequencing", {
     displayName: "Onboarding: preserves policy preset step order",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; no inference endpoint",
     profile: "standard",
     timeoutMinutes: 60,
     installMode: "authenticated",
@@ -897,6 +1026,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("onboard-resume", {
     displayName: "Onboarding: resumes interrupted setup from recorded progress",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; local onboarding fixtures",
     profile: "standard",
     timeoutMinutes: 45,
     installMode: "credential-free",
@@ -906,6 +1037,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("openclaw-discord-pairing", {
     displayName: "Messaging: shares OpenClaw Discord pairing approval",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Discord",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -921,6 +1054,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("openclaw-skill-cli", {
     displayName: "Skills: OpenClaw installs and inspects workspace skills",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "none",
@@ -934,6 +1069,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("openclaw-inference-switch", {
     displayName: "Inference: OpenClaw switches providers and remains responsive",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; compatible inference fixtures",
     profile: "standard",
     timeoutMinutes: 90,
     installMode: "none",
@@ -954,6 +1091,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("openclaw-tui-chat-correlation", {
     displayName: "TUI: keeps rapid OpenClaw turns correlated",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 75,
     installMode: "none",
@@ -977,6 +1116,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("openclaw-slack-pairing", {
     displayName: "Messaging: shares OpenClaw Slack pairing approval",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Slack",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -994,6 +1135,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   ...GATEWAY_UPGRADE_TARGETS,
   target("rebuild-openclaw", {
     displayName: "Rebuild: preserves OpenClaw state and rotates the gateway token",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 130,
     installMode: "credential-free",
@@ -1007,6 +1150,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("rebuild-hermes", {
     displayName: "Rebuild: preserves Hermes state and recovers cron dispatch",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     owningPaths: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
@@ -1034,6 +1179,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("rebuild-hermes-stale-base", {
     displayName: "Rebuild: refreshes a stale Hermes base and restores state",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     testFile: "test/e2e/live/rebuild-hermes.test.ts",
@@ -1063,6 +1210,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("sandbox-survival", {
     displayName: "Lifecycle: preserves sandbox state after an OpenShell gateway restart",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 30,
     installMode: "none",
@@ -1077,6 +1226,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("sandbox-operations", {
     displayName: "Sandbox: preserves lifecycle and multi-sandbox operations",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -1095,6 +1246,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("security-posture-openclaw", {
     targetId: "security-posture",
     displayName: "Security: OpenClaw retains the required sandbox posture",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     testFile: "test/e2e/live/full-e2e.test.ts",
@@ -1121,6 +1274,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   target("security-posture-hermes", {
     targetId: "security-posture",
     displayName: "Security: Hermes retains the required sandbox posture",
+    agentRuntime: "hermes",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     testFile: "test/e2e/live/hermes-e2e.test.ts",
@@ -1149,6 +1304,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("sessions-agents-cli", {
     displayName: "CLI: routes sessions and agents to OpenClaw",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 70,
     installMode: "credential-free",
@@ -1163,6 +1320,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("shields-config", {
     displayName: "Shields: restores stopped OpenClaw across posture changes",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "none",
@@ -1178,6 +1337,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("snapshot-commands", {
     displayName: "Snapshot: restores selected sandbox state without credential leaks",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu Docker host; no inference endpoint",
     profile: "standard",
     timeoutMinutes: 40,
     installMode: "none",
@@ -1197,6 +1358,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("spark-install", {
     displayName: "Install: leaves NemoClaw and OpenShell usable after standard installation",
+    agentRuntime: "unresolved",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
+    unresolvedReason: "The test asserts CLI usability but does not assert an agent runtime",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "none",
@@ -1213,6 +1377,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("skill-agent", {
     displayName: "Skills: OpenClaw reads an injected sandbox skill",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     prAdvisorSelectable: true,
     timeoutMinutes: 30,
@@ -1223,6 +1389,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("state-backup-restore", {
     displayName: "Backup: restores workspace files and memory",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference",
     profile: "nvidia-inference",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -1237,6 +1405,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("telegram-injection", {
     displayName: "Messaging: treats Telegram shell metacharacters as data",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Telegram fixture",
     profile: "nvidia-inference",
     timeoutMinutes: 45,
     installMode: "credential-free",
@@ -1251,6 +1421,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("token-rotation", {
     displayName: "Messaging: rotates one provider token without rebuilding siblings",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; no inference endpoint",
     profile: "github-read",
     timeoutMinutes: 45,
     installMode: "none",
@@ -1269,6 +1441,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("tunnel-lifecycle", {
     displayName: "Tunnel: starts, probes, and stops a public dashboard tunnel",
+    agentRuntime: "openclaw",
+    environmentOrInferenceEndpoint: "Ubuntu; NVIDIA hosted inference and Cloudflare tunnel",
     profile: "nvidia-inference",
     timeoutMinutes: 75,
     installMode: "none",
@@ -1284,6 +1458,8 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
   }),
   target("whatsapp-qr-compact", {
     displayName: "Messaging: renders a compact WhatsApp pairing QR code",
+    agentRuntime: "none",
+    environmentOrInferenceEndpoint: "Ubuntu; no sandbox or inference endpoint",
     profile: "standard",
     timeoutMinutes: 15,
     installMode: "none",
@@ -1356,8 +1532,7 @@ export function validateE2eTargetCatalogue(
     }
     if (
       entry.runnerKey !== "" &&
-      (!ID_PATTERN.test(entry.runnerKey) ||
-        !E2E_CATALOGUE_RUNNER_KEY_SET.has(entry.runnerKey))
+      (!ID_PATTERN.test(entry.runnerKey) || !E2E_CATALOGUE_RUNNER_KEY_SET.has(entry.runnerKey))
     ) {
       throw new Error(`E2E target ${entry.id} has an invalid runner routing key`);
     }
@@ -1435,6 +1610,15 @@ export function validateE2eTargetCatalogue(
         throw new Error(`E2E target ${entry.id} has an invalid environment entry`);
       }
     }
+    validateE2eExecutionMetadata(
+      {
+        agentRuntime: entry.agentRuntime,
+        environmentOrInferenceEndpoint: entry.environmentOrInferenceEndpoint,
+        observableOutcome: entry.displayName,
+        unresolvedReason: entry.unresolvedReason,
+      },
+      `E2E target ${entry.id}`,
+    );
   }
   return targets;
 }
@@ -1487,6 +1671,10 @@ export function catalogueMatrix(
       id: entry.id,
       target_id: entry.targetId,
       display_name: entry.displayName,
+      agent_runtime: entry.agentRuntime,
+      observable_outcome: entry.displayName,
+      environment_or_inference_endpoint: entry.environmentOrInferenceEndpoint,
+      unresolved_reason: entry.unresolvedReason,
       runner: entry.runner,
       runner_key: entry.runnerKey,
       test_file: entry.testFile,

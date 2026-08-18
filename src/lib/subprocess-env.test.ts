@@ -145,34 +145,38 @@ describe("withLocalNoProxy", () => {
     expect(env.no_proxy?.split(",")).toContain("host.containers.internal");
   });
 
-  it("does not inject a broad .local suffix or arbitrary *.local hostnames", () => {
-    const env: Record<string, string> = { HTTP_PROXY: "http://127.0.0.1:8118" };
-    withLocalNoProxy(env);
-    for (const key of ["NO_PROXY", "no_proxy"] as const) {
+  it.each(["NO_PROXY", "no_proxy"] as const)(
+    "does not inject a broad .local suffix or arbitrary *.local hostnames [%s]",
+    (key) => {
+      const env: Record<string, string> = { HTTP_PROXY: "http://127.0.0.1:8118" };
+      withLocalNoProxy(env);
+
       const parts = (env[key] ?? "").split(",");
       expect(parts).not.toContain(".local");
       expect(parts).not.toContain("*.local");
       expect(parts).not.toContain("evil.local");
       expect(parts).not.toContain("attacker.local");
       expect(parts.filter((p) => p.endsWith(".local"))).toEqual(["inference.local"]);
-    }
-  });
+    },
+  );
 
-  it("preserves a caller-provided .local entry without expanding the bypass", () => {
-    const env: Record<string, string> = {
-      HTTP_PROXY: "http://127.0.0.1:8118",
-      NO_PROXY: "trusted.local",
-      no_proxy: "trusted.local",
-    };
-    withLocalNoProxy(env);
-    for (const key of ["NO_PROXY", "no_proxy"] as const) {
+  it.each(["NO_PROXY", "no_proxy"] as const)(
+    "preserves a caller-provided .local entry without expanding the bypass [%s]",
+    (key) => {
+      const env: Record<string, string> = {
+        HTTP_PROXY: "http://127.0.0.1:8118",
+        NO_PROXY: "trusted.local",
+        no_proxy: "trusted.local",
+      };
+      withLocalNoProxy(env);
+
       const parts = (env[key] ?? "").split(",");
       expect(parts).toContain("trusted.local");
       expect(parts).toContain("inference.local");
       expect(parts).not.toContain(".local");
       expect(parts).not.toContain("*.local");
-    }
-  });
+    },
+  );
 });
 
 describe("buildSubprocessEnv NO_PROXY injection", () => {

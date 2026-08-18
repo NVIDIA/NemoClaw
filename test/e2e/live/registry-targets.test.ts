@@ -12,15 +12,20 @@ import {
   type LifecycleProfile,
   readRegistrySandboxEntry,
 } from "../fixtures/phases/index.ts";
-import { listTargets } from "../registry/registry.ts";
+import { listTargets, requireTargets } from "../registry/registry.ts";
 import { liveTargetSupport, liveTargetTestName } from "../registry/runtime-support.ts";
 import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
+  dcodeBaseImageReferenceForContract,
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
+import {
+  requireRegistryTargetSecrets,
+  verifyPersonalStockFetchForTarget,
+} from "./personal-egress-live-proof.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
   "post-reboot-recovery",
@@ -37,11 +42,22 @@ const E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR = path.join(
 );
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-// The workflow filters by exact target id via `-t "^${TARGET_ID}$"`.
+// The workflow filters by target ID via `-t "^${TARGET_ID}$"`.
 // When that env is set, surface the structured `[not wired]` reason for the
 // targeted unsupported target at module load so the job log/summary
-// captures it before vitest reports the skipped test by id.
+// captures it before Vitest reports the skipped test by ID.
 const SELECTED_TARGET_ID = process.env.TARGET_ID;
+// That selector matches nothing when the ID names no registered target, and an
+// empty ID builds the selector `-t "^$"`, which also matches nothing. Vitest
+// then filters every test out and the run exits 0, reporting success for a run
+// that executed no target. `generate-matrix` already rejects an unknown ID
+// before the dispatch reaches here, so this is the last-mile check for a run
+// that sets TARGET_ID some other way. Resolve the ID through the registry and
+// let it name the registered choices (#8286).
+const SELECTED_TARGET_IDS = [SELECTED_TARGET_ID].filter(
+  (targetId): targetId is string => targetId !== undefined,
+);
+requireTargets(SELECTED_TARGET_IDS);
 const REGISTRY_TARGET_PHASES = [
   "resolve the target contract and run plan",
   "confirm the target environment is ready",
@@ -50,6 +66,7 @@ const REGISTRY_TARGET_PHASES = [
   "execute the target lifecycle boundary",
   "verify the expected sandbox state",
   "run target-specific cloud checks",
+  "verify the Personal stock fetch contract",
   "record target completion evidence",
 ] as const;
 
@@ -77,6 +94,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       lifecycle,
       onboard,
       progress,
+      sandbox,
       secrets,
       stateValidation,
     }) => {
@@ -84,9 +102,10 @@ for (const [targetIndex, target] of listTargets().entries()) {
         target.id,
         artifacts.pathFor("dcode-base-image.json"),
       );
-      for (const secret of target.requiredSecrets ?? []) {
-        secrets.required(secret);
-      }
+      const dcodeBaseImageReference = dcodeBaseContract
+        ? dcodeBaseImageReferenceForContract(dcodeBaseContract)
+        : undefined;
+      requireRegistryTargetSecrets(target.id, target.requiredSecrets ?? [], secrets);
 
       expect(
         fs.existsSync(CLI_DIST_ENTRYPOINT),
@@ -126,6 +145,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, {
         sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
+        dcodeBaseImageReference,
       });
 
       // Lifecycle phase runs between onboard and state-validation.
@@ -159,15 +179,30 @@ for (const [targetIndex, target] of listTargets().entries()) {
       expect(checkScripts).toEqual(
         cloudExperimentalChecksForOnboarding(target.environment.onboarding),
       );
-      for (const scriptPath of checkScripts) {
-        expect(fs.existsSync(path.join(REPO_ROOT, scriptPath))).toBe(true);
-      }
+      expect(
+        checkScripts.every((scriptPath) =>
+          Object.is(fs.existsSync(path.join(REPO_ROOT, scriptPath)), true),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
       await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
         artifacts,
+        dcodeBaseImageReference,
         host,
         secrets,
       });
+
+      const personalStockFetch = await verifyPersonalStockFetchForTarget(
+        target.id,
+        target.environment.policyTier,
+        instance.agent,
+        sandbox,
+        host,
+        artifacts,
+        secrets,
+        instance.sandboxName,
+        () => progress.phase("verify the Personal stock fetch contract"),
+      );
 
       progress.phase("record target completion evidence");
       const dcodeBaseImage = dcodeBaseContract
@@ -182,6 +217,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
         lifecycle: lifecycleResult
           ? { profile: lifecycleResult.profile, steps: lifecycleResult.steps.map((s) => s.id) }
           : undefined,
+        ...(personalStockFetch ? { personalStockFetch } : {}),
       });
     },
   );

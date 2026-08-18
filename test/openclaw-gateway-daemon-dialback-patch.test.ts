@@ -112,80 +112,84 @@ describe("OpenClaw gateway daemon self-dialback patch", () => {
         "--experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts /usr/local/lib/node_modules/openclaw/dist\n",
       version: "2026.7.1",
     },
-  ])("runs the exact-version Dockerfile gate for $version (#7230)", ({
-    expectedCalls,
-    version,
-  }) => {
-    const shellCommand = readGatewayDaemonDialbackBuildCommand();
+  ])(
+    "runs the exact-version Dockerfile gate for $version (#7230)",
+    ({ expectedCalls, version }) => {
+      const shellCommand = readGatewayDaemonDialbackBuildCommand();
 
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-gate-"));
-    const callLog = path.join(tmp, "node-calls.log");
-    const nodeStub = path.join(tmp, "node");
-    try {
-      fs.writeFileSync(
-        nodeStub,
-        ["#!/bin/sh", `printf "%s\\n" "$*" >> "$PATCH_CALL_LOG"`, ""].join("\n"),
-        { mode: 0o755 },
-      );
-      const result = spawnSync("sh", ["-c", shellCommand], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          OPENCLAW_VERSION: version,
-          PATCH_CALL_LOG: callLog,
-          PATH: `${tmp}${path.delimiter}${process.env.PATH ?? ""}`,
-        },
-      });
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf8") : "").toBe(expectedCalls);
-    } finally {
-      fs.rmSync(tmp, { force: true, recursive: true });
-    }
-  });
-
-  it("uses loopback only for the OpenShell gateway daemon while descendants keep the private URL", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-runtime-"));
-    try {
-      const callRuntime = await importFixture<{
-        resolveGatewayCallContext(opts: { localPortOverride?: number; url?: string }): string;
-      }>(tmp, "call.mjs", patchGatewayCallContextText(CALL_CONTEXT_SOURCE).text);
-      const detailsRuntime = await importFixture<{
-        buildGatewayConnectionDetails(options: {
-          ignoreEnvUrlOverride?: boolean;
-          localPortOverride?: number;
-          url?: string;
-        }): string;
-      }>(
-        tmp,
-        "connection-details.mjs",
-        patchGatewayConnectionDetailsText(CONNECTION_DETAILS_SOURCE).text,
-      );
-      const targetRuntime = await importFixture<{
-        resolveDefaultGatewayTarget(params: {
-          envGatewayUrl?: string;
-          remoteUrl?: string;
-        }): "local" | "remote";
-      }>(tmp, "gateway-tools.mjs", patchGatewayToolTargetText(TOOL_TARGET_SOURCE).text);
-      const privateUrl = "ws://10.200.0.2:18789";
-
-      withGatewayEnvironment({ openshell: "1", title: "openclaw-gateway", url: privateUrl }, () => {
-        expect(callRuntime.resolveGatewayCallContext({})).toBe("ws://127.0.0.1:18789");
-        expect(detailsRuntime.buildGatewayConnectionDetails({})).toBe("ws://127.0.0.1:18789");
-        expect(targetRuntime.resolveDefaultGatewayTarget({ envGatewayUrl: privateUrl })).toBe(
-          "local",
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-gate-"));
+      const callLog = path.join(tmp, "node-calls.log");
+      const nodeStub = path.join(tmp, "node");
+      try {
+        fs.writeFileSync(
+          nodeStub,
+          ["#!/bin/sh", `printf "%s\\n" "$*" >> "$PATCH_CALL_LOG"`, ""].join("\n"),
+          { mode: 0o755 },
         );
-      });
+        const result = spawnSync("sh", ["-c", shellCommand], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            OPENCLAW_VERSION: version,
+            PATCH_CALL_LOG: callLog,
+            PATH: `${tmp}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
+        });
 
-      withGatewayEnvironment({ openshell: "1", title: "openclaw", url: privateUrl }, () => {
-        expect(callRuntime.resolveGatewayCallContext({})).toBe(privateUrl);
-        expect(detailsRuntime.buildGatewayConnectionDetails({})).toBe(privateUrl);
-        expect(targetRuntime.resolveDefaultGatewayTarget({ envGatewayUrl: privateUrl })).toBe(
-          "remote",
+        expect(result.status, result.stderr).toBe(0);
+        expect(fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf8") : "").toBe(expectedCalls);
+      } finally {
+        fs.rmSync(tmp, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each(["0", "false", " ", "sandbox-name"])(
+    "uses loopback only for the OpenShell gateway daemon while descendants keep the private URL [%s]",
+    async (openshell) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-runtime-"));
+      try {
+        const callRuntime = await importFixture<{
+          resolveGatewayCallContext(opts: { localPortOverride?: number; url?: string }): string;
+        }>(tmp, "call.mjs", patchGatewayCallContextText(CALL_CONTEXT_SOURCE).text);
+        const detailsRuntime = await importFixture<{
+          buildGatewayConnectionDetails(options: {
+            ignoreEnvUrlOverride?: boolean;
+            localPortOverride?: number;
+            url?: string;
+          }): string;
+        }>(
+          tmp,
+          "connection-details.mjs",
+          patchGatewayConnectionDetailsText(CONNECTION_DETAILS_SOURCE).text,
         );
-      });
+        const targetRuntime = await importFixture<{
+          resolveDefaultGatewayTarget(params: {
+            envGatewayUrl?: string;
+            remoteUrl?: string;
+          }): "local" | "remote";
+        }>(tmp, "gateway-tools.mjs", patchGatewayToolTargetText(TOOL_TARGET_SOURCE).text);
+        const privateUrl = "ws://10.200.0.2:18789";
 
-      for (const openshell of ["0", "false", " ", "sandbox-name"]) {
+        withGatewayEnvironment(
+          { openshell: "1", title: "openclaw-gateway", url: privateUrl },
+          () => {
+            expect(callRuntime.resolveGatewayCallContext({})).toBe("ws://127.0.0.1:18789");
+            expect(detailsRuntime.buildGatewayConnectionDetails({})).toBe("ws://127.0.0.1:18789");
+            expect(targetRuntime.resolveDefaultGatewayTarget({ envGatewayUrl: privateUrl })).toBe(
+              "local",
+            );
+          },
+        );
+
+        withGatewayEnvironment({ openshell: "1", title: "openclaw", url: privateUrl }, () => {
+          expect(callRuntime.resolveGatewayCallContext({})).toBe(privateUrl);
+          expect(detailsRuntime.buildGatewayConnectionDetails({})).toBe(privateUrl);
+          expect(targetRuntime.resolveDefaultGatewayTarget({ envGatewayUrl: privateUrl })).toBe(
+            "remote",
+          );
+        });
+
         withGatewayEnvironment({ openshell, title: "openclaw-gateway", url: privateUrl }, () => {
           expect(callRuntime.resolveGatewayCallContext({})).toBe(privateUrl);
           expect(detailsRuntime.buildGatewayConnectionDetails({})).toBe(privateUrl);
@@ -193,11 +197,11 @@ describe("OpenClaw gateway daemon self-dialback patch", () => {
             "remote",
           );
         });
+      } finally {
+        fs.rmSync(tmp, { force: true, recursive: true });
       }
-    } finally {
-      fs.rmSync(tmp, { force: true, recursive: true });
-    }
-  });
+    },
+  );
 
   it("preserves OPENCLAW_GATEWAY_URL outside OpenShell and explicit URL precedence", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-explicit-"));

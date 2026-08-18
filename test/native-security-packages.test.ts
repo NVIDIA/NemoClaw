@@ -145,32 +145,29 @@ describe("native security package remediation", () => {
 
   it("records every reviewed upstream fix at the patch boundary", () => {
     const libssh2Patch = fs.readFileSync(LIBSSH2_PATCH, "utf-8");
-    for (const commit of [
-      "5e4776146552d898b9c0e1b313cd093fa8dc92d0",
-      "a2ed82d40964bbc0d64cd717aa0a5a892117d2e6",
-      "a13bb6c773f0d55ad1628cede57e99803cd898d9",
-      "42e33d81577ed4b95d4b4f6f845e5ee8efe5eeb4",
-      "a9758da45a52bc8c630ec9493804d0c6ea30b24a",
-      "7c8a170c6dca3cd4cf24de836f43ba1a20e662d5",
-    ]) {
-      expect(libssh2Patch).toContain(commit);
-    }
+    expect([
+          "5e4776146552d898b9c0e1b313cd093fa8dc92d0",
+          "a2ed82d40964bbc0d64cd717aa0a5a892117d2e6",
+          "a13bb6c773f0d55ad1628cede57e99803cd898d9",
+          "42e33d81577ed4b95d4b4f6f845e5ee8efe5eeb4",
+          "a9758da45a52bc8c630ec9493804d0c6ea30b24a",
+          "7c8a170c6dca3cd4cf24de836f43ba1a20e662d5",
+        ].every((commit) => libssh2Patch.includes(commit))).toBe(true);
     expect(libssh2Patch).toContain("blocksize > sizeof(buf)");
     expect(libssh2Patch).toContain("pkey->listFetch_s + comment_len");
     expect(libssh2Patch).toContain("data = NULL");
     expect(libssh2Patch).toContain("p->total_num < mac_len + 4 + (size_t)blocksize");
     expect(libssh2Patch).toContain("memset(&list[keys], 0, sizeof(list[keys]))");
-    for (const [rejectedElement, expectedChecks] of [
-      ["Public key description too large", 2],
-      ["Public key language too large", 2],
-      ["Public key comment too large", 1],
-      ["Public key name too large", 2],
-      ["Public key blob too large", 2],
-      ["Public key attribute name too large", 1],
-      ["Public key attribute value too large", 1],
-    ] as const) {
-      expect(libssh2Patch.split(rejectedElement)).toHaveLength(expectedChecks + 1);
-    }
+    expect(([
+          ["Public key description too large", 2],
+          ["Public key language too large", 2],
+          ["Public key comment too large", 1],
+          ["Public key name too large", 2],
+          ["Public key blob too large", 2],
+          ["Public key attribute name too large", 1],
+          ["Public key attribute value too large", 1],
+        ] as const).every(([rejectedElement, expectedChecks]) =>
+          libssh2Patch.split(rejectedElement).length === expectedChecks + 1)).toBe(true);
 
     const pythonPatch = fs.readFileSync(PYTHON_PATCH, "utf-8");
     expect(pythonPatch).toContain("7933f4bf7131aa4140750f9404f5de0aa2969ced");

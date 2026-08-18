@@ -8,7 +8,7 @@ export type {
 } from "./mcp-bridge-provider-inspection";
 export {
   assertMcpProviderRecoverable,
-  assertNoAttachedProviderCredentialCollision,
+  assertNoAttachedProviderCredentialCollisions,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   parseMcpProviderAttachmentNames,

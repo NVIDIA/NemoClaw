@@ -249,9 +249,9 @@ describe("simple global oclif adapters", () => {
     try {
       await expect(GatewayTokenCliCommand.run(["hermes"], rootDir)).resolves.toBeUndefined();
       expect(process.exitCode).toBe(1);
-      for (const line of hermesLines) {
+      hermesLines.forEach((line) => {
         expect(errorSpy).toHaveBeenCalledWith(line);
-      }
+      });
       const combined = errorSpy.mock.calls.map((args) => args.join(" ")).join("\n");
       expect(combined).not.toMatch(/ExitError|@oclif\/core|at Object\.exit/);
     } finally {
@@ -289,11 +289,12 @@ describe("simple global oclif adapters", () => {
 
   it("maps tunnel and deprecated service commands to service actions", async () => {
     await TunnelStartCommand.run([], rootDir);
+    expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await TunnelStopCommand.run([], rootDir);
     await DeprecatedStartCommand.run([], rootDir);
+    expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await DeprecatedStopCommand.run([], rootDir);
 
-    expect(mocks.runStartCommand).toHaveBeenCalledTimes(2);
     expect(mocks.runStopCommand).toHaveBeenCalledTimes(2);
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),

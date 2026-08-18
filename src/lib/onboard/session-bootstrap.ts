@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ServingProfileProvenance } from "../inference/serving/types";
+import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 import { redactSensitiveText } from "../security/redact";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
@@ -27,6 +28,7 @@ import type { PortableInferenceActivation } from "./experimental/portable-infere
 import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
+import { ensureRequiredTierPolicyPresets } from "./policy-tier-suppression";
 import {
   assertLockedResumeIntentSnapshot as assertLockedResumeIntentSnapshotAtPath,
   isOnboardResumeIntentRaceError,
@@ -93,6 +95,7 @@ const PORTABLE_DEFAULT_ENV_KEYS = [
   TOOL_DISCLOSURE_ENV,
   "NEMOCLAW_PROVIDER",
   "NEMOCLAW_MODEL",
+  "NEMOCLAW_PROVIDER_MODEL",
   "NEMOCLAW_ENDPOINT_URL",
   "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_OLLAMA_NO_AUTOSTART",
@@ -218,13 +221,24 @@ export function createPortableOnboardEnvironmentScope(
     env.NEMOCLAW_PREFERRED_API = "openai-completions";
   }
   if (!options.resume) {
+    const requestedModel = previous.get("NEMOCLAW_MODEL")?.value?.trim();
+    const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value;
     env[TOOL_DISCLOSURE_ENV] = "direct";
     env.NEMOCLAW_PROVIDER = activation ? "custom" : "ollama";
-    env.NEMOCLAW_MODEL = activation?.model ?? "qwen3-vl:4b";
-    env.NEMOCLAW_POLICY_MODE = "custom";
-    env.NEMOCLAW_POLICY_PRESETS =
-      previous.get("NEMOCLAW_POLICY_PRESETS")?.value ?? "personal-open-internet";
-    env.NEMOCLAW_POLICY_TIER = "personal";
+    env.NEMOCLAW_MODEL = activation?.model ?? (requestedModel || "qwen3-vl:4b");
+    env.NEMOCLAW_POLICY_TIER = PERSONAL_POLICY_TIER_NAME;
+    if (requestedPolicyPresets?.trim()) {
+      env.NEMOCLAW_POLICY_MODE = "custom";
+      env.NEMOCLAW_POLICY_PRESETS = ensureRequiredTierPolicyPresets(
+        PERSONAL_POLICY_TIER_NAME,
+        requestedPolicyPresets
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean),
+      ).join(",");
+    } else {
+      env.NEMOCLAW_POLICY_MODE = "suggested";
+    }
   } else {
     const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value?.trim();
     if (requestedPolicyPresets) {

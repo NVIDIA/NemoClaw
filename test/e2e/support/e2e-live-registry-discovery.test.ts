@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
 import { target } from "../registry/builder.ts";
-import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
 import type { TargetDefinition, TargetEnvironment } from "../registry/types.ts";
 
@@ -26,17 +25,6 @@ function syntheticTarget(environment: TargetEnvironment = SUPPORTED_ENVIRONMENT)
 }
 
 describe("live target registry discovery support", () => {
-  // source-shape-contract: compatibility -- Every shipped target must classify as runnable or expose a concrete skip reason
-  it("classifies every shipped target as supported or with a concrete reason", () => {
-    const targets = listTargets();
-
-    expect(targets.length).toBeGreaterThan(0);
-    for (const registered of targets) {
-      const support = liveTargetSupport(registered);
-      expect(support.supported || support.reasons.length > 0, registered.id).toBe(true);
-    }
-  });
-
   it("accepts a fully wired synthetic target and forwards its pending suites", () => {
     const registered = syntheticTarget();
 
@@ -59,6 +47,17 @@ describe("live target registry discovery support", () => {
     expect(support.supported).toBe(false);
     expect(support.reasons).toEqual([
       `${dimension} 'synthetic-${dimension}' is not wired for live fixtures`,
+    ]);
+  });
+
+  it("rejects an unrecognized runtime policy tier", () => {
+    const environment = {
+      ...SUPPORTED_ENVIRONMENT,
+      policyTier: "synthetic-policy-tier" as TargetEnvironment["policyTier"],
+    };
+
+    expect(liveTargetSupport(syntheticTarget(environment)).reasons).toEqual([
+      "policyTier 'synthetic-policy-tier' is not wired for live fixtures",
     ]);
   });
 

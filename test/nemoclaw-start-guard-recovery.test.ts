@@ -182,60 +182,62 @@ function runRecoveryHarness({
 }
 
 describe("OpenClaw PID 1 guard-chain recovery", () => {
-  it("re-stages packaged guards identically across five recovery preparations (#7919)", () => {
-    const attempts = 5;
-    const harness = runRecoveryHarness({ attempts });
-    try {
-      expect(harness.result.status, harness.result.stderr).toBe(0);
-      expect(harness.result.stdout).toContain("rc:0\n");
-      expect(harness.result.stderr.match(/restoring library guards/g)).toHaveLength(1);
-      expect(harness.result.stderr).not.toContain("gateway launching without library guards");
-      expect(
-        fs.readFileSync(harness.gatewayLog, "utf8").match(/restoring library guards/g),
-      ).toHaveLength(1);
-      expect(fs.readFileSync(harness.gatewayLog, "utf8")).not.toContain(
-        "gateway launching without library guards",
-      );
+  it.each(["safety", "proxy", "nemotron", "ciao"])(
+    "re-stages packaged guards identically across five recovery preparations [%s] (#7919)",
+    (name) => {
+      const attempts = 5;
+      const harness = runRecoveryHarness({ attempts });
+      try {
+        expect(harness.result.status, harness.result.stderr).toBe(0);
+        expect(harness.result.stdout).toContain("rc:0\n");
+        expect(harness.result.stderr.match(/restoring library guards/g)).toHaveLength(1);
+        expect(harness.result.stderr).not.toContain("gateway launching without library guards");
+        expect(
+          fs.readFileSync(harness.gatewayLog, "utf8").match(/restoring library guards/g),
+        ).toHaveLength(1);
+        expect(fs.readFileSync(harness.gatewayLog, "utf8")).not.toContain(
+          "gateway launching without library guards",
+        );
 
-      const onePass = [
-        "guard:preflight-restart",
-        "emit:target-safety.js",
-        "emit:target-proxy.js",
-        "emit:target-nemotron.js",
-        "emit:target-ciao.js",
-        "write-messaging-plan",
-        "messaging",
-        "secret-scan",
-        "write-runtime-env",
-        "emit:nemoclaw-proxy-env.sh",
-        "validate",
-      ];
-      expect(fs.readFileSync(harness.eventLog, "utf8").trim().split("\n")).toEqual(
-        Array.from({ length: attempts }, () => onePass).flat(),
-      );
+        const onePass = [
+          "guard:preflight-restart",
+          "emit:target-safety.js",
+          "emit:target-proxy.js",
+          "emit:target-nemotron.js",
+          "emit:target-ciao.js",
+          "write-messaging-plan",
+          "messaging",
+          "secret-scan",
+          "write-runtime-env",
+          "emit:nemoclaw-proxy-env.sh",
+          "validate",
+        ];
+        expect(fs.readFileSync(harness.eventLog, "utf8").trim().split("\n")).toEqual(
+          Array.from({ length: attempts }, () => onePass).flat(),
+        );
 
-      for (const name of ["safety", "proxy", "nemotron", "ciao"]) {
         const target = harness.targets[name];
         expect(fs.readFileSync(target, "utf8")).toBe(
           fs.readFileSync(harness.sources[name], "utf8"),
         );
         expect(fs.statSync(target).mode & 0o777).toBe(0o444);
         expect(harness.result.stdout.split(target)).toHaveLength(2);
-      }
-      const runtimeEnvFd = fs.openSync(
-        harness.targets.runtimeEnv,
-        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-      );
-      try {
-        expect(fs.fstatSync(runtimeEnvFd).mode & 0o777).toBe(0o444);
-        expect(fs.readFileSync(runtimeEnvFd, "utf8")).toBe("# recovered runtime environment\n");
+
+        const runtimeEnvFd = fs.openSync(
+          harness.targets.runtimeEnv,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        );
+        try {
+          expect(fs.fstatSync(runtimeEnvFd).mode & 0o777).toBe(0o444);
+          expect(fs.readFileSync(runtimeEnvFd, "utf8")).toBe("# recovered runtime environment\n");
+        } finally {
+          fs.closeSync(runtimeEnvFd);
+        }
       } finally {
-        fs.closeSync(runtimeEnvFd);
+        fs.rmSync(harness.tmpDir, { recursive: true, force: true });
       }
-    } finally {
-      fs.rmSync(harness.tmpDir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("does not write guard-chain warnings through an unsafe gateway log symlink", () => {
     const harness = runRecoveryHarness({ gatewayLogKind: "symlink" });

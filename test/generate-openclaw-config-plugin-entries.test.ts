@@ -79,13 +79,13 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES).toEqual(
       EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
     );
-    for (const { channelId, pluginId } of EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES) {
+    EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.forEach(({ channelId, pluginId }) => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
       expect(config.channels[channelId], channelId).toEqual({ enabled: false });
-    }
-    for (const pluginId of ["diagnostics-otel", "brave", "tavily"]) {
+    });
+    ["diagnostics-otel", "brave", "tavily"].forEach((pluginId) => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
-    }
+    });
     expect(config.tools.web.search).toEqual({ enabled: false });
   });
 
@@ -109,7 +109,9 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
           },
         }),
       );
-      for (const name of Object.keys(process.env)) delete process.env[name];
+      Object.keys(process.env).forEach((name) => {
+        delete process.env[name];
+      });
       Object.assign(process.env, BASE_ENV, {
         HOME: tempDirectory,
         NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
@@ -123,7 +125,9 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       expect(config.plugins?.entries?.["openclaw-weixin"]).toEqual({ enabled: false });
       expect(config.channels?.["openclaw-weixin"]).toEqual({ enabled: false });
     } finally {
-      for (const name of Object.keys(process.env)) delete process.env[name];
+      Object.keys(process.env).forEach((name) => {
+        delete process.env[name];
+      });
       Object.assign(process.env, originalEnvironment);
       fs.rmSync(tempDirectory, { force: true, recursive: true });
     }

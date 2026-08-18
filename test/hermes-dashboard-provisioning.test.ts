@@ -35,11 +35,11 @@ describe("Hermes dashboard provisioning", () => {
     fs.mkdirSync(hermesWebDir, { recursive: true });
     fs.writeFileSync(path.join(hermesRoot, "package-lock.json"), '{"packages":{"web":{}}}\n');
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
-    for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
+    ["npm", "electron", "node-gyp", "uv"].forEach((cache) => {
       const cachePath = path.join(rootCache, cache);
       fs.mkdirSync(cachePath, { recursive: true });
       fs.writeFileSync(path.join(cachePath, "build-only-cache"), "unused after image assembly\n");
-    }
+    });
 
     try {
       const { result, calls } = runLoggedDockerShell(
@@ -55,9 +55,9 @@ describe("Hermes dashboard provisioning", () => {
       expect(calls).toContain(`npm run build --prefix ${hermesRoot} --workspace web`);
       expect(calls).toContain(`npm ci --omit=dev --workspaces=false --prefix ${hermesRoot}`);
       expect(fs.existsSync(hermesWebDist)).toBe(true);
-      for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
+      ["npm", "electron", "node-gyp", "uv"].forEach((cache) => {
         expect(() => fs.lstatSync(path.join(rootCache, cache))).toThrow();
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

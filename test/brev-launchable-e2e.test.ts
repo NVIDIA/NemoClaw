@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const SCRIPT = path.join(REPO_ROOT, "tools", "e2e", "brev-launchable-e2e.sh");
+const REAL_PYTHON3 = spawnSync("which", ["python3"], { encoding: "utf8" }).stdout.trim();
 const candidateSha = "a".repeat(40);
 const roots: string[] = [];
 
@@ -102,6 +103,23 @@ exec "$@"
   executable(
     path.join(bin, "sleep"),
     '#!/usr/bin/env bash\nprintf "sleep %s\\n" "$*" >> "$FAKE_CALLS"\n',
+  );
+  executable(
+    path.join(bin, "python3"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "-" ] && [[ "\${2:-}" == */brev-launchable-e2e.*/full-e2e.raw ]]; then
+  [ "$#" -eq 3 ]
+  [ -n "\${NEMOCLAW_REDACTION_SECRET:-}" ]
+  raw_mode="$(stat -c '%a' "$2" 2>/dev/null || stat -f '%Lp' "$2")"
+  directory_mode="$(stat -c '%a' "$(dirname "$2")" 2>/dev/null || stat -f '%Lp' "$(dirname "$2")")"
+  [ "$raw_mode" = "600" ]
+  [ "$directory_mode" = "700" ]
+  printf 'python redactor arg-count %s with environment secret and modes %s/%s\n' \
+    "$#" "$raw_mode" "$directory_mode" >> "$FAKE_CALLS"
+fi
+exec ${JSON.stringify(REAL_PYTHON3)} "$@"
+`,
   );
   executable(
     path.join(bin, "gh"),
@@ -340,6 +358,72 @@ function emittedOutput(result: ReturnType<typeof run>, workDir: string): string 
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("publishes exact image evidence without Brev or inference access (#8924)", () => {
+    const { calls, env, state, workDir } = fixture();
+    const imageOnlyEnv: NodeJS.ProcessEnv = {
+      ...env,
+      NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "1",
+    };
+    delete imageOnlyEnv.BREV_API_KEY;
+    delete imageOnlyEnv.BREV_LAUNCHABLE_ID;
+    delete imageOnlyEnv.INSTANCE_NAME;
+    delete imageOnlyEnv.NVIDIA_INFERENCE_API_KEY;
+    const result = run(imageOnlyEnv);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands.match(/\/dispatches/gu)).toHaveLength(1);
+    expect(commands).not.toMatch(/\bbrev\b|\bssh\b|sleep 300|full-e2e\.test\.ts/u);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(fs.readdirSync(workDir).sort()).toEqual(["lane.log", "launchable-image.json"]);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "launchable-image.json"), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      kind: "nemoclaw-staging-launchable-image-v1",
+      candidateSha,
+      producer: {
+        repository: "brevdev/nemoclaw-image",
+        workflow: ".github/workflows/build-launchable-e2e-image.yml",
+        runId: "123",
+        status: "success",
+      },
+      image: {
+        uri: "projects/brevdevprod/global/images/nemoclaw-test-image",
+        family: "nemoclaw-brev-staging-cpu",
+        imageRepositorySha: "b".repeat(40),
+      },
+      validation: {
+        launchable: "not-run",
+        runtime: "not-run",
+        inference: "not-run",
+      },
+    });
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      "Launchable deployment, runtime, and inference validation did not run",
+    );
+
+    const wrongReceipt = fixture({ receiptSha: "b".repeat(40) });
+    const wrongResult = run({
+      ...wrongReceipt.env,
+      NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "1",
+    });
+    expect(wrongResult.status).not.toBe(0);
+    expect(wrongResult.stderr).toContain("producer receipt does not match the candidate");
+    expect(fs.readFileSync(wrongReceipt.calls, "utf8")).not.toMatch(/\bbrev\b|\bssh\b/u);
+    expect(fs.existsSync(path.join(wrongReceipt.workDir, "launchable-image.json"))).toBe(false);
+  });
+
+  it("rejects an invalid image-publication mode before dispatch (#8924)", () => {
+    const { calls, env, workDir } = fixture();
+    const result = run({ ...env, NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "yes" });
+    expect(result.status).not.toBe(0);
+    expect(emittedOutput(result, workDir)).toContain(
+      "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY must be 0 or 1",
+    );
+    expect(fs.existsSync(calls)).toBe(false);
+  });
+
   it("binds the producer run, verifies the clean booted SHA, runs E2E, and deletes (#6943)", () => {
     const { calls, env, sshAttempts, state, workDir } = fixture({
       sshReadyAfter: 6,
@@ -439,18 +523,18 @@ describe("focused staging Brev Launchable lane", () => {
     expect(receiptResult.stderr).toContain("producer receipt does not match the candidate");
     expect(fs.readFileSync(receipt.calls, "utf8")).not.toMatch(/brev create|full-e2e\.test\.ts/u);
 
-    for (const malformed of [
+    [
       fixture({ omitReceiptField: "project" }),
       fixture({ omitReceiptField: "imageName" }),
       fixture({ imageRepositorySha: "not-a-sha" }),
-    ]) {
+    ].forEach((malformed) => {
       const malformedResult = run(malformed.env);
       expect(malformedResult.status).not.toBe(0);
       expect(malformedResult.stderr).toContain("producer receipt does not match the candidate");
       expect(fs.readFileSync(malformed.calls, "utf8")).not.toMatch(
         /brev create|full-e2e\.test\.ts/u,
       );
-    }
+    });
 
     const unready = fixture({ ready: false });
     const unreadyResult = run({ ...unready.env, BREV_READY_TIMEOUT_SECONDS: "1" });
@@ -467,7 +551,7 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.readFileSync(wrongImage.calls, "utf8")).not.toContain("full-e2e.test.ts");
     expect(fs.existsSync(wrongImage.state)).toBe(false);
 
-    for (const boot of [
+    [
       fixture({ repoSha: "b".repeat(40) }),
       fixture({ provisionSha: "b".repeat(40) }),
       fixture({ provisionImageRepositorySha: "c".repeat(40) }),
@@ -476,7 +560,7 @@ describe("focused staging Brev Launchable lane", () => {
       fixture({ schemaVersion: 2 }),
       fixture({ sourceRepository: "example/NemoClaw" }),
       fixture({ sourcePath: "/home/ubuntu/NemoClaw" }),
-    ]) {
+    ].forEach((boot) => {
       const bootResult = run(boot.env);
       expect(bootResult.status).not.toBe(0);
       expect(bootResult.stderr).toContain(
@@ -484,7 +568,7 @@ describe("focused staging Brev Launchable lane", () => {
       );
       expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
       expect(fs.existsSync(boot.state)).toBe(false);
-    }
+    });
   }, 90_000);
 
   it("reports E2E failure only after verified workspace cleanup", () => {
@@ -492,6 +576,27 @@ describe("focused staging Brev Launchable lane", () => {
     const result = run(env);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("full E2E failed");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("protects and removes raw inference evidence without passing the credential to redactor arguments", () => {
+    const { calls, env, state, workDir } = fixture();
+    fs.mkdirSync(path.join(workDir, "full-e2e.log"));
+    const result = run(env);
+
+    expect(result.status).not.toBe(0);
+    expect(fs.readFileSync(calls, "utf8")).toContain(
+      "python redactor arg-count 3 with environment secret and modes 600/700",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("nvapi-test-value");
+    expect(
+      fs
+        .readdirSync(String(env.RUNNER_TEMP))
+        .filter((entry) => entry.startsWith("brev-launchable-e2e.")),
+    ).toEqual([]);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
@@ -544,32 +649,30 @@ describe("focused staging Brev Launchable lane", () => {
       .split("\n")
       .filter((line) => line.includes("; error:"));
     expect(diagnosticErrorLines).not.toHaveLength(0);
-    for (const line of diagnosticErrorLines) {
+    diagnosticErrorLines.forEach((line) => {
       const error = line.split("; error: ", 2)[1]?.replace(/\)$/u, "") ?? "";
       expect(Buffer.byteLength(error)).toBeLessThanOrEqual(512);
-    }
-    for (const secretOrConfiguration of [
-      "brev-test-secret",
-      "container-secret",
-      "default-secret",
-      "host-token",
-      "ssh-secret",
-      "short-token",
-      "hunter2",
-      "hidden-user",
-      "github-test-token",
-      "nvapi-test-value",
-      "/hidden/private-key",
-      "host.hidden.internal",
-      "host-exec.hidden.internal",
-      "container.hidden.internal",
-      "refresh.hidden.internal",
-      "203.0.113.20",
-      "identityfile /hidden/private-key",
-      "user hidden-user",
-    ]) {
-      expect(output).not.toContain(secretOrConfiguration);
-    }
+    });
+    expect([
+          "brev-test-secret",
+          "container-secret",
+          "default-secret",
+          "host-token",
+          "ssh-secret",
+          "short-token",
+          "hunter2",
+          "hidden-user",
+          "github-test-token",
+          "nvapi-test-value",
+          "/hidden/private-key",
+          "host.hidden.internal",
+          "host-exec.hidden.internal",
+          "container.hidden.internal",
+          "refresh.hidden.internal",
+          "203.0.113.20",
+          "identityfile /hidden/private-key",
+          "user hidden-user",
+        ].every((secretOrConfiguration) => !output.includes(secretOrConfiguration))).toBe(true);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
@@ -664,45 +767,53 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.existsSync(calls)).toBe(false);
   });
 
-  it("caps blocking readiness and failure diagnostics by separate deadlines", () => {
-    const { calls, env, state, workDir } = fixture({
-      timeoutBlockCommand: "brev refresh",
-      timeoutBlockDiagnostics: true,
-    });
-    const startedAt = performance.now();
-    const result = run({
-      ...env,
-      BREV_HOST_SSH_TIMEOUT_SECONDS: "1",
-      BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS: "6",
-    });
-    const elapsedMs = performance.now() - startedAt;
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("host SSH readiness timed out");
-    expect(elapsedMs).toBeLessThan(12_000);
-    const commands = fs.readFileSync(calls, "utf8");
-    expect(commands).toContain("timeout 1s brev refresh");
-    expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1");
-    expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1-host");
-    expect(commands).toMatch(/timeout [12]s brev exec nclaw-e2e-test-1 true/u);
-    expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
-    const output = emittedOutput(result, workDir);
-    expect(output).toContain("Readiness diagnostics budget: up to 6 seconds");
-    expect(output).toContain("Readiness probe brev exec container: failure; status 124;");
-    for (const label of ["brev exec host", "direct SSH container", "direct SSH host"]) {
+  it.each(
+    ["brev exec host", "direct SSH container", "direct SSH host"],
+  )(
+    "caps blocking readiness and failure diagnostics by separate deadlines [%s]",
+    (label) => {
+      const { calls, env, state, workDir } = fixture({
+        timeoutBlockCommand: "brev refresh",
+        timeoutBlockDiagnostics: true,
+      });
+      const startedAt = performance.now();
+      const result = run({
+        ...env,
+        BREV_HOST_SSH_TIMEOUT_SECONDS: "1",
+        BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS: "6",
+      });
+      const elapsedMs = performance.now() - startedAt;
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("host SSH readiness timed out");
+      expect(elapsedMs).toBeLessThan(12_000);
+      const commands = fs.readFileSync(calls, "utf8");
+      expect(commands).toContain("timeout 1s brev refresh");
+      expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1");
+      expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1-host");
+      expect(commands).toMatch(/timeout [12]s brev exec nclaw-e2e-test-1 true/u);
+      expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
+      const output = emittedOutput(result, workDir);
+      expect(output).toContain("Readiness diagnostics budget: up to 6 seconds");
+      expect(output).toContain("Readiness probe brev exec container: failure; status 124;");
+
       expect(output).toContain(
         `Readiness probe ${label}: not run; status unavailable; error: diagnostic budget exhausted`,
       );
-    }
-    expect(output).toContain("diagnostic budget exhausted");
-    expect(output).toContain(
-      "Readiness classification: incomplete diagnostics; inspect available bounded probe results",
-    );
-    expect(output).not.toContain("Readiness classification: neither target reachable");
-    expect(fs.existsSync(state)).toBe(false);
-    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
-      status: "ABSENT",
-    });
-  }, 90_000);
+
+      expect(output).toContain("diagnostic budget exhausted");
+      expect(output).toContain(
+        "Readiness classification: incomplete diagnostics; inspect available bounded probe results",
+      );
+      expect(output).not.toContain("Readiness classification: neither target reachable");
+      expect(fs.existsSync(state)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject(
+        {
+          status: "ABSENT",
+        },
+      );
+    },
+    90_000,
+  );
 
   it("caps a blocking SSH probe by the host SSH deadline and deletes the workspace", () => {
     const { calls, env, state, workDir } = fixture({ timeoutBlockCommand: "ssh-host" });

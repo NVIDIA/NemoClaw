@@ -10,13 +10,17 @@ import { getOnboardProgressStep, ONBOARD_PROGRESS_STEPS } from "./progress";
 
 vi.mock("../prompt-helpers", () => ({ step: vi.fn() }));
 
+const progressStateDefinitions = ONBOARD_MACHINE_STATE_DEFINITIONS.flatMap((definition) =>
+  "progress" in definition ? [definition] : [],
+);
+
 describe("onboard progress metadata", () => {
-  it("derives state-backed progress labels from machine definitions", () => {
-    for (const definition of ONBOARD_MACHINE_STATE_DEFINITIONS) {
-      if (!("progress" in definition)) continue;
+  it.each(progressStateDefinitions)(
+    "derives the $state progress label from its machine definition",
+    (definition) => {
       expect(ONBOARD_PROGRESS_STEPS[definition.stepName]).toEqual(definition.progress);
-    }
-  });
+    },
+  );
 
   it("preserves the existing eight-step onboarding labels", () => {
     expect(ONBOARD_PROGRESS_STEPS).toEqual({

@@ -33,11 +33,11 @@ describe("NemoCUA agent onboarding", () => {
   it("refuses candidate onboarding before loading the agent without qualification authority (#7755)", () => {
     const runtime = createCuaRuntimeTestFixture();
     fixtures.push(runtime);
-    for (const [key, value] of Object.entries(runtime.env).filter(
+    Object.entries(runtime.env).filter(
       (entry): entry is [string, string] => entry[1] !== undefined,
-    )) {
+    ).forEach(([key, value]) => {
       vi.stubEnv(key, value);
-    }
+    });
     vi.stubEnv("NEMOCLAW_CUA_QUALIFICATION", "");
 
     expect(() => resolveAgent({ agentFlag: "nemocua" })).toThrow(

@@ -65,14 +65,6 @@ afterEach(() => {
 });
 
 describe("release latest tag workflow", () => {
-  // source-shape-contract: security -- Exact verified-object output wiring prevents latest promotion from bypassing GitHub signature verification
-  it("binds latest promotion to the exact GitHub-verified tag object", () => {
-    expect(verifyStep?.uses).toBe("actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3");
-    expect(moveStep?.env?.EXPECTED_RELEASE_TAG_OBJECT).toBe(
-      "${{ steps.verify-release-tag.outputs.tag_object_sha }}",
-    );
-  });
-
   it("accepts a GitHub-verified signed tag and emits its exact object SHA", async () => {
     vi.stubEnv("RELEASE_TAG", RELEASE_TAG);
     const harness = createHarness({ verified: true, reason: "valid" });

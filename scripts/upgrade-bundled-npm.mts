@@ -9,17 +9,20 @@ import {
   closeSync,
   constants,
   fstatSync,
-  lstatSync,
   mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
-  realpathSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  readJsonObject as readJson,
+  requireRealDirectory as realDirectory,
+} from "./lib/bundled-npm-package.mts";
 
 export const REVIEWED_NPM_VERSION = "11.18.0";
 export const REVIEWED_NPM_INTEGRITY =
@@ -34,36 +37,6 @@ export const REVIEWED_NPM_PACKAGES = {
 } as const;
 
 const REPLACEABLE_NPM_VERSIONS = new Set(["10.9.8", "11.13.0", "11.16.0"]);
-
-type JsonRecord = Record<string, unknown>;
-
-function record(value: unknown, label: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${label} must be a JSON object`);
-  }
-  return value as JsonRecord;
-}
-
-function readJson(file: string, label: string): JsonRecord {
-  const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    if (!fstatSync(descriptor).isFile()) throw new Error(`${label} must be a real file: ${file}`);
-    return record(JSON.parse(readFileSync(descriptor, "utf8")), label);
-  } catch (error) {
-    throw new Error(`${label} is invalid: ${String(error)}`);
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
-function realDirectory(directory: string, label: string): string {
-  const resolved = resolve(directory);
-  const metadata = lstatSync(resolved);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    throw new Error(`${label} must be a real directory: ${resolved}`);
-  }
-  return realpathSync(resolved);
-}
 
 function npmVersion(npmRoot: string): string {
   const manifest = readJson(join(npmRoot, "package.json"), "npm package manifest");

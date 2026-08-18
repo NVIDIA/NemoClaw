@@ -220,21 +220,20 @@ describe("MessagingWorkflowPlanner", () => {
           if (context.channelId === "telegram") {
             throw new Error("existing channels should not re-enroll");
           }
-          const outputs: Record<string, { kind: "secret"; value: string }> = {};
-          for (const output of context.outputDeclarations ?? []) {
-            if (output.kind === "secret") {
-              const value =
-                context.channelId === "slack" && output.id === "botToken"
-                  ? "xoxb-test-slack-bot-token"
-                  : context.channelId === "slack" && output.id === "appToken"
-                    ? "xapp-test-slack-app-token"
-                    : `test-${context.channelId}-${output.id}`;
-              outputs[output.id] = {
-                kind: "secret",
-                value,
-              };
-            }
-          }
+          const outputs = Object.fromEntries(
+            (context.outputDeclarations ?? [])
+              .filter((output) => output.kind === "secret")
+              .map((output) => {
+                const value =
+                  context.channelId === "slack" && output.id === "botToken"
+                    ? "xoxb-test-slack-bot-token"
+                    : context.channelId === "slack" && output.id === "appToken"
+                      ? "xapp-test-slack-app-token"
+                      : `test-${context.channelId}-${output.id}`;
+                return [output.id, { kind: "secret" as const, value }];
+              }),
+          );
+
           return { outputs };
         },
       },
@@ -493,21 +492,20 @@ describe("MessagingWorkflowPlanner", () => {
           if (context.channelId === "telegram") {
             throw new Error("existing channels should not re-enroll");
           }
-          const outputs: Record<string, { kind: "secret"; value: string }> = {};
-          for (const output of context.outputDeclarations ?? []) {
-            if (output.kind === "secret") {
-              const value =
-                context.channelId === "slack" && output.id === "botToken"
-                  ? "xoxb-test-slack-bot-token"
-                  : context.channelId === "slack" && output.id === "appToken"
-                    ? "xapp-test-slack-app-token"
-                    : `test-${context.channelId}-${output.id}`;
-              outputs[output.id] = {
-                kind: "secret",
-                value,
-              };
-            }
-          }
+          const outputs = Object.fromEntries(
+            (context.outputDeclarations ?? [])
+              .filter((output) => output.kind === "secret")
+              .map((output) => {
+                const value =
+                  context.channelId === "slack" && output.id === "botToken"
+                    ? "xoxb-test-slack-bot-token"
+                    : context.channelId === "slack" && output.id === "appToken"
+                      ? "xapp-test-slack-app-token"
+                      : `test-${context.channelId}-${output.id}`;
+                return [output.id, { kind: "secret" as const, value }];
+              }),
+          );
+
           return { outputs };
         },
       },

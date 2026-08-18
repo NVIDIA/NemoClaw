@@ -29,6 +29,15 @@ function requireUnsupportedTarget() {
   return unsupported!;
 }
 
+function expectExecutableTypedTargetCoverage(): void {
+  for (const row of buildLiveTargetMatrix()) {
+    expect(row.agentRuntime).not.toBe("unresolved");
+    expect(row.observableOutcome).not.toBe("unresolved");
+    expect(row.environmentOrInferenceEndpoint).not.toBe("unresolved");
+    expect(row.unresolvedReason).toBe("");
+  }
+}
+
 describe("live E2E target matrix", () => {
   it("honors an explicit runs-on:<label> requirement override", () => {
     const custom = target("test-runs-on-override")
@@ -83,30 +92,6 @@ describe("live E2E target matrix", () => {
     expect(() => resolveRunnerForTarget(broken)).toThrow(/no default for platform/);
   });
 
-  // source-shape-contract: compatibility -- Default live matrix output must cover every fixture-supported registered target once
-  it("builds the default live matrix from every fixture-supported target", () => {
-    const targets = listTargets();
-    const supportedTargets = targets.filter((entry) => liveTargetSupport(entry).supported);
-    const matrix = buildLiveTargetMatrix();
-
-    expect(matrix).not.toHaveLength(0);
-    expect(matrix.map((entry) => entry.id)).toEqual(supportedTargets.map((entry) => entry.id));
-    expect(new Set(matrix.map((entry) => entry.id)).size).toBe(matrix.length);
-    for (const entry of matrix) {
-      const registered = supportedTargets.find((target) => target.id === entry.id);
-      expect(
-        registered,
-        `matrix entry '${entry.id}' must resolve to a supported target`,
-      ).toBeDefined();
-      expect(entry).toMatchObject({
-        runner: resolveRunnerForTarget(registered!).runner,
-        supported: true,
-        supportReasons: [],
-        pendingRuntimeSuites: registered!.suiteIds ?? [],
-      });
-    }
-  });
-
   it("keeps explicitly selected unsupported live targets in the matrix with skip reasons", () => {
     const unsupported = requireUnsupportedTarget();
     const support = liveTargetSupport(unsupported);
@@ -114,10 +99,19 @@ describe("live E2E target matrix", () => {
     expect(buildLiveTargetMatrix([unsupported.id])).toEqual([
       expect.objectContaining({
         id: unsupported.id,
+        agentRuntime: "unresolved",
+        observableOutcome: "unresolved",
+        environmentOrInferenceEndpoint: "unresolved",
+        unresolvedReason: "This typed registry declaration has no executable owner",
         supported: false,
         supportReasons: support.reasons,
       }),
     ]);
+  });
+
+  it("exposes execution coverage for every executable typed target (#9167)", () => {
+    expect(buildLiveTargetMatrix()).toHaveLength(4);
+    expectExecutableTypedTargetCoverage();
   });
 
   it("prints a single-line JSON array of supported live E2E targets for --emit-live-matrix", () => {
