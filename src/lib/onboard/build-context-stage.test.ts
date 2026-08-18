@@ -134,9 +134,9 @@ describe("stageCreateSandboxBuildContext", () => {
       "agents/hermes/Dockerfile",
       "FROM scratch\nCOPY agents/hermes/plugin/ /opt/plugin/\nCOPY src/ /src/\nCOPY scripts/ /scripts/\nCOPY nemoclaw-blueprint/ /blueprint/\n",
     );
-    for (const [relativePath, contents] of [...requiredFiles, ...credentialFiles]) {
+    [...requiredFiles, ...credentialFiles].forEach(([relativePath, contents]) => {
       writeFixtureFile(repoRoot, relativePath, contents);
-    }
+    });
     writeFixtureFile(repoRoot, "ignored-by-repo-rule.txt", "forbidden-dockerignore-canary");
     writeFixtureFile(
       repoRoot,
@@ -169,13 +169,12 @@ describe("stageCreateSandboxBuildContext", () => {
     tmpDirs.push(result.buildCtx);
 
     const stagedBytes = readStagedBytes(result.buildCtx);
-    for (const [relativePath, contents] of requiredFiles) {
-      expect(fs.readFileSync(path.join(result.buildCtx, relativePath), "utf8")).toBe(contents);
-    }
-    for (const [relativePath, contents] of credentialFiles) {
+    expect(requiredFiles.every(([relativePath, contents]) =>
+        Object.is(fs.readFileSync(path.join(result.buildCtx, relativePath), "utf8"), contents))).toBe(true);
+    credentialFiles.forEach(([relativePath, contents]) => {
       expect(fs.existsSync(path.join(result.buildCtx, relativePath))).toBe(false);
       expect(stagedBytes).not.toContain(contents);
-    }
+    });
     expect(stagedBytes).not.toContain("forbidden-dockerignore-canary");
   });
 

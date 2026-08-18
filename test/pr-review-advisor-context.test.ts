@@ -129,9 +129,11 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
 
     expect(turns).toHaveLength(16);
     expect(actualAnalysis).toEqual(expectedAnalysis);
-    for (const [index, turn] of turns.entries()) {
-      expect(turn.prompt).toContain(`Turn ${index + 1}/${turns.length}`);
-    }
+    expect(
+      [...turns.entries()].every(([index, turn]) =>
+        turn.prompt.includes(`Turn ${index + 1}/${turns.length}`),
+      ),
+    ).toBe(true);
     const workingPrompts = analysisTurns.map((turn) => turn.prompt);
     expect(
       workingPrompts.filter((prompt) => prompt.includes("Do not produce final JSON")),
@@ -176,7 +178,7 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(commitTurns[4]?.prompt).toContain("basis kinds missing_regression");
     expect(commitTurns[5]?.prompt).toContain("categories workflow, docs, architecture");
     expect(commitTurns[6]?.prompt).toContain("Reconciliation may update, resolve, or supersede");
-    for (const turn of analysisTurns) {
+    analysisTurns.forEach((turn) => {
       const contextTools = turn.contextToolResults?.map((result) => result.toolName) ?? [];
       const reconciliation = turn.name === "reconcile-findings-analysis";
       const terminology = turn.name === "terminology-review-analysis";
@@ -208,9 +210,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.prompt).toContain("Required analysis protocol — perform these steps in order");
       expect(turn.prompt).toContain("A separate commit turn follows this analysis");
-    }
+    });
     expect(analysisTurns[6]?.prompt).toContain("`pr_review_read_ledger`");
-    for (const turn of commitTurns.filter((turn) => turn.name !== "terminology-review")) {
+    commitTurns.filter((turn) => turn.name !== "terminology-review").forEach((turn) => {
       expect(turn.contextToolResults).toBeUndefined();
       expect(turn.activeToolNames).toEqual(["pr_review_update_ledger"]);
       expect(turn.requiredToolNames).toEqual(["pr_review_update_ledger"]);
@@ -223,7 +225,7 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       expect(turn.prompt).toContain("do not stringify arrays");
       expect(turn.prompt).not.toContain("`operations`");
       expect(turn.prompt).toContain("Emit no prose before or after the tool call");
-    }
+    });
     expect(validationTurn?.activeToolNames).toEqual([
       "pr_review_read_ledger",
       "pr_review_read_terminology",

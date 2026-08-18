@@ -808,9 +808,9 @@ describe("managed llama.cpp installer", () => {
         }),
       }),
     );
-    for (const [target, contents] of before) {
+    [...before].forEach(([target, contents]) => {
       expect(fs.readFileSync(target)).toEqual(contents);
-    }
+    });
   });
 
   it("reuses YAML-pinned images, the shared Hugging Face cache, and the durable lifecycle", async () => {

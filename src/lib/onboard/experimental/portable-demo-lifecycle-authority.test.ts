@@ -192,7 +192,7 @@ describe("portable demo lifecycle authority", () => {
       },
     );
 
-    for (const [, env] of runtime.podman.mock.calls) {
+    runtime.podman.mock.calls.forEach(([, env]) => {
       expect(env).toMatchObject({
         HOME: RUNTIME_AUTHORITY.homeDir,
         XDG_CONFIG_HOME: RUNTIME_AUTHORITY.configHome,
@@ -201,7 +201,7 @@ describe("portable demo lifecycle authority", () => {
       expect(env).not.toHaveProperty("CONTAINER_CONNECTION");
       expect(env).not.toHaveProperty("CONTAINER_HOST");
       expect(env).not.toHaveProperty("CONTAINER_SSHKEY");
-    }
+    });
   });
 
   it("refuses socket replacement before mutating the portable restart policy (#9068)", () => {

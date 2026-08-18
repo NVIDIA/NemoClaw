@@ -182,7 +182,9 @@ describe("Podman local inference command translation", () => {
       "ai.nvidia.nemoclaw.inference.prior-state=stopped",
     ];
     const args = ["run"];
-    for (const label of labels) args.push("--label", label);
+    labels.forEach((label) => {
+      args.push("--label", label);
+    });
     args.push(IMAGE);
 
     expect(translatePodmanLocalInferenceArgs(args, authority())).toEqual([
