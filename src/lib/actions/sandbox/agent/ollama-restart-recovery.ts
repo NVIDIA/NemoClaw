@@ -17,12 +17,12 @@
 import { buildValidatedCurlCommandArgs } from "../../../adapters/http/curl-args";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import {
-  describeOllamaInventory,
+  describeModelInventory,
   getResolvedOllamaHost,
+  ollamaInventoryContainsModel,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
-  type OllamaModelPresenceResult,
-  probeOllamaEndpointModelPresence,
+  probeOllamaEndpointInventory,
   type RunCaptureExFn,
 } from "../../../inference/local";
 import {
@@ -44,11 +44,10 @@ export interface OllamaRestartRecoveryDeps {
     getOllamaHost: () => string,
     runCaptureImpl?: OllamaRuntimeRunCaptureFn,
   ) => OllamaRuntimeModelStatus;
-  probeModelPresence?: (
+  probeModelInventory?: (
     host: string,
-    model: string,
     runCaptureImpl?: OllamaRuntimeRunCaptureFn,
-  ) => OllamaModelPresenceResult;
+  ) => string[] | null;
   runCaptureExImpl?: RunCaptureExFn;
   getOllamaHost?: () => string;
   runCaptureImpl?: OllamaRuntimeRunCaptureFn;
@@ -239,14 +238,14 @@ export function maybeWarmOllamaAfterDaemonRestart(
     // valid (#9455). Ask the same daemon for its inventory to tell them apart;
     // an unreadable inventory keeps the original warm-failure reason.
     if (response === "ollama-error") {
-      const probePresence = deps.probeModelPresence ?? probeOllamaEndpointModelPresence;
-      const presence = probePresence(rawHost, model, deps.runCaptureImpl);
-      if (presence.presence === "absent") {
+      const probeInventory = deps.probeModelInventory ?? probeOllamaEndpointInventory;
+      const inventory = probeInventory(rawHost, deps.runCaptureImpl);
+      if (inventory && !ollamaInventoryContainsModel(inventory, model)) {
         return {
           kind: "skipped",
           reason: "model-absent",
           endpoint: `http://${rawHost}:${OLLAMA_PORT}`,
-          inventoryLabel: describeOllamaInventory(presence.inventory),
+          inventoryLabel: describeModelInventory(inventory),
         };
       }
     }

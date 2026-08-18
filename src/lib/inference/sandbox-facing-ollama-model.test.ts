@@ -4,8 +4,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT } from "../core/ports";
 import {
-  getSandboxFacingOllamaInventoryCheck,
-  probeOllamaEndpointModelPresence,
+  getLocalProviderContainerReachabilityCheck,
+  ollamaInventoryContainsModel,
+  probeOllamaEndpointInventory,
   resetOllamaContainerPortCache,
   resetOllamaHostCache,
   setResolvedOllamaHost,
@@ -46,7 +47,7 @@ describe("sandbox-facing Ollama model validation", () => {
   });
 
   it("asks the sandbox host bridge for its inventory", () => {
-    const command = getSandboxFacingOllamaInventoryCheck();
+    const command = getLocalProviderContainerReachabilityCheck("ollama-local", "body");
 
     expect(command).not.toBeNull();
     expect(commandUrl(command ?? [])).toBe(
@@ -60,7 +61,7 @@ describe("sandbox-facing Ollama model validation", () => {
     containerCanReachHostLoopback.mockReturnValue(false);
     resetOllamaContainerPortCache();
 
-    expect(getSandboxFacingOllamaInventoryCheck()).toBeNull();
+    expect(getLocalProviderContainerReachabilityCheck("ollama-local", "body")).toBeNull();
     expect(validateSandboxFacingOllamaModel("llama3.2:1b", () => "")).toEqual({ ok: true });
   });
 
@@ -91,6 +92,7 @@ describe("sandbox-facing Ollama model validation", () => {
     ["an unreachable endpoint", ""],
     ["a non-Ollama body", "<html>proxy</html>"],
     ["a JSON body without a models array", JSON.stringify({ error: "nope" })],
+    ["an inventory with a malformed model entry", JSON.stringify({ models: [{}] })],
   ])("never fails onboarding on %s", (_name, body) => {
     expect(validateSandboxFacingOllamaModel("llama3.2:1b", () => body)).toEqual({ ok: true });
   });
@@ -103,28 +105,29 @@ describe("sandbox-facing Ollama model validation", () => {
   });
 });
 
-describe("probeOllamaEndpointModelPresence", () => {
+describe("Ollama model inventory", () => {
   it("queries the given daemon for its inventory", () => {
     const capture = vi.fn((_command: readonly string[]) => tagsBody("llama3.2:1b"));
 
-    const result = probeOllamaEndpointModelPresence("host.docker.internal", "gemma4:26b", capture);
+    const inventory = probeOllamaEndpointInventory("host.docker.internal", capture);
 
     expect(commandUrl(capture.mock.calls[0][0])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/tags`,
     );
-    expect(result).toEqual({ presence: "absent", inventory: ["llama3.2:1b"] });
+    expect(inventory).toEqual(["llama3.2:1b"]);
+    expect(ollamaInventoryContainsModel(inventory ?? [], "gemma4:26b")).toBe(false);
   });
 
-  it("reports a served model as present", () => {
-    expect(
-      probeOllamaEndpointModelPresence("127.0.0.1", "gemma4:26b", () => tagsBody("gemma4:26b"))
-        .presence,
-    ).toBe("present");
+  it("matches a served model", () => {
+    const inventory = probeOllamaEndpointInventory("127.0.0.1", () => tagsBody("gemma4:26b"));
+    expect(ollamaInventoryContainsModel(inventory ?? [], "gemma4:26b")).toBe(true);
   });
 
-  it("reports an unreadable inventory as unknown", () => {
-    expect(probeOllamaEndpointModelPresence("127.0.0.1", "gemma4:26b", () => "").presence).toBe(
-      "unknown",
-    );
+  it("returns null for an unreadable inventory", () => {
+    expect(probeOllamaEndpointInventory("127.0.0.1", () => "")).toBeNull();
+  });
+
+  it("keeps a valid empty inventory authoritative", () => {
+    expect(probeOllamaEndpointInventory("127.0.0.1", () => tagsBody())).toEqual([]);
   });
 });
