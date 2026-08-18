@@ -2073,6 +2073,10 @@ function applyPresetContent(
 
   if (options.custom) {
     const np = parseNetworkPolicies(presetContent);
+    if (!np) {
+      console.error(`  Preset '${presetName}' has invalid or missing network_policies.`);
+      return false;
+    }
     const reservedKey = [OPENCLAW_NPM_PRESET_KEY, PERSONAL_OPEN_INTERNET_POLICY_KEY].find(
       (key) => np && Object.prototype.hasOwnProperty.call(np, key),
     );
