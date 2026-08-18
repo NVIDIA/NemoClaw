@@ -110,6 +110,22 @@ async function requestJson(options: {
   });
 }
 
+async function expectAdmissionsRejected(
+  port: number,
+  bodies: readonly object[],
+): Promise<void> {
+  for (const body of bodies) {
+    const response = await requestJson({
+      port,
+      method: "POST",
+      path: "/v1/voice/sessions",
+      bearer: DEPLOYMENT_BEARER,
+      body,
+    });
+    expect(response).toEqual({ status: 400, body: '{"error":"invalid_request"}' });
+  }
+}
+
 afterEach(async () => {
   await Promise.all(
     [...servers].map(
@@ -359,80 +375,7 @@ describe("experimental voice gateway composed boundary", () => {
     ).not.toContain("nemoclaw-voice");
   });
 
-  it("rejects invalid runtime conversation IDs before creating an OpenClaw client (#9411)", async () => {
-    let clientsCreated = 0;
-    const service = new VoiceSessionService({
-      runtimeIdentity: "voiceclaw-local",
-      runtimeProfile: "voiceclaw-pinned",
-      sandbox: "repository-fixture",
-      agent: "main",
-      createClient: () => {
-        clientsCreated += 1;
-        return new FakeOpenClawGatewayClient(OPENCLAW_CREDENTIAL);
-      },
-    });
-    const port = await listen(
-      createVoiceGatewayServer({
-        deploymentCredential: DEPLOYMENT_BEARER,
-        service,
-      }),
-    );
-
-    const malformed = await requestJson({
-      port,
-      method: "POST",
-      path: "/v1/voice/sessions",
-      bearer: DEPLOYMENT_BEARER,
-      body: { runtimeConversationId: "../namespace-escape" },
-    });
-    const oversized = await requestJson({
-      port,
-      method: "POST",
-      path: "/v1/voice/sessions",
-      bearer: DEPLOYMENT_BEARER,
-      body: { runtimeConversationId: "x".repeat(129) },
-    });
-
-    expect(malformed).toEqual({ status: 400, body: '{"error":"invalid_request"}' });
-    expect(oversized).toEqual({ status: 400, body: '{"error":"invalid_request"}' });
-    expect(clientsCreated).toBe(0);
-  });
-
-  it("rejects a runtime-supplied OpenClaw session key before creating a client (#9411)", async () => {
-    let clientsCreated = 0;
-    const service = new VoiceSessionService({
-      runtimeIdentity: "voiceclaw-local",
-      runtimeProfile: "voiceclaw-pinned",
-      sandbox: "repository-fixture",
-      agent: "main",
-      createClient: () => {
-        clientsCreated += 1;
-        return new FakeOpenClawGatewayClient(OPENCLAW_CREDENTIAL);
-      },
-    });
-    const port = await listen(
-      createVoiceGatewayServer({
-        deploymentCredential: DEPLOYMENT_BEARER,
-        service,
-      }),
-    );
-
-    const response = await requestJson({
-      port,
-      method: "POST",
-      path: "/v1/voice/sessions",
-      bearer: DEPLOYMENT_BEARER,
-      body: {
-        runtimeConversationId: "runtime-conversation",
-        sessionKey: "agent:main:nemoclaw-voice:runtime-selected",
-      },
-    });
-
-    expect(response).toEqual({ status: 400, body: '{"error":"invalid_request"}' });
-    expect(clientsCreated).toBe(0);
-  });
-
-  it("authenticates before admission or turn parsing and rejects runtime-selected authority (#8378)", async () => {
+  it("authenticates before admission parsing and rejects invalid or runtime-selected authority (#9411)", async () => {
     const fakeOpenClaw = new FakeOpenClawGatewayClient(OPENCLAW_CREDENTIAL);
     let clientsCreated = 0;
     const service = new VoiceSessionService({
@@ -464,18 +407,19 @@ describe("experimental voice gateway composed boundary", () => {
       body: '{"error":"authentication_failed"}',
     });
 
-    const override = await requestJson({
-      port,
-      method: "POST",
-      path: "/v1/voice/sessions",
-      bearer: DEPLOYMENT_BEARER,
-      body: {
+    await expectAdmissionsRejected(port, [
+      { runtimeConversationId: "../namespace-escape" },
+      { runtimeConversationId: "x".repeat(129) },
+      {
+        runtimeConversationId: "runtime-conversation",
+        sessionKey: "agent:main:nemoclaw-voice:runtime-selected",
+      },
+      {
         runtimeConversationId: "runtime-conversation",
         agent: "runtime-selected",
         gatewayUrl: "ws://attacker.invalid/ws",
       },
-    });
-    expect(override.status).toBe(400);
+    ]);
     expect(clientsCreated).toBe(0);
 
     const runtime = new PinnedVoiceRuntimeAdapter(port, DEPLOYMENT_BEARER, () => {});
