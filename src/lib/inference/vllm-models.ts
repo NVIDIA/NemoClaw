@@ -46,6 +46,23 @@ export interface VllmRuntimeOverride {
   dockerRunArgsMode?: "append" | "replace";
   /** Maximum time allowed for the immutable image pull. */
   pullTimeoutSec?: number;
+  /** Runtime-specific GPU floor, overriding the model-wide default. */
+  minComputeCapability?: number;
+}
+
+/**
+ * A runtime override qualified for a host platform and architecture.
+ *
+ * Entries are ordered from general to specific. The resolver selects the last
+ * matching entry, which lets a conservative Linux baseline precede a
+ * device-specific optimized runtime without making an ARM64 image the fallback
+ * for an x86_64 host.
+ */
+export interface VllmRuntimeVariant extends VllmRuntimeOverride {
+  /** NemoClaw platform profiles this runtime can serve. */
+  platforms?: readonly VllmPlatform[];
+  /** Node.js host architectures this image was built for. */
+  architectures?: readonly NodeJS.Architecture[];
 }
 
 export const NEMOTRON_ULTRA_STATION_IMAGE = {
@@ -85,14 +102,17 @@ export interface VllmModelDef {
   /** True when the upstream HF repo requires accepting a licence. */
   gated: boolean;
   /**
-   * Platforms whose interactive picker should offer this entry. Models with
-   * platform-specific flags (the NVFP4 MoE checkpoint targets `sm_121a` only,
-   * the very large V4 Flash recipe wants Station-class VRAM) appear only on
-   * profiles they can actually run on. Direct `NEMOCLAW_VLLM_MODEL`
-   * overrides bypass the picker filter, so `runVllmInstall` rejects any
-   * override outside this list before the image pull and model download.
+   * Platforms on which managed vLLM may serve this entry. Direct
+   * `NEMOCLAW_VLLM_MODEL` overrides are checked against this list before an
+   * image pull or model download.
    */
   platforms: readonly VllmPlatform[];
+  /**
+   * Optional narrower list for the interactive picker. This keeps a newly
+   * added compatibility path explicit-only until it has completed broader
+   * hardware qualification without blocking an intentional env override.
+   */
+  pickerPlatforms?: readonly VllmPlatform[];
   minComputeCapability?: number;
   /**
    * Environment variables exported immediately before `vllm serve` (e.g.
@@ -103,6 +123,10 @@ export interface VllmModelDef {
   serveEnv?: Record<string, string>;
   /** Runtime overrides for recipes that cannot use the platform image. */
   runtime?: VllmRuntimeOverride;
+  /** Ordered, compatibility-qualified runtime overrides. */
+  runtimeVariants?: readonly VllmRuntimeVariant[];
+  /** Refuse the platform baseline when no runtime variant matches. */
+  requireRuntimeVariant?: true;
   /** Whether startup must install vLLM's fastsafetensors extra. Defaults to true. */
   installFastSafetensors?: boolean;
   /** Disable remote model code for a runtime image that contains native model support. */
@@ -365,6 +389,10 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
     servedModelId: "muse-glimmer",
     modelArgs: [
+      "--tokenizer",
+      "/root/.cache/huggingface/hub/models--Inferact--Muse-Glimmer-30B-NVFP4-W4A4/snapshots/d35cb79050f419c457611b1cee5c5d15b176f285",
+      "--tokenizer-revision",
+      "d35cb79050f419c457611b1cee5c5d15b176f285",
       "--gpu-memory-utilization",
       "0.75",
       "--max-num-seqs",
@@ -380,14 +408,81 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "auto",
     ],
     gated: false,
-    platforms: ["spark"],
+    platforms: ["spark", "linux"],
+    pickerPlatforms: ["spark"],
     minComputeCapability: 121,
-    runtime: {
-      image:
-        "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
-      imageDownloadSizeBytes: 9_699_710_136,
-      modelDownloadSizeBytes: 25_447_097_878,
-    },
+    runtimeVariants: [
+      {
+        platforms: ["linux"],
+        architectures: ["x64"],
+        minComputeCapability: 120,
+        image:
+          "vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f",
+        imageDownloadSizeBytes: 8_632_473_449,
+        modelDownloadSizeBytes: 25_447_097_878,
+      },
+      {
+        platforms: ["spark"],
+        architectures: ["arm64"],
+        minComputeCapability: 121,
+        image:
+          "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+        imageDownloadSizeBytes: 9_699_710_136,
+        modelDownloadSizeBytes: 25_447_097_878,
+      },
+    ],
+    requireRuntimeVariant: true,
+    installFastSafetensors: false,
+    trustRemoteCode: false,
+    managedBearerAuth: true,
+  },
+  {
+    id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+    label: "NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 [Experimental]",
+    envValue: "nemotron-3.5-lightning-30b",
+    downloadSizeBytes: 21_561_882_284,
+    maxModelLen: 65536,
+    revision: "0dcd680e5585c791728c83342b311d0a0026dbeb",
+    servedModelId: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
+    modelArgs: [
+      "--max-num-seqs",
+      "1",
+      "--gpu-memory-utilization",
+      "0.75",
+      "--max-num-batched-tokens",
+      "4096",
+      "--mamba-backend",
+      "flashinfer",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--reasoning-parser",
+      "nemotron_v3",
+    ],
+    gated: false,
+    platforms: ["linux"],
+    pickerPlatforms: [],
+    minComputeCapability: 80,
+    runtimeVariants: [
+      {
+        platforms: ["linux"],
+        architectures: ["x64"],
+        minComputeCapability: 80,
+        image:
+          "vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2",
+        imageDownloadSizeBytes: 9_110_652_559,
+        modelDownloadSizeBytes: 21_561_882_284,
+        dockerRunArgs: [
+          "--shm-size",
+          "34359738368b",
+          "--ulimit",
+          "memlock=-1",
+          "--ulimit",
+          "stack=67108864",
+        ],
+      },
+    ],
+    requireRuntimeVariant: true,
     installFastSafetensors: false,
     trustRemoteCode: false,
     managedBearerAuth: true,
@@ -402,7 +497,9 @@ export const DEFAULT_VLLM_MODEL: VllmModelDef = VLLM_MODELS[0];
  * the recommended entry by id rather than position.
  */
 export function modelsForPlatform(platform: VllmPlatform): readonly VllmModelDef[] {
-  return VLLM_MODELS.filter((model) => model.platforms.includes(platform));
+  return VLLM_MODELS.filter((model) =>
+    (model.pickerPlatforms ?? model.platforms).includes(platform),
+  );
 }
 
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;

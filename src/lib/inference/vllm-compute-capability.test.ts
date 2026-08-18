@@ -216,7 +216,11 @@ describe("managed vLLM GPU compute capability preflight", () => {
   });
 
   it.each(quantizedModels)("declares a minimum compute capability for $id (#8307)", (model) => {
-    expect(model.minComputeCapability).toBeGreaterThanOrEqual(89);
+    // NVIDIA's published Lightning recipe explicitly covers A100 (8.0);
+    // device-specific runtime variants may raise this floor (Spark uses 12.1).
+    const expectedMinimum =
+      model.envValue === "nemotron-3.5-lightning-30b" ? 80 : 89;
+    expect(model.minComputeCapability).toBeGreaterThanOrEqual(expectedMinimum);
   });
 });
 

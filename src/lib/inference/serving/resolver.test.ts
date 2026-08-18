@@ -81,7 +81,10 @@ function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
 
 function hostLocalFixtureCatalog(): CompiledManagedInferenceCatalog {
   const catalog = shippedCatalog();
-  const sourceRecipe = catalog.recipes.find(isHostLocalInferenceServingRecipe);
+  const sourceRecipe = catalog.recipes.find(
+    (recipe): recipe is HostLocalInferenceServingRecipe =>
+      isHostLocalInferenceServingRecipe(recipe) && recipe.spec.runtime.architecture === "arm64",
+  );
   expect(sourceRecipe).toBeDefined();
   const sourcePreset = catalog.presets.find(
     ({ spec }) => spec.plan.recipeRef === sourceRecipe!.metadata.id,
@@ -351,6 +354,7 @@ describe("managed inference resolver", () => {
     const baseProfile = {
       name: "DGX Spark",
       platform: "spark",
+      architecture: "arm64",
       image: "example.invalid/vllm@sha256:" + "a".repeat(64),
       imageDownloadSizeBytes: 1,
       defaultModel: {} as never,
@@ -375,6 +379,48 @@ describe("managed inference resolver", () => {
         id: catalog.recipes[0]!.spec.model.id,
         platforms: ["spark"],
       },
+    });
+  });
+
+  it("materializes a Linux amd64 host-local profile without Spark-specific branches", () => {
+    const catalog = shippedCatalog();
+    const presetId = "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4";
+    const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId)!;
+    const recipe = catalog.recipes.find(
+      ({ metadata }) => metadata.id === preset.spec.plan.recipeRef,
+    )!;
+    expect(isHostLocalInferenceServingRecipe(recipe)).toBe(true);
+    const hostLocalRecipe = recipe as HostLocalInferenceServingRecipe;
+    const selection = {
+      outcome: "selected",
+      selection: "explicit",
+      catalogDigest: catalog.catalogDigest,
+      presetDigest: managedInferenceDigest(preset),
+      recipeDigest: managedInferenceDigest(hostLocalRecipe),
+      preset,
+      recipe: hostLocalRecipe,
+    } as ResolvedHostLocalInferenceSelection;
+    const baseProfile = {
+      name: "Linux + NVIDIA GPU",
+      platform: "linux",
+      architecture: "x64",
+      image: "example.invalid/vllm@sha256:" + "a".repeat(64),
+      imageDownloadSizeBytes: 1,
+      defaultModel: {} as never,
+      containerName: "nemoclaw-vllm",
+      dockerRunFlags: ["--gpus", "all"],
+      pullTimeoutSec: 1,
+      loadTimeoutSec: 1,
+    } satisfies VllmProfile;
+
+    expect(materializeHostLocalVllmSelection(selection, baseProfile)).toMatchObject({
+      presetId,
+      profile: {
+        platform: "linux",
+        architecture: "x64",
+        image: hostLocalRecipe.spec.runtime.image,
+      },
+      model: { id: hostLocalRecipe.spec.model.id, platforms: ["linux"] },
     });
   });
 

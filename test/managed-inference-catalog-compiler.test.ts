@@ -31,6 +31,13 @@ const LIGHTNING_PROFILE_ID = "vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-
 const LIGHTNING_RECIPE_ID = "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1";
 const MUSE_PROFILE_ID = "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4";
 const MUSE_RECIPE_ID = "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1";
+const LINUX_LIGHTNING_PROFILE_ID =
+  "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4";
+const LINUX_LIGHTNING_RECIPE_ID =
+  "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1";
+const LINUX_MUSE_PROFILE_ID =
+  "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4";
+const LINUX_MUSE_RECIPE_ID = "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1";
 
 function catalogSources(): ServingCatalogSource[] {
   return (["presets", "recipes"] as const).flatMap((kind) => {
@@ -281,6 +288,52 @@ describe("managed inference YAML profile contract", () => {
     });
   });
 
+  it.each([
+    [
+      LINUX_MUSE_PROFILE_ID,
+      LINUX_MUSE_RECIPE_ID,
+      "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+      "vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f",
+    ],
+    [
+      LINUX_LIGHTNING_PROFILE_ID,
+      LINUX_LIGHTNING_RECIPE_ID,
+      "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+      "vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2",
+    ],
+  ])("compiles the explicit Linux amd64 profile %s", (profileId, recipeId, modelId, image) => {
+    const catalog = compile(catalogSources());
+    const preset = catalog.presets.find(({ metadata }) => metadata.id === profileId);
+    const recipe = catalog.recipes.find(({ metadata }) => metadata.id === recipeId);
+
+    expect(preset).toMatchObject({
+      metadata: { supportState: "experimental" },
+      spec: {
+        selection: "explicit-only",
+        plan: { backend: "vllm", recipeRef: recipeId },
+      },
+    });
+    expect(preset?.spec.requirements?.all).toContainEqual({
+      readiness: {
+        scope: "everyNode",
+        kind: "observation",
+        id: "host.os.architecture",
+        comparison: { operator: "equals", value: "x64" },
+      },
+    });
+    expect(recipe).toMatchObject({
+      spec: {
+        backend: "vllm",
+        model: { id: modelId },
+        runtime: { architecture: "amd64", image },
+        execution: {
+          materializerRef: "vllm.host-local/v1",
+          lifecycleRef: "vllm.host-local.lifecycle/v1",
+        },
+      },
+    });
+  });
+
   it("documents the Experimental Lightning support boundary (#8385)", () => {
     const setupGuide = readFileSync(
       path.join(REPOSITORY_ROOT, "docs", "inference", "set-up-vllm.mdx"),
@@ -292,10 +345,10 @@ describe("managed inference YAML profile contract", () => {
 
     expect(warning).toBeDefined();
     expect(warning).toContain(
-      "This profile is an explicit opt-in for one DGX Spark and remains Experimental.",
+      "These profiles are explicit opt-ins for one DGX Spark or a compatible Linux `amd64` NVIDIA GPU host and remain Experimental.",
     );
     expect(warning).toContain(
-      "Promotion requires broader validation of the pinned Python frontend and the `step3p5` reasoning and tool-call parsers.",
+      "Promotion requires broader validation of both architecture-specific runtimes and parser configurations.",
     );
     expect(warning).not.toContain("qualified for broader support");
   });

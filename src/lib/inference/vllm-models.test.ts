@@ -52,6 +52,7 @@ describe("vllm model registry", () => {
       "nemotron-3-ultra-550b-a55b": 352_381_245_521,
       "qwen3.6-35b-a3b-nvfp4": 23_500_000_000,
       "muse-glimmer-30b": 25_447_097_878,
+      "nemotron-3.5-lightning-30b": 21_561_882_284,
     });
   });
 
@@ -458,18 +459,13 @@ describe("vllm model registry", () => {
       revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
       servedModelId: "muse-glimmer",
       maxModelLen: 32768,
-      platforms: ["spark"],
+      platforms: ["spark", "linux"],
       minComputeCapability: 121,
       gated: false,
       installFastSafetensors: false,
       trustRemoteCode: false,
       managedBearerAuth: true,
-      runtime: {
-        image:
-          "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
-        imageDownloadSizeBytes: 9_699_710_136,
-        modelDownloadSizeBytes: 25_447_097_878,
-      },
+      requireRuntimeVariant: true,
     });
 
     const command = buildVllmServeCommand(muse!);
@@ -489,6 +485,27 @@ describe("vllm model registry", () => {
     expect(command).not.toContain("--speculative-config");
     expect(command).not.toContain("pip install");
   });
+
+  it("uses the published hardware-neutral parser baseline for Lightning on Linux", () => {
+    const lightning = VLLM_MODELS.find(
+      (model) => model.envValue === "nemotron-3.5-lightning-30b",
+    );
+
+    expect(lightning).toMatchObject({
+      id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+      platforms: ["linux"],
+      pickerPlatforms: [],
+      minComputeCapability: 80,
+      requireRuntimeVariant: true,
+    });
+    const command = buildVllmServeCommand(lightning!);
+    expect(command).toContain("--mamba-backend flashinfer");
+    expect(command).toContain("--tool-call-parser qwen3_coder");
+    expect(command).toContain("--reasoning-parser nemotron_v3");
+    expect(command).not.toContain("--moe-backend");
+    expect(command).not.toContain("--speculative-config");
+    expect(command).not.toContain("step3p5");
+  });
 });
 
 describe("modelsForPlatform", () => {
@@ -505,6 +522,7 @@ describe("modelsForPlatform", () => {
     expect(slugs).toContain("nemotron-3-nano-4b");
     expect(slugs).toContain("deepseek-r1-distill-70b");
     expect(slugs).toContain("muse-glimmer-30b");
+    expect(slugs).not.toContain("nemotron-3.5-lightning-30b");
     expect(slugs).not.toContain("deepseek-v4-flash");
   });
 
@@ -517,22 +535,24 @@ describe("modelsForPlatform", () => {
     expect(slugs).toContain("nemotron-3-ultra-550b-a55b");
     expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
     expect(slugs).not.toContain("muse-glimmer-30b");
+    expect(slugs).not.toContain("nemotron-3.5-lightning-30b");
   });
 
-  it("omits arch-specific entries from the generic Linux profile", () => {
+  it("keeps newly added Linux compatibility paths out of the interactive picker", () => {
     const slugs = modelsForPlatform("linux").map((m) => m.envValue);
     expect(slugs).toContain("qwen3.6-27b");
     expect(slugs).toContain("nemotron-3-nano-4b");
     expect(slugs).toContain("deepseek-r1-distill-70b");
     expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
     expect(slugs).not.toContain("muse-glimmer-30b");
+    expect(slugs).not.toContain("nemotron-3.5-lightning-30b");
     expect(slugs).not.toContain("deepseek-v4-flash");
   });
 
   it("preserves registry order so callers can stably mark the recommended entry", () => {
-    const registryOrder = VLLM_MODELS.filter((m) => m.platforms.includes("spark")).map(
-      (m) => m.envValue,
-    );
+    const registryOrder = VLLM_MODELS.filter((m) =>
+      (m.pickerPlatforms ?? m.platforms).includes("spark"),
+    ).map((m) => m.envValue);
     expect(modelsForPlatform("spark").map((m) => m.envValue)).toEqual(registryOrder);
   });
 });

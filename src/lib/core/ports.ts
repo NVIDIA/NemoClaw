@@ -1,30 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
+import {
+  DEFAULT_LLAMA_CPP_PORT,
+  LLAMA_CPP_PORT,
+  LLAMA_CPP_PORT_ENV,
+  OLLAMA_PORT,
+  OLLAMA_PROXY_PORT,
+  parsePort,
+  VLLM_PORT,
+} from "./local-inference-ports";
+
+export { LLAMA_CPP_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT, parsePort, VLLM_PORT };
 
 /**
  * Central port configuration — override any port via environment variables.
  * TypeScript counterpart of bin/lib/ports.js.
  */
-
-/**
- * Read an environment variable as a port number, falling back to a default.
- * Validates that the value is a valid non-privileged port (1024-65535).
- */
-export function parsePort(envVar: string, fallback: number): number {
-  const raw = process.env[envVar];
-  if (raw === undefined || raw === "") return fallback;
-  const trimmed = String(raw).trim();
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`);
-  }
-  const parsed = Number(trimmed);
-  if (parsed < 1024 || parsed > 65535) {
-    throw new Error(`Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`);
-  }
-  return parsed;
-}
 
 export interface GatewayPortValidationOptions {
   dashboardPort: number;
@@ -61,14 +53,6 @@ export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", SANDBOX_DASHB
 export const DASHBOARD_PORT_RANGE_START = SANDBOX_DASHBOARD_PORT;
 /** End of the auto-allocation range for dashboard ports (inclusive). */
 export const DASHBOARD_PORT_RANGE_END = 18799;
-/** vLLM / NIM inference port (default 8000, override via NEMOCLAW_VLLM_PORT). */
-export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
-/** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */
-export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
-/** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
-export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);
-/** llama.cpp existing-server attachment port; fixed by the declarative serving contract. */
-export { LLAMA_CPP_PORT };
 /** Default Hermes OpenAI-compatible API port (manifest `forward_ports[1]`; the default for start.sh `PUBLIC_PORT`). */
 export const HERMES_OPENAI_API_PORT = 8642;
 /** Start of the auto-allocation range for Hermes API ports (inclusive). */
@@ -138,11 +122,11 @@ const SERVICE_PORT_CATALOG: readonly ServicePortDefinition[] = [
     configuredPort: (options) => options.vllmPort,
   },
   {
-    envVar: null,
+    envVar: LLAMA_CPP_PORT_ENV,
     label: "llama.cpp inference",
-    defaultPort: LLAMA_CPP_PORT,
+    defaultPort: DEFAULT_LLAMA_CPP_PORT,
     reserveDefault: true,
-    configuredPort: () => undefined,
+    configuredPort: () => LLAMA_CPP_PORT,
   },
   {
     envVar: "NEMOCLAW_OLLAMA_PORT",
@@ -261,18 +245,11 @@ export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GA
   httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
 });
 
-/** Reject every configurable service collision with fixed llama.cpp attachment port 8081. */
+/** Reject llama.cpp collisions with every other configured host service. */
 export function validateLlamaCppPortReservation(
   options: RuntimeAdapterPortValidationOptions,
 ): void {
-  const conflict = SERVICE_PORT_CATALOG.find(
-    (entry) => entry.envVar !== null && entry.configuredPort(options) === LLAMA_CPP_PORT,
-  );
-  if (conflict) {
-    throw new Error(
-      `Invalid port: ${conflict.envVar}="${LLAMA_CPP_PORT}" — conflicts with the fixed llama.cpp inference port (${LLAMA_CPP_PORT})`,
-    );
-  }
+  validateServicePort(LLAMA_CPP_PORT_ENV, LLAMA_CPP_PORT, options, LLAMA_CPP_PORT_ENV);
 }
 
 validateLlamaCppPortReservation({

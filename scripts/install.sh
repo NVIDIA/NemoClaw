@@ -237,6 +237,7 @@ resolve_nemoclaw_gateway_port() {
   local -a configured_names=(
     NEMOCLAW_DASHBOARD_PORT
     NEMOCLAW_VLLM_PORT
+    NEMOCLAW_LLAMACPP_PORT
     NEMOCLAW_OLLAMA_PORT
     NEMOCLAW_OLLAMA_PROXY_PORT
     NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT
@@ -246,6 +247,7 @@ resolve_nemoclaw_gateway_port() {
   local -a configured_ports=(
     "${NEMOCLAW_DASHBOARD_PORT:-18789}"
     "${NEMOCLAW_VLLM_PORT:-8000}"
+    "${NEMOCLAW_LLAMACPP_PORT:-8081}"
     "${NEMOCLAW_OLLAMA_PORT:-11434}"
     "${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
     "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT:-11436}"
@@ -257,8 +259,9 @@ resolve_nemoclaw_gateway_port() {
     configured_port="${configured_ports[$i]}"
     configured_port="${configured_port#"${configured_port%%[![:space:]]*}"}"
     configured_port="${configured_port%"${configured_port##*[![:space:]]}"}"
-    if [[ "$configured_port" =~ ^0*8081$ ]]; then
-      error "${configured_names[$i]} must not overlap the fixed llama.cpp inference port (8081)."
+    if [[ "${configured_names[$i]}" != "NEMOCLAW_LLAMACPP_PORT" ]] \
+      && [[ "$configured_port" =~ ^0*8081$ ]]; then
+      error "${configured_names[$i]} must not overlap the reserved llama.cpp inference default port (8081)."
     fi
     if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$port" -eq "$configured_port" ]; then
       error "NEMOCLAW_GATEWAY_PORT conflicts with ${configured_names[$i]} ($configured_port)."
@@ -5168,9 +5171,9 @@ activate_express_install() {
       export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
         if [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ] \
-          || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] || [ -n "${NEMOCLAW_VLLM_PORT:-}" ] \
+          || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] \
           || [ -n "${NEMOCLAW_VLLM_EXTRA_ARGS_JSON:-}" ]; then
-          error "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides."
+          error "The fixed DGX Spark vLLM profile does not accept provider, model, or serve-argument overrides."
         fi
         unset NEMOCLAW_PROVIDER
         export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
@@ -5623,7 +5626,7 @@ describe_express_install() {
     "DGX Spark")
       if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
         inference_summary="Qwen3.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile"
-        inference_disclosure="The serving catalog owns the model, image, port, and vLLM arguments. The installer rejects provider and model overrides, and the dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides before starting its managed container."
+        inference_disclosure="The serving catalog owns the model, image, and vLLM arguments. The installer rejects provider and model overrides, and the dedicated local-model onboarder rejects vLLM model and serve-argument overrides before starting its managed container. NEMOCLAW_VLLM_PORT may override the host listener."
       elif [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
         inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
         inference_disclosure="The explicit model remains authoritative, so this run keeps the existing single-host DGX Spark profile. Managed vLLM pulls the configured image/model and runs only its dedicated container."
@@ -6012,12 +6015,6 @@ main() {
     && { [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; }; then
     error "The local model profile does not accept NEMOCLAW_PROVIDER or NEMOCLAW_MODEL overrides."
   fi
-  if [ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" = "1" ] \
-    && [ "${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" = "vllm" ] \
-    && [ -n "${NEMOCLAW_VLLM_PORT:-}" ]; then
-    error "The vLLM local model profile uses fixed port 8000 and does not accept NEMOCLAW_VLLM_PORT."
-  fi
-
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
   # is only one of several phase-3 steps that need a TTY or --non-interactive

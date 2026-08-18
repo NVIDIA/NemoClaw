@@ -213,7 +213,7 @@ describe("shell runtime helpers", () => {
     expect(result.status).not.toBe(0);
     expect(result.stdout.trim()).toBe("");
     expect(result.stderr).toContain(
-      `Invalid ${name}=${value} (conflicts with fixed llama.cpp inference port 8081)`,
+      `Invalid ${name}=${value} (conflicts with reserved llama.cpp inference default port 8081)`,
     );
   });
 

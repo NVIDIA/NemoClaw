@@ -191,6 +191,8 @@ export function inspectManagedLlamaCppStatus(
   try {
     readiness = (options.probe ?? probeLlamaCppAttachment)(apiKey, {
       requestedModel: selection.recipe.spec.model.servedName,
+      baseUrl: `http://127.0.0.1:${String(receipt.endpoint.port)}`,
+      expectedPort: receipt.endpoint.port,
     });
   } catch {
     return {

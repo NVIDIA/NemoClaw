@@ -1405,7 +1405,11 @@ describe("createSetupNim", () => {
   });
 
   it("routes a gated local model profile through its dedicated onboarder", async () => {
-    const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
+    const profile = {
+      name: "DGX Spark",
+      platform: "spark",
+      architecture: "arm64",
+    } as VllmProfile;
     const plan = { runtime: "vllm" } as LocalModelProfilePlan;
     const onboard = vi.fn<NonNullable<SetupNimFlowDeps["localModelProfileIntegration"]>["onboard"]>(
       async (_plan, host, state) => {

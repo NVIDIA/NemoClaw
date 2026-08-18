@@ -328,8 +328,8 @@ function validateHostLocalVllmMaterializerRecipe(
     return "host-local vLLM materializer does not accept topology bindings";
   }
   const runtime = recipe.spec.runtime;
-  if (runtime.architecture !== "arm64") {
-    return "host-local vLLM materializer requires an arm64 runtime";
+  if (runtime.architecture !== "arm64" && runtime.architecture !== "amd64") {
+    return "host-local vLLM materializer requires an arm64 or amd64 runtime";
   }
   if (
     runtime.networkMode !== "bridge" ||

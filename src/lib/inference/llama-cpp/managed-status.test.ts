@@ -86,7 +86,7 @@ function reserveState(homeDir: string, presetId?: string, presetDigest?: string)
   loadOrCreateManagedLlamaCppApiKey(paths);
 }
 
-function publishState(homeDir: string, runtimeEngine: ContainerEngine): void {
+function publishState(homeDir: string, runtimeEngine: ContainerEngine, hostPort = 8081): void {
   reserveState(homeDir);
   const paths = managedLlamaCppStatePaths(homeDir);
   const engineAuthority = {
@@ -104,7 +104,7 @@ function publishState(homeDir: string, runtimeEngine: ContainerEngine): void {
     engineAuthority,
     endpoint: {
       host: "host.openshell.internal",
-      port: 8081,
+      port: hostPort,
       networkName: MANAGED_LLAMA_CPP_NETWORK_NAME,
     },
     runtime: {
@@ -330,6 +330,31 @@ describe("managed llama.cpp status", () => {
       homeDir,
       operation: { engine: runtimeEngine },
       paths: managedLlamaCppStatePaths(homeDir),
+    });
+  });
+
+  it("uses the receipt port for status recovery without an environment override", () => {
+    const inspectExact = vi.fn<NonNullable<ManagedLlamaCppStatusOptions["inspectExact"]>>(() => ({
+      running: true,
+      receipt: {} as never,
+    }));
+    const probe = vi.fn(() => ({ ok: true as const, model: "nvidia-nemotron" }));
+    const runtimeEngine = engine(vi.fn(() => ({ status: 0, stdout: "[]", stderr: "" })));
+    const homeDir = temporaryHome();
+    publishState(homeDir, runtimeEngine, 19081);
+
+    expect(
+      inspectManagedLlamaCppStatus("spark-agent", {
+        homeDir,
+        engine: runtimeEngine,
+        inspectExact,
+        probe,
+      }),
+    ).toMatchObject({ state: "running" });
+    expect(probe).toHaveBeenCalledWith(expect.any(String), {
+      requestedModel: "nvidia-nemotron-3-nano-30b-a3b",
+      baseUrl: "http://127.0.0.1:19081",
+      expectedPort: 19081,
     });
   });
 

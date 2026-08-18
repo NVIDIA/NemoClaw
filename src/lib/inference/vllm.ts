@@ -111,6 +111,8 @@ export interface VllmProfile {
   // filters the registry. Decoupled from `name` so future user-facing label
   // tweaks don't change which models are offered.
   platform: VllmPlatform;
+  /** Qualified host architecture for this platform profile. */
+  architecture?: NodeJS.Architecture;
   image: string; // platform-specific image pinned by digest
   // Compressed size of that exact platform manifest. The storage preflight
   // adds unpacking and pull-staging headroom.
@@ -139,6 +141,8 @@ export interface VllmProfile {
   // Optional pinned model snapshot size. Model-specific runtime overrides use
   // this to guard the host Hugging Face cache before a cold download.
   modelDownloadSizeBytes?: number;
+  /** GPU floor selected by a compatibility-qualified model runtime. */
+  minComputeCapability?: number;
   servingCatalog?: {
     catalogDigest: string;
     presetId: string;
@@ -300,6 +304,7 @@ function printHfRateLimitRecovery(): void {
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
   platform: "spark",
+  architecture: "arm64",
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
   imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
@@ -313,6 +318,7 @@ const SPARK_PROFILE: VllmProfile = {
 const N1X_PROFILE: VllmProfile = {
   name: "N1x",
   platform: "n1x",
+  architecture: "arm64",
   image: SPARK_PROFILE.image,
   imageDownloadSizeBytes: SPARK_PROFILE.imageDownloadSizeBytes,
   imageUnpackedSizeBytes: SPARK_PROFILE.imageUnpackedSizeBytes,
@@ -327,6 +333,7 @@ const N1X_PROFILE: VllmProfile = {
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
   platform: "station",
+  architecture: "arm64",
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
   imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
@@ -362,6 +369,7 @@ const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxImage
   ? {
       name: "Linux + NVIDIA GPU",
       platform: "linux",
+      architecture: process.arch,
       image: genericLinuxImage.ref,
       imageDownloadSizeBytes: genericLinuxImage.downloadSizeBytes,
       imageUnpackedSizeBytes: genericLinuxImage.unpackedSizeBytes,
@@ -439,8 +447,9 @@ export function formatComputeCapability(capability: number): string {
 export function computeCapabilityPreflight(
   model: VllmModelDef,
   capabilities: number[] = readGpuComputeCapabilities(),
+  runtimeMinimum: number | undefined = model.minComputeCapability,
 ): { ok: true } | { ok: false; reason: string } {
-  const required = model.minComputeCapability;
+  const required = runtimeMinimum;
   if (required === undefined) return { ok: true };
   if (capabilities.length === 0) return { ok: true };
   const lowest = Math.min(...capabilities);
@@ -589,8 +598,22 @@ export function buildVllmRunArgs(
   ];
 }
 
-export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModelDef): VllmProfile {
-  const runtime = model.runtime;
+export function resolveVllmRuntimeProfile(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  architecture: NodeJS.Architecture = profile.architecture ?? process.arch,
+): VllmProfile {
+  const matchingVariants = (model.runtimeVariants ?? []).filter(
+    (candidate) =>
+      (!candidate.platforms || candidate.platforms.includes(profile.platform)) &&
+      (!candidate.architectures || candidate.architectures.includes(architecture)),
+  );
+  const runtime = matchingVariants.at(-1) ?? model.runtime;
+  if (model.requireRuntimeVariant && !runtime) {
+    throw new Error(
+      `${model.label} has no managed vLLM runtime for ${profile.name} on ${architecture}.`,
+    );
+  }
   let resolved = profile;
   if (runtime) {
     const extraRunArgs = [...(runtime.dockerRunArgs ?? [])];
@@ -612,6 +635,7 @@ export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModel
             ? () => [...profile.buildDockerRunFlags!(), ...extraRunArgs]
             : undefined,
       pullTimeoutSec: runtime.pullTimeoutSec ?? profile.pullTimeoutSec,
+      minComputeCapability: runtime.minComputeCapability ?? model.minComputeCapability,
     };
   }
   assertVllmRegistryDigestRef(resolved.image);
@@ -1559,12 +1583,6 @@ async function runVllmInstall(
       );
       return { ok: false };
     }
-    if (String(process.env.NEMOCLAW_VLLM_PORT ?? "").trim()) {
-      console.error(
-        "  vLLM install failed: this local model profile uses fixed port 8000 and does not accept NEMOCLAW_VLLM_PORT.",
-      );
-      return { ok: false };
-    }
   }
   const managedCluster = hostLocalSelection
     ? { kind: "not-selected" as const }
@@ -1795,7 +1813,11 @@ async function runVllmInstall(
     return { ok: false };
   }
 
-  const capability = computeCapabilityPreflight(model);
+  const capability = computeCapabilityPreflight(
+    model,
+    readGpuComputeCapabilities(),
+    runtimeProfile.minComputeCapability,
+  );
   if (!capability.ok) {
     console.error(`  vLLM install failed: ${capability.reason}`);
     return { ok: false };

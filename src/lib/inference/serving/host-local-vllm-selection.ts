@@ -106,10 +106,18 @@ export function materializeHostLocalVllmSelection(
   ) {
     throw new Error("selected serving preset is not a host-local vLLM recipe");
   }
-  if (baseProfile.platform !== "spark") {
-    throw new Error("host-local vLLM serving presets are currently qualified only for DGX Spark");
+  if (baseProfile.platform !== "spark" && baseProfile.platform !== "linux") {
+    throw new Error("host-local vLLM serving presets require DGX Spark or Linux + NVIDIA GPU");
   }
   const runtime = recipe.spec.runtime;
+  const hostArchitecture = baseProfile.architecture ?? process.arch;
+  const expectedRuntimeArchitecture =
+    hostArchitecture === "x64" ? "amd64" : hostArchitecture === "arm64" ? "arm64" : null;
+  if (!expectedRuntimeArchitecture || runtime.architecture !== expectedRuntimeArchitecture) {
+    throw new Error(
+      `host-local vLLM recipe architecture ${runtime.architecture} does not match host architecture ${hostArchitecture}`,
+    );
+  }
   const servedModelId = recipe.spec.model.servedName;
   if (
     !runtime?.image ||
@@ -139,7 +147,7 @@ export function materializeHostLocalVllmSelection(
     servedModelId,
     modelArgs: modelArguments(selection),
     gated: recipe.spec.model.gated,
-    platforms: ["spark"],
+    platforms: [baseProfile.platform],
     ...(Object.keys(serveEnvironment).length > 0 ? { serveEnv: serveEnvironment } : {}),
     runtime: {
       image: runtime.image,

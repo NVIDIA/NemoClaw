@@ -172,9 +172,10 @@ describe("managed vLLM image distribution boundary", () => {
       )
       .filter((ref): ref is string => ref !== null),
   );
-  const runtimeRefs = VLLM_MODELS.map((model) => model.runtime?.image).filter(
-    (ref): ref is string => typeof ref === "string",
-  );
+  const runtimeRefs = VLLM_MODELS.flatMap((model) => [
+    ...(model.runtime?.image ? [model.runtime.image] : []),
+    ...(model.runtimeVariants ?? []).map((runtime) => runtime.image),
+  ]);
   const managedImageRefs = [...new Set([...platformRefs, ...runtimeRefs])];
 
   it("accepts repository-qualified immutable registry digests", () => {
@@ -307,6 +308,47 @@ describe("vLLM profile detection", () => {
     expect(bindings).toEqual(["127.0.0.1:8000:8000", "172.18.0.1:8000:8000"]);
     expect(args).toEqual(expect.arrayContaining(["--env", "VLLM_API_KEY", runtime.image]));
     expect(args).not.toContain(apiKey);
+  });
+
+  it("resolves Muse Glimmer to the generic Linux x86_64 baseline", () => {
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+    const muse = VLLM_MODELS.find((model) => model.envValue === "muse-glimmer-30b");
+
+    expect(profile).not.toBeNull();
+    expect(muse).toBeDefined();
+    const runtime = resolveVllmRuntimeProfile(profile!, muse!, "x64");
+
+    expect(runtime.image).toBe(
+      "vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f",
+    );
+    expect(runtime.imageDownloadSizeBytes).toBe(8_632_473_449);
+    expect(runtime.minComputeCapability).toBe(120);
+  });
+
+  it("rejects Muse Glimmer when no architecture-qualified runtime exists", () => {
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+    const muse = VLLM_MODELS.find((model) => model.envValue === "muse-glimmer-30b");
+
+    expect(() => resolveVllmRuntimeProfile(profile!, muse!, "arm64")).toThrow(
+      /no managed vLLM runtime for Linux \+ NVIDIA GPU on arm64/u,
+    );
+  });
+
+  it("resolves Nemotron 3.5 Lightning to the published Linux amd64 vLLM runtime", () => {
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+    const lightning = VLLM_MODELS.find(
+      (model) => model.envValue === "nemotron-3.5-lightning-30b",
+    );
+
+    expect(profile).not.toBeNull();
+    expect(lightning).toBeDefined();
+    const runtime = resolveVllmRuntimeProfile(profile!, lightning!, "x64");
+
+    expect(runtime.image).toBe(
+      "vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2",
+    );
+    expect(runtime.imageDownloadSizeBytes).toBe(9_110_652_559);
+    expect(runtime.minComputeCapability).toBe(80);
   });
 
 
@@ -725,6 +767,63 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
     const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(errors).toContain("DeepSeek V4 Flash is not supported on Linux + NVIDIA GPU");
+  });
+
+  it.each([
+    [
+      "muse-glimmer-30b",
+      "muse-glimmer",
+      "vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f",
+    ],
+    [
+      "nemotron-3.5-lightning-30b",
+      "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
+      "vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2",
+    ],
+  ])("accepts the explicit %s compatibility path on Linux x86_64", async (slug, servedId, image) => {
+    process.env.NEMOCLAW_VLLM_MODEL = slug;
+    const profile = {
+      ...detectVllmProfile({ platform: "linux", type: "nvidia" })!,
+      architecture: "x64" as const,
+    };
+    const beforeInstall = vi.fn();
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    // The shared fixture intentionally has no OpenShell bridge inspection
+    // response. Reaching that later boundary proves model/platform admission,
+    // image selection, storage checks, and the model download all proceeded.
+    expect(result).toEqual({ ok: false });
+    expect(beforeInstall).toHaveBeenCalledWith(servedId);
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledWith(image, expect.any(Object));
+    expect(errors).toContain("could not inspect the OpenShell bridge");
+    expect(errors).not.toContain("is not supported on Linux + NVIDIA GPU");
+  });
+
+  it("keeps the Lightning environment slug on the Linux baseline", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3.5-lightning-30b";
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(beforeInstall).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(errors).toContain("is not supported on DGX Spark");
   });
 
   it("still accepts a platform-matched override on its own platform (#7358)", async () => {

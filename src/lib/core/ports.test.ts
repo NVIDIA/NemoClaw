@@ -171,13 +171,13 @@ describe("validateLlamaCppPortReservation", () => {
     "bedrockRuntimeAdapterPort",
     "openrouterRuntimeAdapterPort",
     "httpsPinRuntimeAdapterPort",
-  ] as const)("rejects configured %s collision with fixed port 8081 (#8161)", (field) => {
+  ] as const)("rejects configured %s collision with the llama.cpp port", (field) => {
     expect(() =>
       validateLlamaCppPortReservation({
         ...GATEWAY_VALIDATION_OPTIONS,
         [field]: 8081,
       }),
-    ).toThrow(/fixed llama\.cpp inference port \(8081\)/);
+    ).toThrow(/NEMOCLAW_LLAMACPP_PORT.*conflicts/u);
   });
 });
 

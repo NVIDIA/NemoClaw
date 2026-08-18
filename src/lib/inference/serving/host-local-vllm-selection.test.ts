@@ -49,6 +49,7 @@ function baseProfile(): VllmProfile {
   return {
     name: "DGX Spark",
     platform: "spark",
+    architecture: "arm64",
     image: `example.invalid/vllm@sha256:${"a".repeat(64)}`,
     imageDownloadSizeBytes: 1,
     defaultModel: {} as never,
