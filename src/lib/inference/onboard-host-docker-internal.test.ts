@@ -101,12 +101,12 @@ describe("host.docker.internal onboarding inference policy", () => {
       });
     }
     expect(seenCommands).toHaveLength(2);
-    for (const { command, args } of seenCommands) {
+    seenCommands.forEach(({ command, args }) => {
       expect(command).toBe("docker");
       expect(args).toContain("curlimages/curl:8.10.1");
       expect(args).toContain("http://host.docker.internal:11434/v1/chat/completions");
       expect(args).not.toContain("--volume");
-    }
+    });
   });
 
   it.each([

@@ -11,6 +11,7 @@ import { ROOT } from "../../../state/paths";
 import { readAutoPairApprovalPolicyModule } from "../auto-pair-approval";
 
 const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
+const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const OBSERVATION_TIMEOUT_MS = 3_000;
 const OBSERVATION_MAX_OUTPUT_BYTES = 4 * 1_024;
@@ -26,6 +27,11 @@ export const OPENCLAW_PAIRING_REQUIRED_SCOPES = [
 ] as const;
 
 export type OpenClawPairingQualification = LaunchReadinessOpenClawSessionQualification;
+
+export type OpenClawPairingSettlementObservation = {
+  readonly state: "pairing-only" | "settled";
+  readonly deviceIdentitySha256: string;
+};
 
 interface ObservationProjection {
   deviceIdentitySha256: string;
@@ -96,9 +102,35 @@ export function parseOpenClawPairingObservation(output: string): ObservationProj
   return record as unknown as ObservationProjection;
 }
 
+export function parseOpenClawPairingSettlementObservation(
+  output: string,
+): OpenClawPairingSettlementObservation | null {
+  const lines = output.trimEnd().split(/\r?\n/);
+  const markerLines = lines.filter((line) => line.startsWith(SETTLEMENT_MARKER));
+  if (markerLines.length !== 1 || lines.at(-1) !== markerLines[0]) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(markerLines[0]!.slice(SETTLEMENT_MARKER.length)) as unknown;
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    !hasExactKeys(record, ["deviceIdentitySha256", "state"]) ||
+    typeof record.deviceIdentitySha256 !== "string" ||
+    !SHA256_RE.test(record.deviceIdentitySha256) ||
+    (record.state !== "pairing-only" && record.state !== "settled")
+  ) {
+    return null;
+  }
+  return record as OpenClawPairingSettlementObservation;
+}
+
 export function buildOpenClawPairingObservationScript(
   approvalPolicyModuleB64: string,
   stateDirectory: string,
+  mode: "qualification" | "settlement" = "qualification",
 ): string {
   if (!path.posix.isAbsolute(stateDirectory)) {
     throw new OpenClawPairingQualificationError();
@@ -110,10 +142,11 @@ export function buildOpenClawPairingObservationScript(
     throw new OpenClawPairingQualificationError();
   }
   const stateDirectoryB64 = Buffer.from(stateDirectory, "utf8").toString("base64");
-  // OpenClaw owns these in-sandbox state files. This observer
-  // only reads descriptor-pinned state from the sandbox and returns fixed
-  // allowlisted fields plus digests; the existing approval pass remains the
-  // only writer. Gateway pinning happens in observeOpenClawPairingQualification.
+  const marker = mode === "settlement" ? SETTLEMENT_MARKER : QUALIFICATION_MARKER;
+  // OpenClaw owns these in-sandbox state files. This observer reads
+  // descriptor-pinned state through the requested gateway and returns only
+  // allowlisted fields and digests. Pairing changes remain owned by the
+  // canonical OpenClaw request producer and approval command.
   return `
 command -v python3 >/dev/null 2>&1 || exit 1
 NEMOCLAW_APPROVAL_POLICY_B64='${approvalPolicyModuleB64}' \
@@ -124,14 +157,18 @@ import binascii
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 
-MARKER = ${JSON.stringify(QUALIFICATION_MARKER)}
+MARKER = ${JSON.stringify(marker)}
 MAX_ENTRY_BYTES = 512 * 1024
 REQUIRED_ROLES = ['operator']
+PAIRING_ONLY_SCOPES = ['operator.pairing']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
 TOKEN_SCOPES = ['operator.pairing', 'operator.read', 'operator.write']
+ED25519_SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
+RAW_PUBLIC_KEY_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
 
 def reject():
     sys.exit(1)
@@ -309,17 +346,36 @@ def parse_json(raw):
     return value
 
 def public_key(identity):
-    raw = str(identity.get('publicKey', '') or '').strip()
-    if raw:
-        return raw
-    pem = str(identity.get('publicKeyPem', '') or '')
-    body = ''.join(line.strip() for line in pem.splitlines() if '---' not in line)
-    if not body:
+    raw_value = identity.get('publicKey')
+    raw = ''
+    if raw_value is not None:
+        if not isinstance(raw_value, str) or not RAW_PUBLIC_KEY_RE.fullmatch(raw_value):
+            return ''
+        raw_bytes = base64.urlsafe_b64decode(raw_value + '=')
+        if len(raw_bytes) != 32 or base64.urlsafe_b64encode(raw_bytes).decode('ascii').rstrip('=') != raw_value:
+            return ''
+        raw = raw_value
+
+    pem_value = identity.get('publicKeyPem')
+    pem_key = ''
+    if pem_value is not None:
+        if not isinstance(pem_value, str):
+            return ''
+        match = re.fullmatch(
+            r'-----BEGIN PUBLIC KEY-----\\n([A-Za-z0-9+/]{59}=)\\n-----END PUBLIC KEY-----\\n',
+            pem_value,
+        )
+        if not match:
+            return ''
+        der = base64.b64decode(match.group(1), validate=True)
+        if len(der) != 44 or not der.startswith(ED25519_SPKI_PREFIX):
+            return ''
+        pem_key = base64.urlsafe_b64encode(der[len(ED25519_SPKI_PREFIX):]).decode('ascii').rstrip('=')
+    if not raw and not pem_key:
         return ''
-    der = base64.b64decode(body, validate=True)
-    if len(der) < 32:
+    if raw and pem_key and raw != pem_key:
         return ''
-    return base64.urlsafe_b64encode(der[-32:]).decode('ascii').rstrip('=')
+    return raw or pem_key
 
 def exact_string_set(value, expected):
     return (
@@ -337,7 +393,11 @@ def normalized_roles(device):
         roles.add(device.get('role'))
     if device.get('roles') is not None:
         raw_roles = device.get('roles')
-        if not isinstance(raw_roles, list) or not all(isinstance(role, str) and role for role in raw_roles):
+        if (
+            not isinstance(raw_roles, list)
+            or not all(isinstance(role, str) and role for role in raw_roles)
+            or len(raw_roles) != len(set(raw_roles))
+        ):
             return None
         roles.update(raw_roles)
     return roles
@@ -351,18 +411,23 @@ try:
     auth = parse_json(first['auth'][0])
     paired = parse_json(first['paired'][0])
     pending = parse_json(first['pending'][0])
-    device_id = str(identity.get('deviceId', '') or '').strip()
+    device_id = identity.get('deviceId')
     device_public_key = public_key(identity)
     public_key_raw = base64.urlsafe_b64decode(device_public_key + '=' * (-len(device_public_key) % 4))
-    if not device_id or len(public_key_raw) != 32 or hashlib.sha256(public_key_raw).hexdigest() != device_id:
+    if (
+        not isinstance(device_id, str)
+        or not re.fullmatch(r'[a-f0-9]{64}', device_id)
+        or len(public_key_raw) != 32
+        or hashlib.sha256(public_key_raw).hexdigest() != device_id
+    ):
         reject()
 
     local_paired = [
         (map_key, device) for map_key, device in paired.items()
         if map_key == device_id or (
             isinstance(device, dict) and (
-                str(device.get('deviceId', '') or '').strip() == device_id
-                or str(device.get('publicKey', '') or '').strip() == device_public_key
+                device.get('deviceId') == device_id
+                or device.get('publicKey') == device_public_key
             )
         )
     ]
@@ -372,43 +437,50 @@ try:
     if (
         map_key != device_id
         or not isinstance(paired_device, dict)
-        or str(paired_device.get('deviceId', '') or '').strip() != device_id
-        or str(paired_device.get('publicKey', '') or '').strip() != device_public_key
+        or paired_device.get('deviceId') != device_id
+        or paired_device.get('publicKey') != device_public_key
         or paired_device.get('clientId') != 'cli'
         or paired_device.get('clientMode') != 'cli'
-        or normalized_roles(paired_device) != set(REQUIRED_ROLES)
-        or not exact_string_set(paired_device.get('scopes'), REQUEST_SCOPES)
-        or not exact_string_set(paired_device.get('approvedScopes'), REQUEST_SCOPES)
+        or paired_device.get('role') != 'operator'
+        or not exact_string_set(paired_device.get('roles'), REQUIRED_ROLES)
+        or 'requestedScopes' in paired_device
+        or 'publicKeyPem' in paired_device
     ):
         reject()
     paired_tokens = paired_device.get('tokens')
     paired_operator = paired_tokens.get('operator') if isinstance(paired_tokens, dict) and set(paired_tokens) == {'operator'} else None
     if (
         not isinstance(paired_operator, dict)
-        or str(paired_operator.get('role', '') or '').strip() != 'operator'
+        or paired_operator.get('role') != 'operator'
         or paired_operator.get('revokedAtMs') is not None
-        or not str(paired_operator.get('token', '') or '').strip()
-        or not exact_string_set(paired_operator.get('scopes'), TOKEN_SCOPES)
+        or not isinstance(paired_operator.get('token'), str)
+        or not paired_operator.get('token')
+        or paired_operator.get('token').strip() != paired_operator.get('token')
+        or any(alias in paired_operator for alias in ('requestedScopes', 'approvedScopes', 'roles'))
     ):
         reject()
     auth_tokens = auth.get('tokens')
     auth_operator = auth_tokens.get('operator') if isinstance(auth_tokens, dict) and set(auth_tokens) == {'operator'} else None
     if (
-        auth.get('version') != 1
-        or str(auth.get('deviceId', '') or '').strip() != device_id
+        type(auth.get('version')) is not int
+        or auth.get('version') != 1
+        or auth.get('deviceId') != device_id
         or not isinstance(auth_operator, dict)
-        or str(auth_operator.get('role', '') or '').strip() != 'operator'
-        or str(auth_operator.get('token', '') or '').strip() != str(paired_operator.get('token', '') or '').strip()
-        or not exact_string_set(auth_operator.get('scopes'), TOKEN_SCOPES)
+        or auth_operator.get('role') != 'operator'
+        or auth_operator.get('revokedAtMs') is not None
+        or not isinstance(auth_operator.get('token'), str)
+        or auth_operator.get('token') != paired_operator.get('token')
+        or any(alias in auth_operator for alias in ('requestedScopes', 'approvedScopes', 'roles'))
     ):
         reject()
 
+    ${mode === "settlement" ? "if pending:\n        reject()" : ""}
     for request_id, request in pending.items():
         if (
             not isinstance(request_id, str)
             or not request_id
             or not isinstance(request, dict)
-            or str(request.get('requestId', '') or '').strip() != request_id
+            or request.get('requestId') != request_id
         ):
             reject()
         decision = approval_request_decision(request)
@@ -425,11 +497,33 @@ try:
         if normalized_roles(device) is None:
             reject()
 
+    settled = (
+        exact_string_set(paired_device.get('scopes'), REQUEST_SCOPES)
+        and exact_string_set(paired_device.get('approvedScopes'), REQUEST_SCOPES)
+        and exact_string_set(paired_operator.get('scopes'), TOKEN_SCOPES)
+        and exact_string_set(auth_operator.get('scopes'), TOKEN_SCOPES)
+    )
+    pairing_only = (
+        exact_string_set(paired_device.get('scopes'), PAIRING_ONLY_SCOPES)
+        and exact_string_set(paired_device.get('approvedScopes'), PAIRING_ONLY_SCOPES)
+        and exact_string_set(paired_operator.get('scopes'), PAIRING_ONLY_SCOPES)
+        and exact_string_set(auth_operator.get('scopes'), PAIRING_ONLY_SCOPES)
+    )
+    if not settled and not pairing_only:
+        reject()
+
+    device_identity_sha256 = hashlib.sha256(json.dumps({
+        'deviceId': device_id,
+        'publicKey': device_public_key,
+    }, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+    ${
+      mode === "settlement"
+        ? "print(MARKER + json.dumps({\n        'deviceIdentitySha256': device_identity_sha256,\n        'state': 'settled' if settled else 'pairing-only',\n    }, sort_keys=True, separators=(',', ':')))\n    sys.exit(0)"
+        : "if not settled:\n        reject()"
+    }
+
     projection = {
-        'deviceIdentitySha256': hashlib.sha256(json.dumps({
-            'deviceId': device_id,
-            'publicKey': device_public_key,
-        }, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest(),
+        'deviceIdentitySha256': device_identity_sha256,
         # Bind only the allowlisted security projection. Token values, unknown
         # device state, and pending-request fields never contribute a reusable
         # credential oracle outside the sandbox.
@@ -476,6 +570,73 @@ function recordQualificationStage(startedAt: number): void {
   }
 }
 
+function runOpenClawPairingObservation(
+  sandboxName: string,
+  gatewayName: string,
+  openclawVersion: string,
+  stateDirectory: string,
+  mode: "qualification" | "settlement",
+  execDeps?: Partial<OpenClawPairingQualificationDeps>,
+): { readonly output: string; readonly policy: string } {
+  const approvalPolicy = (execDeps?.readApprovalPolicy ?? readAutoPairApprovalPolicyModule)();
+  const normalizedVersion = openclawVersion.trim();
+  if (!approvalPolicy || !normalizedVersion || normalizedVersion.length > 128) {
+    throw new OpenClawPairingQualificationError();
+  }
+  const approvalPolicyModuleB64 = Buffer.from(approvalPolicy, "utf8").toString("base64");
+  const script = buildOpenClawPairingObservationScript(
+    approvalPolicyModuleB64,
+    stateDirectory,
+    mode,
+  );
+  const deps = {
+    getOpenshellBinary: execDeps?.getOpenshellBinary ?? resolveOpenshellBinary,
+    spawnSync: execDeps?.spawnSync ?? spawnSync,
+  };
+  const result = deps.spawnSync(
+    deps.getOpenshellBinary(),
+    ["sandbox", "exec", "--name", sandboxName, "-g", gatewayName, "--", "sh", "-s"],
+    {
+      cwd: ROOT,
+      env: process.env,
+      input: script,
+      encoding: "utf8",
+      maxBuffer: OBSERVATION_MAX_OUTPUT_BYTES,
+      stdio: ["pipe", "pipe", "ignore"],
+      timeout: OBSERVATION_TIMEOUT_MS,
+    },
+  );
+  if (result.error || result.signal || result.status !== 0) {
+    throw new OpenClawPairingQualificationError();
+  }
+  return { output: String(result.stdout ?? ""), policy: approvalPolicy };
+}
+
+export function observeOpenClawPairingSettlement(
+  sandboxName: string,
+  gatewayName: string,
+  openclawVersion: string,
+  stateDirectory: string,
+  execDeps?: Partial<OpenClawPairingQualificationDeps>,
+): OpenClawPairingSettlementObservation {
+  try {
+    const executed = runOpenClawPairingObservation(
+      sandboxName,
+      gatewayName,
+      openclawVersion,
+      stateDirectory,
+      "settlement",
+      execDeps,
+    );
+    const observation = parseOpenClawPairingSettlementObservation(executed.output);
+    if (!observation) throw new OpenClawPairingQualificationError();
+    return observation;
+  } catch (error) {
+    if (error instanceof OpenClawPairingQualificationError) throw error;
+    throw new OpenClawPairingQualificationError();
+  }
+}
+
 export function observeOpenClawPairingQualification(
   sandboxName: string,
   gatewayName: string,
@@ -483,43 +644,25 @@ export function observeOpenClawPairingQualification(
   stateDirectory: string,
   execDeps?: Partial<OpenClawPairingQualificationDeps>,
 ): OpenClawPairingQualification {
-  const approvalPolicy = (execDeps?.readApprovalPolicy ?? readAutoPairApprovalPolicyModule)();
   const normalizedVersion = openclawVersion.trim();
-  if (!approvalPolicy || !normalizedVersion || normalizedVersion.length > 128) {
-    throw new OpenClawPairingQualificationError();
-  }
-  const approvalPolicyModuleB64 = Buffer.from(approvalPolicy, "utf8").toString("base64");
-  const script = buildOpenClawPairingObservationScript(approvalPolicyModuleB64, stateDirectory);
-  const deps = {
-    getOpenshellBinary: execDeps?.getOpenshellBinary ?? resolveOpenshellBinary,
-    spawnSync: execDeps?.spawnSync ?? spawnSync,
-  };
   const startedAt = performance.now();
   try {
-    const result = deps.spawnSync(
-      deps.getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "-g", gatewayName, "--", "sh", "-s"],
-      {
-        cwd: ROOT,
-        env: process.env,
-        input: script,
-        encoding: "utf8",
-        maxBuffer: OBSERVATION_MAX_OUTPUT_BYTES,
-        stdio: ["pipe", "pipe", "ignore"],
-        timeout: OBSERVATION_TIMEOUT_MS,
-      },
+    const executed = runOpenClawPairingObservation(
+      sandboxName,
+      gatewayName,
+      normalizedVersion,
+      stateDirectory,
+      "qualification",
+      execDeps,
     );
-    if (result.error || result.signal || result.status !== 0) {
-      throw new OpenClawPairingQualificationError();
-    }
-    const projection = parseOpenClawPairingObservation(String(result.stdout ?? ""));
+    const projection = parseOpenClawPairingObservation(executed.output);
     if (!projection) throw new OpenClawPairingQualificationError();
     return {
       schemaVersion: 1,
       kind: "openclaw-pairing",
       openclawVersion: normalizedVersion,
       ...projection,
-      policySha256: sha256(approvalPolicy),
+      policySha256: sha256(executed.policy),
     };
   } catch (error) {
     if (error instanceof OpenClawPairingQualificationError) throw error;

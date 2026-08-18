@@ -968,7 +968,7 @@ exit 1
       { mode: 0o755 },
     );
     try {
-      for (const replacementId of ["replacement-1", "replacement-10", ""]) {
+      ["replacement-1", "replacement-10", ""].forEach((replacementId) => {
         resetState();
         const result = runGuardedShell(setup, [
           `export OPENCLAW_STATE_DIR=${JSON.stringify(stateDir)}`,
@@ -991,7 +991,7 @@ exit 1
         expect(JSON.stringify(paired)).not.toContain("operator.admin");
         expect(pending.replacement.requestId).toBe("replacement-1");
         expect(result.stderr).toContain("gateway connect failed");
-      }
+      });
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
@@ -1000,7 +1000,7 @@ exit 1
     const setup = writeProxyEnvWithGuard();
     try {
       const channels = ["discord", "slack", "teams", "telegram", "wechat", "whatsapp"];
-      for (const op of ["add", "remove"]) {
+      ["add", "remove"].forEach((op) => {
         for (const channel of channels) {
           const result = runGuardedShell(setup, [
             "export OPENSHELL_SANDBOX=my-assistant",
@@ -1011,17 +1011,17 @@ exit 1
             `Run 'nemoclaw my-assistant channels ${op} ${channel}' on the host.`,
           );
         }
-      }
+      });
       const marker = path.join(setup.tmpDir, "host-command-injection");
-      for (const args of [
+      [
         ["channels", `add'; touch ${marker}; #`, "telegram"],
         ["channels", "add", `telegram\n; touch ${marker}`],
-      ]) {
+      ].forEach((args) => {
         const result = runGuardedOpenclaw(setup, args);
         expect(result.status).toBe(1);
         expect(result.stderr).not.toContain(marker);
         expect(result.stderr).toMatch(/channels (?:<operation> telegram|add <channel>)/);
-      }
+      });
       expect(fs.existsSync(marker)).toBe(false);
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
@@ -1038,21 +1038,21 @@ exit 1
         ["channels", "status", "--channel", "whatsapp"],
         ["channels", "status"],
       ];
-      for (const argv of allowed) {
+      allowed.forEach((argv) => {
         const result = runGuardedOpenclaw(setup, argv);
         expect(result.status, `${argv.join(" ")} should pass the guard`).toBe(0);
-      }
+      });
 
       const blocked = [
         ["channels", "login"],
         ["channels", "login", "--channel", "wechat"],
         ["channels", "login", "--channel=telegram"],
       ];
-      for (const argv of blocked) {
+      blocked.forEach((argv) => {
         const result = runGuardedOpenclaw(setup, argv);
         expect(result.status, `${argv.join(" ")} should be blocked`).toBe(1);
         expect(result.stderr).toContain("only supported inside the sandbox for WhatsApp");
-      }
+      });
 
       const log = fs.readFileSync(setup.commandLog, "utf-8");
       expect(log).toContain("channels login --channel whatsapp");
@@ -3316,7 +3316,7 @@ describe("provider placeholder refresh (#4251)", () => {
     const canonicalKeys: string[] = Array.from(canonicalPlaceholderKeys()).sort();
     expect(canonicalKeys.length).toBeGreaterThan(0);
 
-    for (const canonical of canonicalKeys) {
+    canonicalKeys.forEach((canonical) => {
       const extension = `${canonical}_PARITY`;
       const scoped = `openshell:resolve:env:v77_${extension}`;
       const run = runRefresh(
@@ -3342,7 +3342,7 @@ describe("provider placeholder refresh (#4251)", () => {
         `bash refresh refused manifest credential extension '${extension}'`,
       ).not.toContain(`[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${extension}'`);
       expect(run.config.channels.telegram.accounts.parity.botToken).toBe(scoped);
-    }
+    });
   });
 
   it("caps NEMOCLAW_EXTRA_PLACEHOLDER_KEYS at 32 entries inside the sandbox", () => {

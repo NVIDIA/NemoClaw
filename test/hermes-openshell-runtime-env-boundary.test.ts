@@ -114,9 +114,9 @@ describe("Hermes OpenShell runtime environment boundary", () => {
     const result = runRuntimeEnvValidator(values);
 
     expect(result.status).toBe(1);
-    for (const [key, value] of Object.entries(values)) {
+    Object.entries(values).forEach(([key, value]) => {
       expect(result.stderr).toContain(key);
       expect(result.stderr).not.toContain(value);
-    }
+    });
   });
 });

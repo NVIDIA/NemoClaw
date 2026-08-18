@@ -51,37 +51,42 @@ describe("portable onboarding environment scope", () => {
     expect(env).toEqual({ NEMOCLAW_MODEL: "" });
   });
 
-  it("uses the narrow portable policy defaults when fresh intent is absent (#9200)", () => {
+  it("uses the Personal tier suggestions when fresh policy intent is absent (#9206)", () => {
     const env: NodeJS.ProcessEnv = {};
     const scope = createPortableOnboardEnvironmentScope(env, null);
 
-    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("weather,public-reference,github");
-    expect(env.NEMOCLAW_POLICY_PRESETS).not.toContain("personal-open-internet");
+    expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
+    expect(env.NEMOCLAW_POLICY_MODE).toBe("suggested");
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBeUndefined();
 
     scope.restore();
     expect(env).toEqual({});
   });
 
   it.each(["", "  \t "])(
-    "uses the narrow portable policy defaults and restores blank fresh intent %# (#9200)",
+    "uses the Personal tier suggestions and restores blank fresh intent %# (#9206)",
     (policyPresets) => {
       const env: NodeJS.ProcessEnv = { NEMOCLAW_POLICY_PRESETS: policyPresets };
       const scope = createPortableOnboardEnvironmentScope(env, null);
 
-      expect(env.NEMOCLAW_POLICY_PRESETS).toBe("weather,public-reference,github");
+      expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
+      expect(env.NEMOCLAW_POLICY_MODE).toBe("suggested");
+      expect(env.NEMOCLAW_POLICY_PRESETS).toBeUndefined();
 
       scope.restore();
       expect(env).toEqual({ NEMOCLAW_POLICY_PRESETS: policyPresets });
     },
   );
 
-  it("preserves a nonblank fresh portable policy list (#9200)", () => {
+  it("adds required Personal access to explicit Portable presets (#9206)", () => {
     const env: NodeJS.ProcessEnv = {
       NEMOCLAW_POLICY_PRESETS: "github,weather",
     };
     const scope = createPortableOnboardEnvironmentScope(env, null);
 
-    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("github,weather");
+    expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
+    expect(env.NEMOCLAW_POLICY_MODE).toBe("custom");
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("personal-open-internet,github,weather");
 
     scope.restore();
     expect(env).toEqual({ NEMOCLAW_POLICY_PRESETS: "github,weather" });

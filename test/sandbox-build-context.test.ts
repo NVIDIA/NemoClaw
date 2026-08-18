@@ -1020,10 +1020,10 @@ describe("sandbox build context staging", () => {
       const hermesBuild = createAgentSandbox(hermesAgent, { rootDir: repoRoot });
 
       try {
-        for (const [name, staged] of [
+        ([
           ["openclaw", stageOptimizedSandboxBuildContext(repoRoot, tmpDir)],
           ["hermes", hermesBuild],
-        ] as const) {
+        ] as const).forEach(([name, staged]) => {
           const { buildCtx, stagedDockerfile } = staged;
           expect(fs.readFileSync(stagedDockerfile, "utf8")).toContain(
             REVIEWED_RUNTIME_LICENSE_COPY,
@@ -1060,7 +1060,7 @@ describe("sandbox build context staging", () => {
               fs.readFileSync(path.join(reviewedRuntimeSource, sourceRelativePath)),
             );
           }
-        }
+        });
       } finally {
         fs.rmSync(hermesBuild.buildCtx, { recursive: true, force: true });
         fs.rmSync(tmpDir, { recursive: true, force: true });
