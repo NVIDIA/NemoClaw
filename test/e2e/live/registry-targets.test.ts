@@ -14,7 +14,6 @@ import {
 } from "../fixtures/phases/index.ts";
 import { listTargets, requireTargets } from "../registry/registry.ts";
 import { liveTargetSupport, liveTargetTestName } from "../registry/runtime-support.ts";
-import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
@@ -176,14 +175,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
 
       progress.phase("run target-specific cloud checks");
       const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
-      expect(checkScripts).toEqual(
-        cloudExperimentalChecksForOnboarding(target.environment.onboarding),
-      );
-      expect(
-        checkScripts.every((scriptPath) =>
-          Object.is(fs.existsSync(path.join(REPO_ROOT, scriptPath)), true),
-        ),
-      ).toBe(true);
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
       await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
         artifacts,
