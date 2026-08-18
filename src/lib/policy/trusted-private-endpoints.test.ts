@@ -46,9 +46,9 @@ network_policies:
       network_policies: { services: { endpoints: Array<{ allowed_ips?: string[] }> } };
     };
     expect(document.network_policies.services.endpoints).toHaveLength(4);
-    for (const endpoint of document.network_policies.services.endpoints) {
+    document.network_policies.services.endpoints.forEach((endpoint) => {
       expect(endpoint.allowed_ips).toEqual(["10.20.30.40", "fd00::40"]);
-    }
+    });
     expect(prepared.trustedPrivatePins).toMatchObject({
       version: 1,
       contentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),

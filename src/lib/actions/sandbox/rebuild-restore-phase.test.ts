@@ -232,11 +232,11 @@ describe("rebuild policy restore fidelity", () => {
     );
     expect(applyPreset).toHaveBeenCalledOnce();
     expect(applyPreset).toHaveBeenCalledWith("alpha", "npm");
-    for (const entry of customPolicies) {
+    customPolicies.forEach((entry) => {
       expect(applyPresetContent).toHaveBeenCalledWith("alpha", entry.name, entry.content, {
         custom: { sourcePath: entry.sourcePath },
       });
-    }
+    });
     expect(result.restoredPresets).toEqual(["npm", "brave", "tavily", "nous-web"]);
     expect(result.failedPresets).toEqual([]);
     expect(result.finalPresets).toEqual(["npm", "brave", "tavily", "nous-web"]);

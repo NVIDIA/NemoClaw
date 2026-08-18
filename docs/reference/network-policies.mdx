@@ -139,7 +139,10 @@ This is the supported registry-backed way to replay a live exact-key removal dur
 | Restricted | No tier defaults | Starts from the baseline policy. Web search or messaging integrations selected earlier can still suggest their required presets; deselect them during policy review for baseline-only access. Restricted suppresses other agent-required additions; reapply them later with `policy add` only after reviewing the additional egress. |
 | Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, selected `brave` or `tavily` web search preset | Full dev tooling and web search when you select a provider the active agent supports. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
 | Open | `npm`, `pypi`, `huggingface`, `brew`, selected `brave` or `tavily` web search preset, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. |
-| Personal | `personal-open-internet` and every maintained preset supported by the active agent | Lets every sandbox binary open TCP connections to public and private address ranges on destination ports `80` and `443`. Unspecified, loopback, and link-local ranges remain blocked. Also selects every maintained preset applicable to the active agent. |
+| Personal | `personal-open-internet` (mandatory) | Lets every sandbox binary open TCP connections to public and private address ranges on destination ports `80` and `443`. The broad route replaces overlapping web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. |
+
+When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point.
+Interactive choices, `NEMOCLAW_POLICY_MODE=custom`, and `NEMOCLAW_POLICY_MODE=skip` control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
 
 <Warning title="Personal Tier Network Access">
 The Personal tier applies the `personal-open-internet` policy preset with a hostless L4 endpoint on destination ports `80` and `443`.
@@ -155,12 +158,13 @@ The sandbox's filesystem, process, gateway authentication, and managed credentia
 Use this tier only for trusted personal workloads with trusted prompts and data.
 </Warning>
 
-For a fresh onboarding run, the experimental portable profile selects `weather`, `public-reference`, and `github` when `NEMOCLAW_POLICY_PRESETS` is unset, blank, or contains only whitespace.
-This default does not select `personal-open-internet`.
-If `NEMOCLAW_POLICY_PRESETS` contains a non-blank list, portable onboarding treats that explicit list as authoritative instead.
-`$$nemoclaw onboard --resume` does not inject the fresh-onboarding default.
+Every fresh onboarding run through the experimental Portable profile selects the Personal tier.
+When `NEMOCLAW_POLICY_PRESETS` is unset, blank, or contains only whitespace, Portable uses `suggested` mode with no optional preset override.
+If `NEMOCLAW_POLICY_PRESETS` contains a non-blank list, Portable treats that list as authoritative for additional presets while still applying mandatory `personal-open-internet`.
+`$$nemoclaw onboard --resume` does not override a recorded non-Personal tier; a resumed Personal tier retains or repairs its mandatory preset.
 
-After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
+After selecting a tier, a combined preset and access-mode screen lets you include or exclude optional presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
+On Personal, NemoClaw restores `personal-open-internet` if it is deselected in the screen.
 Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent.
 NemoClaw filters tier defaults and built-in preset choices by the active agent's supported integrations.
 The `personal-open-internet` preset uses L4 passthrough, so its read-write label does not add HTTP method or path inspection.
@@ -182,16 +186,17 @@ These modes skip policy preset additions, but they do not preserve a disabled ch
 `$$nemoclaw onboard --resume` reconciles the policy selection instead of skipping it when the effective messaging selection omits a channel whose preset remains applied.
 NemoClaw keeps the preset for an in-sandbox QR-paired channel such as WhatsApp because you pair that channel inside the sandbox rather than through host environment values.
 </AgentOnly>
-The Personal tier instead keeps every applicable maintained web-search preset selected by default.
-Explicit custom preset lists and manual interactive selections remain operator-controlled.
+The Personal tier does not select a Brave Search or Tavily Search preset by default.
+Its broad route supports ordinary keyless web fetches, while `web_search` still requires a separately configured provider.
+Explicit custom preset lists and manual interactive selections remain operator-controlled for additional presets.
 <AgentOnly variant="hermes">
 Hermes managed-tool gateway selections can add Hermes-specific presets, such as Nous-hosted web, image, audio, browser, or code tools, without applying unsupported OpenClaw-only presets.
 When Hermes uses Tavily, NemoClaw removes `nous-web` from the effective managed-tool selection while preserving other selected Nous tool presets.
 </AgentOnly>
 <AgentOnly variant="openclaw">
-OpenClaw onboarding also adds the `openclaw-pricing` preset on top of tier defaults so session-cost records can populate from LiteLLM and OpenRouter without manual configuration.
-On the Balanced and Open tiers, enabling OpenClaw OTEL diagnostics with a local endpoint adds the `openclaw-diagnostics-otel-local` preset.
-The Personal tier selects that preset by default, while Restricted suppresses it during reconciliation.
+OpenClaw onboarding also adds the `openclaw-pricing` preset on top of Balanced and Open tier defaults so session-cost records can populate from LiteLLM and OpenRouter without manual configuration.
+On the Balanced, Open, and Personal tiers, enabling OpenClaw OTEL diagnostics with a local endpoint adds the `openclaw-diagnostics-otel-local` preset.
+Personal suppresses the overlapping pricing route because `personal-open-internet` already owns ports `80` and `443`, while Restricted suppresses it to retain the restricted posture.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 When LangChain Deep Agents Code is onboarded with `--observability`, NemoClaw adds the `observability-otlp-local` preset on Balanced, Open, and Personal tiers.
@@ -202,7 +207,7 @@ The applied set therefore reflects the chosen tier *plus* any agent-required pre
 The `policy list` provenance tags are inferred from the current tier YAML and the active agent at display time and are not persisted per preset.
 A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy add` after onboarding; agent-specific preset names are only labelled `[from <agent> agent]` when the active agent matches.
 Claude Code direct egress is not included in the Restricted, Balanced, or Open tiers.
-The Personal tier selects the `claude-code` preset by default; on other tiers, apply it explicitly if you install and run the Claude Code CLI inside the sandbox with its own credentials.
+Personal's broad route permits its port `443` transport but does not install or configure Claude Code; on other tiers, apply the `claude-code` preset explicitly if you install and run the CLI inside the sandbox with its own credentials.
 Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.
 
 Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.

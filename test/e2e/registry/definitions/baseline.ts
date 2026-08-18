@@ -64,10 +64,11 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   {
     id: "ubuntu-repo-cloud-openclaw",
     manifestName: "openclaw-nvidia",
-    environment: ubuntuRepoDocker("cloud-openclaw"),
+    environment: { ...ubuntuRepoDocker("cloud-openclaw"), policyTier: "personal" },
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "inference", "credentials"],
-    description: "Ubuntu repo checkout with Docker and cloud OpenClaw onboarding.",
+    suiteIds: ["smoke", "inference", "credentials", "personal-stock-fetch"],
+    description:
+      "Ubuntu repo checkout with Docker, Personal policy, and cloud OpenClaw stock-fetch proof.",
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {

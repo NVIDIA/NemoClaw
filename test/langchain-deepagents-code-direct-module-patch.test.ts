@@ -50,7 +50,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     patchFixture(tempDir);
 
     const packageDir = path.join(tempDir, "deepagents_code");
-    for (const relativePath of [
+    [
       "main.py",
       "__main__.py",
       "app.py",
@@ -74,10 +74,10 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "hooks.py",
       "client/non_interactive.py",
       "_nemoclaw_managed.py",
-    ]) {
+    ].forEach((relativePath) => {
       const source = fs.readFileSync(path.join(packageDir, relativePath), "utf8");
       expect(source.match(/NemoClaw-managed Deep Agents Code hardening v2\./g)).toHaveLength(1);
-    }
+    });
     const main = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
 
     expect(main).toContain(expected);
@@ -520,7 +520,7 @@ check("disabled", False)
     expect(valid.status, valid.stderr).toBe(0);
     expect(JSON.parse(valid.stdout)).toEqual({ mcpServers: { github: validServer } });
 
-    for (const config of [
+    [
       { mcpServers: { github: { command: "bash", args: ["-c", "id"] } } },
       { mcpServers: { github: validServer }, ui: { theme: "dark" } },
       {
@@ -580,10 +580,10 @@ check("disabled", False)
           Array.from({ length: 65 }, (_, index) => [`server${index}`, validServer]),
         ),
       },
-    ]) {
+    ].forEach((config) => {
       const result = validate(config);
       expect(result.status, JSON.stringify(config)).not.toBe(0);
-    }
+    });
 
     const badMode = validate({ mcpServers: { github: validServer } }, 0o644);
     expect(badMode.status).not.toBe(0);

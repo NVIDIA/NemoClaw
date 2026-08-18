@@ -536,11 +536,11 @@ describe("dual-Station managed vLLM lifecycle", () => {
         (operation) => operation.kind === "capture" && operation.value.startsWith("image:"),
       ),
     ).toHaveLength(2);
-    for (const call of fake.runCalls) {
+    fake.runCalls.forEach((call) => {
       expect(call.args).toContain("--pull=never");
       expect(call.args).toContain(DUAL_STATION_VLLM_RUNTIME.image);
       expect(call.options?.env?.VLLM_API_KEY).toBeUndefined();
-    }
+    });
     expect([...fake.captureOptions, ...fake.rmOptions].every((options) => options?.env?.VLLM_API_KEY === undefined)).toBe(true);
   });
 
@@ -614,10 +614,10 @@ describe("dual-Station managed vLLM lifecycle", () => {
     expect(headRun?.options?.env?.VLLM_API_KEY).toBe(API_KEY);
     expect(headRun?.args).toContain("VLLM_API_KEY");
     expect(headRun?.args).not.toContain(API_KEY);
-    for (const call of fake.runCalls.filter((call) => call !== headRun)) {
+    fake.runCalls.filter((call) => call !== headRun).forEach((call) => {
       expect(call.options?.env?.VLLM_API_KEY).toBeUndefined();
       expect(call.args).not.toContain(API_KEY);
-    }
+    });
     expect([...fake.captureOptions, ...fake.rmOptions].every((options) => options?.env?.VLLM_API_KEY === undefined)).toBe(true);
     expect(fake.buildRemoteDockerEnv).toHaveBeenCalledWith(sshFixture.binding);
   });

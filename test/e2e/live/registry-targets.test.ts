@@ -21,6 +21,10 @@ import {
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
+import {
+  requireRegistryTargetSecrets,
+  verifyPersonalStockFetchForTarget,
+} from "./personal-egress-live-proof.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
   "post-reboot-recovery",
@@ -61,6 +65,7 @@ const REGISTRY_TARGET_PHASES = [
   "execute the target lifecycle boundary",
   "verify the expected sandbox state",
   "run target-specific cloud checks",
+  "verify the Personal stock fetch contract",
   "record target completion evidence",
 ] as const;
 
@@ -88,6 +93,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       lifecycle,
       onboard,
       progress,
+      sandbox,
       secrets,
       stateValidation,
     }) => {
@@ -95,9 +101,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
         target.id,
         artifacts.pathFor("dcode-base-image.json"),
       );
-      for (const secret of target.requiredSecrets ?? []) {
-        secrets.required(secret);
-      }
+      requireRegistryTargetSecrets(target.id, target.requiredSecrets ?? [], secrets);
 
       expect(
         fs.existsSync(CLI_DIST_ENTRYPOINT),
@@ -179,6 +183,18 @@ for (const [targetIndex, target] of listTargets().entries()) {
         secrets,
       });
 
+      const personalStockFetch = await verifyPersonalStockFetchForTarget(
+        target.id,
+        target.environment.policyTier,
+        instance.agent,
+        sandbox,
+        host,
+        artifacts,
+        secrets,
+        instance.sandboxName,
+        () => progress.phase("verify the Personal stock fetch contract"),
+      );
+
       progress.phase("record target completion evidence");
       const dcodeBaseImage = dcodeBaseContract
         ? captureDcodeBaseImageRuntimeEvidence(dcodeBaseContract, instance.sandboxName)
@@ -192,6 +208,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
         lifecycle: lifecycleResult
           ? { profile: lifecycleResult.profile, steps: lifecycleResult.steps.map((s) => s.id) }
           : undefined,
+        ...(personalStockFetch ? { personalStockFetch } : {}),
       });
     },
   );

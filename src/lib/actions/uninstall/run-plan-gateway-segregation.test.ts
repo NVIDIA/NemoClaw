@@ -364,9 +364,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         "https-pin-runtime-adapter.lock",
         "https-pin-runtime-adapter.log",
       ];
-      for (const name of adapterStateEntries) {
+      adapterStateEntries.forEach((name) => {
         fs.writeFileSync(path.join(stateDir, name), name.endsWith(".pid") ? "4242" : "state");
-      }
+      });
       const logs: string[] = [];
       const kill = vi.fn(() => true);
       const run = vi.fn((_command: string, _args: string[]) => ok());
@@ -848,11 +848,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         "ollama-auth-proxy.pid",
         "ollama-auth-proxy.status",
       ];
-      for (const entry of proxyStateEntries) {
+      proxyStateEntries.forEach((entry) => {
         const value = entry === "ollama-auth-proxy.pid" ? "4242\n" : `${entry}\n`;
         fs.writeFileSync(path.join(shared, entry), value);
         fs.writeFileSync(path.join(selected, entry), `legacy-${value}`);
-      }
+      });
 
       const runCalls: Array<{ command: string; args: string[] }> = [];
       const dockerCalls: string[][] = [];
@@ -1277,12 +1277,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         "ollama-auth-proxy.pid",
         "ollama-auth-proxy.status",
       ];
-      for (const entry of proxyStateEntries) {
+      proxyStateEntries.forEach((entry) => {
         fs.writeFileSync(
           path.join(stateDir, entry),
           entry === "ollama-auth-proxy.pid" ? "4242\n" : "seeded\n",
         );
-      }
+      });
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       let proxyProcessIsRunning = true;

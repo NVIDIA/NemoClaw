@@ -34,12 +34,12 @@ describe("shared MCP tool discovery runtime", () => {
           "arbitrary-format-secret-that-the-server-would-echo",
         ]),
       ).toThrow("invalid arguments");
-      for (const credentialEnv of [
+      [
         "EXAMPLE_MCP_TOKEN",
         "lowercase_token",
         "_TOKEN",
         `A${"a".repeat(127)}`,
-      ]) {
+      ].forEach((credentialEnv) => {
         expect(() => validateMcpCredentialEnvName(credentialEnv)).not.toThrow();
         expect(
           parseMcpToolDiscoveryArguments([
@@ -52,7 +52,7 @@ describe("shared MCP tool discovery runtime", () => {
           url: new URL("https://example.test/mcp"),
           credentialEnv,
         });
-      }
+      });
       expect(buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN")).toBe(
         "Bearer openshell:resolve:env:EXAMPLE_MCP_TOKEN",
       );

@@ -52,7 +52,7 @@ describe("terminal agent smoke command invocation", () => {
     ).toEqual({ ok: true });
 
     expect(capture).toHaveBeenCalled();
-    for (const [args] of capture.mock.calls) {
+    capture.mock.calls.forEach(([args]) => {
       expect(args.slice(0, 7)).toEqual([
         "sandbox",
         "exec",
@@ -62,7 +62,7 @@ describe("terminal agent smoke command invocation", () => {
         "nemoclaw-8091",
         "--no-tty",
       ]);
-    }
+    });
   });
 
   it("does not add a login shell to Deep Agents Code smoke exec (#8624)", () => {

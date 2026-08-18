@@ -3023,7 +3023,7 @@ reportChildScenario(async () => {
     ] as const;
     const previousEnv = new Map(envNames.map((name) => [name, process.env[name]]));
     const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-missing-build-key-"));
-    for (const name of envNames) delete process.env[name];
+    envNames.forEach((name) => delete process.env[name]);
     process.env.HOME = isolatedHome;
     const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw Object.assign(new Error(`process.exit:${String(code)}`), { exitCode: code });
@@ -3067,7 +3067,7 @@ reportChildScenario(async () => {
       );
     } finally {
       exit.mockRestore();
-      for (const [name, value] of previousEnv) restoreProcessEnvValue(name, value);
+      [...previousEnv].forEach(([name, value]) => restoreProcessEnvValue(name, value));
       fs.rmSync(isolatedHome, { recursive: true, force: true });
     }
   });

@@ -373,11 +373,13 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       expect(mode(fixture.configPath)).toBe(0o444);
       expect(strictHashIsValid(fixture)).toBe(true);
     } finally {
-      for (const openFd of staleFd === undefined ? [] : [staleFd]) fs.closeSync(openFd);
+      (staleFd === undefined ? [] : [staleFd]).forEach((openFd) => {
+        fs.closeSync(openFd);
+      });
       fs.chmodSync(fixture.sandboxDir, 0o700);
-      for (const existingHermesDir of fs.existsSync(fixture.hermesDir) ? [fixture.hermesDir] : []) {
+      (fs.existsSync(fixture.hermesDir) ? [fixture.hermesDir] : []).forEach((existingHermesDir) => {
         fs.chmodSync(existingHermesDir, 0o700);
-      }
+      });
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });

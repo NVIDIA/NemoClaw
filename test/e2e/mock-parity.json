@@ -311,7 +311,8 @@
       "live": "test/e2e/live/common-egress-agent.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/common-egress-agent-helpers.test.ts"
       ]
     },
     {

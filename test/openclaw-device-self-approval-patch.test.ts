@@ -606,10 +606,10 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         runtime.approvePairingWithFallback({ json: true }, "request-1"),
       ).resolves.toEqual({ requestId: "request-1", approved: true });
       expect(runtime.gatewayCalls).toHaveLength(2);
-      for (const [method, call] of [
+      ([
         ["device.pair.list", runtime.gatewayCalls[0]],
         ["device.pair.approve", runtime.gatewayCalls[1]],
-      ] as const) {
+      ] as const).forEach(([method, call]) => {
         expect(call).toMatchObject({
           method,
           scopes: ["operator.pairing"],
@@ -617,7 +617,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           requiredStoredDeviceAuthScopes: ["operator.pairing"],
         });
         expect(call).not.toHaveProperty("nemoclawDisableStoredDeviceAuth");
-      }
+      });
 
       runtime.gatewayCalls.length = 0;
       const preconvergenceList = {
@@ -627,13 +627,13 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       runtime.setPairingLists(preconvergenceList);
       await runtime.approvePairingWithFallback({ json: true }, "request-1");
       expect(runtime.gatewayCalls).toHaveLength(2);
-      for (const call of runtime.gatewayCalls) {
+      runtime.gatewayCalls.forEach((call) => {
         expect(call).toMatchObject({
           scopes: ["operator.pairing"],
           useStoredDeviceAuth: true,
           requiredStoredDeviceAuthScopes: ["operator.pairing"],
         });
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -659,7 +659,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           "device.pair.list",
           "device.pair.approve",
         ]);
-        for (const call of runtime.gatewayCalls) {
+        runtime.gatewayCalls.forEach((call) => {
           expect(call).toMatchObject({
             scopes: ["operator.pairing"],
             credentialSource: "option",
@@ -674,7 +674,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           expect(call.cliArgPassword).toBeUndefined();
           expect(call).not.toHaveProperty("useStoredDeviceAuth");
           expect(call).not.toHaveProperty("requiredStoredDeviceAuthScopes");
-        }
+        });
         expect(runtime.pairingStats()).toEqual({
           localPairingReadCount: 0,
           localApprovalCount: 0,

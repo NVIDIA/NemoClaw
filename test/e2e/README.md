@@ -264,6 +264,13 @@ The execution profile owns the credentials available to its target step:
   The reusable workflow enforces this boundary; PR revision callers set `trusted_main` to `false`, so their target steps receive no `GITHUB_TOKEN`.
 - `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
 
+`common-egress-agent` runs 4 isolated scenario shards.
+The Personal stock-price shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
+It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives no Brave Search or Tavily Search API key.
+The Personal stock assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain the complete source URL.
+Raw OpenClaw session and trajectory JSONL stay inside the sandbox; uploaded evidence contains only the price and source date, the source hostname and protocol, and bounded reduced evidence such as tool names, public target hosts, provider labels, final statuses, and quote-match booleans.
+The live assertions require `web_fetch`, reject `web_search` and search-provider use, permit public access from curl and Python, and deny loopback and link-local targets.
+
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
 Each target selects its runner through the catalogue.
@@ -810,8 +817,9 @@ concrete job executions.
 - `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
-The two extra executions come from `common-egress-agent`, which runs three
-scenario shards.
+The two extra instrumented executions come from the 3 `common-egress-agent`
+scenario shards that enable runner comparison.
+The Personal stock-price shard runs without runner-comparison telemetry.
 The OpenClaw matrix entries for `mcp-bridge`,
 `channels-stop-start`, and `security-posture` are not instrumented.
 The #7145 standard-versus-larger-runner cohort compares the same lane and

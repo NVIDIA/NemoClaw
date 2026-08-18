@@ -28,7 +28,7 @@ describe("installer git checkout", () => {
       expect(git(["-c", "commit.gpgsign=false", "commit", "-m", "fixture"]).status).toBe(0);
       const expectedHead = git(["rev-parse", "HEAD"]).stdout.trim();
 
-      for (const [index, installer] of [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].entries()) {
+      [...[INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].entries()].forEach(([index, installer]) => {
         const destination = path.join(tmp, `checkout-${index}`);
         const result = spawnSync(
           "bash",
@@ -51,7 +51,7 @@ describe("installer git checkout", () => {
         expect(result.status, result.stderr).toBe(0);
         expect(git(["-C", destination, "rev-parse", "HEAD"], tmp).stdout.trim()).toBe(expectedHead);
         expect(git(["-C", destination, "symbolic-ref", "-q", "HEAD"], tmp).status).not.toBe(0);
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -77,7 +77,7 @@ describe("installer git checkout", () => {
       expect(git(["-c", "commit.gpgsign=false", "commit", "-m", "post release"]).status).toBe(0);
       expect(git(["rev-parse", "HEAD"]).stdout.trim()).not.toBe(taggedHead);
 
-      for (const [index, installer] of [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].entries()) {
+      [...[INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].entries()].forEach(([index, installer]) => {
         const destination = path.join(tmp, `checkout-${index}`);
         const result = spawnSync(
           "bash",
@@ -97,7 +97,7 @@ describe("installer git checkout", () => {
         expect(result.status, result.stderr).toBe(0);
         expect(git(["-C", destination, "rev-parse", "HEAD"], tmp).stdout.trim()).toBe(taggedHead);
         expect(git(["-C", destination, "symbolic-ref", "-q", "HEAD"], tmp).status).not.toBe(0);
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

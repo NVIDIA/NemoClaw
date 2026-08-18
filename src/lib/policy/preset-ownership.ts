@@ -5,6 +5,8 @@ import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 
+export { PERSONAL_OPEN_INTERNET_PRESET_NAME } from "./tiers";
+
 function policyMap(content: string): Record<string, unknown> {
   const policies = YAML.parse(content)?.network_policies;
   return policies && typeof policies === "object" && !Array.isArray(policies) ? policies : {};

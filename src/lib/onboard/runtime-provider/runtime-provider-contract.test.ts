@@ -116,7 +116,7 @@ function expectSupportedSurface<T extends { readonly supported: boolean }>(
 describe("RuntimeProviderBundle registry contract", () => {
   it("keeps the production selectable set limited to complete Docker and Kubernetes bundles", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
-    for (const [providerId, bundle] of Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES)) {
+    Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES).forEach(([providerId, bundle]) => {
       expect(bundle.identity.id).toBe(providerId);
       expect(([
             "plan",
@@ -152,7 +152,7 @@ describe("RuntimeProviderBundle registry contract", () => {
           : { supported: false },
       );
       expect(bundle.recovery).toMatchObject({ supported: false });
-    }
+    });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.capabilities.hostLocalInference).toBe(true);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.hostLocalInference).toMatchObject({
       supported: true,

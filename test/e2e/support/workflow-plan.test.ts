@@ -304,11 +304,11 @@ describe("E2E workflow plan", () => {
     ],
   ])("excludes %s from catalogue planning with a reason (#9022)", (id, reason) => {
     expect(E2E_TARGET_CATALOGUE.map((target) => target.id)).not.toContain(id);
-    for (const selector of ["jobs", "targets"] as const) {
+    (["jobs", "targets"] as const).forEach((selector) => {
       expect(() => buildE2eWorkflowPlan({ [selector]: id })).toThrow(
         `E2E catalogue target ${id} is not scheduled: ${reason}`,
       );
-    }
+    });
   });
 
   it("rejects unreviewed catalogue execution metadata", () => {
@@ -536,6 +536,18 @@ describe("E2E workflow plan", () => {
     ]);
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
+  });
+
+  it.each([
+    "test/e2e/live/openclaw-agent-assertion.ts",
+    "test/e2e/live/personal-egress-live-proof.ts",
+  ])("selects both Personal stock proof owners when a shared helper changes: %s", (changedFile) => {
+    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+    expect(plan.matrix.map((row) => row.id)).toContain("ubuntu-repo-cloud-openclaw");
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "common-egress-agent-openclaw-personal-stock-price",
+    );
   });
 
   it("selects the Jetson test when no other E2E job owns a changed file (#8142)", () => {
@@ -904,11 +916,11 @@ describe("E2E workflow plan", () => {
       { ...validPlan, hermesSelected: "false" },
     ];
 
-    for (const plan of malformedPlans) {
+    malformedPlans.forEach((plan) => {
       expect(() => validateE2eWorkflowPlan(plan)).toThrow(
         "E2E planner returned an invalid output schema",
       );
-    }
+    });
   });
 
   it("writes byte-compatible GitHub outputs and the execution-plan summary", () => {
