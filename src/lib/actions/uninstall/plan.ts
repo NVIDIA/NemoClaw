@@ -5,7 +5,6 @@ import fs from "node:fs";
 import os from "node:os";
 
 import {
-  AGENT_ALIAS_CLI_BINARIES,
   defaultUninstallPaths,
   NEMOCLAW_PROVIDERS,
   type UninstallPaths,
@@ -17,7 +16,7 @@ import {
 } from "../../domain/uninstall/plan";
 import { classifyNemoclawShim, type ShimClassification } from "../../domain/uninstall/shims";
 
-export { AGENT_ALIAS_CLI_BINARIES, buildUninstallPlan, defaultUninstallPaths, NEMOCLAW_PROVIDERS };
+export { buildUninstallPlan, defaultUninstallPaths, NEMOCLAW_PROVIDERS };
 export type { UninstallPaths, UninstallPlan };
 
 export interface FileSystemDeps {

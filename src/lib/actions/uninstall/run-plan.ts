@@ -76,7 +76,6 @@ import {
   stopOpenRouterRuntimeAdapter,
 } from "./openrouter-runtime-adapter-cleanup";
 import {
-  AGENT_ALIAS_CLI_BINARIES,
   buildUninstallPlan,
   classifyShimPath,
   defaultUninstallPaths,
@@ -1670,28 +1669,37 @@ function removeAliases(paths: UninstallPaths, runtime: UninstallRuntime): void {
   }
 }
 
+/** Direct entries of `dir`, or none when it is absent or unreadable. */
+function dirEntries(dir: string): fs.Dirent[] {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
 function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const nodeVersionsDir = path.join(paths.nvmDir, "versions", "node");
   if (!runtime.existsSync(nodeVersionsDir)) return;
-  // npm publishes every declared bin as a symlink, so `isFile()` never matched.
-  const cliBinNames: readonly string[] = ["nemoclaw", ...AGENT_ALIAS_CLI_BINARIES];
-  const stack = [nodeVersionsDir];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const target = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        if (target.endsWith(path.join("lib", "node_modules", "nemoclaw"))) {
-          runtime.rmSync(target, { force: true, recursive: true });
-          runtime.log(`Removed leftover nemoclaw module at ${target}`);
-        } else {
-          stack.push(target);
-        }
-      } else if (path.basename(current) === "bin" && cliBinNames.includes(entry.name)) {
-        runtime.rmSync(target, { force: true });
-        runtime.log(`Removed leftover ${entry.name} binary at ${target}`);
-      }
+  // npm publishes every declared bin as a symlink, so an `isFile()` test never matched them.
+  const cliBinNames = ["nemoclaw", ...paths.agentAliasShimPaths.map((shim) => shim.binName)];
+  for (const version of dirEntries(nodeVersionsDir)) {
+    if (!version.isDirectory()) continue;
+    const versionDir = path.join(nodeVersionsDir, version.name);
+    const modulesDir = path.join(versionDir, "lib", "node_modules");
+    for (const entry of dirEntries(modulesDir)) {
+      if (!entry.isDirectory() || entry.name !== "nemoclaw") continue;
+      const target = path.join(modulesDir, entry.name);
+      runtime.rmSync(target, { force: true, recursive: true });
+      runtime.log(`Removed leftover nemoclaw module at ${target}`);
+    }
+    const binDir = path.join(versionDir, "bin");
+    for (const entry of dirEntries(binDir)) {
+      const removable = entry.isFile() || entry.isSymbolicLink();
+      if (!removable || !cliBinNames.includes(entry.name)) continue;
+      const target = path.join(binDir, entry.name);
+      runtime.rmSync(target, { force: true });
+      runtime.log(`Removed leftover ${entry.name} binary at ${target}`);
     }
   }
 }
