@@ -275,6 +275,29 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
   });
 
   it.each([
+    {
+      relativePath: ".git",
+      mode: 0o775,
+      modeLabel: "0775",
+      error: "Git directory authority is unsafe",
+    },
+    {
+      relativePath: ".git/HEAD",
+      mode: 0o664,
+      modeLabel: "0664",
+      error: "source revision evidence is unsafe",
+    },
+  ])(
+    "rejects group-writable Git authority at $relativePath with mode $modeLabel (#9203)",
+    ({ relativePath, mode, error }) => {
+      const source = primaryCloneFixture();
+      fs.chmodSync(path.join(source, relativePath), mode);
+
+      expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(error);
+    },
+  );
+
+  it.each([
     { access: "group", mode: 0o620 },
     { access: "other", mode: 0o602 },
   ])("rejects $access-write access on a source file (#9203)", ({ mode }) => {

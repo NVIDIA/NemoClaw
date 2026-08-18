@@ -173,12 +173,16 @@ resolve_stamped_version() {
 clone_nemoclaw_ref() {
   local ref="$1" dest="$2"
 
-  git init --quiet "$dest"
-  git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-  if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
-    error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
-  fi
-  git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
+  (
+    # Git applies the process umask when it creates the authoritative source checkout.
+    umask 022
+    git init --quiet "$dest"
+    git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
+    if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
+      error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+    fi
+    git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
+  )
 }
 
 # ---------------------------------------------------------------------------
