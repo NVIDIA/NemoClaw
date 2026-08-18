@@ -284,10 +284,11 @@ function removeGlob(
 function removePath(
   target: string,
   deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>,
-): void {
-  if (!deps.existsSync(target)) return;
+): boolean {
+  if (!deps.existsSync(target)) return false;
   deps.rmSync(target, { force: true, recursive: true });
   deps.log(`Removed ${target}`);
+  return true;
 }
 
 // Entries under `nemoclawStateDir` (~/.nemoclaw/) that survive uninstall by
@@ -1670,6 +1671,36 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
   }
 }
 
+/**
+ * Remove installer-managed user-local CLI shims (`~/.local/bin/nemoclaw` and
+ * agent-alias siblings). Classification still preserves foreign files of those
+ * names. Shared npm global package removal stays in `removeNemoclawCli`.
+ * Returns how many shim paths `removePath` actually deleted.
+ */
+function removeManagedCliShims(paths: UninstallPaths, runtime: UninstallRuntime): number {
+  let removed = 0;
+  const shim = classifyShimPath(paths.nemoclawShimPath);
+  if (shim.remove) {
+    if (removePath(paths.nemoclawShimPath, runtime)) removed += 1;
+  } else if (shim.kind === "preserve-foreign-file") {
+    runtime.warn(
+      `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
+    );
+  }
+  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
+  // installer creates; uninstall previously left them resolving on PATH (#6098).
+  // The same classification guard preserves any non-managed file of that name.
+  for (const alias of paths.agentAliasShimPaths) {
+    const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
+    if (aliasShim.remove) {
+      if (removePath(alias.path, runtime)) removed += 1;
+    } else if (aliasShim.kind === "preserve-foreign-file") {
+      runtime.warn(`Leaving ${alias.path} in place because it is not an installer-managed shim.`);
+    }
+  }
+  return removed;
+}
+
 function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const branding = runtimeBranding(runtime);
   if (runtime.commandExists("npm")) {
@@ -1684,25 +1715,41 @@ function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): vo
     runtime.warn(`npm not found; skipping ${branding.display} CLI uninstall.`);
   }
 
-  const shim = classifyShimPath(paths.nemoclawShimPath);
-  if (shim.remove) removePath(paths.nemoclawShimPath, runtime);
-  else if (shim.kind === "preserve-foreign-file") {
-    runtime.warn(
-      `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
-    );
-  }
-  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
-  // installer creates; uninstall previously left them resolving on PATH (#6098).
-  // The same classification guard preserves any non-managed file of that name.
-  for (const alias of paths.agentAliasShimPaths) {
-    const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
-    if (aliasShim.remove) removePath(alias.path, runtime);
-    else if (aliasShim.kind === "preserve-foreign-file") {
-      runtime.warn(`Leaving ${alias.path} in place because it is not an installer-managed shim.`);
-    }
-  }
+  removeManagedCliShims(paths, runtime);
   removeNvmLeftovers(paths, runtime);
   removeAliases(paths, runtime);
+}
+
+/**
+ * CLI uninstall step for `executePlan`. Extracted so the plan loop stays under
+ * the run-plan cognitive-complexity budget when scoped destroy needs the
+ * confirmed-sibling vs unidentified shim split (#9277).
+ */
+function runNemoclawCliUninstallStep(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+  otherGatewayPorts: readonly number[],
+): void {
+  if (!scopedToSelectedGateway) {
+    removeNemoclawCli(paths, runtime);
+    return;
+  }
+  // Confirmed sibling gateway ports share ~/.local/bin shims. Only the
+  // unidentified / unproven scoped path (#9277 false positives: odd
+  // gateways/ entries, unreadable gateway list, etc.) may drop managed
+  // shims on `--destroy-user-data` while keeping the shared npm package.
+  const confirmedSiblingPortsRemain = otherGatewayPorts.length > 0;
+  if (options.destroyUserData && !confirmedSiblingPortsRemain) {
+    runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI package.");
+    const removedShims = removeManagedCliShims(paths, runtime);
+    if (removedShims > 0) {
+      runtime.log("Removed managed user-local CLI shims because --destroy-user-data was set.");
+    }
+    return;
+  }
+  runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI and shell shims.");
 }
 
 function dockerIsAvailable(runtime: UninstallRuntime): boolean {
@@ -2602,6 +2649,7 @@ function executePlan(
   preserveUnderStateDir: readonly string[],
   scopedToSelectedGateway: boolean,
   sharedRegistryMustBePreserved: boolean,
+  otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -2743,11 +2791,13 @@ function executePlan(
         return { ok: false };
       }
     } else if (step.name === "NemoClaw CLI") {
-      if (scopedToSelectedGateway) {
-        runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI and shell shims.");
-      } else {
-        removeNemoclawCli(paths, runtime);
-      }
+      runNemoclawCliUninstallStep(
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        otherGatewayPorts,
+      );
     } else if (step.name === "Docker resources") {
       if (externallySupervised) {
         runtime.log(
@@ -3052,6 +3102,7 @@ export function runUninstallPlan(
       preserveUnderStateDir,
       scopedToSelectedGateway,
       gatewayInspection.sharedRegistryMustBePreserved,
+      gatewayInspection.otherGatewayPorts,
       sandboxNames,
       teardownAuthority,
       portableRuntimeCleanup,

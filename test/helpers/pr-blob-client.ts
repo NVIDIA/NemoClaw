@@ -1,11 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Shared GitHub pull-request file/blob client for the codebase growth
-// guardrails. Both policy evaluators (test-size budget and test-conditional
-// counting) need the same batched GraphQL blob fetch, REST fallback, and
-// transient-failure retry. This module owns that once instead of duplicating it
-// in two workflow heredocs.
+// GitHub pull-request file/blob client for the codebase growth guardrail tests.
+// It batches blob reads, falls back for large files, and retries transient
+// failures without duplicating network code in each test.
 //
 // Trust boundary: this runs from the trusted base checkout under
 // pull_request_target. It only reads GitHub's diff metadata and blob text as

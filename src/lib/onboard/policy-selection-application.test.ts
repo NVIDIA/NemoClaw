@@ -149,6 +149,25 @@ describe("onboarding policy application", () => {
       );
     });
 
+    // NEMOCLAW_POLICY_PRESETS alone runs in suggested mode, which is not
+    // authoritative, so the applied set is preserved on top of it. Nothing
+    // downstream can retire the channel's egress; only a caller that names the
+    // channel in disabledChannels can. This is why handlePoliciesState derives
+    // that list from the applied presets as well as the messaging plans.
+    it("preserves an applied channel preset when no caller disables the channel (#9283)", async () => {
+      const application = createApplication({ NEMOCLAW_POLICY_PRESETS: "npm,pypi" });
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: null,
+          enabledChannels: [],
+          disabledChannels: [],
+          webSearchSupported: false,
+          hermesToolGateways: [],
+        }),
+      ).resolves.toEqual(["npm", "pypi", "discord"]);
+    });
+
     it("drops the disabled channel preset when policy selection is skipped (#9109)", async () => {
       const application = createApplication({ NEMOCLAW_POLICY_MODE: "skip" });
 

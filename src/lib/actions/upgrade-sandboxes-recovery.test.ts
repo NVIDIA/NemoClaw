@@ -200,19 +200,21 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     ]);
   });
 
-  it("passes every non-Ready sandbox's validated manifest into rebuild", async () => {
-    const harness = createRecoveryHarness(["alpha", "beta"]);
+  it.each(["alpha", "beta"])(
+    "passes every non-Ready sandbox's validated manifest into rebuild [%s]",
+    async (name) => {
+      const harness = createRecoveryHarness(["alpha", "beta"]);
 
-    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+      await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
 
-    expect(harness.rebuildSpy).toHaveBeenCalledTimes(2);
-    for (const name of ["alpha", "beta"]) {
+      expect(harness.rebuildSpy).toHaveBeenCalledTimes(2);
+
       expect(harness.rebuildSpy).toHaveBeenCalledWith(name, ["--yes"], {
         throwOnError: true,
         recoveryManifest: expect.objectContaining({ sandboxName: name }),
       });
-    }
-  });
+    },
+  );
 
   it.each([
     {
@@ -232,63 +234,62 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       expectedRebuilds: 0,
       expectedSequence: ["warning:/sandbox/.openclaw", "warning:/sandbox/.hermes"],
     },
-  ] as const)("warns with each agent's restore path before $mode mixed recovery (#7073)", async ({
-    options,
-    expectedRebuilds,
-    expectedSequence,
-  }) => {
-    const sequence: string[] = [];
-    const warningMessages: string[] = [];
-    const statePaths = ["/sandbox/.openclaw", "/sandbox/.hermes"];
-    const harness = createRecoveryHarness(["openclaw-box", "hermes-box"], {
-      manifestAgentTypes: { "openclaw-box": "openclaw", "hermes-box": "hermes" },
-      registryOverrides: {
-        "openclaw-box": { agent: "openclaw" },
-        "hermes-box": { agent: "hermes" },
-      },
-    });
-    vi.mocked(console.log).mockImplementation((...args) => {
-      const message = String(args[0]);
-      warningMessages.push(...[message].filter((entry) => entry.includes("⚠ Recovery restores")));
-      sequence.push(
-        ...statePaths
-          .filter((candidate) =>
-            message.includes(`Recovery restores ${JSON.stringify(candidate)} state only`),
-          )
-          .map((statePath) => `warning:${statePath}`),
-      );
-    });
-    harness.rebuildSpy.mockImplementation(async (name: string) => {
-      sequence.push(`rebuild:${name}`);
-    });
+  ] as const)(
+    "warns with each agent's restore path before $mode mixed recovery (#7073)",
+    async ({ options, expectedRebuilds, expectedSequence }) => {
+      const sequence: string[] = [];
+      const warningMessages: string[] = [];
+      const statePaths = ["/sandbox/.openclaw", "/sandbox/.hermes"];
+      const harness = createRecoveryHarness(["openclaw-box", "hermes-box"], {
+        manifestAgentTypes: { "openclaw-box": "openclaw", "hermes-box": "hermes" },
+        registryOverrides: {
+          "openclaw-box": { agent: "openclaw" },
+          "hermes-box": { agent: "hermes" },
+        },
+      });
+      vi.mocked(console.log).mockImplementation((...args) => {
+        const message = String(args[0]);
+        warningMessages.push(...[message].filter((entry) => entry.includes("⚠ Recovery restores")));
+        sequence.push(
+          ...statePaths
+            .filter((candidate) =>
+              message.includes(`Recovery restores ${JSON.stringify(candidate)} state only`),
+            )
+            .map((statePath) => `warning:${statePath}`),
+        );
+      });
+      harness.rebuildSpy.mockImplementation(async (name: string) => {
+        sequence.push(`rebuild:${name}`);
+      });
 
-    await expect(harness.upgradeSandboxes(options)).resolves.toBeUndefined();
+      await expect(harness.upgradeSandboxes(options)).resolves.toBeUndefined();
 
-    expect(warningMessages).toHaveLength(statePaths.length);
-    expect(
-      warningMessages.map((message) =>
-        statePaths.filter((statePath) =>
-          message.includes(`Recovery restores ${JSON.stringify(statePath)} state only`),
+      expect(warningMessages).toHaveLength(statePaths.length);
+      expect(
+        warningMessages.map((message) =>
+          statePaths.filter((statePath) =>
+            message.includes(`Recovery restores ${JSON.stringify(statePath)} state only`),
+          ),
         ),
-      ),
-    ).toEqual(statePaths.map((statePath) => [statePath]));
-    for (const statePath of statePaths) {
+      ).toEqual(statePaths.map((statePath) => [statePath]));
+      for (const statePath of statePaths) {
+        expect(console.log).toHaveBeenCalledWith(
+          expect.stringContaining(
+            `Recovery restores ${JSON.stringify(statePath)} state only for this sandbox`,
+          ),
+        );
+      }
       expect(console.log).toHaveBeenCalledWith(
-        expect.stringContaining(
-          `Recovery restores ${JSON.stringify(statePath)} state only for this sandbox`,
-        ),
+        expect.stringContaining("Files outside this recorded managed state path"),
       );
-    }
-    expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining("Files outside this recorded managed state path"),
-    );
-    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("/sandbox/user-data"));
-    expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining("NOT preserved by the recreate"),
-    );
-    expect(harness.rebuildSpy).toHaveBeenCalledTimes(expectedRebuilds);
-    expect(sequence).toEqual(expectedSequence);
-  });
+      expect(console.log).toHaveBeenCalledWith(expect.stringContaining("/sandbox/user-data"));
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining("NOT preserved by the recreate"),
+      );
+      expect(harness.rebuildSpy).toHaveBeenCalledTimes(expectedRebuilds);
+      expect(sequence).toEqual(expectedSequence);
+    },
+  );
 
   it("continues through all eligible sandboxes before reporting a recovery failure", async () => {
     const harness = createRecoveryHarness(["alpha", "beta"]);
@@ -422,26 +423,25 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
-  it.each([
-    "not-json",
-    '{"legacy-box":true}',
-    '["legacy-box",1]',
-  ])("rejects malformed scoped confirmation %s (#6114)", async (confirmedLegacyManagedNames) => {
-    const harness = createRecoveryHarness(["legacy-box"], {
-      confirmedLegacyManagedNames,
-      registryOverrides: {
-        "legacy-box": { agent: null, nemoclawVersion: null },
-      },
-      useRealManagedEvidence: true,
-    });
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code})`);
-    }) as never);
+  it.each(["not-json", '{"legacy-box":true}', '["legacy-box",1]'])(
+    "rejects malformed scoped confirmation %s (#6114)",
+    async (confirmedLegacyManagedNames) => {
+      const harness = createRecoveryHarness(["legacy-box"], {
+        confirmedLegacyManagedNames,
+        registryOverrides: {
+          "legacy-box": { agent: null, nemoclawVersion: null },
+        },
+        useRealManagedEvidence: true,
+      });
+      vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        throw new Error(`process.exit(${code})`);
+      }) as never);
 
-    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+      await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.rebuildSpy).not.toHaveBeenCalled();
-  });
+      expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not let legacy confirmation override a recorded custom image (#6114)", async () => {
     const harness = createRecoveryHarness(["custom-box"], {
@@ -807,26 +807,26 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
-  it.each([
-    "Provisioning",
-    "Error",
-  ])("recovers an absent sandbox when confirmation reports the %s phase (#6114)", async (phase) => {
-    const harness = createRecoveryHarness(["orphaned-box"], {
-      liveOutput: "other-box Ready",
-    });
-    harness.liveListSpy
-      .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
-      .mockResolvedValueOnce({ status: 0, output: `orphaned-box ${phase}` });
+  it.each(["Provisioning", "Error"])(
+    "recovers an absent sandbox when confirmation reports the %s phase (#6114)",
+    async (phase) => {
+      const harness = createRecoveryHarness(["orphaned-box"], {
+        liveOutput: "other-box Ready",
+      });
+      harness.liveListSpy
+        .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+        .mockResolvedValueOnce({ status: 0, output: `orphaned-box ${phase}` });
 
-    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+      await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
 
-    expect(harness.liveListSpy).toHaveBeenCalledTimes(2);
-    expect(harness.latestBackupSpy).toHaveBeenCalledWith("orphaned-box");
-    expect(harness.rebuildSpy).toHaveBeenCalledWith("orphaned-box", ["--yes"], {
-      throwOnError: true,
-      recoveryManifest: expect.objectContaining({ sandboxName: "orphaned-box" }),
-    });
-  });
+      expect(harness.liveListSpy).toHaveBeenCalledTimes(2);
+      expect(harness.latestBackupSpy).toHaveBeenCalledWith("orphaned-box");
+      expect(harness.rebuildSpy).toHaveBeenCalledWith("orphaned-box", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: expect.objectContaining({ sandboxName: "orphaned-box" }),
+      });
+    },
+  );
 
   it("uses prepared recovery for both stale live and non-Ready sandboxes", async () => {
     const harness = createRecoveryHarness(["stale-box", "recovery-box"], {

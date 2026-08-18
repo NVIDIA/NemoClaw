@@ -151,15 +151,17 @@ describe("larger-runner workflow routing boundary", () => {
     });
   });
 
-  it("keeps every catalogue runner key in the trusted routing map (#7145)", () => {
-    const usedRunnerKeys = [
-      ...new Set(E2E_TARGET_CATALOGUE.map((target) => target.runnerKey).filter(Boolean)),
-    ].sort();
-    expect(usedRunnerKeys).toEqual([...E2E_CATALOGUE_RUNNER_KEYS].sort());
-    for (const runnerKey of E2E_CATALOGUE_RUNNER_KEYS) {
+  it.each(Array.from(E2E_CATALOGUE_RUNNER_KEYS, (value) => [value]))(
+    "keeps catalogue runner key %s in the trusted routing map (#7145)",
+    (runnerKey) => {
+      const usedRunnerKeys = [
+        ...new Set(E2E_TARGET_CATALOGUE.map((target) => target.runnerKey).filter(Boolean)),
+      ].sort();
+      expect(usedRunnerKeys).toEqual([...E2E_CATALOGUE_RUNNER_KEYS].sort());
+
       expect(standardRouting).toHaveProperty(runnerKey, "ubuntu-latest");
-    }
-  });
+    },
+  );
 
   // source-shape-contract: security -- Executes the shipped pre-checkout router to prove malformed administrator labels fail before job routing
   it("rejects malformed administrator workflow labels (#7145)", () => {

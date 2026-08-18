@@ -68,25 +68,27 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
     expect(normalizeInferenceSetProvider("BUILD")).toBe("nvidia-prod");
   });
 
-  it("passes OpenShell provider names through unchanged", () => {
-    for (const name of INFERENCE_SET_SUPPORTED_PROVIDER_NAMES) {
+  it.each(INFERENCE_SET_SUPPORTED_PROVIDER_NAMES)(
+    "passes the OpenShell provider name %s through unchanged",
+    (name) => {
       expect(normalizeInferenceSetProvider(name)).toBe(name);
-    }
-  });
+    },
+  );
 
   it("passes an unrecognized provider through unchanged (validation still rejects it later)", () => {
     expect(normalizeInferenceSetProvider("totally-made-up")).toBe("totally-made-up");
   });
 
-  it("every installer alias resolves to a supported OpenShell provider name (drift guard)", () => {
-    const supported = new Set<string>(INFERENCE_SET_SUPPORTED_PROVIDER_NAMES);
-    for (const [alias, resolved] of Object.entries(INFERENCE_SET_INSTALLER_PROVIDER_ALIASES)) {
+  it.each(Object.entries(INFERENCE_SET_INSTALLER_PROVIDER_ALIASES))(
+    "resolves the %s installer alias to the supported %s provider",
+    (alias, resolved) => {
+      const supported = new Set<string>(INFERENCE_SET_SUPPORTED_PROVIDER_NAMES);
       expect(
         supported.has(resolved),
         `${alias} -> ${resolved} not in SUPPORTED_PROVIDER_NAMES`,
       ).toBe(true);
-    }
-  });
+    },
+  );
 });
 
 describe("runInferenceSet accepts the installer provider name — facet 1 (#6321)", () => {
@@ -246,20 +248,21 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
     await expect(attempt).rejects.toThrow(`--name ${shellQuote(name)} --fresh`);
     // The bare, unquoted name must not sit directly after --name.
     await expect(attempt).rejects.not.toThrow(`--name ${name} --fresh`);
+  });
 
-    // PRA-2: validateName blocks metacharacter names before this hint, so the
-    // shellQuote layer is defense-in-depth. Assert it keeps spaces, quotes, ';',
-    // '$()' and backticks inside a single quoted argument that a shell cannot
-    // break out of.
-    for (const meta of ["a b", "a'b", "a;b", "a$(id)", "a`id`"]) {
+  // PRA-2: validateName blocks metacharacter names before the recovery hint, so
+  // shellQuote is defense-in-depth.
+  it.each(["a b", "a'b", "a;b", "a$(id)", "a`id`"])(
+    "keeps the metacharacter input %j inside one shell argument",
+    (meta) => {
       const quoted = shellQuote(meta);
       expect(quoted.startsWith("'")).toBe(true);
       expect(quoted.endsWith("'")).toBe(true);
       // After removing the only legal break-out escape ('\''), no bare single
       // quote remains — nothing can terminate the quoted argument early.
       expect(quoted.slice(1, -1).replaceAll("'\\''", "")).not.toContain("'");
-    }
-  });
+    },
+  );
 });
 
 // Hosts the stand-in guard treats as internal-resolving. Parsed exactly from
@@ -603,46 +606,38 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
 });
 
 describe("installer alias parity with onboard provider config — facet 1 drift guard (#6321)", () => {
-  it("matches onboard's getEffectiveProviderName for every shared provider key", () => {
-    // Bind the local alias map to onboard's source of truth: for every installer
-    // key onboard accepts that resolves to a provider inference set supports,
-    // normalizeInferenceSetProvider must produce the exact same OpenShell name.
-    // If onboard renames a provider or adds an alias, this fails until the local
-    // map is updated — closing the drift gap CodeRabbit / the PR advisor flagged.
-    const supported = new Set<string>(INFERENCE_SET_SUPPORTED_PROVIDER_NAMES);
-    const aliasKeys: string[] = Object.keys(
-      onboardProviders.NON_INTERACTIVE_PROVIDER_ALIASES ?? {},
+  const supported = new Set<string>(INFERENCE_SET_SUPPORTED_PROVIDER_NAMES);
+  const aliasKeys: string[] = Object.keys(onboardProviders.NON_INTERACTIVE_PROVIDER_ALIASES ?? {});
+  const directKeys: string[] = Array.from(
+    (onboardProviders.NON_INTERACTIVE_PROVIDER_KEYS ?? new Set()) as Iterable<string>,
+  );
+  const onboardKeys = [...new Set([...aliasKeys, ...directKeys])];
+  const relevant = onboardKeys
+    .map((key) => ({
+      key,
+      onboardResolved: onboardProviders.getEffectiveProviderName(
+        onboardProviders.NON_INTERACTIVE_PROVIDER_ALIASES?.[key] ?? key,
+      ) as string | null,
+    }))
+    .filter(
+      (entry): entry is { key: string; onboardResolved: string } =>
+        !!entry.onboardResolved && supported.has(entry.onboardResolved),
     );
-    const directKeys: string[] = Array.from(
-      (onboardProviders.NON_INTERACTIVE_PROVIDER_KEYS ?? new Set()) as Iterable<string>,
-    );
-    const onboardKeys = [...new Set([...aliasKeys, ...directKeys])];
+
+  it("loads a meaningful set of onboard provider keys", () => {
     // Sanity: onboard exposes a non-trivial key set (guards against an import
     // that silently resolved to an empty object).
     expect(onboardKeys.length).toBeGreaterThan(5);
+    expect(relevant.length).toBeGreaterThan(3);
+  });
 
-    // Resolve each onboard key to its OpenShell provider name, then keep only
-    // those that are inference-set targets. `.map().filter()` (not a loop with
-    // `if`/`continue`) to satisfy the test-shape gate.
-    const relevant = onboardKeys
-      .map((key) => ({
-        key,
-        onboardResolved: onboardProviders.getEffectiveProviderName(
-          onboardProviders.NON_INTERACTIVE_PROVIDER_ALIASES?.[key] ?? key,
-        ) as string | null,
-      }))
-      .filter(
-        (entry): entry is { key: string; onboardResolved: string } =>
-          !!entry.onboardResolved && supported.has(entry.onboardResolved),
-      );
-
-    for (const { key, onboardResolved } of relevant) {
+  it.each(relevant)(
+    "maps the onboard $key key to the $onboardResolved OpenShell provider",
+    ({ key, onboardResolved }) => {
       expect(
         normalizeInferenceSetProvider(key),
         `inference set must map onboard key '${key}' to '${onboardResolved}'`,
       ).toBe(onboardResolved);
-    }
-    // We actually exercised a meaningful set (anthropicCompatible, build, etc.).
-    expect(relevant.length).toBeGreaterThan(3);
-  });
+    },
+  );
 });

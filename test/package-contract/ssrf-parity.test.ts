@@ -91,15 +91,17 @@ describe("private-networks.yaml schema", () => {
     );
   });
 
-  it("requires a non-empty purpose on every entry", () => {
-    const doc = cliHelper.getNetworkEntries();
-    for (const family of ["ipv4", "ipv6", "names"] as const) {
+  it.each(["ipv4", "ipv6", "names"] as const)(
+    "requires a non-empty purpose on every entry [%s]",
+    (family) => {
+      const doc = cliHelper.getNetworkEntries();
+
       for (const entry of doc[family]) {
         expect(entry.purpose, `${family} ${entryLabel(entry)}`).toBeTypeOf("string");
         expect(entry.purpose.trim().length, `${family} ${entryLabel(entry)}`).toBeGreaterThan(0);
       }
-    }
-  });
+    },
+  );
 
   it("rejects duplicate entries", () => {
     const doc = cliHelper.getNetworkEntries();

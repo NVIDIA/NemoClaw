@@ -59,6 +59,7 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
   /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
+const JSON_ARRAY_INDEX_SEGMENT_RE = /^\[(?:0|[1-9][0-9]*)\]$/u;
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /nvapi-[A-Za-z0-9_-]{10,}/u,
   /nvcf-[A-Za-z0-9_-]{10,}/u,
@@ -993,12 +994,71 @@ function valueLooksLikeSecret(value: string): boolean {
 }
 
 function isMessagingCredentialPlaceholder(path: readonly string[], value: unknown): boolean {
-  return (
-    path.length >= 2 &&
+  if (typeof value !== "string" || !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) {
+    return false;
+  }
+  const isCredentialBindingPlaceholder =
+    path.length === 5 &&
     path[0] === "messaging" &&
     path[1] === "plan" &&
-    typeof value === "string" &&
-    MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)
+    path[2] === "credentialBindings" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
+    path[4] === "placeholder";
+  const isAgentRenderValuePlaceholder =
+    path.length >= 5 &&
+    path[0] === "messaging" &&
+    path[1] === "plan" &&
+    path[2] === "agentRender" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
+    path[4] === "value";
+  return isCredentialBindingPlaceholder || isAgentRenderValuePlaceholder;
+}
+
+function messagingCredentialPlaceholderEnvKey(value: string): string | null {
+  if (!MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) return null;
+  const marker = value.startsWith("openshell:resolve:env:")
+    ? "openshell:resolve:env:"
+    : "-OPENSHELL-RESOLVE-ENV-";
+  const key = value.slice(value.indexOf(marker) + marker.length);
+  return key.replace(/^v[0-9]+_/u, "");
+}
+
+function containsMessagingCredentialPlaceholder(value: string): boolean {
+  return value.includes("openshell:resolve:env:") || value.includes("-OPENSHELL-RESOLVE-ENV-");
+}
+
+function isMessagingCredentialPlaceholderAssignment(
+  path: readonly string[],
+  value: string,
+): boolean {
+  if (
+    path.length !== 6 ||
+    path[0] !== "messaging" ||
+    path[1] !== "plan" ||
+    path[2] !== "agentRender" ||
+    !JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") ||
+    path[4] !== "lines" ||
+    !JSON_ARRAY_INDEX_SEGMENT_RE.test(path[5] ?? "")
+  ) {
+    return false;
+  }
+  const separator = value.indexOf("=");
+  if (separator <= 0 || value.indexOf("=", separator + 1) !== -1) return false;
+  const envKey = value.slice(0, separator);
+  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(value.slice(separator + 1));
+  return CREDENTIAL_ENV_NAME_PATTERN.test(envKey) && envKey === placeholderEnvKey;
+}
+
+function isMessagingPackagePin(path: readonly string[], value: unknown): boolean {
+  return (
+    path.length === 6 &&
+    path[0] === "messaging" &&
+    path[1] === "plan" &&
+    path[2] === "buildSteps" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
+    path[4] === "value" &&
+    path[5] === "pin" &&
+    typeof value === "boolean"
   );
 }
 
@@ -1367,7 +1427,9 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       observeText(current.value);
       if (
         !isMessagingCredentialPlaceholder(current.path, current.value) &&
-        valueLooksLikeSecret(current.value)
+        !isMessagingCredentialPlaceholderAssignment(current.path, current.value) &&
+        (valueLooksLikeSecret(current.value) ||
+          containsMessagingCredentialPlaceholder(current.value))
       ) {
         invalid(
           `payload field ${payloadPath(current.path)} contains credential-shaped string data`,
@@ -1450,7 +1512,11 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
           invalid("payload must contain only JSON data properties");
         }
         const child = descriptor.value;
-        if (isCredentialShapedName(key) && !isMessagingCredentialPlaceholder(current.path, child)) {
+        if (
+          isCredentialShapedName(key) &&
+          !isMessagingCredentialPlaceholder([...current.path, key], child) &&
+          !isMessagingPackagePin([...current.path, key], child)
+        ) {
           invalid(
             `payload field ${payloadPath([...current.path, key])} has a credential-shaped field name`,
           );

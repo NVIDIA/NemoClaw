@@ -11,6 +11,7 @@ const SUPPORTED_ONBOARDING = new Set([
   "cloud-openclaw-policy-custom-missing-presets",
   "cloud-langchain-deepagents-code",
 ]);
+const SUPPORTED_POLICY_TIERS = new Set(["balanced", "open", "personal"]);
 // Lifecycle profiles wired into the live Vitest driver. A profile is
 // supported only after both (a) `LifecyclePhaseFixture.simulate(profile)`
 // dispatches it, and (b) at least one expected-state declares the post-
@@ -52,6 +53,9 @@ export function liveTargetSupport(target: TargetDefinition): LiveTargetSupport {
     }
     if (!SUPPORTED_ONBOARDING.has(environment.onboarding)) {
       reasons.push(`onboarding '${environment.onboarding}' is not wired for live fixtures`);
+    }
+    if (environment.policyTier && !SUPPORTED_POLICY_TIERS.has(environment.policyTier)) {
+      reasons.push(`policyTier '${environment.policyTier}' is not wired for live fixtures`);
     }
     if (environment.lifecycle && !SUPPORTED_LIFECYCLES.has(environment.lifecycle)) {
       reasons.push(`lifecycle '${environment.lifecycle}' is not wired for live fixtures`);

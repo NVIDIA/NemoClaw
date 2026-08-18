@@ -221,4 +221,61 @@ describe("createRemoteModelValidator", () => {
     assert.equal(state.model, "nvidia/local-nim");
     assert.equal(state.nimContainer, "nemoclaw-nim-test");
   });
+
+  it("passes the selected provider only as validation context (#9298)", async () => {
+    const state = makeState();
+    state.provider = "gemini-api";
+    state.endpointUrl = "https://generativelanguage.googleapis.com/v1beta/openai";
+    state.model = "gemini-2.5-flash";
+    let receivedOptions: unknown;
+    const { validateSelectedRemoteModel } = createRemoteModelValidator({
+      OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+      ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+      requireValue,
+      isBackToSelection: (_value): _value is never => false,
+      validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+      validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+      validateAnthropicSelectionWithRetryMessage: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateOpenAiLikeSelection: async (
+        _label,
+        _endpointUrl,
+        _model,
+        _credentialEnv,
+        _retryMessage,
+        _helpUrl,
+        options,
+      ) => {
+        receivedOptions = options;
+        return { ok: true, api: "openai-completions" };
+      },
+      shouldRequireResponsesToolCalling: () => true,
+      shouldSkipResponsesProbe: () => true,
+      getProbeAuthMode: () => undefined,
+    });
+
+    assert.equal(
+      await validateSelectedRemoteModel({
+        selected: { key: "gemini" },
+        remoteConfig: {
+          label: "Google Gemini",
+          endpointUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+          helpUrl: null,
+        },
+        state,
+        selectedCredentialEnv: "GEMINI_API_KEY",
+      }),
+      "selected",
+    );
+    assert.deepEqual(receivedOptions, {
+      provider: "gemini-api",
+      requireResponsesToolCalling: true,
+      skipResponsesProbe: true,
+      authMode: undefined,
+      extraHeaders: [],
+      capabilityCache: undefined,
+    });
+  });
 });

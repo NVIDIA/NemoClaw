@@ -241,7 +241,7 @@ The preset separately grants that registry transport to its listed npm, Yarn, an
 </AgentOnly>
 
 <Warning title="Personal Tier">
-The Personal tier selects `personal-open-internet` and every maintained preset supported by the active agent.
+The Personal tier selects `personal-open-internet` as its web authority and preserves non-web policy.
 The open-internet preset allows every sandbox binary to reach public and private address ranges on destination ports `80` and `443` through L4 passthrough.
 Traffic on those ports is not limited to HTTP or HTTPS.
 OpenShell does not inspect the hostname, application protocol, HTTP method, path, or body for those connections.
@@ -372,7 +372,7 @@ Use only for a trusted single-user sandbox that needs arbitrary TCP egress on de
 - Select the Personal tier during onboarding.
 - Treat every prompt, downloaded package, webpage, and workspace file as able to trigger external TCP traffic on destination ports `80` and `443`.
 - Do not place raw credentials or sensitive data in the sandbox unless the agent must use them.
-- Return to Balanced or Restricted and recreate the sandbox when this broad egress is no longer required.
+- Create a new Balanced or Restricted sandbox when this broad egress is no longer required. NemoClaw refuses to remove Personal in place because its normalized policy has already replaced overlapping web entries.
 
 ### Integration Testing
 

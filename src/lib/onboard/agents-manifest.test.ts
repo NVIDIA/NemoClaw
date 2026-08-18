@@ -152,36 +152,37 @@ describe("loadAgentsManifest", () => {
     expect(() => loadAgentsManifest(dir)).toThrow(/must point to a file:/);
   });
 
-  it("rejects manifests with nested credential-named keys before they reach the build", () => {
-    for (const key of [
-      "apiKey",
-      "api_key",
-      "API_KEY",
-      "token",
-      "secret",
-      "password",
-      "passphrase",
-      "credential",
-      "bearer",
-      "auth",
-      "clientSecret",
-      "client_secret",
-      "accessToken",
-      "refreshToken",
-      "refresh-token",
-      "sessionToken",
-      "idToken",
-      "apiToken",
-      "privateKey",
-      "private_key",
-      "publicKey",
-      "signingKey",
-      "encryptionKey",
-      "AccessKey",
-      "bearerToken",
-      "webhookSecret",
-      "encryption_passphrase",
-    ]) {
+  it.each([
+    "apiKey",
+    "api_key",
+    "API_KEY",
+    "token",
+    "secret",
+    "password",
+    "passphrase",
+    "credential",
+    "bearer",
+    "auth",
+    "clientSecret",
+    "client_secret",
+    "accessToken",
+    "refreshToken",
+    "refresh-token",
+    "sessionToken",
+    "idToken",
+    "apiToken",
+    "privateKey",
+    "private_key",
+    "publicKey",
+    "signingKey",
+    "encryptionKey",
+    "AccessKey",
+    "bearerToken",
+    "webhookSecret",
+    "encryption_passphrase",
+  ])(
+    "rejects manifests with nested credential-named keys before they reach the build [case %#]",
+    (key) => {
       const file = manifestPath(
         `credential-${key}.yaml`,
         [
@@ -195,11 +196,12 @@ describe("loadAgentsManifest", () => {
         ].join("\n"),
       );
       expect(() => loadAgentsManifest(file)).toThrow(/looks like a credential and is not allowed/);
-    }
-  });
+    },
+  );
 
-  it("accepts benign field names that are not credential-shaped", () => {
-    for (const key of ["model", "workspace", "agentDir", "allowAgents", "maxSpawnDepth"]) {
+  it.each(["model", "workspace", "agentDir", "allowAgents", "maxSpawnDepth"])(
+    "accepts benign field names that are not credential-shaped [case %#]",
+    (key) => {
       const file = manifestPath(
         `benign-${key}.yaml`,
         [
@@ -211,8 +213,8 @@ describe("loadAgentsManifest", () => {
         ].join("\n"),
       );
       expect(() => loadAgentsManifest(file)).not.toThrow();
-    }
-  });
+    },
+  );
 });
 
 describe("applyAgentsManifestEnv", () => {

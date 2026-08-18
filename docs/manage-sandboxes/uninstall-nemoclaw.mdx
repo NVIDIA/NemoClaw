@@ -25,7 +25,7 @@ It preserves resources from a separate OpenClaw installation while continuing to
 | `--yes` | Skip the confirmation prompt. |
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process. |
 | `--delete-models` | Delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. |
-| `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. |
+| `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. Removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified. When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package. |
 | `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
 
@@ -180,6 +180,8 @@ It skips the generic Docker availability probe and all generic Docker container,
 It does not remove the user's Podman installation, storage, networks, or unrelated containers.
 It does not disable a user-managed socket.
 On every successful portable cleanup, the final retirement operation removes the exact portable lifecycle receipts, their matching `sandboxes.json` rows, and `~/.config/nemoclaw/portable/containers.conf`, regardless of `--destroy-user-data`.
+After NemoClaw removes `containers.conf`, it removes `~/.config/nemoclaw/portable/` and `~/.config/nemoclaw/` only when each directory is empty.
+NemoClaw preserves either directory when it contains an unrelated entry.
 Other preserved user data follows the normal `--destroy-user-data` behavior.
 After NemoClaw releases the locks, later uninstall-plan cleanup never recursively revisits the canonical receipt, sandbox registry, or `~/.config/nemoclaw/portable/containers.conf` paths.
 This preserves any new lifecycle generation published after lock release.
@@ -230,6 +232,7 @@ If validation, runtime cleanup, or temporary-claim retirement fails, uninstall e
 Resolve the reported SSH, Docker, peer-host, or claim error before you retry.
 Runtime cleanup can partially complete before an error, so inspect every cluster node before retrying.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
+With `--destroy-user-data`, that scoped path removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified (for example odd `~/.nemoclaw/gateways/` entries or an unreadable gateway list). When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package and the other shared host resources.
 A recorded sandbox that OpenShell reports as already removed leaves nothing to delete, so the scoped path reports it, finishes the remaining gateway cleanup, and exits `0`.
 A sandbox that OpenShell cannot reach or refuses to delete still leaves state behind.
 Uninstall exits nonzero and preserves the selected gateway registration, port-scoped state, and selected sandbox registry entry for a retry.

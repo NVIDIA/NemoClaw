@@ -53,6 +53,7 @@ const MAX_RECEIPT_DIRECTORY_ENTRIES = 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const EXEC_READY_TIMEOUT_MS = 90_000;
+const STOP_RECONCILIATION_TIMEOUT_MS = 30_000;
 const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
 const OLLAMA_STARTUP_TIMEOUT_MS = 30_000;
@@ -256,6 +257,10 @@ function commandDetail(result: CommandResult): string {
 function requireCommand(result: CommandResult, action: string): void {
   if (result.status === 0 && !result.error) return;
   throw new Error(`${action} failed: ${commandDetail(result)}`);
+}
+
+function isCommandTimeout(result: CommandResult): boolean {
+  return (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1312,13 +1317,34 @@ export function stopPortableDemoSandboxLifecycle(
   if (!inspection.running) return { kind: "already-stopped" };
 
   beforeStop();
-  requireCommand(
-    authority.podman(["stop", receipt.containerId]),
-    `Stopping portable sandbox '${sandboxName}'`,
-  );
-  const stopped = inspectPodmanContainer(receipt.containerId, sandboxName, authority.podman);
-  requireReceiptOwnedInspection(receipt, stopped);
-  if (stopped.running) {
+  const stop = authority.podman(["stop", receipt.containerId]);
+  const inspectStoppedState = (): boolean => {
+    const result = authority.podman(["inspect", receipt.containerId]);
+    if (isMissingPodmanContainer(result)) {
+      throw new Error(
+        `Portable sandbox '${sandboxName}' no longer has its recorded Podman container`,
+      );
+    }
+    const stopped = inspectPodmanContainer(
+      receipt.containerId,
+      sandboxName,
+      authority.podman,
+      result,
+    );
+    requireReceiptOwnedInspection(receipt, stopped);
+    return !stopped.running;
+  };
+  if (isCommandTimeout(stop)) {
+    // The rootless Podman service can continue an accepted stop after its CLI
+    // client times out. Reconcile only the exact receipt-owned container; do
+    // not retry the mutation or weaken socket and container identity checks.
+    const timing = { now: deps.now ?? Date.now, sleep: deps.sleep ?? defaultSleep };
+    if (waitFor(STOP_RECONCILIATION_TIMEOUT_MS, timing, inspectStoppedState)) {
+      return { kind: "stopped" };
+    }
+  }
+  requireCommand(stop, `Stopping portable sandbox '${sandboxName}'`);
+  if (!inspectStoppedState()) {
     throw new Error(`Portable sandbox '${sandboxName}' did not enter the stopped state`);
   }
   return { kind: "stopped" };
