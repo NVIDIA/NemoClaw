@@ -156,7 +156,7 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     expect(log).not.toHaveBeenCalledWith(expect.stringMatching(/compatibility-only/iu));
   });
 
-  it("keeps non-OpenClaw portable agents on their existing GPU route (#9068)", () => {
+  it("honors an explicit non-portable lifecycle flag at the create-plan boundary (#9068)", () => {
     const result = resolveDockerGpuSandboxCreatePlan(
       { sandboxGpuEnabled: true },
       {
@@ -165,7 +165,6 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
         portableLifecycle: false,
         env: {
           NEMOCLAW_DOCKER_GPU_PATCH: "1",
-          NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
         },
         platform: "linux",
       },
@@ -174,7 +173,7 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     expect(result.gpuRoutePlan).toBe("compatibility-only");
   });
 
-  it("selects the portable lifecycle route only for OpenClaw (#9068)", () => {
+  it("keeps every portable agent on native GPU lifecycle operations (#9462)", () => {
     const env = {
       NEMOCLAW_DOCKER_GPU_PATCH: "1",
       NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
@@ -191,6 +190,29 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
         env,
         "linux",
       ).gpuRoutePlan,
-    ).toBe("compatibility-only");
+    ).toBe("native-only");
+    expect(
+      resolveAgentPlan(
+        { sandboxGpuEnabled: true },
+        { name: "langchain-deepagents-code" },
+        true,
+        env,
+        "linux",
+      ).gpuRoutePlan,
+    ).toBe("native-only");
+  });
+
+  it("keeps portable Jetson hosts off the compatibility-only default (#9462)", () => {
+    const env = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+
+    expect(
+      resolveAgentPlan(
+        { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
+        { name: "hermes" },
+        true,
+        env,
+        "linux",
+      ).gpuRoutePlan,
+    ).toBe("native-only");
   });
 });
