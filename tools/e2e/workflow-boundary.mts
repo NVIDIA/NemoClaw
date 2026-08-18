@@ -188,15 +188,12 @@ const HOST_DEPENDENCY_ACTION_USES = HOST_DEPENDENCY_ACTION_PROVENANCE.reference;
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
 // The general E2E workflow runs on push/manual dispatch. Its event set is
 // intentionally distinct from the reusable image workflow's push/manual boundary.
-const TRUSTED_E2E_CREDENTIAL_PREDICATE =
-  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
-const guardedE2eSecret = (secret: string): string =>
-  `\${{ ${TRUSTED_E2E_CREDENTIAL_PREDICATE} && secrets.${secret} || '' }}`;
-const TRUSTED_DOCKER_HUB_PREDICATE = TRUSTED_E2E_CREDENTIAL_PREDICATE;
+const TRUSTED_DOCKER_HUB_PREDICATE =
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == ''";
 const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;
 const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
 const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
-const GUARDED_HERMES_E2E_INFERENCE_KEY = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
+const GUARDED_HERMES_E2E_INFERENCE_KEY = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 const RUNNER_ROUTING_OUTPUT = "${{ steps.runner_routing.outputs.runner_routing }}";
 const RUNNER_ROUTING_STEP_NAME = "Build trusted larger-runner routing";
 const RUNNER_ROUTING_SCRIPT = [
@@ -1589,52 +1586,12 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_HERMES_E2E_INFERENCE_KEY) {
     errors.push(
-      "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind an authorized trusted-main dispatch and the inference mode condition",
+      "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch without a PR checkout and the inference mode condition",
     );
   }
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/hermes-e2e.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-}
-
-function validateCandidateCredentialSteps(errors: string[], jobs: WorkflowRecord): void {
-  const credentialSteps = [
-    {
-      jobName: "cloud-onboard",
-      stepName: "Run cloud-onboard live Vitest test",
-      secrets: ["NVIDIA_INFERENCE_API_KEY"],
-    },
-    {
-      jobName: "messaging-providers",
-      stepName: "Run messaging providers live Vitest test",
-      secrets: [
-        "NVIDIA_INFERENCE_API_KEY",
-        "TELEGRAM_BOT_TOKEN_REAL",
-        "DISCORD_BOT_TOKEN_REAL",
-        "SLACK_BOT_TOKEN_REAL",
-        "SLACK_APP_TOKEN_REAL",
-        "TELEGRAM_ALLOWED_IDS",
-        "TELEGRAM_AUTHORIZED_CHAT_IDS",
-        "TELEGRAM_CHAT_ID",
-        "TELEGRAM_CHAT_ID_E2E",
-        "DISCORD_CHANNEL_ID_E2E",
-        "SLACK_CHANNEL_ID_E2E",
-      ],
-    },
-  ] as const;
-
-  for (const { jobName, stepName, secrets } of credentialSteps) {
-    const job = asRecord(jobs[jobName]);
-    const step = requireJobStep(errors, jobName, asSteps(job.steps), stepName);
-    const environment = asRecord(step?.env);
-    for (const secret of secrets) {
-      if (environment[secret] !== guardedE2eSecret(secret)) {
-        errors.push(
-          `${jobName} ${stepName} must guard ${secret} behind trusted-main candidate authorization`,
-        );
-      }
-    }
-  }
 }
 
 function validateHermesTimeoutHeadroom(errors: string[], jobs: WorkflowRecord): void {
@@ -1698,12 +1655,11 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   if (
     !isDeepStrictEqual(asRecord(job.concurrency), {
       group: "jetson-nvmap-gpu-dispatch",
-      queue: "max",
       "cancel-in-progress": false,
     })
   ) {
     errors.push(
-      "jetson-nvmap-gpu concurrency must queue every operator-backend dispatch without cancellation",
+      "jetson-nvmap-gpu concurrency must preserve its operator-backend group without cancellation",
     );
   }
   if (!isDeepStrictEqual(asRecord(job.permissions), { contents: "read", "id-token": "write" })) {
@@ -1821,9 +1777,9 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
   }
   if (
     concurrency["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && inputs.jobs != 'staging-brev-launchable' && !inputs.include_staging_brev_launchable }}"
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"
   ) {
-    errors.push("workflow concurrency must not cancel an active Jetson or Launchable dispatch");
+    errors.push("workflow concurrency must not cancel an active Jetson dispatch");
   }
 }
 
@@ -1832,20 +1788,21 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   if (job.name !== "Exact staging Brev Launchable") {
     errors.push("staging-brev-launchable must identify the exact Launchable E2E contract");
   }
+  if (job.needs !== "generate-matrix") {
+    errors.push("staging-brev-launchable must depend on the authorized generate-matrix job");
+  }
   if (Object.hasOwn(job, "environment")) {
     errors.push("staging-brev-launchable must not use a GitHub environment");
   }
   const trustedRun = "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'";
-  const candidateAuthorization =
-    "(inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
   if (
     !stringValue(job.if).includes(trustedRun) ||
-    !stringValue(job.if).includes(candidateAuthorization)
+    stringValue(job.if).includes("checkout_sha == ''")
   ) {
-    errors.push("staging-brev-launchable must require trusted-main candidate authorization");
+    errors.push("staging-brev-launchable must allow only trusted-main dispatches");
   }
   const expectedSelector =
-    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
+    "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
   if (job.if !== expectedSelector) {
     errors.push("staging-brev-launchable must retain trusted manual selection");
   }
@@ -1897,11 +1854,11 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   const concurrency = asRecord(job.concurrency);
   if (
     concurrency.group !== "staging-brev-launchable-cpu" ||
-    concurrency.queue !== "max" ||
+    Object.hasOwn(concurrency, "queue") ||
     concurrency["cancel-in-progress"] !== false
   ) {
     errors.push(
-      "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
+      "staging-brev-launchable concurrency must preserve its Launchable group without cancelling the running job or using unsupported queue keys",
     );
   }
   const steps = asSteps(job.steps);
@@ -1911,11 +1868,16 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     checkoutWith.ref !== "${{ github.workflow_sha }}" ||
     checkoutWith["persist-credentials"] !== false
   ) {
-    errors.push("staging-brev-launchable must check out trusted workflow source without credentials");
+    errors.push(
+      "staging-brev-launchable must check out trusted workflow source without credentials",
+    );
   }
   const prepare = requireStep(errors, steps, "Prepare the trusted lane");
   const prepareEnv = asRecord(prepare?.env);
   const run = requireStep(errors, steps, "Build, deploy, verify, test, and clean up");
+  if (run?.run !== "tools/e2e/brev-launchable-e2e.sh") {
+    errors.push("staging-brev-launchable must execute the trusted Launchable E2E script");
+  }
   if (prepare && run && steps.indexOf(prepare) >= steps.indexOf(run)) {
     errors.push("staging-brev-launchable must prepare the workspace before the Launchable E2E run");
   }
@@ -1926,7 +1888,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
     [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
   ] as const) {
-    const expected = `\${{ ${trustedRun} && github.event_name == 'workflow_dispatch' && ${candidateAuthorization} && secrets.${secret} || '' }}`;
+    const expected = `\${{ ${trustedRun} && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
     if (env[key] !== expected) {
       errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
     }
@@ -1961,7 +1923,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   const prepareRun = stringValue(prepare?.run);
   if (
     !prepareRun.includes("sha256sum -c -") ||
-    !prepareRun.includes("brev login --api-key \"$BREV_API_KEY\" --org-id \"$BREV_ORG_ID\"")
+    !prepareRun.includes('brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"')
   ) {
     errors.push("staging-brev-launchable must verify and authenticate the pinned Brev CLI");
   }
@@ -1986,107 +1948,6 @@ function validateStagingBrevLaunchableInput(
     errors.push(
       "workflow_dispatch include_staging_brev_launchable input must document full-run Launchable E2E scope",
     );
-  }
-}
-
-function validateReleaseQualificationWaiverInputs(
-  errors: string[],
-  dispatchInputs: WorkflowRecord,
-): void {
-  const jobsInput = requireInput(errors, dispatchInputs, "release_qualification_waived_jobs");
-  if (jobsInput.type !== "string" || jobsInput.default !== "") {
-    errors.push(
-      "workflow_dispatch release_qualification_waived_jobs input must be a string and default to empty",
-    );
-  }
-  const jobsDescription = stringValue(jobsInput.description);
-  if (
-    !jobsDescription.includes("Admin-only") ||
-    !jobsDescription.includes("release-required E2E job IDs") ||
-    !jobsDescription.includes("Leave empty")
-  ) {
-    errors.push(
-      "workflow_dispatch release_qualification_waived_jobs input must document its admin-only release scope",
-    );
-  }
-  const reasonInput = requireInput(errors, dispatchInputs, "release_qualification_waiver_reason");
-  if (reasonInput.type !== "string" || reasonInput.default !== "") {
-    errors.push(
-      "workflow_dispatch release_qualification_waiver_reason input must be a string and default to empty",
-    );
-  }
-  const reasonDescription = stringValue(reasonInput.description);
-  if (
-    !reasonDescription.includes("Admin-only") ||
-    !reasonDescription.includes("Required when release_qualification_waived_jobs is not empty")
-  ) {
-    errors.push(
-      "workflow_dispatch release_qualification_waiver_reason input must document its paired admin-only scope",
-    );
-  }
-}
-
-function validateReleaseQualificationWaiverAuthorization(
-  errors: string[],
-  generateSteps: readonly WorkflowStep[],
-): void {
-  const authorization = requireJobStep(
-    errors,
-    "generate-matrix",
-    generateSteps,
-    "Authorize release qualification waiver",
-  );
-  if (
-    authorization?.if !==
-    "${{ github.event_name == 'workflow_dispatch' && (inputs.release_qualification_waived_jobs != '' || inputs.release_qualification_waiver_reason != '') }}"
-  ) {
-    errors.push("release qualification waiver authorization must cover either nonempty input");
-  }
-  if (authorization?.shell !== "bash") {
-    errors.push("release qualification waiver authorization must use bash");
-  }
-  const expectedEnv = {
-    ACTOR: "${{ github.actor }}",
-    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
-    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
-    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
-    GITHUB_TOKEN: "${{ github.token }}",
-    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
-    JOBS: "${{ inputs.jobs }}",
-    TARGETS: "${{ inputs.targets }}",
-    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
-    WAIVED_JOBS: "${{ inputs.release_qualification_waived_jobs }}",
-    WAIVER_REASON: "${{ inputs.release_qualification_waiver_reason }}",
-    WORKFLOW_REF: "${{ github.ref }}",
-  };
-  if (!isDeepStrictEqual(asRecord(authorization?.env), expectedEnv)) {
-    errors.push(
-      "release qualification waiver authorization must bind only trusted identity and release-run inputs",
-    );
-  }
-  for (const required of [
-    "/collaborators/${administrator}/permission",
-    "'.user.login // \"\"'",
-    "'.role_name // \"\"'",
-    '== "admin"',
-    'require_admin "$ACTOR"',
-    'require_admin "$TRIGGERING_ACTOR"',
-    '[[ -z "$CHECKOUT_SHA" && -z "$JOBS" && -z "$TARGETS" ]]',
-    '[[ "$INCLUDE_LAUNCHABLE" == "true"',
-    '[[ "$WAIVED_JOBS" =~ $waived_jobs_pattern ]]',
-    "${#WAIVER_REASON} -ge 10",
-    "${#WAIVER_REASON} -le 500",
-    "requires a repository administrator",
-  ]) {
-    requireRunContains(errors, authorization, required);
-  }
-  const checkout = namedStep(generateSteps, "Check out E2E candidate");
-  if (
-    authorization &&
-    checkout &&
-    generateSteps.indexOf(authorization) >= generateSteps.indexOf(checkout)
-  ) {
-    errors.push("release qualification waiver authorization must run before candidate checkout");
   }
 }
 
@@ -2176,8 +2037,6 @@ function validateTrustedE2eDispatchReceipt(
     REPOSITORY: "${{ github.repository }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
     RUN_ID: "${{ github.run_id }}",
-    RELEASE_QUALIFICATION_WAIVED_JOBS: "${{ inputs.release_qualification_waived_jobs }}",
-    RELEASE_QUALIFICATION_WAIVER_REASON: "${{ inputs.release_qualification_waiver_reason }}",
     TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
@@ -2207,8 +2066,6 @@ function validateTrustedE2eDispatchReceipt(
     "allowJetsonDispatch: $allowJetsonDispatch",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
-    'releaseQualificationWaivedJobs: (if $releaseQualificationWaivedJobs == "" then [] else ($releaseQualificationWaivedJobs | split(",")) end)',
-    'releaseQualificationWaiverReason: (if $releaseQualificationWaiverReason == "" then null else $releaseQualificationWaiverReason end)',
     "triggeringActor: $triggeringActor",
     'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
@@ -2233,14 +2090,8 @@ function validateTrustedE2eDispatchReceipt(
   }
 
   const authentication = namedStep(generateSteps, "Authenticate manual PR dispatch");
-  const controllerMatrix = namedStep(generateSteps, "Build trusted controller target matrix");
-  const waiverAuthorization = namedStep(generateSteps, "Authorize release qualification waiver");
   const candidateCheckout = namedStep(generateSteps, "Check out E2E candidate");
   const authenticationIndex = authentication ? generateSteps.indexOf(authentication) : -1;
-  const controllerMatrixIndex = controllerMatrix ? generateSteps.indexOf(controllerMatrix) : -1;
-  const waiverAuthorizationIndex = waiverAuthorization
-    ? generateSteps.indexOf(waiverAuthorization)
-    : -1;
   const receiptIndex = dispatchReceipt ? generateSteps.indexOf(dispatchReceipt) : -1;
   const uploadIndex = dispatchUpload ? generateSteps.indexOf(dispatchUpload) : -1;
   const checkoutIndex = candidateCheckout ? generateSteps.indexOf(candidateCheckout) : -1;
@@ -2248,7 +2099,6 @@ function validateTrustedE2eDispatchReceipt(
     "Build trusted larger-runner routing",
     "Authenticate manual PR dispatch",
     "Build trusted controller target matrix",
-    "Authorize release qualification waiver",
     "Record trusted E2E dispatch receipt",
     "Upload trusted E2E dispatch receipt",
   ];
@@ -2258,9 +2108,7 @@ function validateTrustedE2eDispatchReceipt(
       trustedPrefix,
     ) ||
     authenticationIndex < 0 ||
-    controllerMatrixIndex !== authenticationIndex + 1 ||
-    waiverAuthorizationIndex !== controllerMatrixIndex + 1 ||
-    receiptIndex !== waiverAuthorizationIndex + 1 ||
+    receiptIndex !== authenticationIndex + 2 ||
     uploadIndex !== receiptIndex + 1 ||
     checkoutIndex <= uploadIndex
   ) {
@@ -2304,7 +2152,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireInput(errors, dispatchInputs, "targets");
   validateFullE2eConcurrency(errors, workflow);
   validateStagingBrevLaunchableInput(errors, dispatchInputs);
-  validateReleaseQualificationWaiverInputs(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
@@ -2329,7 +2176,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   validateRetiredSelectorCompatibilityJob(errors, jobs);
   const expectedRunName =
-    "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
+    "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
   if (workflow["run-name"] !== expectedRunName) {
     errors.push("workflow run-name must expose the unique manual-dispatch correlation ID");
   }
@@ -2365,12 +2212,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   ) {
     errors.push("generate-matrix job must expose release_required_jobs output");
   }
-  if (
-    generateOutputs.release_qualification_waived_jobs !==
-    "${{ steps.matrix.outputs.release_qualification_waived_jobs }}"
-  ) {
-    errors.push("generate-matrix job must expose release_qualification_waived_jobs output");
-  }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
   const controllerMatrix = requireJobStep(
@@ -2386,7 +2227,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     controllerMatrix?.if !==
     "${{ inputs.checkout_sha != '' && steps.candidate_authorization.outputs.nvidia_owned != 'true' }}"
   ) {
-    errors.push("trusted controller matrix step must run only for authenticated external dispatches");
+    errors.push("trusted controller matrix step must run only for external PR dispatches");
   }
   if (controllerMatrix?.shell !== "bash") {
     errors.push("trusted controller matrix step must use bash");
@@ -2566,12 +2407,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("matrix generation step must pass targets through TARGETS env");
   }
   if (
-    generateEnv.RELEASE_QUALIFICATION_WAIVED_JOBS !==
-    "${{ inputs.release_qualification_waived_jobs }}"
-  ) {
-    errors.push("matrix generation step must pass release qualification waived jobs through env");
-  }
-  if (
     generateEnv.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !==
     "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}"
   ) {
@@ -2603,16 +2438,13 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     "E2E planner matrix does not match controller-selected targets",
   );
   validateTrustedE2eDispatchReceipt(errors, generateSteps);
-  validateReleaseQualificationWaiverAuthorization(errors, generateSteps);
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
   if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
     errors.push("live job must run on the matrix runner");
   }
-  if (
-    !isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])
-  ) {
+  if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
     errors.push("live job must depend on base-image-publication and generate-matrix");
   }
   if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
@@ -2773,10 +2605,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
     errors.push("live E2E step must pass matrix.id through TARGET_ID env");
   }
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== guardedE2eSecret("NVIDIA_INFERENCE_API_KEY")) {
-    errors.push(
-      "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind trusted-main candidate authorization",
-    );
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push("live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
@@ -2949,7 +2779,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateStagingBrevLaunchableJob(errors, jobs);
   validateCatalogueOwnedJobs(errors, jobs);
   validateHermesE2EJob(errors, jobs);
-  validateCandidateCredentialSteps(errors, jobs);
   validateHermesTimeoutHeadroom(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
