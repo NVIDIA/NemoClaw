@@ -11,7 +11,6 @@ import type {
 import {
   WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID,
   WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
-  WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID,
 } from "../contract.ts";
 import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url.ts";
 
