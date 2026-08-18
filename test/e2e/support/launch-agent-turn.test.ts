@@ -56,6 +56,7 @@ type FixtureMode =
   | "cleanup-failure"
   | "delayed-input-attachment"
   | "delayed-recording"
+  | "delayed-tui-ready"
   | "input-mode-timeout"
   | "invalid-order"
   | "late-extra"
@@ -370,8 +371,8 @@ if (process.argv[2] !== "tui") {
   if (!monitorPid) process.exit(71);
   fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_MONITOR_PID, monitorPid);
   if (mode === "pty-response-forgery") {
-    process.stdin.on("data", () => {
-      fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_EARLY_INPUT_MARKER, "");
+    process.stdin.on("data", (chunk) => {
+      if (chunk.includes(13)) fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_EARLY_INPUT_MARKER, "");
     });
     fs.unlinkSync(socketPath);
     const ttyPath = fs.realpathSync("/proc/self/fd/0");
@@ -438,6 +439,9 @@ if (process.argv[2] !== "tui") {
   fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TTY_MARKER, "");
   const sessionFile = process.env.NEMOCLAW_FIXTURE_SESSION_FILE;
   const terminalCopy = process.env.NEMOCLAW_FIXTURE_TERMINAL_COPY;
+  const messageIndex = process.argv.indexOf("--message");
+  const firstInput = messageIndex === -1 ? "" : process.argv[messageIndex + 1];
+  if (!firstInput) process.exit(75);
   const append = (role, content) => fs.appendFileSync(
     sessionFile,
     JSON.stringify({ message: { content: [{ text: content, type: "text" }], role }, type: "message" }) + "\n",
@@ -446,6 +450,8 @@ if (process.argv[2] !== "tui") {
     process.stdin.setRawMode(true);
     await new Promise((resolve) => setTimeout(resolve, 750));
     process.stdin.setRawMode(false);
+    append("user", firstInput);
+    append("assistant", "first response");
     const recordUnexpectedInput = () =>
       fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_EARLY_INPUT_MARKER, "");
     process.stdin.on("data", recordUnexpectedInput);
@@ -453,54 +459,52 @@ if (process.argv[2] !== "tui") {
     await new Promise((resolve) => setTimeout(resolve, 10_000));
     process.stdin.off("data", recordUnexpectedInput);
   }
-  if (mode === "delayed-input-attachment" || mode === "input-mode-timeout") {
-    let inputBeforeAttachment = false;
-    const recordEarlyInput = () => { inputBeforeAttachment = true; };
+  if (mode === "input-mode-timeout") {
+    append("user", firstInput);
+    append("assistant", "first response");
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
+  if (mode === "delayed-input-attachment" || mode === "delayed-tui-ready") {
+    const recordEarlyInput = () =>
+      fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_EARLY_INPUT_MARKER, "");
+    if (mode === "delayed-tui-ready") process.stdin.setRawMode(true);
     process.stdin.on("data", recordEarlyInput);
-    await new Promise((resolve) => setTimeout(resolve, mode === "input-mode-timeout" ? 10_000 : 1_500));
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
     process.stdin.off("data", recordEarlyInput);
-    if (inputBeforeAttachment) process.exit(67);
+    if (fs.existsSync(process.env.NEMOCLAW_FIXTURE_EARLY_INPUT_MARKER)) process.exit(67);
   }
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   const ask = () => new Promise((resolve) => rl.question("", resolve));
   if (terminalCopy === "ansi") process.stdout.write("\u001b[2Kgateway connected | idle\r");
   if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
-  const first = await ask();
-  process.kill(Number(monitorPid), "SIGTERM");
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  const monitorStat = fs.readFileSync("/proc/" + monitorPid + "/stat", "utf8");
-  const monitorState = monitorStat ? monitorStat.slice(monitorStat.lastIndexOf(") ") + 2)[0] : null;
-  if (!monitorState || monitorState === "Z") process.exit(71);
-  const delayedInputs = [];
   if (mode === "delayed-recording") {
-    const recordDelayedInput = (line) => delayedInputs.push(line);
-    rl.on("line", recordDelayedInput);
     const publicationDeadline = Date.now() + 2_000;
     while (!fs.existsSync(process.env.NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER)) {
       if (Date.now() >= publicationDeadline) process.exit(68);
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    rl.off("line", recordDelayedInput);
   }
   if (mode === "recording-timeout") await new Promise((resolve) => setTimeout(resolve, 10_000));
   if (mode === "invalid-order") {
     append("assistant", "response before input");
-    append("user", first);
+    append("user", firstInput);
   } else {
-    append("user", first);
+    append("user", firstInput);
     append("assistant", "first response");
   }
-  for (const duplicate of delayedInputs) {
-    append("user", duplicate);
-    append("assistant", "duplicate response");
-  }
+
+  process.kill(Number(monitorPid), "SIGTERM");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const monitorStat = fs.readFileSync("/proc/" + monitorPid + "/stat", "utf8");
+  const monitorState = monitorStat ? monitorStat.slice(monitorStat.lastIndexOf(") ") + 2)[0] : null;
+  if (!monitorState || monitorState === "Z") process.exit(71);
 
   const second = await ask();
   append("user", second);
   append("assistant", "second response");
   const exitCommand = await ask();
-  if (mode === "late-extra") append("user", first);
+  if (mode === "late-extra") append("user", firstInput);
   rl.close();
   if (exitCommand !== "/exit") process.exit(65);
   process.exit(mode.includes("nonzero") ? 23 : 0);
@@ -757,6 +761,7 @@ require("node:fs").appendFileSync(
     NEMOCLAW_OPENSHELL_BIN: shim,
     NEMOCLAW_OPENSHELL_COMMAND: realOpenShell,
     OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH: interceptPath,
+    OPENSHELL_NEMOCLAW_LAUNCH_FIRST_INPUT: "fixture input",
     OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_KEY_PATH: keyPath,
     OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
     OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND: realOpenShell,
@@ -799,6 +804,10 @@ require("node:fs").appendFileSync(
     const passThrough = runShim(passThroughArgv, hostEnv);
     const ttyPassThrough = runShim(ttyPassThroughArgv);
     const malformed = runShim(malformedArgv);
+    const invalidFirstInput = runShim(exactArgv, {
+      ...env,
+      OPENSHELL_NEMOCLAW_LAUNCH_FIRST_INPUT: "",
+    });
     const intercepted = runShim(exactArgv);
     const duplicate = runShim(exactArgv);
     const records = readFileSync(callsPath, "utf8")
@@ -813,6 +822,7 @@ require("node:fs").appendFileSync(
       exactArgv,
       interceptMode: statSync(interceptPath).mode & 0o777,
       intercepted,
+      invalidFirstInput,
       malformed,
       passThrough,
       passThroughArgv,
@@ -926,6 +936,10 @@ it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as co
     expect(fixture.ttyPassThrough.status, fixture.ttyPassThrough.stderr).toBe(0);
     expect(fixture.malformed.status).toBe(73);
     expect(fixture.malformed.stderr).toContain('"reason":"openshell_launch_invocation_invalid"');
+    expect(fixture.invalidFirstInput.status).toBe(73);
+    expect(fixture.invalidFirstInput.stderr).toContain(
+      '"reason":"openshell_shim_first_input_invalid"',
+    );
     expect(fixture.intercepted.status, fixture.intercepted.stderr).toBe(0);
     expect(fixture.duplicate.status).toBe(73);
     expect(fixture.duplicate.stderr).toContain('"reason":"openshell_launch_intercept_duplicate"');
@@ -956,7 +970,10 @@ it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as co
       fixture.monitorRoot,
       fixture.publicKey,
       `${fixture.monitorRoot}/pty-monitor-private-key`,
-      ...expectedRemote,
+      ...expectedRemote.slice(0, -1),
+      'exec openclaw tui --message "$1"',
+      "nemoclaw-launch-first-turn",
+      "fixture input",
     ]);
     expect(fixture.calls.flat()).not.toContain(fixture.privateKey);
   },
@@ -997,7 +1014,7 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux").each(["absent", "ansi", "reordered"] as const)(
-  "keeps the monitor alive through SIGTERM, sends two PTY inputs and /exit, strips launch authority, and ignores terminal copy evidence [%s] (#9160)",
+  "keeps the monitor alive through SIGTERM, records an auto-message and PTY turn, sends /exit, strips launch authority, and ignores terminal copy evidence [%s] (#9160, #9384)",
   (terminalCopy) => {
     const {
       baselineRemoved,
@@ -1050,6 +1067,17 @@ it.runIf(process.platform === "linux")(
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(0);
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "waits for OpenClaw startup to accept its auto-message before submitting one PTY input (#9384)",
+  () => {
+    const fixture = runLaunchSessionFixture("delayed-tui-ready", "absent");
+
+    expect(fixture.earlyInputObserved, fixture.result.stderr).toBe(false);
+    expect(fixture.baselineRemoved, fixture.result.stderr).toBe(true);
+    expect(fixture.result.status, fixture.result.stderr).toBe(0);
   },
 );
 
