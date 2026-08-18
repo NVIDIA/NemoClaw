@@ -524,18 +524,17 @@ function finalizeRelaunchedRecovery(
   try {
     completion = relaunch.finalize(true);
     if (completion.stateRestored === false || completion.rolledBack) {
+      const recoveryFailureDetail = completion.rolledBack
+        ? "Sandbox recovery did not complete; the previous container was restored"
+        : "Sandbox recovery failed and the previous container could not be restored automatically";
       if (!quiet) {
-        console.error(
-          completion.rolledBack
-            ? "  Sandbox recovery did not complete; the previous container was restored."
-            : "  Sandbox recovery failed and the previous container could not be restored automatically.",
-        );
+        console.error(`  ${recoveryFailureDetail}.`);
         if (completion.rolledBack && completion.stateBackupRemoved === false) {
           console.error("  Warning: the temporary sandbox state backup could not be removed.");
         }
         if (!completion.rolledBack) printRecoveryHints();
       }
-      return finalRelaunchRecoveryFailure();
+      return finalRelaunchRecoveryFailure(recoveryFailureDetail);
     }
   } catch {
     if (!quiet) {

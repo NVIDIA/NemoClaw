@@ -919,7 +919,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
           (_name: string, options?: { beforeProbe?: (timeoutMs: number) => boolean | null }) =>
             options?.beforeProbe?.(1000) === true && finalReadinessReady,
         );
-      const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+      const captureOpenshell = vi
+        .spyOn(openshellRuntime, "captureOpenshell")
+        .mockReturnValue({ status: 0, output: "" });
+      const runOpenshell = vi
+        .spyOn(openshellRuntime, "runOpenshell")
+        .mockReturnValue({ status: 0 } as never);
 
       const result = checkAndRecoverSandboxProcesses("failed-handoff-box", {
         quiet: true,
@@ -943,6 +948,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledTimes(
         expectedReadinessCalls,
       );
+      expect(captureOpenshell).not.toHaveBeenCalled();
       expect(runOpenshell).not.toHaveBeenCalled();
     },
   );
@@ -980,6 +986,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       wasRunning: false,
       recovered: false,
       forwardRecovered: false,
+      recoveryFailureDetail: "Sandbox recovery did not complete; the previous container was restored",
     });
     expect(order).toEqual(["restore-state", "post-restore-restart", "rollback-container"]);
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(4);
@@ -1015,7 +1022,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         _options?: { beforeProbe?: (timeoutMs: number) => boolean | null; timeoutSeconds?: number },
       ) => true,
     );
-    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+    const captureOpenshell = vi
+      .spyOn(openshellRuntime, "captureOpenshell")
+      .mockReturnValue({ status: 0, output: "" });
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0 } as never);
 
     const result = checkAndRecoverSandboxProcesses("restore-failed-box", {
       quiet: true,
@@ -1031,6 +1043,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       wasRunning: false,
       recovered: false,
       forwardRecovered: false,
+      recoveryFailureDetail:
+        "Sandbox recovery did not complete; the previous container was restored",
     });
     expect(finalize).toHaveBeenCalledOnce();
     expect(finalize).toHaveBeenCalledWith(true);
@@ -1042,6 +1056,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(waitForRecreatedSandboxOpenShellReadyImpl.mock.calls[0]?.[1]).not.toHaveProperty(
       "timeoutSeconds",
     );
+    expect(captureOpenshell).not.toHaveBeenCalled();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -1067,6 +1082,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     }));
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const captureOpenshell = vi
+      .spyOn(openshellRuntime, "captureOpenshell")
+      .mockReturnValue({ status: 0, output: "" });
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0 } as never);
 
     const result = checkAndRecoverSandboxProcesses("restore-rollback", {
       quiet: false,
@@ -1082,7 +1103,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       wasRunning: false,
       recovered: false,
       forwardRecovered: false,
+      recoveryFailureDetail:
+        "Sandbox recovery failed and the previous container could not be restored automatically",
     });
+    expect(result).not.toHaveProperty("forwardRecoveryFailed");
+    expect(captureOpenshell).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
     const output = errorSpy.mock.calls.flat().join("\n");
     expect(output).toContain(
       "Sandbox recovery failed and the previous container could not be restored automatically.",
