@@ -156,6 +156,10 @@ export interface RepairLocalInferenceSystemdOverrideOptions {
   model: string | null | undefined;
   contextWindowFloor: number;
   isNonInteractive: () => boolean;
+  /** True when the recorded ollama-local resolves to a Windows-host Ollama daemon
+   * (host.docker.internal or mirrored loopback). Linux does not own that daemon,
+   * so the systemd loopback-override repair must not run against it. */
+  isWindowsHostOllama?: boolean;
 }
 
 function failOllamaResumeRepair(message: string): never {
@@ -170,14 +174,16 @@ function failOllamaResumeRepair(message: string): never {
 export function repairLocalInferenceSystemdOverrideOrExit(
   options: RepairLocalInferenceSystemdOverrideOptions,
 ): void {
-  const { provider, model, isNonInteractive } = options;
+  const { provider, model, isNonInteractive, isWindowsHostOllama } = options;
   if (provider !== "ollama-local") return;
   const contextWindowFloor = resolveOllamaContextWindowFloor(options.contextWindowFloor);
-  const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
-  if (state === "failed") {
-    failOllamaResumeRepair(
-      "Ollama systemd restart did not recover after applying the loopback override.",
-    );
+  if (!isWindowsHostOllama) {
+    const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
+    if (state === "failed") {
+      failOllamaResumeRepair(
+        "Ollama systemd restart did not recover after applying the loopback override.",
+      );
+    }
   }
   if (contextWindowFloor <= MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW) return;
   if (!model) {

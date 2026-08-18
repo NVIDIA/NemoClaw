@@ -3421,6 +3421,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           ...reasoningMode.compatibleEndpointReasoningConfigureDeps,
           ...reasoningMode.compatibleEndpointReasoningClearDeps,
           repairLocalInferenceSystemdOverrideOrExit,
+          resolveIsWindowsHostOllama: () =>
+            detectInferenceProviderHostState({
+              gpu: null,
+              experimental: EXPERIMENTAL,
+              probeVllm: false,
+              log: () => {},
+            }).isWindowsHostOllama,
           isNonInteractive,
           getOpenshellBinary,
           needsBedrockRuntimeAdapter: (providerName, url) => providerName === "compatible-anthropic-endpoint" && bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),

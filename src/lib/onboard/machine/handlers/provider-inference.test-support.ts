@@ -124,6 +124,7 @@ export function createDeps(
     repairEvent: vi.fn(async () => createSession()),
     hydrate: vi.fn(),
     repair: vi.fn(),
+    resolveIsWindowsHostOllama: vi.fn(() => false),
     routeReady: vi.fn((_gatewayName: string, _provider: string, _model: string) => false),
     reconcileRouter: vi.fn(async () => undefined),
     reupsertRoutedProvider: vi.fn(
@@ -199,6 +200,7 @@ export function createDeps(
       },
       clearCompatibleEndpointReasoningEffort: () => null,
       repairLocalInferenceSystemdOverrideOrExit: calls.repair,
+      resolveIsWindowsHostOllama: calls.resolveIsWindowsHostOllama,
       isNonInteractive: () => true,
       getOpenshellBinary: () => "/usr/bin/openshell",
       needsBedrockRuntimeAdapter: () => false,

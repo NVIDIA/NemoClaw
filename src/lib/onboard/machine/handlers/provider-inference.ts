@@ -245,6 +245,9 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     repairLocalInferenceSystemdOverrideOrExit(
       options: RepairLocalInferenceSystemdOverrideOptions,
     ): void;
+    /** Recheck whether the recorded ollama-local is a Windows-host daemon before
+     * resume runs the Linux systemd override repair. */
+    resolveIsWindowsHostOllama?(): boolean;
     isNonInteractive(): boolean;
     getOpenshellBinary(): string;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
@@ -846,7 +849,7 @@ async function configureResumeReasoning(
 
 type LocalInferenceRepairDeps = Pick<
   ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
-  "recordRepairEvent" | "repairLocalInferenceSystemdOverrideOrExit"
+  "recordRepairEvent" | "repairLocalInferenceSystemdOverrideOrExit" | "resolveIsWindowsHostOllama"
 >;
 
 async function repairResumedLocalInference(
@@ -860,6 +863,7 @@ async function repairResumedLocalInference(
     model,
     contextWindowFloor: getOllamaContextWindowFloorForAgent(agentName(agent)),
     isNonInteractive: () => false,
+    isWindowsHostOllama: deps.resolveIsWindowsHostOllama?.(),
   };
   if (provider !== "ollama-local") {
     deps.repairLocalInferenceSystemdOverrideOrExit(options);

@@ -184,6 +184,37 @@ describe("repairLocalInferenceSystemdOverrideOrExit (#6760)", () => {
     expect(mockedApplyRuntimeContext).not.toHaveBeenCalled();
   });
 
+  it("skips the systemd override repair for a Windows-host Ollama but still verifies the model", () => {
+    const callOrder: string[] = [];
+    mockedFindReachableHost.mockImplementation(() => {
+      callOrder.push("host");
+      return "127.0.0.1";
+    });
+    mockedValidateModel.mockImplementation(() => {
+      callOrder.push("warm");
+      return { ok: true };
+    });
+    mockedApplyRuntimeContext.mockImplementation(() => {
+      callOrder.push("runtime-context");
+      return { ok: true };
+    });
+
+    repairLocalInferenceSystemdOverrideOrExit({
+      provider: "ollama-local",
+      model: recordedModel,
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+      isNonInteractive,
+      isWindowsHostOllama: true,
+    });
+
+    expect(mockedEnsureSystemdOverride).not.toHaveBeenCalled();
+    expect(mockedValidateModel).toHaveBeenCalledWith(recordedModel);
+    expect(mockedApplyRuntimeContext).toHaveBeenCalledWith(recordedModel, {
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+    });
+    expect(callOrder).toEqual(["host", "warm", "runtime-context"]);
+  });
+
   it("rejects a strict resume when the recorded model is missing", () => {
     expectFailure(
       () =>

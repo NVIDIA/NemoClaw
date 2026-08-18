@@ -462,6 +462,7 @@ describe("handleProviderInferenceState", () => {
       model: "llama3.1",
       contextWindowFloor: 16_384,
       isNonInteractive: deps.isNonInteractive,
+      isWindowsHostOllama: false,
     });
     expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
       state: "provider_selection",
@@ -474,6 +475,38 @@ describe("handleProviderInferenceState", () => {
       model: "llama3.1",
     });
     expect(result).toMatchObject({ provider: "ollama-local", model: "llama3.1" });
+  });
+
+  it("rechecks the Windows-host topology before resume repairs the systemd loopback (#9348)", async () => {
+    const session = createSession({
+      provider: "ollama-local",
+      model: "llama3.1",
+      credentialEnv: null,
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      resolveIsWindowsHostOllama: () => true,
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.resolveIsWindowsHostOllama).toHaveBeenCalledTimes(1);
+    expect(calls.repair).toHaveBeenCalledWith({
+      provider: "ollama-local",
+      model: "llama3.1",
+      contextWindowFloor: 16_384,
+      isNonInteractive: deps.isNonInteractive,
+      isWindowsHostOllama: true,
+    });
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
+      state: "provider_selection",
+      metadata: { repair: "ollama-systemd-loopback" },
+    });
   });
 
   it("reuses a persisted vLLM served alias when resume repairs inference (#7023)", async () => {
