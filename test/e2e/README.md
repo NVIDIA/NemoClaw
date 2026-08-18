@@ -325,7 +325,36 @@ npx tsx tools/e2e/workflow-plan.mts --summary >> "$GITHUB_STEP_SUMMARY"
 ```
 
 The workflow's `--ci-output` mode uses the same renderer for its job summary.
-The table includes the typed registry matrix, shared test matrix, catalogue profile matrices, and retained workflow jobs.
+The table includes the typed registry matrix, shared test matrix, catalogue profile matrices, retained workflow jobs, and staging Brev execution.
+
+Each execution row declares three coverage fields:
+
+- `agentRuntime` names the agent runtime that the execution asserts. Use `none` when the execution does not start an agent. Use `unresolved` only with an `unresolvedReason`.
+- `observableOutcome` names the behavior that produces the evidence. Catalogue targets use their outcome-oriented `displayName` as this value.
+- `environmentOrInferenceEndpoint` names the host boundary or inference endpoint that distinguishes the evidence.
+
+Keep coverage metadata with the execution owner:
+
+- Catalogue targets declare it in `tools/e2e/target-catalogue.mts`.
+- Executable typed targets declare it in `test/e2e/registry/definitions/baseline.ts`.
+- Shared credential-free tests declare it in `tools/e2e/credential-free-tests.mts`.
+- Retained workflow jobs and staging Brev declare it in `.github/workflows/e2e.yaml`.
+
+Single workflow jobs use the `E2E_AGENT_RUNTIME`, `E2E_OBSERVABLE_OUTCOME`,
+`E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT`, and optional `E2E_UNRESOLVED_REASON`
+environment entries. Matrix jobs put variant-specific values in the corresponding
+snake-case include entries and use `coverage_variant` when one job contributes
+multiple rows. `tools/e2e/workflow-plan.mts` composes and validates these sources.
+Do not add a separate hand-maintained execution list.
+
+The default coverage matrix excludes explicit-only jobs and inert typed-registry declarations.
+The rendered report lists those categories separately.
+Explicit-only rows keep their coverage dimensions but do not join the default release matrix.
+Inert declarations report unresolved coverage fields and the missing executable ownership.
+
+The inert declarations are combinatorial gaps, not supported matrix cells. #8285 owns the decision on the inert cross-runtime foundation. #8286 owns executable-only registry cleanup after that decision. Do not schedule other Cartesian-product cells without an accepted supported combination. This migration removes no execution, so it requires no duplicate-to-retained-evidence mapping. A documented gap does not schedule a new combination or change release judgment.
+
+The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
 ## Launch-readiness locked-image acceptance
 

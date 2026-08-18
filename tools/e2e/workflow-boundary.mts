@@ -39,6 +39,11 @@ import {
 } from "./operations-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
+import {
+  type E2eExecutionRow,
+  validateE2eExecutionRows,
+  validateE2eExecutionMetadata,
+} from "./execution-coverage.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import {
   validateTrustedHermesSwapHelperSource,
@@ -114,6 +119,7 @@ export interface FreeStandingJobsInventory {
   freeStandingTargets: string[];
   targetToJob: Map<string, string>;
   liveTestToJobs: Map<string, string[]>;
+  coverageRows: E2eExecutionRow[];
 }
 
 export interface FocusedE2eJob {
@@ -154,6 +160,18 @@ const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
+const AGENT_RUNTIME_MARKER = "E2E_AGENT_RUNTIME";
+const OUTCOME_MARKER = "E2E_OBSERVABLE_OUTCOME";
+const ENVIRONMENT_MARKER = "E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT";
+const UNRESOLVED_MARKER = "E2E_UNRESOLVED_REASON";
+const COVERAGE_MATRIX_KEYS = [
+  "agent_runtime",
+  "observable_outcome",
+  "environment_or_inference_endpoint",
+  "unresolved_reason",
+  "coverage_variant",
+] as const;
+const STAGING_BREV_JOB_ID = "staging-brev-launchable";
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
@@ -449,6 +467,44 @@ function findDuplicates(values: readonly string[]): string[] {
   return [...duplicates].sort();
 }
 
+function workflowCoverageRows(jobId: string, job: WorkflowRecord): E2eExecutionRow[] {
+  const env = asRecord(job.env);
+  const matrix = asRecord(asRecord(job.strategy).matrix);
+  const includes = Array.isArray(matrix.include)
+    ? matrix.include
+        .map(asRecord)
+        .filter((entry) => COVERAGE_MATRIX_KEYS.some((key) => Object.hasOwn(entry, key)))
+    : [];
+  const hasEnvironmentMetadata = [
+    AGENT_RUNTIME_MARKER,
+    OUTCOME_MARKER,
+    ENVIRONMENT_MARKER,
+    UNRESOLVED_MARKER,
+  ].some((key) => Object.hasOwn(env, key));
+  if (!hasEnvironmentMetadata && includes.length === 0) return [];
+
+  const candidates = includes.length > 0 ? includes : [{}];
+  return candidates.map((entry) => {
+    const metadata = validateE2eExecutionMetadata(
+      {
+        agentRuntime: stringValue(entry.agent_runtime || env[AGENT_RUNTIME_MARKER]),
+        observableOutcome: stringValue(entry.observable_outcome || env[OUTCOME_MARKER]),
+        environmentOrInferenceEndpoint: stringValue(
+          entry.environment_or_inference_endpoint || env[ENVIRONMENT_MARKER],
+        ),
+        unresolvedReason: stringValue(entry.unresolved_reason || env[UNRESOLVED_MARKER]),
+      } as Parameters<typeof validateE2eExecutionMetadata>[0],
+      `E2E workflow job ${jobId}`,
+    );
+    return {
+      id: jobId,
+      variant: stringValue(entry.coverage_variant),
+      source: jobId === STAGING_BREV_JOB_ID ? "staging" : "retained-workflow",
+      ...metadata,
+    };
+  });
+}
+
 function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   errors: string[];
   inventory: FreeStandingJobsInventory;
@@ -460,10 +516,16 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   const freeStandingTargets: string[] = [];
   const targetToJob = new Map<string, string>();
   const liveTestToJobs = new Map<string, string[]>();
+  const coverageRows: E2eExecutionRow[] = [];
 
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob);
     const env = asRecord(job.env);
+    try {
+      coverageRows.push(...workflowCoverageRows(jobId, job));
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
     if (jobId === SHARED_E2E_JOB_ID) continue;
     const hasJobMarker = Object.hasOwn(env, FREE_STANDING_JOB_MARKER);
     const hasTargetMarker = Object.hasOwn(env, FREE_STANDING_TARGET_MARKER);
@@ -532,6 +594,22 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   for (const duplicate of findDuplicates(freeStandingTargets)) {
     errors.push(`free-standing workflow metadata repeats target id: ${duplicate}`);
   }
+  for (const jobId of workflowJobs) {
+    if (jobId !== SHARED_E2E_JOB_ID && !coverageRows.some((row) => row.id === jobId)) {
+      errors.push(`${jobId} job requires execution coverage metadata`);
+    }
+  }
+  if (
+    Object.hasOwn(jobs, STAGING_BREV_JOB_ID) &&
+    !coverageRows.some((row) => row.source === "staging")
+  ) {
+    errors.push(`${STAGING_BREV_JOB_ID} job requires execution coverage metadata`);
+  }
+  try {
+    validateE2eExecutionRows(coverageRows);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
 
   return {
     errors,
@@ -541,6 +619,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       explicitOnlyJobs,
       freeStandingTargets,
       targetToJob,
+      coverageRows,
       liveTestToJobs: new Map(
         [...liveTestToJobs]
           .sort(([left], [right]) => left.localeCompare(right))
@@ -568,6 +647,7 @@ function cloneFreeStandingJobsInventory(
     explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     freeStandingTargets: [...inventory.freeStandingTargets],
     targetToJob: new Map(inventory.targetToJob),
+    coverageRows: inventory.coverageRows.map((row) => ({ ...row })),
     liveTestToJobs: cloneStringArrayMap(inventory.liveTestToJobs),
   };
 }
