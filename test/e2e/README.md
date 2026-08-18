@@ -1263,9 +1263,10 @@ first fresh onboarding path in that job. It measures from the onboard root span
 agent response and reads the registered workload receipt. A `legacy-dockerfile`
 receipt requires the local BuildKit prebuild without a gateway-builder fallback.
 A `managed-image` receipt instead requires an exact digest that matches the
-registered sandbox image tag and forbids a local BuildKit prebuild. Both paths
-enforce the calibrated root and phase limits in the budget file and limit the
-longest onboard output gap to 60 seconds. A violation fails
+registered sandbox image tag, a non-empty publication cohort, and an exact
+40-character source revision, and it forbids a local BuildKit prebuild. Both
+paths enforce the calibrated root and phase limits in the budget file and limit
+the longest onboard output gap to 60 seconds. A violation fails
 `full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
 The artifact records the first-turn command wall clock and OpenClaw's internal
 agent duration separately. Older or malformed OpenClaw output records an
