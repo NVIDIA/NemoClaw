@@ -6,29 +6,26 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 export function isCanonicalNemoClawRemote(remote: string): boolean {
-  if (/^git@github[.]com:NVIDIA\/NemoClaw(?:[.]git)?\/?$/iu.test(remote)) {
-    return true;
-  }
+  return /^https:\/\/github[.]com\/NVIDIA\/NemoClaw(?:[.]git)?$/u.test(remote);
+}
+
+export function isLocalReleaseFixtureRemote(remote: string): boolean {
+  if (path.isAbsolute(remote)) return true;
   try {
     const url = new URL(remote);
-    const protocolAllowed =
-      url.protocol === "https:" || (url.protocol === "ssh:" && url.username === "git");
-    const repository = url.pathname
-      .replace(/\/$/u, "")
-      .replace(/[.]git$/iu, "")
-      .toLowerCase();
-    return (
-      protocolAllowed &&
-      url.hostname.toLowerCase() === "github.com" &&
-      repository === "/nvidia/nemoclaw"
-    );
+    return url.protocol === "file:" && url.hostname === "" && path.isAbsolute(url.pathname);
   } catch {
     return false;
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  const remote = process.argv[2] ?? "";
   process.stdout.write(
-    isCanonicalNemoClawRemote(process.argv[2] ?? "") ? "canonical" : "noncanonical",
+    isCanonicalNemoClawRemote(remote)
+      ? "canonical"
+      : isLocalReleaseFixtureRemote(remote)
+        ? "local-fixture"
+        : "noncanonical",
   );
 }

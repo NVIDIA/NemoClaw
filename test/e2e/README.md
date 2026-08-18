@@ -230,7 +230,7 @@ Each entry owns these target properties:
 - PR Review Advisor selection. Standard-profile targets are selectable by default; a credentialed target must set `prAdvisorSelectable` before the Advisor may recommend its logical target ID.
 - Optional Vitest title selector.
 - Target-specific environment variables.
-- Pre-tag release requirement.
+- Full-run qualification membership.
 
 Host preparation is the reviewed E2E runner preparation mode.
 `none` makes no runner-level change.
@@ -302,7 +302,7 @@ If the target reports success without product evidence, manifest creation fails 
 A catalogue Vitest selection that runs no tests exits nonzero before manifest creation, including when every selected test skips.
 Failed targets still write a manifest for diagnosis, and the existing artifact upload publishes the manifest with the target artifacts.
 The manifest is secret-free diagnostic evidence.
-It does not replace the workflow job result or the `Release qualification` release gate.
+It does not replace the workflow job result or the strict `Release qualification` aggregate.
 
 Run the planner locally to render the complete default selection as a Markdown table:
 
@@ -724,31 +724,41 @@ A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev L
 Push runs do not select this job.
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
-`targets` selectors runs the default workflow E2E selection plus the Launchable E2E job.
-This selection is the full manual `main` run for pre-tag release evidence.
-Each full dispatch uses
-`github.run_id` in its workflow concurrency identity, so another full dispatch
-cannot supersede it while it waits. The trusted `main` workflow dispatch
-verifies that the dispatching and rerunning actors have repository `maintain` or
-`admin` permission before the Launchable path's source checkout. That automatic
-role check authorizes `staging-brev-launchable`; the job does not use GitHub
-environment approval. The job uses the non-cancelling
-`staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable E2E
-runs remain queued instead of replacing one another.
+`targets` selectors runs the default workflow E2E selection plus `Exact staging
+Brev Launchable`. The workflow names this selection `E2E full main`, with the
+correlation ID when one was supplied, so maintainers can find the newest full
+manual run without scanning every run's jobs.
 
-For a full manual run dispatched against `main`, `Release qualification` waits for every E2E job that does not require a separate opt-in.
-The check requires each of those jobs to pass, including `Exact staging Brev Launchable`.
-A passing check at the candidate commit SHA is the pre-tag release E2E evidence.
-Ensure that each candidate commit SHA has a qualifying full manual `main` run.
-Dispatch another full run only when no qualifying run exists.
-`scripts/release-cut-tag.sh` searches completed, successful manual `.github/workflows/e2e.yaml` runs at the exact planned `origin/main` commit before a signing preflight or tag push.
-It accepts the first run with exactly one completed, successful `Release qualification` job.
-A run with zero or multiple jobs of that name is not evidence.
-If no qualifying run exists, the script fails closed.
-Local fixture remotes skip the canonical repository gate only when tests set the explicit `NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL=1` override and the shared classifier confirms a noncanonical origin.
-Canonical-equivalent `NVIDIA/NemoClaw` remotes always run the gate, even when that override is set.
-A local fixture cannot authorize a production release.
-Maintainers do not build a local evidence ledger or infer GitHub job status from an artifact.
+Each full dispatch uses `github.run_id` in its workflow concurrency identity, so
+another full dispatch cannot supersede it while it waits. The trusted `main`
+workflow dispatch verifies that the dispatching and rerunning actors have
+repository `maintain` or `admin` permission before the Launchable path's source
+checkout. That automatic role check authorizes `staging-brev-launchable`; the job
+does not use GitHub environment approval.
+
+The job uses the `staging-brev-launchable-cpu` concurrency group without
+cancelling a running job. GitHub keeps at most one pending job in that group, so
+a newer job can replace an older pending job.
+
+For a full manual run dispatched against `main`, `Release qualification` waits
+for every E2E job that does not require a separate opt-in, including `Exact
+staging Brev Launchable`. The strict aggregate reports whether that full run
+passed; it does not authorize or reject a tag. For a release decision, report
+the newest identifiable full run, its timestamps, tested commit SHA, workflow
+result, `Release qualification` result, and every job that did not succeed.
+Compare the tested SHA with the release candidate, but do not require a match or
+apply a staleness threshold. The maintainer can proceed with the reported status,
+rerun focused jobs, or request another full run.
+The release-tag skill records only the general E2E decision and any reason for
+proceeding with exceptional status in the signed release brief.
+
+Separately, every release candidate requires a successful exact-candidate `Exact
+staging Brev Launchable` job. That evidence can come from a Launchable-only or
+full run and cannot be waived by the maintainer's general E2E decision. The job
+builds the exact candidate image, deploys the standing Launchable, verifies the
+booted image and baked runtime, runs the preinstalled full E2E suite with
+inference, and confirms workspace absence.
+
 After preparation succeeds, the Launchable upload retains `lane.log` and each
 phase artifact created before exit. A preparation failure can produce no
 artifact. A later early failure can retain only `lane.log`. A successful job
@@ -769,9 +779,9 @@ Set `allow_dgx_spark_runner_queue=true` to select both
 GitHub can pause the qualification job for the
 `approve-dgx-spark-image-qualification` environment before it reaches the DGX
 Spark runner.
-Manual pre-tag dispatches require both hardware opt-in flags to remain `false`.
-Jetson push results and opt-in hardware results do not enter the required
-pre-tag E2E denominator.
+Full manual `main` dispatches require both hardware opt-in flags to remain `false`.
+Jetson push results and opt-in hardware results do not enter the strict full-run
+qualification set.
 
 ### Hosted-Runner Recovery
 
@@ -1061,7 +1071,7 @@ The workflow planner connects each trusted input to its execution and evidence b
 ```mermaid
 flowchart LR
   push["main push diff"] --> planner["Workflow planner"]
-  manual["Exact-SHA full manual dispatch<br/>or manual selectors"] --> planner
+  manual["Full manual dispatch<br/>or manual selectors"] --> planner
   planner --> registry["Typed registry matrix"]
   planner --> shared["Shared test matrix"]
   planner --> profiles["Catalogue profile matrices"]
@@ -1076,7 +1086,7 @@ flowchart LR
   dedicated -->|"push job results"| relevant
   reusable -->|"full manual job results"| release["Release qualification"]
   dedicated -->|"full manual job results"| release
-  release --> gate["Release gate"]
+  release --> decision["Status for maintainer decision"]
 ```
 
 Selected jobs retain their runner, credential, evidence, and cleanup boundaries.
@@ -1134,8 +1144,7 @@ unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the latest PR commit to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
-OpenShell PR qualification uses that receipt to bind the candidate repository, candidate commit SHA, base SHA, workflow SHA, run, and selectors.
-The pre-tag `Release qualification` check does not use this receipt.
+The full-main `Release qualification` aggregate does not use this receipt.
 
 PR Review Advisor maps changes to either of these shared journaled-recreation handlers to recommended E2E coverage:
 
