@@ -14,8 +14,9 @@
  *
  * It also binds the accepted Pi trust boundary:
  *
- * - The baseline network policy permits only the managed inference route, and
- *   only root-owned image binaries carry network capability.
+ * - The baseline network policy permits only the managed inference route,
+ *   enforced over REST with at least one explicit /v1/ rule, and only
+ *   root-owned image binaries carry network capability.
  * - The read-write paths stay /dev/null, /sandbox, /sandbox/.pi, and /tmp, and
  *   Landlock stays strict so filesystem policy fails closed.
  * - Pi runs as the sandbox user and group.
@@ -42,6 +43,7 @@ const PI_POLICY_PATH = "agents/pi/policy-additions.yaml";
 const MANAGED_INFERENCE_POLICY = "managed_inference";
 const MANAGED_INFERENCE_HOST = "inference.local";
 const MANAGED_INFERENCE_PORT = 443;
+const MANAGED_INFERENCE_PROTOCOL = "rest";
 const APPROVED_NETWORK_BINARIES = [
   "/usr/local/bin/node",
   "/usr/local/bin/pi",
@@ -272,7 +274,9 @@ function sortedStrings(value: unknown): string[] {
 }
 
 function sameSet(actual: readonly string[], approved: readonly string[]): boolean {
-  return actual.length === approved.length && actual.every((entry, index) => entry === approved[index]);
+  return (
+    actual.length === approved.length && actual.every((entry, index) => entry === approved[index])
+  );
 }
 
 function verifyNetworkBoundary(policy: LooseRecord): string[] {
@@ -288,7 +292,9 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
   const managed = asRecord(networkPolicies[MANAGED_INFERENCE_POLICY]);
   const endpoints = Array.isArray(managed.endpoints) ? managed.endpoints : [];
   if (endpoints.length !== 1) {
-    failures.push(`${PI_POLICY_PATH}: ${MANAGED_INFERENCE_POLICY} must declare exactly one endpoint`);
+    failures.push(
+      `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_POLICY} must declare exactly one endpoint`,
+    );
   }
   for (const entry of endpoints) {
     const endpoint = asRecord(entry);
@@ -297,10 +303,22 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
         `${PI_POLICY_PATH}: the baseline permits only ${MANAGED_INFERENCE_HOST}:${String(MANAGED_INFERENCE_PORT)}`,
       );
     }
+    if (endpoint.protocol !== MANAGED_INFERENCE_PROTOCOL) {
+      failures.push(
+        `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must enforce protocol ${MANAGED_INFERENCE_PROTOCOL}, not ${typeof endpoint.protocol === "string" ? endpoint.protocol : "an unset protocol"}`,
+      );
+    }
     if (endpoint.enforcement !== "enforce") {
-      failures.push(`${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must stay enforced, not observed`);
+      failures.push(
+        `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must stay enforced, not observed`,
+      );
     }
     const rules = Array.isArray(endpoint.rules) ? endpoint.rules : [];
+    if (rules.length === 0) {
+      failures.push(
+        `${PI_POLICY_PATH}: every managed inference endpoint must declare at least one explicit /v1/ route`,
+      );
+    }
     for (const rule of rules) {
       const allow = asRecord(asRecord(rule).allow);
       const rulePath = typeof allow.path === "string" ? allow.path : "";
@@ -312,9 +330,7 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
     }
   }
   const binaries = sortedStrings(
-    Array.isArray(managed.binaries)
-      ? managed.binaries.map((entry) => asRecord(entry).path)
-      : [],
+    Array.isArray(managed.binaries) ? managed.binaries.map((entry) => asRecord(entry).path) : [],
   );
   if (!sameSet(binaries, APPROVED_NETWORK_BINARIES)) {
     failures.push(
@@ -343,7 +359,9 @@ function verifyFilesystemBoundary(policy: LooseRecord): string[] {
     process.run_as_user !== REQUIRED_SANDBOX_IDENTITY ||
     process.run_as_group !== REQUIRED_SANDBOX_IDENTITY
   ) {
-    failures.push(`${PI_POLICY_PATH}: Pi must run as the ${REQUIRED_SANDBOX_IDENTITY} user and group`);
+    failures.push(
+      `${PI_POLICY_PATH}: Pi must run as the ${REQUIRED_SANDBOX_IDENTITY} user and group`,
+    );
   }
   return failures;
 }

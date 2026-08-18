@@ -177,7 +177,6 @@ describe("Pi release cohort separation", () => {
     expect(CANDIDATE_MANAGED_IMAGE_AGENTS).toContain("pi");
     expect(SHIPPED_MANAGED_IMAGE_AGENTS).not.toContain("pi");
   });
-
 });
 
 describe("Pi candidate contract validation", () => {
@@ -265,6 +264,42 @@ describe("Pi runtime boundaries", () => {
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
       "agents/pi/policy-additions.yaml: inference.local must stay enforced, not observed",
+    );
+  });
+
+  it("rejects a managed inference endpoint with its protocol removed (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      delete policy.network_policies.managed_inference.endpoints[0].protocol;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must enforce protocol rest, not an unset protocol",
+    );
+  });
+
+  it("rejects a managed inference endpoint with a non-REST protocol (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].protocol = "tcp";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must enforce protocol rest, not tcp",
+    );
+  });
+
+  it("rejects a managed inference endpoint with an empty rule set (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules = [];
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: every managed inference endpoint must declare at least one explicit /v1/ route",
+    );
+  });
+
+  it("rejects a managed inference endpoint with its rule set removed (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      delete policy.network_policies.managed_inference.endpoints[0].rules;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: every managed inference endpoint must declare at least one explicit /v1/ route",
     );
   });
 
