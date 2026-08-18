@@ -74,6 +74,19 @@ function resolutionMetadata(
 }
 
 describe("Deep Agents Code published base runtime evidence", () => {
+  it("binds amd64 live onboarding to the published amd64 platform reference (#9386)", () => {
+    expect(
+      parseDcodeBaseImagePublicationEvidence(
+        publicationEvidence(),
+        publicationEnvironment({
+          [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE,
+        }),
+      ),
+    ).toMatchObject({
+      platformReferences: { "linux/amd64": AMD64_REFERENCE },
+    });
+  });
+
   it("records the completed sandbox image only when its platform digest matches publication", () => {
     const contract = parseDcodeBaseImagePublicationEvidence(
       publicationEvidence(),
