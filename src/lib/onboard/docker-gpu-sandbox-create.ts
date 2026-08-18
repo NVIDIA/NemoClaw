@@ -31,10 +31,7 @@ import {
 } from "./docker-startup-command-sandbox-create";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
-export type {
-  DockerGpuRoutePlan,
-  SelectedDockerGpuRoute,
-} from "./docker-gpu-route";
+export type { DockerGpuRoutePlan, SelectedDockerGpuRoute } from "./docker-gpu-route";
 export {
   isDockerDesktopWslRuntime,
   resetIsDockerDesktopWslRuntimeCache,
@@ -118,6 +115,8 @@ export interface DockerManagedBootstrapDeferredCutover {
 
 export type DockerGpuSandboxCreatePatch = {
   maybeApplyDuringCreate: () => void;
+  /** Full Docker container ID owned by the transaction, or null until it records a replacement. */
+  replacementRuntimeId: () => string | null;
   createFailureMessage: () => string | null;
   exitOnPatchError: () => Promise<void>;
   attachManagedBootstrapCutover: (cutover: DockerManagedBootstrapDeferredCutover) => void;
@@ -295,6 +294,10 @@ export function createDockerGpuSandboxCreatePatch(
       }
     },
 
+    replacementRuntimeId() {
+      return result?.newContainerId ?? null;
+    },
+
     createFailureMessage() {
       if (!patchError) return null;
       return routeAdapter.enabled
@@ -470,10 +473,7 @@ export function createDockerGpuSandboxCreatePatch(
           : null;
         cutoverFinalized = true;
         if (!finalizeOutcome) return;
-        if (
-          finalizeOutcome.backupRemoved &&
-          finalizeOutcome.replacementRestarted === undefined
-        ) {
+        if (finalizeOutcome.backupRemoved && finalizeOutcome.replacementRestarted === undefined) {
           return;
         }
         if (finalizeOutcome.backupRemoved && finalizeOutcome.replacementRestarted) {

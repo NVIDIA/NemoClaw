@@ -285,6 +285,9 @@ export async function runRebuildPreflightPhase(
           preparedTarget.targetConfig.durableConfig.dcodeAutoApprovalMode,
           recoveryRecreate,
           preparedTarget.recreateOptions.targetGatewayPort,
+          {
+            resolutionHint: preparedTarget.recreateOptions.baseImageResolutionHint,
+          },
         );
         if (!imageReady) return null;
         if (!preparedTarget.recreateOptions.managedWorkloadRebuild) {

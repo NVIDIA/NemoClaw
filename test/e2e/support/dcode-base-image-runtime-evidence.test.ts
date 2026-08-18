@@ -21,6 +21,23 @@ const AMD64_REFERENCE = `${DCODE_BASE_IMAGE}@${AMD64_DIGEST}`;
 const ARM64_REFERENCE = `${DCODE_BASE_IMAGE}@${ARM64_DIGEST}`;
 const CANDIDATE_REVISION = "d".repeat(40);
 const PUBLICATION_REVISION = "e".repeat(40);
+const PLATFORM_MISMATCH =
+  "Deep Agents Code sandbox image did not use the published linux/amd64 base digest";
+
+function baseContractMismatch(...labels: string[]): string {
+  return `Deep Agents Code sandbox image does not match the published linux/amd64 base-image contract (mismatched fields: ${labels.join(", ")})`;
+}
+
+function thrownMessage(action: () => unknown): string {
+  let thrown: unknown;
+  try {
+    action();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(Error);
+  return (thrown as Error).message;
+}
 
 function publicationEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -111,6 +128,29 @@ describe("Deep Agents Code published base runtime evidence", () => {
       source: "override",
       sourceRevision: PUBLICATION_REVISION,
     });
+  });
+
+  it("reports base-image resolution mismatch labels without rejected values (#9386)", () => {
+    const contract = parseDcodeBaseImagePublicationEvidence(
+      publicationEvidence(),
+      publicationEnvironment(),
+    );
+    const message = thrownMessage(() =>
+      verifyDcodeBaseImageRuntimeEvidence(
+        contract,
+        "nemoclaw-langchain-deepagents-code:e2e",
+        resolutionMetadata({
+          source: "source-sha",
+          digest: INDEX_DIGEST,
+          ref: INDEX_REFERENCE,
+        }),
+      ),
+    );
+
+    expect(message).toBe(baseContractMismatch("source", "digest", "reference"));
+    expect(
+      ["source-sha", INDEX_DIGEST, INDEX_REFERENCE].filter((value) => message.includes(value)),
+    ).toEqual([]);
   });
 
   it("rejects the publication index instead of the validated platform reference (#9386)", () => {
@@ -225,58 +265,78 @@ describe("Deep Agents Code published base runtime evidence", () => {
   });
 
   it.each([
-    ["missing metadata", null, /missing base resolution metadata/],
-    [
-      "the publication index instead of the selected platform",
-      resolutionMetadata({ digest: INDEX_DIGEST, ref: INDEX_REFERENCE }),
-      /did not use the published linux\/amd64 base digest/,
-    ],
-    [
-      "the opposite platform digest for amd64",
-      resolutionMetadata({ digest: ARM64_DIGEST, ref: ARM64_REFERENCE }),
-      /did not use the published linux\/amd64 base digest/,
-    ],
-    [
-      "self-consistent opposite-platform metadata",
-      resolutionMetadata({
+    {
+      label: "missing metadata",
+      metadata: null,
+      expectedMessage: "Deep Agents Code sandbox image is missing base resolution metadata",
+      rejectedValues: [],
+    },
+    {
+      label: "an unsupported metadata schema version",
+      metadata: resolutionMetadata({ schema: 2 }),
+      expectedMessage: baseContractMismatch("schema"),
+      rejectedValues: ["2"],
+    },
+    {
+      label: "the publication index instead of the selected platform",
+      metadata: resolutionMetadata({ digest: INDEX_DIGEST, ref: INDEX_REFERENCE }),
+      expectedMessage: baseContractMismatch("digest", "reference"),
+      rejectedValues: [INDEX_DIGEST, INDEX_REFERENCE],
+    },
+    {
+      label: "the opposite platform digest for amd64",
+      metadata: resolutionMetadata({ digest: ARM64_DIGEST, ref: ARM64_REFERENCE }),
+      expectedMessage: baseContractMismatch("digest", "reference"),
+      rejectedValues: [ARM64_DIGEST, ARM64_REFERENCE],
+    },
+    {
+      label: "self-consistent opposite-platform metadata",
+      metadata: resolutionMetadata({
         architecture: "arm64",
         digest: ARM64_DIGEST,
         ref: ARM64_REFERENCE,
       }),
-      /did not use the published linux\/amd64 base digest/,
-    ],
-    [
-      "a different image repository",
-      resolutionMetadata({ imageName: "ghcr.io/example/base" }),
-      /did not use the published linux\/amd64 base digest/,
-    ],
-    [
-      "a fallback resolution source",
-      resolutionMetadata({ source: "latest" }),
-      /did not use the published linux\/amd64 base digest/,
-    ],
-    [
-      "a pinned fallback reference",
-      resolutionMetadata({ pinnedRemoteRef: AMD64_REFERENCE }),
-      /did not use the published linux\/amd64 base digest/,
-    ],
-    [
-      "an unsupported platform",
-      resolutionMetadata({ architecture: "ppc64le" }),
-      /did not use the published linux\/amd64 base digest/,
-    ],
-  ])("rejects %s", (_label, metadata, expectedError) => {
+      expectedMessage: PLATFORM_MISMATCH,
+      rejectedValues: [ARM64_DIGEST, ARM64_REFERENCE],
+    },
+    {
+      label: "a different image repository",
+      metadata: resolutionMetadata({ imageName: "ghcr.io/example/base" }),
+      expectedMessage: baseContractMismatch("image", "reference binding"),
+      rejectedValues: ["ghcr.io/example/base"],
+    },
+    {
+      label: "a fallback resolution source",
+      metadata: resolutionMetadata({ source: "latest" }),
+      expectedMessage: baseContractMismatch("source"),
+      rejectedValues: ["latest"],
+    },
+    {
+      label: "a pinned fallback reference",
+      metadata: resolutionMetadata({ pinnedRemoteRef: AMD64_REFERENCE }),
+      expectedMessage: baseContractMismatch("pinned reference"),
+      rejectedValues: [AMD64_REFERENCE],
+    },
+    {
+      label: "an unsupported platform",
+      metadata: resolutionMetadata({ architecture: "ppc64le" }),
+      expectedMessage: PLATFORM_MISMATCH,
+      rejectedValues: ["ppc64le"],
+    },
+  ])("rejects $label", ({ metadata, expectedMessage, rejectedValues }) => {
     const contract = parseDcodeBaseImagePublicationEvidence(
       publicationEvidence(),
       publicationEnvironment(),
     );
-
-    expect(() =>
+    const message = thrownMessage(() =>
       verifyDcodeBaseImageRuntimeEvidence(
         contract,
         "nemoclaw-langchain-deepagents-code:e2e",
         metadata,
       ),
-    ).toThrow(expectedError);
+    );
+
+    expect(message).toBe(expectedMessage);
+    expect(rejectedValues.filter((value) => message.includes(value))).toEqual([]);
   });
 });
