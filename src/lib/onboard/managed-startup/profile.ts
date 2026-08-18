@@ -1011,7 +1011,21 @@ function isMessagingCredentialPlaceholder(path: readonly string[], value: unknow
     path[2] === "agentRender" &&
     JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
     path[4] === "value";
-  return isCredentialBindingPlaceholder || isAgentRenderValuePlaceholder;
+  const isWechatAccountTokenPlaceholder =
+    path.length === 7 &&
+    path[0] === "messaging" &&
+    path[1] === "plan" &&
+    path[2] === "buildSteps" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
+    path[4] === "value" &&
+    path[5] === "content" &&
+    path[6] === "token" &&
+    messagingCredentialPlaceholderEnvKey(value) === "WECHAT_BOT_TOKEN";
+  return (
+    isCredentialBindingPlaceholder ||
+    isAgentRenderValuePlaceholder ||
+    isWechatAccountTokenPlaceholder
+  );
 }
 
 function messagingCredentialPlaceholderEnvKey(value: string): string | null {
