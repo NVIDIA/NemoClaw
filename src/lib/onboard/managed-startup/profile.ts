@@ -1045,8 +1045,11 @@ function isMessagingCredentialPlaceholderAssignment(
   const separator = value.indexOf("=");
   if (separator <= 0 || value.indexOf("=", separator + 1) !== -1) return false;
   const envKey = value.slice(0, separator);
-  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(value.slice(separator + 1));
-  return CREDENTIAL_ENV_NAME_PATTERN.test(envKey) && envKey === placeholderEnvKey;
+  const placeholder = value.slice(separator + 1);
+  return (
+    CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&
+    MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(placeholder)
+  );
 }
 
 function isMessagingRuntimeEnvAliasPath(path: readonly string[]): boolean {

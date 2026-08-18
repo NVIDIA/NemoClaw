@@ -731,7 +731,7 @@ describe("managed startup profile", () => {
     ).toThrow(/credential-shaped field name/);
   });
 
-  it("accepts schema-owned messaging package pins and credential placeholder lines (#9355)", () => {
+  it("accepts schema-owned messaging pins, placeholders, and agent aliases (#9355)", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
@@ -762,6 +762,7 @@ describe("managed startup profile", () => {
                   "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
                   "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
                   "TELEGRAM_BOT_TOKEN=openshell:resolve:env:v1_TELEGRAM_BOT_TOKEN",
+                  "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
                 ],
                 templateRefs: ["credential.slackBotToken.placeholder"],
               },
@@ -776,12 +777,16 @@ describe("managed startup profile", () => {
     ["a raw credential", `SLACK_BOT_TOKEN=xoxb-${"a".repeat(32)}`],
     ["a malformed assignment", "SLACK_BOT_TOKEN =openshell:resolve:env:SLACK_BOT_TOKEN"],
     [
-      "a placeholder for a different environment key",
-      "SLACK_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+      "more than one assignment",
+      "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN=FORGED",
     ],
     [
-      "a versioned placeholder for a different environment key",
-      "SLACK_BOT_TOKEN=openshell:resolve:env:v1_DISCORD_BOT_TOKEN",
+      "a placeholder assigned to a non-credential environment key",
+      "CHANNEL_NAME=openshell:resolve:env:SLACK_BOT_TOKEN",
+    ],
+    [
+      "a placeholder with a noncanonical provider environment key",
+      "SLACK_BOT_TOKEN=openshell:resolve:env:slack_bot_token",
     ],
   ])("rejects %s in messaging environment lines (#9355)", (_label, line) => {
     expect(() =>
