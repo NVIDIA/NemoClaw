@@ -17,6 +17,8 @@ type GatewayRouteMutationLock =
   (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
   import("../../src/lib/actions/sandbox/launch-readiness").LaunchReadinessPublicationResult;
+type PortablePairingSettlementResult =
+  import("../../src/lib/actions/sandbox/launch-readiness").PortableOpenClawPairingSettlementResult;
 
 export const requireDist = createRequire(import.meta.url);
 export const connectModulePath = "../../src/lib/actions/sandbox/connect.js";
@@ -41,6 +43,7 @@ export type ConnectHarness = {
   inspectLaunchReadinessSpy: MockInstance;
   launchReadinessMutationGateSpy: MockInstance;
   publishLaunchReadinessSpy: MockInstance;
+  settlePortablePairingSpy: MockInstance;
   preflightVllmSpy: MockInstance;
   probeLocalProviderHealthSpy: MockInstance;
   probeOllamaAuthProxyHealthSpy: MockInstance;
@@ -109,6 +112,7 @@ export type ConnectHarnessOptions = {
         authorityUnsupported?: true;
       };
   readinessPublicationResult?: LaunchReadinessPublicationResult;
+  portablePairingSettlementResult?: PortablePairingSettlementResult;
 };
 
 function throwSttyFailure(): never {
@@ -343,6 +347,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const runAutoPairSpy = vi
     .spyOn(autoPairApproval, "runConnectAutoPairApprovalPass")
     .mockImplementation(() => undefined);
+  const settlePortablePairingSpy = vi
+    .spyOn(launchReadiness, "settlePortableOpenClawPairing")
+    .mockResolvedValue(options.portablePairingSettlementResult ?? { kind: "not-portable" });
 
   logSpy.mockClear();
   errorSpy.mockClear();
@@ -372,6 +379,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     resolveAgentConfigSpy,
     restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,
     runAutoPairSpy,
+    settlePortablePairingSpy,
     runOpenshellSpy,
     runSetupDnsProxySpy,
     spawnSyncSpy,
