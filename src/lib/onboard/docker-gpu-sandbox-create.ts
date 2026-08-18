@@ -35,7 +35,7 @@ export type { DockerGpuRoutePlan, SelectedDockerGpuRoute } from "./docker-gpu-ro
 export {
   isDockerDesktopWslRuntime,
   resetIsDockerDesktopWslRuntimeCache,
-  resolveAgentPlan,
+  resolveProfileGpuCreatePlan,
   resolveDockerGpuSandboxCreatePlan,
 } from "./docker-gpu-sandbox-create-plan";
 

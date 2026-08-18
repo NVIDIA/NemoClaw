@@ -33,6 +33,27 @@ function upstream(overrides: Partial<ProviderHealthStatus> = {}): ProviderHealth
 
 describe("doctor inference checks", () => {
   it.each([
+    ["nvidia-prod", "nvidia/nemotron", "ok"],
+    ["nvidia-prod", "unknown", "warn"],
+    ["unknown", "nvidia/nemotron", "warn"],
+    ["unknown", "unknown", "warn"],
+  ] as const)("reports %s / %s inference route as %s (#9435)", async (provider, model, status) => {
+    const checks = await collectInferenceChecks("alpha", { provider, model }, false, {
+      probeProviderHealthImpl: () => null,
+      includeServingProcessCheck: false,
+    });
+
+    expect(checks[0]).toEqual({
+      group: "Inference",
+      label: "Route",
+      status,
+      detail: `${provider} / ${model}`,
+      hint:
+        status === "ok" ? undefined : "run `nemoclaw alpha status` after the gateway is healthy",
+    });
+  });
+
+  it.each([
     ["running", "ok", false],
     ["preparing", "warn", true],
     ["stopped", "warn", true],
