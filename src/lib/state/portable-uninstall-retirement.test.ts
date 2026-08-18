@@ -53,6 +53,16 @@ function targetPath(test: Fixture, role: TargetRole): string {
   return role === "config" ? test.config : role === "receipt" ? test.receipt : test.registryFile;
 }
 
+async function forEachConcurrentBatch<T>(
+  cases: readonly T[],
+  batchSize: number,
+  action: (testCase: T) => Promise<void>,
+): Promise<void> {
+  for (let offset = 0; offset < cases.length; offset += batchSize) {
+    await Promise.all(cases.slice(offset, offset + batchSize).map(action));
+  }
+}
+
 function retiredFixture() {
   const test = fixture();
   publishAndRetirePortableEvidence(prepareFixture(test));
@@ -571,9 +581,7 @@ describe("portable uninstall retirement state", () => {
     const cases = Object.entries(boundaries).flatMap(([operation, count]) =>
       Array.from({ length: count }, (_value, index) => [operation, index + 1] as const),
     );
-    for (let offset = 0; offset < cases.length; offset += 6) {
-      await Promise.all(
-        cases.slice(offset, offset + 6).map(async ([operation, boundary]) => {
+    await forEachConcurrentBatch(cases, 6, async ([operation, boundary]) => {
           const test = fixture();
           const result = await spawnForSignal([
             "--no-warnings",
@@ -600,9 +608,7 @@ describe("portable uninstall retirement state", () => {
           };
           const assertPrior = () => expect(targets.every(fs.existsSync)).toBe(true);
           (hasPortableRetirementRecord(test.homeDir) ? assertRecovered : assertPrior)();
-        }),
-      );
-    }
+    });
   }, 30_000);
 
   it("recovers completed onboarding after SIGKILL at every supersession boundary (#9189)", async () => {
@@ -630,9 +636,7 @@ describe("portable uninstall retirement state", () => {
     const cases = Object.entries(boundaries).flatMap(([operation, count]) =>
       Array.from({ length: count }, (_value, index) => [operation, index + 1] as const),
     );
-    for (let offset = 0; offset < cases.length; offset += 6) {
-      await Promise.all(
-        cases.slice(offset, offset + 6).map(async ([operation, boundary]) => {
+    await forEachConcurrentBatch(cases, 6, async ([operation, boundary]) => {
           const scope = retiredFixture();
           const result = await spawnForSignal([
             "--no-warnings",
@@ -654,8 +658,6 @@ describe("portable uninstall retirement state", () => {
             supersedePortableRetirementAfterOnboard(scope.test.homeDir, scope.admission),
           ).not.toThrow();
           expect(hasPortableRetirementRecord(scope.test.homeDir)).toBe(false);
-        }),
-      );
-    }
+    });
   }, 30_000);
 });

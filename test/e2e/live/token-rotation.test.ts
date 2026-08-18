@@ -482,28 +482,28 @@ test(
     });
     expect(openshellVersion.exitCode, resultText(openshellVersion)).toBe(0);
 
-    for (const providerName of [
+    await forEachFixtureSequentially(
+      [
       `${SANDBOX_NAME}-telegram-bridge`,
       `${SANDBOX_NAME}-discord-bridge`,
       `${SANDBOX_NAME}-slack-bridge`,
       `${SANDBOX_NAME}-slack-app`,
-    ]) {
+      ],
+      async (providerName) => {
       const provider = await host.command("openshell", ["provider", "get", providerName], {
         artifactName: `phase-1-provider-get-${providerName}`,
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 30_000,
       });
       expect(provider.exitCode, resultText(provider)).toBe(0);
-    }
+      },
+    );
 
-    [
-      "TELEGRAM_BOT_TOKEN",
-      "DISCORD_BOT_TOKEN",
-      "SLACK_BOT_TOKEN",
-      "SLACK_APP_TOKEN",
-    ].forEach((envKey) => {
+    ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"].forEach(
+      (envKey) => {
       expectCredentialHash(envKey);
-    });
+      },
+    );
     await assertSandboxRunning(host, "phase-1-sandbox-running-after-install");
 
     progress.phase("rotate only the Telegram provider");
@@ -539,11 +539,7 @@ test(
     );
     const afterTelegramSameText = resultText(afterTelegramSame);
     expect(afterTelegramSame.exitCode, afterTelegramSameText).toBe(0);
-    await assertSandboxReused(
-      host,
-      beforeTelegramReuseId,
-      "phase-3-after-same-telegram",
-    );
+    await assertSandboxReused(host, beforeTelegramReuseId, "phase-3-after-same-telegram");
 
     progress.phase("rotate only the Discord provider");
     const discord = await runOnboard(
@@ -578,11 +574,7 @@ test(
     );
     const afterDiscordSameText = resultText(afterDiscordSame);
     expect(afterDiscordSame.exitCode, afterDiscordSameText).toBe(0);
-    await assertSandboxReused(
-      host,
-      beforeDiscordReuseId,
-      "phase-5-after-same-discord",
-    );
+    await assertSandboxReused(host, beforeDiscordReuseId, "phase-5-after-same-discord");
 
     progress.phase("rotate only the Slack providers");
     const slack = await runOnboard(host, fakeOpenAI.baseUrl, TOKEN_B, "phase-6-rotate-slack");
@@ -596,10 +588,7 @@ test(
     await assertSandboxRunning(host, "phase-6-sandbox-running-after-slack-rotation");
 
     progress.phase("reuse the sandbox and record rotation evidence");
-    const beforeSlackReuseId = await sandboxIdentity(
-      host,
-      "phase-7-before-same-slack-identity",
-    );
+    const beforeSlackReuseId = await sandboxIdentity(host, "phase-7-before-same-slack-identity");
     const afterSlackSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -624,3 +613,10 @@ test(
     });
   },
 );
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

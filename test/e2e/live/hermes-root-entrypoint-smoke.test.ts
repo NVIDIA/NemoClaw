@@ -442,7 +442,9 @@ exec /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-start`;
   );
 }
 
-test("hermes root-entrypoint smoke preserves runtime layout and legacy state migration", {
+test(
+  "hermes root-entrypoint smoke preserves runtime layout and legacy state migration",
+  {
   meta: {
     e2ePhases: [
       "check Docker and Hermes image inputs",
@@ -451,7 +453,8 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       "validate legacy state migration",
     ],
   },
-}, async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
+  },
+  async ({ artifacts, cleanup, progress, secrets, signal, skip }) => {
   const probe = new DockerProbe(
     artifacts,
     (text, extraValues) => secrets.redact(text, extraValues),
@@ -506,9 +509,9 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
     progress.phase("validate legacy state migration");
     await runLegacyVariant(probe, image, runId, containers);
   } catch (error) {
-    for (const container of containers) {
+      await forEachFixtureSequentially(containers, async (container) => {
       await dumpContainerDiagnostics(probe, container);
-    }
+      });
     throw error;
   }
 
@@ -527,4 +530,12 @@ test("hermes root-entrypoint smoke preserves runtime layout and legacy state mig
       legacyDashboardProfileMigrationVerified: true,
     },
   });
-});
+  },
+);
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

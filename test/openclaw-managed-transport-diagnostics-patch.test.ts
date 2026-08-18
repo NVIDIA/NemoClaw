@@ -64,6 +64,13 @@ interface HelperHarness {
   stderr: string[];
 }
 
+async function forEachRequestId(
+  count: number,
+  action: (requestId: number) => Promise<void>,
+): Promise<void> {
+  for (let requestId = 0; requestId < count; requestId += 1) await action(requestId);
+}
+
 function loadHelper(
   env: Record<string, string> = { OPENSHELL_SANDBOX: "1" },
   now: () => number = () => Date.now(),
@@ -292,13 +299,13 @@ describe("injected managed transport wrapper", () => {
       catalogListTimeoutMs: 1_500,
     });
 
-    for (let index = 0; index < delays.length; index += 1) {
+    await forEachRequestId(delays.length, async (index) => {
       const response = await wrapped("https://mcp.test/rpc", {
         method: "POST",
         body: JSON.stringify({ jsonrpc: "2.0", id: index, method: "tools/list" }),
       });
       expect(response.status).toBe(200);
-    }
+    });
 
     const events = emittedEvents(stderr);
     expect(events).toHaveLength(5);
@@ -383,12 +390,12 @@ describe("injected managed transport wrapper", () => {
       catalogListTimeoutMs: 5_000,
     });
 
-    for (let id = 0; id < 5; id += 1) {
+    await forEachRequestId(5, async (id) => {
       await wrapped("https://mcp.test/rpc", {
         method: "POST",
         body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" }),
       });
-    }
+    });
 
     expect(emittedEvents(stderr)[4].shadow_recommended_timeout_ms).toBe("5000");
   });

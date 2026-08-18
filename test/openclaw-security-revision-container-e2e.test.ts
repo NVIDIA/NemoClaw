@@ -459,13 +459,13 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
     );
   });
 
-  test.each(
-    [
+  test.each([
         ["--network", "none"],
         ["--cap-drop", "ALL"],
         ["--security-opt", "no-new-privileges"],
-    ] as const,
-  )("uses an offline read-only least-privilege Docker boundary [case %#]", (option, value) => {
+  ] as const)(
+    "uses an offline read-only least-privilege Docker boundary [case %#]",
+    (option, value) => {
     const args = secureDockerRunArgs("security-e2e", "candidate:local");
 
     const optionIndex = args.indexOf(option);
@@ -475,7 +475,8 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
     expect(args).toContain("--read-only");
     expect(args.join(" ")).not.toContain("docker.sock");
     expect(args).not.toContain("--mount");
-  });
+    },
+  );
 
   test("rejects vulnerable or incomplete installed dependency evidence", () => {
     const good = exactEvidence();
@@ -520,10 +521,10 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
       ).toThrow();
     });
     (["tar", "braceExpansion", "jszip"] as const).forEach((packageName) => {
-      for (const optionalDependencyState of [
+      [
         { hasOptionalDependencies: true },
         { optionalDependencies: { unreviewed: "1.0.0" } },
-      ]) {
+      ].forEach((optionalDependencyState) => {
         expect(() =>
           requireExactRemediation({
             ...good,
@@ -536,7 +537,7 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
             },
           }),
         ).toThrow();
-      }
+      });
     });
     expect(() =>
       requireExactRemediation({

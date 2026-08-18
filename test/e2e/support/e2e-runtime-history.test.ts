@@ -135,9 +135,9 @@ describe("E2E rolling runtime history", () => {
       "### Push flake watch\n",
     )[1] as string;
 
-    for (let index = 0; index < 5; index += 1) {
+    repeatFixtureAction(5, (index) => {
       expect(flakeWatch).toContain(`| target-${index} | scenario-${index} |`);
-    }
+    });
     expect(flakeWatch).not.toContain("| target-5 | scenario-5 |");
     expect(flakeWatch).not.toContain("always-fails");
     expect(flakeWatch).not.toContain("always-passes");
@@ -356,3 +356,7 @@ describe("E2E rolling runtime history", () => {
     );
   });
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}

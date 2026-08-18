@@ -726,14 +726,14 @@ describe("Hermes managed-tool gateway broker", () => {
       ["/openai-audio/v1/audio/speech", { "openai-api-key": "broker-1" }, "audio"],
       ["/modal/sandboxes", { Authorization: "Bearer broker-1" }, "modal"],
     ] as const;
-    for (const [route, headers] of checks) {
+    await forEachFixtureSequentially(checks, async ([route, headers]) => {
       const resp = await fetch(`http://127.0.0.1:${brokerPort}${route}`, {
         method: "POST",
         headers,
         body: "{}",
       });
       expect(resp.status).toBe(200);
-    }
+    });
     expect(upstreamRequests[1]).toMatchObject({
       url: "/browsers",
       browserUseApiKey: "access-2",
@@ -1053,3 +1053,10 @@ describe("Hermes managed-tool gateway broker", () => {
     expect(Date.now() - shutdownStartedAt).toBeLessThan(3_000);
   });
 });
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { runAttemptsUntil } from "../fixtures/attempt-sequence.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
@@ -209,7 +210,9 @@ async function expectPongFromSandboxInference(
   );
 }
 
-test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup", {
+test(
+  "bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -223,7 +226,8 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
       "destroy the bootstrap sandbox and clone",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   validateSandboxName(SANDBOX_NAME);
 
   await artifacts.target.declare({
@@ -356,7 +360,7 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
 
   progress.phase("onboard the hosted inference sandbox");
   let onboard: ShellProbeResult | undefined;
-  for (let attempt = 1; attempt <= ONBOARD_ATTEMPTS; attempt += 1) {
+    await runAttemptsUntil(ONBOARD_ATTEMPTS, async (attempt) => {
     onboard = await host.command("nemoclaw", ["onboard", "--non-interactive"], {
       artifactName: attempt === 1 ? "phase-4-onboard" : `phase-4-onboard-attempt-${attempt}`,
       cwd: cloneDir,
@@ -370,10 +374,10 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
       redactionValues: [apiKey],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     });
-    if (onboard.exitCode === 0) break;
+      if (onboard.exitCode === 0) return true;
     if (isTransientProviderValidationFailure(onboard) && attempt < ONBOARD_ATTEMPTS) {
       await sleep(30_000 * attempt);
-      continue;
+        return false;
     }
     if (isTransientProviderValidationFailure(onboard) && process.env.GITHUB_ACTIONS === "true") {
       await artifacts.writeJson("transient-provider-validation.skip.json", {
@@ -387,8 +391,8 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
         `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${ONBOARD_ATTEMPTS} attempts`,
       );
     }
-    break;
-  }
+      return true;
+    });
   expectExitZero(onboard as ShellProbeResult, "nemoclaw onboard --non-interactive");
 
   progress.phase("inspect sandbox and gateway health");
@@ -511,4 +515,5 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   }
 
   await cleanupBootstrapState(host, cloneDir);
-});
+  },
+);

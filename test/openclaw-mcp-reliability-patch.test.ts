@@ -439,11 +439,11 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
       code: "ECONNRESET",
     }) as Error & { cause?: unknown };
     let deepCursor: { cause?: unknown } = deepBlockedCause;
-    for (let depth = 0; depth < 8; depth += 1) {
+    repeatFixtureAction(8, () => {
       const next: { cause?: unknown } = {};
       deepCursor.cause = next;
       deepCursor = next;
-    }
+    });
     deepCursor.cause = new Error("Error POSTing to endpoint (HTTP 401): Unauthorized");
     const cyclicCause = Object.assign(new Error("connection reset"), {
       code: "ECONNRESET",
@@ -488,7 +488,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
       },
     ];
 
-    for (const testCase of cases) {
+    await forEachFixtureSequentially(cases, async (testCase) => {
       let attempts = 0;
       let resolvedTransports = 0;
       const task = helper.nemoClawWithMcpStartRetry({
@@ -510,7 +510,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
       expect(result.diagnostics[0].message, testCase.label).not.toContain(
         "temporary MCP transport failure",
       );
-    }
+    });
   });
 
   it("treats any catalog carrying a server diagnostic as unfit for the stable session catalog", () => {
@@ -629,3 +629,14 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     expect(patchBundleMcpRuntimeText(bundleMcpRuntimeFixture(), "fixture.js").patched).toBe(true);
   });
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

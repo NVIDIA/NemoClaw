@@ -116,9 +116,9 @@ describe("resolveCorporateCaFromHostAnchors host trust-store path (#6210)", () =
 
   it("warns and skips when anchor directory traversal exceeds the scan cap", () => {
     const anchorDir = tmpDir();
-    for (let i = 0; i < 1025; i += 1) {
+    repeatFixtureAction(1025, (i) => {
       fs.mkdirSync(path.join(anchorDir, `d-${String(i).padStart(4, "0")}`));
-    }
+    });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const resolved = resolveCorporateCaFromHostAnchors([anchorDir]);
     const messages = errorSpy.mock.calls.map((call) => String(call[0]));
@@ -279,3 +279,7 @@ describe("resolveCorporateCa env then host anchors (#6210)", () => {
     expect(messages).toHaveLength(0);
   });
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}

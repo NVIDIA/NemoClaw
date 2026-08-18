@@ -15,6 +15,12 @@ const PLUGIN_PATH = path.resolve(
 
 const plugin = require(PLUGIN_PATH);
 
+async function collectAsync<T>(values: AsyncIterable<T>): Promise<T[]> {
+  const collected: T[] = [];
+  for await (const value of values) collected.push(value);
+  return collected;
+}
+
 function makeProvider() {
   const providers: any[] = [];
   plugin.register({
@@ -375,8 +381,7 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     expect(wrapper).toEqual(expect.any(Function));
 
     const stream = wrapper({}, failedToolContext(), {});
-    const events = [];
-    for await (const event of stream) events.push(event);
+    const events = await collectAsync<any>(stream);
     const result = await stream.result();
 
     expect(events.map((event: any) => event.type)).toEqual([
@@ -423,8 +428,7 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     expect(wrapper).toEqual(expect.any(Function));
 
     const stream = wrapper({}, {}, {});
-    const events = [];
-    for await (const event of stream) events.push(event);
+    const events = await collectAsync<any>(stream);
     const result = await stream.result();
 
     expect(events[0].partial.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);

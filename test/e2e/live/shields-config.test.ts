@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runUntilDeadline } from "../fixtures/attempt-sequence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupWhenCommandAvailable,
@@ -535,7 +536,9 @@ function readTimerMarker(sandboxName: string): {
   return JSON.parse(fs.readFileSync(TIMER_FILE(sandboxName), "utf8"));
 }
 
-test("shields-config: live Shields lifecycle restores stopped OpenClaw under both postures (#8112)", {
+test(
+  "shields-config: live Shields lifecycle restores stopped OpenClaw under both postures (#8112)",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -553,7 +556,8 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "record shields contract evidence",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   await artifacts.target.declare({
     id: "shields-config",
     boundary: "live-sandbox-shields-config",
@@ -581,7 +585,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   });
   if (dockerInfo.exitCode !== 0) {
     if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(`Docker is required for shields-config live E2E: ${resultText(dockerInfo)}`);
+        throw new Error(
+          `Docker is required for shields-config live E2E: ${resultText(dockerInfo)}`,
+        );
     }
     skip("Docker is required for shields-config live E2E");
   }
@@ -763,12 +769,12 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     mode: "660",
     owner: "sandbox:sandbox",
   });
-  expect(await statPath(sandbox, CONFIG_DIR, "phase-2c-config-dir-perms-after-down")).toMatchObject(
-    {
+    expect(
+      await statPath(sandbox, CONFIG_DIR, "phase-2c-config-dir-perms-after-down"),
+    ).toMatchObject({
       mode: "2770",
       owner: "sandbox:sandbox",
-    },
-  );
+    });
 
   const layoutProbe = await sandboxShell(
     sandbox,
@@ -834,7 +840,11 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
     artifactName: "phase-4-config-get-dotpath",
     redactionValues: [apiKey],
   });
-  if (dotpath.exitCode === 0 && dotpath.stdout.trim() !== "" && dotpath.stdout.trim() !== "null") {
+    if (
+      dotpath.exitCode === 0 &&
+      dotpath.stdout.trim() !== "" &&
+      dotpath.stdout.trim() !== "null"
+    ) {
     expect(dotpath.stdout).not.toMatch(/nvapi-|sk-|Bearer /);
   } else {
     await artifacts.writeJson("phase-4-dotpath-non-fatal.json", {
@@ -955,7 +965,11 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   );
   expect(permsDrift.exitCode, resultText(permsDrift)).toBe(0);
 
-  const hashDrifted = await statPath(sandbox, CONFIG_HASH_PATH, "phase-5c-hash-perms-after-drift");
+    const hashDrifted = await statPath(
+      sandbox,
+      CONFIG_HASH_PATH,
+      "phase-5c-hash-perms-after-drift",
+    );
   expect(hashDrifted).toMatchObject({ mode: "660", owner: "sandbox:sandbox" });
 
   // The drift-repair relock reaches the OpenClaw config guard's already-locked
@@ -985,7 +999,15 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   progress.phase("unlock shields and inspect the audit trail");
   const shieldsDown = await runNemoclaw(
     host,
-    [SANDBOX_NAME, "shields", "down", "--timeout", "15m", "--reason", "E2E shields lifecycle test"],
+      [
+        SANDBOX_NAME,
+        "shields",
+        "down",
+        "--timeout",
+        "15m",
+        "--reason",
+        "E2E shields lifecycle test",
+      ],
     { artifactName: "phase-6-shields-down" },
   );
   expect(shieldsDown.exitCode, resultText(shieldsDown)).toBe(0);
@@ -1064,17 +1086,19 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   let restored = statusTimer.stdout.includes("Shields: UP");
 
   const deadline = Date.now() + TIMER_POLL_TIMEOUT_MS;
-  for (let attempt = 1; !restored && Date.now() < deadline; attempt += 1) {
-    const waitForRestoreAt = Math.max(0, new Date(timerMarker.restoreAt).getTime() - Date.now());
+    if (!restored) {
+      restored = await runUntilDeadline(deadline, async (attempt) => {
+        const waitForRestoreAt = Math.max(
+          0,
+          new Date(timerMarker.restoreAt).getTime() - Date.now(),
+        );
     await delay(Math.max(TIMER_POLL_INTERVAL_MS, waitForRestoreAt + 1_000));
     const poll = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
       artifactName: `phase-9-status-dead-timer-inline-restore-poll-${attempt}`,
     });
     lastTimerStatus = resultText(poll);
-    if (lastTimerStatus.includes("Shields: UP")) {
-      restored = true;
-      break;
-    }
+        return lastTimerStatus.includes("Shields: UP");
+      });
   }
   expect(restored, lastTimerStatus).toBe(true);
   const dirTimer = await statPath(
@@ -1275,7 +1299,9 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   // The supported host command owns the policy receipt and config mutation as
   // one transition. Resume only after it commits the mutable posture, then
   // prove ordinary stop/start recovery remains available before relocking.
-  await expectStopStartRecovery(host, sandbox, "DOWN", "phase-12-restart-after-recovery", [apiKey]);
+    await expectStopStartRecovery(host, sandbox, "DOWN", "phase-12-restart-after-recovery", [
+      apiKey,
+    ]);
   const relockAfterRecovery = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
     artifactName: "phase-12-relock-after-recovery",
   });
@@ -1303,4 +1329,5 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       inheritedMutationLockAcceptedByStateGuard: true,
     },
   });
-});
+  },
+);

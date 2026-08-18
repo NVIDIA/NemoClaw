@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
+import { runAttemptsUntil } from "../fixtures/attempt-sequence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -434,15 +435,16 @@ test(
 
     // Phase 4: Hermes health and sandbox state.
     let health: ShellProbeResult | undefined;
-    for (let attempt = 1; attempt <= 15; attempt += 1) {
+    await runAttemptsUntil(15, async (attempt) => {
       health = await sandbox.exec(SANDBOX_NAME, ["curl", "-sf", HERMES_HEALTH_URL], {
         artifactName: `phase-4-hermes-health-attempt-${attempt}`,
         env: commandEnv(),
         timeoutMs: 20_000,
       });
-      if (health.exitCode === 0 && /"ok"/i.test(resultText(health))) break;
+      if (health.exitCode === 0 && /"ok"/i.test(resultText(health))) return true;
       await sleep(4_000);
-    }
+      return false;
+    });
     expect(health, "Hermes health probe did not run").toBeTruthy();
     expect(health?.exitCode, health ? resultText(health) : "missing health result").toBe(0);
     expect(resultText(health!)).toMatch(/"ok"/i);
@@ -777,11 +779,14 @@ test(
       });
       expect(restartForwardList.exitCode, resultText(restartForwardList)).toBe(0);
       expect(forwardListHasRunningPort(restartForwardList.stdout, SANDBOX_NAME, "8642")).toBe(true);
-      expect((hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
+      expect(
+        (hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
           Object.is(
             forwardListHasRunningPort(restartForwardList.stdout, SANDBOX_NAME, dashboardPort),
             true,
-          ))).toBe(true);
+          ),
+        ),
+      ).toBe(true);
 
       // Regression precondition for #5253: Hermes deliberately uses a Python
       // gateway, so its proxy-env and gateway process do not carry OpenClaw's
@@ -932,7 +937,9 @@ test(
         ),
       ).toBe(true);
 
-      for (const dashboardPort of hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []) {
+      await forEachFixtureSequentially(
+        hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : [],
+        async (dashboardPort) => {
         const stopDashboardForward = await sandbox.openshell(
           ["forward", "stop", dashboardPort, SANDBOX_NAME],
           {
@@ -1010,14 +1017,16 @@ test(
             timeoutMs: 60_000,
           },
         );
-        expect(statusAfterDashboardRecover.exitCode, resultText(statusAfterDashboardRecover)).toBe(
-          0,
-        );
+          expect(
+            statusAfterDashboardRecover.exitCode,
+            resultText(statusAfterDashboardRecover),
+          ).toBe(0);
         expect(resultText(statusAfterDashboardRecover)).toMatch(/Ready/i);
         expect(resultText(statusAfterDashboardRecover)).toMatch(
           /Inference(?: \([^)]+\))?: healthy/i,
         );
-      }
+        },
+      );
     } else {
       expect(beforePid1.stdout).toContain("/opt/openshell/bin/openshell-sandbox");
       expect(beforeGateway.owner).toBe("sandbox");
@@ -1247,11 +1256,14 @@ test(
       });
       expect(managedForwardList.exitCode, resultText(managedForwardList)).toBe(0);
       expect(forwardListHasRunningPort(managedForwardList.stdout, SANDBOX_NAME, "8642")).toBe(true);
-      expect((hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
+      expect(
+        (hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
           Object.is(
             forwardListHasRunningPort(managedForwardList.stdout, SANDBOX_NAME, dashboardPort),
             true,
-          ))).toBe(true);
+          ),
+        ),
+      ).toBe(true);
     }
 
     expect(routingTopologyCaptures).toBe(2);
@@ -1461,3 +1473,10 @@ test(
     });
   },
 );
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

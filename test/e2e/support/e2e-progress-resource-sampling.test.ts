@@ -194,7 +194,9 @@ describe("canonical runner comparison progress sampling", () => {
       harness.options,
     );
 
-    for (let index = 0; index < 5; index += 1) harness.state.fireNext();
+    repeatFixtureAction(5, () => {
+      harness.state.fireNext();
+    });
 
     expect(records.filter((entry) => entry.startsWith("periodic:"))).toHaveLength(5);
     expect(harness.state.now()).toBe(300_000);
@@ -219,7 +221,9 @@ describe("canonical runner comparison progress sampling", () => {
       harness.options,
     );
 
-    for (let index = 0; index < 6; index += 1) harness.state.fireNext();
+    repeatFixtureAction(6, () => {
+      harness.state.fireNext();
+    });
     expect(harness.state.now()).toBe(310_000);
     expect(periodicCalls).toBe(5);
     expect(harness.state.legacySamples).toEqual([]);
@@ -229,10 +233,9 @@ describe("canonical runner comparison progress sampling", () => {
     progress.stop();
   });
 
-  it.each([
-    "false",
-    "throw",
-  ] as const)("permanently falls back to legacy evidence when the collision append returns %s (#7146)", (failure) => {
+  it.each(["false", "throw"] as const)(
+    "permanently falls back to legacy evidence when the collision append returns %s (#7146)",
+    (failure) => {
     let periodicCalls = 0;
     const failAtCollision = {
       false: () => false,
@@ -249,7 +252,9 @@ describe("canonical runner comparison progress sampling", () => {
       harness.options,
     );
 
-    for (let index = 0; index < 5; index += 1) harness.state.fireNext();
+      repeatFixtureAction(5, () => {
+        harness.state.fireNext();
+      });
     expect(harness.state.now()).toBe(300_000);
     expect(harness.state.legacySamples).toEqual(["build Hermes image"]);
     expect(harness.state.nextTimerAt()).toBe(900_000);
@@ -257,7 +262,8 @@ describe("canonical runner comparison progress sampling", () => {
     expect(periodicCalls).toBe(5);
     expect(harness.state.legacySamples).toEqual(["build Hermes image", "build Hermes image"]);
     progress.stop();
-  });
+    },
+  );
 
   it("skips missed periodic slots after a blocking collector instead of catching up (#7146)", () => {
     const periodicStarts: number[] = [];
@@ -410,3 +416,7 @@ describe("canonical runner comparison progress sampling", () => {
     expect(timerCalls).toBe(2);
   });
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}

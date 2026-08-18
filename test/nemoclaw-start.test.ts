@@ -981,13 +981,13 @@ exit 1
         expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain(
           "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
         );
-        for (const scopes of [
+        [
           paired["device-1"].approvedScopes,
           paired["device-1"].scopes,
           paired["device-1"].tokens.operator.scopes,
-        ]) {
+        ].forEach((scopes) => {
           expect(scopes).toEqual(["operator.pairing"]);
-        }
+        });
         expect(JSON.stringify(paired)).not.toContain("operator.admin");
         expect(pending.replacement.requestId).toBe("replacement-1");
         expect(result.stderr).toContain("gateway connect failed");
@@ -1001,7 +1001,7 @@ exit 1
     try {
       const channels = ["discord", "slack", "teams", "telegram", "wechat", "whatsapp"];
       ["add", "remove"].forEach((op) => {
-        for (const channel of channels) {
+        channels.forEach((channel) => {
           const result = runGuardedShell(setup, [
             "export OPENSHELL_SANDBOX=my-assistant",
             shellOpenclawCommand(["channels", op, channel]),
@@ -1010,7 +1010,7 @@ exit 1
           expect(result.stderr).toContain(
             `Run 'nemoclaw my-assistant channels ${op} ${channel}' on the host.`,
           );
-        }
+        });
       });
       const marker = path.join(setup.tmpDir, "host-command-injection");
       [

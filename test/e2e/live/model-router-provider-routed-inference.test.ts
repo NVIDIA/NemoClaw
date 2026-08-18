@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 
+import { runAttemptsUntil } from "../fixtures/attempt-sequence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -70,7 +71,9 @@ function routedPongReason(raw: string): "ok" | string {
   return "ok";
 }
 
-test("model-router provider-routed onboard returns routed inference.local PONG", {
+test(
+  "model-router provider-routed onboard returns routed inference.local PONG",
+  {
   meta: {
     e2ePhases: [
       "confirm routed-provider prerequisites",
@@ -81,7 +84,8 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
       "record the routed inference contract result",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   expect(
     fs.existsSync(CLI_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
@@ -151,7 +155,7 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
 
   progress.phase("wait for a healthy model-router endpoint");
   let lastHealth = "";
-  for (let attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt += 1) {
+    await runAttemptsUntil(HEALTH_ATTEMPTS, async (attempt) => {
     const health = await host.command(
       "curl",
       ["-s", "--max-time", "10", "http://127.0.0.1:4000/health"],
@@ -163,9 +167,10 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
       },
     );
     lastHealth = health.stdout || health.stderr;
-    if (health.exitCode === 0 && hasHealthyEndpoint(lastHealth)) break;
+      if (health.exitCode === 0 && hasHealthyEndpoint(lastHealth)) return true;
     if (attempt < HEALTH_ATTEMPTS) await sleep(3_000);
-  }
+      return false;
+    });
   expect(
     hasHealthyEndpoint(lastHealth),
     `model-router has no healthy endpoints; expected #3255 main-equivalent failure: ${lastHealth.slice(0, 500)}`,
@@ -184,7 +189,7 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
   });
   let lastCompletion = "";
   let completionReason = "not attempted";
-  for (let attempt = 1; attempt <= COMPLETION_ATTEMPTS; attempt += 1) {
+    await runAttemptsUntil(COMPLETION_ATTEMPTS, async (attempt) => {
     const completion = await sandbox.exec(
       SANDBOX_NAME,
       [
@@ -207,10 +212,12 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
     );
     lastCompletion = completion.stdout || completion.stderr;
     completionReason = routedPongReason(lastCompletion);
-    if (completion.exitCode === 0 && completionReason === "ok") break;
-    if (/inference service unavailable|HTTP 503|healthy_count.*0/i.test(lastCompletion)) break;
+      if (completion.exitCode === 0 && completionReason === "ok") return true;
+      if (/inference service unavailable|HTTP 503|healthy_count.*0/i.test(lastCompletion))
+        return true;
     if (attempt < COMPLETION_ATTEMPTS) await sleep(5_000);
-  }
+      return false;
+    });
   expect(
     completionReason,
     `Model Router inference.local did not return a routed completion; expected #3255 main-equivalent failure: ${lastCompletion.slice(0, 500)}`,
@@ -226,4 +233,5 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
       routedPongCompletion: completionReason === "ok",
     },
   });
-});
+  },
+);

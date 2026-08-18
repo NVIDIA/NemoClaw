@@ -171,7 +171,17 @@ describe("nemoclaw-start config guard output permissions", () => {
         expect(fs.statSync(privateDir).uid).toBe(0);
         const remainingOutput = spawnSync(
           "sudo",
-          ["-n", "/usr/bin/find", privateDir, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit"],
+          [
+            "-n",
+            "/usr/bin/find",
+            privateDir,
+            "-mindepth",
+            "1",
+            "-maxdepth",
+            "1",
+            "-print",
+            "-quit",
+          ],
           { encoding: "utf-8" },
         );
         expect(remainingOutput.status, remainingOutput.stderr).toBe(0);
@@ -502,9 +512,9 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     fs.writeFileSync(racePath, "mutable\n");
     fs.writeFileSync(protectedTarget, "protected\n", { mode: 0o640 });
     const initialProtectedMode = mode(protectedTarget);
-    for (let index = 0; index < 300; index++) {
+    repeatFixtureAction(300, (index) => {
       fs.writeFileSync(path.join(configDir, `filler-${index}`), "x\n");
-    }
+    });
 
     const normalizeFunction = replaceRequired(
       extractShellFunction("normalize_mutable_config_perms"),
@@ -866,3 +876,7 @@ describe("nemoclaw-start mutable config reclaim", () => {
     },
   );
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}

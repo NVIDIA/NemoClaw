@@ -418,11 +418,11 @@ print(json.dumps({"results": results, "null_result": null_result}))
     };
     Object.values(payload.results).forEach((outcomes) => {
       expect(outcomes).toHaveLength(4);
-      for (const outcome of outcomes) {
+      outcomes.forEach((outcome) => {
         expect(outcome.error).toContain("expected a YAML object");
         expect(outcome.preserved).toBe(true);
         expect(outcome.writes).toBe(0);
-      }
+      });
     });
     expect(payload.null_result.error).toBe("");
     expect(payload.null_result.preserved).toBe(false);
@@ -466,13 +466,15 @@ print(json.dumps({"exit_code": module.main()}))
       expect(result.status, result.stdout).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
       expect(result.stderr).toContain("<REDACTED>");
-      expect([
+      expect(
+        [
             "SAFE_MCP_TOKEN",
             "runtime-secret-123",
             "second-secret-456",
             "password",
             "query-secret-789",
-          ].every((secret) => !result.stderr.includes(secret))).toBe(true);
+        ].every((secret) => !result.stderr.includes(secret)),
+      ).toBe(true);
       expect(result.stderr).not.toContain("\u001b");
       expect(result.stderr).not.toContain("\u202e");
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
@@ -745,9 +747,11 @@ print(json.dumps(results, sort_keys=True))
     Object.entries(scenarios).forEach(([name, scenario]) => {
       expect(scenario.blocked, name).toBe(true);
       expect(scenario.error, `${name}.error`).toBe(expectedErrors[name]);
-      expect(Object.entries(scenario).filter(
-            ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
-          ).every(([property, value]) => Object.is(value, true))).toBe(true);
+      expect(
+        Object.entries(scenario)
+          .filter(([property]) => property.endsWith("preserved") || property === "temp_cleaned")
+          .every(([property, value]) => Object.is(value, true)),
+      ).toBe(true);
     });
   });
 

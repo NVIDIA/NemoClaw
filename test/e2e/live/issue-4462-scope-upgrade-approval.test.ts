@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { forEachFixtureSequentially } from "../fixtures/attempt-sequence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
@@ -20,7 +21,6 @@ import {
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = 70 * 60_000;
-
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -1322,7 +1322,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     "operator.write",
   ]);
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  await forEachFixtureSequentially([1, 2, 3], async (attempt) => {
     const sessionId = `gpu-${attempt}-${Math.floor(Date.now() / 1000)}`;
     const freshAgent = await host.command(
       process.execPath,
@@ -1374,7 +1374,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     expect(nextSnapshot.activeOperatorTokenScopes).toEqual(freshSnapshot.activeOperatorTokenScopes);
     expect(nextSnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
     freshSnapshot = nextSnapshot;
-  }
+  });
   progress.phase("approve the write-scope upgrade without admin");
   const encodedScopeUpgradeScript = Buffer.from(
     scopeUpgradeScript().replaceAll("\\${", "${"),

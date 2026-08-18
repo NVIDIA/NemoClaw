@@ -15,6 +15,7 @@ import path from "node:path";
 
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import { listPresets } from "../../../src/lib/policy/index.ts";
+import { runAttemptsUntil } from "../fixtures/attempt-sequence.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -580,7 +581,7 @@ test(
     });
 
     let onboard: ShellProbeResult | null = null;
-    for (let attempt = 1; attempt <= ONBOARD_ATTEMPTS; attempt += 1) {
+    await runAttemptsUntil(ONBOARD_ATTEMPTS, async (attempt) => {
       if (attempt > 1) {
         await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], {
           artifactName: `pre-cleanup-nemoclaw-destroy-network-policy-attempt-${attempt}`,
@@ -608,11 +609,11 @@ test(
         },
       );
       if (onboard.exitCode === 0) {
-        break;
+        return true;
       }
       if (isTransientProviderValidationFailure(onboard) && attempt < ONBOARD_ATTEMPTS) {
         await sleep(10_000 * attempt);
-        continue;
+        return false;
       }
       if (isTransientProviderValidationFailure(onboard) && process.env.GITHUB_ACTIONS === "true") {
         // Invalid state: the external NVIDIA Endpoints validation request is unreachable,
@@ -632,9 +633,12 @@ test(
           `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${ONBOARD_ATTEMPTS} attempts`,
         );
       }
-      break;
-    }
-    expect(onboard?.exitCode, onboard ? text(onboard) : "onboard did not run").toBe(0);
+      return true;
+    });
+    const onboardResult = onboard as ShellProbeResult | null;
+    expect(onboardResult?.exitCode, onboardResult ? text(onboardResult) : "onboard did not run").toBe(
+      0,
+    );
 
     // Keep the actual OpenShell boundary in the retained journey: a default
     // restricted onboard must have no active preset before operator mutation.
@@ -966,9 +970,14 @@ printf '\n'
     );
     expect(directProvider).toMatch(/STATUS_403|ERROR_/);
 
-    expect(["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
-        Object.is(isPrivateIp(ip), true))).toBe(true);
-    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(true);
+    expect(
+      ["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
+        Object.is(isPrivateIp(ip), true),
+      ),
+    ).toBe(true);
+    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(
+      true,
+    );
 
     progress.phase("exercise scoped host-gateway web fetch policy");
     const marker = "NEMOCLAW_HOST_GATEWAY_WEB_FETCH_OK";

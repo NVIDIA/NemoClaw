@@ -125,11 +125,11 @@ describe("Fern changelog documentation", () => {
       );
       versions.push(...fileVersions);
 
-      for (const [index, match] of versionMatches.entries()) {
+      versionMatches.forEach((match, index) => {
         const version = match[1];
         const block = source.slice(match.index, versionMatches[index + 1]?.index ?? source.length);
         releaseBlocks.set(version, block);
-      }
+      });
 
       const relativeLinks = extractMarkdownLinks(source).filter(
         ({ target }) =>

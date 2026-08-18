@@ -199,9 +199,9 @@ Run $$nemoclaw list.
       expect(output).not.toContain("Missing");
       expect(output).not.toContain("Stale");
       expect(output).not.toContain("Generated agent variant docs are out of sync");
-      for (const file of generatedFiles) {
+      generatedFiles.forEach((file) => {
         expect(readFileSync(file.path, "utf8")).toBe(file.contents);
-      }
+      });
     } finally {
       rmSync(fixtureRoot, { recursive: true, force: true });
     }

@@ -77,7 +77,9 @@ describe("node-tar image remediation contract", () => {
     pinnedBaseDockerfiles.forEach((file) => {
       const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
       assertReviewedNodeBases(file, source);
-      for (const base of nodeBaseReferences(source)) observedBases.add(base);
+      nodeBaseReferences(source).forEach((base) => {
+        observedBases.add(base);
+      });
     });
     expect([...observedBases].sort()).toEqual(
       [...NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH].sort(),
@@ -117,9 +119,9 @@ describe("node-tar image remediation contract", () => {
     expect(patchRun, file).toBeGreaterThan(curlInstall);
   });
 
-  it.each(
-    dockerfiles,
-  )("places bundled npm tar remediation in the final $file stage before any npm consumers", (entry) => {
+  it.each(dockerfiles)(
+    "places bundled npm tar remediation in the final $file stage before any npm consumers",
+    (entry) => {
     const { file, installsPatchDownloader, installsWithNpm } = entry;
     const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const source = completedStage(dockerfile);
@@ -127,10 +129,14 @@ describe("node-tar image remediation contract", () => {
       (stage) => source.includes(`COPY --from=${stage} / /`),
     );
     const patchPayloadLayer =
-      patchPayloadStage === undefined ? -1 : source.indexOf(`COPY --from=${patchPayloadStage} / /`);
+        patchPayloadStage === undefined
+          ? -1
+          : source.indexOf(`COPY --from=${patchPayloadStage} / /`);
     const patchInputStage =
       patchPayloadStage === undefined ? source : namedStage(dockerfile, patchPayloadStage);
-    const flattenedPatchInputStage = patchInputStage.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+      const flattenedPatchInputStage = patchInputStage
+        .replace(/\\\s*\n/g, " ")
+        .replace(/\s+/g, " ");
     const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
     const helperCopy = patchInputStage.indexOf("scripts/lib/bundled-npm-package.mts");
     const patchCopy = patchInputStage.indexOf(
@@ -169,7 +175,9 @@ describe("node-tar image remediation contract", () => {
         aptInstallCleanup < patchRun,
       file,
     ).toBe(installsPatchDownloader);
-    const executableSource = source.replace(/^\s*#.*$/gmu, (comment) => " ".repeat(comment.length));
+      const executableSource = source.replace(/^\s*#.*$/gmu, (comment) =>
+        " ".repeat(comment.length),
+      );
     const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
       (match) => match.index,
     );
@@ -178,7 +186,8 @@ describe("node-tar image remediation contract", () => {
       npmConsumers.every((index) => index > patchRun),
       file,
     ).toBe(true);
-  });
+    },
+  );
 });
 
 describe("reviewed npm image remediation contract", () => {

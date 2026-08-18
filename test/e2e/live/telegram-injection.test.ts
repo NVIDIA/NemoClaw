@@ -192,7 +192,9 @@ async function assertSandboxProcessTableDoesNotExposeSecret(
   expect(result.stdout.trim(), resultText(result)).toBe("SECRET_ABSENT");
 }
 
-test("Telegram bridge-style message handling treats shell metacharacters as data", {
+test(
+  "Telegram bridge-style message handling treats shell metacharacters as data",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -203,7 +205,8 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
       "confirm benign message passthrough",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = phase6Env({
     sandboxName: SANDBOX_NAME,
@@ -249,10 +252,17 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
     "NVIDIA endpoint validation was rate-limited before Telegram injection assertions ran",
   );
   expectExitZero(install, "install.sh --non-interactive");
-  await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-telegram-injection");
+    await expectSandboxReady(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "sandbox-list-telegram-injection",
+    );
 
   progress.phase("exercise command-substitution payloads");
-  for (const [label, marker, payload] of [
+    await forEachFixtureSequentially(
+      [
     [
       "command-substitution",
       "/tmp/injection-proof-t1",
@@ -264,7 +274,8 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
       "/tmp/injection-proof-t3",
       "'; touch /tmp/injection-proof-t3; echo '",
     ],
-  ] as const) {
+      ] as const,
+      async ([label, marker, payload]) => {
     await sandboxSh(sandbox, SANDBOX_NAME, `rm -f ${shellQuote(marker)}`, {
       artifactName: `remove-${label}-marker`,
       redactionValues: redactions,
@@ -313,7 +324,8 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
     );
     expectExitZero(sshMarkerCheck, `check ${label} ssh marker`);
     expect(sshMarkerCheck.stdout.trim(), resultText(sshMarkerCheck)).toBe("SAFE");
-  }
+      },
+    );
 
   progress.phase("check parameter and process-table secret boundaries");
   await assertParameterPayloadStaysLiteral(host, env, redactions);
@@ -331,7 +343,7 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
     "../etc/passwd",
     "UPPERCASE",
   ];
-  for (const invalidName of invalidNames) {
+    await forEachFixtureSequentially(invalidNames, async (invalidName) => {
     const validation = await host.command(
       "node",
       [
@@ -349,7 +361,7 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
     );
     expectExitZero(validation, `validateName ${invalidName}`);
     expect(validation.stdout, invalidName).toContain("REJECTED");
-  }
+    });
 
   progress.phase("confirm benign message passthrough");
   const normal = await sendPayloadViaSandboxStdin(
@@ -382,4 +394,12 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
       timeoutMs: 60_000,
     }),
   );
-});
+  },
+);
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

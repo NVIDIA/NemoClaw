@@ -51,6 +51,14 @@ async function unusedLoopbackPort(): Promise<number> {
   return address.port;
 }
 
+function dashboardPortRange(): number[] {
+  const ports: number[] = [];
+  for (let port = 18_789; port <= 18_799; port += 1) ports.push(port);
+  return ports;
+}
+
+const DASHBOARD_PORT_RANGE = dashboardPortRange();
+
 describe("findDashboardForwardOwner", () => {
   it("parses openshell forward list column format (#2169)", () => {
     const forwardList = [
@@ -106,9 +114,9 @@ describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
 
   it("throws when every port in the range is occupied by other sandboxes", () => {
     const lines = ["SANDBOX  BIND  PORT  PID  STATUS"];
-    for (let p = 18789; p <= 18799; p++) {
+    DASHBOARD_PORT_RANGE.forEach((p) => {
       lines.push(`other${p}    127.0.0.1  ${p}  ${p}  running`);
-    }
+    });
     assert.throws(
       () => findAvailableDashboardPort("cursor", 18789, lines.join("\n"), stubBound()),
       /All dashboard ports in range 18789-18799 are occupied/,
@@ -116,8 +124,7 @@ describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
   });
 
   it("includes host-bound ports in the exhaustion error so users know what's blocking them", () => {
-    const allBound = new Set<number>();
-    for (let p = 18789; p <= 18799; p++) allBound.add(p);
+    const allBound = new Set(DASHBOARD_PORT_RANGE);
     assert.throws(
       () => findAvailableDashboardPort("cursor", 18789, "", (p) => allBound.has(p)),
       /18789 → non-OpenShell host listener/,
@@ -448,9 +455,9 @@ describe("findAvailableDashboardPort multi-gateway registry occupancy", () => {
 
   it("includes registry-owned ports in the exhaustion error so the operator can see who holds them", () => {
     const lines = ["SANDBOX  BIND  PORT  PID  STATUS"];
-    for (let p = 18789; p <= 18798; p++) {
+    DASHBOARD_PORT_RANGE.slice(0, -1).forEach((p) => {
       lines.push(`forwarded${p}    127.0.0.1  ${p}  ${p}  running`);
-    }
+    });
     const registryOccupied = new Map<string, string>([["18799", "instance-z"]]);
 
     assert.throws(

@@ -67,7 +67,9 @@ function assertSlackCapture(captureFile: string, expectedCode: string, expectedU
   ).toBe(true);
 }
 
-test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell approval", {
+test(
+  "OpenClaw Slack Socket Mode pairing request is shared with connect-shell approval",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -79,7 +81,8 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
       "approve the Slack code through connect-shell",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = pairingEnv({
     sandboxName: SANDBOX_NAME,
@@ -135,7 +138,9 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
   await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-slack-pairing");
 
   progress.phase("inspect Slack providers and preset policy");
-  for (const providerName of [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`]) {
+    await forEachFixtureSequentially(
+      [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`],
+      async (providerName) => {
     const provider = await host.command("openshell", ["provider", "get", providerName], {
       artifactName: `provider-get-${providerName}`,
       env,
@@ -143,7 +148,8 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
       timeoutMs: 60_000,
     });
     expectExitZero(provider, `${providerName} exists`);
-  }
+      },
+    );
 
   await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "slack", redactions);
   await assertSlackPresetPolicySemantics({
@@ -204,4 +210,12 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     code,
     redactions,
   });
-});
+  },
+);
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

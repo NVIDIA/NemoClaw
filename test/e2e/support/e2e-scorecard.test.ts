@@ -144,6 +144,10 @@ function makeRawTrace(totalMs = 1200, preflightMs = 500): Record<string, unknown
   };
 }
 
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}
+
 function runSanitizer(source: string, output: string) {
   return spawnSync("python3", [SANITIZER, source, output], {
     cwd: process.cwd(),
@@ -820,9 +824,10 @@ print(json.dumps(module.extract_candidate(artifact), sort_keys=True))
     try {
       mkdirSync(source);
       writeFileSync(join(source, "000-valid.json"), JSON.stringify(makeRawTrace(1_200)));
-      for (let index = 1; index < 100; index += 1) {
+      repeatFixtureAction(99, (zeroBasedIndex) => {
+        const index = zeroBasedIndex + 1;
         writeFileSync(join(source, `${String(index).padStart(3, "0")}-invalid.json`), "{}");
-      }
+      });
       writeFileSync(join(source, "100-ignored.json"), JSON.stringify(makeRawTrace(9_999)));
       writeFileSync(join(source, "101-oversized.json"), " ".repeat(2 * 1024 * 1024 + 1));
 
@@ -834,9 +839,10 @@ print(json.dumps(module.extract_candidate(artifact), sort_keys=True))
 
       rmSync(output, { force: true, recursive: true });
       rmSync(join(source, "000-valid.json"));
-      for (let index = 1; index < 100; index += 1) {
+      repeatFixtureAction(99, (zeroBasedIndex) => {
+        const index = zeroBasedIndex + 1;
         rmSync(join(source, `${String(index).padStart(3, "0")}-invalid.json`));
-      }
+      });
       rmSync(join(source, "100-ignored.json"));
       const oversizedOnly = runSanitizer(source, output);
       expect(oversizedOnly.status, oversizedOnly.stderr).toBe(0);

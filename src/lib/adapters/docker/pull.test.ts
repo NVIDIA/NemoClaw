@@ -198,9 +198,9 @@ describe("docker pull progress watchdog", () => {
       spawnImpl: () => child,
     });
 
-    for (let i = 0; i < 210; i += 1) {
+    repeatFixtureAction(210, (i) => {
       child.stderr.emit("data", Buffer.from(`diagnostic line ${String(i)}\n`));
-    }
+    });
     child.emit("close", 1, null);
 
     const result = await pull;
@@ -275,3 +275,7 @@ describe("docker pull progress watchdog", () => {
     });
   });
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}

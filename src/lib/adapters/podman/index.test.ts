@@ -372,9 +372,9 @@ describe("Podman container engine command adapter", () => {
       capture,
     });
 
-    for (let index = 0; index < 63; index += 1) {
+    repeatFixtureAction(63, () => {
       expect(engine.capture(["info"])).toMatchObject({ status: 0 });
-    }
+    });
     expect(readFile).toHaveBeenCalledOnce();
     expect(() => engine.capture(["info"])).toThrow("changed after it was qualified");
     expect(capture).toHaveBeenCalledTimes(63);
@@ -410,7 +410,9 @@ describe("Podman container engine command adapter", () => {
     });
 
     expect(() => engine.capture(["info"])).toThrow(transientSocketFailure);
-    for (let index = 0; index < 63; index += 1) engine.capture(["info"]);
+    repeatFixtureAction(63, () => {
+      engine.capture(["info"]);
+    });
     expect(capture).toHaveBeenCalledTimes(63);
     expect(readFile).toHaveBeenCalledOnce();
 
@@ -443,7 +445,9 @@ describe("Podman container engine command adapter", () => {
       capture: vi.fn(() => ({ status: 0, stdout: "ok", stderr: "" })),
     });
 
-    for (let index = 0; index < 63; index += 1) first.capture(["info"]);
+    repeatFixtureAction(63, () => {
+      first.capture(["info"]);
+    });
     second.capture(["info"]);
     expect(firstReadFile).toHaveBeenCalledOnce();
     expect(secondReadFile).toHaveBeenCalledOnce();
@@ -482,3 +486,7 @@ describe("Podman container engine command adapter", () => {
     expect(capture).not.toHaveBeenCalled();
   });
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}

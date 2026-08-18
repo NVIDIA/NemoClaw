@@ -716,7 +716,7 @@ describe("MessagingWorkflowPlanner", () => {
         });
 
         let current = baseline;
-        for (const channelId of channels) {
+        await forEachFixtureSequentially(channels, async (channelId) => {
           const stopped = await lifecyclePlanner.buildChannelStopPlanFromSandboxEntry({
             sandboxName: "demo",
             agent: "hermes",
@@ -725,7 +725,7 @@ describe("MessagingWorkflowPlanner", () => {
           });
           expect(stopped).not.toBeNull();
           current = stopped!;
-        }
+        });
         const disabledRebuild = await lifecyclePlanner.buildRebuildPlanFromSandboxEntry({
           sandboxName: "demo",
           agent: "hermes",
@@ -748,7 +748,7 @@ describe("MessagingWorkflowPlanner", () => {
         });
 
         current = disabledRebuild!;
-        for (const channelId of channels) {
+        await forEachFixtureSequentially(channels, async (channelId) => {
           const started = await lifecyclePlanner.buildChannelStartPlanFromSandboxEntry({
             sandboxName: "demo",
             agent: "hermes",
@@ -757,7 +757,7 @@ describe("MessagingWorkflowPlanner", () => {
           });
           expect(started).not.toBeNull();
           current = started!;
-        }
+        });
         const restoredRebuild = await lifecyclePlanner.buildRebuildPlanFromSandboxEntry({
           sandboxName: "demo",
           agent: "hermes",
@@ -1142,3 +1142,10 @@ describe("MessagingWorkflowPlanner", () => {
     );
   });
 });
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

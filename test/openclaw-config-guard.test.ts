@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { waitForFile } from "./helpers/wait-for-file.ts";
 
 const GUARD_PATH = path.resolve("scripts/openclaw-config-guard.py");
 const fixtures: string[] = [];
@@ -1200,7 +1201,7 @@ describe("openclaw-config-guard", () => {
       expect(fs.readFileSync(outside, "utf-8")).toBe("outside\n");
       expect(mode(current.configPath)).toBe(0o444);
 
-      for (const _directoryAttack of attack === "directory" ? [true] : []) {
+      (attack === "directory" ? [true] : []).forEach((_directoryAttack) => {
         expect(runGuard("unlock", current.configDir).status).toBe(0);
         const retained = fs
           .readdirSync(current.configDir)
@@ -1208,7 +1209,7 @@ describe("openclaw-config-guard", () => {
         expect(retained).toBeDefined();
         fs.renameSync(path.join(current.configDir, retained!), reserved);
         expect(runGuard("lock", current.configDir).status).toBe(0);
-      }
+      });
     });
 
     const swapped = fixture();
@@ -1316,9 +1317,7 @@ describe("openclaw-config-guard", () => {
       },
     );
     try {
-      for (let attempt = 0; attempt < 80 && !fs.existsSync(ready); attempt += 1) {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-      }
+      waitForFile(ready, 80, 25);
       expect(fs.existsSync(ready)).toBe(true);
       const blocked = runGuard("lock", configDir);
       expect(blocked.status).toBe(1);

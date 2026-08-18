@@ -80,14 +80,14 @@ describe("growth-guardrails pr-blob-client", () => {
       const aliasCount = (query.match(/f\d+: object/g) ?? []).length;
       graphqlCalls.push(aliasCount);
       const entries: Record<string, unknown> = {};
-      for (let i = 0; i < aliasCount; i += 1) {
+      repeatFixtureAction(aliasCount, (i) => {
         entries[`f${i}`] = {
           __typename: "Blob",
           text: "line\n",
           isBinary: false,
           isTruncated: false,
         };
-      }
+      });
       return jsonResponse(blobData(entries));
     };
     const client = createPrBlobClient({ token: "t", fetchImpl, ...DETERMINISTIC });
@@ -187,3 +187,7 @@ describe("growth-guardrails pr-blob-client", () => {
     expect(urls).toHaveLength(4);
   });
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}

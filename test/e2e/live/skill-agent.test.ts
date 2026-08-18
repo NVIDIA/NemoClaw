@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { runAttemptsUntil } from "../fixtures/attempt-sequence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import {
@@ -326,7 +327,7 @@ test(
     const attempts = Math.max(1, Number.isFinite(MAX_ATTEMPTS) ? MAX_ATTEMPTS : 3);
 
     progress.phase("ask the agent to consume the skill");
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    await runAttemptsUntil(attempts, async (attempt) => {
       const verify = await host.command("bash", [VERIFY_SKILL_SCRIPT], {
         artifactName: `verify-sandbox-skill-via-agent-${attempt}`,
         cwd: REPO_ROOT,
@@ -345,17 +346,18 @@ test(
       lastExitCode = verify.exitCode;
       if (verify.exitCode === 0) {
         agentOk = true;
-        break;
+        return true;
       }
       if (isAgentVerificationFailClosed(lastAgentOutput)) {
-        break;
+        return true;
       }
       if (agentSectionContainsToken(lastAgentOutput)) {
         agentOk = true;
-        break;
+        return true;
       }
       if (attempt < attempts) await sleep(RETRY_SLEEP_MS);
-    }
+      return false;
+    });
 
     if (!agentOk) {
       const fixturePresent = await verifySkillFixturePresent(sandbox, SANDBOX_NAME);

@@ -39,6 +39,12 @@ function listen(server: http.Server): Promise<string> {
   });
 }
 
+async function collectAsync<T>(values: AsyncIterable<T>): Promise<T[]> {
+  const collected: T[] = [];
+  for await (const value of values) collected.push(value);
+  return collected;
+}
+
 describe("Bedrock Runtime OpenAI adapter", () => {
   it("converts text chat completions to Converse and back", async () => {
     const send = vi.fn(async (command: any) => {
@@ -86,17 +92,16 @@ describe("Bedrock Runtime OpenAI adapter", () => {
       return { stream: stream() };
     });
 
-    const chunks: any[] = [];
-    for await (const chunk of await streamOpenAiChatCompletion(
+    const chunks = await collectAsync<any>(
+      await streamOpenAiChatCompletion(
       {
         model: "anthropic.claude-3-haiku-20240307-v1:0",
         stream: true,
         messages: [{ role: "user", content: "hello" }],
       },
       { send },
-    )) {
-      chunks.push(chunk);
-    }
+      ),
+    );
 
     expect(chunks.map((chunk: any) => chunk.choices[0].delta.content).filter(Boolean)).toEqual([
       "hel",
@@ -124,17 +129,16 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     }
     const send = vi.fn(async () => ({ stream: stream() }));
 
-    const chunks: any[] = [];
-    for await (const chunk of await streamOpenAiChatCompletion(
+    const chunks = await collectAsync<any>(
+      await streamOpenAiChatCompletion(
       {
         model: "anthropic.claude-3-haiku-20240307-v1:0",
         stream: true,
         messages: [{ role: "user", content: "weather" }],
       },
       { send },
-    )) {
-      chunks.push(chunk);
-    }
+      ),
+    );
 
     expect(
       chunks.find((chunk) => chunk.choices[0].delta.tool_calls)?.choices[0].delta.tool_calls,

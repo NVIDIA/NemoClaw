@@ -583,9 +583,9 @@ describe("starter prompt docs CTA", () => {
     expect(formSource).toContain('const LOCAL_SUBMIT_PATH = "/submit";');
     expect(formSource).toContain("fetch(LOCAL_SUBMIT_PATH");
     expect(formSource).not.toContain('params.get("submit")');
-    for (const url of urlsIn(formSource)) {
+    urlsIn(formSource).forEach((url) => {
       expect(["127.0.0.1", "localhost", "[::1]"], url.href).toContain(url.hostname);
-    }
+    });
     expect(formSource).not.toContain("localStorage");
     expect(formSource).not.toContain("sessionStorage");
   });
@@ -668,7 +668,7 @@ describe("starter prompt docs CTA", () => {
     expect(requireExpectedPromptAssetRoutes(promptSource, platformPromptAssetRoutes)).toEqual(
       new Map(platformPromptAssetRoutes.map(({ asset, label }) => [label, asset.url])),
     );
-    for (const asset of Object.values(promptAssets)) {
+    Object.values(promptAssets).forEach((asset) => {
       expect(promptSource).toContain(asset.url);
       const assetUrl = new URL(asset.url);
       expect(assetUrl.origin).toBe("https://raw.githubusercontent.com");
@@ -676,7 +676,7 @@ describe("starter prompt docs CTA", () => {
         /^\/NVIDIA\/NemoClaw\/[0-9a-f]{40}\/docs\/resources\/prompt-assets\/[^/]+\.md$/,
       );
       expect(assetUrl.pathname).toContain(`/${promptAssetRevision}/`);
-    }
+    });
 
     expect(promptSource).toContain("load exactly one matching instruction asset");
     expect(promptSource).toContain("Read the matching raw Markdown file completely");
@@ -724,7 +724,7 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).toContain("For DeepSeek, pass `--station-deepseek`");
     expect(stationSource).toContain("TCP port `6379`");
     expect(stationSource).toContain("shared `/24`");
-    for (const environmentName of [
+    [
       "NEMOCLAW_PROVIDER",
       "NEMOCLAW_VLLM_MODEL",
       "NEMOCLAW_MODEL",
@@ -732,9 +732,9 @@ describe("starter prompt docs CTA", () => {
       "NEMOCLAW_YES",
       "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
       "NEMOCLAW_NO_EXPRESS",
-    ]) {
+    ].forEach((environmentName) => {
       expect(stationSource).toContain(`\`${environmentName}\``);
-    }
+    });
     expect(stationSource).toContain(
       "Let the installer present its third-party-software notice and complete Express summary.",
     );
@@ -788,7 +788,8 @@ describe("starter prompt docs CTA", () => {
     expect(allInvalid.fieldsElement.children).toHaveLength(0);
     expect(allInvalid.resultElement.allText()).toContain("Rejected specs: bad-name:secret");
 
-    for (const malformedUrl of [
+    await forEachFixtureSequentially(
+      [
       "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN",
       "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:unknown",
       "http://127.0.0.1:4123/local-credential-form.html?fields=SECRET_TOKEN:text:extra",
@@ -823,13 +824,15 @@ describe("starter prompt docs CTA", () => {
       "http://127.0.0.1:4123/local-credential-form.html?fields=OPENSHELL_DOCKER_SUPERVISOR_IMAGE:text",
       "http://127.0.0.1:4123/local-credential-form.html?fields=PIP_INDEX_URL:text",
       "http://127.0.0.1:4123/local-credential-form.html?fields=PUBLIC_ID:text&submit=/capture",
-    ]) {
+      ],
+      async (malformedUrl) => {
       const malformed = runCredentialForm(withCredentialCapability(malformedUrl));
       expect(malformed.submitButton.disabled, malformedUrl).toBe(true);
       expect(malformed.resultElement.allText(), malformedUrl).toContain("rejected");
       await malformed.preview();
       expect(malformed.fetchCalls, malformedUrl).toHaveLength(0);
-    }
+      },
+    );
 
     const tooManyFields = Array.from({ length: 17 }, (_, index) => `PUBLIC_ID_${index}:text`);
     const oversizedSchema = runCredentialForm(
@@ -1124,3 +1127,10 @@ describe("starter prompt checkout line endings", () => {
     expect(readCheckoutEol(relativePath)).toContain(`${relativePath}: eol: lf`);
   });
 });
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

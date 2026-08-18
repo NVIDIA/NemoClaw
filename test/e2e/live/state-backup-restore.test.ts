@@ -125,7 +125,9 @@ async function destroySandboxUntilAbsent(
   );
 }
 
-test("state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)", {
+test(
+  "state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)",
+  {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -138,7 +140,8 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
       "validate restored workspace and memory",
     ],
   },
-}, async ({
+  },
+  async ({
   artifacts,
   cleanup,
   environment,
@@ -268,7 +271,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
     expected: `${markerContent}_daily`,
   });
 
-  for (const expectation of expectations) {
+    await forEachFixtureSequentially(expectations, async (expectation) => {
     await stateValidation.writeMarkerFile(
       instance,
       path.posix.join(WORKSPACE_PATH, expectation.relativePath),
@@ -279,7 +282,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
         timeoutMs: 60_000,
       },
     );
-  }
+    });
   await artifacts.writeJson("phase-1-marker-summary.json", {
     workspaceFilesWritten: WORKSPACE_FILES.length,
     memoryFilesWritten: 1,
@@ -394,7 +397,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   progress.phase("validate restored workspace and memory");
   let restoredFiles = 0;
   const mismatches: Array<{ file: string; actual: string }> = [];
-  for (const file of WORKSPACE_FILES) {
+    await forEachFixtureSequentially(WORKSPACE_FILES, async (file) => {
     const remotePath = path.posix.join(WORKSPACE_PATH, file);
     const read = await sandbox.exec(
       SANDBOX_NAME,
@@ -411,7 +414,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
     } else {
       mismatches.push({ file, actual: resultText(read).slice(0, 200) });
     }
-  }
+    });
   await artifacts.writeJson("phase-6-files-restore-summary.json", {
     restoredFiles,
     expectedFiles: WORKSPACE_FILES.length,
@@ -445,4 +448,12 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   }
   expect(memoryText).toContain("STATE=EXISTS");
   expect(memoryText).toContain(`${markerContent}_daily`);
-});
+  },
+);
+
+async function forEachFixtureSequentially<T>(
+  values: Iterable<T>,
+  action: (value: T) => Promise<void>,
+): Promise<void> {
+  for (const value of values) await action(value);
+}

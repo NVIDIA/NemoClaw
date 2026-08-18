@@ -418,7 +418,7 @@ describe.skipIf(!canRun)(
           "https",
         ];
         unsafeEndpoints.forEach((endpoint) => {
-          for (const source of ["config", "runtime"] as const) {
+          (["config", "runtime"] as const).forEach((source) => {
             const config =
               source === "config"
                 ? SAMPLE_CONFIG.replace("https://inference.local/v1", endpoint)
@@ -430,7 +430,7 @@ describe.skipIf(!canRun)(
             expect(run.status).toBe(refusedByRuntimeGuard ? 2 : 0);
             expect(`${run.stdout}\n${run.stderr}`).not.toContain(endpoint);
             expect(run.stdout).not.toContain("Endpoint:");
-          }
+          });
         });
       });
     });

@@ -382,7 +382,9 @@ describe("runFatalOnboardRuntimePreflight", () => {
     ["the CLI disable flag", { sandboxGpu: "disable" as const }, {}],
     ["the environment CPU-only mode", {}, { NEMOCLAW_SANDBOX_GPU: "0" }],
   ])("treats %s as explicit CPU-only intent", (_label, options, env) => {
-    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+    Object.entries(env).forEach(([name, value]) => {
+      vi.stubEnv(name, value);
+    });
     const result = runFatalOnboardRuntimePreflight(options, {
       nonInteractive: true,
       assessHost: () => hostWithMissingGpuIntegration(),

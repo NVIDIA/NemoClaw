@@ -148,9 +148,9 @@ describe("package-managed gateway version gate (#8094)", () => {
     const warn = vi.fn();
     const options = resolveOptions("0.0.91", { warn });
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    repeatFixtureAction(3, () => {
       expect(() => hasOpenShellGatewayUserService(options)).toThrow("outside the maximum 0.0.85");
-    }
+    });
 
     expect(warn).toHaveBeenCalledTimes(1);
   });
@@ -247,3 +247,7 @@ describe("package-managed gateway version gate (#8094)", () => {
     expect(events.some((event) => /^(stop|enable|restart)/.test(event))).toBe(false);
   });
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}

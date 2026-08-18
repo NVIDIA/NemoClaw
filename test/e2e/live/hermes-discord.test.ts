@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
+import { runAttemptsUntil } from "../fixtures/attempt-sequence.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
@@ -487,7 +488,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, and native ga
   expectExitZero(provider, "Discord provider exists in gateway");
 
   let health: ShellProbeResult | undefined;
-  for (let attempt = 1; attempt <= 15; attempt += 1) {
+  await runAttemptsUntil(15, async (attempt) => {
     health = await sandboxSh(sandbox, SANDBOX_NAME, `curl -sf ${shellQuote(HERMES_HEALTH_URL)}`, {
       artifactName: `phase-3-hermes-health-${attempt}`,
       redactionValues,
@@ -495,12 +496,12 @@ test("hermes-discord: Hermes Discord schema, credential isolation, and native ga
     });
     switch (health.exitCode === 0 && /"ok"/i.test(resultText(health))) {
       case true:
-        attempt = 16;
-        break;
+        return true;
       default:
         await sleep(4_000);
+        return false;
     }
-  }
+  });
   expect(health, "Hermes health probe did not run").toBeTruthy();
   expect(health?.exitCode, health ? resultText(health) : "missing health result").toBe(0);
   expect(resultText(health!)).toMatch(/"ok"/i);

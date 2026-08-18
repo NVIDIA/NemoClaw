@@ -11,6 +11,7 @@
 
 import path from "node:path";
 
+import { runAttemptsUntil } from "../fixtures/attempt-sequence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -193,7 +194,9 @@ async function preCleanCronSandbox(sandbox: SandboxClient): Promise<void> {
   );
 }
 
-test("cron preflight reaches managed inference.local provider without EAI_AGAIN", {
+test(
+  "cron preflight reaches managed inference.local provider without EAI_AGAIN",
+  {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -203,7 +206,8 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
       "validate managed route availability",
     ],
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets, process.env, { model: MODEL });
   const apiKey = hosted.apiKey;
 
@@ -258,7 +262,7 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
 
   progress.phase("install hosted-inference OpenClaw sandbox");
   let install: ShellProbeResult | undefined;
-  for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
+    await runAttemptsUntil(INSTALL_ATTEMPTS, async (attempt) => {
     install = await host.command(
       "bash",
       ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
@@ -273,13 +277,13 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
         timeoutMs: 20 * 60_000,
       },
     );
-    if (install.exitCode === 0) break;
+      if (install.exitCode === 0) return true;
     if (isTransientProviderValidationFailure(install) && attempt < INSTALL_ATTEMPTS) {
       await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt));
-      continue;
-    }
-    break;
+        return false;
   }
+      return true;
+    });
   expect(install, "install command must run").toBeDefined();
   expect(install?.exitCode, resultText(install as ShellProbeResult)).toBe(0);
 
@@ -302,4 +306,5 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
   expect(probe.exitCode, output).toBe(0);
   expect(parsed?.result?.status, output).toBe("available");
   expect(parsed?.baseUrl, output).toBe("https://inference.local/v1");
-});
+  },
+);

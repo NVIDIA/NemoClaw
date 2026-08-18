@@ -196,14 +196,14 @@ describe("Docker managed-startup shared-state finalization", () => {
       .mockImplementationOnce(copyReceipt)
       .mockImplementationOnce(completeCommit);
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    repeatFixtureAction(2, () => {
       expect(
         finalizeDockerManagedStartupSharedState(
           { transaction: transaction(), patchResult: result(), supervisorReady: true },
           { dockerRun },
         ),
       ).toEqual({ supervisorReady: true, failure: null });
-    }
+    });
     expect(new Set(receiptPaths).size).toBe(2);
     expect(receiptPaths.every((receiptPath) => !fs.existsSync(path.dirname(receiptPath)))).toBe(
       true,
@@ -285,3 +285,7 @@ describe("Docker managed-startup shared-state finalization", () => {
     expect(dockerStop).not.toHaveBeenCalled();
   });
 });
+
+function repeatFixtureAction(count: number, action: (index: number) => void): void {
+  for (let index = 0; index < count; index += 1) action(index);
+}
