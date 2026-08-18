@@ -3,9 +3,69 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { prepareOnboardSandboxWorkloadLaunch } from "./onboard-orchestration";
+const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
+
+vi.mock("../workload/preparation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../workload/preparation")>()),
+  prepareSandboxWorkloadSource,
+}));
+
+vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
+
+import {
+  createManagedWorkloadOnboardRuntime,
+  prepareOnboardSandboxWorkloadLaunch,
+} from "./onboard-orchestration";
 
 describe("managed workload onboard orchestration", () => {
+  it("retains the live qualification catalog revision during fresh onboarding (#9385)", async () => {
+    const catalogRevision = "a".repeat(40);
+    const prepared = {
+      source: {
+        kind: "legacy-dockerfile",
+        dockerfilePath: "agents/openclaw/Dockerfile",
+        reason: "managed-image-unavailable",
+      },
+      release: "v0.0.0",
+      fallbackDiagnostic: null,
+    };
+    prepareSandboxWorkloadSource.mockResolvedValueOnce(prepared);
+
+    const runtime = createManagedWorkloadOnboardRuntime(
+      {
+        computePlan: { driverName: "docker" },
+        managedWorkloadRebuild: null,
+        tempManagedRuntime: false,
+        tempManagedRuntimeCatalog: null,
+        agentName: "openclaw",
+        legacyDockerfilePath: "agents/openclaw/Dockerfile",
+        customDockerfilePath: null,
+        rootDir: "/tmp/nemoclaw",
+        model: "model",
+        provider: "provider",
+        preferredInferenceApi: null,
+        endpointUrl: null,
+        startupProfile: {
+          environment: {
+            GITHUB_ACTIONS: "true",
+            E2E_MANAGED_IMAGE_REVISION: catalogRevision,
+          },
+        },
+        note: vi.fn(),
+        fallbackBuildEstimate: () => null,
+      } as unknown as Parameters<typeof createManagedWorkloadOnboardRuntime>[0],
+      {
+        resolveAgentInferenceApi: vi.fn(),
+        getSandboxInferenceConfig: vi.fn(),
+      },
+    );
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ catalogRevision }),
+    );
+  });
+
   it("resolves final-image patch metadata after managed build-context staging", async () => {
     const resolutionMetadata = { key: "published-dcode-base" };
     let staged = false;
