@@ -18,6 +18,7 @@ import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
+  dcodeBaseImageReferenceForContract,
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
@@ -95,9 +96,10 @@ for (const [targetIndex, target] of listTargets().entries()) {
         target.id,
         artifacts.pathFor("dcode-base-image.json"),
       );
-      for (const secret of target.requiredSecrets ?? []) {
-        secrets.required(secret);
-      }
+      const dcodeBaseImageReference = dcodeBaseContract
+        ? dcodeBaseImageReferenceForContract(dcodeBaseContract)
+        : undefined;
+      requireRegistryTargetSecrets(target.id, target.requiredSecrets ?? [], secrets);
 
       expect(
         fs.existsSync(CLI_DIST_ENTRYPOINT),
@@ -137,6 +139,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, {
         sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
+        dcodeBaseImageReference,
       });
 
       // Lifecycle phase runs between onboard and state-validation.
@@ -170,12 +173,15 @@ for (const [targetIndex, target] of listTargets().entries()) {
       expect(checkScripts).toEqual(
         cloudExperimentalChecksForOnboarding(target.environment.onboarding),
       );
-      for (const scriptPath of checkScripts) {
-        expect(fs.existsSync(path.join(REPO_ROOT, scriptPath))).toBe(true);
-      }
+      expect(
+        checkScripts.every((scriptPath) =>
+          Object.is(fs.existsSync(path.join(REPO_ROOT, scriptPath)), true),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
       await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
         artifacts,
+        dcodeBaseImageReference,
         host,
         secrets,
       });
