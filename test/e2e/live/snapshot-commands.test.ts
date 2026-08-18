@@ -29,7 +29,6 @@ import {
   classifySnapshotGatewayProbe,
   classifySnapshotRestoreResult,
   type SnapshotInferenceFixture,
-  verifySnapshotCloneResult,
 } from "./snapshot-commands-helpers.ts";
 import { scanSnapshotCredentialLeaks } from "./snapshot-credential-scanner.ts";
 
@@ -675,8 +674,8 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     );
     const cloneRestoreResult = classifySnapshotRestoreResult(cloneRestore);
     progress.phase("verify the restored clone state and gateway pairing");
-    await verifySnapshotCloneResult(cloneRestoreResult, {
-      managedCloneDormancy: async () => {
+    switch (cloneRestoreResult) {
+      case "managed-clone-rebind-required": {
         expect(resultText(cloneRestore)).toContain(
           `restoring '${SANDBOX_NAME}' as '${CLONE_SANDBOX_NAME}' requires managed-profile clone rebind`,
         );
@@ -699,8 +698,9 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
           classification: cloneRestoreResult,
           destinationAbsent: true,
         });
-      },
-      restoredLegacyClone: async () => {
+        break;
+      }
+      case "restored": {
         await expectSandboxFileContent(
           sandbox,
           CLONE_SANDBOX_NAME,
@@ -806,8 +806,11 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
           },
         );
         expect(destroyClone.exitCode, resultText(destroyClone)).toBe(0);
-      },
-    });
+        break;
+      }
+      default:
+        throw new Error(`Unexpected snapshot clone result classification: ${cloneRestoreResult}`);
+    }
 
     progress.phase("create a second snapshot from changed workspace");
     const modify = await sandbox.exec(
