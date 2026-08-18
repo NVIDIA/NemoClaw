@@ -21,6 +21,8 @@ import {
   parseNvdaPersonalStockReply,
   parseOpenClawAgentText,
   parseOpenClawToolEvidence,
+  projectNvdaPersonalStockReplyEvidence,
+  projectPersonalStockToolEvidenceArtifact,
   reduceOpenClawToolEvidence,
   runHermesAgentAssertionRetry,
   runOpenClawAgentAssertionRetry,
@@ -59,6 +61,7 @@ function stockSessionJsonLines(
     details?: Record<string, unknown>;
     extraToolName?: string;
     isError?: boolean;
+    maxChars?: number | null;
     payload?: Record<string, unknown>;
     resultCallId?: string;
     resultToolName?: string;
@@ -66,12 +69,13 @@ function stockSessionJsonLines(
 ): string {
   const callId = options.callId ?? "call-web-fetch-1";
   const payload = options.payload ?? stockPayload();
+  const maxChars = options.maxChars === undefined ? 8_000 : options.maxChars;
   const content = [
     {
       type: "toolCall",
       id: callId,
       name: "web_fetch",
-      arguments: { url: STOCK_SOURCE_URL, maxChars: 8_000 },
+      arguments: { url: STOCK_SOURCE_URL, ...(maxChars === null ? {} : { maxChars }) },
     },
     ...(options.extraToolName
       ? [{ type: "toolCall", id: "call-extra-1", name: options.extraToolName, arguments: {} }]
@@ -104,6 +108,117 @@ function stockTrajectory(extraToolName?: string): string {
       ],
     },
   });
+}
+
+function directStockTrajectoryWithProjection(): string {
+  const messagesSnapshot = stockSessionJsonLines()
+    .split("\n")
+    .map((line) => (JSON.parse(line) as { message: unknown }).message);
+  return [
+    JSON.stringify({ type: "model.completed", data: { messagesSnapshot } }),
+    stockTrajectory(),
+  ].join("\n");
+}
+
+function progressiveStockSessionJsonLines(
+  options: { maxChars?: number | null; wrapperTargetId?: string } = {},
+): string {
+  const maxChars = options.maxChars === undefined ? 8_000 : options.maxChars;
+  const calls = [
+    { id: "call-search-1", name: "tool_search", arguments: { query: "web fetch" } },
+    {
+      id: "call-describe-1",
+      name: "tool_describe",
+      arguments: { id: "openclaw:core:web_fetch" },
+    },
+    {
+      id: "call-wrapper-1",
+      name: "tool_call",
+      arguments: {
+        id: options.wrapperTargetId ?? "openclaw:core:web_fetch",
+        args: { url: STOCK_SOURCE_URL, ...(maxChars === null ? {} : { maxChars }) },
+      },
+    },
+  ];
+  return calls
+    .flatMap((call) => [
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: [{ type: "toolCall", ...call }] },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: call.id,
+          toolName: call.name,
+          content: [{ type: "text", text: "{}" }],
+          isError: false,
+        },
+      }),
+    ])
+    .join("\n");
+}
+
+function progressiveStockTrajectory(
+  options: {
+    maxChars?: number | null;
+    payload?: Record<string, unknown>;
+    projectedParentCallId?: string;
+    projectedTargetName?: string;
+    wrapperTargetId?: string;
+  } = {},
+): string {
+  const payload = options.payload ?? stockPayload();
+  const projectedTargetName = options.projectedTargetName ?? "web_fetch";
+  const maxChars = options.maxChars === undefined ? 8_000 : options.maxChars;
+  const targetArguments = {
+    url: STOCK_SOURCE_URL,
+    ...(maxChars === null ? {} : { maxChars }),
+  };
+  const sessionMessages = progressiveStockSessionJsonLines(options)
+    .split("\n")
+    .map((line) => (JSON.parse(line) as { message: unknown }).message);
+  const targetCallId = `tool_search_code:${
+    options.projectedParentCallId ?? "call-wrapper-1"
+  }:${projectedTargetName}:1`;
+  const messagesSnapshot = [
+    ...sessionMessages,
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: targetCallId,
+          name: projectedTargetName,
+          arguments: targetArguments,
+          input: targetArguments,
+        },
+      ],
+    },
+    {
+      role: "toolResult",
+      toolCallId: targetCallId,
+      toolName: projectedTargetName,
+      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+      isError: false,
+    },
+  ];
+  return [
+    JSON.stringify({ type: "model.completed", data: { messagesSnapshot } }),
+    JSON.stringify({
+      type: "trace.artifacts",
+      data: {
+        finalStatus: "success",
+        toolMetas: [
+          { toolName: "tool_search", meta: {} },
+          { toolName: "tool_describe", meta: {} },
+          { toolName: projectedTargetName, meta: STOCK_SOURCE_URL },
+          { toolName: "tool_call", meta: {} },
+        ],
+      },
+    }),
+  ].join("\n");
 }
 
 function stockAttemptValidationOptions(
@@ -162,9 +277,11 @@ describe("common-egress agent parsing and classification helpers", () => {
 
     expect(evidence).toEqual({
       schemaVersion: 1,
+      controlTargetViolations: 0,
       errors: [],
       expectedStockFingerprint: expect.stringMatching(/^[0-9a-f]{8}$/u),
       finalStatuses: ["success"],
+      projectedTargetEvidence: false,
       providerMentions: [],
       toolCalls: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
       toolExecutions: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
@@ -174,6 +291,7 @@ describe("common-egress agent parsing and classification helpers", () => {
           asOfMatches: true,
           directFetch: true,
           httpSuccess: true,
+          maxCharsWithinLimit: true,
           paired: true,
           priceMatches: true,
           resultSuccess: true,
@@ -240,6 +358,247 @@ describe("common-egress agent parsing and classification helpers", () => {
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
+  });
+
+  it("uses a direct-call model snapshot for complete results without granting control tools", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      stockSessionJsonLines({
+        details: { persistedDetailsTruncated: true },
+        payload: stockPayload({ text: "persisted result was truncated" }),
+      }),
+      directStockTrajectoryWithProjection(),
+      STOCK_REPLY,
+    );
+
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      forbiddenToolNames: [],
+      matches: true,
+      projectedTargetEvidence: false,
+      qualifyingWebFetchResults: 1,
+    });
+  });
+
+  it("accepts a progressive Tool Search wrapper only with projected web_fetch proof", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      progressiveStockSessionJsonLines(),
+      progressiveStockTrajectory(),
+      STOCK_REPLY,
+    );
+
+    expect(evidence.errors).toEqual([]);
+    expect(evidence).toMatchObject({
+      controlTargetViolations: 0,
+      projectedTargetEvidence: true,
+    });
+    expect(evidence.toolCalls.map(({ name }) => name)).toEqual([
+      "tool_search",
+      "tool_describe",
+      "tool_call",
+      "web_fetch",
+    ]);
+    expect(evidence.toolExecutions.map(({ name }) => name)).toEqual([
+      "tool_search",
+      "tool_describe",
+      "web_fetch",
+      "tool_call",
+    ]);
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      forbiddenProviderMentions: [],
+      forbiddenToolNames: [],
+      matches: true,
+      qualifyingWebFetchResults: 1,
+      webFetchCalls: 1,
+      webFetchExecutions: 1,
+    });
+    expect(JSON.stringify(evidence)).not.toContain("credential");
+    expect(JSON.stringify(evidence)).not.toContain("192.38");
+  });
+
+  it("rejects progressive controls without a projected target call and result", () => {
+    const trajectory = progressiveStockTrajectory()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { data?: Record<string, unknown>; type?: string })
+      .map((event) =>
+        JSON.stringify(
+          event.type === "model.completed" && event.data
+            ? {
+                ...event,
+                data: {
+                  ...event.data,
+                  messagesSnapshot: (
+                    event.data.messagesSnapshot as Array<{
+                      content?: Array<{ name?: string }>;
+                    }>
+                  ).filter((message) => message.content?.[0]?.name !== "web_fetch"),
+                },
+              }
+            : event,
+        ),
+      )
+      .join("\n");
+    const evidence = reduceOpenClawToolEvidence(
+      progressiveStockSessionJsonLines(),
+      trajectory,
+      STOCK_REPLY,
+    );
+
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      matches: false,
+      qualifyingWebFetchResults: 0,
+      webFetchCalls: 0,
+    });
+  });
+
+  it("rejects fallback controls that target exec beside an otherwise valid direct fetch", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      [
+        stockSessionJsonLines(),
+        progressiveStockSessionJsonLines({ wrapperTargetId: "openclaw:core:exec" }),
+      ].join("\n"),
+      stockTrajectory("tool_call"),
+      STOCK_REPLY,
+    );
+
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      controlTargetViolations: 1,
+      forbiddenToolNames: ["tool_call", "tool_describe", "tool_search"],
+      matches: false,
+      projectedTargetEvidence: false,
+      qualifyingWebFetchResults: 1,
+    });
+  });
+
+  it.each([
+    {
+      name: "an oversized direct fetch",
+      session: stockSessionJsonLines({ maxChars: 8_001 }),
+      trajectory: stockTrajectory(),
+    },
+    {
+      name: "an oversized progressive fetch",
+      session: progressiveStockSessionJsonLines({ maxChars: 8_001 }),
+      trajectory: progressiveStockTrajectory({ maxChars: 8_001 }),
+    },
+    {
+      name: "a direct fetch that omits maxChars",
+      session: stockSessionJsonLines({ maxChars: null }),
+      trajectory: stockTrajectory(),
+    },
+  ])("rejects $name", ({ session, trajectory }) => {
+    const evidence = reduceOpenClawToolEvidence(session, trajectory, STOCK_REPLY);
+
+    expect(evidence.webFetchResults).toContainEqual(
+      expect.objectContaining({ maxCharsWithinLimit: false }),
+    );
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      matches: false,
+      qualifyingWebFetchResults: 0,
+    });
+  });
+
+  it.each([
+    { name: "a forbidden projected target", projectedTargetName: "exec", payload: stockPayload() },
+    {
+      name: "a provider-backed projected fetch",
+      projectedTargetName: "web_fetch",
+      payload: stockPayload({
+        extractor: "firecrawl",
+        externalContent: {
+          untrusted: true,
+          source: "web_fetch",
+          provider: "firecrawl",
+          wrapped: true,
+        },
+      }),
+    },
+  ])("rejects $name behind progressive controls", ({ payload, projectedTargetName }) => {
+    const evidence = reduceOpenClawToolEvidence(
+      progressiveStockSessionJsonLines(),
+      progressiveStockTrajectory({ payload, projectedTargetName }),
+      STOCK_REPLY,
+    );
+
+    expect(assessPersonalStockToolEvidence(evidence).matches).toBe(false);
+  });
+
+  it.each([
+    {
+      controlTargetViolations: 1,
+      name: "a non-core catalog alias",
+      projectedParentCallId: "call-wrapper-1",
+      wrapperTargetId: "mcp:evil:web_fetch",
+    },
+    {
+      controlTargetViolations: 0,
+      name: "an unassociated projected call",
+      projectedParentCallId: "unrelated-call",
+      wrapperTargetId: "openclaw:core:web_fetch",
+    },
+  ])(
+    "rejects $name even with a complete projected web_fetch result",
+    ({ controlTargetViolations, projectedParentCallId, wrapperTargetId }) => {
+      const evidence = reduceOpenClawToolEvidence(
+        progressiveStockSessionJsonLines({ wrapperTargetId }),
+        progressiveStockTrajectory({ projectedParentCallId, wrapperTargetId }),
+        STOCK_REPLY,
+      );
+
+      expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+        controlTargetViolations,
+        matches: false,
+        projectedTargetEvidence: false,
+      });
+    },
+  );
+
+  it("projects upload-safe stock evidence and keeps failure diagnostics aggregate-only", async () => {
+    const providerSentinel = "provider-secret-sentinel";
+    const toolSentinel = "tool-secret-sentinel";
+    const evidence = reduceOpenClawToolEvidence(
+      stockSessionJsonLines({
+        extraToolName: toolSentinel,
+        payload: stockPayload({
+          extractor: "firecrawl",
+          externalContent: {
+            untrusted: true,
+            source: "web_fetch",
+            provider: providerSentinel,
+            wrapped: true,
+          },
+        }),
+      }),
+      stockTrajectory(toolSentinel),
+      STOCK_REPLY,
+    );
+    const artifact = projectPersonalStockToolEvidenceArtifact(evidence);
+    const serialized = JSON.stringify(artifact);
+
+    expect(artifact).toMatchObject({
+      errorCount: 0,
+      finalSuccess: true,
+      forbiddenProviderMentionCount: 1,
+      forbiddenToolCount: 1,
+      matches: false,
+      publicHttpsTargets: [{ hostname: "query1.finance.yahoo.com", protocol: "https:" }],
+    });
+    expect(serialized).not.toContain(providerSentinel);
+    expect(serialized).not.toContain(toolSentinel);
+    expect(serialized).not.toContain("credential");
+    expect(evidence.expectedStockFingerprint).not.toBeNull();
+    expect(serialized).not.toContain(evidence.expectedStockFingerprint!);
+
+    const result = await validateOpenClawAgentAttemptEvidence(
+      stockAttemptValidationOptions({
+        reduceToolEvidence: vi.fn().mockResolvedValue({
+          exitCode: 0,
+          stdout: `__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
+        }),
+        toolEvidenceValidator: () => false,
+      }),
+    );
+    expect(result.failure).toContain("forbiddenTools=1; forbiddenProviders=1");
+    expect(result.failure).not.toContain(providerSentinel);
+    expect(result.failure).not.toContain(toolSentinel);
   });
 
   it("validates and records a successful Personal stock-fetch attempt", async () => {
@@ -379,7 +738,7 @@ describe("common-egress agent parsing and classification helpers", () => {
       matches: false,
       publicHttpsTargets: [],
     });
-    expect(evidence.errors).toEqual(["session line 2 is not JSON"]);
+    expect(evidence.errors).toEqual(["session line 2 is not JSON", "tool call has no bounded id"]);
   });
 
   it("accepts a recent numeric NVDA reply only when one paired fetch result supports it", () => {
@@ -395,6 +754,16 @@ describe("common-egress agent parsing and classification helpers", () => {
       source_url: STOCK_SOURCE_URL,
       symbol: "NVDA",
     });
+    const projectedReply = projectNvdaPersonalStockReplyEvidence(reply);
+    expect(projectedReply).toEqual({
+      as_of: STOCK_REPLY.as_of,
+      price: STOCK_REPLY.price,
+      source: { hostname: "query1.finance.yahoo.com", protocol: "https:" },
+      status: "NVDA_PERSONAL_AGENT_OK",
+      symbol: "NVDA",
+    });
+    expect(JSON.stringify(projectedReply)).not.toContain("credential");
+    expect(JSON.stringify(projectedReply)).not.toContain("/v8/finance/chart");
     expect(
       parseNvdaPersonalStockReply(
         JSON.stringify({ ...STOCK_REPLY, source_url: "https://10.0.0.1/quote/NVDA" }),

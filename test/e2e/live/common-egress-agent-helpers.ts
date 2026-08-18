@@ -47,6 +47,7 @@ export interface OpenClawWebFetchResultEvidence {
   asOfMatches: boolean;
   directFetch: boolean;
   httpSuccess: boolean;
+  maxCharsWithinLimit: boolean;
   paired: boolean;
   priceMatches: boolean;
   resultSuccess: boolean;
@@ -57,9 +58,11 @@ export interface OpenClawWebFetchResultEvidence {
 
 export interface OpenClawToolEvidence {
   schemaVersion: 1;
+  controlTargetViolations: number;
   errors: string[];
   expectedStockFingerprint: string | null;
   finalStatuses: string[];
+  projectedTargetEvidence: boolean;
   providerMentions: string[];
   toolCalls: OpenClawToolRecord[];
   toolExecutions: OpenClawToolRecord[];
@@ -68,19 +71,46 @@ export interface OpenClawToolEvidence {
 }
 
 export interface PersonalStockToolEvidenceAssessment {
+  controlTargetViolations: number;
   forbiddenProviderMentions: string[];
   forbiddenToolNames: string[];
   matches: boolean;
+  projectedTargetEvidence: boolean;
   publicHttpsTargets: OpenClawToolTarget[];
   qualifyingWebFetchResults: number;
   webFetchCalls: number;
   webFetchExecutions: number;
 }
 
+export interface PersonalStockToolEvidenceArtifact {
+  schemaVersion: 1;
+  controlTargetViolations: number;
+  errorCount: number;
+  finalStatusCount: number;
+  finalSuccess: boolean;
+  forbiddenProviderMentionCount: number;
+  forbiddenToolCount: number;
+  matches: boolean;
+  projectedTargetEvidence: boolean;
+  publicHttpsTargets: OpenClawToolTarget[];
+  qualifyingWebFetchResults: number;
+  webFetchCalls: number;
+  webFetchExecutions: number;
+  webFetchResultsWithinMaxChars: number;
+}
+
 export interface NvdaPersonalStockReply {
   as_of: string;
   price: number;
   source_url: string;
+  status: "NVDA_PERSONAL_AGENT_OK";
+  symbol: "NVDA";
+}
+
+export interface NvdaPersonalStockReplyEvidence {
+  as_of: string;
+  price: number;
+  source: OpenClawToolTarget;
   status: "NVDA_PERSONAL_AGENT_OK";
   symbol: "NVDA";
 }
@@ -281,6 +311,26 @@ export function reduceOpenClawToolEvidence(
           (candidate): candidate is string => typeof candidate === "string",
         ) ?? null);
   };
+  const maxCharsWithinLimitFrom = (value: unknown): boolean => {
+    const record = asRecord(value);
+    const candidate = record?.maxChars ?? record?.max_chars;
+    return (
+      typeof candidate === "number" &&
+      Number.isInteger(candidate) &&
+      candidate >= 1 &&
+      candidate <= 8_000
+    );
+  };
+  const isAllowedWebFetchControlTarget = (value: unknown): boolean => {
+    const record = asRecord(value);
+    const identifier = normalizedName(record?.id);
+    return identifier === "web_fetch" || identifier === "openclaw:core:web_fetch";
+  };
+  const sanitizeToolCallIdPart = (value: string): string =>
+    value
+      .trim()
+      .replace(/[^A-Za-z0-9_.:-]+/gu, "_")
+      .slice(0, 120) || "call";
   const normalizedUrl = (value: unknown): string | null => {
     if (typeof value !== "string" || value.length > 4096) return null;
     try {
@@ -414,13 +464,84 @@ export function reduceOpenClawToolEvidence(
     return (hash >>> 0).toString(16).padStart(8, "0");
   };
 
+  const trajectoryDocuments = parseJsonLines(trajectoryJsonLines, "trajectory");
+  const projectedMessages: unknown[] = [];
+  for (const document of trajectoryDocuments) {
+    const root = asRecord(document);
+    if (root?.type !== "model.completed") continue;
+    const data = asRecord(root.data);
+    if (!Array.isArray(data?.messagesSnapshot)) continue;
+    projectedMessages.splice(0, projectedMessages.length, ...data.messagesSnapshot);
+  }
+
   const toolCalls: OpenClawToolRecord[] = [];
   const sessionDocuments = parseJsonLines(sessionJsonLines, "session");
+  const allowedWrapperIdParts = new Set<string>();
+  const controlTargetViolationIds = new Set<string>();
+  const sessionCallIds = new Set<string>();
+  for (const document of sessionDocuments) {
+    const root = asRecord(document);
+    const message = asRecord(root?.message ?? document);
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const blockValue of message.content) {
+      const block = asRecord(blockValue);
+      if (block?.type !== "toolCall") continue;
+      const id = normalizedId(block.id ?? block.toolCallId ?? block.tool_call_id);
+      const name = normalizedName(block.name ?? block.toolName ?? block.tool_name);
+      if (!id) {
+        if (name === "tool_call" || name === "tool_describe") {
+          addError("control tool call has no bounded id");
+        }
+        continue;
+      }
+      sessionCallIds.add(id);
+      const argumentsValue = block.arguments ?? block.input ?? block.args;
+      const allowedControlTarget = isAllowedWebFetchControlTarget(argumentsValue);
+      if ((name === "tool_call" || name === "tool_describe") && !allowedControlTarget) {
+        controlTargetViolationIds.add(id);
+      }
+      if (name === "tool_call" && allowedControlTarget) {
+        allowedWrapperIdParts.add(sanitizeToolCallIdPart(id));
+      }
+    }
+  }
+  const projectedTargetCallIds = new Set<string>();
+  for (const document of projectedMessages) {
+    const root = asRecord(document);
+    const message = asRecord(root?.message ?? document);
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const blockValue of message.content) {
+      const block = asRecord(blockValue);
+      const id = normalizedId(block?.id ?? block?.toolCallId ?? block?.tool_call_id);
+      const name = normalizedName(block?.name ?? block?.toolName ?? block?.tool_name);
+      if (block?.type !== "toolCall" || name !== "web_fetch" || !id || sessionCallIds.has(id)) {
+        continue;
+      }
+      const associated = [...allowedWrapperIdParts].some((wrapperIdPart) => {
+        const prefix = `tool_search_code:${wrapperIdPart}:web_fetch:`;
+        return id.startsWith(prefix) && /^[1-9][0-9]*$/u.test(id.slice(prefix.length));
+      });
+      if (associated) projectedTargetCallIds.add(id);
+    }
+  }
+  // Progressive Tool Search persists the model-visible control calls in the
+  // session, then projects each invoked target tool into the final trajectory
+  // snapshot. Prefer the complete projection whenever present so result
+  // content remains available before session persistence truncates it. Only a
+  // paired web_fetch target whose generated ID binds to an allowed native
+  // wrapper grants the control-tool exemption; direct-disclosure sessions
+  // remain web_fetch-only.
+  const proofMessages = projectedMessages.length > 0 ? projectedMessages : sessionDocuments;
   const callsById = new Map<
     string,
-    { name: string; requestedUrl: string | null; target?: OpenClawToolTarget }
+    {
+      maxCharsWithinLimit: boolean;
+      name: string;
+      requestedUrl: string | null;
+      target?: OpenClawToolTarget;
+    }
   >();
-  for (const document of sessionDocuments) {
+  for (const document of proofMessages) {
     const root = asRecord(document);
     const message = asRecord(root?.message ?? document);
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
@@ -431,7 +552,17 @@ export function reduceOpenClawToolEvidence(
       recordTool(toolCalls, block, argumentsValue);
       const id = normalizedId(block.id ?? block.toolCallId ?? block.tool_call_id);
       const name = normalizedName(block.name ?? block.toolName ?? block.tool_name);
-      if (!id || !name) continue;
+      if (!name) continue;
+      if (!id) {
+        addError("tool call has no bounded id");
+        continue;
+      }
+      if (
+        (name === "tool_call" || name === "tool_describe") &&
+        !isAllowedWebFetchControlTarget(argumentsValue)
+      ) {
+        controlTargetViolationIds.add(id);
+      }
       if (callsById.size >= MAX_RECORDS) {
         addError("tool call id limit exceeded");
         continue;
@@ -443,6 +574,7 @@ export function reduceOpenClawToolEvidence(
       const directUrl = directUrlFrom(argumentsValue);
       const target = targetFrom(argumentsValue);
       callsById.set(id, {
+        maxCharsWithinLimit: maxCharsWithinLimitFrom(argumentsValue),
         name,
         requestedUrl: normalizedUrl(directUrl),
         ...(target ? { target } : {}),
@@ -461,9 +593,10 @@ export function reduceOpenClawToolEvidence(
       ? fingerprint(JSON.stringify([expectedSourceUrl, expectedPrice, expectedAsOf]))
       : null;
   const nativeExtractors = new Set(["cf-markdown", "json", "raw", "raw-html", "readability"]);
+  const pairedProjectedTargetCallIds = new Set<string>();
   const toolResults: OpenClawToolRecord[] = [];
   const webFetchResults: OpenClawWebFetchResultEvidence[] = [];
-  for (const document of sessionDocuments) {
+  for (const document of proofMessages) {
     const root = asRecord(document);
     const message = asRecord(root?.message ?? document);
     if (message?.role !== "toolResult") continue;
@@ -481,6 +614,9 @@ export function reduceOpenClawToolEvidence(
       typeof payload?.text === "string" ? payload.text.slice(0, 20_000) : "";
     const status = payload?.status;
     const paired = call?.name === "web_fetch" && resultName === "web_fetch";
+    if (paired && callId && projectedTargetCallIds.has(callId)) {
+      pairedProjectedTargetCallIds.add(callId);
+    }
     const httpSuccess =
       typeof status === "number" && Number.isInteger(status) && status >= 200 && status < 300;
     const directFetch =
@@ -499,6 +635,7 @@ export function reduceOpenClawToolEvidence(
           : false,
       directFetch,
       httpSuccess,
+      maxCharsWithinLimit: call?.maxCharsWithinLimit === true,
       paired,
       priceMatches:
         typeof expectedPrice === "number" && Number.isFinite(expectedPrice) && boundedPayloadText
@@ -513,10 +650,11 @@ export function reduceOpenClawToolEvidence(
       ...(call?.target ? { target: call.target } : {}),
     });
   }
+  const projectedTargetEvidence = pairedProjectedTargetCallIds.size > 0;
 
   const finalStatuses = new Set<string>();
   const toolExecutions: OpenClawToolRecord[] = [];
-  for (const document of parseJsonLines(trajectoryJsonLines, "trajectory")) {
+  for (const document of trajectoryDocuments) {
     const root = asRecord(document);
     if (root?.type !== "trace.artifacts") continue;
     const data = asRecord(root.data);
@@ -536,9 +674,11 @@ export function reduceOpenClawToolEvidence(
 
   return {
     schemaVersion: 1,
+    controlTargetViolations: controlTargetViolationIds.size,
     errors,
     expectedStockFingerprint,
     finalStatuses: [...finalStatuses].sort(),
+    projectedTargetEvidence,
     providerMentions: [...providerMentions].sort(),
     toolCalls,
     toolExecutions,
@@ -577,12 +717,14 @@ export function parseOpenClawToolEvidence(raw: string): OpenClawToolEvidence {
   ) as Partial<OpenClawToolEvidence>;
   if (
     parsed.schemaVersion !== 1 ||
+    !Number.isInteger(parsed.controlTargetViolations) ||
     !Array.isArray(parsed.errors) ||
     !(
       parsed.expectedStockFingerprint === null ||
       typeof parsed.expectedStockFingerprint === "string"
     ) ||
     !Array.isArray(parsed.finalStatuses) ||
+    typeof parsed.projectedTargetEvidence !== "boolean" ||
     !Array.isArray(parsed.providerMentions) ||
     !Array.isArray(parsed.toolCalls) ||
     !Array.isArray(parsed.toolExecutions) ||
@@ -652,8 +794,13 @@ export function assessPersonalStockToolEvidence(
   evidence: OpenClawToolEvidence,
 ): PersonalStockToolEvidenceAssessment {
   const allRecords = [...evidence.toolCalls, ...evidence.toolExecutions, ...evidence.toolResults];
+  const allowedToolNames = new Set(
+    evidence.projectedTargetEvidence
+      ? ["web_fetch", "tool_search", "tool_describe", "tool_call"]
+      : ["web_fetch"],
+  );
   const forbiddenToolNames = [
-    ...new Set(allRecords.map(({ name }) => name).filter((name) => name !== "web_fetch")),
+    ...new Set(allRecords.map(({ name }) => name).filter((name) => !allowedToolNames.has(name))),
   ].sort();
   const forbiddenProviderMentions = [...evidence.providerMentions];
   const webFetchCalls = evidence.toolCalls.filter(({ name }) => name === "web_fetch");
@@ -664,6 +811,7 @@ export function assessPersonalStockToolEvidence(
       result.asOfMatches &&
       result.directFetch &&
       result.httpSuccess &&
+      result.maxCharsWithinLimit &&
       result.paired &&
       result.priceMatches &&
       result.resultSuccess &&
@@ -672,10 +820,12 @@ export function assessPersonalStockToolEvidence(
       isPublicHttpsTarget(result.target),
   );
   return {
+    controlTargetViolations: evidence.controlTargetViolations,
     forbiddenProviderMentions,
     forbiddenToolNames,
     matches:
       evidence.errors.length === 0 &&
+      evidence.controlTargetViolations === 0 &&
       evidence.finalStatuses.includes("success") &&
       webFetchCalls.length > 0 &&
       webFetchExecutions.length > 0 &&
@@ -683,10 +833,35 @@ export function assessPersonalStockToolEvidence(
       qualifyingWebFetchResults.length > 0 &&
       forbiddenToolNames.length === 0 &&
       forbiddenProviderMentions.length === 0,
+    projectedTargetEvidence: evidence.projectedTargetEvidence,
     publicHttpsTargets,
     qualifyingWebFetchResults: qualifyingWebFetchResults.length,
     webFetchCalls: webFetchCalls.length,
     webFetchExecutions: webFetchExecutions.length,
+  };
+}
+
+export function projectPersonalStockToolEvidenceArtifact(
+  evidence: OpenClawToolEvidence,
+): PersonalStockToolEvidenceArtifact {
+  const assessment = assessPersonalStockToolEvidence(evidence);
+  return {
+    schemaVersion: 1,
+    controlTargetViolations: evidence.controlTargetViolations,
+    errorCount: evidence.errors.length,
+    finalStatusCount: evidence.finalStatuses.length,
+    finalSuccess: evidence.finalStatuses.includes("success"),
+    forbiddenProviderMentionCount: assessment.forbiddenProviderMentions.length,
+    forbiddenToolCount: assessment.forbiddenToolNames.length,
+    matches: assessment.matches,
+    projectedTargetEvidence: evidence.projectedTargetEvidence,
+    publicHttpsTargets: assessment.publicHttpsTargets,
+    qualifyingWebFetchResults: assessment.qualifyingWebFetchResults,
+    webFetchCalls: assessment.webFetchCalls,
+    webFetchExecutions: assessment.webFetchExecutions,
+    webFetchResultsWithinMaxChars: evidence.webFetchResults.filter(
+      ({ maxCharsWithinLimit }) => maxCharsWithinLimit,
+    ).length,
   };
 }
 
@@ -727,6 +902,22 @@ export function parseNvdaPersonalStockReply(raw: string): NvdaPersonalStockReply
     }
   }
   return null;
+}
+
+export function projectNvdaPersonalStockReplyEvidence(
+  raw: string,
+): NvdaPersonalStockReplyEvidence | null {
+  const reply = parseNvdaPersonalStockReply(raw);
+  if (!reply) return null;
+  const source = targetFromReplyUrl(reply.source_url);
+  if (!source) return null;
+  return {
+    as_of: reply.as_of,
+    price: reply.price,
+    source,
+    status: reply.status,
+    symbol: reply.symbol,
+  };
 }
 
 function targetFromReplyUrl(value: string): OpenClawToolTarget | undefined {
@@ -803,9 +994,22 @@ export async function validateOpenClawAgentAttemptEvidence(
     }
     await options.recordToolEvidence(toolEvidence);
     if (!options.toolEvidenceValidator(toolEvidence)) {
+      const assessment = assessPersonalStockToolEvidence(toolEvidence);
+      const diagnostic = [
+        `errors=${toolEvidence.errors.length}`,
+        `finalStatuses=${toolEvidence.finalStatuses.length}`,
+        `finalSuccess=${toolEvidence.finalStatuses.includes("success")}`,
+        `projectedTarget=${assessment.projectedTargetEvidence}`,
+        `controlTargetViolations=${assessment.controlTargetViolations}`,
+        `webFetchCalls=${assessment.webFetchCalls}`,
+        `webFetchExecutions=${assessment.webFetchExecutions}`,
+        `qualifying=${assessment.qualifyingWebFetchResults}`,
+        `forbiddenTools=${assessment.forbiddenToolNames.length}`,
+        `forbiddenProviders=${assessment.forbiddenProviderMentions.length}`,
+      ].join("; ");
       return {
         attempt: { passed: false, failureClass: "deterministic" },
-        failure: `${options.label}: reduced tool evidence did not match the required trajectory`,
+        failure: `${options.label}: reduced tool evidence did not match the required trajectory (${diagnostic})`,
       };
     }
   }

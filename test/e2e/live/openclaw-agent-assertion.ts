@@ -15,12 +15,14 @@ import {
   nvdaPersonalStockReplyMatchesEvidence,
   parseNvdaPersonalStockReply,
   parseOpenClawAgentText,
+  projectNvdaPersonalStockReplyEvidence,
+  projectPersonalStockToolEvidenceArtifact,
   runOpenClawAgentAssertionRetry,
   text,
   type NvdaPersonalStockReply,
   type OpenClawToolTarget,
   type OpenClawToolEvidence,
-  type PersonalStockToolEvidenceAssessment,
+  type PersonalStockToolEvidenceArtifact,
   validateOpenClawAgentAttemptEvidence,
 } from "./common-egress-agent-helpers.ts";
 
@@ -47,7 +49,7 @@ export interface OpenClawAgentAssertionOptions {
 }
 
 export interface PersonalStockAssertionResult {
-  assessment: PersonalStockToolEvidenceAssessment;
+  assessment: PersonalStockToolEvidenceArtifact;
   asOfRecent: true;
   quote: {
     as_of: string;
@@ -92,7 +94,7 @@ export async function runOpenClawAgentAssertion(
     attempts: OPENCLAW_AGENT_ATTEMPTS,
     delayMs: (attempt) => attempt * 15_000,
     onEvidence: async (evidence) => {
-      await artifacts.writeJson(`retry/${args.label}-agent-retry-evidence.json`, evidence);
+      await artifacts.writeJson(`actions/${args.label}-agent-retry-evidence.json`, evidence);
     },
     run: async (attempt) => {
       const sessionId = `e2e-common-egress-${Date.now()}-${process.pid}-${attempt}`;
@@ -131,6 +133,13 @@ export async function runOpenClawAgentAssertion(
       );
       const combined = text(agent);
       const reply = parseOpenClawAgentText(agent.stdout);
+      const stockReplyEvidence = projectNvdaPersonalStockReplyEvidence(reply);
+      if (stockReplyEvidence) {
+        await artifacts.writeJson(`actions/${args.label}-attempt-${attempt}-reply.json`, {
+          schemaVersion: 1,
+          quote: stockReplyEvidence,
+        });
+      }
       lastFailure = args.redactOutputInFailure
         ? `agent output omitted; exit=${agent.exitCode}`
         : `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
@@ -148,8 +157,8 @@ export async function runOpenClawAgentAssertion(
         label: args.label,
         recordToolEvidence: async (toolEvidence) => {
           await artifacts.writeJson(
-            `trajectory/${args.label}-attempt-${attempt}-reduced.json`,
-            toolEvidence,
+            `actions/${args.label}-attempt-${attempt}-reduced.json`,
+            projectPersonalStockToolEvidenceArtifact(toolEvidence),
           );
         },
         reduceToolEvidence: async (expectedStock) =>
@@ -194,8 +203,9 @@ export async function runOpenClawAgentAssertion(
 }
 
 export const PERSONAL_STOCK_PROMPT = `Find the latest available NVIDIA (NVDA) stock price.
-Use web_fetch and choose a public HTTPS source yourself.
-Use no other tool. Do not use web_search, Brave Search, or Tavily Search.
+Choose a small, machine-readable public HTTPS source yourself and use web_fetch as the only target tool.
+If progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.
+Do not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.
 Set web_fetch maxChars to no more than 8000.
 Only after web_fetch returns a numeric NVDA price with its source date or timestamp, reply with one JSON object and no Markdown.
 Set status to NVDA_PERSONAL_AGENT_OK, symbol to NVDA, price to a JSON number, source_url to the exact HTTPS URL passed to web_fetch, and as_of to the source's ISO 8601 date or timestamp.`;
@@ -220,7 +230,7 @@ export async function runPersonalStockAgentAssertion(
     toolEvidenceValidator: (evidence) => assessPersonalStockToolEvidence(evidence).matches,
   });
   expect(stock.toolEvidence).toBeDefined();
-  const assessment = assessPersonalStockToolEvidence(stock.toolEvidence!);
+  const assessmentArtifact = projectPersonalStockToolEvidenceArtifact(stock.toolEvidence!);
   const quote = parseNvdaPersonalStockReply(stock.reply);
   expect(quote).not.toBeNull();
   const quoteTime = Date.parse(quote!.as_of);
@@ -229,9 +239,9 @@ export async function runPersonalStockAgentAssertion(
   expect(quoteTime).toBeLessThanOrEqual(now + MAX_SOURCE_CLOCK_SKEW_MS);
   const sourceUrl = new URL(quote!.source_url);
   expect(sourceUrl.protocol).toBe("https:");
-  await artifacts.writeJson(`trajectory/${args.label}-assessment.json`, assessment);
+  await artifacts.writeJson(`actions/${args.label}-assessment.json`, assessmentArtifact);
   return {
-    assessment,
+    assessment: assessmentArtifact,
     asOfRecent: true,
     quote: {
       as_of: quote!.as_of,
