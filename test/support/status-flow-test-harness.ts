@@ -16,6 +16,13 @@ import type { BaselineExclusionRuntimeStatus } from "../../src/lib/policy/baseli
 import type { BaselineExclusionTransition, SandboxHostMount } from "../../src/lib/state/registry";
 
 type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
+type GetSandboxStatusReport =
+  typeof import("../../src/lib/actions/sandbox/status")["getSandboxStatusReport"];
+type PortableAgentReceiptDisposition = ReturnType<
+  typeof import("../../src/lib/onboard/experimental/portable-agent-lifecycle")["inspectPortableAgentReceiptDisposition"]
+>;
+type WithMcpLifecycleLock =
+  typeof import("../../src/lib/state/mcp-lifecycle-lock-acquisition")["withMcpLifecycleLock"];
 
 const requireDist = createRequire(import.meta.url);
 const statusModulePath = "../../src/lib/actions/sandbox/status.js";
@@ -30,10 +37,13 @@ export type StatusFlowHarness = {
   collectSandboxStatusSnapshotSpy: MockInstance;
   getActiveSandboxSessionsSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
+  getSandboxStatusReport: GetSandboxStatusReport;
+  inspectPortableAgentReceiptDispositionSpy: MockInstance;
   isSandboxGatewayRunningForStatusSpy: MockInstance;
   logSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   showSandboxStatus: ShowSandboxStatus;
+  withMcpLifecycleLockSpy: MockInstance;
 };
 
 const baseSandboxEntry = {
@@ -63,6 +73,12 @@ export type StatusFlowHarnessOptions = {
   routeDrift?: SandboxStatusRouteDrift | null;
   inferenceHealth?: ProviderHealthStatus | null;
   servingProcessHealth?: ServingProcessHealth | null;
+  portableDisposition?:
+    | PortableAgentReceiptDisposition
+    | Error
+    | (() => PortableAgentReceiptDisposition | Error);
+  registryEntry?: "present" | "missing";
+  withMcpLifecycleLock?: WithMcpLifecycleLock;
   baselineExclusionStatus?: BaselineExclusionRuntimeStatus;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
@@ -110,6 +126,12 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   const statusProcessRecovery = requireDist(
     "../../src/lib/actions/sandbox/status/process-recovery.js",
   );
+  const portableAgentLifecycle = requireDist(
+    "../../src/lib/onboard/experimental/portable-agent-lifecycle.js",
+  );
+  const lifecycleLock = requireDist(
+    "../../src/lib/state/mcp-lifecycle-lock-acquisition.js",
+  );
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const nim = requireDist("../../src/lib/inference/nim.js");
@@ -138,8 +160,27 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
         });
 
   const sandboxEntry = { ...baseSandboxEntry, ...options.sandboxEntry };
+  const inspectPortableAgentReceiptDispositionSpy = vi
+    .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
+    .mockImplementation(() => {
+      const disposition =
+        typeof options.portableDisposition === "function"
+          ? options.portableDisposition()
+          : options.portableDisposition;
+      if (disposition instanceof Error) throw disposition;
+      return disposition ?? { kind: "absent" };
+    });
 
-  vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
+  const withMcpLifecycleLockSpy = vi
+    .spyOn(lifecycleLock, "withMcpLifecycleLock")
+    .mockImplementation(
+      (options.withMcpLifecycleLock ??
+        (async (_sandboxName: string, operation: () => unknown) => await operation())) as never,
+    );
+
+  vi.spyOn(registry, "getSandbox").mockReturnValue(
+    options.registryEntry === "missing" ? null : sandboxEntry,
+  );
   const removeSandboxSpy = vi.spyOn(registry, "removeSandbox").mockImplementation(() => undefined);
   vi.spyOn(statusPreflight, "getSandboxStatusPreflight").mockResolvedValue(
     options.preflight ?? {
@@ -249,14 +290,19 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
 
   logSpy.mockClear();
 
+  const statusModule = requireDist(statusModulePath);
+
   return {
     checkAgentVersionSpy,
     collectSandboxStatusSnapshotSpy,
     getActiveSandboxSessionsSpy,
     getSandboxDockerRuntimeSpy,
+    getSandboxStatusReport: statusModule.getSandboxStatusReport,
+    inspectPortableAgentReceiptDispositionSpy,
     isSandboxGatewayRunningForStatusSpy,
     logSpy,
     removeSandboxSpy,
-    showSandboxStatus: requireDist(statusModulePath).showSandboxStatus,
+    showSandboxStatus: statusModule.showSandboxStatus,
+    withMcpLifecycleLockSpy,
   } satisfies StatusFlowHarness;
 }

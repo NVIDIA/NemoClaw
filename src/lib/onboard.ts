@@ -115,7 +115,7 @@ const {
   usesManagedDcodeIdentity,
 }: typeof import("./onboard/dcode-selection-drift") = require("./onboard/dcode-selection-drift");
 const {
-  finalizeCreatedSandbox,
+  createOnboardCreatedSandboxCompletion,
 }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
@@ -1920,153 +1920,151 @@ async function createSandboxWithBaseImageResolution(
     request: managedStartupRootApplyRequest,
     intendedWorkloadArgv: intendedSandboxStartupCommand,
   });
-  const createdSandboxLifecycle = sandboxRecreateTransaction.createCreatedSandboxLifecycle(recreateRuntime, { sandboxName, gatewayName: GATEWAY_NAME }, getSandboxRecreateObservation);
-  const {
-    createResult,
-    runtimePatch,
-    route: selectedGpuRoute,
-    firstCreateOutput,
-    registryImageRef,
-    lifecycleRegistrationFields,
-  } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
-    {
-      sandboxName,
-      provider,
-      sandboxGpuConfig: effectiveSandboxGpuConfig,
-      gpuRoutePlan,
-      initialGpuRoute,
-      compatibilityPolicyPath,
-      dockerDriverGateway,
-      gatewayPort: GATEWAY_PORT,
-      sandboxReadyTimeoutSecs,
-      createArgv,
-      sandboxEnv,
-      sandboxStartupCommand,
-      lifecycleGeneration: createdSandboxLifecycle.generation,
-      portableRuntimeAuthority,
-      prebuild,
-      restoreBackupPath,
-      terminalAgent: agentDefs.isTerminalAgent(agent),
-      managedBootstrap,
-      ...sandboxGpuCreateFlow.resolveAgentCreateInput(agent, dockerDriverGateway),
-    },
-    {
-      runOpenshell,
-      runCaptureOpenshell,
-      sleep: sleepSeconds,
-      openshellArgv,
-      verifyDirectSandboxGpu,
-    },
+  const createdSandboxLifecycle = sandboxRecreateTransaction.createCreatedSandboxLifecycle(
+    recreateRuntime,
+    { sandboxName, gatewayName: GATEWAY_NAME },
+    getSandboxRecreateObservation,
   );
-
-  if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
-    process.removeListener("exit", initialSandboxPolicy.cleanup);
-  }
-
-  // Only deregister the 'exit' safety net when inline cleanup succeeded;
-  // otherwise leave it armed so a later process.exit() still removes the
-  // temp dir (which may hold source and env-arg API keys).
-  const cleanupBuildCtx = legacyBuildContext?.cleanupBuildCtx;
-  if (cleanupBuildCtx?.()) {
-    process.removeListener("exit", cleanupBuildCtx);
-  }
-
-  if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
-      effectiveSandboxGpuConfig,
-      provider,
+  const agentCreateInput = sandboxGpuCreateFlow.resolveAgentCreateInput(agent, dockerDriverGateway);
+  const runCreateFlow = (attemptCreateArgv: string[]) =>
+    sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
       {
         sandboxName,
+        provider,
+        sandboxGpuConfig: effectiveSandboxGpuConfig,
+        gpuRoutePlan,
+        initialGpuRoute,
+        compatibilityPolicyPath,
         dockerDriverGateway,
-        selectedRoute: selectedGpuRoute,
-        verifyDirectSandboxGpu,
-        runCaptureOpenshell,
-        log: console.log,
+        gatewayPort: GATEWAY_PORT,
+        sandboxReadyTimeoutSecs,
+        createArgv: attemptCreateArgv,
+        sandboxEnv,
+        sandboxStartupCommand,
+        lifecycleGeneration: createdSandboxLifecycle.generation,
+        portableRuntimeAuthority,
+        prebuild,
+        restoreBackupPath,
+        terminalAgent: agentDefs.isTerminalAgent(agent),
+        managedBootstrap,
+        ...agentCreateInput,
       },
-      runtimePatch,
+      {
+        runOpenshell,
+        runCaptureOpenshell,
+        sleep: sleepSeconds,
+        openshellArgv,
+        verifyDirectSandboxGpu,
+      },
+    );
+
+  const cleanupBuildCtx = legacyBuildContext?.cleanupBuildCtx;
+  const cleanupBuildContext = (): void => {
+    if (cleanupBuildCtx?.()) process.removeListener("exit", cleanupBuildCtx);
+  };
+  const cleanupInitialCreateSource = (): boolean => {
+    if (!initialSandboxPolicy.cleanup) return true;
+    return sandboxGpuCreateFlow.cleanupSandboxCreateSource(initialSandboxPolicy.cleanup);
+  };
+  const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
+  const createdSandboxCompletion = createOnboardCreatedSandboxCompletion(
+    sandboxName,
+    restoreBackupPath,
+    pendingStateRestoreBackupPath,
+    agent,
+    fromDockerfile,
+    { customOpenClawImage, isManagedDcodeAgent },
+    { provider, model, preferredInferenceApi },
+    { createIntent, resolvedCreateIntent },
+    sandboxRuntimeFields,
+    { toolDisclosure: effectiveToolDisclosure, dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode },
+    { webSearchConfig, hermesAuthMethod: normalizeHermesAuthMethod(hermesAuthMethod) },
+    { plannedMessagingState, preservedMcpState, hermesToolGateways },
+    hermesApiPortReservationScope.effectivePort,
+    { gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
+    { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, dashboardRemoteBindPrepared },
+    prebuild.imageRef,
+    buildId,
+    effectiveSandboxGpuConfig,
+    dockerDriverGateway,
+    verifyDirectSandboxGpu,
+    runCaptureOpenshell,
+    chatUiUrl,
+    hermesDashboardState,
+    dashboardPortReservationScope.release,
+    ensureDashboardForward,
+    getDashboardForwardPort,
+    hermesDashboardForwarding.resolveStateForPort,
+    hermesDashboardForwarding.ensureForState,
+    managedWorkloadRuntime,
+    preparedSandboxWorkload,
+    note,
+  );
+  type Receipt = NonNullable<Parameters<typeof createdSandboxCompletion.complete>[1]>;
+  async function completeCreatedSandboxRegistration(
+    created: import("./onboard/sandbox-gpu-create-flow").SandboxGpuCreateFlowResult | null,
+    configuredReceipt: Receipt | null,
+    configuredLiveIdentityFingerprint?: string,
+  ): Promise<void> {
+    if (!created && !configuredReceipt) {
+      throw new Error("Sandbox registration requires create or Hermes receipt authority.");
+    }
+    cleanupBuildContext();
+    let providerGpuDisposition: "disabled" | "created" | "hermes" = "disabled";
+    if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
+      if (created) providerGpuDisposition = "created";
+      else providerGpuDisposition = "hermes";
+    }
+    await createdSandboxCompletion.complete(
+      created,
+      configuredReceipt,
+      providerGpuDisposition,
+      manageDashboard,
+      () =>
+        configuredReceipt
+          ? {
+              lifecycleGeneration: configuredReceipt.lifecycleGeneration,
+              lifecycleLiveIdentityFingerprint: configuredLiveIdentityFingerprint,
+            }
+          : created!.lifecycleRegistrationFields,
+      createdSandboxLifecycle,
     );
   }
 
-  let actualDashboardPort = 0;
-  let finalHermesDashboardState = hermesDashboardState;
-  if (manageDashboard) {
-    await dashboardPortReservationScope.release();
-    actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
-      rollbackSandboxOnFailure: true,
-    });
-    if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
-      chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
+  if (agentCreateInput.hermesPortableLifecycle) {
+    if (!agent || agent.name !== "hermes" || !portableRuntimeAuthority) {
+      throw new Error("Hermes portable onboarding is missing exact agent or runtime authority.");
     }
-    process.env.CHAT_UI_URL = chatUiUrl;
-    finalHermesDashboardState = hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
-    hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
-  }
-
-  const { resolvedImageTag, workloadReceipt } =
-    managedWorkloadOnboard.resolveOnboardSandboxWorkloadReceipt({
-      runtime: managedWorkloadRuntime,
-      workload: preparedSandboxWorkload,
-      registryImageRef,
-      prebuildImageRef: prebuild.imageRef,
-      firstCreateOutput,
-      createOutput: createResult.output,
-      buildId,
-      extractBuiltImageRef: buildContext.extractBuiltImageRef,
-      resolveSandboxImageTagFromCreateOutput,
-    });
-  const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
-  const pinnedLifecycleRegistration = createdSandboxLifecycle.capture(lifecycleRegistrationFields);
-  finalizeCreatedSandbox(
-    {
+    if (managedBootstrap || !["none", "native-only"].includes(gpuRoutePlan)) {
+      throw new Error(
+        "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
+      );
+    }
+    await sandboxGpuCreateFlow.runHermesPortableOnboardingFromOnboard<
+      import("./onboard/sandbox-gpu-create-flow").SandboxGpuCreateFlowResult
+    >(
       sandboxName,
-      restoreBackupPath,
-      preUpgradeBackup: pendingStateRestoreBackupPath !== null,
-      targetAgentType: agent?.name ?? "openclaw",
-      customImage: Boolean(fromDockerfile),
-      discoverOpenClawImagePluginInstalls: customOpenClawImage,
-      validateManagedDcode: isManagedDcodeAgent,
-      provider,
-      model,
-      preferredInferenceApi,
-    },
-    {
-      discoverFreshOpenClawImagePluginInstalls: (name) => openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(name, sandboxState, agent?.configPaths.dir),
-      restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
-      getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
-        getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
-          runCaptureOpenshell,
-        }),
-      note,
-      error: console.error,
-      exitProcess: (code) => process.exit(code),
-      register: (openclawImagePluginInstalls) => sandboxRegistration.registerCreatedSandbox({
-          sandboxName,
-          inferenceSelection: sandboxRegistration.selection(sandboxName, provider, model, preferredInferenceApi, createIntent?.endpointSource ?? null),
-          runtimeFields: sandboxRuntimeFields,
-          agent,
-          agentVersionKnown: !fromDockerfile,
-          imageTag: resolvedImageTag,
-          workload: workloadReceipt,
-          openclawImagePluginInstalls,
-          appliedPolicies: initialSandboxPolicy.appliedPresets,
-          toolDisclosure: effectiveToolDisclosure,
-          observabilityEnabled: createIntent?.observabilityEnabled === true,
-          ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
-          policyTier: resolvedCreatePolicyTier,
-          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared, resolvedCreateIntent.policy.options.baselineExclusions),
-          plannedMessagingState,
-          preservedMcpState,
-          hermesToolGateways,
-          hermesDashboardState: finalHermesDashboardState,
-          hermesApiPort: hermesApiPortReservationScope.effectivePort,
-          dashboardPort: actualDashboardPort,
-          ...createdSandboxLifecycle.revalidate(pinnedLifecycleRegistration),
-          gatewayName: GATEWAY_NAME,
-          gatewayPort: GATEWAY_PORT,
-          hostMounts: resolvedCreateIntent.hostMounts,
-        }),
-    },
-  );
+      GATEWAY_NAME,
+      createdSandboxLifecycle.generation,
+      portableRuntimeAuthority,
+      createArgv,
+      initialSandboxPolicy.policyPath,
+      { agent, sandboxName, startupArgv: intendedSandboxStartupCommand },
+      sandboxMutationLock.withMcpLifecycleLock,
+      run,
+      openshellArgv,
+      (attemptArgv) => runCreateFlow([...attemptArgv]),
+      () => registry.getSandbox(sandboxName),
+      (created, receipt, liveIdentityFingerprint) =>
+        completeCreatedSandboxRegistration(created, receipt, liveIdentityFingerprint),
+      cleanupInitialCreateSource,
+    );
+    cleanupBuildContext();
+  } else {
+    const created = await runCreateFlow(createArgv);
+    cleanupInitialCreateSource();
+    await completeCreatedSandboxRegistration(created, null);
+  }
   if ("complete" in recreateRuntime) recreateRuntime.complete();
   restoreDefaultAfterRecreate(registry.setDefault, sandboxName, sandboxWasLiveDefault); // #4614: default deferred to finalization
 

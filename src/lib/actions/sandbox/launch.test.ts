@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   inspectLaunchReadiness: vi.fn(),
   publishLaunchReadiness: vi.fn(),
   withLaunchReadinessMutationGate: vi.fn(),
+  inspectPortableReceiptDisposition: vi.fn(),
+  recoverPortableLifecycle: vi.fn(),
 }));
 
 vi.mock("./connect", () => ({
@@ -44,6 +46,10 @@ vi.mock("./launch-readiness", () => ({
     gatewayPort: 8080,
     epochId: decision.fence?.epochId ?? null,
   }),
+}));
+vi.mock("./gateway-state", () => ({
+  inspectPortableAgentReceiptDisposition: mocks.inspectPortableReceiptDisposition,
+  recoverPortableDemoSandboxLifecycleForConnect: mocks.recoverPortableLifecycle,
 }));
 
 import { launchSandbox } from "./launch";
@@ -121,6 +127,8 @@ describe("launchSandbox", () => {
       kind: "entered",
       value: await operation(),
     }));
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "absent" });
+    mocks.recoverPortableLifecycle.mockReturnValue({ kind: "already-running" });
     // Production keeps OpenClaw null in getSessionAgent so its recovery path
     // continues to use the legacy defaults. The launch resolver must still
     // load OpenClaw's trusted manifest before choosing the interactive command.
@@ -159,6 +167,86 @@ describe("launchSandbox", () => {
     await launchSandbox("alpha");
 
     expect(launchedCommand()).toEqual(["bash", "-lc", "hermes"]);
+  });
+
+  it("holds schema-5 authority through the exact interactive child execution (#9203)", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    prepareSession("hermes", hermes);
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "hermes", phase: "active" });
+    const events: string[] = [];
+    const childStarted = deferred();
+    const releaseChild = deferred();
+    const withSandboxMutationLock = createSerialTestLock(events, "sandbox");
+    mocks.execSandbox.mockImplementationOnce(async () => {
+      events.push("child");
+      childStarted.resolve();
+      await releaseChild.promise;
+    });
+
+    const launch = launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock,
+    });
+    await childStarted.promise;
+    const contender = withSandboxMutationLock("alpha", () => events.push("contender"));
+    await Promise.resolve();
+
+    expect(mocks.recoverPortableLifecycle).toHaveBeenCalledWith("alpha", entry, "gateway-alpha");
+    expect(events).toEqual(["sandbox:acquired", "child"]);
+    expect(launchedCommand()).toEqual(["bash", "-lc", "hermes"]);
+
+    releaseChild.resolve();
+    await launch;
+    await contender;
+    expect(events).toEqual([
+      "sandbox:acquired",
+      "child",
+      "sandbox:released",
+      "sandbox:acquired",
+      "contender",
+      "sandbox:released",
+    ]);
+  });
+
+  it("classifies ordinary-to-schema-5 publication inside the launch lifecycle fence (#9203)", async () => {
+    const entry = sandboxEntry("hermes");
+    prepareSession("hermes", loadAgent("hermes"));
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "absent" });
+
+    await launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock: async (_sandboxName, operation) => {
+        mocks.inspectPortableReceiptDisposition.mockReturnValue({
+          kind: "hermes",
+          phase: "active",
+        });
+        return await operation();
+      },
+    });
+
+    expect(mocks.recoverPortableLifecycle).toHaveBeenCalledWith("alpha", entry, "gateway-alpha");
+    expect(mocks.execSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("classifies schema-5 retirement inside the launch lifecycle fence (#9203)", async () => {
+    prepareSession("hermes", loadAgent("hermes"));
+    mocks.inspectPortableReceiptDisposition.mockReturnValue({
+      kind: "hermes",
+      phase: "active",
+    });
+
+    await launchSandbox("alpha", {
+      withSandboxMutationLock: async (_sandboxName, operation) => {
+        mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "absent" });
+        return await operation();
+      },
+    });
+
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.execSandbox).toHaveBeenCalledOnce();
   });
 
   it("holds CUA mutation authority through the exact interactive child execution (#7755)", async () => {

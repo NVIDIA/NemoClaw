@@ -54,6 +54,7 @@ import {
   type RestartSandboxGatewayOptions,
   restartSandboxGatewayWithDeps,
   sandboxAgentName,
+  withUnsupportedHermesPortableGatewayRestartFence,
 } from "./gateway-restart";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-boundary-recovery";
@@ -633,8 +634,9 @@ export function restartSandboxGateway(
   sandboxName: string,
   { quiet = false, deps = {} }: RestartSandboxGatewayOptions = {},
 ): GatewayRestartResult {
-  return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
-    restartSandboxGatewayWithDeps(sandboxName, {
+  return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
+    return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
+      restartSandboxGatewayWithDeps(sandboxName, {
       quiet,
       deps: {
         getSessionAgent: agentRuntime.getSessionAgent,
@@ -661,8 +663,9 @@ export function restartSandboxGateway(
         inspectHermesMcpReconciliationRefusal,
         ...deps,
       },
-    }),
-  );
+      }),
+    );
+  });
 }
 
 function readNonNegativeNumberEnv(name: string, fallback: number): number {

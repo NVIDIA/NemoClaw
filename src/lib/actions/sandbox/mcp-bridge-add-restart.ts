@@ -11,6 +11,7 @@ import {
   replayTrustedPrivateEndpoint,
 } from "../../security/trusted-private-endpoint";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -136,7 +137,10 @@ export async function addMcpBridge(
   sandboxName: string,
   options: McpBridgeAddOptions,
 ): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () => addMcpBridgeUnlocked(sandboxName, options));
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:add");
+    return addMcpBridgeUnlocked(sandboxName, options);
+  });
 }
 
 async function addMcpBridgeUnlocked(

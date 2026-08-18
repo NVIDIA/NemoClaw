@@ -27,6 +27,79 @@ describe("showSandboxStatus flow", () => {
     resetStatusFlowModuleCache();
   });
 
+  it.each(["pending", "configuring", "active"] as const)(
+    "reports Hermes portable receipt phase %s without Docker or OpenClaw status work (#9203)",
+    async (phase) => {
+      const harness = createStatusFlowHarness({
+        portableDisposition: { kind: "hermes", phase },
+        registryEntry: phase === "pending" ? "missing" : "present",
+        sandboxEntry: { agent: "hermes" },
+      });
+
+      await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+      const report = await harness.getSandboxStatusReport("alpha");
+
+      expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+        `Portable lifecycle phase: ${phase}`,
+      );
+      expect(report).toMatchObject({
+        schemaVersion: 1,
+        name: "alpha",
+        found: phase === "active",
+        agent: "hermes",
+        agentDisplayName: "Hermes",
+        portableLifecyclePhase: phase,
+      });
+      expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
+      expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+      expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("rejects malformed portable receipt authority before status probes (#9203)", async () => {
+    const harness = createStatusFlowHarness({
+      portableDisposition: new Error("invalid portable lifecycle receipt"),
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow(
+      "invalid portable lifecycle receipt",
+    );
+    expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves schema-4 OpenClaw status behavior (#9203)", async () => {
+    const harness = createStatusFlowHarness({ portableDisposition: { kind: "openclaw" } });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith("alpha", expect.anything());
+    expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledWith("alpha", expect.any(Function));
+  });
+
+  it("classifies publication while waiting for the status lifecycle fence (#9203)", async () => {
+    let disposition:
+      | { readonly kind: "absent" }
+      | { readonly kind: "hermes"; readonly phase: "active" } = { kind: "absent" };
+    const harness = createStatusFlowHarness({
+      portableDisposition: () => disposition,
+      sandboxEntry: { agent: "hermes" },
+      withMcpLifecycleLock: async (_sandboxName, operation) => {
+        disposition = { kind: "hermes", phase: "active" };
+        return await operation();
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Portable lifecycle phase: active",
+    );
+    expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+  });
+
   it("warns when the live gateway route differs from the sandbox's recorded route (#6315)", async () => {
     const harness = createStatusFlowHarness({
       currentProvider: "nvidia",

@@ -3,6 +3,8 @@
 
 import { Args, Flags } from "@oclif/core";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
+import { assertHermesPortableCommandUnavailable } from "../../../lib/onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock as withSandboxMutationLock } from "../../../lib/state/mcp-lifecycle-lock-acquisition";
 
 import * as sandboxConfig from "../../../lib/sandbox/config";
 
@@ -42,11 +44,14 @@ export default class SandboxConfigSetCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxConfigSetCommand);
     try {
-      await sandboxConfig.configSet(args.sandboxName, {
-        key: flags.key ?? null,
-        value: flags.value ?? null,
-        restart: flags.restart ?? false,
-        acceptNewPath: flags["config-accept-new-path"] ?? false,
+      await withSandboxMutationLock(args.sandboxName, () => {
+        assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:config:set");
+        return sandboxConfig.configSet(args.sandboxName, {
+          key: flags.key ?? null,
+          value: flags.value ?? null,
+          restart: flags.restart ?? false,
+          acceptNewPath: flags["config-accept-new-path"] ?? false,
+        });
       });
     } catch (error) {
       if (error instanceof sandboxConfig.SandboxConfigError) {

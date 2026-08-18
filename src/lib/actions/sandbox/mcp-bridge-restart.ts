@@ -3,6 +3,7 @@
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
 import { registerAgentAdapter } from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -58,7 +59,10 @@ function resolvedTargetPins(
 }
 
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () => restartMcpBridgeUnlocked(sandboxName, server));
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:restart");
+    return restartMcpBridgeUnlocked(sandboxName, server);
+  });
 }
 
 async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): Promise<void> {

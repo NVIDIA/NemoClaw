@@ -9,11 +9,26 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 type RunSandboxDoctor = typeof import("./doctor")["runSandboxDoctor"];
+type PortableAgentReceiptDisposition = ReturnType<
+  typeof import("../../onboard/experimental/portable-agent-lifecycle")["inspectPortableAgentReceiptDisposition"]
+>;
+type WithMcpLifecycleLock =
+  typeof import("../../state/mcp-lifecycle-lock-acquisition")["withMcpLifecycleLock"];
+
+type DoctorHarnessOptions = {
+  portableDisposition?:
+    | PortableAgentReceiptDisposition
+    | Error
+    | (() => PortableAgentReceiptDisposition | Error);
+  registryEntry?: "present" | "missing";
+  registryAgent?: "openclaw" | "hermes";
+  withMcpLifecycleLock?: WithMcpLifecycleLock;
+};
 
 const requireDist = createRequire(import.meta.url);
 const doctorModulePath = "./doctor.js";
 
-function createDoctorHarness(provider = "ollama-local"): {
+function createDoctorHarness(provider = "ollama-local", options: DoctorHarnessOptions = {}): {
   buildToolScopeChecksSpy: MockInstance;
   captureOpenShellSpy: MockInstance;
   captureHostCommandSpy: MockInstance;
@@ -34,6 +49,7 @@ function createDoctorHarness(provider = "ollama-local"): {
   resolveOpenShellSpy: MockInstance;
   resolveSandboxGatewayNameSpy: MockInstance;
   runSandboxDoctor: RunSandboxDoctor;
+  withMcpLifecycleLockSpy: MockInstance;
 } {
   delete require.cache[requireDist.resolve(doctorModulePath)];
 
@@ -58,10 +74,32 @@ function createDoctorHarness(provider = "ollama-local"): {
   const doctorHostCommand = requireDist("./doctor-host-command.js");
   const doctorToolScope = requireDist("./doctor-tool-scope.js");
   const inferenceRouteHealth = requireDist("./inference-route-health.js");
+  const doctorSystemChecks = requireDist("./doctor-system-checks.js");
 
-  const getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue({
+  vi.spyOn(doctorSystemChecks, "inspectSandboxDoctorPortableDisposition").mockImplementation(
+    () => {
+      const disposition =
+        typeof options.portableDisposition === "function"
+          ? options.portableDisposition()
+          : options.portableDisposition;
+      switch (disposition instanceof Error) {
+        case true:
+          throw disposition;
+        default:
+          return disposition ?? { kind: "absent" };
+      }
+    },
+  );
+  const withMcpLifecycleLockSpy = vi
+    .spyOn(doctorSystemChecks, "withSandboxDoctorLifecycleLock")
+    .mockImplementation(
+      (options.withMcpLifecycleLock ??
+        (async (_sandboxName: string, operation: () => unknown) => await operation())) as never,
+    );
+
+  const registryEntry = {
     name: "alpha",
-    agent: "openclaw",
+    agent: options.registryAgent ?? "openclaw",
     model: "registry-model",
     provider,
     openshellDriver: "docker",
@@ -73,7 +111,10 @@ function createDoctorHarness(provider = "ollama-local"): {
     gatewayName: "nemoclaw-19080",
     gatewayPort: 19080,
     messaging: undefined,
-  });
+  };
+  const getSandboxSpy = vi
+    .spyOn(registry, "getSandbox")
+    .mockReturnValue(options.registryEntry === "missing" ? null : registryEntry);
   const configuredMessagingChannelsSpy = vi
     .spyOn(registry, "getConfiguredMessagingChannelsFromEntry")
     .mockReturnValue([]);
@@ -230,6 +271,7 @@ function createDoctorHarness(provider = "ollama-local"): {
     resolveOpenShellSpy,
     resolveSandboxGatewayNameSpy,
     runSandboxDoctor,
+    withMcpLifecycleLockSpy,
   };
 }
 
@@ -245,6 +287,94 @@ describe("runSandboxDoctor flow", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     delete require.cache[requireDist.resolve(doctorModulePath)];
+  });
+
+  it.each(["pending", "configuring", "active"] as const)(
+    "reports Hermes portable receipt phase %s without Docker or OpenClaw doctor work (#9203)",
+    async (phase) => {
+      const harness = createDoctorHarness("ollama-local", {
+        portableDisposition: { kind: "hermes", phase },
+        registryEntry: phase === "pending" ? "missing" : "present",
+        registryAgent: "hermes",
+      });
+
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+      expect(report).toMatchObject({
+        sandbox: "alpha",
+        status: phase === "active" ? "ok" : "warn",
+        checks: [
+          {
+            label: "Portable lifecycle",
+            detail: `agent=Hermes; phase=${phase}`,
+          },
+        ],
+      });
+      expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
+      expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
+      expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+      expect(harness.executeSandboxCommandForVerificationSpy).not.toHaveBeenCalled();
+      expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledWith("alpha", expect.any(Function));
+    },
+  );
+
+  it("renders plain Hermes portable doctor output without recovery (#9203)", async () => {
+    const harness = createDoctorHarness("ollama-local", {
+      portableDisposition: { kind: "hermes", phase: "active" },
+      registryAgent: "hermes",
+    });
+
+    await expect(harness.runSandboxDoctor("alpha")).resolves.toBeUndefined();
+
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Portable lifecycle: agent=Hermes; phase=active",
+    );
+    expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
+    expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed portable receipt authority before doctor probes (#9203)", async () => {
+    const harness = createDoctorHarness("ollama-local", {
+      portableDisposition: new Error("invalid portable lifecycle receipt"),
+    });
+
+    await expect(
+      harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true }),
+    ).rejects.toThrow("invalid portable lifecycle receipt");
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
+    expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves schema-4 OpenClaw doctor behavior under the lifecycle fence (#9203)", async () => {
+    const harness = createDoctorHarness("ollama-local", {
+      portableDisposition: { kind: "openclaw" },
+    });
+
+    await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.captureOpenShellSpy).toHaveBeenCalled();
+    expect(harness.captureHostCommandSpy).toHaveBeenCalled();
+    expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledWith("alpha", expect.any(Function));
+  });
+
+  it("classifies publication while waiting for the doctor lifecycle fence (#9203)", async () => {
+    let disposition: PortableAgentReceiptDisposition = { kind: "absent" };
+    const harness = createDoctorHarness("ollama-local", {
+      portableDisposition: () => disposition,
+      registryAgent: "hermes",
+      withMcpLifecycleLock: async (_sandboxName, operation) => {
+        disposition = { kind: "hermes", phase: "active" };
+        return await operation();
+      },
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toEqual([
+      expect.objectContaining({ detail: "agent=Hermes; phase=active" }),
+    ]);
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
+    expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
   });
 
   it(

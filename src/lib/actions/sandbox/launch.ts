@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as agentRuntime from "../../agent/runtime";
+import type { AgentDefinition } from "../../agent/definition-types";
 import { requireCuaLifecycleReadiness } from "../../cua/lifecycle-readiness";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import type { SandboxEntry } from "../../state/registry";
 import {
   completeReadinessQualifiedInteractiveSessionSetup,
   prepareInteractiveSession,
@@ -13,6 +15,10 @@ import {
 } from "./connect";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import { execSandbox } from "./exec";
+import {
+  inspectPortableAgentReceiptDisposition,
+  recoverPortableDemoSandboxLifecycleForConnect,
+} from "./gateway-state";
 import { getKnownSandboxTarget } from "./gateway-target";
 import {
   inspectLaunchReadiness,
@@ -68,6 +74,49 @@ async function launchCuaUnderMutationLocks(
         timeoutSeconds: 0,
       });
     });
+  });
+}
+
+async function launchAgentWithPortableAuthority(
+  sandboxName: string,
+  agent: AgentDefinition | null,
+  entry: SandboxEntry | null,
+  command: readonly string[],
+  deps: LaunchSandboxDeps,
+): Promise<void> {
+  const runAgent = async (): Promise<void> => {
+    prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+    await execSandbox(sandboxName, command, {
+      tty: true,
+      stdin: true,
+      timeoutSeconds: 0,
+    });
+  };
+  const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
+  await lockSandbox(sandboxName, async () => {
+    const current = inspectPortableAgentReceiptDisposition(sandboxName);
+    if (current.kind !== "hermes") {
+      await runAgent();
+      return;
+    }
+    if (current.phase !== "active") {
+      throw new Error("Hermes portable lifecycle authority changed before agent launch.");
+    }
+    const getSandbox = deps.getSandbox ?? getKnownSandboxTarget;
+    const registered = getSandbox(sandboxName);
+    if (!registered || registered.agent !== "hermes") {
+      throw new Error("Hermes portable registry authority changed before agent launch.");
+    }
+    const gatewayName = (deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName)(registered);
+    const recovery = recoverPortableDemoSandboxLifecycleForConnect(
+      sandboxName,
+      registered,
+      gatewayName,
+    );
+    if (recovery.kind === "not-installed") {
+      throw new Error("Hermes portable lifecycle authority disappeared before agent launch.");
+    }
+    await runAgent();
   });
 }
 
@@ -132,8 +181,6 @@ export async function launchSandbox(
   // part of prepareInteractiveSession, so `launch` must call it too: without it
   // a Hermes TUI on a light-background terminal keeps the default dark skin,
   // and a switch back to a dark terminal never removes the managed skin.
-  prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
-
   // Run the agent through a login shell. execSandbox wraps every command in
   // wrapExecCommandWithRuntimeEnv (runtime-env.ts), which sources
   // /tmp/nemoclaw-proxy-env.sh and then unsets OPENCLAW_GATEWAY_TOKEN so
@@ -143,14 +190,10 @@ export async function launchSandbox(
   // agent under a different auth mode than `connect` gives it, so `-l` is
   // load-bearing: do not flatten this to `bash -c` or to the split command.
   if (isCua) {
+    prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
     await launchCuaUnderMutationLocks(sandboxName, deps);
     return;
   }
   const command = ["bash", "-lc", agentCommand];
-  await execSandbox(sandboxName, command, {
-    tty: true,
-    stdin: true,
-    // 0 means no timeout. Any other value kills a long interactive session.
-    timeoutSeconds: 0,
-  });
+  await launchAgentWithPortableAuthority(sandboxName, agent, sb, command, deps);
 }

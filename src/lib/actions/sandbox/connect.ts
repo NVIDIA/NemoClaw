@@ -3,9 +3,12 @@
 
 import { spawnSync } from "node:child_process";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import {
-
+  captureOpenshell,
+  getOpenshellBinary,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
+import {
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -74,9 +77,11 @@ import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
   ensureLiveSandboxOrExit,
+  inspectPortableAgentReceiptDisposition,
   printGatewayLifecycleHint,
   recoverPortableDemoSandboxLifecycleForConnect,
   startStoppedSandboxContainerForProbeRecovery,
+  withConnectSandboxLifecycleLock,
 } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
@@ -128,7 +133,6 @@ type SandboxListProbe = {
   status: number | null;
   output: string;
 };
-
 
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
@@ -269,9 +273,19 @@ async function settlePortablePairingOrExit(sandboxName: string): Promise<boolean
   return result.kind === "settled";
 }
 
-async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
+async function runSandboxConnectProbe(
+  sandboxName: string,
+  { hermesPortable = false }: { hermesPortable?: boolean } = {},
+): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
+  if (hermesPortable) {
+    await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
+    console.log(
+      `  Probe complete: ${agentName} passed receipt-owned authenticated health in '${sandboxName}'.`,
+    );
+    return;
+  }
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) {
     const routeResult = await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
     runTerminalAgentConnectProbe({
@@ -418,7 +432,6 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
   }
 }
 
-
 function sleepSync(milliseconds: number): void {
   if (milliseconds <= 0) return;
   if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
@@ -459,7 +472,6 @@ export function probeSandboxInferenceRoute(
     },
   );
 }
-
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`
@@ -1007,6 +1019,7 @@ function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult
 }
 
 type WaitForSandboxReadyOptions = {
+  allowDockerRuntimeInspection?: boolean;
   defaultTimeoutSec?: number;
   retryCommand?: string;
   successLogs?: readonly string[];
@@ -1021,6 +1034,7 @@ export const SANDBOX_REPAIR_READY_TIMEOUT_SEC = 300;
 export function waitForSandboxReadyOrExit(
   sandboxName: string,
   {
+    allowDockerRuntimeInspection = true,
     defaultTimeoutSec = 120,
     retryCommand = "connect",
     successLogs = [],
@@ -1074,7 +1088,7 @@ export function waitForSandboxReadyOrExit(
     console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
     process.exit(1);
   }
-  if (isDockerRuntimeDown(sandboxName)) {
+  if (allowDockerRuntimeInspection && isDockerRuntimeDown(sandboxName)) {
     failConnectReadinessDockerRuntimeDown(sandboxName);
   }
 
@@ -1109,7 +1123,7 @@ export function waitForSandboxReadyOrExit(
       console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
       process.exit(1);
     }
-    if (isDockerRuntimeDown(sandboxName)) {
+    if (allowDockerRuntimeInspection && isDockerRuntimeDown(sandboxName)) {
       failConnectReadinessDockerRuntimeDown(sandboxName);
     }
     if (!everSeen && elapsed >= 30) {
@@ -1142,54 +1156,88 @@ export function waitForSandboxReadyOrExit(
  */
 async function runConnectEntryPreflight(
   sandboxName: string,
-  { probeOnly }: { probeOnly: boolean },
+  {
+    probeOnly,
+    withinLifecycleFence,
+  }: {
+    probeOnly: boolean;
+    withinLifecycleFence?: (route: {
+      readonly hermesPortable: boolean;
+      readonly requalify: () => void;
+    }) => Promise<void>;
+  },
 ): Promise<void> {
-  try {
-    assertNoOpenShellGatewayEndpointOverride();
-    const registered = registry.getSandbox(sandboxName);
-    if (registered?.pendingRouteReservation === true) {
-      throw new Error(
-        `Sandbox '${sandboxName}' is still being created by onboarding. Wait for onboarding to finish or remove the incomplete sandbox before connecting.`,
-      );
-    }
-    if (registered) {
-      const gatewayName = resolveSandboxGatewayName(registered);
-      if (registry.getSandboxEntryInference(registered).kind === "configured") {
+  await withConnectSandboxLifecycleLock(sandboxName, async () => {
+    let hermesPortable = false;
+    let requalify = () => undefined;
+    try {
+      assertNoOpenShellGatewayEndpointOverride();
+      const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
+      hermesPortable = disposition.kind === "hermes";
+      const registered = registry.getSandbox(sandboxName);
+      if (registered?.pendingRouteReservation === true) {
+        throw new Error(
+          `Sandbox '${sandboxName}' is still being created by onboarding. Wait for onboarding to finish or remove the incomplete sandbox before connecting.`,
+        );
+      }
+      const gatewayName = registered
+        ? resolveSandboxGatewayName(registered)
+        : getSandboxTargetGatewayName(sandboxName);
+      if (registered && registry.getSandboxEntryInference(registered).kind === "configured") {
         assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
       }
       recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName);
+      requalify = () => {
+        const current = inspectPortableAgentReceiptDisposition(sandboxName);
+        if (
+          current.kind !== disposition.kind ||
+          (current.kind === "hermes" && current.phase !== "active")
+        ) {
+          throw new Error("portable lifecycle receipt authority changed during connect");
+        }
+        if (!hermesPortable) return;
+        const currentRegistry = registry.getSandbox(sandboxName);
+        const currentGateway = currentRegistry
+          ? resolveSandboxGatewayName(currentRegistry)
+          : getSandboxTargetGatewayName(sandboxName);
+        const recovery = recoverPortableDemoSandboxLifecycleForConnect(
+          sandboxName,
+          currentRegistry,
+          currentGateway,
+        );
+        if (recovery.kind === "not-installed") {
+          throw new Error("Hermes portable lifecycle authority disappeared during connect");
+        }
+      };
+    } catch (error) {
+      console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
     }
-  } catch (error) {
-    console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
-  // probe-only / recover can restart receipt-owned local inference, but they
-  // never select, install, or pull a model. Skip the express-vLLM model
-  // preflight because it only steers installation and can reject recovery on
-  // a stale NEMOCLAW_VLLM_MODEL.
-  if (!probeOnly) preflightVllmModelEnvOrExit();
-  const live = await ensureLiveSandboxOrExit(sandboxName, {
-    allowNonReadyPhase: true,
-    gatewayRecovery: probeOnly ? "observe" : "recover",
-  });
+    // probe-only / recover can restart receipt-owned local inference, but they
+    // never select, install, or pull a model. Skip the express-vLLM model
+    // preflight because it only steers installation and can reject recovery on
+    // a stale NEMOCLAW_VLLM_MODEL.
+    if (!probeOnly) preflightVllmModelEnvOrExit();
+    const live = await ensureLiveSandboxOrExit(sandboxName, {
+      allowNonReadyPhase: true,
+      gatewayRecovery: hermesPortable ? "observe" : probeOnly ? "observe" : "recover",
+    });
 
-  // Fast-fail on a Docker daemon outage before the probe-only health check and
-  // the session/recovery probes below (each can spawn 15s `openshell sandbox
-  // exec`/`ssh-config` calls) and before the readiness wait loop. When Docker
-  // is down and the sandbox is not yet ready, connect cannot make progress;
-  // surface the outage immediately so the user is not left waiting tens of
-  // seconds (or killed by an external `timeout`). Terminal phases keep their
-  // normal handling below (#4428).
-  const livePhase = parseSandboxPhase(live.output || "");
-  if (
-    livePhase &&
-    livePhase !== "Ready" &&
-    livePhase !== "Running" &&
-    !isTerminalSandboxPhase(livePhase) &&
-    isDockerRuntimeDown(sandboxName)
-  ) {
-    failConnectReadinessDockerRuntimeDown(sandboxName);
-  }
+    // Docker reachability is not authority for a schema-5 Hermes sandbox.
+    const livePhase = parseSandboxPhase(live.output || "");
+    if (
+      !hermesPortable &&
+      livePhase &&
+      livePhase !== "Ready" &&
+      livePhase !== "Running" &&
+      !isTerminalSandboxPhase(livePhase) &&
+      isDockerRuntimeDown(sandboxName)
+    ) {
+      failConnectReadinessDockerRuntimeDown(sandboxName);
+    }
+    await withinLifecycleFence?.({ hermesPortable, requalify });
+    requalify();
+  });
 }
 
 /** Print version and active-session hints on both interactive launch paths. */
@@ -1256,38 +1304,49 @@ export function completeReadinessQualifiedInteractiveSessionSetup(
 export async function prepareInteractiveSession(
   sandboxName: string,
 ): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
-  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
-  printInteractiveSessionHints(sandboxName);
-
-  const processCheck = checkAndRecoverSandboxProcesses(sandboxName);
-  if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
-    const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
-    exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Connect");
-  }
-  if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
-    const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
-    exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
-  }
-  // Ensure Ollama auth proxy is running (recovers from host reboots)
-  ensureOllamaAuthProxy();
-
-  let sb: SandboxEntry | null = null;
-
-  waitForSandboxReadyOrExit(sandboxName, {
-    successLogs: ["  Sandbox is ready. Connecting..."],
+  const prepared: {
+    value: { agent: AgentDefinition | null; sb: SandboxEntry | null } | null;
+  } = { value: null };
+  await runConnectEntryPreflight(sandboxName, {
+    probeOnly: false,
+    withinLifecycleFence: async ({ hermesPortable, requalify }) => {
+      printInteractiveSessionHints(sandboxName);
+      if (!hermesPortable) {
+        const processCheck = checkAndRecoverSandboxProcesses(sandboxName);
+        if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
+          const agentName = agentRuntime.getAgentDisplayName(
+            agentRuntime.getSessionAgent(sandboxName),
+          );
+          exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Connect");
+        }
+        if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
+          const agentName = agentRuntime.getAgentDisplayName(
+            agentRuntime.getSessionAgent(sandboxName),
+          );
+          exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
+        }
+      }
+      // Ensure Ollama auth proxy is running (recovers from host reboots)
+      ensureOllamaAuthProxy();
+      waitForSandboxReadyOrExit(sandboxName, {
+        allowDockerRuntimeInspection: !hermesPortable,
+        successLogs: ["  Sandbox is ready. Connecting..."],
+      });
+      requalify();
+      // ── Inference route swap (#1248, #3390) ───────────────────────
+      const agent = agentRuntime.getSessionAgent(sandboxName);
+      const sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
+      requalify();
+      if (hermesPortable) {
+        maybeEnsureHermesToolGatewayBroker(sb);
+      } else if (!(await settlePortablePairingOrExit(sandboxName))) {
+        completeInteractiveSessionSetup(sandboxName, sb);
+      }
+      prepared.value = { agent, sb };
+    },
   });
-
-  // ── Inference route swap (#1248, #3390) ───────────────────────────
-  // When the user has multiple sandboxes with different providers, the
-  // cluster-wide inference.local route may still point at the other provider.
-  // After the sandbox is Ready, verify and recover the route before SSH.
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
-  if (!(await settlePortablePairingOrExit(sandboxName))) {
-    completeInteractiveSessionSetup(sandboxName, sb);
-  }
-
-  return { agent, sb };
+  if (!prepared.value) throw new Error("interactive connect lifecycle did not complete");
+  return prepared.value;
 }
 
 export async function connectSandbox(
@@ -1320,20 +1379,30 @@ export async function connectSandbox(
       }
       const publicationRequest = publicationFromDecision(sandboxName, readiness);
       const gated = await withLaunchReadinessMutationGate(publicationRequest, async () => {
-        await runConnectEntryPreflight(sandboxName, { probeOnly: true });
-        // Restart a stopped container before the readiness wait. Without this step,
-        // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
-        startStoppedSandboxContainerForProbeRecovery(sandboxName);
-        waitForSandboxReadyOrExit(sandboxName, {
-          defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
-          retryCommand: "connect --probe-only",
+        await runConnectEntryPreflight(sandboxName, {
+          probeOnly: true,
+          withinLifecycleFence: async ({ hermesPortable, requalify }) => {
+            // Restart a stopped container before the readiness wait. Without this step,
+            // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
+            if (!hermesPortable) startStoppedSandboxContainerForProbeRecovery(sandboxName);
+            waitForSandboxReadyOrExit(sandboxName, {
+              allowDockerRuntimeInspection: !hermesPortable,
+              defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
+              retryCommand: "connect --probe-only",
+            });
+            // Re-pin and re-observe the owning gateway after a potentially long wait
+            // before any in-sandbox process or host-forward mutation. The readiness
+            // polls are already scoped to the owning gateway; this also catches
+            // registry changes.
+            await ensureLiveSandboxOrExit(sandboxName, {
+              allowNonReadyPhase: hermesPortable,
+              gatewayRecovery: "observe",
+            });
+            requalify();
+            await runSandboxConnectProbe(sandboxName, { hermesPortable });
+            requalify();
+          },
         });
-        // Re-pin and re-observe the owning gateway after a potentially long wait
-        // before any in-sandbox process or host-forward mutation. The readiness
-        // polls are already scoped to the owning gateway; this also catches
-        // registry changes.
-        await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-        await runSandboxConnectProbe(sandboxName);
         return publishLaunchReadiness(publicationRequest);
       });
       if (gated.kind === "changed") {

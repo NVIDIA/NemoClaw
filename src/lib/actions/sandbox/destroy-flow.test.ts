@@ -64,6 +64,24 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("rejects schema-5 inside the destroy lifecycle fence before Docker or OpenShell (#9203)", async () => {
+    const harness = createDestroyHarness({ portableCommandError: "schema-5 rejected" });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "schema-5 rejected",
+    );
+
+    expect(harness.assertHermesPortableCommandUnavailableSpy).toHaveBeenCalledWith(
+      "alpha",
+      "sandbox:destroy",
+    );
+    expect(harness.dockerRunSpy).not.toHaveBeenCalled();
+    expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+  });
+
   it("runs routed teardown under the gateway and host router-port locks (#9098)", async () => {
     const harness = createDestroyHarness({ provider: "nvidia-router" });
 

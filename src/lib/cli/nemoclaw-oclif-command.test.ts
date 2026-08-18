@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Args } from "@oclif/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as receiptAuthority from "../onboard/experimental/hermes-portable-receipt";
 import { log } from "./logger";
 import { type CommandExitResult, NemoClawCommand } from "./nemoclaw-oclif-command";
 
@@ -70,6 +72,43 @@ class PlainFailureCommand extends NemoClawCommand {
   }
 }
 
+class RawUnsupportedSandboxCommand extends NemoClawCommand {
+  static id = "sandbox:agent";
+  static ran = false;
+
+  public async run(): Promise<void> {
+    RawUnsupportedSandboxCommand.ran = true;
+  }
+}
+
+class RawSandboxDoctorCommand extends NemoClawCommand {
+  static id = "sandbox:doctor";
+  static ran = false;
+
+  public async run(): Promise<void> {
+    RawSandboxDoctorCommand.ran = true;
+  }
+}
+
+class ParsedUnsupportedSandboxCommand extends NemoClawCommand {
+  static id = "sandbox:destroy";
+  static args = { sandboxName: Args.string({ required: true }) };
+  static flags = {};
+  static ran = false;
+
+  public async run(): Promise<void> {
+    await this.parse(ParsedUnsupportedSandboxCommand);
+    ParsedUnsupportedSandboxCommand.ran = true;
+  }
+}
+
+function useHermesPortableAuthority(): void {
+  vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+    kind: "hermes",
+    snapshot: { receipt: { phase: "active" } } as never,
+  });
+}
+
 function makeCommand(): TestCommand {
   return Object.create(TestCommand.prototype) as TestCommand;
 }
@@ -80,6 +119,9 @@ describe("NemoClawCommand", () => {
     vi.unstubAllEnvs();
     log.configure();
     process.exitCode = undefined;
+    RawUnsupportedSandboxCommand.ran = false;
+    RawSandboxDoctorCommand.ran = false;
+    ParsedUnsupportedSandboxCommand.ran = false;
   });
 
   it("records status-like command results without throwing", () => {
@@ -154,5 +196,43 @@ describe("NemoClawCommand", () => {
 
   it("passes non-sentinel failures to the default oclif handler", async () => {
     await expect(PlainFailureCommand.run([], process.cwd())).rejects.toThrow("real failure");
+  });
+
+  it("rejects schema-5 unsupported parsed commands before the action body (#9203)", async () => {
+    useHermesPortableAuthority();
+
+    await expect(ParsedUnsupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      "not supported for an experimental Hermes portable sandbox",
+    );
+    expect(ParsedUnsupportedSandboxCommand.ran).toBe(false);
+  });
+
+  it("rejects schema-5 unsupported raw-argv commands before the action body (#9203)", async () => {
+    useHermesPortableAuthority();
+
+    await expect(
+      RawUnsupportedSandboxCommand.run(["alpha", "--json"], process.cwd()),
+    ).rejects.toThrow("not supported for an experimental Hermes portable sandbox");
+    expect(RawUnsupportedSandboxCommand.ran).toBe(false);
+  });
+
+  it("preserves raw help before schema-5 action admission (#9203)", async () => {
+    useHermesPortableAuthority();
+
+    await expect(
+      RawUnsupportedSandboxCommand.run(["alpha", "--help"], process.cwd()),
+    ).resolves.toBeUndefined();
+    expect(RawUnsupportedSandboxCommand.ran).toBe(true);
+  });
+
+  it("rejects schema-5 doctor --fix with option-specific guidance (#9203)", async () => {
+    useHermesPortableAuthority();
+
+    await expect(
+      RawSandboxDoctorCommand.run(["alpha", "--fix"], process.cwd()),
+    ).rejects.toThrow(
+      "The --fix option is not supported for an experimental Hermes portable sandbox",
+    );
+    expect(RawSandboxDoctorCommand.ran).toBe(false);
   });
 });

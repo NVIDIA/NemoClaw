@@ -12,6 +12,8 @@ import {
   resolveCurrentRuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
+import { inspectPortableAgentReceiptDisposition } from "../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
 import { readCloudflaredState } from "../../tunnel/services";
 import {
@@ -20,6 +22,12 @@ import {
 } from "./doctor-gateway-fallback";
 import { captureHostCommand } from "./doctor-host-command";
 import type { DoctorCheck } from "./doctor-report";
+
+export const withSandboxDoctorLifecycleLock = withMcpLifecycleLock;
+
+export function inspectSandboxDoctorPortableDisposition(sandboxName: string) {
+  return inspectPortableAgentReceiptDisposition(sandboxName);
+}
 
 export function oneLine(value = ""): string {
   return String(value).replace(/\s+/g, " ").trim();

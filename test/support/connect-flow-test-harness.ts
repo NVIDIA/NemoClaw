@@ -48,6 +48,7 @@ export type ConnectHarness = {
   probeOllamaAuthProxyHealthSpy: MockInstance;
   readSandboxConfigSpy: MockInstance;
   recoverPortableDemoLifecycleSpy: MockInstance;
+  inspectPortableReceiptDispositionSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
   runAutoPairSpy: MockInstance;
@@ -85,6 +86,10 @@ export type ConnectHarnessOptions = {
     mcpReconciliationReason?: string;
   };
   portableRecoveryResult?: { kind: "not-installed" | "already-running" | "recovered" };
+  portableReceiptDisposition?:
+    | { kind: "absent" }
+    | { kind: "openclaw" }
+    | { kind: "hermes"; phase: "pending" | "configuring" | "active" };
   dockerRuntime?: {
     health?: string;
     paused?: boolean;
@@ -164,6 +169,29 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
   const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
+  const portableAgentLifecycle = requireDist(
+    "../../src/lib/onboard/experimental/portable-agent-lifecycle.js",
+  );
+  const lifecycleLock = requireDist("../../src/lib/state/mcp-lifecycle-lock.js");
+  const lifecycleLockAcquisition = requireDist(
+    "../../src/lib/state/mcp-lifecycle-lock-acquisition.js",
+  );
+
+  vi.spyOn(lifecycleLock, "withMcpLifecycleLock").mockImplementation((async (
+    _sandboxName: string,
+    operation: () => Promise<unknown>,
+  ) => operation()) as never);
+  vi.spyOn(lifecycleLockAcquisition, "withMcpLifecycleLock").mockImplementation((async (
+    _sandboxName: string,
+    operation: () => Promise<unknown>,
+  ) => operation()) as never);
+  vi.spyOn(gatewayState, "withConnectSandboxLifecycleLock").mockImplementation((async (
+    _sandboxName: string,
+    operation: () => Promise<unknown>,
+  ) => operation()) as never);
+  const inspectPortableReceiptDispositionSpy = vi
+    .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
+    .mockReturnValue(options.portableReceiptDisposition ?? { kind: "absent" });
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -372,6 +400,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     probeOllamaAuthProxyHealthSpy,
     readSandboxConfigSpy,
     recoverPortableDemoLifecycleSpy,
+    inspectPortableReceiptDispositionSpy,
     registryEntries,
     resolveAgentConfigSpy,
     runAutoPairSpy,

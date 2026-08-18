@@ -66,9 +66,11 @@ import {
   dockerInspectGateway,
   findSandboxListLine,
   inferSandboxReadyFromLine,
+  inspectSandboxDoctorPortableDisposition,
   ollamaDoctorCheck,
   oneLine,
   shouldInspectLegacyGatewayContainer,
+  withSandboxDoctorLifecycleLock,
 } from "./doctor-system-checks";
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 
@@ -92,6 +94,45 @@ type SandboxProbe = {
   checks: DoctorCheck[];
   reachable: boolean;
 };
+
+function hermesPortableDoctorReport(
+  sandboxName: string,
+  phase: "pending" | "configuring" | "active",
+): DoctorReport {
+  const active = phase === "active";
+  return buildDoctorReport(sandboxName, [
+    {
+      group: "Sandbox",
+      label: "Portable lifecycle",
+      status: active ? "ok" : "warn",
+      detail: `agent=Hermes; phase=${phase}`,
+      ...(active
+        ? {}
+        : { hint: "resume the existing Hermes portable onboarding transaction" }),
+    },
+  ]);
+}
+
+function assertHermesPortableDoctorRegistry(
+  sandboxName: string,
+  phase: "pending" | "configuring" | "active",
+): void {
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry) {
+    if (phase !== "active") return;
+    throw new Error("Hermes portable active receipt is missing its registry authority.");
+  }
+  if (
+    entry.name !== sandboxName ||
+    entry.agent !== "hermes" ||
+    entry.openshellDriver !== "docker"
+  ) {
+    throw new Error("Hermes portable receipt and registry authority disagree.");
+  }
+  if (phase === "pending") {
+    throw new Error("Hermes portable pending receipt conflicts with an existing registry entry.");
+  }
+}
 
 function parseDoctorIntent(sandboxName: string, args: string[]): DoctorIntent | null {
   const asJson = args.includes("--json");
@@ -598,6 +639,15 @@ async function collectDoctorChecks(
   ];
 }
 
+function resolveDoctorGatewayName(sb: SandboxEntry | null | undefined): string | null {
+  if (!sb) return resolveGatewayName(GATEWAY_PORT);
+  try {
+    return resolveSandboxGatewayName(sb);
+  } catch {
+    return null;
+  }
+}
+
 export async function runSandboxDoctor(
   sandboxName: string,
   args: string[] = [],
@@ -606,20 +656,25 @@ export async function runSandboxDoctor(
   const intent = parseDoctorIntent(sandboxName, args);
   if (!intent) return undefined;
 
-  const sb = registry.getSandbox(sandboxName);
-  let gatewayName: string | null = resolveGatewayName(GATEWAY_PORT);
-  if (sb) {
-    try {
-      gatewayName = resolveSandboxGatewayName(sb);
-    } catch {
-      gatewayName = null;
+  return withSandboxDoctorLifecycleLock(sandboxName, async () => {
+    const portable = inspectSandboxDoctorPortableDisposition(sandboxName);
+    if (portable.kind === "hermes") {
+      assertHermesPortableDoctorRegistry(sandboxName, portable.phase);
+      const report = hermesPortableDoctorReport(sandboxName, portable.phase);
+      if (intent.asJson && options.quietJson) return report;
+      const exitCode = renderDoctorReport(report, intent.asJson);
+      if (exitCode !== 0) process.exit(exitCode);
+      return undefined;
     }
-  }
-  const checks = await collectDoctorChecks(sandboxName, sb, gatewayName, intent);
-  const report = buildDoctorReport(sandboxName, checks);
-  if (intent.asJson && options.quietJson) return report;
 
-  const exitCode = renderDoctorReport(report, intent.asJson);
-  if (exitCode !== 0) process.exit(exitCode);
-  return undefined;
+    const sb = registry.getSandbox(sandboxName);
+    const gatewayName = resolveDoctorGatewayName(sb);
+    const checks = await collectDoctorChecks(sandboxName, sb, gatewayName, intent);
+    const report = buildDoctorReport(sandboxName, checks);
+    if (intent.asJson && options.quietJson) return report;
+
+    const exitCode = renderDoctorReport(report, intent.asJson);
+    if (exitCode !== 0) process.exit(exitCode);
+    return undefined;
+  });
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as portableAgentLifecycle from "../../lib/onboard/experimental/portable-agent-lifecycle";
 
 const mocks = vi.hoisted(() => {
   class SandboxConfigError extends Error {
@@ -18,6 +19,8 @@ const mocks = vi.hoisted(() => {
 
   return {
     configGet: vi.fn(),
+    configRotateToken: vi.fn().mockResolvedValue(undefined),
+    configSet: vi.fn().mockResolvedValue(undefined),
     connectSandbox: vi.fn().mockResolvedValue(undefined),
     destroySandbox: vi.fn().mockResolvedValue(undefined),
     listSandboxChannels: vi.fn(),
@@ -79,6 +82,8 @@ vi.mock("../../lib/actions/sandbox/host-aliases", () => ({
 
 vi.mock("../../lib/sandbox/config", () => ({
   configGet: mocks.configGet,
+  configRotateToken: mocks.configRotateToken,
+  configSet: mocks.configSet,
   SandboxConfigError: mocks.SandboxConfigError,
 }));
 
@@ -94,6 +99,8 @@ vi.mock("../../lib/shields", () => ({
 
 import SandboxChannelsListCommand from "./channels/list";
 import SandboxConfigGetCommand from "./config/get";
+import SandboxConfigRotateTokenCommand from "./config/rotate-token";
+import SandboxConfigSetCommand from "./config/set";
 import ConnectCliCommand from "./connect";
 import DestroyCliCommand from "./destroy";
 import SandboxDoctorCliCommand from "./doctor";
@@ -233,6 +240,32 @@ describe("sandbox oclif command adapters", () => {
     });
   });
 
+  it("maps ordinary config mutations and rejects schema-5 before their actions (#9203)", async ({
+    onTestFinished,
+  }) => {
+    await SandboxConfigSetCommand.run(["alpha", "--key", "model", "--value", "next"], rootDir);
+    await SandboxConfigRotateTokenCommand.run(["alpha", "--from-env", "TOKEN"], rootDir);
+    expect(mocks.configSet).toHaveBeenCalledOnce();
+    expect(mocks.configRotateToken).toHaveBeenCalledOnce();
+    vi.clearAllMocks();
+
+    const guard = vi
+      .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
+      .mockImplementation(() => {
+        throw new Error("schema-5 rejected");
+      });
+    onTestFinished(() => guard.mockRestore());
+
+    await expect(
+      SandboxConfigSetCommand.run(["alpha", "--key", "model", "--value", "next"], rootDir),
+    ).rejects.toThrow("schema-5 rejected");
+    await expect(
+      SandboxConfigRotateTokenCommand.run(["alpha", "--from-env", "TOKEN"], rootDir),
+    ).rejects.toThrow("schema-5 rejected");
+    expect(mocks.configSet).not.toHaveBeenCalled();
+    expect(mocks.configRotateToken).not.toHaveBeenCalled();
+  });
+
   it("keeps sandbox inspection usage metadata on native oclif commands", () => {
     const usage = (command: { usage?: string[] }) => command.usage?.join(" ") ?? "";
 
@@ -318,6 +351,31 @@ describe("sandbox oclif command adapters", () => {
     });
     expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha", { throwOnError: true });
     expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha");
+  });
+
+  it("rejects schema-5 shields commands inside their command lifecycle fence (#9203)", async ({
+    onTestFinished,
+  }) => {
+    const guard = vi
+      .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
+      .mockImplementation((_sandboxName, commandId) => {
+        throw new Error(`rejected ${commandId}`);
+      });
+    onTestFinished(() => guard.mockRestore());
+
+    await expect(ShieldsDownCommand.run(["alpha"], rootDir)).rejects.toThrow(
+      "rejected sandbox:shields:down",
+    );
+    await expect(ShieldsUpCommand.run(["alpha"], rootDir)).rejects.toThrow(
+      "rejected sandbox:shields:up",
+    );
+    await expect(ShieldsStatusCommand.run(["alpha"], rootDir)).rejects.toThrow(
+      "rejected sandbox:shields:status",
+    );
+
+    expect(mocks.shieldsDown).not.toHaveBeenCalled();
+    expect(mocks.shieldsUp).not.toHaveBeenCalled();
+    expect(mocks.shieldsStatus).not.toHaveBeenCalled();
   });
 
   it("translates shields exit sentinels into exit codes without a traceback (#7382)", async () => {

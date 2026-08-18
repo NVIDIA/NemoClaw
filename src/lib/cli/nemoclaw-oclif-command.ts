@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command, Flags, type Interfaces } from "@oclif/core";
+import { inspectPortableAgentReceiptAuthority } from "../onboard/experimental/hermes-portable-receipt";
+import { HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE } from "../onboard/experimental/portable-agent-lifecycle";
+import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import { isDeferredShieldsExit } from "../shields/deferred-exit";
 import { log } from "./logger";
@@ -11,6 +14,39 @@ export type CommandExitResult = {
   message?: string | null;
   status?: number | null;
 };
+
+const HERMES_PORTABLE_COMMANDS = new Set([
+  "launch",
+  "sandbox:connect",
+  "sandbox:doctor",
+  "sandbox:recover",
+  "sandbox:start",
+  "sandbox:status",
+  "sandbox:stop",
+]);
+
+export { HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE };
+export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =
+  "The --fix option is not supported for an experimental Hermes portable sandbox.";
+
+function assertHermesPortableCommandSupported(
+  commandId: string,
+  sandboxName: string,
+  argv: readonly string[],
+): void {
+  const authority = inspectPortableAgentReceiptAuthority(
+    sandboxName,
+    defaultPortableDemoStateDir(process.env),
+  );
+  const supported =
+    HERMES_PORTABLE_COMMANDS.has(commandId) &&
+    !(commandId === "sandbox:doctor" && argv.includes("--fix"));
+  if (authority.kind !== "hermes" || supported) return;
+  if (commandId === "sandbox:doctor" && argv.includes("--fix")) {
+    throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE} Command: ${commandId}`);
+  }
+  throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`);
+}
 
 /**
  * Shared oclif base for NemoClaw commands.
@@ -45,6 +81,17 @@ export abstract class NemoClawCommand extends Command {
     // passthrough commands intentionally stop here: only environment-based
     // logging configuration applies to them.
     log.configure({ debug: false, quiet: false });
+    const commandId = this.id;
+    const sandboxName = this.argv[0];
+    if (
+      typeof commandId === "string" &&
+      sandboxName &&
+      (commandId === "launch" || commandId.startsWith("sandbox:")) &&
+      !this.argv.includes("--help") &&
+      !this.argv.includes("-h")
+    ) {
+      assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
+    }
   }
 
   protected override async parse<
@@ -56,6 +103,16 @@ export abstract class NemoClawCommand extends Command {
     argv?: string[],
   ): Promise<Interfaces.ParserOutput<F, B, A>> {
     const parsed = await super.parse(options, argv);
+
+    const commandId = this.id;
+    const parsedSandboxName = (parsed.args as Record<string, unknown>).sandboxName;
+    if (
+      typeof commandId === "string" &&
+      typeof parsedSandboxName === "string" &&
+      (commandId === "launch" || commandId.startsWith("sandbox:"))
+    ) {
+      assertHermesPortableCommandSupported(commandId, parsedSandboxName, this.argv);
+    }
 
     // Logging flags belong to the host only when a command invokes oclif's
     // parser. Commands that deliberately consume raw argv (for example

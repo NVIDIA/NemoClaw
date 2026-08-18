@@ -14,10 +14,11 @@ import {
 } from "../docker-driver-sandbox-recovery";
 import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import {
-  hasPortableDemoSandboxLifecycleReceipt,
-  recoverPortableDemoSandboxLifecycle,
-  stopPortableDemoSandboxLifecycle,
-} from "../experimental/portable-demo-lifecycle";
+  hasPortableAgentSandboxLifecycleReceipt,
+  recoverPortableAgentSandboxLifecycle,
+  stopPortableAgentSandboxLifecycle,
+} from "../experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -58,16 +59,17 @@ export interface DockerRuntimeProviderDependencies {
     timeout?: number,
   ) => RuntimeProviderCommandCapture;
   readonly findLabeledSandboxContainers: typeof findLabeledSandboxContainers;
-  readonly hasPortableLifecycleReceipt: typeof hasPortableDemoSandboxLifecycleReceipt;
+  readonly hasPortableLifecycleReceipt: typeof hasPortableAgentSandboxLifecycleReceipt;
   readonly isRuntimeDown: typeof isDockerRuntimeDown;
   readonly printRuntimeDownGuidance: typeof printDockerRuntimeDownGuidance;
   readonly recoverSandbox: typeof recoverDockerDriverSandbox;
-  readonly recoverPortableSandbox: typeof recoverPortableDemoSandboxLifecycle;
+  readonly recoverPortableSandbox: typeof recoverPortableAgentSandboxLifecycle;
   readonly queryRuntimeSnapshot: typeof queryOpenShellDockerSandboxRuntimeSnapshot;
   readonly removeImage: DockerRemoveImage;
   readonly stopContainer: DockerStop;
-  readonly stopPortableSandbox: typeof stopPortableDemoSandboxLifecycle;
+  readonly stopPortableSandbox: typeof stopPortableAgentSandboxLifecycle;
   readonly unpauseContainer: DockerUnpause;
+  readonly withLifecycleLockSync: typeof withMcpLifecycleLockSync;
 }
 
 const DOCKER_OPERATION_TIMEOUT_MS = 30_000;
@@ -95,22 +97,22 @@ function resolveDependencies(
     findLabeledSandboxContainers:
       overrides.findLabeledSandboxContainers ?? findLabeledSandboxContainers,
     hasPortableLifecycleReceipt:
-      overrides.hasPortableLifecycleReceipt ?? hasPortableDemoSandboxLifecycleReceipt,
+      overrides.hasPortableLifecycleReceipt ?? hasPortableAgentSandboxLifecycleReceipt,
     isRuntimeDown: overrides.isRuntimeDown ?? isDockerRuntimeDown,
     printRuntimeDownGuidance: overrides.printRuntimeDownGuidance ?? printDockerRuntimeDownGuidance,
     recoverSandbox: overrides.recoverSandbox ?? recoverDockerDriverSandbox,
     recoverPortableSandbox:
-      overrides.recoverPortableSandbox ?? recoverPortableDemoSandboxLifecycle,
+      overrides.recoverPortableSandbox ?? recoverPortableAgentSandboxLifecycle,
     queryRuntimeSnapshot:
       overrides.queryRuntimeSnapshot ?? queryOpenShellDockerSandboxRuntimeSnapshot,
     removeImage:
       overrides.removeImage ??
       ((reference, options) => loadDockerRemoveImage()(reference, options)),
     stopContainer: overrides.stopContainer ?? ((name, options) => loadDockerStop()(name, options)),
-    stopPortableSandbox:
-      overrides.stopPortableSandbox ?? stopPortableDemoSandboxLifecycle,
+    stopPortableSandbox: overrides.stopPortableSandbox ?? stopPortableAgentSandboxLifecycle,
     unpauseContainer:
       overrides.unpauseContainer ?? ((name, options) => loadDockerUnpause()(name, options)),
+    withLifecycleLockSync: overrides.withLifecycleLockSync ?? withMcpLifecycleLockSync,
   };
 }
 
@@ -163,6 +165,15 @@ function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleResult {
+  return deps.withLifecycleLockSync(input.sandboxName, () =>
+    startDockerSandboxUnlocked(input, deps),
+  );
+}
+
+function startDockerSandboxUnlocked(
+  input: RuntimeProviderLifecycleInput,
+  deps: DockerRuntimeProviderDependencies,
+): RuntimeProviderLifecycleResult {
   try {
     const portable = deps.recoverPortableSandbox(
       input.sandboxName,
@@ -173,7 +184,11 @@ function startDockerSandbox(
         openshellDriver: input.sandbox.openshellDriver,
         provider: input.sandbox.provider,
       },
-      { env: input.environment, log: input.log },
+      {
+        env: input.environment,
+        log: input.log,
+        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+      },
     );
     if (portable.kind !== "not-installed") return { exitCode: 0 };
   } catch (error) {
@@ -224,6 +239,16 @@ function stopDockerSandbox(
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleStopOutcome {
+  return deps.withLifecycleLockSync(input.sandboxName, () =>
+    stopDockerSandboxUnlocked(input, hooks, deps),
+  );
+}
+
+function stopDockerSandboxUnlocked(
+  input: RuntimeProviderLifecycleInput,
+  hooks: RuntimeProviderLifecycleStopHooks,
+  deps: DockerRuntimeProviderDependencies,
+): RuntimeProviderLifecycleStopOutcome {
   try {
     const portable = deps.stopPortableSandbox(
       input.sandboxName,
@@ -235,7 +260,11 @@ function stopDockerSandbox(
         provider: input.sandbox.provider,
       },
       hooks.beforeStop,
-      { env: input.environment, log: input.log },
+      {
+        env: input.environment,
+        log: input.log,
+        readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
+      },
     );
     if (portable.kind === "already-stopped") {
       return { exitCode: 0, state: "already-stopped" };

@@ -14,6 +14,16 @@ import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
+import {
+  classifyHermesPortableRegistry,
+  createHermesPortableContainerDeps,
+  createHermesPortableOpenShellCapture,
+  defaultHermesPortableStateDir,
+  isHermesPortableLifecycleMode,
+  observeHermesPortableSandbox,
+  runHermesPortableOnboardingFromOnboard,
+  runHermesPortableOnboardingTransaction,
+} from "./experimental/hermes-portable-onboarding";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import {
@@ -38,6 +48,22 @@ import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
+export {
+  classifyHermesPortableRegistry,
+  createHermesPortableContainerDeps,
+  createHermesPortableOpenShellCapture,
+  defaultHermesPortableStateDir,
+  observeHermesPortableSandbox,
+  runHermesPortableOnboardingFromOnboard,
+  runHermesPortableOnboardingTransaction,
+};
+
+/** Release the exit cleanup listener only after its create source was retired. */
+export function cleanupSandboxCreateSource(cleanup: () => boolean): boolean {
+  const completed = cleanup();
+  if (completed) process.removeListener("exit", cleanup);
+  return completed;
+}
 
 export function resolvePortableLifecycleMode(
   agent: AgentDefinition | null,
@@ -49,16 +75,14 @@ export function resolvePortableLifecycleMode(
 /** Resolve the checkpoint-owned authority required by exported portable creation helpers. */
 export function resolveExportedPortableRuntimeAuthority(
   env: NodeJS.ProcessEnv,
-  loadSession: () =>
-    | {
-        checkpoint?: {
-          profile: { kind: "selected"; value: "default" | "portable" };
-          runtimeAuthority:
-            | { kind: "unset" }
-            | { kind: "selected"; value: CheckpointPortableRuntimeAuthority };
-        } | null;
-      }
-    | null,
+  loadSession: () => {
+    checkpoint?: {
+      profile: { kind: "selected"; value: "default" | "portable" };
+      runtimeAuthority:
+        | { kind: "unset" }
+        | { kind: "selected"; value: CheckpointPortableRuntimeAuthority };
+    } | null;
+  } | null,
 ): CheckpointPortableRuntimeAuthority | null {
   if (!isPortableExperimentalProfile(env)) return null;
   const checkpoint = loadSession()?.checkpoint;
@@ -80,6 +104,7 @@ export function resolveAgentCreateInput(
   return {
     ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
     portableLifecycle: resolvePortableLifecycleMode(agent, env),
+    hermesPortableLifecycle: isHermesPortableLifecycleMode(agent, env),
   };
 }
 
@@ -132,6 +157,7 @@ export interface SandboxGpuCreateFlowInput {
   /** Host-side runtime environment used only by the selected lifecycle provider. */
   hostEnv?: NodeJS.ProcessEnv;
   portableLifecycle?: boolean;
+  hermesPortableLifecycle?: boolean;
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
   lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
@@ -194,12 +220,31 @@ export async function runSandboxGpuCreateFlow(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
+  const hermesPortableLifecycle = input.hermesPortableLifecycle === true;
   assertPortableManagedBootstrapNotSelected(
     input.portableLifecycle === true,
     input.managedBootstrap != null,
   );
+  if (hermesPortableLifecycle && input.managedBootstrap != null) {
+    throw new Error(
+      "Hermes portable onboarding cannot use managed-image bootstrap because it requires Docker lifecycle operations.",
+    );
+  }
+  if (hermesPortableLifecycle && (!input.lifecycleGeneration || !input.portableRuntimeAuthority)) {
+    throw new Error(
+      "Hermes portable onboarding requires checkpoint runtime authority and a lifecycle generation before creation.",
+    );
+  }
   let registryImageRef: string | null = input.prebuild.imageRef;
-  const attemptRunner = createSandboxGpuCreateAttemptRunner(input, deps);
+  const attemptRunner = createSandboxGpuCreateAttemptRunner(
+    hermesPortableLifecycle ? { ...input, portableLifecycle: true } : input,
+    hermesPortableLifecycle
+      ? {
+          ...deps,
+          installPortableDemoLifecycle: () => input.lifecycleGeneration!,
+        }
+      : deps,
+  );
   const gpuCreateOutcome = await sandboxGpuCreateAttempt
     .executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
       runAttempt: attemptRunner.runAttempt,
@@ -312,7 +357,7 @@ export async function runSandboxGpuCreateFlow(
   }
 
   let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
-  if (!input.portableLifecycle && !portableLifecycleGeneration) {
+  if (!input.portableLifecycle && !input.hermesPortableLifecycle && !portableLifecycleGeneration) {
     try {
       portableLifecycleGeneration =
         (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(

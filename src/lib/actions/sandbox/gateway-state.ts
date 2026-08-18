@@ -13,6 +13,7 @@ import {
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
@@ -50,9 +51,10 @@ import {
   recoverDockerDriverSandbox,
 } from "../../onboard/docker-driver-sandbox-recovery";
 import {
-  type PortableDemoLifecycleRecoveryResult,
-  recoverPortableDemoSandboxLifecycle,
-} from "../../onboard/experimental/portable-demo-lifecycle";
+  inspectPortableAgentReceiptDisposition,
+  recoverPortableAgentSandboxLifecycle,
+} from "../../onboard/experimental/portable-agent-lifecycle";
+import type { PortableDemoLifecycleRecoveryResult } from "../../onboard/experimental/portable-demo-lifecycle";
 import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -81,6 +83,11 @@ export type SandboxGatewayState = {
   recoverySandboxVia?: string | null;
 };
 
+export type { PortableAgentReceiptDisposition } from "../../onboard/experimental/portable-agent-lifecycle";
+
+export { inspectPortableAgentReceiptDisposition };
+export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
+
 type SandboxGatewayStateLookup = (
   sandboxName: string,
   gatewayName?: string,
@@ -97,19 +104,22 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   sandbox: SandboxEntry | null,
   gatewayName: string,
 ): PortableDemoLifecycleRecoveryResult {
-  if (!sandbox || sandbox.openshellDriver !== "docker") return { kind: "not-installed" };
-  return recoverPortableDemoSandboxLifecycle(
+  return recoverPortableAgentSandboxLifecycle(
     sandboxName,
     {
-      agent: sandbox.agent,
+      agent: sandbox?.agent,
       gatewayName,
-      lifecycleGeneration: sandbox.lifecycleGeneration,
-      openshellDriver: sandbox.openshellDriver,
-      provider: sandbox.provider,
+      lifecycleGeneration: sandbox?.lifecycleGeneration,
+      openshellDriver: sandbox?.openshellDriver,
+      provider: sandbox?.provider,
     },
     {
-      backfillRegistryGeneration: (generation) =>
-        compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
+      ...(sandbox
+        ? {
+            backfillRegistryGeneration: (generation: string) =>
+              compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
+          }
+        : {}),
       openshellBinary: getOpenshellBinary(),
       captureOpenshell: (args, timeoutMs) => {
         const result = captureOpenshell([...args], {
@@ -124,6 +134,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
           error: result.error,
         };
       },
+      readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
     },
   );
 }

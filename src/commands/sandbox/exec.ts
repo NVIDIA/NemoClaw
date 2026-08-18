@@ -4,6 +4,8 @@
 import { Args, Flags } from "@oclif/core";
 import { execSandbox } from "../../lib/actions/sandbox/exec";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { assertHermesPortableCommandUnavailable } from "../../lib/onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock as withSandboxMutationLock } from "../../lib/state/mcp-lifecycle-lock-acquisition";
 
 export default class SandboxExecCommand extends NemoClawCommand {
   static id = "sandbox:exec";
@@ -51,11 +53,14 @@ export default class SandboxExecCommand extends NemoClawCommand {
     const cmd = (
       separatorIndex === -1 ? argv.slice(1) : originalArgv.slice(separatorIndex + 1)
     ) as string[];
-    await execSandbox(args.sandboxName, cmd, {
-      workdir: flags.workdir,
-      tty: typeof flags.tty === "boolean" ? flags.tty : null,
-      timeoutSeconds: flags.timeout,
-      stdin: flags.stdin,
+    await withSandboxMutationLock(args.sandboxName, () => {
+      assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:exec");
+      return execSandbox(args.sandboxName, cmd, {
+        workdir: flags.workdir,
+        tty: typeof flags.tty === "boolean" ? flags.tty : null,
+        timeoutSeconds: flags.timeout,
+        stdin: flags.stdin,
+      });
     });
   }
 }

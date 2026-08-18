@@ -907,4 +907,92 @@ describe("connectSandbox flow", () => {
     expect(logOutput).not.toContain("Probe complete");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+
+  it("keeps active Hermes probe on receipt-owned recovery with every Docker path poisoned (#9203)", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalled();
+  });
+
+  it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails before Docker when Hermes receipt authority disappears during probe (#9203)", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+    harness.inspectPortableReceiptDispositionSpy
+      .mockReturnValueOnce({ kind: "hermes", phase: "active" })
+      .mockReturnValue({ kind: "absent" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "receipt authority changed during connect",
+    );
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending", "configuring"] as const)(
+    "rejects incomplete Hermes %s receipt before connect mutation (#9203)",
+    async (phase) => {
+      const harness = createConnectHarness({
+        agentName: "hermes",
+        registryEntry: { openshellDriver: "docker" },
+        portableReceiptDisposition: { kind: "hermes", phase },
+      });
+      harness.recoverPortableDemoLifecycleSpy.mockImplementation(() => {
+        throw new Error(`phase '${phase}' is incomplete`);
+      });
+
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+      expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+      expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+      expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    },
+  );
 });
