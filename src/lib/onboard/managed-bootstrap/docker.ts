@@ -2188,6 +2188,26 @@ export function createDockerManagedBootstrapAdapter(
     }
     throw failure;
   };
+  const finalizePendingSharedStateRollback = (
+    journal: DockerBootstrapTransaction,
+    transaction: ReturnType<typeof managedSharedStateTransaction>,
+  ): void => {
+    try {
+      finalizeDockerManagedStartupSharedState(
+        {
+          transaction,
+          supervisorReady: false,
+          retainContainerAfterRollback: true,
+        },
+        deps,
+      );
+    } catch (error) {
+      if (error instanceof DockerManagedStartupSharedStateRestoreError) {
+        failAfterSharedStateRestoreError(journal, error);
+      }
+      throw error;
+    }
+  };
   const completedCommit = (
     handle: ManagedBootstrapHeldWorkloadHandle,
     commitReceipt: ManagedBootstrapCompletionReceipt,
@@ -2518,21 +2538,7 @@ export function createDockerManagedBootstrapAdapter(
         );
       }
       if (sharedStatus === "pending") {
-        try {
-          finalizeDockerManagedStartupSharedState(
-            {
-              transaction: sharedTransaction,
-              supervisorReady: false,
-              retainContainerAfterRollback: true,
-            },
-            deps,
-          );
-        } catch (error) {
-          if (error instanceof DockerManagedStartupSharedStateRestoreError) {
-            failAfterSharedStateRestoreError(activeJournal, error);
-          }
-          throw error;
-        }
+        finalizePendingSharedStateRollback(activeJournal, sharedTransaction);
       }
     } else if (journal.phase === "cutover") {
       activeJournal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
@@ -2824,21 +2830,7 @@ export function createDockerManagedBootstrapAdapter(
       }
       activeJournal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
       if (!sharedStateAlreadyRolledBack && sharedStatus === "pending") {
-        try {
-          finalizeDockerManagedStartupSharedState(
-            {
-              transaction: sharedTransaction,
-              supervisorReady: false,
-              retainContainerAfterRollback: true,
-            },
-            deps,
-          );
-        } catch (error) {
-          if (error instanceof DockerManagedStartupSharedStateRestoreError) {
-            failAfterSharedStateRestoreError(activeJournal, error);
-          }
-          throw error;
-        }
+        finalizePendingSharedStateRollback(activeJournal, sharedTransaction);
       }
     } else {
       if (!originalAtTargetRecoverable && !originalAtBackupRecoverable) {
@@ -2889,21 +2881,7 @@ export function createDockerManagedBootstrapAdapter(
           });
         }
         if (sharedStatus === "pending") {
-          try {
-            finalizeDockerManagedStartupSharedState(
-              {
-                transaction: sharedTransaction,
-                supervisorReady: false,
-                retainContainerAfterRollback: true,
-              },
-              deps,
-            );
-          } catch (error) {
-            if (error instanceof DockerManagedStartupSharedStateRestoreError) {
-              failAfterSharedStateRestoreError(activeJournal, error);
-            }
-            throw error;
-          }
+          finalizePendingSharedStateRollback(activeJournal, sharedTransaction);
         }
       }
     }
