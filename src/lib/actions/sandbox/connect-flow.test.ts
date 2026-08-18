@@ -907,4 +907,83 @@ describe("connectSandbox flow", () => {
     expect(logOutput).not.toContain("Probe complete");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+
+  it("does not suggest a manual forward when gateway recovery fails before forward start", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureDetail:
+          "the replacement container identity changed during the final managed supervisor health check",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("NemoClaw could not recover the OpenClaw gateway in 'alpha'");
+    expect(errorOutput).toContain(
+      "the replacement container identity changed during the final managed supervisor health check",
+    );
+    expect(errorOutput).not.toContain("gateway is running");
+    expect(errorOutput).not.toContain("openshell forward start");
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("redacts untrusted gateway recovery details before reporting them", async () => {
+    const opaqueToken = "opaque-gateway-recovery-token";
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureDetail: `OpenShell failed\nAuthorization: Bearer ${opaqueToken}\u001b[31m`,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("Recovery detail:");
+    expect(errorOutput).not.toContain(opaqueToken);
+    expect(errorOutput).not.toContain("\u001b");
+    expect(errorOutput).toMatch(/Recovery detail: .*\.$/mu);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps a direct recovery failure detail separate from an earlier callback layer", () => {
+    const harness = createConnectHarness();
+    harness.checkAndRecoverSpy.mockImplementation(
+      (
+        _sandboxName: string,
+        options?: {
+          onRecoveryFailureLayer?: (layer: string, detail?: string) => void;
+        },
+      ) => {
+        options?.onRecoveryFailureLayer?.("supervisor not running", "SUPERVISOR_NOT_RUNNING");
+        return {
+          checked: true,
+          wasRunning: false,
+          recovered: false,
+          forwardRecovered: false,
+          recoveryFailureDetail:
+            "the managed supervisor health check for the recreated sandbox did not pass",
+        };
+      },
+    );
+
+    expect(harness.restoreSandboxStartupState("alpha")).toMatchObject({
+      recoveryFailureDetail:
+        "the managed supervisor health check for the recreated sandbox did not pass",
+      recoveryFailureLayer: null,
+    });
+  });
 });

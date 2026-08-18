@@ -12,35 +12,33 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("gateway restart failure markers", () => {
-  function verifySupervisorFailureMarkers() {
-    const expectedMarkers: Array<
-      [string, ReturnType<typeof classifyGatewayRestartFailure>["layer"]]
-    > = [
-      ["PRIVILEGED_CONTROL_UNAVAILABLE", "privileged control unavailable"],
-      ["SUPERVISOR_UNAVAILABLE", "privileged control unavailable"],
-      [
-        "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement",
-        "supervisor unavailable",
-      ],
-      ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
-      ["SUPERVISOR_REBUILD_REQUIRED", "privileged control unavailable"],
-      ["SUPERVISOR_BUSY", "privileged control unavailable"],
-      [MARKERS.SECRET_BOUNDARY_REFUSED, "secret-boundary refusal"],
-      [MARKERS.SECRET_BOUNDARY_VALIDATOR_MISSING, "unsafe config path"],
-      [MARKERS.GATEWAY_UNSAFE_CONFIG_PATH, "unsafe config path"],
-      ["mcp-integrity", "MCP reconciliation refusal"],
-      ["mcp-reconcile-required", "MCP reconciliation refusal"],
-      ["HERMES_MCP_CONFIG_DRIFT", "MCP reconciliation refusal"],
-      [MARKERS.GATEWAY_CONFIG_HASH_MISMATCH, "config hash mismatch"],
-      ["HERMES_UNSAFE_CONFIG_PATH", "unsafe config path"],
-      ["HERMES_LOCKED_HASH_MISMATCH", "config hash mismatch"],
-      ["HERMES_CONFIG_HASH_MISMATCH", "config hash mismatch"],
-      ["GATEWAY_HEALTH_TIMEOUT", "health timeout"],
-      [MARKERS.GATEWAY_FAILED, "launch failure"],
-    ] as const;
+const supervisorFailureMarkers: Array<
+  [string, ReturnType<typeof classifyGatewayRestartFailure>["layer"]]
+> = [
+  ["PRIVILEGED_CONTROL_UNAVAILABLE", "privileged control unavailable"],
+  ["SUPERVISOR_UNAVAILABLE", "privileged control unavailable"],
+  ["SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement", "supervisor unavailable"],
+  ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
+  ["SUPERVISOR_REBUILD_REQUIRED", "privileged control unavailable"],
+  ["SUPERVISOR_BUSY", "privileged control unavailable"],
+  [MARKERS.SECRET_BOUNDARY_REFUSED, "secret-boundary refusal"],
+  [MARKERS.SECRET_BOUNDARY_VALIDATOR_MISSING, "unsafe config path"],
+  [MARKERS.GATEWAY_UNSAFE_CONFIG_PATH, "unsafe config path"],
+  ["mcp-integrity", "MCP reconciliation refusal"],
+  ["mcp-reconcile-required", "MCP reconciliation refusal"],
+  ["HERMES_MCP_CONFIG_DRIFT", "MCP reconciliation refusal"],
+  [MARKERS.GATEWAY_CONFIG_HASH_MISMATCH, "config hash mismatch"],
+  ["HERMES_UNSAFE_CONFIG_PATH", "unsafe config path"],
+  ["HERMES_LOCKED_HASH_MISMATCH", "config hash mismatch"],
+  ["HERMES_CONFIG_HASH_MISMATCH", "config hash mismatch"],
+  ["GATEWAY_HEALTH_TIMEOUT", "health timeout"],
+  [MARKERS.GATEWAY_FAILED, "launch failure"],
+];
 
-    for (const [marker, layer] of expectedMarkers) {
+describe("gateway restart failure markers", () => {
+  it.each(supervisorFailureMarkers)(
+    "classifies supervisor failure marker %s as %s",
+    (marker, layer) => {
       expect(
         classifyGatewayRestartFailure({
           status: 1,
@@ -48,10 +46,8 @@ describe("gateway restart failure markers", () => {
           stderr: "",
         }),
       ).toMatchObject({ layer });
-    }
-  }
-
-  it("keeps supervisor failure markers aligned with the classifier", verifySupervisorFailureMarkers);
+    },
+  );
 });
 
 describe("gateway restart failure classification precedence", () => {

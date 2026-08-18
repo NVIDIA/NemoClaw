@@ -125,6 +125,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 
   await printSandboxGatewayLookupStatus({
     sandboxName,
+    registered: sb !== null,
     lookup,
     phase,
     dockerRuntime,

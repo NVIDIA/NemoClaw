@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import ts from "typescript";
 import YAML from "yaml";
-import { PR_E2E_MANUAL_CONTROLLER_JOB_IDS, RISK_RULES } from "../advisors/risk-plan.mts";
+import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
 
@@ -230,7 +230,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "pr_number",
     "checkout_sha",
     "checkout_repository",
-    "review_reason",
     "base_sha",
     "workflow_sha",
     "correlation_id",
@@ -262,9 +261,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   if (
     workflow.concurrency?.["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !inputs.include_staging_brev_launchable }}"
   ) {
-    errors.push("Manual PR E2E concurrency must not cancel an active Jetson dispatch");
+    errors.push(
+      "Manual PR E2E concurrency must not cancel an active Jetson or Launchable dispatch",
+    );
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
@@ -272,7 +273,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authenticationIndex = steps.findIndex(
     (step) => step.name === "Authenticate manual PR dispatch",
   );
-  const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+  const checkoutIndex = steps.findIndex((step) => step.name === "Check out E2E candidate");
   const validationIndex = steps.findIndex((step) => step.name === "Validate manual PR checkout");
   const credentialAuthorizationIndex = steps.findIndex(
     (step) => step.name === "Authorize E2E credentials",
@@ -293,24 +294,22 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
 
   const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
-  if (authentication.if !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("Manual PR authentication must be activated only by checkout_sha");
+  if (
+    authentication.id !== "candidate_authorization" ||
+    authentication.if !==
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}"
+  ) {
+    errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
-    ACTOR: "${{ github.actor }}",
-    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     GITHUB_TOKEN: "${{ github.token }}",
-    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable }}",
+    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
-    REVIEW_REASON: "${{ inputs.review_reason }}",
-    RUN_ATTEMPT: "${{ github.run_attempt }}",
-    TARGETS: "${{ inputs.targets }}",
-    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
     WORKFLOW_EVENT: "${{ github.event_name }}",
     WORKFLOW_REF: "${{ github.ref }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -320,37 +319,31 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must bind ${name}`);
   }
   const authSource = String(authentication.run ?? "");
-  const acceptedJobCases = [
-    "::false:false",
-    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS.map((jobId) => `${jobId}::false:false`),
-    "native-runtime-qualification-producer::false:false",
-    ":jetson-nvmap-gpu:false:true",
-  ].join(" | ");
-  const acceptedNames = [
-    ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS,
-    "native-runtime-qualification-producer",
-    "jetson-nvmap-gpu with its dispatch flag",
-  ];
-  const acceptedJobNames = `${acceptedNames.slice(0, -1).join(", ")}, or ${acceptedNames.at(-1)}`;
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
-    '"$RUN_ATTEMPT" == "1"',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
-    '"$REVIEW_REASON" =~ ^[[:print:]]+$',
-    "${#REVIEW_REASON} >= 10",
-    "${#REVIEW_REASON} <= 500",
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
-    "Manual PR E2E requires a repository maintainer or administrator",
-    `${acceptedJobCases}) ;;`,
-    `Manual PR E2E accepts only empty selectors, ${acceptedJobNames}`,
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
+    `[[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]]`,
+    `[[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]]`,
     `[[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]]`,
     `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
+    '"$INCLUDE_LAUNCHABLE" == "true"',
+    '",${JOBS}," == *",staging-brev-launchable,"*',
+    '"$nvidia_owned" == "true"',
+    "Launchable PR E2E requires an NVIDIA-owned source repository",
+    '"$CHECKOUT_REPOSITORY" == "NVIDIA/NemoClaw"',
+    "Launchable PR E2E requires a branch in NVIDIA/NemoClaw",
+    `"$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA"`,
+    `"$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization"`,
+    "nvidia_owned=false",
+    "nvidia_owned=true",
+    `printf 'nvidia_owned=%s\\n' "$nvidia_owned" >> "$GITHUB_OUTPUT"`,
   ]) {
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
@@ -381,13 +374,22 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
+  if (
+    validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
+  ) {
+    errors.push("Manual PR checkout validation must bind authenticated NVIDIA ownership");
+  }
   for (const fragment of [
     '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "pull request must still be open",
+    "pull request base repository changed before execution",
+    "pull request base branch changed before execution",
     "checkout_repository changed before execution",
     "checkout_sha changed before execution",
     "base_sha changed before execution",
+    '"$NVIDIA_OWNED" == "true"',
+    "PR source repository ownership changed before execution",
   ]) {
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
@@ -410,6 +412,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EVENT_NAME: "${{ github.event_name }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    NVIDIA_OWNED: "${{ steps.candidate_authorization.outputs.nvidia_owned }}",
     REF: "${{ github.ref }}",
     WORKFLOW_REPOSITORY: "${{ github.repository }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -422,7 +425,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authorizationSource = String(credentialAuthorization.run ?? "");
   for (const fragment of [
     '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
-    '"$CHECKOUT_REPOSITORY" == "$WORKFLOW_REPOSITORY"',
+    '"$NVIDIA_OWNED" == "true"',
     '"$EVENT_NAME" == "workflow_dispatch"',
     '"$REF" == "refs/heads/main"',
     '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
@@ -444,6 +447,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         jobName === "hermes-gpu-startup" &&
         step.name === "Checkout trusted Hermes GPU runtime fixture" &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedE2ePlannerCheckout =
+        jobName === "generate-matrix" &&
+        step.name === "Check out trusted E2E planner" &&
+        step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedReportHelperCheckout =
         jobName === "report-to-pr" &&
@@ -530,6 +538,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
           step.with?.ref === "${{ github.workflow_sha }}");
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
+        trustedE2ePlannerCheckout ||
         trustedReportHelperCheckout ||
         trustedReleaseQualificationCheckout ||
         trustedRelevantE2eCheckout ||
@@ -553,7 +562,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         !trustedCheckout &&
         step.with?.repository !== "${{ inputs.checkout_repository || github.repository }}"
       ) {
-        errors.push(`${jobName} checkout must use the selected PR head repository`);
+        errors.push(`${jobName} checkout must use the selected PR source repository`);
       }
     }
   }

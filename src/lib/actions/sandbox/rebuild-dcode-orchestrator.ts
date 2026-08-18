@@ -183,6 +183,7 @@ export function createDcodeRebuildOrchestrator(
           dcodeAutoApprovalMode,
           skipLiveRoute,
           gatewayPort,
+          baseImageOptions,
           log,
           bail: scope.bail,
           checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, scope.bail),

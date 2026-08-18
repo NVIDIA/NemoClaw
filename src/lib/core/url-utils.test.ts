@@ -9,6 +9,7 @@ import {
   endpointUrlHasUserinfoQueryOrFragment,
   formatEnvAssignment,
   isLoopbackHostname,
+  isLoopbackRemoteAddress,
   normalizeProviderBaseUrl,
   parsePolicyPresetEnv,
   stripEndpointSuffix,
@@ -209,6 +210,19 @@ describe("isLoopbackHostname", () => {
     ["", false],
   ] as const)("classifies %s", (input, expected) => {
     expect(isLoopbackHostname(input)).toBe(expected);
+  });
+
+  it.each([
+    ["127.0.0.1", true],
+    ["::1", true],
+    ["::ffff:127.0.0.1", true],
+    ["10.40.0.1", false],
+    ["192.168.1.5", false],
+    ["::ffff:192.168.1.5", false],
+    [undefined, false],
+    ["", false],
+  ] as const)("classifies remote address %s", (input, expected) => {
+    expect(isLoopbackRemoteAddress(input)).toBe(expected);
   });
 });
 
