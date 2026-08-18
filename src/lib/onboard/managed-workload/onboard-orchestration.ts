@@ -53,6 +53,7 @@ import {
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import {
+  liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
 } from "../workload/preparation";
@@ -171,6 +172,7 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
+    const catalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
     preparedWorkloadPromise ??= input.managedWorkloadRebuild
       ? Promise.resolve(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
@@ -186,7 +188,7 @@ export function createManagedWorkloadOnboardRuntime(
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
           catalogPath: input.tempManagedRuntimeCatalog,
-          catalogRevision: liveE2eManagedImageRevision(input.startupProfile.environment),
+          ...(catalogRevision ? { catalogRevision } : {}),
           acceptedCandidateContract: isCandidateAgent(input.agentName)
             ? readCandidateQualificationReceipt(input.agentName)
             : null,

@@ -107,7 +107,7 @@ describe("sandbox workload preparation", () => {
     });
   });
 
-  it("threads an immutable qualification revision into registry catalog resolution (#7744)", async () => {
+  it("passes an immutable qualification revision to catalog resolution (#9385)", async () => {
     const resolveCatalog = vi.fn(async () => CATALOG);
 
     await prepareSandboxWorkloadSource(

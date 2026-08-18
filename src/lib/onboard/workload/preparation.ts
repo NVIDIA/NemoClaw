@@ -47,6 +47,12 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly acceptedCandidateContract?: ManagedImageContractV1 | null;
 }
 
+export function liveE2eManagedImageRevision(environment: NodeJS.ProcessEnv): string | null {
+  if (environment.GITHUB_ACTIONS !== "true") return null;
+  const revision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
+  return revision ? revision : null;
+}
+
 function readExactManagedImageCatalog(catalogPath: string): ManagedImageContractCatalog {
   let descriptor: number | null = null;
   try {

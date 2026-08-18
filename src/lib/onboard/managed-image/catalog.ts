@@ -518,7 +518,7 @@ async function resolveManagedImageContractAtReferenceFromGhcr(options: {
     return invalid(`'${agent}' image publication cohort does not match the OpenClaw cohort`);
   }
   if (options.expectedRevision !== undefined && identity.revision !== options.expectedRevision) {
-    return invalid(`'${agent}' image source revision does not match the OpenClaw revision`);
+    return invalid(`'${agent}' image source revision does not match the expected revision`);
   }
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
   return {
