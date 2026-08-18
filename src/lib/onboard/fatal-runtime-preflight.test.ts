@@ -291,6 +291,27 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
+  it("presents warning advisories by default at the system readiness boundary", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host: HostAssessment = {
+      ...hostWithRuntime("docker-desktop"),
+      isHeadlessLikely: true,
+      dockerCredsStore: "desktop",
+      dockerCredsStorePath: "~/.docker/config.json",
+    };
+    const readiness = assertOnboardHostReadiness(host, null, {
+      explicitlyOptedOutGpuPassthrough: false,
+      presentAdvisories: false,
+    });
+
+    assertOnboardSystemReadiness(readiness, host, {
+      explicitlyOptedOutGpuPassthrough: false,
+    });
+
+    const output = error.mock.calls.map(([line]) => line).join("\n");
+    expect(output).toContain("DOCKER_CONFIG=$(mktemp -d) nemoclaw onboard --resume");
+  });
+
   it("retains warning remediation when a repeated readiness check blocks", () => {
     const exit = vi.fn((_code: number): never => {
       throw new Error("exit");

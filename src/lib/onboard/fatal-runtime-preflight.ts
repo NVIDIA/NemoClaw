@@ -174,7 +174,7 @@ export function assertOnboardSystemReadiness(
   });
   const advisories = planHostAdvisories(host, { resuming: options.resuming });
   if (admission.admitted) {
-    if (options.presentAdvisories === true) {
+    if (options.presentAdvisories !== false) {
       printRemediationActions(advisories.filter(({ severity }) => severity === "warning"));
     }
     return readinessReport;
@@ -300,6 +300,8 @@ function collectOnboardHostReadiness(
     resuming: context.resuming,
     allowStorageRemediation,
     allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+    // The initial host readiness gate already presented warning advisories.
+    presentAdvisories: false,
     exitProcess: context.exitProcess,
   });
   return {
@@ -387,6 +389,7 @@ async function collectAdmittedReadinessPair(
     resuming: context.resuming,
     allowStorageRemediation: isManagedGatewayReadiness(gateway),
     allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+    presentAdvisories: false,
     exitProcess,
   });
   return { host, gateway, report };
@@ -433,10 +436,7 @@ export function assertOnboardHostReadiness(
     now: observedAt ? () => new Date(observedAt) : now,
   });
   const readinessReport = projectHostReadiness(snapshot, { ...getBuildIdentity(), now });
-  return assertOnboardSystemReadiness(readinessReport, host, {
-    ...options,
-    presentAdvisories: options.presentAdvisories ?? true,
-  });
+  return assertOnboardSystemReadiness(readinessReport, host, options);
 }
 
 /** Run runtime probes that may pull an image or start a short-lived container. */
