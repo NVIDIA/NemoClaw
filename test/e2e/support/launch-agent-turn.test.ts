@@ -989,7 +989,7 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "uses the inherited PTY descriptor when the device path cannot be reopened (#9384)",
+  "uses the inherited PTY descriptor when the sandbox user cannot reopen the device path (#9384)",
   () => {
     const {
       baselineRemoved,
@@ -1018,28 +1018,28 @@ it.runIf(process.platform === "linux").each([
   {
     mode: "pty-socket-invalid",
     reason: "pty_termios_response_invalid",
-    behavior: "malformed replacement-socket response",
+    behavior: "malformed response from a replacement socket",
     evidence: '"reason":"pty_termios_response_invalid"',
     monitorRemoved: false,
   },
   {
     mode: "pty-socket-permission",
     reason: "pty_socket_invalid",
-    behavior: "insecure PTY monitor socket permissions",
+    behavior: "PTY monitor socket whose mode is not 0600",
     evidence: '"reason":"pty_socket_invalid"',
     monitorRemoved: false,
   },
   {
     mode: "pty-response-identity",
     reason: "pty_identity_changed",
-    behavior: "response whose PTY identity changed",
+    behavior: "response with PTY identity that does not match its device path",
     evidence: '"reason":"pty_identity_changed"',
     monitorRemoved: false,
   },
   {
     mode: "pty-termios-unavailable",
     reason: "pty_termios_unavailable",
-    behavior: "unavailable PTY terminal state",
+    behavior: "unavailable PTY input-mode evidence",
     evidence:
       '"sttyStatus":1,"sttySignal":null,"sttyErrorCode":null,"sttyStderr":"fixture stty denied"',
     monitorRemoved: true,
@@ -1096,7 +1096,7 @@ it.runIf(process.platform === "linux")(
     expect(result.signal).toBeNull();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "launch did not observe the PTY in noncanonical input mode before the session deadline or PTY child exit",
+      "launch did not observe noncanonical PTY input mode before the session deadline or before the PTY child process exited",
     );
     expect(result.stderr).toContain('"reason":"pty_input_canonical"');
   },

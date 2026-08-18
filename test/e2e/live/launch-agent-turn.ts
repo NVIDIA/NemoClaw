@@ -11,8 +11,8 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 export const OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT =
   'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"';
 
-// OpenShell creates the PTY before it drops to the sandbox user. This bounded
-// child inherits fd 0, so it can observe terminal mode without reopening the
+// OpenShell creates the PTY before it drops to the sandbox user. This child
+// process inherits fd 0, so it can observe PTY input mode without reopening the
 // root-owned device path from a separate sandbox command.
 export const OPENCLAW_PTY_INPUT_MODE_MONITOR_SCRIPT = String.raw`
 const childProcess = require("node:child_process");
@@ -228,9 +228,9 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 }
 `;
 
-// This script runs inside the same PTY process that will become OpenClaw. It
-// starts a monitor that retains fd 0 before execve preserves that descriptor
-// for the unchanged production command.
+// This starter and its monitor both inherit PTY fd 0. The starter then replaces
+// itself with the unchanged production command while the monitor retains its
+// descriptor.
 export const OPENCLAW_PTY_MONITOR_STARTER_SCRIPT = String.raw`
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
@@ -1139,7 +1139,7 @@ wait_for_pty_input_mode() {
     fi
     sleep 0.1
   done
-  fail_launch_session "launch did not observe the PTY in noncanonical input mode before the session deadline or PTY child exit"
+  fail_launch_session "launch did not observe noncanonical PTY input mode before the session deadline or before the PTY child process exited"
 }
 
 if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
