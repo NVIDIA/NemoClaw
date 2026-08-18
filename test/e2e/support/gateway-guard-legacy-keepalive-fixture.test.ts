@@ -107,7 +107,7 @@ describe("gateway guard legacy keepalive fixture", () => {
       );
       expect(rewritten[0].Config).toMatchObject({
         Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-        Cmd: [],
+        Cmd: ["--workdir", "/sandbox"],
         Env: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_UID=", "OPENSHELL_SANDBOX_GID="],
       });
       return successfulResult();
@@ -141,7 +141,7 @@ describe("gateway guard legacy keepalive fixture", () => {
 
     expect(rewritten[0].Config).toMatchObject({
       Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-      Cmd: [],
+      Cmd: ["--workdir", "/sandbox"],
       Env: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_UID=", "OPENSHELL_SANDBOX_GID="],
     });
   });
@@ -175,12 +175,14 @@ describe("gateway guard legacy keepalive fixture", () => {
   });
 
   it("accepts the reviewed empty OpenShell supervisor command before legacy recreation (#9364)", () => {
-    expect(() =>
+    const rewritten = JSON.parse(
       rewriteManagedInspectForLegacyKeepalive(
         managedRuntimeInspect({ command: [] }),
         OLD_CONTAINER_ID,
       ),
-    ).not.toThrow();
+    );
+
+    expect(rewritten[0].Config.Cmd).toEqual(["--workdir", "/sandbox"]);
   });
 
   it("accepts the reviewed nullable empty OpenShell supervisor command before legacy recreation (#9364)", () => {
@@ -326,7 +328,11 @@ describe("gateway guard legacy keepalive fixture", () => {
       ]),
     );
     expect(args).not.toContain("OPENSHELL_OCI_IMAGE_USER=sandbox");
-    expect(args.slice(args.indexOf(immutableImage))).toEqual([immutableImage]);
+    expect(args.slice(args.indexOf(immutableImage))).toEqual([
+      immutableImage,
+      "--workdir",
+      "/sandbox",
+    ]);
   });
 
   it.each([

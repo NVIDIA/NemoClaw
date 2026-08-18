@@ -172,14 +172,16 @@ export function rewriteManagedInspectForLegacyKeepalive(
     "legacy keepalive fixture requires the reviewed managed startup workload",
   );
 
-  // The replacement container runs the exact pre-0.0.99 OpenShell supervisor
-  // contract. OpenShell 0.0.99's OCI-user marker would prepare the shared
-  // /sandbox workspace before running this synthetic keepalive and mutate the
-  // ownership that the later managed-startup recovery is meant to inherit.
-  // That marker did not exist in the legacy runtime represented here. Keep
-  // this test-only rewrite separate from the production recreation allowlist.
+  // Keep the reviewed current OpenShell supervisor and /sandbox workdir
+  // envelope while the recreation helper replaces only its managed workload
+  // with the exact legacy keepalive command. Giving today's supervisor the old
+  // empty argument tuple conflates two runtime contracts: the keepalive ignores
+  // its working directory, but the later managed startup does not. OpenShell
+  // 0.0.99's OCI-user marker must also be absent because it
+  // would mutate the shared /sandbox ownership before the synthetic keepalive.
+  // Keep both test-only rewrites separate from the production allowlist.
   configRecord.Entrypoint = [...OPENSHELL_SANDBOX_ENTRYPOINT];
-  configRecord.Cmd = [];
+  configRecord.Cmd = [...OPENSHELL_WORKDIR_COMMAND];
   const environment = configRecord.Env as string[];
   const hasOciImageUser = environment.some(
     (entry) =>
