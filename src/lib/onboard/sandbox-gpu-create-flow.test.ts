@@ -208,12 +208,12 @@ describe("resolveAgentCreateInput", () => {
     const env = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
 
     expect(resolveAgentCreateInput(null, true, env)).toMatchObject({
-      persistStartupCommand: true,
+      persistStartupCommand: false,
       portableLifecycle: true,
     });
     expect(resolveAgentCreateInput({ name: "hermes" } as AgentDefinition, true, env)).toMatchObject(
       {
-        persistStartupCommand: true,
+        persistStartupCommand: false,
         portableLifecycle: false,
       },
     );

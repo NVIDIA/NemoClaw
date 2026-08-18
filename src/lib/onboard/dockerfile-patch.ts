@@ -32,6 +32,7 @@ import {
   encodeCorporateCaArg,
   resolveCorporateCa,
 } from "./corporate-ca";
+import { warnCorporateCa } from "./corporate-ca-policy";
 import {
   DCODE_AUTO_APPROVAL_BUILD_ARG,
   type DcodeAutoApprovalMode,
@@ -598,9 +599,21 @@ export function patchStagedDockerfile(
           'ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]. ' +
           "NemoClaw cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
       );
+    } else {
+      // A fallback source stays a no-op when a custom Dockerfile lacks either
+      // build argument required for root-owned runtime trust. Onboarding still
+      // exits 0 and the sandbox still reaches Ready, so report the dropped
+      // anchor here; otherwise the missing trust is invisible until external
+      // TLS through the corporate proxy fails at runtime (#8454).
+      const reason = corporateCaArgPattern.test(dockerfile)
+        ? "the Dockerfile does not declare a final-stage ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER that controls the image user before the NemoClaw entrypoint"
+        : "the Dockerfile is missing ARG NEMOCLAW_CORPORATE_CA_B64";
+      warnCorporateCa(
+        `corporate proxy CA from ${corporateCa.sourceEnv} (${corporateCa.sourcePath}) was not baked ` +
+          `into the sandbox image because ${reason}; the sandbox will start without a corporate ` +
+          "trust anchor and external TLS through the corporate proxy may fail",
+      );
     }
-    // An OpenClaw fallback source stays a no-op when a custom Dockerfile lacks
-    // either build argument required for root-owned runtime trust.
   }
 
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
