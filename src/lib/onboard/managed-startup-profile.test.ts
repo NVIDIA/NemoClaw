@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HERMES_API_PORT_RANGE_END, HERMES_API_PORT_RANGE_START } from "../core/ports";
+import { listMessagingCredentialEnvAssignments } from "../messaging/channels/metadata.ts";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
@@ -731,13 +732,13 @@ describe("managed startup profile", () => {
     ).toThrow(/credential-shaped field name/);
   });
 
-  it("accepts schema-owned messaging package pins and credential placeholder lines (#9355)", () => {
+  it("accepts schema-owned messaging pins, placeholders, and credential environment aliases (#9355)", () => {
     expect(() =>
       validateManagedStartupProfile({
-        ...OPENCLAW_PROFILE,
+        ...HERMES_PROFILE,
         messaging: {
           plan: {
-            ...OPENCLAW_PROFILE.messaging.plan,
+            ...HERMES_PROFILE.messaging.plan,
             buildSteps: [
               {
                 channelId: "slack",
@@ -752,7 +753,6 @@ describe("managed startup profile", () => {
               },
             ],
             agentRender: [
-              ...OPENCLAW_PROFILE.messaging.plan.agentRender,
               {
                 channelId: "slack",
                 agent: "hermes",
@@ -762,6 +762,9 @@ describe("managed startup profile", () => {
                   "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
                   "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
                   "TELEGRAM_BOT_TOKEN=openshell:resolve:env:v1_TELEGRAM_BOT_TOKEN",
+                  ...listMessagingCredentialEnvAssignments({ agent: "hermes" })
+                    .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+                    .map(({ targetEnvKey, placeholder }) => `${targetEnvKey}=${placeholder}`),
                 ],
                 templateRefs: ["credential.slackBotToken.placeholder"],
               },
@@ -773,17 +776,28 @@ describe("managed startup profile", () => {
   });
 
   it.each([
+    ...listMessagingCredentialEnvAssignments({ agent: "hermes" })
+      .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+      .map(({ targetEnvKey, placeholder }) => [
+        "a cross-agent credential environment alias",
+        `${targetEnvKey}=${placeholder}`,
+      ] as const),
     ["a raw credential", `SLACK_BOT_TOKEN=xoxb-${"a".repeat(32)}`],
     ["a malformed assignment", "SLACK_BOT_TOKEN =openshell:resolve:env:SLACK_BOT_TOKEN"],
+    ["more than one assignment", "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN=FORGED"],
     [
-      "a placeholder for a different environment key",
-      "SLACK_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+      "a placeholder assigned to a non-credential environment key",
+      "CHANNEL_NAME=openshell:resolve:env:SLACK_BOT_TOKEN",
     ],
     [
-      "a versioned placeholder for a different environment key",
-      "SLACK_BOT_TOKEN=openshell:resolve:env:v1_DISCORD_BOT_TOKEN",
+      "a placeholder with a noncanonical provider environment key",
+      "SLACK_BOT_TOKEN=openshell:resolve:env:slack_bot_token",
     ],
-  ])("rejects %s in messaging environment lines (#9355)", (_label, line) => {
+    [
+      "a placeholder assigned to an unapproved credential environment key",
+      "AWS_SECRET_ACCESS_KEY=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+    ],
+  ] as const)("rejects %s in messaging environment lines (#9355)", (_label, line) => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
@@ -793,7 +807,7 @@ describe("managed startup profile", () => {
             agentRender: [
               {
                 channelId: "slack",
-                agent: "hermes",
+                agent: "openclaw",
                 target: "~/.hermes/.env",
                 kind: "env-lines",
                 lines: [line],

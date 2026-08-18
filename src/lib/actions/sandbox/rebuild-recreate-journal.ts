@@ -67,6 +67,7 @@ export function fingerprintRebuildRecreateTargetIntent(
     | "sandboxGpu"
     | "sandboxGpuDevice"
     | "controlUiPort"
+    | "hostMounts"
     | "targetGatewayName"
     | "targetGatewayPort"
     | "toolDisclosure"
@@ -75,6 +76,16 @@ export function fingerprintRebuildRecreateTargetIntent(
     | "policyTier"
   >,
 ): string {
+  const hostMounts = (options.hostMounts ?? []).map(
+    ({ source, target, readOnly, sourceIdentity }) => ({
+      source,
+      target,
+      readOnly,
+      sourceIdentity: sourceIdentity
+        ? { device: sourceIdentity.device, inode: sourceIdentity.inode }
+        : null,
+    }),
+  );
   return fingerprintSandboxRecreateValue({
     version: 1,
     agent: options.agent ?? null,
@@ -86,6 +97,10 @@ export function fingerprintRebuildRecreateTargetIntent(
     sandboxGpu: options.sandboxGpu,
     sandboxGpuDevice: options.sandboxGpuDevice,
     controlUiPort: options.controlUiPort,
+    // Preserve the version-1 fingerprint for existing mount-free journals.
+    // A previous journal with mounts did not bind their source identity and
+    // must remain incompatible with the stronger fingerprint.
+    ...(hostMounts.length > 0 ? { hostMounts } : {}),
     gatewayName: options.targetGatewayName,
     gatewayPort: options.targetGatewayPort,
     toolDisclosure: options.toolDisclosure,
