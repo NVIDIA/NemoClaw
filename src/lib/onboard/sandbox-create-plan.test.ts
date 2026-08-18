@@ -413,6 +413,102 @@ describe("resolveSandboxCreateIntent", () => {
     expect(driverConfig.podman.mounts).toEqual([driverConfig.docker.mounts[0]]);
   });
 
+  it("passes the managed Hermes state volume through the Docker driver config", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "hermes-box",
+      channels: [],
+      enabledChannels: [],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      gpuCreateArgs: [],
+      gpuRoutePlan: "native-only",
+      sandboxGpuLogMessage: null,
+      agentName: "hermes",
+      policyTier: null,
+    });
+    const plan = materializeSandboxCreatePlan({
+      intent,
+      fromRef: `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`,
+      managedStateMount: {
+        type: "volume",
+        source: "nemoclaw-hermes-state-v1-hermes-box",
+        target: "/sandbox/.hermes",
+        read_only: false,
+      },
+      messagingTokenDefs: [],
+      prepareInitialSandboxCreatePolicy: vi.fn(() => ({
+        policyPath: "/tmp/policy.yaml",
+        appliedPresets: [],
+      })),
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders: vi.fn(() => []),
+      getHermesToolGatewayProviderName: vi.fn(),
+    });
+    const configIndex = plan.createArgs.indexOf("--driver-config-json");
+
+    expect(JSON.parse(plan.createArgs[configIndex + 1]!)).toEqual({
+      docker: {
+        mounts: [
+          {
+            type: "volume",
+            source: "nemoclaw-hermes-state-v1-hermes-box",
+            target: "/sandbox/.hermes",
+            read_only: false,
+          },
+        ],
+      },
+    });
+  });
+
+  it("rejects host mounts that overlap the managed Hermes state root", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "hermes-box",
+      channels: [],
+      enabledChannels: [],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      gpuCreateArgs: [],
+      hostMounts: [{ source: "/srv/hermes", target: "/sandbox/.hermes", readOnly: true }],
+      gpuRoutePlan: "native-only",
+      sandboxGpuLogMessage: null,
+      agentName: "hermes",
+      policyTier: null,
+    });
+
+    expect(() =>
+      materializeSandboxCreatePlan({
+        intent,
+        fromRef: `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`,
+        managedStateMount: {
+          type: "volume",
+          source: "nemoclaw-hermes-state-v1-hermes-box",
+          target: "/sandbox/.hermes",
+          read_only: false,
+        },
+        messagingTokenDefs: [],
+        prepareInitialSandboxCreatePolicy: vi.fn(() => ({
+          policyPath: "/tmp/policy.yaml",
+          appliedPresets: [],
+        })),
+        runProviderPreDeleteCleanup: vi.fn(),
+        upsertMessagingProviders: vi.fn(() => []),
+        getHermesToolGatewayProviderName: vi.fn(),
+      }),
+    ).toThrow(/conflicts with the managed Hermes state root/u);
+  });
+
   it("cleans up the prepared policy when disclosure fails before provider effects (#7179)", () => {
     const intent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/policy.yaml",
