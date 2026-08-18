@@ -244,7 +244,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
   it("validates manual PR dispatch inputs and the checked-out commit", () => {
     const workflow = readE2eOperationsWorkflow();
-    delete workflow.on?.workflow_dispatch?.inputs?.review_reason;
+    delete workflow.on?.workflow_dispatch?.inputs?.checkout_repository;
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
@@ -256,11 +256,40 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "workflow_dispatch review_reason must be an optional string with an empty default",
+        "workflow_dispatch checkout_repository must be an optional string with an empty default",
         'Manual PR authentication must retain "$WORKFLOW_EVENT" == "workflow_dispatch"',
         'Manual PR authentication must retain "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
         'Manual PR checkout validation must retain "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
       ]),
+    );
+  });
+
+  it("runs authentication when any candidate identity input is present and skips it when all are empty", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    const validationError =
+      "Manual PR authentication must run when any candidate identity input is present";
+
+    expect(validateE2eOperationsWorkflow(workflow)).not.toContain(validationError);
+    expect(authentication.if).toBe(
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}",
+    );
+
+    authentication.if = "${{ inputs.checkout_sha != '' }}";
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(validationError);
+  });
+
+  it("pins the trusted planner checkout to the workflow repository", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const checkout = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Check out trusted E2E planner",
+    )!;
+    checkout.with!.repository = "untrusted/repository";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "generate-matrix checkout must use the selected PR source repository",
     );
   });
 
@@ -276,6 +305,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       expect.arrayContaining([
         "Manual PR credential authorization must expose only the authorization result",
         'Manual PR credential authorization must retain "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+        'Manual PR credential authorization must retain "$NVIDIA_OWNED" == "true"',
         'Manual PR credential authorization must retain "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
       ]),
     );
@@ -285,14 +315,25 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     {
       caseName: "matching repository and requested SHAs",
       checkoutRepository: "NVIDIA/NemoClaw",
+      nvidiaOwned: true,
       workflowRepository: "NVIDIA/NemoClaw",
       checkoutShaMatches: true,
       workflowShaMatches: true,
       expectedAllowed: true,
     },
     {
-      caseName: "a checkout repository outside NVIDIA/NemoClaw",
+      caseName: "an NVIDIA-owned sibling repository",
+      checkoutRepository: "NVIDIA/NemoClaw-E2E",
+      nvidiaOwned: true,
+      workflowRepository: "NVIDIA/NemoClaw",
+      checkoutShaMatches: true,
+      workflowShaMatches: true,
+      expectedAllowed: true,
+    },
+    {
+      caseName: "a checkout repository outside NVIDIA",
       checkoutRepository: "contributor/NemoClaw",
+      nvidiaOwned: false,
       workflowRepository: "NVIDIA/NemoClaw",
       checkoutShaMatches: true,
       workflowShaMatches: true,
@@ -301,6 +342,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     {
       caseName: "a workflow repository outside NVIDIA/NemoClaw",
       checkoutRepository: "NVIDIA/NemoClaw",
+      nvidiaOwned: true,
       workflowRepository: "contributor/NemoClaw",
       checkoutShaMatches: true,
       workflowShaMatches: true,
@@ -309,6 +351,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     {
       caseName: "checkout_sha differs from the checked-out commit",
       checkoutRepository: "NVIDIA/NemoClaw",
+      nvidiaOwned: true,
       workflowRepository: "NVIDIA/NemoClaw",
       checkoutShaMatches: false,
       workflowShaMatches: true,
@@ -317,6 +360,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     {
       caseName: "a requested workflow SHA that differs from the running workflow",
       checkoutRepository: "NVIDIA/NemoClaw",
+      nvidiaOwned: true,
       workflowRepository: "NVIDIA/NemoClaw",
       checkoutShaMatches: true,
       workflowShaMatches: false,
@@ -326,6 +370,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     "sets E2E credential access to $expectedAllowed for $caseName (#9047)",
     ({
       checkoutRepository,
+      nvidiaOwned,
       workflowRepository,
       checkoutShaMatches,
       workflowShaMatches,
@@ -358,6 +403,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
               EVENT_NAME: "workflow_dispatch",
               EXPECTED_WORKFLOW_SHA: expectedWorkflowSha,
               GITHUB_OUTPUT: output,
+              NVIDIA_OWNED: nvidiaOwned ? "true" : "false",
               REF: "refs/heads/main",
               WORKFLOW_REPOSITORY: workflowRepository,
               WORKFLOW_SHA: workflowSha,
@@ -400,46 +446,28 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("limits manual PR runs to controller-approved selectors or Jetson dispatch", () => {
+  it("requires API-confirmed NVIDIA organization ownership for full PR E2E", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, native-runtime-qualification-producer, or jetson-nvmap-gpu with its dispatch flag",
-      "Manual PR E2E accepts arbitrary selectors",
+      `"$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization"`,
+      `"$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "User"`,
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, native-runtime-qualification-producer, or jetson-nvmap-gpu with its dispatch flag",
-    );
-  });
-
-  it("uses the same controller selectors as the PR Review Advisor", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate manual PR dispatch",
-    )!;
-    authentication.run = authentication.run!.replace("inference-routing::false:false | ", "");
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | native-runtime-qualification-producer::false:false | :jetson-nvmap-gpu:false:true) ;;",
+      `Manual PR authentication must retain "$(jq -r '.head.repo.owner.type // ""' <<< "$pull_json")" == "Organization"`,
     );
   });
 
   it.each([
-    ["maintain", "", "", "false", 0, ""],
-    ["maintain", "inference-routing", "", "false", 0, ""],
-    ["maintain", "managed-image-protected-runtime", "", "false", 0, ""],
-    ["maintain", "native-runtime-qualification-producer", "", "false", 0, ""],
-    ["maintain", "", "jetson-nvmap-gpu", "true", 0, ""],
-    ["maintain", "", "jetson-nvmap-gpu", "false", 1, "accepts only empty selectors"],
-    ["maintain", "network-policy", "", "false", 1, "accepts only empty selectors"],
-    ["maintain", "gpu-e2e", "", "false", 1, "accepts only empty selectors"],
-    ["write", "", "", "false", 1, "requires a repository maintainer or administrator"],
+    ["NVIDIA organization", "NVIDIA", "Organization", true],
+    ["external organization", "contributor", "Organization", false],
+    ["lookalike user", "NVIDIA", "User", false],
   ])(
-    "requires a maintainer role and bounded selector before manual PR E2E for %s with jobs %s and targets %s",
-    (role, jobs, targets, allowJetsonDispatch, expectedStatus, expectedStderr) => {
+    "records NVIDIA ownership for a %s without a duplicate actor-role gate",
+    (_caseName, ownerLogin, ownerType, expectedNvidiaOwned) => {
       const workflow = readE2eOperationsWorkflow();
       const authentication = workflow.jobs["generate-matrix"].steps!.find(
         (step) => step.name === "Authenticate manual PR dispatch",
@@ -447,18 +475,108 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       const headSha = "a".repeat(40);
       const baseSha = "b".repeat(40);
       const workflowSha = "c".repeat(40);
+      const checkoutRepository = `${ownerLogin}/NemoClaw`;
       const prefix = [
         "curl() {",
-        '  local url="${@: -1}" output_file="" previous="" argument body',
-        '  for argument in "$@"; do',
-        '    if [[ "$previous" == "--output" ]]; then output_file="$argument"; fi',
-        '    previous="$argument"',
-        "  done",
-        '  case "$url" in',
-        `    *collaborators*) body='{"user":{"login":"maintainer"},"role_name":"${role}"}'; if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '200'; else printf '%s' "$body"; fi ;;`,
-        `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"contributor/NemoClaw"},"sha":"${headSha}"},"base":{"sha":"${baseSha}"}}' ;;`,
+        '  case "${@: -1}" in',
+        `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"${checkoutRepository}","owner":{"login":"${ownerLogin}","type":"${ownerType}"}},"sha":"${headSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${baseSha}"}}' ;;`,
         "    *) return 1 ;;",
         "  esac",
+        "}",
+      ].join("\n");
+      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-owner-"));
+      const output = join(directory, "output");
+      writeFileSync(output, "");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${authentication.run}`],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            BASE_SHA: baseSha,
+            CHECKOUT_REPOSITORY: checkoutRepository,
+            CHECKOUT_SHA: headSha,
+            EXPECTED_WORKFLOW_SHA: workflowSha,
+            GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+            GITHUB_TOKEN: "token",
+            GITHUB_OUTPUT: output,
+            INCLUDE_LAUNCHABLE: "false",
+            JOBS: "",
+            PR_NUMBER: "42",
+            WORKFLOW_EVENT: "workflow_dispatch",
+            WORKFLOW_REF: "refs/heads/main",
+            WORKFLOW_SHA: workflowSha,
+          },
+        },
+      );
+
+      try {
+        expect(result.status, result.stderr).toBe(0);
+        expect(readFileSync(output, "utf8")).toBe(
+          `nvidia_owned=${expectedNvidiaOwned ? "true" : "false"}\n`,
+        );
+        expect(authentication.run).not.toContain("collaborators/");
+        expect(authentication.run).not.toContain("role_name");
+      } finally {
+        rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each([
+    [
+      "an invalid source repository name",
+      "invalid-repository",
+      "a",
+      "b",
+      "c",
+      "::error::checkout_repository must be an owner/repository name\n",
+    ],
+    [
+      "a PR commit mismatch",
+      "NVIDIA/NemoClaw",
+      "d",
+      "b",
+      "c",
+      "::error::checkout_sha must match the latest PR commit SHA\n",
+    ],
+    [
+      "a PR base commit mismatch",
+      "NVIDIA/NemoClaw",
+      "a",
+      "d",
+      "c",
+      "::error::base_sha must match the PR base SHA\n",
+    ],
+    [
+      "a trusted workflow commit mismatch",
+      "NVIDIA/NemoClaw",
+      "a",
+      "b",
+      "d",
+      "::error::workflow_sha must match the trusted main workflow SHA\n",
+    ],
+  ] as const)(
+    "rejects manual PR authentication for %s",
+    (
+      _caseName,
+      requestedRepository,
+      requestedHeadCharacter,
+      requestedBaseCharacter,
+      expectedWorkflowCharacter,
+      expectedStderr,
+    ) => {
+      const apiHeadSha = "a".repeat(40);
+      const apiBaseSha = "b".repeat(40);
+      const workflowSha = "c".repeat(40);
+      const workflow = readE2eOperationsWorkflow();
+      const authentication = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Authenticate manual PR dispatch",
+      )!;
+      const prefix = [
+        "curl() {",
+        `  printf '%s' '{"state":"open","head":{"repo":{"full_name":"NVIDIA/NemoClaw","owner":{"login":"NVIDIA","type":"Organization"}},"sha":"${apiHeadSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${apiBaseSha}"}}'`,
         "}",
       ].join("\n");
       const result = spawnSync(
@@ -468,21 +586,104 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
           encoding: "utf8",
           env: {
             ...process.env,
-            ACTOR: "maintainer",
-            ALLOW_JETSON_DISPATCH: allowJetsonDispatch,
-            BASE_SHA: baseSha,
-            CHECKOUT_REPOSITORY: "contributor/NemoClaw",
-            CHECKOUT_SHA: headSha,
-            EXPECTED_WORKFLOW_SHA: workflowSha,
+            BASE_SHA: requestedBaseCharacter.repeat(40),
+            CHECKOUT_REPOSITORY: requestedRepository,
+            CHECKOUT_SHA: requestedHeadCharacter.repeat(40),
+            EXPECTED_WORKFLOW_SHA: expectedWorkflowCharacter.repeat(40),
+            GITHUB_OUTPUT: "/dev/null",
             GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
             GITHUB_TOKEN: "token",
             INCLUDE_LAUNCHABLE: "false",
+            JOBS: "",
+            PR_NUMBER: "42",
+            WORKFLOW_EVENT: "workflow_dispatch",
+            WORKFLOW_REF: "refs/heads/main",
+            WORKFLOW_SHA: workflowSha,
+          },
+        },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toBe(expectedStderr);
+    },
+  );
+
+  it.each([
+    ["NVIDIA inclusion flag", "NVIDIA/NemoClaw", "NVIDIA", "Organization", "true", "", 0, ""],
+    [
+      "NVIDIA job selector",
+      "NVIDIA/NemoClaw",
+      "NVIDIA",
+      "Organization",
+      "false",
+      "staging-brev-launchable",
+      0,
+      "",
+    ],
+    [
+      "external source",
+      "contributor/NemoClaw",
+      "contributor",
+      "Organization",
+      "true",
+      "",
+      1,
+      "::error::Launchable PR E2E requires an NVIDIA-owned source repository\n",
+    ],
+    [
+      "NVIDIA sibling repository",
+      "NVIDIA/NemoClaw-fork",
+      "NVIDIA",
+      "Organization",
+      "false",
+      "staging-brev-launchable",
+      1,
+      "::error::Launchable PR E2E requires a branch in NVIDIA/NemoClaw\n",
+    ],
+  ])(
+    "authorizes Launchable PR E2E for %s",
+    (
+      _caseName,
+      checkoutRepository,
+      ownerLogin,
+      ownerType,
+      includeLaunchable,
+      jobs,
+      expectedStatus,
+      expectedStderr,
+    ) => {
+      const workflow = readE2eOperationsWorkflow();
+      const authentication = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Authenticate manual PR dispatch",
+      )!;
+      const headSha = "a".repeat(40);
+      const baseSha = "b".repeat(40);
+      const workflowSha = "c".repeat(40);
+      const prefix = [
+        "curl() {",
+        '  case "${@: -1}" in',
+        `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"${checkoutRepository}","owner":{"login":"${ownerLogin}","type":"${ownerType}"}},"sha":"${headSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${baseSha}"}}' ;;`,
+        "    *) return 1 ;;",
+        "  esac",
+        "}",
+      ].join("\n");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-c", `${prefix}\n${authentication.run}`],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            BASE_SHA: baseSha,
+            CHECKOUT_REPOSITORY: checkoutRepository,
+            CHECKOUT_SHA: headSha,
+            EXPECTED_WORKFLOW_SHA: workflowSha,
+            GITHUB_OUTPUT: "/dev/null",
+            GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+            GITHUB_TOKEN: "token",
+            INCLUDE_LAUNCHABLE: includeLaunchable,
             JOBS: jobs,
             PR_NUMBER: "42",
-            REVIEW_REASON: "Reviewed latest PR commit",
-            RUN_ATTEMPT: "1",
-            TARGETS: targets,
-            TRIGGERING_ACTOR: "maintainer",
             WORKFLOW_EVENT: "workflow_dispatch",
             WORKFLOW_REF: "refs/heads/main",
             WORKFLOW_SHA: workflowSha,
@@ -491,7 +692,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       );
 
       expect(result.status, result.stderr).toBe(expectedStatus);
-      expect(result.stderr).toContain(expectedStderr);
+      expect(result.stderr).toBe(expectedStderr);
     },
   );
 
@@ -574,6 +775,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "mock",
             JOBS: "",
+            NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
+            NVIDIA_OWNED: "false",
             TARGETS: "",
           },
         },
@@ -657,6 +860,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "mock",
             JOBS: jobSelector,
+            NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
+            NVIDIA_OWNED: "false",
             TARGETS: targetSelector,
           },
         },
