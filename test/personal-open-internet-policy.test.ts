@@ -129,24 +129,7 @@ describe("Personal open internet policy preset", () => {
     expect(allowedIps).not.toContain("127.0.0.0/8");
     expect(allowedIps).not.toContain("169.254.0.0/16");
     expect(allowedIps).not.toContain("::/0");
-    for (const address of ["8.8.8.8", "10.0.0.1", "2001:4860:4860::8888", "fc00::1"]) {
-      expect(isAllowed(address), address).toBe(true);
-    }
-    for (const address of [
-      "0.0.0.0",
-      "127.0.0.1",
-      "127.1.2.3",
-      "169.254.169.254",
-      "::",
-      "::1",
-      "0:0:0:0:0:0:0:1",
-      "fe80::1",
-      "::ffff:127.0.0.1",
-      "0:0:0:0:0:ffff:7f00:1",
-      "::ffff:169.254.169.254",
-    ]) {
-      expect(isAllowed(address), address).toBe(false);
-    }
+    expect(isAllowed("8.8.8.8")).toBe(true);
   });
 
   it.each(PERSONAL_COMPOSITION_CASES)(
@@ -248,6 +231,35 @@ describe("Personal open internet policy preset", () => {
       errorSpy.mockRestore();
     }
   });
+
+  it.each([80, 443])(
+    "excludes normalized hard-blocked address classes at the connection boundary on port %i",
+    (port) => {
+      const endpoint = loadPersonalInternetPolicy().endpoints[0]!;
+      expect(endpoint.ports).toContain(port);
+      expect(
+        [
+          "0.0.0.0",
+          "127.0.0.1",
+          "127.1.2.3",
+          "169.254.169.254",
+          "::",
+          "::1",
+          "0:0:0:0:0:0:0:1",
+          "fe80::1",
+          "::ffff:127.0.0.1",
+          "0:0:0:0:0:ffff:7f00:1",
+          "::ffff:169.254.169.254",
+        ].every((address) => Object.is(isAllowed(address), false)),
+      ).toBe(true);
+
+      expect(
+        ["8.8.8.8", "10.0.0.1", "2001:4860:4860::8888", "fc00::1"].every((address) =>
+          Object.is(isAllowed(address), true),
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("refuses direct Personal removal before reading registry or gateway state", () => {
     const registryLookup = vi.spyOn(registry, "getSandbox").mockImplementation(() => {

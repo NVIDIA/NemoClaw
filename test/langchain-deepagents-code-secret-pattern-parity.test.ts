@@ -144,19 +144,17 @@ describe("Deep Agents Code secret-pattern parity", () => {
     "bounds assignment separators and rejects credential-word substrings [case %#] (#6452)",
     (value) => {
       const assignmentPattern = CONTEXT_PATTERNS[1];
-      for (const value of [
-        "COMPASS=opaqueNonSecretPayload123",
-        "BYPASS=allowedValue123",
-        "TOPSECRET=opaqueNonSecretPayload123",
-        "SUBTOKEN=opaqueNonSecretPayload123",
-        "public-key=opaqueVerificationMaterial123",
-        "custom-key=opaqueNonSecretPayload123",
-        '{"key":"agent:main:main"}',
-        `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
-        `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
-      ]) {
-        expect(matches(assignmentPattern, value), value.slice(0, 80)).toBe(false);
-      }
+      expect([
+            "COMPASS=opaqueNonSecretPayload123",
+            "BYPASS=allowedValue123",
+            "TOPSECRET=opaqueNonSecretPayload123",
+            "SUBTOKEN=opaqueNonSecretPayload123",
+            "public-key=opaqueVerificationMaterial123",
+            "custom-key=opaqueNonSecretPayload123",
+            '{"key":"agent:main:main"}',
+            `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
+            `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
+          ].every((value) => Object.is(matches(assignmentPattern, value), false))).toBe(true);
       expect(
         matches(assignmentPattern, `TOKEN${" ".repeat(32)}opaqueCredentialPayloadZ1234567890`),
       ).toBe(true);

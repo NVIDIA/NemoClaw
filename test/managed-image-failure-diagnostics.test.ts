@@ -49,53 +49,68 @@ afterEach(() => {
 });
 
 describe("managed-image failure diagnostic export", () => {
-  it("fully redacts known patterns and opaque credential values before export", () => {
-    const { outputRoot, sourceRoot } = fixture();
-    const diagnosticBundle = bundle(sourceRoot);
-    const opaqueCanary = "opaque-managed-image-secret-canary-928374";
-    const dockerCanary = "opaque-docker-password-canary-019283";
-    const knownCanary = "ghp_known_pattern_canary_abcdef012345";
-    fs.writeFileSync(
-      path.join(diagnosticBundle, "summary.txt"),
-      [
-        `arbitrary opaque output ${opaqueCanary}`,
-        `another opaque value ${dockerCanary}`,
-        `known token ${knownCanary}`,
-        "Authorization: Bearer bearer-known-canary-123456",
-      ].join("\n"),
-    );
-    fs.writeFileSync(
-      path.join(diagnosticBundle, "openshell-gateway-relevant.log"),
-      `gateway reconnect failed for ${opaqueCanary}\n`,
-    );
-    fs.writeFileSync(
-      path.join(diagnosticBundle, "rootfs-console.log"),
-      "managed startup exited before the supervisor reconnected\n",
-    );
-    fs.writeFileSync(
-      path.join(diagnosticBundle, "unrelated.raw"),
-      "this raw file must never enter the artifact\n",
-    );
+  it.each([
+    { scenario: "opaque canary" },
+    { scenario: "Docker canary" },
+    { scenario: "known token pattern" },
+    { scenario: "Bearer token" },
+  ])(
+    "fully redacts known patterns and opaque credential values before export [$scenario]",
+    ({ scenario }) => {
+      const { outputRoot, sourceRoot } = fixture();
+      const diagnosticBundle = bundle(sourceRoot);
+      const opaqueCanary = "opaque-managed-image-secret-canary-928374";
+      const dockerCanary = "opaque-docker-password-canary-019283";
+      const knownCanary = "ghp_known_pattern_canary_abcdef012345";
+      fs.writeFileSync(
+        path.join(diagnosticBundle, "summary.txt"),
+        [
+          `arbitrary opaque output ${opaqueCanary}`,
+          `another opaque value ${dockerCanary}`,
+          `known token ${knownCanary}`,
+          "Authorization: Bearer bearer-known-canary-123456",
+        ].join("\n"),
+      );
+      fs.writeFileSync(
+        path.join(diagnosticBundle, "openshell-gateway-relevant.log"),
+        `gateway reconnect failed for ${opaqueCanary}\n`,
+      );
+      fs.writeFileSync(
+        path.join(diagnosticBundle, "rootfs-console.log"),
+        "managed startup exited before the supervisor reconnected\n",
+      );
+      fs.writeFileSync(
+        path.join(diagnosticBundle, "unrelated.raw"),
+        "this raw file must never enter the artifact\n",
+      );
 
-    const result = exportManagedImageFailureDiagnostics({
-      env: {
-        DOCKERHUB_TOKEN: dockerCanary,
-        NEMOCLAW_PROVIDER_KEY: opaqueCanary,
-      },
-      outputRoot,
-      sourceRoot,
-    });
+      const result = exportManagedImageFailureDiagnostics({
+        env: {
+          DOCKERHUB_TOKEN: dockerCanary,
+          NEMOCLAW_PROVIDER_KEY: opaqueCanary,
+        },
+        outputRoot,
+        sourceRoot,
+      });
 
-    expect(result).toMatchObject({ bundles: 1, files: 3 });
-    const exported = outputText(outputRoot);
-    expect(exported).toContain("<REDACTED>");
-    expect(exported).toContain("managed startup exited before the supervisor reconnected");
-    for (const secret of [opaqueCanary, dockerCanary, knownCanary, "bearer-known-canary-123456"]) {
+      expect(result).toMatchObject({ bundles: 1, files: 3 });
+      const exported = outputText(outputRoot);
+      expect(exported).toContain("<REDACTED>");
+      expect(exported).toContain("managed startup exited before the supervisor reconnected");
+      const secret = (
+        {
+          "opaque canary": opaqueCanary,
+          "Docker canary": dockerCanary,
+          "known token pattern": knownCanary,
+          "Bearer token": "bearer-known-canary-123456",
+        } as const
+      )[scenario]!;
       expect(exported).not.toContain(secret);
-    }
-    expect(exported).not.toContain("this raw file must never enter the artifact");
-    expect(fs.existsSync(path.join(outputRoot, "bundle-01", "unrelated.raw"))).toBe(false);
-  });
+
+      expect(exported).not.toContain("this raw file must never enter the artifact");
+      expect(fs.existsSync(path.join(outputRoot, "bundle-01", "unrelated.raw"))).toBe(false);
+    },
+  );
 
   it("fails closed on symlinks without writing a partial artifact", () => {
     const { outputRoot, sourceRoot, temporaryRoot } = fixture();

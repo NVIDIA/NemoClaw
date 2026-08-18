@@ -112,7 +112,7 @@ function expectInspectedWebSocket(endpoint: Endpoint): void {
 
 describe("effective built-in policy contracts", () => {
   it.each(["openclaw", "hermes"] as const)(
-    "composes every preset advertised for %s while retaining non-web policy",
+    "composes every preset advertised for %s without replacing the existing non-web policy",
     (agent) => {
       const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
       const effective = composePresets(presetNames, agent);
@@ -121,6 +121,7 @@ describe("effective built-in policy contracts", () => {
       expect(policyKeys).toEqual(expect.arrayContaining(["existing", "personal_open_internet"]));
       expect(policyKeys).not.toContain("npm_yarn");
       expect(policyKeys).not.toContain("tavily");
+      expect(policyKeys.length).toBeGreaterThan(presetNames.length);
     },
   );
 
@@ -133,12 +134,12 @@ describe("effective built-in policy contracts", () => {
       for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
         expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
         const endpoints = policy.endpoints ?? [];
-        for (const endpoint of endpoints) {
-          expect(methods(endpoint), `${policyName}:${endpoint.host}`).not.toContain("*");
-        }
-        for (const endpoint of endpoints.filter(({ protocol }) => protocol === "rest")) {
-          expect(endpoint.tls, `${policyName}:${endpoint.host}`).not.toBe("terminate");
-        }
+        expect(endpoints.every((endpoint) => !methods(endpoint).includes("*"))).toBe(true);
+        expect(
+          endpoints
+            .filter(({ protocol }) => protocol === "rest")
+            .every((endpoint) => !Object.is(endpoint.tls, "terminate")),
+        ).toBe(true);
       }
     },
   );
@@ -416,9 +417,11 @@ describe("effective built-in policy contracts", () => {
         (endpoint) => endpoint.host === "host.openshell.internal" && endpoint.port === 11436,
       );
       expect(JSON.stringify(broker), presetName).toContain(new URL(entry.envValue).pathname);
-      for (const host of vendorHosts) {
-        expect((policy.endpoints ?? []).some((endpoint) => endpoint.host === host)).toBe(false);
-      }
+      expect(vendorHosts.every((host) =>
+          Object.is(
+            (policy.endpoints ?? []).some((endpoint) => endpoint.host === host),
+            false,
+          ))).toBe(true);
       const browserHosts = (policy.endpoints ?? []).filter((endpoint) =>
         endpoint.host?.endsWith(".browser-use.com"),
       );

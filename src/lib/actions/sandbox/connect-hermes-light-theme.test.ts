@@ -378,9 +378,9 @@ describe("Hermes sandbox connect light terminal skin", () => {
 
     const skinWriteCall = skinWriteCalls(harness)[0];
     expect(skinWriteCall?.[0]).toEqual(["sandbox", "exec", "--name", "alpha", "--", "sh", "-s"]);
-    for (const part of (skinWriteCall?.[0] ?? []) as string[]) {
-      expect(part).not.toMatch(/[\n\r]/);
-    }
+    expect(((skinWriteCall?.[0] ?? []) as string[]).every((part) => !/[\n\r]/.test(part))).toBe(
+      true,
+    );
     const opts = skinWriteCall?.[1] as { input?: string; stdio?: unknown } | undefined;
     expect(opts?.input ?? "").toContain('mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"');
     expect(opts?.input ?? "").toContain("\n");

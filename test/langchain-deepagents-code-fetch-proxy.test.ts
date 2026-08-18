@@ -129,47 +129,53 @@ print("root-owned-proxy-verification-ok")
     }
   });
 
-  it("prepares read-only raw GitHub access without opening denied fetch targets", () => {
-    const prepared = prepareInitialSandboxCreatePolicy(
-      path.join(agentDir, "policy-additions.yaml"),
-      [],
-      {
-        agentName: "langchain-deepagents-code",
-        policyTier: "balanced",
-        additionalPresets: ["observability-otlp-local"],
-      },
-    );
-
-    try {
-      const policy = YAML.parse(fs.readFileSync(prepared.policyPath, "utf8")) as {
-        network_policies?: Record<string, { endpoints?: Array<Record<string, unknown>> }>;
-      };
-      const endpoints = Object.values(policy.network_policies ?? {}).flatMap(
-        (networkPolicy) => networkPolicy.endpoints ?? [],
+  it.each(
+    ["example.com", "169.254.169.254", "127.0.0.1"],
+  )(
+    "prepares read-only raw GitHub access without opening denied fetch targets [%s]",
+    (deniedHost) => {
+      const prepared = prepareInitialSandboxCreatePolicy(
+        path.join(agentDir, "policy-additions.yaml"),
+        [],
+        {
+          agentName: "langchain-deepagents-code",
+          policyTier: "balanced",
+          additionalPresets: ["observability-otlp-local"],
+        },
       );
-      const rawGitHub = endpoints.find((endpoint) => endpoint.host === "raw.githubusercontent.com");
 
-      expect(rawGitHub).toMatchObject({
-        port: 443,
-        protocol: "rest",
-        enforcement: "enforce",
-        rules: [
-          { allow: { method: "GET", path: "/**" } },
-          { allow: { method: "HEAD", path: "/**" } },
-        ],
-      });
-      expect(rawGitHub).not.toHaveProperty("access");
+      try {
+        const policy = YAML.parse(fs.readFileSync(prepared.policyPath, "utf8")) as {
+          network_policies?: Record<string, { endpoints?: Array<Record<string, unknown>> }>;
+        };
+        const endpoints = Object.values(policy.network_policies ?? {}).flatMap(
+          (networkPolicy) => networkPolicy.endpoints ?? [],
+        );
+        const rawGitHub = endpoints.find(
+          (endpoint) => endpoint.host === "raw.githubusercontent.com",
+        );
 
-      const effectiveHosts = new Set(endpoints.map((endpoint) => endpoint.host));
-      for (const deniedHost of ["example.com", "169.254.169.254", "127.0.0.1"]) {
+        expect(rawGitHub).toMatchObject({
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: [
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "HEAD", path: "/**" } },
+          ],
+        });
+        expect(rawGitHub).not.toHaveProperty("access");
+
+        const effectiveHosts = new Set(endpoints.map((endpoint) => endpoint.host));
+
         expect(effectiveHosts, `${deniedHost} must remain denied by default`).not.toContain(
           deniedHost,
         );
+      } finally {
+        prepared.cleanup?.();
       }
-    } finally {
-      prepared.cleanup?.();
-    }
-  });
+    },
+  );
 
   it("pins the cloud E2E wiring for fetch_url success and denied-host paths", () => {
     const check = fs.readFileSync(

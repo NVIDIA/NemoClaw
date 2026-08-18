@@ -318,28 +318,30 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
     expect(result.signatureReport).not.toContain("retrying transient signature download");
   });
 
-  it("keeps the image cache trusted and deletes the sandbox-writable copy", () => {
+  it.each(
+    [
+        "AS wechat-npm-cache",
+        "COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/",
+        "RUN --network=none",
+        "node --experimental-strip-types /opt/nemoclaw-build-tools/reviewed-npm-archive.mts",
+        "--lockfile /opt/wechat-runtime/package-lock.json",
+        "--cache /out/wechat-npm-cache",
+        "--registry-origin https://registry.npmjs.org/",
+        "chown -R root:root /out/wechat-npm-cache",
+        "chmod -R a+rX,go-w /out/wechat-npm-cache",
+        "COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/",
+        "trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache",
+        'install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"',
+        'cp -R "$trusted_cache"/. "$install_cache"/',
+        'NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache"',
+        'rm -rf "$install_cache"',
+        'test ! -e "$install_cache"',
+      ],
+  )("keeps the image cache trusted and deletes the sandbox-writable copy [%s]", (fragment) => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-    for (const fragment of [
-      "AS wechat-npm-cache",
-      "COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/",
-      "RUN --network=none",
-      "node --experimental-strip-types /opt/nemoclaw-build-tools/reviewed-npm-archive.mts",
-      "--lockfile /opt/wechat-runtime/package-lock.json",
-      "--cache /out/wechat-npm-cache",
-      "--registry-origin https://registry.npmjs.org/",
-      "chown -R root:root /out/wechat-npm-cache",
-      "chmod -R a+rX,go-w /out/wechat-npm-cache",
-      "COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/",
-      "trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache",
-      'install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"',
-      'cp -R "$trusted_cache"/. "$install_cache"/',
-      'NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache"',
-      'rm -rf "$install_cache"',
-      'test ! -e "$install_cache"',
-    ]) {
-      expect(dockerfile).toContain(fragment);
-    }
+
+    expect(dockerfile).toContain(fragment);
+
     const cacheVerification = dockerfile.indexOf(
       "--lockfile /opt/wechat-runtime/package-lock.json",
     );

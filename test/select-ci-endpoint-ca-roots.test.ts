@@ -280,9 +280,11 @@ describe("CI endpoint CA root selection", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
-    "rejects a hard-linked CA output without changing either path",
-    () => {
+  it
+    .skipIf(process.platform === "win32")
+    .each([{ scenario: "output path" }, { scenario: "hard-linked path" }])(
+    "rejects a hard-linked CA output without changing either path [$scenario]",
+    ({ scenario }) => {
       const directory = tmpDir();
       const output = path.join(directory, "compact.pem");
       const linked = path.join(directory, "linked.pem");
@@ -297,10 +299,9 @@ describe("CI endpoint CA root selection", () => {
 
       expect(openSync).toHaveBeenCalledOnce();
       expect(ftruncateSync).not.toHaveBeenCalled();
-      for (const file of [output, linked]) {
-        expect(fs.readFileSync(file, "utf8")).toBe("unchanged");
-        expect(fs.statSync(file).mode & 0o777).toBe(0o640);
-      }
+      const file = ({ "output path": output, "hard-linked path": linked } as const)[scenario]!;
+      expect(fs.readFileSync(file, "utf8")).toBe("unchanged");
+      expect(fs.statSync(file).mode & 0o777).toBe(0o640);
     },
   );
 
@@ -331,9 +332,9 @@ describe("CI endpoint CA root selection", () => {
     expect(fs.statSync(output).mode & 0o777).toBe(0o604);
   });
 
-  it.skipIf(!hasOpenSsl)(
-    "selects a self-signed system root when the server sends its cross-signed form",
-    () => {
+  it.skipIf(!hasOpenSsl).each(CI_CA_ENDPOINTS)(
+    "selects a self-signed system root when the server sends its cross-signed form [case %#]",
+    (endpoint) => {
       const directory = tmpDir();
       const output = path.join(directory, "compact.pem");
       fs.writeFileSync(output, "", { mode: 0o600 });
@@ -383,40 +384,39 @@ describe("CI endpoint CA root selection", () => {
       });
       expect(fs.readFileSync(output, "utf8")).toBe(fixture.root);
       expect(connections).toHaveLength(CI_CA_ENDPOINTS.length * 2);
-      for (const endpoint of CI_CA_ENDPOINTS) {
-        const endpointConnections = connections.filter((args) => args.includes(`${endpoint}:443`));
-        expect(endpointConnections).toEqual([
-          [
-            "s_client",
-            "-connect",
-            `${endpoint}:443`,
-            "-servername",
-            endpoint,
-            "-verify_hostname",
-            endpoint,
-            "-verify_return_error",
-            "-CAfile",
-            CI_CA_SYSTEM_BUNDLE,
-            "-no-CApath",
-            "-no-CAstore",
-            "-showcerts",
-          ],
-          [
-            "s_client",
-            "-connect",
-            `${endpoint}:443`,
-            "-servername",
-            endpoint,
-            "-verify_hostname",
-            endpoint,
-            "-verify_return_error",
-            "-CAfile",
-            expect.stringMatching(/\/compact\.pem$/u),
-            "-no-CApath",
-            "-no-CAstore",
-          ],
-        ]);
-      }
+
+      const endpointConnections = connections.filter((args) => args.includes(`${endpoint}:443`));
+      expect(endpointConnections).toEqual([
+        [
+          "s_client",
+          "-connect",
+          `${endpoint}:443`,
+          "-servername",
+          endpoint,
+          "-verify_hostname",
+          endpoint,
+          "-verify_return_error",
+          "-CAfile",
+          CI_CA_SYSTEM_BUNDLE,
+          "-no-CApath",
+          "-no-CAstore",
+          "-showcerts",
+        ],
+        [
+          "s_client",
+          "-connect",
+          `${endpoint}:443`,
+          "-servername",
+          endpoint,
+          "-verify_hostname",
+          endpoint,
+          "-verify_return_error",
+          "-CAfile",
+          expect.stringMatching(/\/compact\.pem$/u),
+          "-no-CApath",
+          "-no-CAstore",
+        ],
+      ]);
 
       fs.writeFileSync(output, "unchanged", { mode: 0o600 });
       const rejectCompactVerification: OpenSslRunner = (args) =>

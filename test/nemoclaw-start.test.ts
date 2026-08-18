@@ -498,7 +498,9 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(result.stdout).not.toContain("true");
   });
 
-  it("repairs writable OpenClaw state directories in non-root mode", () => {
+  it.each(
+    ["workspace", "memory", "credentials", "flows", "telegram", "media"],
+  )("repairs writable OpenClaw state directories in non-root mode [%s]", (dir) => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const match = src.match(/fix_openclaw_ownership\(\) \{([\s\S]*?)^\s*\}/m);
     if (!match) {
@@ -523,9 +525,7 @@ describe("nemoclaw-start non-root fallback", () => {
         env: { ...process.env, HOME: tmpDir },
       });
       expect(result.status).toBe(0);
-      for (const dir of ["workspace", "memory", "credentials", "flows", "telegram", "media"]) {
-        expect(fs.statSync(path.join(openclawDir, dir)).isDirectory()).toBe(true);
-      }
+      expect(fs.statSync(path.join(openclawDir, dir)).isDirectory()).toBe(true);
       expect((fs.statSync(openclawDir).mode & 0o777).toString(8)).toBe("770");
       expect(fs.statSync(openclawDir).mode & 0o2000).toBe(0o2000);
       expect((fs.statSync(path.join(openclawDir, "openclaw.json")).mode & 0o777).toString(8)).toBe(
@@ -2354,55 +2354,55 @@ describe("NC-2227-01: legacy migration behavior", () => {
     }
   });
 
-  it("provisions only canonical workspace paths from OpenClaw config", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-workspaces-"));
-    const configDir = path.join(tmpDir, ".openclaw");
-    const script = path.join(tmpDir, "provision.sh");
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.mkdirSync(path.join(configDir, "workspace-existing"));
-    fs.symlinkSync(tmpDir, path.join(configDir, "workspace-linked"));
-    fs.writeFileSync(
-      path.join(configDir, "openclaw.json"),
-      JSON.stringify({
-        agents: {
-          defaults: { workspace: "main" },
-          list: [
-            { workspace: path.join(configDir, "workspace-alpha") },
-            { workspace: "workspace-beta" },
-            { workspace: "../escape" },
-          ],
-        },
-      }),
-    );
-    const body = [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      extractShellFunctionFromSource(src, "chown_tree_no_symlink_follow"),
-      extractShellFunctionFromSource(src, "provision_agent_workspaces").replaceAll(
-        "/sandbox/.openclaw",
-        configDir,
-      ),
-      "provision_agent_workspaces",
-    ].join("\n");
-    fs.writeFileSync(script, body, { mode: 0o700 });
+  it.each(
+    ["workspace-existing", "workspace-main", "workspace-alpha", "workspace-beta"],
+  )(
+    "provisions only canonical workspace paths from OpenClaw config [%s]",
+    (name) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-workspaces-"));
+      const configDir = path.join(tmpDir, ".openclaw");
+      const script = path.join(tmpDir, "provision.sh");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.mkdirSync(path.join(configDir, "workspace-existing"));
+      fs.symlinkSync(tmpDir, path.join(configDir, "workspace-linked"));
+      fs.writeFileSync(
+        path.join(configDir, "openclaw.json"),
+        JSON.stringify({
+          agents: {
+            defaults: { workspace: "main" },
+            list: [
+              { workspace: path.join(configDir, "workspace-alpha") },
+              { workspace: "workspace-beta" },
+              { workspace: "../escape" },
+            ],
+          },
+        }),
+      );
+      const body = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        extractShellFunctionFromSource(src, "chown_tree_no_symlink_follow"),
+        extractShellFunctionFromSource(src, "provision_agent_workspaces").replaceAll(
+          "/sandbox/.openclaw",
+          configDir,
+        ),
+        "provision_agent_workspaces",
+      ].join("\n");
+      fs.writeFileSync(script, body, { mode: 0o700 });
+      try {
+        const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
+        expect(result.status).toBe(0);
 
-    try {
-      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
-      expect(result.status).toBe(0);
-      for (const name of [
-        "workspace-existing",
-        "workspace-main",
-        "workspace-alpha",
-        "workspace-beta",
-      ]) {
         expect(fs.statSync(path.join(configDir, name)).isDirectory()).toBe(true);
+
+        expect(fs.existsSync(path.join(configDir, "workspace-.."))).toBe(false);
+        expect(result.stderr).toContain("refusing symlinked workspace dir");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
       }
-      expect(fs.existsSync(path.join(configDir, "workspace-.."))).toBe(false);
-      expect(result.stderr).toContain("refusing symlinked workspace dir");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  }, 15_000);
+    },
+    15_000,
+  );
 });
 
 describe("seed_default_workspace_templates (#3240)", () => {
@@ -2463,16 +2463,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
     try {
       const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
       expect(result.status).toBe(0);
-      for (const name of [
-        "AGENTS.md",
-        "SOUL.md",
-        "IDENTITY.md",
-        "USER.md",
-        "TOOLS.md",
-        "HEARTBEAT.md",
-      ]) {
-        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(true);
-      }
+      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
       expect(fs.existsSync(path.join(workspaceDir, "BOOTSTRAP.md"))).toBe(false);
       expect(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf-8")).toBe(
         "# SOUL.md template content\n",
@@ -2588,16 +2579,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
         env: { PATH: `${fakeBin}:${path.dirname(process.execPath)}:${process.env.PATH || ""}` },
       });
       expect(result.status).toBe(0);
-      for (const name of [
-        "AGENTS.md",
-        "SOUL.md",
-        "IDENTITY.md",
-        "USER.md",
-        "TOOLS.md",
-        "HEARTBEAT.md",
-      ]) {
-        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(false);
-      }
+      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => !fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
       expect(result.stderr).toContain("openclaw workspace templates dir not found");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2725,16 +2707,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toContain("NEMOCLAW_MINIMAL_BOOTSTRAP=1");
       expect(result.stderr).toContain("skipping default workspace template seed");
-      for (const name of [
-        "AGENTS.md",
-        "SOUL.md",
-        "IDENTITY.md",
-        "USER.md",
-        "TOOLS.md",
-        "HEARTBEAT.md",
-      ]) {
-        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(false);
-      }
+      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => !fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -3258,65 +3231,70 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("refuses arbitrary host secret names that do not extend a discovered provider envKey inside the sandbox", () => {
-    // Defence-in-depth: even if an operator clobbers NEMOCLAW_EXTRA_PLACEHOLDER_KEYS
-    // inside a running sandbox after the host-side parser already filtered it,
-    // the container-side refresh helper must mirror the host's canonical-prefix
-    // restriction so a noncanonical name such as GITHUB_TOKEN never reaches the
-    // python placeholder walker.
-    const run = runRefresh(
-      {
-        channels: {
-          telegram: {
-            accounts: {
-              default: {
-                botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+  it.each(
+    [
+        "GITHUB_TOKEN",
+        "AWS_SECRET_ACCESS_KEY",
+        "NPM_TOKEN",
+        "KUBECONFIG",
+        "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+      ],
+  )(
+    "refuses arbitrary host secret names that do not extend a discovered provider envKey inside the sandbox [%s]",
+    (blocked) => {
+      // Defence-in-depth: even if an operator clobbers NEMOCLAW_EXTRA_PLACEHOLDER_KEYS
+      // inside a running sandbox after the host-side parser already filtered it,
+      // the container-side refresh helper must mirror the host's canonical-prefix
+      // restriction so a noncanonical name such as GITHUB_TOKEN never reaches the
+      // python placeholder walker.
+      const run = runRefresh(
+        {
+          channels: {
+            telegram: {
+              accounts: {
+                default: {
+                  botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+                },
               },
             },
           },
         },
-      },
-      {
-        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
-        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
-          "GITHUB_TOKEN AWS_SECRET_ACCESS_KEY NPM_TOKEN KUBECONFIG NEMOCLAW_EXTRA_PLACEHOLDER_KEYS TELEGRAM_BOT_TOKEN_KEPT",
-        // Stage host secrets that would leak if the bash refresh ever
-        // accepted their names. The assertion below confirms none of these
-        // values appear in any output produced by the python heredoc.
-        GITHUB_TOKEN: "ghp-host-secret-would-leak",
-        AWS_SECRET_ACCESS_KEY: "aws-host-secret-would-leak",
-        NPM_TOKEN: "npm-host-secret-would-leak",
-        KUBECONFIG: "/host/path/would-leak",
-      },
-    );
+        {
+          TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+          NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
+            "GITHUB_TOKEN AWS_SECRET_ACCESS_KEY NPM_TOKEN KUBECONFIG NEMOCLAW_EXTRA_PLACEHOLDER_KEYS TELEGRAM_BOT_TOKEN_KEPT",
+          // Stage host secrets that would leak if the bash refresh ever
+          // accepted their names. The assertion below confirms none of these
+          // values appear in any output produced by the python heredoc.
+          GITHUB_TOKEN: "ghp-host-secret-would-leak",
+          AWS_SECRET_ACCESS_KEY: "aws-host-secret-would-leak",
+          NPM_TOKEN: "npm-host-secret-would-leak",
+          KUBECONFIG: "/host/path/would-leak",
+        },
+      );
 
-    expect(run.result.status, run.result.stderr).toBe(0);
-    for (const blocked of [
-      "GITHUB_TOKEN",
-      "AWS_SECRET_ACCESS_KEY",
-      "NPM_TOKEN",
-      "KUBECONFIG",
-      "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
-    ]) {
+      expect(run.result.status, run.result.stderr).toBe(0);
+
       expect(run.result.stderr).toContain(
         `[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${blocked}' — must extend a discovered provider envKey such as TELEGRAM_BOT_TOKEN_<suffix>`,
       );
-    }
-    expect(run.result.stderr).not.toContain(
-      "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry 'TELEGRAM_BOT_TOKEN_KEPT'",
-    );
-    // None of the staged host secret values should reach any stdout/stderr
-    // line the python heredoc emits, because their names were rejected before
-    // the heredoc ran.
-    expect(run.result.stderr).not.toContain("ghp-host-secret-would-leak");
-    expect(run.result.stderr).not.toContain("aws-host-secret-would-leak");
-    expect(run.result.stderr).not.toContain("npm-host-secret-would-leak");
-    expect(run.result.stdout).not.toContain("ghp-host-secret-would-leak");
-    expect(run.result.stdout).not.toContain("aws-host-secret-would-leak");
-    expect(run.result.stdout).not.toContain("npm-host-secret-would-leak");
-    expect(JSON.stringify(run.config)).not.toContain("ghp-host-secret-would-leak");
-    expect(JSON.stringify(run.config)).not.toContain("aws-host-secret-would-leak");
-  });
+
+      expect(run.result.stderr).not.toContain(
+        "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry 'TELEGRAM_BOT_TOKEN_KEPT'",
+      );
+      // None of the staged host secret values should reach any stdout/stderr
+      // line the python heredoc emits, because their names were rejected before
+      // the heredoc ran.
+      expect(run.result.stderr).not.toContain("ghp-host-secret-would-leak");
+      expect(run.result.stderr).not.toContain("aws-host-secret-would-leak");
+      expect(run.result.stderr).not.toContain("npm-host-secret-would-leak");
+      expect(run.result.stdout).not.toContain("ghp-host-secret-would-leak");
+      expect(run.result.stdout).not.toContain("aws-host-secret-would-leak");
+      expect(run.result.stdout).not.toContain("npm-host-secret-would-leak");
+      expect(JSON.stringify(run.config)).not.toContain("ghp-host-secret-would-leak");
+      expect(JSON.stringify(run.config)).not.toContain("aws-host-secret-would-leak");
+    },
+  );
 
   it("accepts every manifest credential envKey from the messaging plan as an extension prefix", () => {
     // Behavioural parity guard: the in-container parser should not hardcode
@@ -3862,9 +3840,7 @@ describe("write_auth_profile (#1332)", () => {
     try {
       expect(status).toBe(0);
       const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-      for (const key of Object.keys(profile)) {
-        expect(key).not.toMatch(/^nvidia:/);
-      }
+      expect(Object.keys(profile).every((key) => !/^nvidia:/.test(key))).toBe(true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
