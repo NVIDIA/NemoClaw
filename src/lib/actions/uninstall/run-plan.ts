@@ -832,12 +832,12 @@ function deletePortableOpenShellSandbox(
   const result = runtime.run("openshell", ["sandbox", "delete", "-g", gatewayName, sandboxName], {
     env: runtime.env,
   });
-  if (result.status !== 0 && !isExplicitPortableSandboxAbsence(result, sandboxName)) {
+  const deleteReportedAbsence = isExplicitPortableSandboxAbsence(result, sandboxName);
+  if (result.status !== 0 && !deleteReportedAbsence) {
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
-    return false;
   }
   if (result.status === 0) runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
-  else {
+  else if (deleteReportedAbsence) {
     runtime.warn(sandboxDeleteAbsentMessage(sandboxName));
   }
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -2721,6 +2721,7 @@ function executePlan(
     portable: "Keeping shared OpenShell configuration for unrelated sandboxes.",
     requested: "Keeping OpenShell gateway configuration as requested.",
   }[sharedOpenShellReason];
+  let portableCleanupComplete = false;
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     const portableStepMessage = PORTABLE_DEFERRED_STEP_MESSAGES[step.name];
@@ -2813,6 +2814,16 @@ function executePlan(
         return { ok: false };
       }
     } else if (step.name === "NemoClaw CLI") {
+      portableCleanupComplete = completePortableCleanupBeforeCliRemoval(
+        ok,
+        portableRuntimeCleanup,
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        sandboxNames,
+        teardownAuthority,
+      );
       runNemoclawCliUninstallStep(
         paths,
         options,
@@ -2941,7 +2952,7 @@ function executePlan(
   }
   return completePortablePlan(
     ok,
-    portableRuntimeCleanup,
+    portableRuntimeCleanup && !portableCleanupComplete,
     paths,
     options,
     runtime,
@@ -2973,6 +2984,33 @@ function completePortablePlan(
 }
 
 class IncompleteHostGatewayCleanupError extends Error {}
+
+class IncompletePortableCleanupError extends Error {}
+
+function completePortableCleanupBeforeCliRemoval(
+  ok: boolean,
+  portable: boolean,
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scoped: boolean,
+  sandboxNames: readonly string[],
+  authority: GatewayOwner,
+): boolean {
+  if (!portable) return false;
+  const completion = completePortablePlan(
+    ok,
+    true,
+    paths,
+    options,
+    runtime,
+    scoped,
+    sandboxNames,
+    authority,
+  );
+  if (!completion.ok) throw new IncompletePortableCleanupError();
+  return true;
+}
 
 function stopHostGatewayProcessesForUninstall(
   runtime: UninstallRuntime,
@@ -3133,7 +3171,11 @@ export function runUninstallPlan(
       portableRetirementEntries,
     ));
   } catch (error) {
-    if (!(error instanceof IncompleteHostGatewayCleanupError)) throw error;
+    if (
+      !(error instanceof IncompleteHostGatewayCleanupError) &&
+      !(error instanceof IncompletePortableCleanupError)
+    )
+      throw error;
   }
   if (ok) {
     printBye(runtime);

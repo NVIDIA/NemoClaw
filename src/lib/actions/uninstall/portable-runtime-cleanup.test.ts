@@ -933,6 +933,113 @@ describe("portable runtime uninstall cleanup", () => {
     expect(fs.existsSync(`${test.registryFile}.lock`)).toBe(false);
   });
 
+  it("retries one failed read-only sandbox discovery under reasserted authority (#9499)", () => {
+    const test = fixture();
+    const originalPodman = test.deps.podman!;
+    let sandboxObservations = 0;
+    test.deps.podman = vi.fn((args, env) => {
+      const command = args[0] === "--url" ? args.slice(2) : args;
+      const observesSandbox =
+        command[0] === "ps" && command.includes("label=openshell.ai/sandbox-name=alpha");
+      sandboxObservations += Number(observesSandbox);
+      return observesSandbox && sandboxObservations === 1
+        ? { status: 125, stdout: "", stderr: "transient local Podman observation failure" }
+        : originalPodman(args, env);
+    });
+
+    expect(completeCleanup(test.input, test.deps)).toEqual({
+      registryRemoved: true,
+      sandboxContainersRemoved: 1,
+      selectorsRemoved: ["CONTAINERS_CONF", "NETAVARK_FW"],
+    });
+    expect(sandboxObservations).toBe(4);
+    expect(test.containers.has(ALPHA_ID)).toBe(false);
+  });
+
+  it.each([
+    ["non-125 status", { status: 126, stdout: "", stderr: "permission denied" }],
+    ["spawn error", { status: null, stdout: "", stderr: "", error: new Error("spawn EACCES") }],
+  ] as const)("does not retry a %s sandbox discovery failure (#9499)", (_label, failure) => {
+    const test = fixture();
+    const originalPodman = test.deps.podman!;
+    let sandboxObservations = 0;
+    test.deps.podman = vi.fn((args, env) => {
+      const command = args[0] === "--url" ? args.slice(2) : args;
+      const observesSandbox =
+        command[0] === "ps" && command.includes("label=openshell.ai/sandbox-name=alpha");
+      sandboxObservations += Number(observesSandbox);
+      return observesSandbox ? failure : originalPodman(args, env);
+    });
+
+    expect(() => completeCleanup(test.input, test.deps)).toThrow(
+      "Finding portable sandbox 'alpha' failed",
+    );
+    expect(sandboxObservations).toBe(1);
+    expect(test.containers.has(ALPHA_ID)).toBe(true);
+    expect(test.containers.has(REGISTRY_ID)).toBe(true);
+    expect(test.podmanCalls.some((args) => args[0] === "rm")).toBe(false);
+  });
+
+  it("stops a status-125 retry when socket authority changes before re-observation (#9499)", () => {
+    const test = fixture();
+    const originalPodman = test.deps.podman!;
+    let sandboxObservations = 0;
+    let authorityChanged = false;
+    const authorityError = "Podman socket authority changed after it was qualified";
+    const rejectChangedAuthority = () => {
+      throw new Error(authorityError);
+    };
+    const assertSocketAuthority = vi.fn(() =>
+      authorityChanged ? rejectChangedAuthority() : undefined,
+    );
+    test.deps.runtimeReadiness = { ...test.deps.runtimeReadiness, assertSocketAuthority };
+    const failFirstObservation = () => {
+      authorityChanged = true;
+      return { status: 125, stdout: "", stderr: "transient local Podman observation failure" };
+    };
+    test.deps.podman = vi.fn((args, env) => {
+      const command = args[0] === "--url" ? args.slice(2) : args;
+      const observesSandbox =
+        command[0] === "ps" && command.includes("label=openshell.ai/sandbox-name=alpha");
+      sandboxObservations += Number(observesSandbox);
+      return observesSandbox ? failFirstObservation() : originalPodman(args, env);
+    });
+
+    expect(() => completeCleanup(test.input, test.deps)).toThrow(authorityError);
+    expect(sandboxObservations).toBe(1);
+    expect(assertSocketAuthority).toHaveBeenCalled();
+    expect(test.containers.has(ALPHA_ID)).toBe(true);
+    expect(test.containers.has(REGISTRY_ID)).toBe(true);
+    expect(test.podmanCalls.some((args) => args[0] === "rm")).toBe(false);
+  });
+
+  it("stops without mutation after two failed read-only sandbox discoveries (#9499)", () => {
+    const test = fixture();
+    const originalPodman = test.deps.podman!;
+    let sandboxObservations = 0;
+    test.deps.podman = vi.fn((args, env) => {
+      const command = args[0] === "--url" ? args.slice(2) : args;
+      const observesSandbox =
+        command[0] === "ps" && command.includes("label=openshell.ai/sandbox-name=alpha");
+      sandboxObservations += Number(observesSandbox);
+      return observesSandbox
+        ? {
+            status: 125,
+            stdout: "",
+            stderr: "persistent local Podman observation failure",
+          }
+        : originalPodman(args, env);
+    });
+
+    expect(() => completeCleanup(test.input, test.deps)).toThrow(
+      "Finding portable sandbox 'alpha' failed",
+    );
+    expect(sandboxObservations).toBe(2);
+    expect(test.containers.has(ALPHA_ID)).toBe(true);
+    expect(test.containers.has(REGISTRY_ID)).toBe(true);
+    expect(test.podmanCalls.some((args) => args[0] === "rm")).toBe(false);
+  });
+
   it("preserves changed current-user manager selector values (#9189)", () => {
     const test = fixture();
     test.selectors.set("CONTAINERS_CONF", "/home/test/user-containers.conf");

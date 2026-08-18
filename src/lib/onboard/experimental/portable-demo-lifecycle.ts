@@ -655,9 +655,9 @@ export function createPortablePodmanLifecycleTransport(
 
 function matchingPortableSandboxContainerIds(
   sandboxName: string,
-  podman: PortablePodmanLifecycleTransport["podman"],
+  transport: PortablePodmanLifecycleTransport,
 ): string[] {
-  const result = podman([
+  const args = [
     "ps",
     "-a",
     "--no-trunc",
@@ -669,7 +669,12 @@ function matchingPortableSandboxContainerIds(
     `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
     "--format",
     "{{.ID}}",
-  ]);
+  ] as const;
+  let result = transport.podman(args);
+  if (result.status === 125) {
+    transport.assertRuntimeAuthority();
+    result = transport.podman(args);
+  }
   requireCommand(result, `Finding portable sandbox '${sandboxName}'`);
   const ids = String(result.stdout ?? "")
     .split(/\r?\n/u)
@@ -695,7 +700,7 @@ export function preparePortableDemoSandboxRemoval(
   }
   requireCurrentRegistryGeneration(loaded, receiptRecord.registryGeneration);
   transport.assertRuntimeAuthority();
-  const matches = matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport.podman);
+  const matches = matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport);
   if (matches.length > 1 || (matches.length === 1 && matches[0] !== receiptRecord.containerId)) {
     throw new Error(
       `Portable demo lifecycle found a replaced or ambiguous container for sandbox '${receiptRecord.sandboxName}'`,
@@ -748,10 +753,7 @@ export function preparePortableDemoSandboxRemoval(
         `Portable sandbox '${receiptRecord.sandboxName}' still has its recorded Podman container`,
       );
     }
-    const remaining = matchingPortableSandboxContainerIds(
-      receiptRecord.sandboxName,
-      transport.podman,
-    );
+    const remaining = matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport);
     if (remaining.length !== 0) {
       throw new Error(
         `Portable demo lifecycle found a replacement container for sandbox '${receiptRecord.sandboxName}'`,
