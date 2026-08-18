@@ -486,7 +486,7 @@ describe("E2E workflow plan", () => {
     const summary = path.join(directory, "summary.md");
     try {
       writeE2eWorkflowPlanCiOutput(
-        { jobs: "cloud-onboard,hermes-e2e" },
+        { jobs: "managed-image-protected-runtime" },
         {
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
@@ -499,8 +499,8 @@ describe("E2E workflow plan", () => {
       const outputLines = readFileSync(output, "utf8").split("\n");
       expect(outputLines).toEqual(
         expect.arrayContaining([
-          'selected_jobs=["cloud-onboard","hermes-e2e"]',
-          "hermes_selected=true",
+          'selected_jobs=["managed-image-protected-runtime"]',
+          "hermes_selected=false",
         ]),
       );
     } finally {
