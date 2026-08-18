@@ -14,6 +14,7 @@ import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migr
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
+import { cloneSandboxHostMounts } from "../../state/registry/host-mount";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
@@ -175,7 +176,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
           ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
-            ? { hostMounts: recreateOptions.hostMounts.map((mount) => ({ ...mount })) }
+            ? { hostMounts: cloneSandboxHostMounts(recreateOptions.hostMounts) }
             : {}),
         },
       }),
