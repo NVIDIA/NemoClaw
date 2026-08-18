@@ -229,4 +229,28 @@ describe("codebase growth guardrail test support", () => {
       { filename: "added.ts", status: "added" },
     ]);
   });
+
+  it("compares a main merge worktree with its MERGE_HEAD commit", () => {
+    expect(diffTestOnly.selectLocalComparisonBase("branch-base", "main-head", true)).toBe(
+      "main-head",
+    );
+  });
+
+  it("keeps the branch merge base outside a main merge", () => {
+    expect(diffTestOnly.selectLocalComparisonBase("branch-base", null, false)).toBe("branch-base");
+    expect(diffTestOnly.selectLocalComparisonBase("branch-base", "topic-head", false)).toBe(
+      "branch-base",
+    );
+  });
+
+  it("accepts only conclusive Git ancestry probe results", () => {
+    expect(diffTestOnly.parseAncestorProbe(0, undefined)).toBe(true);
+    expect(diffTestOnly.parseAncestorProbe(1, undefined)).toBe(false);
+    expect(() => diffTestOnly.parseAncestorProbe(128, undefined)).toThrow(
+      "git merge-base --is-ancestor failed with status 128",
+    );
+    expect(() => diffTestOnly.parseAncestorProbe(null, new Error("spawn failed"))).toThrow(
+      "spawn failed",
+    );
+  });
 });

@@ -22,11 +22,12 @@ permissions:
   # targets a pull request; issues:write alone returns 403.
   pull-requests: write
 
-# Serialize assignment with tag-triggered label retirement. queue:max keeps
-# every merge event while the release workflow owns the same coordination lock.
+# Do not cancel a running release-label operation. GitHub retains at most one
+# pending run for this group. The scheduled reconciliation repairs a merge
+# event that a newer pending run replaces.
 concurrency:
   group: release-target-label-operations
-  queue: max
+  cancel-in-progress: false
 
 jobs:
   label-release-target:

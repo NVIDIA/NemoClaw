@@ -1,89 +1,109 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff, including the documentation PR, version progress, straggler planning, QA summary, tag cut, and announcement draft. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day, pre-tag release notes.
+description: Runs the end-of-day NemoClaw release handoff and optionally cuts an exact release tag. Use for evening, handoff, wrap-up, or ship requests.
 user_invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # NemoClaw Maintainer Evening
 
-Wrap up the day: check progress, identify stragglers, summarize for QA, cut the tag, automatically carry stragglers to the next patch, retire the released label, and prepare release notes for posting.
+Close the day with one release candidate, one cumulative documentation change, and a clear handoff.
+Tagging is optional. Do not turn post-tag automation into part of the tag wait.
 
-See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md) for the daily cadence.
+See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md) for the daily
+cadence and the [release-train policy](../nemoclaw-maintainer-policies/references/release-train.md)
+for release rules.
 
-## Step 1: Check Progress
+## 1. Select the Target Version
 
-```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts <version>
-```
-
-The first script determines the target version. The second shows shipped vs open. Present the progress summary to the user.
-
-## Step 2: Review Post-Tag Stragglers
+Use the maintainer's exact `vX.Y.Z` when supplied. Otherwise, read the current target and show its
+merged and open work:
 
 ```bash
-gh pr list --repo NVIDIA/NemoClaw --state open --label <version> --limit 100 \
-  --json number,title,url,labels
-gh issue list --repo NVIDIA/NemoClaw --state open --label <version> --limit 100 \
-  --json number,title,url,labels
+node --experimental-strip-types --no-warnings \
+  .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
+node --experimental-strip-types --no-warnings \
+  .agents/skills/nemoclaw-maintainer-day/scripts/version-progress.ts vX.Y.Z
 ```
 
-List open labeled PRs and issues as the post-tag housekeeping plan. Tell the maintainer that, after the tag and workflow-managed `latest` are verified, `cut-release-tag` will automatically move all of them to the next patch label and delete the released label.
+Do not silently convert the answer into a patch, minor, or major bump. If nothing shipped, ask
+whether to stop without a tag.
 
-If an item should leave the daily release flow instead of moving forward, remove it from the released-version label before asking for the release confirmation phrase.
+## 2. Finish One Cumulative Documentation Change
 
-## Step 3: Generate Handoff Summary
+Inspect the current `Docs / Post-Merge Catch-Up` state. The Pi workflow owns documentation catch-up
+for merged changes. Continue its managed draft PR when one exists. If no managed PR exists and the
+release entry is the only missing change, use one direct documentation-only PR.
 
-```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/handoff-summary.ts
-```
+The documentation PR must contain all required documentation for every merged change selected for
+the release and one canonical dated entry headed `## vX.Y.Z`. Follow
+[`docs/CONTRIBUTING.md`](../../../docs/CONTRIBUTING.md) and obtain its required independent
+documentation writer review. Do not create a separate release-entry PR when the active cumulative
+docs PR can carry it.
 
-This lists commits since the last tag, identifies risky areas touched, and suggests QA test focus areas. Format the output as a concise summary the user can paste into the tag annotation or a handoff channel.
+Merge the documentation PR before selecting the tag candidate. Then wait for the resulting exact
+commit's `Docs / Post-Merge Catch-Up` run. The `Publish documentation catch-up` job must succeed,
+which records an independently approved empty Pi result for that commit. A release entry without
+this result is not complete.
 
-## Pre-Tag Docs
+If another product merge lands before candidate selection, decide whether it belongs in this
+release. When it does, update the cumulative documentation change first. When it does not, the tag
+skill may keep an earlier planned candidate that remains on `main`; later managed documentation work
+does not invalidate that candidate.
 
-Follow [Release-Prep Docs](../nemoclaw-maintainer-policies/references/release-train.md#release-prep-docs).
+When an included merge changes the candidate after planning, generate a new exact-version plan after
+its documentation merges.
 
-## Step 4: Cut the Tag and Publish Release Notes
+## 3. Show the Release Handoff
 
-Load `cut-release-tag`.
-The version is already known, so use a patch bump unless the maintainer selects another bump.
-Show the commit, changelog, carry-forward plan, label-retirement plan, and release notes draft.
+Show:
 
-After the release plan captures the candidate SHA, load `nemoclaw-maintainer-e2e`.
-Use an existing qualifying full manual run at the candidate SHA, or run full mode when none exists.
-Require its `Release qualification` check to pass.
-Record the workflow and check URLs.
-Do not ask for the release confirmation phrase until `scripts/release-cut-tag.sh` accepts the canonical check at the current candidate SHA.
+- merged work in `vX.Y.Z`;
+- open PRs and issues still carrying `vX.Y.Z`;
+- the canonical release entry;
+- the exact Pi documentation run and job URL;
+- known image-publication state; and
+- the newest full E2E status, SHA, age, and URLs.
 
-Tag the confirmed release commit with `vX.Y.Z`.
-Let the workflow move `latest`, carry open work forward, and delete the released label.
-Prepare the Announcement draft for the maintainer to post.
+Open labeled items are post-tag planning state, not a tag blocker. State which items are expected to
+move to the next target, but do not perform label writes here.
 
-## Step 5: Confirm and Share
+## 4. Cut the Tag When Requested
 
-After the tag is cut and release notes are drafted or posted by the maintainer, present the final summary:
+Load `nemoclaw-maintainer-cut-release-tag` and pass the exact version. That skill owns:
 
-- **Tag**: `v0.0.8` at commit `abc1234`
-- **Pre-tag E2E evidence**: `Release qualification` passing for the candidate SHA
-- **Release notes draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
-- **Shipped**: 4 items (#1234, #1235, #1236, #1237)
-- **Moved to v0.0.9**: 1 item (#1238 — still needs CI fix)
-- **Retired label**: `v0.0.8`
-- **QA focus areas**: installer changes, new onboard preset
+- the exact-version plan and candidate;
+- nonwaivable documentation, image, and exact staging Launchable evidence;
+- the maintainer's focused, full, or proceed E2E choice;
+- `../nemoclaw-release-vX.Y.Z/release-brief.md`;
+- the exact confirmation phrase; and
+- signed tag creation and remote readback.
 
-This summary can be shared in the team's handoff channel.
+Do not run a full E2E suite automatically. Do not ask for confirmation until the release brief is
+complete and the maintainer has reviewed it.
 
-## Step 6: Update State
+## 5. Return the Handoff
 
-```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history "tag-cut" "<version>" "shipped N items, carried M forward"
-```
+After tag readback, return immediately with:
 
-## Notes
+- tag and candidate commit;
+- plan and release-brief paths;
+- documentation, image, and exact Launchable evidence URLs;
+- E2E decision and exception reason, if any; and
+- current state of `latest`, release labels, public documentation, release images, `lkg`, and the Announcement.
 
-- Never cut a tag or hand off release notes without user confirmation.
-- If nothing was labeled or nothing shipped, ask whether to skip the tag today.
-- A PR version label activates release work; it is not a readiness claim.
-- If an open item misses the tag, post-tag housekeeping moves its target to the next patch version.
-- After carry-forward succeeds, post-tag housekeeping deletes the released label; never rename or reuse it.
+Those states continue outside tag cutting; some share a workflow or depend on another post-tag
+state. A tag-triggered release-image rebuild can fail and be retried without changing the semver
+tag. Draft the public Announcement later with
+`nemoclaw-maintainer-release-notes`; do not delay tag completion for it.
+
+## Hard Rules
+
+- Never cut a tag without the maintainer's exact confirmation phrase.
+- Never bypass the release entry, approved-empty Pi result, applicable GHCR evidence, or exact
+  staging Brev Launchable E2E and cleanup receipts.
+- Never make a different candidate stale merely because `main` advanced or a later documentation PR opened.
+- Never wait for `latest`, label retirement, public documentation, release images, `lkg`, or the Announcement
+  before reporting the tag as cut.

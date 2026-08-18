@@ -2,25 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { isCanonicalNemoClawRemote } from "../scripts/release/remote.mts";
+import {
+  isCanonicalNemoClawRemote,
+  isLocalReleaseFixtureRemote,
+} from "../scripts/release/remote.mts";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const latestScriptPath = path.join(repoRoot, "scripts", "release-latest-tag.sh");
 const cutScriptPath = path.join(repoRoot, "scripts", "release-cut-tag.sh");
-const waitLatestScriptPath = path.join(repoRoot, "scripts", "release-wait-latest.sh");
 const planScriptPath = path.join(repoRoot, "scripts", "release-plan.mts");
-const tsxPath = path.join(repoRoot, "node_modules", ".bin", "tsx");
 const tempRoots: string[] = [];
 
 function baseEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith("GIT_") && value !== undefined) {
+    if (!key.startsWith("GIT_") && key !== "NODE_OPTIONS" && value !== undefined) {
       env[key] = value;
     }
   }
@@ -51,9 +51,7 @@ function run(cwd: string, args: string[], options: { allowFailure?: boolean } = 
       env: testEnv(),
     });
   } catch (error) {
-    if (options.allowFailure) {
-      return "";
-    }
+    if (options.allowFailure) return "";
     throw error;
   }
 }
@@ -202,204 +200,126 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function readJson(filePath: string): any {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+function readJson(filePath: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
 }
-
-function rewritePlanOrigin(planPath: string, originRemote: string): void {
-  const { planHash: _planHash, ...plan } = readJson(planPath);
-  const updated = { ...plan, originRemote };
-  const nextPlan = {
-    ...updated,
-    planHash: createHash("sha256")
-      .update(JSON.stringify(updated, null, 2))
-      .digest("hex"),
-  };
-  fs.writeFileSync(planPath, `${JSON.stringify(nextPlan, null, 2)}\n`, "utf8");
-}
-
-function installReleaseGateStubs(
-  fixture: Fixture,
-  qualification: "failed-unwaived" | "missing" | "success" | "waived" | "waived-invalid",
-  originRemote: string,
-  waiverEvidenceJson?: string,
-): string {
-  const binDir = path.join(fixture.root, `release-gate-bin-${qualification}`);
-  fs.mkdirSync(binDir);
-  const realGit = execFileSync("sh", ["-c", "command -v git"], {
-    encoding: "utf8",
-  }).trim();
-  fs.writeFileSync(
-    path.join(binDir, "git"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-if [[ "\${1:-} \${2:-} \${3:-}" == "remote get-url origin" ]]; then
-  printf '%s\n' ${shellQuote(originRemote)}
-  exit 0
-fi
-if [[ "\${1:-} \${2:-}" == "fetch origin" ]]; then
-  exit 0
-fi
-exec ${shellQuote(realGit)} "$@"
-`,
-  );
-  const waiverDownload =
-    qualification === "waived"
-      ? waiverEvidenceJson === undefined
-        ? `destination="\${!#}"
-candidate="$(${shellQuote(realGit)} rev-parse origin/main)"
-cat >"\${destination}/waiver.json" <<JSON
-{"schemaVersion":1,"kind":"nemoclaw-release-qualification-waiver-v1","candidateSha":"\${candidate}","workflowRunId":123,"workflowRunAttempt":1,"actor":"release-admin","triggeringActor":"release-admin","reason":"Brev credential expired","jobs":[{"id":"staging-brev-launchable","result":"failure"}]}
-JSON`
-        : `destination="\${!#}"
-printf '%s\n' ${shellQuote(waiverEvidenceJson)} >"\${destination}/waiver.json"`
-      : "exit 1";
-  fs.writeFileSync(
-    path.join(binDir, "gh"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-case "$*" in
-  *'/actions/workflows/e2e.yaml/runs?'*)
-    ${qualification === "missing" ? ":" : `printf '%s\\t%s\\t%s\\t%s\\n' 123 https://github.com/NVIDIA/NemoClaw/actions/runs/123 ${qualification.startsWith("waived") || qualification === "failed-unwaived" ? "failure" : "success"} 1`}
-    ;;
-  *'/actions/runs/123/jobs?'*)
-    printf '%s\\t%s\\t%s\\n' completed ${qualification === "waived-invalid" ? "failure" : "success"} https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/456
-    ;;
-  'run download 123 --repo NVIDIA/NemoClaw --name release-qualification-waiver-123-1 --dir '*)
-    ${waiverDownload}
-    ;;
-  *) exit 2 ;;
-esac
-`,
-  );
-  fs.chmodSync(path.join(binDir, "git"), 0o755);
-  fs.chmodSync(path.join(binDir, "gh"), 0o755);
-  return binDir;
-}
-
-type WaiverEvidence = {
-  schemaVersion: number;
-  kind: string;
-  candidateSha: string;
-  workflowRunId: number;
-  workflowRunAttempt: number;
-  actor: string;
-  triggeringActor: string;
-  reason: string;
-  jobs: Array<{ id: string; result: string }>;
-};
-
-function validWaiverEvidence(candidateSha: string): WaiverEvidence {
-  return {
-    schemaVersion: 1,
-    kind: "nemoclaw-release-qualification-waiver-v1",
-    candidateSha,
-    workflowRunId: 123,
-    workflowRunAttempt: 1,
-    actor: "release-admin",
-    triggeringActor: "release-admin",
-    reason: "Brev credential expired",
-    jobs: [{ id: "staging-brev-launchable", result: "failure" }],
-  };
-}
-
-const INVALID_WAIVER_EVIDENCE_CASES: Array<
-  [string, (evidence: WaiverEvidence) => Record<string, unknown>]
-> = [
-  ["schema version", (evidence) => ({ ...evidence, schemaVersion: 2 })],
-  ["kind", (evidence) => ({ ...evidence, kind: "untrusted-waiver" })],
-  ["candidate commit", (evidence) => ({ ...evidence, candidateSha: "0".repeat(40) })],
-  ["workflow run ID", (evidence) => ({ ...evidence, workflowRunId: 124 })],
-  ["workflow run attempt", (evidence) => ({ ...evidence, workflowRunAttempt: 2 })],
-  ["dispatch actor", (evidence) => ({ ...evidence, actor: "-invalid" })],
-  ["triggering actor", (evidence) => ({ ...evidence, triggeringActor: "invalid-" })],
-  ["reason", (evidence) => ({ ...evidence, reason: "short" })],
-  ["jobs type", (evidence) => ({ ...evidence, jobs: "not-an-array" })],
-  ["empty jobs", (evidence) => ({ ...evidence, jobs: [] })],
-  [
-    "duplicate job IDs",
-    (evidence) => ({
-      ...evidence,
-      jobs: [evidence.jobs[0], { ...evidence.jobs[0], result: "success" }],
-    }),
-  ],
-  [
-    "job ID",
-    (evidence) => ({ ...evidence, jobs: [{ id: "Invalid Job", result: "failure" }] }),
-  ],
-  [
-    "job result",
-    (evidence) => ({
-      ...evidence,
-      jobs: [{ id: "staging-brev-launchable", result: "cancelled" }],
-    }),
-  ],
-  [
-    "failed-job presence",
-    (evidence) => ({
-      ...evidence,
-      jobs: [{ id: "staging-brev-launchable", result: "success" }],
-    }),
-  ],
-];
 
 function createPlan(
   fixture: Fixture,
   planPath: string,
   releaseCommit: string,
-): { plan: any; result: ReturnType<typeof spawnSync> } {
+  version = "v0.0.2",
+): { plan: Record<string, string>; result: ReturnType<typeof spawnSync> } {
   const result = runScript(
     fixture.work,
-    [tsxPath, planScriptPath, "--bump", "patch", "--output", planPath],
+    [
+      "node",
+      "--experimental-strip-types",
+      "--no-warnings",
+      planScriptPath,
+      "--version",
+      version,
+      "--output",
+      planPath,
+    ],
     { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
   );
 
   expect(result.status).toBe(0);
-  const plan = readJson(planPath);
-  expect(plan.previousTag).toBe("v0.0.1");
-  expect(plan.nextTag).toBe("v0.0.2");
-  expect(plan.originMainCommit).toBe(releaseCommit);
-  expect(plan.operations).toContain(`create signed annotated v0.0.2 tag at ${releaseCommit}`);
-  const carryForward = "have release-latest-tag workflow carry open v0.0.2 items forward to v0.0.3";
-  const deleteReleased =
-    "have release-latest-tag workflow delete released v0.0.2 label after carry-forward succeeds";
-  const carryForwardIndex = plan.operations.indexOf(carryForward);
-  const deleteReleasedIndex = plan.operations.indexOf(deleteReleased);
-  expect(carryForwardIndex).toBeGreaterThanOrEqual(0);
-  expect(deleteReleasedIndex).toBeGreaterThan(carryForwardIndex);
-  expect(plan.confirmationPhrase).toBe(`CONFIRM RELEASE v0.0.2 ${releaseCommit}`);
+  const plan = readJson(planPath) as Record<string, string>;
+  expect(plan).toMatchObject({
+    previousTag: "v0.0.1",
+    previousTagObject: remoteObject(fixture, "refs/tags/v0.0.1"),
+    previousTagCommit: remoteCommit(fixture, "refs/tags/v0.0.1"),
+    nextTag: version,
+    originMainCommit: releaseCommit,
+  });
+  expect(plan.originMainHeadline).toMatch(/^[0-9a-f]+ planned release commit$/u);
+  expect(Object.keys(plan).sort()).toEqual([
+    "nextTag",
+    "originMainCommit",
+    "originMainHeadline",
+    "previousTag",
+    "previousTagCommit",
+    "previousTagObject",
+  ]);
   return { plan, result };
+}
+
+function confirmationFor(plan: Record<string, string>): string {
+  return `CONFIRM RELEASE ${plan.nextTag} ${plan.originMainCommit}`;
+}
+
+function completeBrief(plan: Record<string, string>): string {
+  return [
+    `# NemoClaw ${plan.nextTag} release brief`,
+    "",
+    `- Candidate: \`${plan.originMainCommit}\``,
+    "",
+    "## Canonical release entry",
+    "",
+    `## ${plan.nextTag}`,
+    "",
+    "- Release detail.",
+    "",
+    "## Pi documentation evidence",
+    "",
+    `- Pi candidate: \`${plan.originMainCommit}\``,
+    "- Evidence: approved empty patch.",
+    "",
+    "## Base and managed image evidence",
+    "",
+    `- Base-image candidate: \`${plan.originMainCommit}\``,
+    "- Evidence: successful publication aggregate.",
+    "",
+    "## Exact staging Brev Launchable evidence",
+    "",
+    `- Launchable candidate: \`${plan.originMainCommit}\``,
+    "- Evidence: successful exact Launchable E2E and cleanup receipts.",
+    "",
+    "## General E2E decision",
+    "",
+    "- Decision: proceed.",
+    "",
+    "Exceptions: None",
+    "",
+  ].join("\n");
+}
+
+function writeBrief(fixture: Fixture, content?: string): string {
+  const messageFile = path.join(fixture.root, "release-brief.md");
+  const candidate = run(fixture.work, ["git", "rev-parse", "HEAD"]).trim();
+  fs.writeFileSync(
+    messageFile,
+    content ?? completeBrief({ nextTag: "v0.0.2", originMainCommit: candidate }),
+    "utf8",
+  );
+  return messageFile;
 }
 
 function cutFromPlan(
   fixture: Fixture,
   planPath: string,
-  confirmationPhrase: string,
+  confirmation: string,
+  messageFile?: string,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): ReturnType<typeof spawnSync> {
+  const selectedMessageFile =
+    messageFile ?? writeBrief(fixture, completeBrief(readJson(planPath) as Record<string, string>));
   return runScript(
     fixture.work,
-    ["bash", cutScriptPath, "--plan", planPath, "--confirm", confirmationPhrase],
-    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    [
+      "bash",
+      cutScriptPath,
+      "--plan",
+      planPath,
+      "--message-file",
+      selectedMessageFile,
+      "--confirm",
+      confirmation,
+    ],
+    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1", ...extraEnv },
   );
-}
-
-function preflightFromPlan(fixture: Fixture, planPath: string): ReturnType<typeof spawnSync> {
-  return runScript(fixture.work, ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"], {
-    NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
-  });
-}
-
-function waitForLatest(fixture: Fixture, planPath: string): ReturnType<typeof spawnSync> {
-  return runScript(fixture.work, [
-    "bash",
-    waitLatestScriptPath,
-    "--plan",
-    planPath,
-    "--timeout-secs",
-    "1",
-    "--interval-secs",
-    "1",
-  ]);
 }
 
 afterEach(() => {
@@ -409,29 +329,273 @@ afterEach(() => {
 });
 
 describe("release-latest-tag.sh", () => {
-  it.each([
-    "git@github.com:NVIDIA/NemoClaw",
-    "git@github.com:NVIDIA/NemoClaw.git",
-    "https://github.com/NVIDIA/NemoClaw",
-    "https://contributor@github.com/NVIDIA/NemoClaw.git",
-    "ssh://git@github.com/NVIDIA/NemoClaw.git",
-  ])("recognizes canonical NemoClaw origin form %s", (remote) => {
-    expect(isCanonicalNemoClawRemote(remote)).toBe(true);
-  });
+  it.each(["https://github.com/NVIDIA/NemoClaw", "https://github.com/NVIDIA/NemoClaw.git"])(
+    "recognizes canonical NemoClaw origin form %s",
+    (remote) => {
+      expect(isCanonicalNemoClawRemote(remote)).toBe(true);
+    },
+  );
 
   it.each([
     "/tmp/NVIDIA/NemoClaw",
+    "git@github.com:NVIDIA/NemoClaw.git",
+    "ssh://git@github.com/NVIDIA/NemoClaw.git",
+    "https://contributor@github.com/NVIDIA/NemoClaw.git",
     "https://example.com/NVIDIA/NemoClaw.git",
     "https://github.com/NVIDIA/another-repo.git",
   ])("rejects noncanonical NemoClaw origin form %s", (remote) => {
     expect(isCanonicalNemoClawRemote(remote)).toBe(false);
   });
 
-  it("advertises that release cuts create signed annotated tags", () => {
+  it("limits the test override to local filesystem remotes", () => {
+    expect(isLocalReleaseFixtureRemote("/tmp/nemoclaw-release/remote.git")).toBe(true);
+    expect(isLocalReleaseFixtureRemote("file:///tmp/nemoclaw-release/remote.git")).toBe(true);
+    expect(isLocalReleaseFixtureRemote("file://release-host/tmp/nemoclaw-release/remote.git")).toBe(
+      false,
+    );
+    expect(isLocalReleaseFixtureRemote("https://github.com/NVIDIA/another-repo.git")).toBe(false);
+  });
+
+  it("requires an exact version when it creates a release plan", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const planPath = path.join(fixture.root, "release", "plan.json");
+
+    const missing = runScript(
+      fixture.work,
+      ["node", "--experimental-strip-types", "--no-warnings", planScriptPath, "--output", planPath],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+    const derived = runScript(
+      fixture.work,
+      [
+        "node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        planScriptPath,
+        "--bump",
+        "patch",
+        "--output",
+        planPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+    const leadingZero = runScript(
+      fixture.work,
+      [
+        "node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        planScriptPath,
+        "--version",
+        "v0.01.0",
+        "--output",
+        planPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+    const missingOutput = runScript(
+      fixture.work,
+      [
+        "node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        planScriptPath,
+        "--version",
+        "v0.0.2",
+        "--output",
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain("--version must be an exact vX.Y.Z tag");
+    expect(derived.status).not.toBe(0);
+    expect(derived.stderr).toContain("Unknown argument: --bump");
+    expect(leadingZero.status).not.toBe(0);
+    expect(leadingZero.stderr).toContain("--version must be an exact vX.Y.Z tag");
+    expect(missingOutput.status).not.toBe(0);
+    expect(missingOutput.stderr).toContain("--output requires a path");
+  });
+
+  it("rejects a split origin before fetching or writing a release plan", () => {
+    const fixture = createFixture();
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    run(fixture.work, [
+      "git",
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/NVIDIA/NemoClaw.git",
+    ]);
+    run(fixture.work, ["git", "config", "remote.origin.pushurl", fixture.remote]);
+
+    const result = runScript(
+      fixture.work,
+      [
+        "node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        planScriptPath,
+        "--version",
+        "v0.0.2",
+        "--output",
+        planPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Unexpected origin fetch or push URL");
+    expect(fs.existsSync(planPath)).toBe(false);
+  });
+
+  it("does not let the fixture override authorize a network remote", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const networkRemote = "https://github.com/NVIDIA/another-repo.git";
+    run(fixture.work, ["git", "remote", "set-url", "origin", networkRemote]);
+    const rejectedPlanPath = path.join(fixture.root, "release", "network-plan.json");
+
+    const planResult = runScript(
+      fixture.work,
+      [
+        "node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        planScriptPath,
+        "--version",
+        "v0.0.2",
+        "--output",
+        rejectedPlanPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+    const cutResult = cutFromPlan(fixture, planPath, confirmationFor(plan));
+
+    expect(planResult.status).not.toBe(0);
+    expect(planResult.stderr).toContain(`Unexpected origin remote: ${networkRemote}`);
+    expect(fs.existsSync(rejectedPlanPath)).toBe(false);
+    expect(cutResult.status).not.toBe(0);
+    expect(cutResult.stderr).toContain(`Unexpected origin remote: ${networkRemote}`);
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("advertises the signed release brief requirement", () => {
     const result = runScript(repoRoot, ["bash", cutScriptPath, "--help"]);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("signed annotated semver tag");
+    expect(result.stdout).toContain("--message-file release-brief.md");
+  });
+
+  it("does not overwrite an existing release plan", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+    const original = fs.readFileSync(planPath, "utf8");
+
+    const result = runScript(
+      fixture.work,
+      [
+        "node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        planScriptPath,
+        "--version",
+        "v0.0.2",
+        "--output",
+        planPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Release plan already exists");
+    expect(result.stderr).toContain("it was not overwritten");
+    expect(fs.readFileSync(planPath, "utf8")).toBe(original);
+  });
+
+  it("does not pair a replanned candidate with the earlier release brief", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const firstCandidate = commit(fixture, "planned release commit");
+    const firstPlanPath = path.join(fixture.root, "release-1", "plan.json");
+    const { plan: firstPlan } = createPlan(fixture, firstPlanPath, firstCandidate);
+    const firstBrief = writeBrief(fixture, completeBrief(firstPlan));
+    const secondCandidate = commit(fixture, "planned release commit");
+    const secondPlanPath = path.join(fixture.root, "release-2", "plan.json");
+    const { plan: secondPlan } = createPlan(fixture, secondPlanPath, secondCandidate);
+
+    const result = cutFromPlan(fixture, secondPlanPath, confirmationFor(secondPlan), firstBrief);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("candidate does not match planned commit");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it.each([
+    ["Pi", "Pi candidate", "plan-bound Pi candidate"],
+    ["base image", "Base-image candidate", "plan-bound base-image candidate"],
+    ["Launchable", "Launchable candidate", "plan-bound Launchable candidate"],
+  ])("does not accept %s evidence copied from an earlier candidate", (_kind, field, error) => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const earlierCandidate = commit(fixture, "earlier release candidate");
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const staleBrief = completeBrief(plan).replace(
+      `- ${field}: \`${releaseCommit}\``,
+      `- ${field}: \`${earlierCandidate}\``,
+    );
+
+    const result = cutFromPlan(
+      fixture,
+      planPath,
+      confirmationFor(plan),
+      writeBrief(fixture, staleBrief),
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(error);
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("orders canonical semver components without numeric precision loss", () => {
+    const fixture = createFixture();
+    const previousTag = "v9007199254740992.0.0";
+    const nextTag = "v9007199254740993.0.0";
+    pushTag(fixture, previousTag, fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const result = runScript(
+      fixture.work,
+      [
+        "node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        planScriptPath,
+        "--version",
+        nextTag,
+        "--output",
+        planPath,
+      ],
+      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+    );
+    const plan = readJson(planPath) as Record<string, string>;
+
+    expect(result.status).toBe(0);
+    expect(plan.previousTag).toBe(previousTag);
+    expect(plan.nextTag).toBe(nextTag);
+    const cut = cutFromPlan(fixture, planPath, confirmationFor(plan));
+    expect(cut.status).toBe(0);
+    expect(remoteCommit(fixture, `refs/tags/${nextTag}`)).toBe(releaseCommit);
   });
 
   it("promotes latest to the newest annotated semver tag without touching lkg", () => {
@@ -610,71 +774,109 @@ describe("release-latest-tag.sh", () => {
     expect(result.stderr).toContain("is not reachable from refs/remotes/origin/main");
   });
 
-  it("plans, cuts, promotes, and verifies a release from immutable plan data", () => {
+  it("signs the release brief verbatim and pushes only the tag without hooks or gh", () => {
     const fixture = createFixture();
-    pushTag(fixture, "lkg", fixture.firstCommit);
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const brief = completeBrief(plan)
+      .replace("- Decision: proceed.", "- Decision: proceed with recorded exception.")
+      .replace(
+        "Exceptions: None",
+        "Exceptions: The accepted full run tested the preceding commit.",
+      );
+    const messageFile = writeBrief(fixture, brief);
+    const hookPath = path.join(fixture.work, ".git", "hooks", "pre-push");
+    fs.writeFileSync(hookPath, "#!/usr/bin/env bash\nexit 97\n", "utf8");
+    fs.chmodSync(hookPath, 0o755);
+    const mockBin = path.join(fixture.root, "mock-bin");
+    const ghMarker = path.join(fixture.root, "gh-called");
+    fs.mkdirSync(mockBin);
+    fs.writeFileSync(
+      path.join(mockBin, "gh"),
+      `#!/usr/bin/env bash\ntouch ${shellQuote(ghMarker)}\nexit 88\n`,
+      "utf8",
+    );
+    fs.chmodSync(path.join(mockBin, "gh"), 0o755);
 
-    const preflightResult = preflightFromPlan(fixture, planPath);
-
-    expect(preflightResult.status).toBe(0);
-    expect(preflightResult.stdout).toContain("signing preflight passed for v0.0.2");
-    expect(localTagObject(fixture, "v0.0.2")).toBe("");
-    expect(
-      run(fixture.work, ["git", "tag", "--list", "nemoclaw-release-signing-preflight-*"]),
-    ).toBe("");
-    expect(
-      run(fixture.work, [
-        "git",
-        "ls-remote",
-        "--tags",
-        "origin",
-        "v0.0.2",
-        "nemoclaw-release-signing-preflight-*",
-      ]),
-    ).toBe("");
-
-    const cutResult = cutFromPlan(fixture, planPath, plan.confirmationPhrase);
+    const cutResult = cutFromPlan(fixture, planPath, confirmationFor(plan), messageFile, {
+      PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+    });
 
     expect(cutResult.status).toBe(0);
+    expect(fs.existsSync(ghMarker)).toBe(false);
     expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(releaseCommit);
-    const releaseTagObject = remoteObject(fixture, "refs/tags/v0.0.2");
-    expect(
-      run(fixture.root, ["git", "--git-dir", fixture.remote, "cat-file", "-p", releaseTagObject]),
-    ).toContain("-----BEGIN SSH SIGNATURE-----");
-    expect(readJson(path.join(fixture.root, "release", "cut-result.json"))).toMatchObject({
-      tag: "v0.0.2",
-      targetCommit: releaseCommit,
-      latestTouched: false,
-      lkgTouched: false,
-    });
-
-    const latestResult = runReleaseLatest(fixture, "v0.0.2");
-    expect(latestResult.status).toBe(0);
-
-    const waitResult = waitForLatest(fixture, planPath);
-
-    expect(waitResult.status).toBe(0);
-    expect(readJson(path.join(fixture.root, "release", "latest-result.json"))).toMatchObject({
-      tag: "v0.0.2",
-      targetCommit: releaseCommit,
-      semverTagObject: releaseTagObject,
-      latestTagObject: releaseTagObject,
-      latestPeeledCommit: releaseCommit,
-      lkgPeeledCommitBefore: fixture.firstCommit,
-      lkgPeeledCommitAfter: fixture.firstCommit,
-    });
+    const tagObject = remoteObject(fixture, "refs/tags/v0.0.2");
+    expect(cutResult.stdout).toContain(`pushed signed v0.0.2 object ${tagObject}`);
+    const rawTag = run(fixture.root, [
+      "git",
+      "--git-dir",
+      fixture.remote,
+      "cat-file",
+      "-p",
+      tagObject,
+    ]);
+    expect(rawTag).toContain("-----BEGIN SSH SIGNATURE-----");
+    const messageStart = rawTag.indexOf("\n\n") + 2;
+    const signatureStart = rawTag.indexOf("-----BEGIN SSH SIGNATURE-----", messageStart);
+    expect(rawTag.slice(messageStart, signatureStart)).toBe(brief);
   });
 
-  it("rejects signing preflight when the configured signer is unavailable", () => {
+  it("signs the validated brief snapshot when the source file changes before tagging", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
-    createPlan(fixture, planPath, releaseCommit);
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const brief = completeBrief(plan);
+    const messageFile = writeBrief(fixture, brief);
+    const mockBin = path.join(fixture.root, "mock-bin");
+    const mutationMarker = path.join(fixture.root, "brief-mutated");
+    const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    fs.mkdirSync(mockBin);
+    fs.writeFileSync(
+      path.join(mockBin, "git"),
+      [
+        "#!/usr/bin/env bash",
+        "set -u",
+        `if [[ "$1" == "fetch" && ! -e ${shellQuote(mutationMarker)} ]]; then`,
+        `  printf '%s\\n' 'changed after validation' > ${shellQuote(messageFile)}`,
+        `  touch ${shellQuote(mutationMarker)}`,
+        "fi",
+        `exec ${shellQuote(realGit)} "$@"`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.chmodSync(path.join(mockBin, "git"), 0o755);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), messageFile, {
+      PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(messageFile, "utf8")).toBe("changed after validation\n");
+    const tagObject = remoteObject(fixture, "refs/tags/v0.0.2");
+    const rawTag = run(fixture.root, [
+      "git",
+      "--git-dir",
+      fixture.remote,
+      "cat-file",
+      "-p",
+      tagObject,
+    ]);
+    const messageStart = rawTag.indexOf("\n\n") + 2;
+    const signatureStart = rawTag.indexOf("-----BEGIN SSH SIGNATURE-----", messageStart);
+    expect(rawTag.slice(messageStart, signatureStart)).toBe(brief);
+  });
+
+  it("fails before pushing when the configured signer is unavailable", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
     run(fixture.work, ["git", "config", "gpg.format", "openpgp"]);
     run(fixture.work, [
       "git",
@@ -684,394 +886,593 @@ describe("release-latest-tag.sh", () => {
     ]);
     run(fixture.work, ["git", "config", "user.signingkey", "missing-release-key"]);
 
-    const preflightResult = preflightFromPlan(fixture, planPath);
+    const cutResult = cutFromPlan(fixture, planPath, confirmationFor(plan));
 
-    expect(preflightResult.status).not.toBe(0);
-    expect(preflightResult.stderr).toContain("missing-release-signer");
+    expect(cutResult.status).not.toBe(0);
+    expect(cutResult.stderr).toContain("missing-release-signer");
     expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("accepts a matching remote tag when push transport reports failure", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const mockBin = path.join(fixture.root, "mock-bin");
+    const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    fs.mkdirSync(mockBin);
+    fs.writeFileSync(
+      path.join(mockBin, "git"),
+      [
+        "#!/usr/bin/env bash",
+        "set -u",
+        'if [[ "$1" == "push" ]]; then',
+        `  ${shellQuote(realGit)} "$@" || exit $?`,
+        "  exit 73",
+        "fi",
+        `exec ${shellQuote(realGit)} "$@"`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.chmodSync(path.join(mockBin, "git"), 0o755);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), writeBrief(fixture), {
+      PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("push reported failure, but remote v0.0.2 matches");
+    expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(releaseCommit);
+  });
+
+  it("removes the local tag after a failed push confirms remote absence", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const hookPath = path.join(fixture.remote, "hooks", "pre-receive");
+    fs.writeFileSync(
+      hookPath,
+      [
+        "#!/bin/sh",
+        "while read -r old new ref; do",
+        '  test "$ref" != "refs/tags/v0.0.2" || exit 1',
+        "done",
+        "exit 0",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.chmodSync(hookPath, 0o755);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("remote tag is absent; removed the local tag");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("keeps a concurrently replaced local tag after a failed push", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const hookPath = path.join(fixture.remote, "hooks", "pre-receive");
+    fs.writeFileSync(
+      hookPath,
+      [
+        "#!/bin/sh",
+        "while read -r old new ref; do",
+        '  test "$ref" != "refs/tags/v0.0.2" || exit 1',
+        "done",
+        "exit 0",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.chmodSync(hookPath, 0o755);
+    const mockBin = path.join(fixture.root, "mock-bin");
+    const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    fs.mkdirSync(mockBin);
+    fs.writeFileSync(
+      path.join(mockBin, "git"),
+      [
+        "#!/usr/bin/env bash",
+        "set -u",
+        'if [[ "$1" == "push" ]]; then',
+        `  ${shellQuote(realGit)} "$@"`,
+        "  status=$?",
+        `  ${shellQuote(realGit)} update-ref refs/tags/v0.0.2 ${shellQuote(fixture.firstCommit)}`,
+        "  exit $status",
+        "fi",
+        `exec ${shellQuote(realGit)} "$@"`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.chmodSync(path.join(mockBin, "git"), 0o755);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), writeBrief(fixture), {
+      PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("local tag could not be removed");
+    expect(result.stderr).toContain("do not rerun the cutter");
+    expect(localTagObject(fixture, "v0.0.2")).toBe(fixture.firstCommit);
+  });
+
+  it("keeps the local tag when remote read-back fails after publication", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const mockBin = path.join(fixture.root, "mock-bin");
+    const pushMarker = path.join(fixture.root, "push-finished");
+    const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    fs.mkdirSync(mockBin);
+    fs.writeFileSync(
+      path.join(mockBin, "git"),
+      [
+        "#!/usr/bin/env bash",
+        "set -u",
+        'if [[ "$1" == "push" ]]; then',
+        `  ${shellQuote(realGit)} "$@"`,
+        "  status=$?",
+        `  touch ${shellQuote(pushMarker)}`,
+        "  exit $status",
+        "fi",
+        `if [[ -f ${shellQuote(pushMarker)} && "$1" == "ls-remote" && "\${4:-}" == "refs/tags/v0.0.2" ]]; then`,
+        "  exit 66",
+        "fi",
+        `exec ${shellQuote(realGit)} "$@"`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.chmodSync(path.join(mockBin, "git"), 0o755);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), writeBrief(fixture), {
+      PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("kept the local tag");
+    expect(result.stderr).toContain("do not rerun the cutter");
+    expect(localTagObject(fixture, "v0.0.2")).not.toBe("");
+    expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(releaseCommit);
+  });
+
+  it("keeps the local tag when a failed push finds different remote data", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const mockBin = path.join(fixture.root, "mock-bin");
+    const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    fs.mkdirSync(mockBin);
+    fs.writeFileSync(
+      path.join(mockBin, "git"),
+      [
+        "#!/usr/bin/env bash",
+        "set -u",
+        'if [[ "$1" == "push" ]]; then',
+        `  object="$(${shellQuote(realGit)} --git-dir=${shellQuote(fixture.remote)} rev-parse refs/tags/v0.0.1)"`,
+        `  ${shellQuote(realGit)} --git-dir=${shellQuote(fixture.remote)} update-ref refs/tags/v0.0.2 "$object"`,
+        "  exit 73",
+        "fi",
+        `exec ${shellQuote(realGit)} "$@"`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.chmodSync(path.join(mockBin, "git"), 0o755);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), writeBrief(fixture), {
+      PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("different data; kept the local tag");
+    expect(result.stderr).toContain("do not rerun the cutter");
+    expect(localTagObject(fixture, "v0.0.2")).not.toBe("");
+    expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(fixture.firstCommit);
+  });
+
+  it("ignores unrelated local-only semver tags", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    run(fixture.work, ["git", "tag", "v9.9.9", releaseCommit]);
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+
+    expect(result.status).toBe(0);
+    expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(releaseCommit);
     expect(
-      run(fixture.work, ["git", "tag", "--list", "nemoclaw-release-signing-preflight-*"]),
-    ).toBe("");
+      runScript(fixture.root, [
+        "git",
+        "--git-dir",
+        fixture.remote,
+        "show-ref",
+        "--verify",
+        "--quiet",
+        "refs/tags/v9.9.9",
+      ]).status,
+    ).not.toBe(0);
   });
 
-  it("requires exact-commit Release qualification before signing preflight", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    createPlan(fixture, planPath, releaseCommit);
-    const originRemote = "git@github.com:NVIDIA/NemoClaw";
-    rewritePlanOrigin(planPath, originRemote);
-    const binDir = installReleaseGateStubs(fixture, "success", originRemote);
-
-    const result = runScript(
-      fixture.work,
-      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain(`verified Release qualification for ${releaseCommit}`);
-    expect(result.stdout).toContain(
-      "qualification evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/456",
-    );
-  });
-
-  it("accepts a failed workflow with successful qualification and trusted failed-job waiver evidence", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    createPlan(fixture, planPath, releaseCommit);
-    const originRemote = "git@github.com:NVIDIA/NemoClaw";
-    rewritePlanOrigin(planPath, originRemote);
-    const binDir = installReleaseGateStubs(fixture, "waived", originRemote);
-
-    const result = runScript(
-      fixture.work,
-      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain(`verified Release qualification for ${releaseCommit}`);
-    expect(result.stdout).toContain(
-      "workflow evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/123 (conclusion: failure)",
-    );
-  });
-
-  it.each(INVALID_WAIVER_EVIDENCE_CASES)(
-    "rejects a failed workflow whose waiver artifact has an invalid %s",
-    (_field, invalidEvidence) => {
+  it.each(["release-cut-tag.sh", path.join("release", "remote.mts")])(
+    "rejects canonical release writes when scripts/%s differs from origin/main",
+    (changedScript) => {
       const fixture = createFixture();
       pushTag(fixture, "v0.0.1", fixture.firstCommit);
+      const fixtureScriptDirectory = path.join(fixture.work, "scripts");
+      const fixtureRemoteDirectory = path.join(fixtureScriptDirectory, "release");
+      const fixtureCutScript = path.join(fixtureScriptDirectory, "release-cut-tag.sh");
+      fs.mkdirSync(fixtureRemoteDirectory, { recursive: true });
+      fs.copyFileSync(cutScriptPath, fixtureCutScript);
+      fs.copyFileSync(
+        path.join(repoRoot, "scripts", "release", "remote.mts"),
+        path.join(fixtureRemoteDirectory, "remote.mts"),
+      );
+      run(fixture.work, ["git", "add", "scripts"]);
       const releaseCommit = commit(fixture, "planned release commit");
       const planPath = path.join(fixture.root, "release", "plan.json");
-      createPlan(fixture, planPath, releaseCommit);
-      const originRemote = "git@github.com:NVIDIA/NemoClaw";
-      rewritePlanOrigin(planPath, originRemote);
-      const evidence = invalidEvidence(validWaiverEvidence(releaseCommit));
-      const binDir = installReleaseGateStubs(
-        fixture,
-        "waived",
-        originRemote,
-        JSON.stringify(evidence),
+      const { plan } = createPlan(fixture, planPath, releaseCommit);
+      const driftComment = changedScript.endsWith(".mts") ? "// local drift" : "# local drift";
+      fs.appendFileSync(path.join(fixtureScriptDirectory, changedScript), `\n${driftComment}\n`);
+      const mockBin = path.join(fixture.root, "mock-bin");
+      const realGit = execFileSync("sh", ["-c", "command -v git"], {
+        encoding: "utf8",
+      }).trim();
+      fs.mkdirSync(mockBin);
+      fs.writeFileSync(
+        path.join(mockBin, "git"),
+        [
+          "#!/usr/bin/env bash",
+          "set -u",
+          'if [[ "$1" == "remote" && "$2" == "get-url" ]]; then',
+          "  printf '%s\\n' 'https://github.com/NVIDIA/NemoClaw.git'",
+          "  exit 0",
+          "fi",
+          `exec ${shellQuote(realGit)} "$@"`,
+          "",
+        ].join("\n"),
+        "utf8",
       );
+      fs.chmodSync(path.join(mockBin, "git"), 0o755);
 
       const result = runScript(
         fixture.work,
-        ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
-        { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        [
+          "bash",
+          fixtureCutScript,
+          "--plan",
+          planPath,
+          "--message-file",
+          writeBrief(fixture, completeBrief(plan)),
+          "--confirm",
+          confirmationFor(plan),
+        ],
+        { PATH: `${mockBin}:${process.env.PATH ?? ""}` },
       );
 
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain(
-        `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
-      );
-    },
-  );
-
-  it("rejects a failed workflow run when Release qualification also fails", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    createPlan(fixture, planPath, releaseCommit);
-    const originRemote = "git@github.com:NVIDIA/NemoClaw";
-    rewritePlanOrigin(planPath, originRemote);
-    const binDir = installReleaseGateStubs(fixture, "waived-invalid", originRemote);
-
-    const result = runScript(
-      fixture.work,
-      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-    );
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
-    );
-  });
-
-  it("rejects a failed unwaived workflow when Release qualification succeeds", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    createPlan(fixture, planPath, releaseCommit);
-    const originRemote = "git@github.com:NVIDIA/NemoClaw";
-    rewritePlanOrigin(planPath, originRemote);
-    const binDir = installReleaseGateStubs(fixture, "failed-unwaived", originRemote);
-
-    const result = runScript(
-      fixture.work,
-      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-    );
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
-    );
-  });
-
-  it.each(["git@github.com:NVIDIA/NemoClaw", "https://contributor@github.com/NVIDIA/NemoClaw.git"])(
-    "rejects signing preflight without exact-commit qualification for %s",
-    (originRemote) => {
-      const fixture = createFixture();
-      pushTag(fixture, "v0.0.1", fixture.firstCommit);
-      const releaseCommit = commit(fixture, "planned release commit");
-      const planPath = path.join(fixture.root, "release", "plan.json");
-      createPlan(fixture, planPath, releaseCommit);
-      rewritePlanOrigin(planPath, originRemote);
-      const binDir = installReleaseGateStubs(fixture, "missing", originRemote);
-
-      const result = runScript(
-        fixture.work,
-        ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
-        { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-      );
-
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain(
-        `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
-      );
+      expect(result.stderr).toContain("Release cutter files differ from refreshed origin/main");
       expect(localTagObject(fixture, "v0.0.2")).toBe("");
     },
   );
 
-  it("does not let the noncanonical test override bypass a canonical remote", () => {
+  it("rejects a noncanonical release remote without the fixture override", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
-    createPlan(fixture, planPath, releaseCommit);
-    const originRemote = "https://contributor@github.com/NVIDIA/NemoClaw.git";
-    rewritePlanOrigin(planPath, originRemote);
-    const binDir = installReleaseGateStubs(fixture, "missing", originRemote);
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
 
-    const result = runScript(
-      fixture.work,
-      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
-      {
-        NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1",
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-      },
+    const result = runScript(fixture.work, [
+      "bash",
+      cutScriptPath,
+      "--plan",
+      planPath,
+      "--message-file",
+      writeBrief(fixture),
+      "--confirm",
+      confirmationFor(plan),
+    ]);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`Unexpected origin remote: ${fixture.remote}`);
+  });
+
+  it("rejects a noncanonical push URL even when the fetch URL is canonical", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    run(fixture.work, [
+      "git",
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/NVIDIA/NemoClaw.git",
+    ]);
+    run(fixture.work, ["git", "config", "remote.origin.pushurl", fixture.remote]);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Unexpected origin fetch or push URL");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("rejects partial remote tag output when ls-remote exits nonzero", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const mockBin = path.join(fixture.root, "mock-bin");
+    const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    const previousTagObject = remoteObject(fixture, "refs/tags/v0.0.1");
+    fs.mkdirSync(mockBin);
+    fs.writeFileSync(
+      path.join(mockBin, "git"),
+      [
+        "#!/usr/bin/env bash",
+        "set -u",
+        'if [[ "$1" == "ls-remote" && "$2" == "--tags" && "${4:-}" == "refs/tags/v*" ]]; then',
+        `  printf '%s\\trefs/tags/v0.0.1\\n' ${shellQuote(previousTagObject)}`,
+        `  printf '%s\\trefs/tags/v0.0.1^{}\\n' ${shellQuote(fixture.firstCommit)}`,
+        "  exit 74",
+        "fi",
+        `exec ${shellQuote(realGit)} "$@"`,
+        "",
+      ].join("\n"),
+      "utf8",
     );
+    fs.chmodSync(path.join(mockBin, "git"), 0o755);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), writeBrief(fixture), {
+      PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Could not read remote semver tags");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("derives confirmation from the plan tag and commit", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+
+    const result = cutFromPlan(fixture, planPath, `CONFIRM RELEASE v0.0.3 ${releaseCommit}`);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Confirmation phrase does not match release tag and commit");
+    expect(localTagObject(fixture, plan.nextTag)).toBe("");
+  });
+
+  it("requires a nonempty release brief", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const emptyBrief = writeBrief(fixture, "");
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), emptyBrief);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Message file is empty");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it.each([
+    [
+      "unfinished prompts",
+      (brief: string) => brief.replace("Exceptions: None", "Exceptions: TODO_RELEASE_BRIEF"),
+      "still contains unresolved prompts",
+    ],
+    [
+      "another version",
+      (brief: string) =>
+        brief.replace(/^# NemoClaw.*$/mu, "# NemoClaw v0.0.3 release brief"),
+      "heading does not match planned tag",
+    ],
+    [
+      "another candidate",
+      (brief: string) =>
+        brief.replace(/^- Candidate:.*$/mu, `- Candidate: \`${"f".repeat(40)}\``),
+      "candidate does not match",
+    ],
+    [
+      "no exception record",
+      (brief: string) => brief.replace("Exceptions: None", "Exceptions removed"),
+      "exactly one resolved Exceptions line",
+    ],
+    [
+      "an empty exception record",
+      (brief: string) => brief.replace("Exceptions: None", "Exceptions: "),
+      "exactly one resolved Exceptions line",
+    ],
+    [
+      "duplicate exception records",
+      (brief: string) =>
+        brief.replace("Exceptions: None", "Exceptions: None\nExceptions: Duplicate"),
+      "exactly one resolved Exceptions line",
+    ],
+    [
+      "content after the exception record",
+      (brief: string) =>
+        brief.replace("Exceptions: None", "Exceptions: None\n\nTrailing content"),
+      "exactly one resolved Exceptions line",
+    ],
+  ])("rejects a release brief with %s", (_case, mutate, expectedError) => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const invalid = mutate(completeBrief(plan));
+    const messageFile = writeBrief(fixture, invalid);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan), messageFile);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(expectedError);
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("keeps a candidate valid when main advances and the worktree has unrelated changes", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    fs.writeFileSync(path.join(fixture.work, "uncommitted.txt"), "unrelated local work\n");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const laterCommit = commit(fixture, "later main commit");
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+
+    expect(result.status).toBe(0);
+    expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(releaseCommit);
+    expect(remoteCommit(fixture, "refs/heads/main")).toBe(laterCommit);
+  });
+
+  it("rejects a candidate that is no longer reachable from origin/main", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    run(fixture.root, [
+      "git",
+      "--git-dir",
+      fixture.remote,
+      "update-ref",
+      "refs/heads/main",
+      fixture.firstCommit,
+    ]);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Candidate commit is not reachable from origin/main");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("rejects a candidate that does not follow the previous release", () => {
+    const fixture = createFixture();
+    const tree = run(fixture.work, ["git", "rev-parse", "HEAD^{tree}"]).trim();
+    const orphanRelease = run(fixture.work, [
+      "git",
+      "commit-tree",
+      tree,
+      "-m",
+      "orphan previous release",
+    ]).trim();
+    pushTag(fixture, "v0.0.1", orphanRelease);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("does not follow previous release v0.0.1");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("rejects replacement of the previous tag object at the same peeled commit", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    run(fixture.work, ["git", "tag", "--delete", "v0.0.1"]);
+    run(fixture.work, [
+      "git",
+      "-c",
+      "tag.gpgSign=false",
+      "tag",
+      "-a",
+      "v0.0.1",
+      fixture.firstCommit,
+      "-m",
+      "replacement tag object",
+    ]);
+    run(fixture.work, ["git", "push", "--force", "origin", "refs/tags/v0.0.1"]);
+    const replacementObject = remoteObject(fixture, "refs/tags/v0.0.1");
+    expect(replacementObject).not.toBe(plan.previousTagObject);
+    expect(remoteCommit(fixture, "refs/tags/v0.0.1")).toBe(plan.previousTagCommit);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(
-      `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
+      `Remote v0.0.1 object changed from ${plan.previousTagObject} to ${replacementObject}`,
     );
-    expect(result.stdout).not.toContain("skipped GitHub qualification");
+    expect(result.stderr).toContain("protected-tag remediation");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
   });
 
-  it("rejects a distinct latest tag object even when it peels to the release commit", () => {
+  it("rejects a plan when an intervening semver tag appears", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit, "v0.0.4");
+    pushTag(fixture, "v0.0.2", releaseCommit);
+
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "A semver tag appeared after planning: highest tag changed from v0.0.1 to v0.0.2",
+    );
+    expect(localTagObject(fixture, "v0.0.4")).toBe("");
+  });
+
+  it("rejects a requested tag that appears remotely after planning", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
-    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(0);
-    pushTag(fixture, "latest", releaseCommit);
+    pushTag(fixture, "v0.0.2", releaseCommit);
 
-    const waitResult = waitForLatest(fixture, planPath);
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
 
-    expect(waitResult.status).not.toBe(0);
-    expect(waitResult.stderr).toContain("latest tag object");
-    expect(waitResult.stderr).toContain("does not match v0.0.2 object");
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Remote tag already exists: v0.0.2");
   });
 
-  it("rejects a tampered release plan before cutting the tag", () => {
+  it("rejects an existing local requested tag before signing", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
-    const tampered = { ...plan, forbiddenOperations: [] };
-    fs.writeFileSync(planPath, `${JSON.stringify(tampered, null, 2)}\n`, "utf8");
+    run(fixture.work, ["git", "tag", "v0.0.2", releaseCommit]);
 
-    const cutResult = cutFromPlan(fixture, planPath, plan.confirmationPhrase);
+    const result = cutFromPlan(fixture, planPath, confirmationFor(plan));
 
-    expect(cutResult.status).not.toBe(0);
-    expect(cutResult.stderr).toContain("planHash mismatch");
-  });
-
-  it("verifies unchanged lightweight lkg tags", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "lkg", fixture.firstCommit, false);
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    const { plan } = createPlan(fixture, planPath, releaseCommit);
-    expect(plan.lkgBefore).toMatchObject({
-      objectSha: fixture.firstCommit,
-      tag: "lkg",
-    });
-    expect(plan.lkgBefore.peeledSha).toBeUndefined();
-    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(0);
-    expect(runReleaseLatest(fixture, "v0.0.2").status).toBe(0);
-
-    const waitResult = waitForLatest(fixture, planPath);
-
-    expect(waitResult.status).toBe(0);
-    expect(readJson(path.join(fixture.root, "release", "latest-result.json"))).toMatchObject({
-      tag: "v0.0.2",
-      targetCommit: releaseCommit,
-      lkgPeeledCommitBefore: fixture.firstCommit,
-      lkgPeeledCommitAfter: fixture.firstCommit,
-    });
-  });
-
-  it("detects lkg creation after a plan captured lkg as absent", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    const { plan } = createPlan(fixture, planPath, releaseCommit);
-    expect(plan.lkgBefore).toBeNull();
-    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(0);
-    expect(runReleaseLatest(fixture, "v0.0.2").status).toBe(0);
-    pushTag(fixture, "lkg", fixture.firstCommit);
-
-    const waitResult = waitForLatest(fixture, planPath);
-
-    expect(waitResult.status).not.toBe(0);
-    expect(waitResult.stderr).toContain("lkg was created after the release plan was generated");
-  });
-
-  it("extracts only squash-merge PR numbers from release notes compare commits", () => {
-    const fixture = createFixture();
-    const binDir = path.join(fixture.root, "bin");
-    fs.mkdirSync(binDir);
-    const ghPath = path.join(binDir, "gh");
-    fs.writeFileSync(
-      ghPath,
-      `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1" = "api" ]; then
-  printf '%s\n' '{"commits":[{"commit":{"message":"fix: use issue ref (#123) (#456)"}},{"commit":{"message":"docs: closes #789 (#987)"}},{"commit":{"message":"Merge pull request #654 from branch"}}]}'
-  exit 0
-fi
-if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-  printf '{"number":%s,"title":"pr %s"}\n' "$3" "$3"
-  exit 0
-fi
-exit 2
-`,
-      "utf8",
-    );
-    fs.chmodSync(ghPath, 0o755);
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    fs.mkdirSync(path.dirname(planPath), { recursive: true });
-    fs.writeFileSync(
-      planPath,
-      `${JSON.stringify(
-        {
-          schemaVersion: 1,
-          mode: "tag-only",
-          previousTag: "v0.0.1",
-          nextTag: "v0.0.2",
-          originMainCommit: "0123456789abcdef0123456789abcdef01234567",
-          planHash: "a".repeat(64),
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-    const outputPath = path.join(fixture.root, "release", "notes-data.json");
-
-    const result = runScript(
-      fixture.work,
-      [
-        tsxPath,
-        path.join(repoRoot, "scripts", "release-notes-data.mts"),
-        "--plan",
-        planPath,
-        "--output",
-        outputPath,
-      ],
-      {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-      },
-    );
-
-    expect(result.status).toBe(0);
-    const data = readJson(outputPath);
-    expect(data).toMatchObject({ status: "ok", prNumbers: [456, 654, 987] });
-    expect(data.pullRequests).toEqual([
-      { number: 456, title: "pr 456" },
-      { number: 654, title: "pr 654" },
-      { number: 987, title: "pr 987" },
-    ]);
-  });
-
-  it("marks release notes data as partial when a PR metadata lookup fails", () => {
-    const fixture = createFixture();
-    const binDir = path.join(fixture.root, "bin");
-    fs.mkdirSync(binDir);
-    const ghPath = path.join(binDir, "gh");
-    fs.writeFileSync(
-      ghPath,
-      `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1" = "api" ]; then
-  printf '%s\n' '{"commits":[{"commit":{"message":"feat: one (#1)"}},{"commit":{"message":"fix: two (#2)"}}]}'
-  exit 0
-fi
-if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "1" ]; then
-  printf '%s\n' '{"number":1,"title":"one"}'
-  exit 0
-fi
-if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "2" ]; then
-  echo 'missing PR' >&2
-  exit 1
-fi
-exit 2
-`,
-      "utf8",
-    );
-    fs.chmodSync(ghPath, 0o755);
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    fs.mkdirSync(path.dirname(planPath), { recursive: true });
-    fs.writeFileSync(
-      planPath,
-      `${JSON.stringify(
-        {
-          schemaVersion: 1,
-          mode: "tag-only",
-          previousTag: "v0.0.1",
-          nextTag: "v0.0.2",
-          originMainCommit: "0123456789abcdef0123456789abcdef01234567",
-          planHash: "a".repeat(64),
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-    const outputPath = path.join(fixture.root, "release", "notes-data.json");
-
-    const result = runScript(
-      fixture.work,
-      [
-        tsxPath,
-        path.join(repoRoot, "scripts", "release-notes-data.mts"),
-        "--plan",
-        planPath,
-        "--output",
-        outputPath,
-      ],
-      {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-      },
-    );
-
-    expect(result.status).toBe(0);
-    const data = readJson(outputPath);
-    expect(data).toMatchObject({ status: "partial", prNumbers: [1, 2] });
-    expect(data.pullRequests).toEqual([{ number: 1, title: "one" }]);
-    expect(data.pullRequestWarnings[0]).toMatchObject({ number: 2 });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Local tag v0.0.2 already exists");
+    expect(result.stderr).toContain("do not rerun the cutter");
   });
 });

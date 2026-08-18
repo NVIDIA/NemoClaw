@@ -48,8 +48,4 @@ describe("live registry-targets skip-name contract", () => {
     expect(liveTargetTestName(supported)).toBe(supported.id);
   });
 
-  // Note: the workflow's `-t "^${TARGET_ID}$"` filter pattern itself is
-  // locked by `tools/e2e/workflow-boundary.mts` and exercised by
-  // `e2e-workflow.test.ts`. This file only needs to guarantee
-  // that the test names registered under that filter equal `target.id`.
 });

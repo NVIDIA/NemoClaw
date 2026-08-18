@@ -35,15 +35,13 @@
       "fast": [
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
-        "src/lib/onboard/setup-nim-flow.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts"
+        "src/lib/onboard/setup-nim-flow.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
         "test/managed-image-publication-workflow.test.ts",
         "test/pr-risk-plan.test.ts",
@@ -257,7 +255,6 @@
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
       "fast": [
-        "test/e2e/support/e2e-workflow.test.ts",
         "test/e2e/support/snapshot-commands-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
