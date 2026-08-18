@@ -58,6 +58,7 @@ const OPAQUE_INPUTS = [
   "scripts/export-managed-base-image-contract.sh",
   "scripts/checks/validate-managed-base-index.sh",
   "scripts/e2e/sanitize-trace-timing.py",
+  "scripts/lib/normalize_mutable_config_perms.py",
   "test/e2e/manifests/openclaw-nvidia.yaml",
   ".github/workflows/e2e.yaml",
   ".github/workflows/e2e-standard-profile.yaml",
@@ -161,6 +162,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",
       "test/e2e/support/sanitize-trace-timing.test.ts",
+    ]);
+    expect(triggeredBy("scripts/lib/normalize_mutable_config_perms.py")).toEqual([
+      "src/lib/shields/mutable-config-repair.test.ts",
+      "test/nemoclaw-start-perms.test.ts",
+      "test/repro-2681-group-writable.test.ts",
     ]);
     expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yaml")).toEqual([
       "test/e2e/support/e2e-manifests.test.ts",

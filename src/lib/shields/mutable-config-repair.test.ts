@@ -23,6 +23,34 @@ function mockPrivilegedArgv() {
     .mockImplementation((_sandboxName, cmd) => ["privileged", ...cmd]);
 }
 
+function normalizerFailure(overrides: Record<string, unknown>): Error {
+  return Object.assign(
+    new Error("docker exec exposed /sandbox/.openclaw/private-value"),
+    {
+      signal: null,
+      status: 1,
+      stderr: Buffer.from("untrusted stderr /sandbox/.openclaw/private-value\n"),
+    },
+    overrides,
+  );
+}
+
+function captureFailure(run: () => void): unknown {
+  let thrown: unknown;
+  try {
+    run();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(Error);
+  return thrown;
+}
+
+function captureFailureMessage(run: () => void): string {
+  const thrown = captureFailure(run);
+  return thrown instanceof Error ? thrown.message : String(thrown);
+}
+
 describe("mutable OpenClaw config repair", () => {
   beforeEach(() => {
     delete require.cache[requireSource.resolve("./mutable-config-repair.js")];
@@ -123,9 +151,14 @@ describe("mutable OpenClaw config repair", () => {
     expect(dockerExecFileSync).toHaveBeenCalledTimes(2);
   });
 
-  it("propagates a trusted normalizer execution failure", () => {
+  it("reports a mutable configuration validation failure without Docker stderr (#9215)", () => {
     const privilegedArgv = mockPrivilegedArgv();
-    const failure = new Error("docker exec failed");
+    const failure = normalizerFailure({
+      stderr: Buffer.from(
+        "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:mutable-config-validation\n" +
+          "untrusted stderr /sandbox/.openclaw/private-value\n",
+      ),
+    });
     const dockerExecFileSync = vi
       .spyOn(dockerExec, "dockerExecFileSync")
       .mockReturnValueOnce("1000\n")
@@ -134,7 +167,14 @@ describe("mutable OpenClaw config repair", () => {
         throw failure;
       });
 
-    expect(() => normalizeMutableOpenClawConfig("alpha", "/sandbox/.openclaw")).toThrow(failure);
+    const message = captureFailureMessage(() =>
+      normalizeMutableOpenClawConfig("alpha", "/sandbox/.openclaw"),
+    );
+    expect(message).toBe(
+      "Mutable OpenClaw configuration repair failed: mutable configuration validation failed",
+    );
+    expect(message).not.toContain("private-value");
+    expect(message).not.toContain("docker exec");
     expect(privilegedArgv).toHaveBeenLastCalledWith(
       "alpha",
       [
@@ -150,5 +190,127 @@ describe("mutable OpenClaw config repair", () => {
       true,
     );
     expect(dockerExecFileSync).toHaveBeenCalledTimes(3);
+  });
+
+  it("preserves a pre-exec authority rejection (#9215)", () => {
+    const authorityFailure = new Error("provider fence owns privileged execution");
+    const privilegedArgv = mockPrivilegedArgv()
+      .mockImplementationOnce((_sandboxName, cmd) => ["privileged", ...cmd])
+      .mockImplementationOnce((_sandboxName, cmd) => ["privileged", ...cmd])
+      .mockImplementationOnce(() => {
+        throw authorityFailure;
+      });
+    const dockerExecFileSync = vi
+      .spyOn(dockerExec, "dockerExecFileSync")
+      .mockReturnValueOnce("1000\n")
+      .mockReturnValueOnce("1001\n");
+
+    const thrown = captureFailure(() =>
+      normalizeMutableOpenClawConfig("alpha", "/sandbox/.openclaw"),
+    );
+
+    expect(thrown).toBe(authorityFailure);
+    expect(privilegedArgv).toHaveBeenCalledTimes(3);
+    expect(dockerExecFileSync).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      name: "the first trusted fixed-file label",
+      failure: normalizerFailure({
+        stderr:
+          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:fixed-file-link:config-hash\n" +
+          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:mutable-config-validation\n" +
+          "untrusted stderr /sandbox/.openclaw/private-value\n",
+      }),
+      expected:
+        "Mutable OpenClaw configuration repair failed: configuration hash link-count validation failed",
+    },
+    {
+      name: "an unknown helper label",
+      failure: normalizerFailure({
+        stderr:
+          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:untrusted-value\n" +
+          "untrusted stderr /sandbox/.openclaw/private-value\n",
+      }),
+      expected:
+        "Mutable OpenClaw configuration repair failed: Docker repair command exited without a trusted helper diagnostic",
+    },
+    {
+      name: "status 1 without a helper label",
+      failure: normalizerFailure({}),
+      expected:
+        "Mutable OpenClaw configuration repair failed: Docker repair command exited without a trusted helper diagnostic",
+    },
+    {
+      name: "a malformed helper label",
+      failure: normalizerFailure({
+        stderr:
+          "untrusted-NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:tree-walk\n" +
+          "untrusted stderr /sandbox/.openclaw/private-value\n",
+      }),
+      expected:
+        "Mutable OpenClaw configuration repair failed: Docker repair command exited without a trusted helper diagnostic",
+    },
+    {
+      name: "an unknown label before a trusted label",
+      failure: normalizerFailure({
+        stderr:
+          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:untrusted-value\n" +
+          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:tree-walk\n" +
+          "untrusted stderr /sandbox/.openclaw/private-value\n",
+      }),
+      expected:
+        "Mutable OpenClaw configuration repair failed: Docker repair command exited without a trusted helper diagnostic",
+    },
+    {
+      name: "the in-sandbox watchdog",
+      failure: normalizerFailure({ status: 124 }),
+      expected:
+        "Mutable OpenClaw configuration repair failed: 15-second helper watchdog timed out",
+    },
+    {
+      name: "status 137",
+      failure: normalizerFailure({ status: 137 }),
+      expected:
+        "Mutable OpenClaw configuration repair failed: in-sandbox watchdog exited with status 137",
+    },
+    {
+      name: "the host command timeout",
+      failure: normalizerFailure({ code: "ETIMEDOUT", signal: "SIGTERM", status: null }),
+      expected: "Mutable OpenClaw configuration repair failed: host command timed out",
+    },
+    {
+      name: "a host Docker signal",
+      failure: normalizerFailure({ signal: "SIGKILL", status: null }),
+      expected:
+        "Mutable OpenClaw configuration repair failed: host Docker command was terminated by a signal",
+    },
+    {
+      name: "an unclassified Docker repair command exit",
+      failure: normalizerFailure({
+        status: 125,
+        stderr:
+          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:tree-walk\n" +
+          "untrusted stderr /sandbox/.openclaw/private-value\n",
+      }),
+      expected: "Mutable OpenClaw configuration repair failed: Docker repair command failed",
+    },
+  ])("reports $name without Docker stderr (#9215)", ({ failure, expected }) => {
+    mockPrivilegedArgv();
+    vi.spyOn(dockerExec, "dockerExecFileSync")
+      .mockReturnValueOnce("1000\n")
+      .mockReturnValueOnce("1001\n")
+      .mockImplementationOnce(() => {
+        throw failure;
+      });
+
+    const message = captureFailureMessage(() =>
+      normalizeMutableOpenClawConfig("alpha", "/sandbox/.openclaw"),
+    );
+
+    expect(message).toBe(expected);
+    expect(message).not.toContain("private-value");
+    expect(message).not.toContain("docker exec");
   });
 });

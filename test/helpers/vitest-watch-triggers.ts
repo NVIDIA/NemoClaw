@@ -141,6 +141,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)scripts\/lib\/normalize_mutable_config_perms\.py$/,
+    testsToRun: runTests(
+      "src/lib/shields/mutable-config-repair.test.ts",
+      "test/nemoclaw-start-perms.test.ts",
+      "test/repro-2681-group-writable.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)test\/e2e\/manifests\/[^/]+\.yaml$/,
     testsToRun: runTests("test/e2e/support/e2e-manifests.test.ts"),
   },

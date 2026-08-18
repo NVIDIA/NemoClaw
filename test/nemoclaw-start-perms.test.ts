@@ -445,7 +445,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
 
     const injectedNormalizer = replaceRequired(
       normalizerSource,
-      "        return root_fd, capture_source_fd\n    except Exception:\n",
+      "        return root_fd, capture_source_fd\n    except Exception as exc:\n",
       [
         `        os.rename(config_dir, ${JSON.stringify(normalizedDir)})`,
         "        os.mkdir(config_dir, 0o700)",
@@ -456,7 +456,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
         '        os.chmod(os.path.join(config_dir, "openclaw.json"), 0o600)',
         '        os.chmod(os.path.join(config_dir, ".config-hash"), 0o600)',
         "        return root_fd, capture_source_fd",
-        "    except Exception:",
+        "    except Exception as exc:",
         "",
       ].join("\n"),
     );

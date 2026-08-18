@@ -30,6 +30,33 @@ CONFIG_NAME = "openclaw.json"
 HASH_NAME = ".config-hash"
 LAST_GOOD_NAME = "openclaw.json.last-good"
 LEGACY_UPDATE_CHECK_NAME = "update-check.json"
+FAILURE_MARKER = "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:"
+FAILURE_REASONS = frozenset(
+    {
+        "config-directory-validation",
+        "fixed-file-validation",
+        "tree-walk",
+        "config-recovery",
+        "recovery-baseline-validation",
+        "final-binding-validation",
+        "privilege-transition",
+        "mutable-config-validation",
+        "descriptor-handoff",
+    }
+    | {
+        f"fixed-file-{failure}:{label}"
+        for failure in (
+            "read",
+            "type",
+            "filesystem",
+            "owner",
+            "mode",
+            "link",
+            "identity",
+        )
+        for label in ("openclaw-config", "config-hash")
+    }
+)
 
 JSON5_VALIDATOR = r"""
 const fs = require("fs");
@@ -51,6 +78,28 @@ try {
 
 class UnsafeTree(Exception):
     """The mutable tree changed identity or violated its ownership contract."""
+
+
+class ClassifiedUnsafeTree(UnsafeTree):
+    """An unsafe tree result with a fixed, non-sensitive diagnostic label."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def report_failure(reason: str) -> None:
+    if reason not in FAILURE_REASONS:
+        reason = "mutable-config-validation"
+    print(f"{FAILURE_MARKER}{reason}", file=sys.stderr, flush=True)
+
+
+def fixed_file_label(name: str) -> str:
+    if name == CONFIG_NAME:
+        return "openclaw-config"
+    if name == HASH_NAME:
+        return "config-hash"
+    raise UnsafeTree()
 
 
 def inode_key(metadata: os.stat_result) -> tuple[int, int, int]:
@@ -485,31 +534,36 @@ def verify_fixed_files(
 ) -> None:
     root_metadata = os.fstat(root_fd)
     for name in FIXED_FILES:
+        label = fixed_file_label(name)
         try:
             before = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
         except FileNotFoundError:
             continue
         except OSError as exc:
-            raise UnsafeTree() from exc
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_dev != root_metadata.st_dev
-            or before.st_uid != expected_uid
-            or before.st_gid != expected_gid
-            or (
-                expected_mode is not None
-                and stat.S_IMODE(before.st_mode) != expected_mode
-            )
-            or before.st_nlink != 1
-        ):
-            raise UnsafeTree()
-        child_fd, opened = open_pinned(root_fd, name, file_flags(), before)
+            raise ClassifiedUnsafeTree(f"fixed-file-read:{label}") from exc
+        if not stat.S_ISREG(before.st_mode):
+            raise ClassifiedUnsafeTree(f"fixed-file-type:{label}")
+        if before.st_dev != root_metadata.st_dev:
+            raise ClassifiedUnsafeTree(f"fixed-file-filesystem:{label}")
+        if before.st_uid != expected_uid or before.st_gid != expected_gid:
+            raise ClassifiedUnsafeTree(f"fixed-file-owner:{label}")
+        if expected_mode is not None and stat.S_IMODE(before.st_mode) != expected_mode:
+            raise ClassifiedUnsafeTree(f"fixed-file-mode:{label}")
+        if before.st_nlink != 1:
+            raise ClassifiedUnsafeTree(f"fixed-file-link:{label}")
+        try:
+            child_fd, opened = open_pinned(root_fd, name, file_flags(), before)
+        except (OSError, UnsafeTree) as exc:
+            raise ClassifiedUnsafeTree(f"fixed-file-identity:{label}") from exc
         try:
             if stable_file_key(opened) != stable_file_key(before):
-                raise UnsafeTree()
-            current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+                raise ClassifiedUnsafeTree(f"fixed-file-identity:{label}")
+            try:
+                current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise ClassifiedUnsafeTree(f"fixed-file-identity:{label}") from exc
             if stable_file_key(current) != stable_file_key(opened):
-                raise UnsafeTree()
+                raise ClassifiedUnsafeTree(f"fixed-file-identity:{label}")
         finally:
             os.close(child_fd)
 
@@ -1145,6 +1199,7 @@ def normalize_owner_tree(
 ) -> tuple[int, int | None]:
     root_fd = -1
     capture_source_fd: int | None = None
+    stage = "config-directory-validation"
     try:
         root_fd = os.open(config_dir, directory_flags())
         root_metadata = os.fstat(root_fd)
@@ -1156,16 +1211,20 @@ def normalize_owner_tree(
             raise UnsafeTree()
         # Reject unsafe fixed-file metadata before recursive normalization can
         # mutate an earlier nonfixed alias of the same inode.
+        stage = "fixed-file-validation"
         verify_fixed_files(
             root_fd,
             expected_uid,
             expected_gid,
             expected_mode=None,
         )
+        stage = "tree-walk"
         normalize_dir(root_fd, top_level=True)
         set_mode(root_fd, 0o2770, required=True)
+        stage = "fixed-file-validation"
         verify_fixed_files(root_fd, expected_uid, expected_gid)
         if recover_config:
+            stage = "config-recovery"
             recover_empty_config(
                 root_fd,
                 config_dir,
@@ -1173,6 +1232,7 @@ def normalize_owner_tree(
                 expected_gid,
             )
         if capture_baseline:
+            stage = "recovery-baseline-validation"
             capture_source_fd = open_baseline_capture_source(
                 root_fd,
                 config_dir,
@@ -1181,14 +1241,19 @@ def normalize_owner_tree(
                 node_binary,
                 json5_module,
             )
+        stage = "final-binding-validation"
         if not config_dir_matches(root_fd, config_dir, expected_uid, expected_gid):
             raise UnsafeTree()
         return root_fd, capture_source_fd
-    except Exception:
+    except Exception as exc:
         if capture_source_fd is not None:
             os.close(capture_source_fd)
         if root_fd >= 0:
             os.close(root_fd)
+        if isinstance(exc, ClassifiedUnsafeTree):
+            raise
+        if isinstance(exc, (OSError, UnsafeTree)):
+            raise ClassifiedUnsafeTree(stage) from exc
         raise
 
 
@@ -1689,26 +1754,35 @@ def run_root_supervisor(
             "[SECURITY] CAP_SETGID is required for sandbox-owned config repair",
             file=sys.stderr,
         )
+        report_failure("privilege-transition")
         raise UnsafeTree() from exc
     if os.getgroups() != [sandbox_gid]:
+        report_failure("privilege-transition")
         raise UnsafeTree()
 
-    parent_socket, child_socket = socket.socketpair(
-        socket.AF_UNIX, socket.SOCK_SEQPACKET
-    )
+    try:
+        parent_socket, child_socket = socket.socketpair(
+            socket.AF_UNIX, socket.SOCK_SEQPACKET
+        )
+    except OSError as exc:
+        report_failure("descriptor-handoff")
+        raise ClassifiedUnsafeTree("descriptor-handoff") from exc
     try:
         parent_socket.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
         child_pid = os.fork()
     except Exception:
         parent_socket.close()
         child_socket.close()
+        report_failure("descriptor-handoff")
         raise
     if child_pid == 0:
         parent_socket.close()
         root_fd = -1
         capture_source_fd: int | None = None
+        child_stage = "privilege-transition"
         try:
             drop_to_owner(sandbox_uid, sandbox_gid)
+            child_stage = "mutable-config-validation"
             root_fd, capture_source_fd = normalize_owner_tree(
                 config_dir,
                 sandbox_uid,
@@ -1718,6 +1792,7 @@ def run_root_supervisor(
                 node_binary=node_binary,
                 json5_module=json5_module,
             )
+            child_stage = "descriptor-handoff"
             rights_fds = [root_fd]
             if capture_baseline:
                 if capture_source_fd is None:
@@ -1737,7 +1812,9 @@ def run_root_supervisor(
             if sent != len(ready_message):
                 raise UnsafeTree()
             exit_code = 0
-        except (KeyError, OSError, UnsafeTree):
+        except (KeyError, OSError, UnsafeTree) as exc:
+            reason = exc.reason if isinstance(exc, ClassifiedUnsafeTree) else child_stage
+            report_failure(reason)
             exit_code = 1
         finally:
             if capture_source_fd is not None:
@@ -1751,6 +1828,7 @@ def run_root_supervisor(
     root_fd = -1
     capture_source_fd: int | None = None
     child_reaped = False
+    parent_stage = "descriptor-handoff"
     try:
         try:
             root_fd, capture_source_fd = receive_owner_fd(
@@ -1770,9 +1848,11 @@ def run_root_supervisor(
             or os.WEXITSTATUS(child_status) != 0
         ):
             raise UnsafeTree()
+        parent_stage = "final-binding-validation"
         if not config_dir_matches(root_fd, config_dir, sandbox_uid, sandbox_gid):
             raise UnsafeTree()
         verify_fixed_files(root_fd, sandbox_uid, sandbox_gid)
+        parent_stage = "recovery-baseline-validation"
         if capture_baseline:
             capture_recovery_baseline(
                 root_fd,
@@ -1790,6 +1870,10 @@ def run_root_supervisor(
                 sandbox_uid,
                 sandbox_gid,
             )
+    except (OSError, UnsafeTree) as exc:
+        reason = exc.reason if isinstance(exc, ClassifiedUnsafeTree) else parent_stage
+        report_failure(reason)
+        raise
     finally:
         if not child_reaped:
             try:
@@ -1892,7 +1976,13 @@ def main() -> int:
                 if capture_source_fd is not None:
                     os.close(capture_source_fd)
                 os.close(root_fd)
-    except (AttributeError, KeyError, OSError, UnsafeTree):
+    except (AttributeError, KeyError, OSError, UnsafeTree) as exc:
+        reason = (
+            exc.reason
+            if isinstance(exc, ClassifiedUnsafeTree)
+            else "mutable-config-validation"
+        )
+        report_failure(reason)
         return 1
     return 0
 
