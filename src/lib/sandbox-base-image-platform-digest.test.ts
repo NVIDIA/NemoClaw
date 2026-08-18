@@ -59,6 +59,8 @@ const REF = `${IMAGE_NAME}@${DIGEST}`;
 const IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const PLATFORM_DIGEST = "sha256:c0c149ed03b3e8fcd3e395558b22e871cd27c9966ea6faf04c0d2b94d0a821b9";
 const PLATFORM_REF = `${IMAGE_NAME}@${PLATFORM_DIGEST}`;
+const ARM_PLATFORM_DIGEST = `sha256:${"d".repeat(64)}`;
+const ARM_PLATFORM_REF = `${IMAGE_NAME}@${ARM_PLATFORM_DIGEST}`;
 
 function resolutionOptions() {
   return {
@@ -297,6 +299,117 @@ describe("sandbox base-image pinned platform digest resolution", () => {
           {
             digest: `sha256:${"d".repeat(64)}`,
             platform: { architecture: "amd64", os: "linux" },
+          },
+        ],
+      }),
+    );
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      pinnedRemoteRef: REF,
+      preferPinnedRemoteRef: true,
+    });
+
+    expect(resolved).toMatchObject({ ref: REF, digest: DIGEST, source: "pinned" });
+    expect(resolved).not.toHaveProperty("metadata");
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+  });
+
+  it("resolves the daemon-selected ARM variant and locally proves its digest (#9386)", () => {
+    let platformRepoDigestOutput = "";
+    dockerMocks.infoFormat.mockReturnValue("linux/aarch64\n");
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockImplementation((ref: string) => {
+      platformRepoDigestOutput =
+        new Map([[ARM_PLATFORM_REF, JSON.stringify([ARM_PLATFORM_REF])]]).get(ref) ??
+        platformRepoDigestOutput;
+      return { status: 0 };
+    });
+    dockerMocks.manifestInspect.mockReturnValue(
+      JSON.stringify({
+        manifests: [
+          {
+            digest: ARM_PLATFORM_DIGEST,
+            platform: { architecture: "arm64", os: "linux", variant: "v8" },
+          },
+          {
+            digest: `sha256:${"e".repeat(64)}`,
+            platform: { architecture: "arm64", os: "linux", variant: "v9" },
+          },
+        ],
+      }),
+    );
+    dockerMocks.imageInspectFormat.mockImplementation(
+      (format: string, ref: string) =>
+        new Map([
+          [`{{json .RepoDigests}}\0${REF}`, JSON.stringify([REF])],
+          [`{{json .Variant}}\0${REF}`, JSON.stringify("v8")],
+          [`{{json .RepoDigests}}\0${ARM_PLATFORM_REF}`, platformRepoDigestOutput],
+          [
+            `{{json .}}\0${ARM_PLATFORM_REF}`,
+            JSON.stringify({
+              Id: IMAGE_ID,
+              RepoDigests: [ARM_PLATFORM_REF],
+              Os: "linux",
+              Architecture: "arm64",
+              Variant: "v8",
+            }),
+          ],
+        ]).get(`${format}\0${ref}`) ?? "",
+    );
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_SANDBOX_BASE_IMAGE_REF: REF,
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      ref: ARM_PLATFORM_REF,
+      digest: ARM_PLATFORM_DIGEST,
+      source: "override",
+      metadata: {
+        ref: ARM_PLATFORM_REF,
+        digest: ARM_PLATFORM_DIGEST,
+        imageId: IMAGE_ID,
+        os: "linux",
+        architecture: "arm64",
+      },
+    });
+    expect(dockerMocks.imageInspectFormat).toHaveBeenCalledWith("{{json .Variant}}", REF, {
+      ignoreError: true,
+    });
+    expect(dockerMocks.pull).toHaveBeenNthCalledWith(2, ARM_PLATFORM_REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+  });
+
+  it.each([
+    ["a nonmatching", JSON.stringify("v8")],
+    ["an unavailable", ""],
+    ["an invalid", JSON.stringify("arm64-v8")],
+  ])("does not select an ARM manifest with %s daemon variant (#9386)", (_case, variantOutput) => {
+    dockerMocks.infoFormat.mockReturnValue("linux/arm64\n");
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: ref === REF ? 0 : 1,
+    }));
+    dockerMocks.imageInspectFormat.mockImplementation(
+      (format: string, ref: string) =>
+        new Map([
+          [`{{json .RepoDigests}}\0${REF}`, JSON.stringify([REF])],
+          [`{{json .Variant}}\0${REF}`, variantOutput],
+        ]).get(`${format}\0${ref}`) ?? "",
+    );
+    dockerMocks.manifestInspect.mockReturnValue(
+      JSON.stringify({
+        manifests: [
+          {
+            digest: ARM_PLATFORM_DIGEST,
+            platform: { architecture: "arm64", os: "linux", variant: "v9" },
           },
         ],
       }),

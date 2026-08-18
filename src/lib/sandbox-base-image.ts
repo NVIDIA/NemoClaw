@@ -171,11 +171,25 @@ function getRepoDigest(
 }
 
 const CANONICAL_SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const CANONICAL_ARM_VARIANT = /^v[1-9][0-9]*$/;
 
 function normalizeDockerArchitecture(value: string): string {
   if (value === "x86_64") return "amd64";
   if (value === "aarch64") return "arm64";
   return value;
+}
+
+function getLocalArmVariant(imageRef: string): string | null {
+  const output = dockerImageInspectFormat("{{json .Variant}}", imageRef, {
+    ignoreError: true,
+  });
+  if (!output) return null;
+  try {
+    const variant = JSON.parse(output) as unknown;
+    return typeof variant === "string" && CANONICAL_ARM_VARIANT.test(variant) ? variant : null;
+  } catch {
+    return null;
+  }
 }
 
 function resolvePlatformManifestDigest(imageRef: string): string | null {
@@ -185,17 +199,24 @@ function resolvePlatformManifestDigest(imageRef: string): string | null {
   const [osName, rawArchitecture, ...extra] = daemonPlatform.split("/");
   if (!osName || !rawArchitecture || extra.length > 0) return null;
   const architecture = normalizeDockerArchitecture(rawArchitecture);
+  const isArmArchitecture = architecture === "arm" || architecture === "arm64";
+  const armVariant = isArmArchitecture ? getLocalArmVariant(imageRef) : null;
+  if (isArmArchitecture && !armVariant) return null;
 
   const manifestOutput = dockerManifestInspect(imageRef, { ignoreError: true });
   if (!manifestOutput) return null;
   try {
     const parsed = JSON.parse(manifestOutput) as {
-      manifests?: Array<{ digest?: unknown; platform?: { architecture?: unknown; os?: unknown } }>;
+      manifests?: Array<{
+        digest?: unknown;
+        platform?: { architecture?: unknown; os?: unknown; variant?: unknown };
+      }>;
     };
     const matches = Array.isArray(parsed.manifests)
       ? parsed.manifests.flatMap((entry) =>
           entry?.platform?.os === osName &&
           normalizeDockerArchitecture(String(entry.platform.architecture ?? "")) === architecture &&
+          (!isArmArchitecture || entry.platform.variant === armVariant) &&
           typeof entry.digest === "string" &&
           CANONICAL_SHA256_DIGEST.test(entry.digest)
             ? [entry.digest]
