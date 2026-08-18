@@ -541,6 +541,69 @@ describe("Docker managed bootstrap adapter", () => {
     expect((failure as Error).message).not.toContain(secret);
   });
 
+  it("reports an exited replacement before exact rollback cleanup (#9465)", async () => {
+    const fake = fixture({ agent: "openclaw" });
+    const secret = "replacement-diagnostic-secret";
+    fake.deps.dockerLogs = vi.fn(() => `managed startup rejected SLACK_BOT_TOKEN=${secret}`);
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority("openclaw");
+    const prepared = await adapter.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await adapter.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+    assert(fake.replacement?.State);
+    Object.assign(fake.replacement.State, {
+      Status: "exited",
+      Running: false,
+      ExitCode: 23,
+      FinishedAt: "2026-08-18T12:00:00.000Z",
+    });
+
+    const failure = await adapter
+      .awaitBootstrap({ handle, snapshot, replacement, timeoutSecs: 1 })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(`Replacement runtime ID: ${NEW_ID}.`);
+    expect((failure as Error).message).toContain(
+      "Replacement state: status=exited running=false exit_code=23 finished_at=2026-08-18T12:00:00.000Z.",
+    );
+    expect((failure as Error).message).toContain(
+      "managed startup rejected SLACK_BOT_TOKEN=<REDACTED>",
+    );
+    expect((failure as Error).message).not.toContain(secret);
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "rollback",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+        replacement,
+        completion: null,
+      }),
+    ).rejects.toMatchObject({
+      name: "ManagedBootstrapOwnerCleanupRequiredError",
+      runtimeId: OLD_ID,
+    });
+    expect(fake.replacement).toBeNull();
+    expect(fake.original).toMatchObject({
+      Id: OLD_ID,
+      Name: "/openshell-alpha",
+      State: { Running: false },
+    });
+  });
+
   it("preserves commit validation failure details when the replacement cannot be quiesced", async () => {
     const fake = fixture({
       sharedState: "pending",
@@ -610,7 +673,7 @@ describe("Docker managed bootstrap adapter", () => {
         prepared,
         durablePreparation: durable,
       }),
-    ).rejects.toThrow("could not prove its exact replacement running");
+    ).rejects.toThrow("replacement after Docker start is not stably running");
     expect(fake.journal?.phase).toBe("cutover");
 
     const restarted = createDockerManagedBootstrapAdapter(fake.deps);
