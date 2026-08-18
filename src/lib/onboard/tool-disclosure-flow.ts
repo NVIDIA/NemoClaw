@@ -79,7 +79,7 @@ export function prepareSandboxToolDisclosure(
   };
 }
 
-/** Resolve schema-5 create policy without observing live state or writing session state. */
+/** Resolve schema-5 tool disclosure without reading live state or writing session state. */
 export function prepareHermesPortableToolDisclosure(
   desiredToolDisclosure: ToolDisclosure | null = null,
 ) {

@@ -34,7 +34,9 @@ export type InferenceSetSandboxRouteProbe = (
   input: SandboxInferenceInvocationInput,
 ) => SandboxInferenceInvocationResult;
 
-const ROUTE_FAMILY_CONVERGENCE_RETRY_DELAYS_MS = [1_000, 2_000] as const;
+// OpenShell 0.0.101 refreshes the sandbox route cache every five seconds.
+// The final probe runs after six seconds so one full refresh can occur.
+const ROUTE_FAMILY_CONVERGENCE_RETRY_DELAYS_MS = [2_000, 4_000] as const;
 
 export function sleepInferenceSetRouteConvergence(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -62,6 +64,11 @@ export async function probeInferenceSetSandboxRouteUntilConverged(
   deps: {
     probe: InferenceSetSandboxRouteProbe;
     sleep: (milliseconds: number) => Promise<void>;
+    onRetry?: (
+      result: SandboxInferenceInvocationResult,
+      delayMs: number,
+      attempt: number,
+    ) => void | Promise<void>;
   } = {
     probe: probeInferenceSetSandboxRoute,
     sleep: sleepInferenceSetRouteConvergence,
@@ -74,6 +81,7 @@ export async function probeInferenceSetSandboxRouteUntilConverged(
       !inferenceApiChanged ||
       (result.httpStatus !== 400 && result.httpStatus !== 404),
     retryDelaysMs: ROUTE_FAMILY_CONVERGENCE_RETRY_DELAYS_MS,
+    onRetry: deps.onRetry,
     sleep: deps.sleep,
   });
 }

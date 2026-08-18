@@ -54,6 +54,7 @@ import {
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import {
+  liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
@@ -221,6 +222,10 @@ export function createManagedWorkloadOnboardRuntime(
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
     const catalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
+    const liveCatalog = liveE2eManagedImageCatalog(input.startupProfile.environment);
+    if (catalogRevision && liveCatalog) {
+      throw new Error("live E2E managed-image revision and catalog authority conflict");
+    }
     preparedWorkloadPromise ??= input.managedWorkloadRebuild
       ? Promise.resolve(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
@@ -235,7 +240,8 @@ export function createManagedWorkloadOnboardRuntime(
           customDockerfilePath: input.customDockerfilePath,
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
-          catalogPath: input.tempManagedRuntimeCatalog,
+          catalogPath: input.tempManagedRuntimeCatalog ?? liveCatalog?.path ?? null,
+          ...(liveCatalog ? { expectedCatalogRevision: liveCatalog.revision } : {}),
           ...(catalogRevision ? { catalogRevision } : {}),
           acceptedCandidateContract: isCandidateAgent(input.agentName)
             ? readCandidateQualificationReceipt(input.agentName)

@@ -57,6 +57,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
+import { runConnectChildWithShieldsRelockNotice } from "./agent/connect-shields-relock-notice";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
@@ -1758,10 +1759,17 @@ async function connectSandboxWithinLifecycleFence(
   const connectArgs = portableAuthority
     ? ["sandbox", "connect", "-g", portableAuthority.gatewayName, sandboxName]
     : ["sandbox", "connect", sandboxName];
-  const result = spawnSync(portableAuthority?.executablePath ?? getOpenshellBinary(), connectArgs, {
-    stdio: "inherit",
-    cwd: ROOT,
-    env: portableAuthority?.env ?? { ...process.env },
-  });
+  const result = await runConnectChildWithShieldsRelockNotice(
+    portableAuthority?.executablePath ?? getOpenshellBinary(),
+    connectArgs,
+    {
+      hostCwd: ROOT,
+      stdin: true,
+      ...(portableAuthority ? { hostEnv: portableAuthority.env } : {}),
+    },
+    sandboxName,
+    agent?.name === "openclaw" || sb?.agent === "openclaw",
+  );
+  result.releaseSignals?.();
   exitWithConnectSpawnResult(sandboxName, result);
 }

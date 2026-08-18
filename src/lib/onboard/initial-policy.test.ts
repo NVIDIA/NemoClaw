@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+const logPresetScopeMock = vi.hoisted(() => vi.fn());
 vi.mock("../policy", () => ({
   mergePresetNamesIntoPolicy: (policy: string, presetNames: string[]) => ({
     policy: `${policy.trimEnd()}\n${presetNames
@@ -16,11 +17,13 @@ vi.mock("../policy", () => ({
     appliedPresets: presetNames,
     missingPresets: [],
   }),
+  logPresetScope: logPresetScopeMock,
 }));
 
 import {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
+  discloseInitialSandboxPolicy,
   discoverHostStationGb300SysfsReadOnlyPaths,
   discoverStationGb300SysfsReadOnlyPaths,
   getNetworkPolicyNames,
@@ -66,6 +69,7 @@ const originalOtelEnv = {
 };
 
 beforeEach(() => {
+  logPresetScopeMock.mockReset();
   delete process.env.NEMOCLAW_OPENCLAW_OTEL;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
@@ -139,6 +143,21 @@ afterEach(() => {
 });
 
 describe("initial sandbox policy helpers", () => {
+  it("discloses the effective in-memory policy when exact source bytes are available (#9203)", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    const effectivePolicy = Buffer.from(
+      "version: 1\nnetwork_policies:\n  personal-open-internet: {}\n",
+    );
+
+    discloseInitialSandboxPolicy({
+      policyPath: basePolicyPath,
+      appliedPresets: ["personal-open-internet"],
+      sourceBytes: effectivePolicy,
+    });
+
+    expect(logPresetScopeMock).toHaveBeenCalledWith(effectivePolicy.toString("utf8"));
+  });
+
   it("plans schema-5 Personal policy bytes without creating a temporary file (#9203)", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
@@ -162,9 +181,7 @@ describe("initial sandbox policy helpers", () => {
 
   it("accepts the hosted installer policy source owned by the current user and group (#9203)", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
-    const basePolicyPath = tmpHostedInstallerPolicy(
-      "version: 1\nnetwork_policies:\n  base: {}\n",
-    );
+    const basePolicyPath = tmpHostedInstallerPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 
     const planned = planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
       agentName: "hermes",
@@ -200,6 +217,26 @@ describe("initial sandbox policy helpers", () => {
         additionalPresets: ["personal-open-internet"],
       }),
     ).toThrow("not strict UTF-8");
+  });
+
+  it("rejects a UTF-8 byte-order mark before schema-5 policy planning (#9203)", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies: {}\n");
+    fs.writeFileSync(
+      basePolicyPath,
+      Buffer.concat([
+        Buffer.from([0xef, 0xbb, 0xbf]),
+        Buffer.from("version: 1\nnetwork_policies: {}\n"),
+      ]),
+    );
+
+    expect(() =>
+      planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
+        agentName: "hermes",
+        policyTier: "personal",
+        additionalPresets: ["personal-open-internet"],
+      }),
+    ).toThrow("must not include a UTF-8 byte-order mark");
   });
 
   it("rejects replaced, linked, or writable schema-5 policy authority (#9203)", () => {
@@ -314,16 +351,14 @@ describe("initial sandbox policy helpers", () => {
     ).toThrow("an available GB300 GPU");
   });
 
-  it.each(
-    [
-        "/sys/class",
-        "/sys/class/net",
-        "/sys/bus/pci/devices",
-        "/sys/firmware",
-        "/sys/fs",
-        "/sys/kernel",
-      ],
-  )(
+  it.each([
+    "/sys/class",
+    "/sys/class/net",
+    "/sys/bus/pci/devices",
+    "/sys/firmware",
+    "/sys/fs",
+    "/sys/kernel",
+  ])(
     "scopes sysfs read access and lets OpenShell own /proc GPU enrichment [%s] (#7103)",
     (unrelatedPath) => {
       const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, {
@@ -479,11 +514,11 @@ network_policies: {}
 
     expect(gpuDoc.filesystem_policy.read_only).not.toContain(writablePath);
     expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, writablePath);
-    STATION_GB300_SYSFS_READ_ONLY_PATHS.filter(
-      (candidate) => candidate !== writablePath,
-    ).forEach((sysfsPath) => {
-      expectSingleOccurrence(gpuDoc.filesystem_policy.read_only, sysfsPath);
-    });
+    STATION_GB300_SYSFS_READ_ONLY_PATHS.filter((candidate) => candidate !== writablePath).forEach(
+      (sysfsPath) => {
+        expectSingleOccurrence(gpuDoc.filesystem_policy.read_only, sysfsPath);
+      },
+    );
   });
 
   it.each(Array.from(STATION_GB300_SYSFS_READ_ONLY_PATHS, (value) => [value]))(
@@ -658,9 +693,7 @@ network_policies: {}
 
   it("gives only portable Hermes an exact replacement-safe policy cleanup (#9203)", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
-    const basePolicyPath = tmpPolicy(
-      "version: 1\nnetwork_policies:\n  discord: {}\n  slack: {}\n",
-    );
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  discord: {}\n  slack: {}\n");
     const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["discord"], {
       agentName: "hermes",
     });

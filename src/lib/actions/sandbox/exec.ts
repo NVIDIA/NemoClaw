@@ -28,11 +28,16 @@ export type SandboxExecOptions = {
   subprocessEnv?: NodeJS.ProcessEnv;
 };
 
+export type SandboxExecChildOptions = SandboxExecOptions & {
+  hostCwd?: string;
+  hostEnv?: NodeJS.ProcessEnv;
+};
+
 export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
 
 export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
 
-type SpawnLikeResult = {
+export type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
   error?: Error;
@@ -60,7 +65,7 @@ export type SandboxExecChild = {
 export type SandboxExecSpawner = (
   binary: string,
   args: readonly string[],
-  options: SandboxExecOptions,
+  options: SandboxExecChildOptions,
 ) => SandboxExecChild;
 
 export type SandboxExecSignalSource = {
@@ -241,7 +246,10 @@ export function cleanupOpenClawAfterExec(
 const defaultSandboxExecSpawner: SandboxExecSpawner = (binary, args, options) =>
   spawn(binary, [...args], {
     stdio: buildSandboxExecStdio(options),
-    ...(options.subprocessEnv ? { env: options.subprocessEnv } : {}),
+    ...(options.hostCwd ? { cwd: options.hostCwd } : {}),
+    ...(options.hostEnv || options.subprocessEnv
+      ? { env: options.hostEnv ?? options.subprocessEnv }
+      : {}),
   });
 
 const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
@@ -252,7 +260,7 @@ const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
 export async function runSandboxExecChild(
   binary: string,
   args: readonly string[],
-  options: SandboxExecOptions = {},
+  options: SandboxExecChildOptions = {},
   spawnChild: SandboxExecSpawner = defaultSandboxExecSpawner,
   signalSource: SandboxExecSignalSource = defaultSandboxExecSignalSource,
 ): Promise<SpawnLikeResult> {

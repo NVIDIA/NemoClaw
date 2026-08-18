@@ -89,7 +89,8 @@ describe("connectSandbox flow", () => {
   });
 
   it("runs readiness checks, recovery probes, auto-pair approval, and opens the OpenShell shell", async () => {
-    vi.stubEnv("NEMOCLAW_ORDINARY_CONNECT_MARKER", "preserved");
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
     const harness = createConnectHarness();
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -101,18 +102,44 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalledTimes(1);
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw");
-    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
+    expect(harness.runSandboxExecChildSpy).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
       expect.objectContaining({
-        stdio: "inherit",
-        env: expect.objectContaining({ NEMOCLAW_ORDINARY_CONNECT_MARKER: "preserved" }),
+        hostCwd: expect.any(String),
+        stdin: true,
       }),
+    );
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 1_000);
+    const watcherTimer = setIntervalSpy.mock.results[setIntervalSpy.mock.results.length - 1]?.value;
+    expect(clearIntervalSpy).toHaveBeenCalledWith(watcherTimer);
+    expect(harness.runSandboxExecChildSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+      exitSpy.mock.invocationCallOrder[0]!,
     );
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("existing SSH sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("does not watch Shields audit state for a terminal-runtime connect session (#9453)", async () => {
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: {
+        name: "langchain-deepagents-code",
+        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(harness.runSandboxExecChildSpy).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+    );
+    expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 1_000);
   });
 
   it("uses the owning OpenShell gateway for auto-pair when an ambient gateway has the same sandbox name (#8942)", async () => {
@@ -1166,11 +1193,7 @@ describe("connectSandbox flow", () => {
       "authority disappeared during probe",
     );
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
-      expect.anything(),
-    );
+    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
   });
 
   it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
@@ -1211,14 +1234,14 @@ describe("connectSandbox flow", () => {
     expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
     expect(sandboxVersion.checkAgentVersion).not.toHaveBeenCalled();
     expect(brokerSpy).not.toHaveBeenCalled();
-    const connectCall = harness.spawnSyncSpy.mock.calls.find(
+    const connectCall = harness.runSandboxExecChildSpy.mock.calls.find(
       ([command, args]) =>
         command === "/usr/bin/openshell" &&
         Array.isArray(args) &&
         args.join("\0") === ["sandbox", "connect", "-g", "nemoclaw", "alpha"].join("\0"),
     );
     expect(connectCall?.[2]).toMatchObject({
-      env: expect.not.objectContaining({
+      hostEnv: expect.not.objectContaining({
         NVIDIA_INFERENCE_API_KEY: expect.anything(),
         GITHUB_TOKEN: expect.anything(),
         AWS_SECRET_ACCESS_KEY: expect.anything(),
@@ -1254,7 +1277,7 @@ describe("connectSandbox flow", () => {
       "lifecycle authority disappeared before interactive connect",
     );
     expect(
-      harness.spawnSyncSpy.mock.calls.some(
+      harness.runSandboxExecChildSpy.mock.calls.some(
         ([, args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "connect",
       ),
     ).toBe(false);

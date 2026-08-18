@@ -56,6 +56,7 @@ export type ConnectHarness = {
   resolveAgentConfigSpy: MockInstance;
   restoreSandboxStartupState: RestoreSandboxStartupState;
   runAutoPairSpy: MockInstance;
+  runSandboxExecChildSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
@@ -257,6 +258,11 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       expected,
       portableAuthorityDeps(),
     )) as never);
+  const sandboxExec = requireDist("../../src/lib/actions/sandbox/exec.js");
+  const runSandboxExecChildSpy = vi.spyOn(sandboxExec, "runSandboxExecChild").mockResolvedValue({
+    status: spawnStatusFromOptions(options),
+    signal: options.spawnSignal ?? null,
+  });
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -491,6 +497,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     resolveAgentConfigSpy,
     restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,
     runAutoPairSpy,
+    runSandboxExecChildSpy,
     settlePortablePairingSpy,
     runOpenshellSpy,
     runSetupDnsProxySpy,

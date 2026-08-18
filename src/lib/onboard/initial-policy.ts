@@ -44,7 +44,9 @@ export type InitialSandboxPolicy = {
 export function discloseInitialSandboxPolicy(policy: InitialSandboxPolicy): void {
   if (policy.appliedPresets.length === 0) return;
   console.log("  Including policy preset(s) at sandbox boot:", policy.appliedPresets.join(", "));
-  policies.logPresetScope(fs.readFileSync(policy.policyPath, "utf8"));
+  policies.logPresetScope(
+    policy.sourceBytes?.toString("utf8") ?? fs.readFileSync(policy.policyPath, "utf8"),
+  );
 }
 
 const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "hermes" });
@@ -652,6 +654,9 @@ export function readHermesPortableInitialPolicySource(basePolicyPath: string): s
       BigInt(bytes.byteLength) !== after.size
     ) {
       throw new Error("Hermes portable policy source authority changed while reading.");
+    }
+    if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+      throw new Error("Hermes portable policy source must not include a UTF-8 byte-order mark.");
     }
     try {
       return new TextDecoder("utf-8", { fatal: true }).decode(bytes);

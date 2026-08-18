@@ -195,7 +195,7 @@ describe("onboard tool-disclosure flow", () => {
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
   });
 
-  it("resolves schema-5 policy without inspecting or writing session state (#9203)", () => {
+  it("resolves schema-5 tool disclosure without reading or writing session state (#9203)", () => {
     const result = prepareHermesPortableToolDisclosure("direct");
 
     expect(result).toMatchObject({
