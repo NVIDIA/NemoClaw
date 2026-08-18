@@ -31,9 +31,15 @@ export const HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS = [
   },
   {
     name: "GitHub token",
-    prefixes: ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"],
+    prefixes: ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"],
     payloadCharacterClass: "A-Za-z0-9",
     minimumPayloadLength: 36,
+  },
+  {
+    name: "GitHub token",
+    prefixes: ["github_pat_"],
+    payloadCharacterClass: "A-Za-z0-9_",
+    minimumPayloadLength: 30,
   },
   {
     name: "npm token",

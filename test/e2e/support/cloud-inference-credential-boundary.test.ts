@@ -60,6 +60,7 @@ describe("cloud inference sandbox credential scan", () => {
   it.each([
     ["NVIDIA", "nvapi-nemoclaw-credential-boundary-canary"],
     ["GitHub", `ghp_${"a".repeat(36)}`],
+    ["GitHub fine-grained", `github_pat_${"a".repeat(15)}_${"b".repeat(14)}`],
     ["npm", `npm_${"b".repeat(36)}`],
   ])("reports only the path of a file that contains a %s credential canary", (_label, canary) => {
     const root = createScanRoot();
