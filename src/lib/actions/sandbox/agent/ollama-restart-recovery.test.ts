@@ -191,8 +191,62 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         { provider: "ollama-local", model: "missing:latest" },
         {
           probeRuntimeModelStatus: () => unloadedStatus,
+          probeModelPresence: () => ({ presence: "unknown", inventory: [] }),
           runCaptureExImpl: () => ({
             stdout: JSON.stringify({ error: "model not found" }),
+            exitCode: 0,
+            timedOut: false,
+          }),
+        },
+      ),
+    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "ollama-error" });
+  });
+
+  it("reports an endpoint that no longer holds the model instead of a warm failure (#9455)", () => {
+    const probeModelPresence = vi.fn(() => ({
+      presence: "absent" as const,
+      inventory: ["llama3.2:1b"],
+    }));
+
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "gemma4:26b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        {
+          probeRuntimeModelStatus: () => unloadedStatus,
+          probeModelPresence,
+          runCaptureExImpl: () => ({
+            stdout: JSON.stringify({ error: "model not found" }),
+            exitCode: 0,
+            timedOut: false,
+          }),
+        },
+      ),
+    ).toEqual({
+      kind: "skipped",
+      reason: "model-absent",
+      endpoint: `http://host.docker.internal:${OLLAMA_PORT}`,
+      inventoryLabel: "llama3.2:1b",
+    });
+    expect(probeModelPresence).toHaveBeenCalledWith(
+      "host.docker.internal",
+      "gemma4:26b",
+      undefined,
+    );
+  });
+
+  it("keeps the warm failure when the daemon does hold the model (#9455)", () => {
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        {
+          probeRuntimeModelStatus: () => unloadedStatus,
+          probeModelPresence: () => ({ presence: "present", inventory: ["qwen3.6:35b"] }),
+          runCaptureExImpl: () => ({
+            stdout: JSON.stringify({ error: "runner stopped unexpectedly" }),
             exitCode: 0,
             timedOut: false,
           }),

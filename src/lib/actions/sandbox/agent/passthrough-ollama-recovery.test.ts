@@ -97,6 +97,34 @@ describe("runOllamaRestartRecovery", () => {
     expect(writes.join("")).toContain(message);
   });
 
+  it("names the endpoint and its reported models when the model is absent (#9455)", () => {
+    const { writes, proc } = makeProcMock();
+
+    runOllamaRestartRecovery(
+      {
+        provider: "ollama-local",
+        model: "gemma4:26b",
+        endpointUrl: "http://host.openshell.internal:11434/v1",
+      },
+      proc,
+      () => ({
+        kind: "skipped",
+        reason: "model-absent",
+        endpoint: "http://host.docker.internal:11434",
+        inventoryLabel: "llama3.2:1b",
+      }),
+    );
+
+    const stderr = writes.join("");
+    expect(stderr).toContain(
+      "Ollama at http://host.docker.internal:11434 reports 'gemma4:26b' as unavailable",
+    );
+    expect(stderr).toContain("reported models: llama3.2:1b");
+    expect(stderr).toContain("continuing to OpenClaw dispatch");
+    expect(stderr).toContain("Restart the daemon that holds 'gemma4:26b'");
+    expect(stderr).not.toContain("Ollama was unreachable during the restart check");
+  });
+
   it("contains an unexpected recovery exception", () => {
     const { writes, proc } = makeProcMock();
 

@@ -1087,6 +1087,140 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
   }
 }
 
+/**
+ * Container-side `/api/tags` fetch that keeps the response body.
+ *
+ * `getLocalProviderContainerReachabilityCheck` proves the network path and
+ * discards the body, so a sandbox that reaches a different Ollama daemon than
+ * the host-side probe still passes. Returns null in the auth-proxy topology:
+ * the probe container carries no bearer token, and the proxy forwards to the
+ * same host daemon the host-side probe already covered, so there is no second
+ * inventory to compare against.
+ */
+export function getSandboxFacingOllamaInventoryCheck(): string[] | null {
+  const containerPort = getOllamaContainerPort();
+  if (containerPort !== OLLAMA_PORT) return null;
+  return [
+    "docker",
+    "run",
+    "--rm",
+    "--add-host",
+    "host.openshell.internal:host-gateway",
+    CONTAINER_REACHABILITY_IMAGE,
+    "--connect-timeout",
+    "5",
+    "--max-time",
+    "10",
+    "-sf",
+    `http://host.openshell.internal:${containerPort}/api/tags`,
+  ];
+}
+
+/**
+ * Whether an Ollama endpoint serves a model. `unknown` means the endpoint did
+ * not answer with a parseable `/api/tags` inventory, which is never treated as
+ * evidence either way.
+ */
+export type OllamaModelPresence = "unknown" | "present" | "absent";
+
+export interface OllamaModelPresenceResult {
+  presence: OllamaModelPresence;
+  inventory: string[];
+}
+
+function resolveOllamaModelPresence(body: string, model: string): OllamaModelPresenceResult {
+  if (!isValidOllamaTagsResponseBody(body)) return { presence: "unknown", inventory: [] };
+  const inventory = modelInventory("ollama-local", body);
+  if (!inventory) return { presence: "unknown", inventory: [] };
+  return {
+    presence: inventoryContainsModel("ollama-local", inventory, model) ? "present" : "absent",
+    inventory,
+  };
+}
+
+/** Render an inventory for an operator-facing message, bounded and sanitised. */
+export function describeOllamaInventory(inventory: readonly string[]): string {
+  if (inventory.length === 0) return "none";
+  return inventory
+    .slice(0, 5)
+    .map((entry) => sanitizeModelNameForDisplay(entry) || "<invalid>")
+    .join(", ");
+}
+
+/** Ask one raw Ollama daemon whether it serves a model. */
+export function probeOllamaEndpointModelPresence(
+  host: string,
+  model: string,
+  runCaptureImpl?: RunCaptureFn,
+): OllamaModelPresenceResult {
+  const selected = String(model ?? "").trim();
+  if (!selected) return { presence: "unknown", inventory: [] };
+  const capture = runCaptureImpl ?? runCapture;
+  const body = capture(
+    [
+      "curl",
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "5",
+        `http://${host}:${OLLAMA_PORT}/api/tags`,
+      ]),
+    ],
+    { ignoreError: true },
+  );
+  return resolveOllamaModelPresence(body, selected);
+}
+
+/**
+ * Confirm the selected model exists on the daemon answering the host bridge.
+ *
+ * Host-side discovery, validation, and warm-up all resolve through
+ * `getResolvedOllamaHost`, which probes 127.0.0.1 before host.docker.internal.
+ * On WSL 2 with a daemon on each side, the loopback daemon wins that race while
+ * the route the gateway records points at the host bridge, so a model that
+ * passes every host-side check is absent at dispatch (#9454). The probe
+ * container reaches that bridge over `--add-host host-gateway` rather than the
+ * sandbox's own k3s path, so it proves the recorded endpoint, not the sandbox
+ * network path.
+ *
+ * Only a parsed inventory that lacks the model fails. An unreachable endpoint,
+ * a non-Ollama body, or an unparseable inventory returns ok: the container
+ * `--add-host host-gateway` path is unavailable on some Docker configurations
+ * (Brev, rootless), and reachability is already covered by
+ * `validateLocalProvider`. This check can only catch the real divergence, never
+ * invent one.
+ */
+export function validateSandboxFacingOllamaModel(
+  model: string,
+  runCaptureImpl?: RunCaptureFn,
+): ValidationResult {
+  const command = getSandboxFacingOllamaInventoryCheck();
+  if (!command) return { ok: true };
+  const selected = String(model ?? "").trim();
+  if (!selected) return { ok: true };
+
+  const capture = runCaptureImpl ?? runCapture;
+  const { presence, inventory } = resolveOllamaModelPresence(
+    capture(command, { ignoreError: true }),
+    selected,
+  );
+  if (presence !== "absent") return { ok: true };
+
+  const selectedDisplay = sanitizeModelNameForDisplay(selected) || "<invalid>";
+  return {
+    ok: false,
+    message:
+      `Selected Ollama model '${selectedDisplay}' is available on ` +
+      `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}, but the daemon answering ` +
+      `http://host.openshell.internal:${getOllamaContainerPort()} reports it as unavailable ` +
+      `(reported models: ${describeOllamaInventory(inventory)}). NemoClaw read that endpoint ` +
+      `from a Docker probe container; two Ollama daemons are answering different endpoints. ` +
+      `On WSL 2 that is a WSL daemon and a Windows-host daemon. Select a model that the ` +
+      `probed endpoint reports, or stop one daemon so one daemon answers both endpoints.`,
+  };
+}
 
 const CONTAINER_CHECK_MAX_ATTEMPTS = 3;
 const CONTAINER_CHECK_RETRY_DELAY_SECS = 2;

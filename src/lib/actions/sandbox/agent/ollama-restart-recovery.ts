@@ -17,9 +17,12 @@
 import { buildValidatedCurlCommandArgs } from "../../../adapters/http/curl-args";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import {
+  describeOllamaInventory,
   getResolvedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
+  type OllamaModelPresenceResult,
+  probeOllamaEndpointModelPresence,
   type RunCaptureExFn,
 } from "../../../inference/local";
 import {
@@ -41,6 +44,11 @@ export interface OllamaRestartRecoveryDeps {
     getOllamaHost: () => string,
     runCaptureImpl?: OllamaRuntimeRunCaptureFn,
   ) => OllamaRuntimeModelStatus;
+  probeModelPresence?: (
+    host: string,
+    model: string,
+    runCaptureImpl?: OllamaRuntimeRunCaptureFn,
+  ) => OllamaModelPresenceResult;
   runCaptureExImpl?: RunCaptureExFn;
   getOllamaHost?: () => string;
   runCaptureImpl?: OllamaRuntimeRunCaptureFn;
@@ -55,6 +63,7 @@ export type OllamaRestartRecoveryFailureReason =
 
 export type OllamaRestartRecoveryResult =
   | { kind: "skipped"; reason: "not-ollama" | "missing-model" | "already-loaded" | "unreachable" }
+  | { kind: "skipped"; reason: "model-absent"; endpoint: string; inventoryLabel: string }
   | { kind: "warmed"; ok: true; timedOut: false }
   | {
       kind: "warmed";
@@ -224,6 +233,23 @@ export function maybeWarmOllamaAfterDaemonRestart(
       return { kind: "warmed", ok: false, timedOut: false, reason: "command-failed" };
     }
     const response = validateWarmResponse(result.stdout);
+    // An Ollama error can mean a broken runner or a daemon that simply does not
+    // hold this model. Only the second is an endpoint-ownership failure, and it
+    // is the one a restart can introduce silently while the route still looks
+    // valid (#9455). Ask the same daemon for its inventory to tell them apart;
+    // an unreadable inventory keeps the original warm-failure reason.
+    if (response === "ollama-error") {
+      const probePresence = deps.probeModelPresence ?? probeOllamaEndpointModelPresence;
+      const presence = probePresence(rawHost, model, deps.runCaptureImpl);
+      if (presence.presence === "absent") {
+        return {
+          kind: "skipped",
+          reason: "model-absent",
+          endpoint: `http://${rawHost}:${OLLAMA_PORT}`,
+          inventoryLabel: describeOllamaInventory(presence.inventory),
+        };
+      }
+    }
     if (response !== "ok") {
       return { kind: "warmed", ok: false, timedOut: false, reason: response };
     }
