@@ -95,12 +95,15 @@ describe("managed startup shared-state transaction", () => {
           ? originalLstatSync(target, { bigint: true })
           : originalLstatSync(target);
       const resolved = path.resolve(String(target));
-      if (resolved === root || resolved.startsWith(`${root}${path.sep}`)) {
-        Object.defineProperty(stat, "dev", {
-          configurable: true,
-          value: typeof stat.dev === "bigint" ? stat.dev + 1n : stat.dev + 1,
-        });
-      }
+      const mounted = resolved === root || resolved.startsWith(`${root}${path.sep}`);
+      const deviceOffset = mounted ? 1 : 0;
+      Object.defineProperty(stat, "dev", {
+        configurable: true,
+        value:
+          typeof stat.dev === "bigint"
+            ? stat.dev + BigInt(deviceOffset)
+            : stat.dev + deviceOffset,
+      });
       return stat;
     }) as typeof fs.lstatSync);
   }
