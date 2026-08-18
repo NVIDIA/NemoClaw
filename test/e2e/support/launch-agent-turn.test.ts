@@ -439,7 +439,8 @@ if (process.argv[2] !== "tui") {
   fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TTY_MARKER, "");
   const sessionFile = process.env.NEMOCLAW_FIXTURE_SESSION_FILE;
   const terminalCopy = process.env.NEMOCLAW_FIXTURE_TERMINAL_COPY;
-  const firstInput = process.argv[process.argv.indexOf("--message") + 1];
+  const messageIndex = process.argv.indexOf("--message");
+  const firstInput = messageIndex === -1 ? "" : process.argv[messageIndex + 1];
   if (!firstInput) process.exit(75);
   const append = (role, content) => fs.appendFileSync(
     sessionFile,
