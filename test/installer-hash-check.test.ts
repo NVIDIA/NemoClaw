@@ -20,6 +20,8 @@ import {
   V00103_CHECKSUM_MANIFESTS,
   V00103_SANDBOX_BUILD_DIGESTS,
   V00103_SUPERVISOR_MANIFEST_DIGEST,
+  V00106_ASSET_DIGESTS,
+  V00106_CHECKSUM_MANIFESTS,
 } from "./helpers/openshell-release-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
@@ -101,6 +103,7 @@ type FixtureMode =
   | "brev-mismatch"
   | "brev-sha-command-bypass"
   | "complete"
+  | "complete-multiple-installer-versions"
   | "duplicate-brev-pin"
   | "duplicate-installer-pin"
   | "failure"
@@ -147,6 +150,7 @@ type FixtureMode =
   | "pr-parser-bypass"
   | "brev-stable-version-drift"
   | "runtime-consumers-newer-than-tables"
+  | "secondary-installer-version-mismatch"
   | "symlink-installer-input"
   | "symlink-scripts-parent"
   | "duplicate-trusted-formula"
@@ -363,6 +367,46 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
 };
 
+function addInstallerReleaseTable(
+  source: string,
+  version: string,
+  assetDigests: ReadonlyMap<string, string>,
+): string {
+  const functionStart = source.indexOf("openshell_pinned_sha256() {");
+  const fallback = "    *)\n      return 1\n      ;;";
+  const fallbackStart = source.indexOf(fallback, functionStart);
+  expect(functionStart, "installer pin function start").not.toBe(-1);
+  expect(fallbackStart, "installer pin function fallback").not.toBe(-1);
+  const cases = INSTALLER_ASSETS.map((asset) => {
+    const digest = assetDigests.get(asset) ?? "missing";
+    return `    v${version}:${asset})
+      printf '%s\\n' "${digest}"
+      ;;`;
+  }).join("\n");
+  return `${source.slice(0, fallbackStart)}${cases}\n${source.slice(fallbackStart)}`;
+}
+
+for (const mode of [
+  "complete-multiple-installer-versions",
+  "secondary-installer-version-mismatch",
+] as const) {
+  INSTALLER_MUTATIONS[mode] = (source) => {
+    const withSecondRelease = addInstallerReleaseTable(
+      source,
+      "0.0.106",
+      V00106_ASSET_DIGESTS,
+    );
+    return mode === "secondary-installer-version-mismatch"
+      ? withSecondRelease.replace(
+          `v0.0.106:${ASSETS[0]})
+      printf '%s\\n' "${V00106_ASSET_DIGESTS.get(ASSETS[0]) ?? "missing"}"`,
+          `v0.0.106:${ASSETS[0]})
+      printf '%s\\n' "${"0".repeat(64)}"`,
+        )
+      : withSecondRelease;
+  };
+}
+
 type InputMutationContext = {
   blueprint: string;
   brevInstaller: string;
@@ -436,11 +480,13 @@ const CHECKSUM_MANIFESTS_BY_VERSION = new Map([
   ["0.0.99", V0099_CHECKSUM_MANIFESTS],
   ["0.0.101", V00101_CHECKSUM_MANIFESTS],
   ["0.0.103", V00103_CHECKSUM_MANIFESTS],
+  ["0.0.106", V00106_CHECKSUM_MANIFESTS],
 ]);
 const ASSET_DIGESTS_BY_VERSION = new Map([
   ["0.0.99", V0099_ASSET_DIGESTS],
   ["0.0.101", V00101_ASSET_DIGESTS],
   ["0.0.103", V00103_ASSET_DIGESTS],
+  ["0.0.106", V00106_ASSET_DIGESTS],
 ]);
 const CHECKER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
   "allowlisted-alternate-version": (source) => {
@@ -731,6 +777,22 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$url" in
+  *releases/download/v0.0.106/*)
+    case "\${url##*/}" in
+      openshell-checksums-sha256.txt)
+        printf '%s' '${V00106_CHECKSUM_MANIFESTS.get("openshell-checksums-sha256.txt")}' >"$output"
+        ;;
+      openshell-gateway-checksums-sha256.txt)
+        printf '%s' '${V00106_CHECKSUM_MANIFESTS.get("openshell-gateway-checksums-sha256.txt")}' >"$output"
+        ;;
+      openshell-sandbox-checksums-sha256.txt)
+        printf '%s' '${V00106_CHECKSUM_MANIFESTS.get("openshell-sandbox-checksums-sha256.txt")}' >"$output"
+        ;;
+      openshell.rb)
+        printf '%s\n' '# OpenShell v0.0.106 formula fixture' >"$output"
+        ;;
+    esac
+    ;;
   *releases/download/v${openshellVersion}/*)
     case "\${NEMOCLAW_TEST_CURL_MODE}" in
       failure) exit 22 ;;
@@ -771,7 +833,13 @@ case "\${1:-}" in
   */openshell.rb)
     case "\${NEMOCLAW_TEST_CURL_MODE:-}" in
       formula-mismatch | formula-self-authorized) digest='${"0".repeat(64)}' ;;
-      *) digest='${assetDigests.get(FORMULA_ASSET)}' ;;
+      *)
+        if grep -q 'OpenShell v0.0.106' "$1"; then
+          digest='${V00106_ASSET_DIGESTS.get(FORMULA_ASSET)}'
+        else
+          digest='${assetDigests.get(FORMULA_ASSET)}'
+        fi
+        ;;
     esac
     printf '%s  %s\\n' "$digest" "$1"
     ;;
@@ -866,6 +934,25 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("verifies each complete installer release table independently", () => {
+    const result = runFixture("complete-multiple-installer-versions", undefined, true);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).toContain("Checking OpenShell v0.0.106 release assets");
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("fails closed when a secondary installer release pin differs from its manifest", () => {
+    const result = runFixture("secondary-installer-version-mismatch", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      `installer ${ASSETS[0]} does not match exactly one v0.0.106 checksum entry`,
+    );
+    expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
   it("verifies the pinned Homebrew formula", () => {
@@ -1185,11 +1272,11 @@ describe("installer hash verification", () => {
     ],
     [
       "multiple-installer-versions",
-      "openshell_pinned_sha256 must contain exactly one release version, found 0.0.72, 0.0.73",
+      `installer pin table for 0.0.72 must contain the exact consumed asset set; missing=[${ASSETS[0]}]`,
     ],
     [
       "mismatched-table-versions",
-      "installer and Brev launchable pin tables must use the same release version, found 0.0.72, 0.0.73",
+      "installer pin table has no assets for selected release 0.0.73",
     ],
   ] as const)("fails closed for %s", (mode, diagnostic) => {
     const result = runFixture(mode, undefined, true);

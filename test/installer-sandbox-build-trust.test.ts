@@ -9,7 +9,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { V00103_SANDBOX_BUILD_DIGESTS } from "./helpers/openshell-release-fixtures";
+import {
+  V00103_SANDBOX_BUILD_DIGESTS,
+  V00106_SANDBOX_BUILD_DIGESTS,
+} from "./helpers/openshell-release-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const PARSER = path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts");
@@ -120,12 +123,26 @@ describe("standalone sandbox build trust", () => {
     expect(runParser().status).toBe(0);
   });
 
-  it("accepts the base-trusted OpenShell 0.0.103 sandbox identities before version selection (#8893)", () => {
+  it.each([
+    ["0.0.103", V00103_SANDBOX_BUILD_DIGESTS],
+    ["0.0.106", V00106_SANDBOX_BUILD_DIGESTS],
+  ] as const)(
+    "accepts the base-trusted OpenShell %s sandbox identities before version selection (#8893)",
+    (version, digests) => {
+      const result = runParser((source) => addSandboxBuildPins(source, version, digests));
+
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it("rejects the OpenShell 0.0.106 sandbox identities when they are remapped", () => {
     const result = runParser((source) =>
-      addSandboxBuildPins(source, "0.0.103", V00103_SANDBOX_BUILD_DIGESTS),
+      addSandboxBuildPins(source, "0.0.105", V00106_SANDBOX_BUILD_DIGESTS),
     );
 
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must use only base-trusted binary identities");
+    expect(result.stderr).toContain(`unexpected=[0.0.105:${V00106_SANDBOX_BUILD_DIGESTS[0]}`);
   });
 
   it("rejects an arbitrary structurally valid identity addition", () => {
