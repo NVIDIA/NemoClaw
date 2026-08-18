@@ -11,6 +11,7 @@ import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
 import {
   dcodeInput,
   expectPreparedImage,
+  writeDcodeRebuildDockerfile,
 } from "../../../../test/helpers/rebuild-managed-image-preflight-harness";
 import {
   disposePreparedDcodeRebuildImage,
@@ -22,7 +23,7 @@ describe("managed DCode rebuild image configuration", () => {
   it("pins recorded reasoning and web search while restoring ambient state (#6195)", async () => {
     const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-fidelity-"));
     const stagedDockerfile = path.join(testRoot, "Dockerfile");
-    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    writeDcodeRebuildDockerfile(stagedDockerfile);
     const previousReasoning = process.env.NEMOCLAW_REASONING;
     process.env.NEMOCLAW_REASONING = "false";
     let reasoningDuringPatch: string | undefined;
@@ -75,7 +76,7 @@ describe("managed DCode rebuild image configuration", () => {
   it("binds DCode auto-approval mode into the prepared image configuration (#6478)", async () => {
     const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-auto-approval-"));
     const stagedDockerfile = path.join(testRoot, "Dockerfile");
-    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    writeDcodeRebuildDockerfile(stagedDockerfile);
     const prepareDockerfilePatch = vi.fn(async () => ({
       buildId: "dcode-auto-approval",
       dashboardRemoteBindPrepared: false,
@@ -112,10 +113,9 @@ describe("managed DCode rebuild image configuration", () => {
     }
   });
 
-  it("carries staged base resolution into a named DCode rebuild image (#9386)", async () => {
+  it("passes pinned base-image resolution metadata to DCode Dockerfile patching (#9386)", async () => {
     const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-base-resolution-"));
     const stagedDockerfile = path.join(testRoot, "Dockerfile");
-    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
     const digest = `sha256:${"a".repeat(64)}`;
     const metadata = {
       schema: 1,
@@ -131,6 +131,7 @@ describe("managed DCode rebuild image configuration", () => {
       requireOpenshellSandboxAbi: true,
       minGlibcVersion: "2.39",
     } satisfies SandboxBaseImageResolutionMetadata;
+    writeDcodeRebuildDockerfile(stagedDockerfile, metadata);
     const prepareDockerfilePatch = vi.fn(async () => ({
       buildId: "dcode-base-resolution",
       dashboardRemoteBindPrepared: false,
@@ -139,12 +140,14 @@ describe("managed DCode rebuild image configuration", () => {
 
     try {
       const result = await prepareManagedDcodeRebuildImage(
-        dcodeInput({ dcodeAutoApprovalMode: "thread-opt-in" }),
+        dcodeInput({
+          dcodeAutoApprovalMode: "thread-opt-in",
+          preResolvedBaseImageMetadata: metadata,
+        }),
         {
           stageBuildContext: () => ({
             buildCtx: testRoot,
             stagedDockerfile,
-            baseImageResolutionMetadata: metadata,
             origin: "generated" as const,
             cleanupBuildCtx: () => {
               fs.rmSync(testRoot, { recursive: true, force: true });
@@ -170,10 +173,51 @@ describe("managed DCode rebuild image configuration", () => {
     }
   });
 
+  it("rejects a staged DCode base image that differs from pinned base-image resolution metadata (#9386)", async () => {
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-base-mismatch-"));
+    const stagedDockerfile = path.join(testRoot, "Dockerfile");
+    const input = dcodeInput();
+    writeDcodeRebuildDockerfile(stagedDockerfile, {
+      ...input.preResolvedBaseImageMetadata,
+      ref: `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:${"c".repeat(64)}`,
+    });
+    const cleanupBuildCtx = vi.fn(() => {
+      fs.rmSync(testRoot, { recursive: true, force: true });
+      return true;
+    });
+    const prepareDockerfilePatch = vi.fn();
+    const buildImage = vi.fn();
+
+    try {
+      await expect(
+        prepareManagedDcodeRebuildImage(input, {
+          stageBuildContext: () => ({
+            buildCtx: testRoot,
+            stagedDockerfile,
+            origin: "generated" as const,
+            cleanupBuildCtx,
+          }),
+          prepareDockerfilePatch,
+          buildImage,
+          removeImage: () => ({ status: 0 }) as never,
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        detail:
+          "managed DCode staged base image does not match pinned base-image resolution metadata",
+      });
+      expect(prepareDockerfilePatch).not.toHaveBeenCalled();
+      expect(buildImage).not.toHaveBeenCalled();
+      expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(testRoot, { recursive: true, force: true });
+    }
+  });
+
   it("preserves remote dashboard bind preparation from the managed Dockerfile patch (#6024)", async () => {
     const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-remote-bind-"));
     const stagedDockerfile = path.join(testRoot, "Dockerfile");
-    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    writeDcodeRebuildDockerfile(stagedDockerfile);
 
     try {
       const result = await prepareManagedDcodeRebuildImage(dcodeInput(), {
@@ -206,7 +250,7 @@ describe("managed DCode rebuild image configuration", () => {
   it("defaults missing compatible-endpoint reasoning without borrowing ambient state (#6195)", async () => {
     const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-reasoning-"));
     const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    writeDcodeRebuildDockerfile(stagedDockerfile);
     const previousReasoning = process.env.NEMOCLAW_REASONING;
     process.env.NEMOCLAW_REASONING = "true";
     let reasoningDuringPatch: string | undefined;
