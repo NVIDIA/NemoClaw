@@ -32,30 +32,32 @@ function candidateBundle() {
 }
 
 describe("inactive OpenShell MXC runtime provider", () => {
-  it("registers one identity-consistent candidate without entering production selection (#8178)", () => {
-    const providers = createRuntimeProviderBundleRegistry([["mxc", candidateBundle()]]);
-    const provider = providers.mxc!;
+  it.each([
+    "plan",
+    "capabilities",
+    "preflightDoctor",
+    "gateway",
+    "workload",
+    "lifecycle",
+    "mutationAuthority",
+    "stateMutation",
+    "bootstrap",
+    "snapshot",
+    "recovery",
+    "cleanup",
+    "containerEngine",
+  ] as const)(
+    "registers one identity-consistent candidate without entering production selection [%s] (#8178)",
+    (surface) => {
+      const providers = createRuntimeProviderBundleRegistry([["mxc", candidateBundle()]]);
+      const provider = providers.mxc!;
 
-    expect(Object.hasOwn(CURRENT_RUNTIME_PROVIDER_BUNDLES, "mxc")).toBe(false);
-    expect(provider.identity).toMatchObject({ id: "mxc", displayName: "OpenShell MXC" });
-    for (const surface of [
-      "plan",
-      "capabilities",
-      "preflightDoctor",
-      "gateway",
-      "workload",
-      "lifecycle",
-      "mutationAuthority",
-      "stateMutation",
-      "bootstrap",
-      "snapshot",
-      "recovery",
-      "cleanup",
-      "containerEngine",
-    ] as const) {
+      expect(Object.hasOwn(CURRENT_RUNTIME_PROVIDER_BUNDLES, "mxc")).toBe(false);
+      expect(provider.identity).toMatchObject({ id: "mxc", displayName: "OpenShell MXC" });
+
       expect(provider[surface].providerId, surface).toBe("mxc");
-    }
-  });
+    },
+  );
 
   it("accepts only a validated OpenClaw Windows native-artifact receipt (#8178)", () => {
     const provider = candidateBundle();
@@ -102,39 +104,53 @@ describe("inactive OpenShell MXC runtime provider", () => {
     });
   });
 
-  it("fails closed for every unqualified mutation and lifecycle surface (#8178)", () => {
-    const provider = candidateBundle();
+  it.each([
+    { scenario: "lifecycle" },
+    { scenario: "mutation authority" },
+    { scenario: "state mutation" },
+    { scenario: "bootstrap" },
+    { scenario: "snapshot" },
+    { scenario: "recovery" },
+    { scenario: "cleanup" },
+    { scenario: "container engine" },
+  ])(
+    "fails closed for every unqualified mutation and lifecycle surface [$scenario] (#8178)",
+    ({ scenario }) => {
+      const provider = candidateBundle();
 
-    expect(provider.capabilities).toMatchObject({
-      hostLocalInference: false,
-      directLifecycle: false,
-      workloadImageCleanup: false,
-      readOnlyHostMounts: {
-        supported: false,
-        reason: expect.stringMatching(/host-directory sharing contract/u),
-      },
-    });
-    for (const surface of [
-      provider.lifecycle,
-      provider.mutationAuthority,
-      provider.stateMutation,
-      provider.bootstrap,
-      provider.snapshot,
-      provider.recovery,
-      provider.cleanup,
-      provider.containerEngine,
-    ]) {
+      expect(provider.capabilities).toMatchObject({
+        hostLocalInference: false,
+        directLifecycle: false,
+        workloadImageCleanup: false,
+        readOnlyHostMounts: {
+          supported: false,
+          reason: expect.stringMatching(/host-directory sharing contract/u),
+        },
+      });
+      const surface = (
+        {
+          lifecycle: provider.lifecycle,
+          "mutation authority": provider.mutationAuthority,
+          "state mutation": provider.stateMutation,
+          bootstrap: provider.bootstrap,
+          snapshot: provider.snapshot,
+          recovery: provider.recovery,
+          cleanup: provider.cleanup,
+          "container engine": provider.containerEngine,
+        } as const
+      )[scenario]!;
       expect(surface).toMatchObject({ providerId: "mxc", supported: false });
       expect("reason" in surface ? surface.reason : "").not.toBe("");
-    }
-    expect(provider.preflightDoctor.preflightLifecycle("start", {} as never)).toMatchObject({
-      exitCode: 1,
-      message: expect.stringMatching(/has not passed live E2E/u),
-    });
-    expect(() => requireRuntimeProviderMutationAuthority(provider, "registration")).toThrow(
-      /does not authorize 'registration'/u,
-    );
-  });
+
+      expect(provider.preflightDoctor.preflightLifecycle("start", {} as never)).toMatchObject({
+        exitCode: 1,
+        message: expect.stringMatching(/has not passed live E2E/u),
+      });
+      expect(() => requireRuntimeProviderMutationAuthority(provider, "registration")).toThrow(
+        /does not authorize 'registration'/u,
+      );
+    },
+  );
 
   it("rejects a native-artifact profile with an unaccepted agent (#8178)", () => {
     const provider = candidateBundle();

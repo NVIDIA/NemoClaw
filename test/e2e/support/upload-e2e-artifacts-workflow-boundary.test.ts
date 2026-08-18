@@ -95,7 +95,6 @@ describe("E2E artifact uploads", () => {
     expect(policyErrors).toContain(
       "upload-e2e-artifacts must preserve artifact defaults, hidden-file policy, missing-file behavior, and retention",
     );
-
   });
 
   it("uploads artifacts even when an earlier step fails", () => {
@@ -148,6 +147,19 @@ describe("E2E artifact uploads", () => {
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
       "release-qualification must not invoke actions/upload-artifact directly",
+    );
+  });
+
+  it("allows only the exact 30-day native runtime aggregate upload", () => {
+    const workflow = mutableWorkflow();
+    const upload = workflow.jobs["native-runtime-qualification-producer-aggregate"].steps?.find(
+      (step) => step.name === "Upload aggregate evidence",
+    );
+    expect(upload).toBeDefined();
+    upload!.with!["retention-days"] = 14;
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "native-runtime-qualification-producer-aggregate must not invoke actions/upload-artifact directly",
     );
   });
 

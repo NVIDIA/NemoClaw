@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
 import { target } from "../registry/builder.ts";
-import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
 import type { TargetDefinition, TargetEnvironment } from "../registry/types.ts";
 
@@ -48,6 +47,17 @@ describe("live target registry discovery support", () => {
     expect(support.supported).toBe(false);
     expect(support.reasons).toEqual([
       `${dimension} 'synthetic-${dimension}' is not wired for live fixtures`,
+    ]);
+  });
+
+  it("rejects an unrecognized runtime policy tier", () => {
+    const environment = {
+      ...SUPPORTED_ENVIRONMENT,
+      policyTier: "synthetic-policy-tier" as TargetEnvironment["policyTier"],
+    };
+
+    expect(liveTargetSupport(syntheticTarget(environment)).reasons).toEqual([
+      "policyTier 'synthetic-policy-tier' is not wired for live fixtures",
     ]);
   });
 

@@ -13,9 +13,19 @@ vi.mock("../src/lib/runner", async (importOriginal) => ({
   runCapture,
 }));
 
-import { applyPresetContent, loadPresetFromFile } from "../src/lib/policy";
+import { applyPresetContent, loadPreset, loadPresetFromFile } from "../src/lib/policy";
 
 const tempDirs: string[] = [];
+const DRIFTED_PERSONAL_POLICY = `version: 1
+network_policies:
+  personal_open_internet:
+    name: personal_open_internet
+    endpoints:
+      - ports: [80, 443]
+        allowed_ips: [8.8.8.8]
+    binaries:
+      - path: /**
+`;
 
 beforeEach(() => {
   runCapture.mockReset();
@@ -77,5 +87,37 @@ describe("custom policy semantic validation", () => {
     } finally {
       errSpy.mockRestore();
     }
+  });
+});
+
+describe("Personal policy mutation validation", () => {
+  it("returns false for non-fatal application when the reserved Personal entry drifts", () => {
+    runCapture.mockReturnValue(DRIFTED_PERSONAL_POLICY);
+    const weatherPreset = loadPreset("weather");
+    expect(weatherPreset).not.toBeNull();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      expect(
+        applyPresetContent("personal-drift", "weather", weatherPreset!, {
+          nonFatal: true,
+        }),
+      ).toBe(false);
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining("does not match the reviewed built-in preset"),
+      );
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("throws for ordinary application when the reserved Personal entry drifts", () => {
+    runCapture.mockReturnValue(DRIFTED_PERSONAL_POLICY);
+    const weatherPreset = loadPreset("weather");
+    expect(weatherPreset).not.toBeNull();
+
+    expect(() => applyPresetContent("personal-drift", "weather", weatherPreset!)).toThrow(
+      "does not match the reviewed built-in preset",
+    );
   });
 });

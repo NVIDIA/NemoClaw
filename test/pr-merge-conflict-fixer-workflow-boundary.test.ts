@@ -67,7 +67,19 @@ describe("PR merge conflict fixer workflow boundary", () => {
     expect(publish["timeout-minutes"]).toBe(10);
   });
 
-  it("loads each resolve command from the pushed main SHA (#6952)", () => {
+  it.each(
+    Array.from(
+      [
+        ["Reproduce the recorded conflict", "prepare"],
+        ["Configure OpenShell inference", "configure"],
+        ["Create the credential-free sandbox", "create"],
+        ["Run one Pi conflict-resolution task", "run"],
+        ["Export the Git patch", "export"],
+        ["Delete the sandbox", "delete"],
+      ],
+      (value) => [value],
+    ),
+  )("loads each resolve command from the pushed main SHA [case %#] (#6952)", ([name, command]) => {
     const actionReferences = [scan, resolve, publish]
       .flatMap((job) => steps(job))
       .map((step) => step.uses)
@@ -87,16 +99,7 @@ describe("PR merge conflict fixer workflow boundary", () => {
       "$TRUSTED_CHECKOUT/tools/pr-merge-conflict-fixer/publish.mts",
     );
 
-    for (const [name, command] of [
-      ["Reproduce the recorded conflict", "prepare"],
-      ["Configure OpenShell inference", "configure"],
-      ["Create the credential-free sandbox", "create"],
-      ["Run one Pi conflict-resolution task", "run"],
-      ["Export the Git patch", "export"],
-      ["Delete the sandbox", "delete"],
-    ]) {
-      expect(namedStep(resolve, name).run).toBe(resolverInvocation(command));
-    }
+    expect(namedStep(resolve, name).run).toBe(resolverInvocation(command));
   });
 
   it("keeps credentials and direct network egress out of Pi (#7542)", () => {

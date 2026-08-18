@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Creates deterministic NemoClaw semver release tags on origin/main after verifying the pre-tag dated changelog entry, handles release housekeeping, drafts announcement release notes, and verifies the maintainer-published Announcement. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, publishing release announcements, or completing release communication.
+description: Creates deterministic NemoClaw semver release tags on origin/main after verifying post-merge documentation workflow state, handles release housekeeping, drafts announcement release notes, and verifies the maintainer-published Announcement. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, publishing release announcements, or completing release communication.
 user_invocable: true
 ---
 
@@ -36,8 +36,7 @@ The downstream scheduled reconciliation remains available if the event-driven di
 ## Hard Rules
 
 - Tag only the commit captured in a generated release plan.
-- Do not generate the release plan until the release-prep docs PR containing `docs/changelog/YYYY-MM-DD.mdx` and the exact planned `## vX.Y.Z` heading is merged or explicitly waived.
-- Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
+- At plan generation and immediately before cutting, require a successful no-change `Docs / Post-Merge Catch-Up` publish job for the exact candidate, no open managed documentation PR, and no branch for that candidate.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
 - Use a passing `Release qualification` check from a full pre-tag run, with or without an administrator-authorized job waiver.
@@ -73,25 +72,27 @@ Release Progress:
 Start with one read-only pass that checks these prerequisites together:
 
 - refresh `origin/main` and resolve its full SHA;
-- check the target changelog heading and release-prep docs state; and
+- verify post-merge documentation state for that SHA; and
 - inventory existing E2E runs for the same SHA before deciding what to dispatch.
 
 Do not wait for merges to stop. The plan captures one candidate SHA for evidence; a late drift check advances it when `origin/main` moves.
 Do not dispatch or poll a workflow during this pass.
 
-Before this step, confirm release-prep docs are merged or explicitly waived.
-Return to `nemoclaw-maintainer-evening` if docs are still pending.
-
-For the planned version, inspect `origin/main` before generating the plan:
+Use GitHub's observed workflow and PR state:
 
 ```bash
-git grep -n '^## vX\.Y\.Z$' origin/main -- 'docs/changelog/*.mdx'
+set -euo pipefail
+CANDIDATE_SHA="$(git rev-parse --verify 'origin/main^{commit}')"
+gh run list --repo NVIDIA/NemoClaw --workflow post-merge-docs.yaml --event push \
+  --branch main --commit "$CANDIDATE_SHA" --status success --limit 1 --json databaseId,headSha,status,conclusion,url
+gh api --paginate "repos/NVIDIA/NemoClaw/pulls?state=open&base=main&per_page=100" | jq --slurp -e '[.[][] | select((.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")] | length == 0' >/dev/null
+REMOTE_BRANCH="$(git ls-remote --heads origin "automation/post-merge-docs-${CANDIDATE_SHA:0:12}")"
+[[ -z "$REMOTE_BRANCH" ]]
 ```
 
-Require exactly one match in a dated file directly under `docs/changelog/`.
-Confirm that a newly created file begins with the parser-safe MDX SPDX comment and that the entry contains its summary and detailed bullets.
-If the entry is missing or malformed, return to `nemoclaw-contributor-update-docs`; do not substitute the post-tag announcement workflow.
-If the maintainer explicitly waives the entry, preserve the reason in the release-plan presentation and confirmation handoff.
+Require the returned `headSha` to equal `CANDIDATE_SHA`.
+Require `gh run view <databaseId> --json jobs` to show one successful no-change `Publish documentation catch-up` job; a skipped or PR-opening job is not readiness.
+Stop on any mismatch and return to `nemoclaw-maintainer-evening`.
 
 Run one of:
 
@@ -116,17 +117,15 @@ Read the generated `plan.json` and show the maintainer:
 - previous tag,
 - next tag,
 - target `origin/main` commit and headline,
+- `Docs / Post-Merge Catch-Up` workflow URL,
 - plan hash,
 - forbidden operations,
 - confirmation phrase,
 - open issue/PR housekeeping plan for the release label, including deletion of the released label after carry-forward succeeds.
 
-Unless Step 1 records an explicit waiver, verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
-When the entry is waived, show the recorded waiver reason in the plan presentation and confirmation handoff instead.
-
 For the plan's full `origin/main` SHA, require a completed, successful `Release qualification` check from a pre-tag `.github/workflows/e2e.yaml` run.
 The workflow planner derives the required jobs from the workflow's E2E metadata.
-By default, the check requires every release-required execution result, including `Publish staging Brev Launchable image`, to succeed.
+By default, the check requires every release-required E2E execution result, including `Exact staging Brev Launchable`, to succeed.
 A repository administrator may waive one or more release-required E2E execution jobs for a documented release exception.
 The waiver requires a comma-separated `release_qualification_waived_jobs` list and a `release_qualification_waiver_reason`.
 The reason must begin with an ASCII letter or digit and contain 10-500 characters chosen from ASCII letters, digits, spaces, and `.,:;/_()'-`.
@@ -168,20 +167,6 @@ Before showing the confirmation prompt, present the candidate SHA, workflow URL,
 For a waived run, also present the waived jobs, their outcomes, the waiver reason, and both recorded actor identities.
 No release-note-only delta exception is currently defined.
 
-After image publication succeeds, present this advisory manual validation:
-
-- State that the image-publication job built and published the candidate image to the staging family used by the [NemoClaw staging Launchable](https://brev.nvidia.com/launchable/deploy/now?launchableID=env-3GdbIjswX4fs3VJ6cYRHr5zoQXo).
-- Encourage the maintainer to deploy one instance and hand its Brev environment URL to a Codex session that invokes `nemoclaw-maintainer-validate-launchable`.
-- Require the manual validation to compare the deployed concrete image with `launchable-image.json`; do not assume that the mutable family still points to the candidate.
-- State that browser-control capability is required for Codex to click and verify the web interface.
-- State that a securely supplied inference credential is required to complete hosted and sandbox inference validation. Never ask the maintainer to paste the credential into chat.
-- Record the manual result as `complete pass`, `partially blocked`, `failed`, or `not run` when the maintainer provides it.
-
-This manual validation is advisory while the automated Launchable path is blocked by issue #8924.
-Its absence, partial result, or failure does not block the signing preflight, confirmation prompt, or release tag.
-Do not describe successful image publication as successful Launchable, runtime, or inference validation.
-Apply the temporary policy in [Pre-Tag E2E Evidence](../nemoclaw-maintainer-policies/references/release-train.md#temporary-staging-launchable-qualification-policy): NemoClaw maintainers own it while #8924 remains open, the successful exact image-publication job and artifact remain required release evidence under normal Actions retention, and the full automated lane returns only after a checksum-pinned Brev release passes deployment through verified cleanup on trusted `main`.
-
 Run the release script's signing preflight before asking for confirmation:
 
 ```bash
@@ -211,6 +196,8 @@ CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>
 Do not proceed on a generic "yes" at this step.
 
 ### Step 3: Cut the Semver Tag
+
+Repeat the Step 1 documentation workflow and open-PR queries for the planned SHA.
 
 Run the cut script with the plan and the maintainer's phrase:
 
@@ -305,7 +292,6 @@ Load and follow `nemoclaw-maintainer-release-notes`, then use its output as the 
 Before continuing to Step 7, verify the draft has three lead paragraphs, categorized shipped changes, one what-changed-and-why-it-matters bullet with a visible `#NNNN` link for every included change, and thanks for external contributors only.
 
 Do not create or update a GitHub Discussion.
-Do not edit `docs/changelog/` in this post-tag step; the canonical entry must already be present in the tagged commit.
 
 ### Step 7: Wait for Maintainer-Published Announcement
 
@@ -335,12 +321,12 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 ## Recovery
 
 - Plan generation fails: fix the named precondition, then regenerate the plan.
-- Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
-- Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable image-publication job finishes.
+- Documentation workflow state is incomplete: return to `nemoclaw-maintainer-evening`, then repeat
+  Step 1 after the documentation PR merges.
+- Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
 - Full-mode E2E ran for another SHA: reject the run and dispatch full mode for the plan candidate SHA.
 - No qualifying `Release qualification` exists: inspect the GitHub result and run pre-tag E2E for the planned SHA only when no qualifying run already exists. Use a job waiver only with explicit repository administrator authorization. Do not release until the release script accepts the canonical check.
-- Launchable image publication fails: inspect `launchable-image.json` and the producer run, correct the failure, and rerun the affected work. Do not infer image publication from manual Launchable validation.
-- Advisory Launchable validation is blocked or fails: record the exact partial result and continue the release flow. Do not convert the result into a release gate or an automated E2E pass.
+- Launchable E2E or cleanup fails: inspect the diagnostic artifacts, correct the failure, and rerun the affected E2E work. Do not infer Launchable success from another workflow result.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
 - Signing preflight fails: fix the reported Git signer or signing-key failure. Run the preflight again before requesting confirmation.

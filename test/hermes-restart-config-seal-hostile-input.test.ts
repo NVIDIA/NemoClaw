@@ -149,9 +149,8 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
         expect(mode(fixture.hermesDir)).toBe(0o500);
         const transition = JSON.parse(fs.readFileSync(fixture.statePath, "utf-8"));
         expect(transition.shields_transition.unavailable).toBe(true);
-        for (const proofPath of hostileKind === "symlink" ? [path.join(victim, "proof")] : []) {
-          expect(fs.readFileSync(proofPath, "utf-8")).toBe("untouched\n");
-        }
+        expect((hostileKind === "symlink" ? [path.join(victim, "proof")] : []).every((proofPath) =>
+            Object.is(fs.readFileSync(proofPath, "utf-8"), "untouched\n"))).toBe(true);
       } finally {
         fs.chmodSync(fixture.sandboxDir, 0o700);
         fs.chmodSync(fixture.hermesDir, 0o700);

@@ -37,12 +37,10 @@ function supportProgress() {
 
 describe("fixture redaction entry point", () => {
   it("recognizes pass env names only at exact or underscore-delimited boundaries", () => {
-    for (const key of ["PASS", "PASSWD", "CUSTOM_PASS", "CUSTOM_PASSWD"]) {
-      expect(isValidSecretEnvKey(key), key).toBe(true);
-    }
-    for (const key of ["COMPASS", "BYPASS", "PASSENGER_COUNT", "PASSED"]) {
-      expect(isValidSecretEnvKey(key), key).toBe(false);
-    }
+    expect(["PASS", "PASSWD", "CUSTOM_PASS", "CUSTOM_PASSWD"].every((key) =>
+        Object.is(isValidSecretEnvKey(key), true))).toBe(true);
+    expect(["COMPASS", "BYPASS", "PASSENGER_COUNT", "PASSED"].every((key) =>
+        Object.is(isValidSecretEnvKey(key), false))).toBe(true);
 
     expect(
       buildChildEnv(
@@ -250,7 +248,14 @@ describe("fixture redaction entry point", () => {
     expect(out).not.toContain(canonical);
   });
 
-  it("redacts raw secrets at the uploaded artifact sink", async () => {
+  it.each([
+    { scenario: "hosted inference key" },
+    { scenario: "Docker token" },
+    { scenario: "gateway token" },
+    { scenario: "GitHub token" },
+    { scenario: "messaging token" },
+    { scenario: "private key" },
+  ])("redacts raw secrets at the uploaded artifact sink [$scenario]", async ({ scenario }) => {
     const fakeHostedKey = "fake-hosted-inference-key-for-artifact-scan";
     const fakeDockerToken = "fake-docker-token-for-artifact-scan";
     const generatedGatewayToken = "generated-gateway-token-for-artifact-scan";
@@ -319,16 +324,18 @@ describe("fixture redaction entry point", () => {
     expect(result.stdout).toContain("[REDACTED]");
     expect(result.stderr).toContain("[REDACTED]");
     const uploadedText = uploadedTexts.join("\n");
-    for (const secret of [
-      fakeHostedKey,
-      fakeDockerToken,
-      generatedGatewayToken,
-      fakeGitHubToken,
-      fakeMessagingToken,
-      generatedPrivateKey,
-    ]) {
-      expect(uploadedText).not.toContain(secret);
-    }
+    const secret = (
+      {
+        "hosted inference key": fakeHostedKey,
+        "Docker token": fakeDockerToken,
+        "gateway token": generatedGatewayToken,
+        "GitHub token": fakeGitHubToken,
+        "messaging token": fakeMessagingToken,
+        "private key": generatedPrivateKey,
+      } as const
+    )[scenario]!;
+    expect(uploadedText).not.toContain(secret);
+
     expect(uploadedText).toContain("[REDACTED]");
     expect(uploadedText).toContain("<REDACTED>");
     expect(uploadedText).not.toContain("PRIVATE KEY");
@@ -399,40 +406,37 @@ describe("fixture redaction entry point", () => {
     }
   });
 
-  it.each([
-    0,
-    -1,
-    1.5,
-    Number.POSITIVE_INFINITY,
-    Number.MAX_SAFE_INTEGER + 1,
-  ])("rejects invalid capture limit %s before spawning a child or writing artifacts", async (captureLimitBytes) => {
-    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-e2e-invalid-capture-"));
-    try {
-      const artifactRoot = path.join(rootDir, "e2e-artifacts/live/invalid-capture");
-      const spawnMarker = path.join(rootDir, "spawned.txt");
-      const artifacts = new ArtifactSink(artifactRoot);
-      await artifacts.ensureRoot();
-      const probe = new ShellProbe({
-        artifacts,
-        progress: supportProgress(),
-        redact: (text, extra) => redactString(text, extra),
-        signal: new AbortController().signal,
-      });
+  it.each([0, -1, 1.5, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid capture limit %s before spawning a child or writing artifacts",
+    async (captureLimitBytes) => {
+      const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-e2e-invalid-capture-"));
+      try {
+        const artifactRoot = path.join(rootDir, "e2e-artifacts/live/invalid-capture");
+        const spawnMarker = path.join(rootDir, "spawned.txt");
+        const artifacts = new ArtifactSink(artifactRoot);
+        await artifacts.ensureRoot();
+        const probe = new ShellProbe({
+          artifacts,
+          progress: supportProgress(),
+          redact: (text, extra) => redactString(text, extra),
+          signal: new AbortController().signal,
+        });
 
-      await expect(
-        probe.run(
-          trustedShellCommand({
-            command: "bash",
-            args: ["-lc", 'printf spawned >"$SPAWN_MARKER"'],
-            reason: "prove invalid output limits fail before child execution",
-          }),
-          { captureLimitBytes, env: { SPAWN_MARKER: spawnMarker } },
-        ),
-      ).rejects.toThrow("captureLimitBytes must be a positive safe integer");
-      await expect(fs.access(spawnMarker)).rejects.toThrow();
-      await expect(fs.readdir(artifactRoot)).resolves.toEqual([]);
-    } finally {
-      await fs.rm(rootDir, { recursive: true, force: true });
-    }
-  });
+        await expect(
+          probe.run(
+            trustedShellCommand({
+              command: "bash",
+              args: ["-lc", 'printf spawned >"$SPAWN_MARKER"'],
+              reason: "prove invalid output limits fail before child execution",
+            }),
+            { captureLimitBytes, env: { SPAWN_MARKER: spawnMarker } },
+          ),
+        ).rejects.toThrow("captureLimitBytes must be a positive safe integer");
+        await expect(fs.access(spawnMarker)).rejects.toThrow();
+        await expect(fs.readdir(artifactRoot)).resolves.toEqual([]);
+      } finally {
+        await fs.rm(rootDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

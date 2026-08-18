@@ -118,6 +118,7 @@ function mockDockerDaemon(containerName: string, restartCount = "0"): void {
 }
 
 describe("managed vLLM GPU compute capability preflight", () => {
+  const quantizedModels = VLLM_MODELS.filter((model) => /FP8|NVFP4/.test(model.id));
   let errSpy: VllmInstallSpies["errSpy"];
   let restoreSpies: VllmInstallSpies["restore"];
   const originalEnv = { ...process.env };
@@ -210,12 +211,12 @@ describe("managed vLLM GPU compute capability preflight", () => {
     expect(formatComputeCapability(121)).toBe("12.1");
   });
 
-  it("declares a minimum for every quantized checkpoint in the registry (#8307)", () => {
-    const quantized = VLLM_MODELS.filter((model) => /FP8|NVFP4/.test(model.id));
-    expect(quantized.length).toBeGreaterThan(0);
-    for (const model of quantized) {
-      expect(model.minComputeCapability, model.id).toBeGreaterThanOrEqual(89);
-    }
+  it("includes quantized checkpoints in the registry (#8307)", () => {
+    expect(quantizedModels.length).toBeGreaterThan(0);
+  });
+
+  it.each(quantizedModels)("declares a minimum compute capability for $id (#8307)", (model) => {
+    expect(model.minComputeCapability).toBeGreaterThanOrEqual(89);
   });
 });
 

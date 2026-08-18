@@ -11,20 +11,12 @@ const launchable = fs.readFileSync(
   path.join(skillsRoot, "nemoclaw-maintainer-validate-launchable", "SKILL.md"),
   "utf8",
 );
-const release = fs.readFileSync(
-  path.join(skillsRoot, "nemoclaw-maintainer-cut-release-tag", "SKILL.md"),
-  "utf8",
-);
 const guide = fs.readFileSync(path.join(skillsRoot, "nemoclaw-skills-guide", "SKILL.md"), "utf8");
-const releasePolicy = fs.readFileSync(
-  path.join(skillsRoot, "nemoclaw-maintainer-policies", "references", "release-train.md"),
-  "utf8",
-);
 
 describe("staging Launchable maintainer guidance", () => {
   it("keeps browser and inference gaps visible as partial validation (#8924)", () => {
     expect(launchable).toContain(
-      "https://brev.nvidia.com/launchable/deploy/now?launchableID=env-3GdbIjswX4fs3VJ6cYRHr5zoQXo",
+      "https://brev.nvidia.com/launchable/deploy/now?launchableID=env-3I2w334slP4GKSce9kKK0hGerjJ",
     );
     expect(launchable).toContain("When authenticated browser-control tools are available");
     expect(launchable).toContain("When browser-control tools are unavailable");
@@ -39,13 +31,13 @@ describe("staging Launchable maintainer guidance", () => {
       "Require a short-lived inference API key scoped only to the required validation",
     );
     expect(launchable).toContain(
-      "require a maintainer-approved waiver tied to the exact candidate commit SHA and selected image-publication run ID",
+      "require a maintainer-approved waiver tied to the exact candidate commit SHA and selected automated Launchable run ID",
     );
     expect(launchable).toContain(
       "rotate or revoke the inference API key in the issuing NVIDIA service after the run",
     );
     expect(launchable).toContain(
-      "record its approver, exact candidate commit SHA, selected image-publication run ID, and the accepted period of later API-key access",
+      "record its approver, exact candidate commit SHA, selected automated Launchable run ID, and the accepted period of later API-key access",
     );
     expect(launchable).toContain(
       "obtain explicit maintainer approval immediately before starting the credential-bearing process",
@@ -75,8 +67,10 @@ describe("staging Launchable maintainer guidance", () => {
 
   it("binds image and environment identity before manual validation (#8924)", () => {
     expect(launchable).toContain(
-      "`producer.runId` equal to the producer run ID selected by the publication job",
+      "`producer.runId` equal to the producer run ID selected by the automated job",
     );
+    expect(launchable).toContain("`fullE2e` equal to `passed`");
+    expect(launchable).toContain("`boot.bootImage` from `launchable-e2e.json`");
     expect(launchable).toContain("Use the supplied environment ID as the authoritative identity");
     expect(launchable).toContain(
       "Use an instance-name lookup only when no environment ID is available",
@@ -86,25 +80,10 @@ describe("staging Launchable maintainer guidance", () => {
     expect(launchable).toContain("`not run` only when no required validation check started");
   });
 
-  it("keeps manual Launchable validation advisory during release tagging (#8924)", () => {
-    expect(release).toContain("nemoclaw-maintainer-validate-launchable");
-    expect(release).toContain(
-      "https://brev.nvidia.com/launchable/deploy/now?launchableID=env-3GdbIjswX4fs3VJ6cYRHr5zoQXo",
-    );
-    expect(release).toContain("Its absence, partial result, or failure does not block");
-    expect(release).toContain(
-      "Do not describe successful image publication as successful Launchable, runtime, or inference validation",
-    );
-    expect(release).toContain(
-      "do not assume that the mutable family still points to the candidate",
-    );
-    expect(release).toContain("temporary-staging-launchable-qualification-policy");
-    expect(releasePolicy).toContain("NemoClaw maintainers own this policy");
-    expect(releasePolicy).toContain("GitHub retains the workflow logs and artifact");
-    expect(releasePolicy).toContain(
-      "missing, partial, or failed result needs no per-release waiver",
-    );
-    expect(releasePolicy).toContain("That successful run is the reactivation evidence");
+  it("keeps manual Launchable validation separate from automated E2E evidence (#8924)", () => {
+    expect(launchable).toContain("This report is advisory manual validation");
+    expect(launchable).toContain("Do not use it as automated E2E evidence");
+    expect(launchable).toContain("Automated Launchable workflow and job URL");
     expect(guide).toContain("`nemoclaw-maintainer-validate-launchable`");
   });
 });

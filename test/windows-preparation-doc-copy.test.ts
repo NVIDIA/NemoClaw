@@ -74,22 +74,21 @@ describe("Windows preparation docs copyable commands", () => {
     expect(languages.has("bash")).toBe(true);
   });
 
-  it("keeps docs style guidance aligned with copyable command blocks", () => {
-    const styleSources = [contributingDoc, codeRabbitConfig, contributorUpdateDocsSkill];
+  it.each(
+    Array.from([contributingDoc, codeRabbitConfig, contributorUpdateDocsSkill], (value) => [value]),
+  )("keeps docs style guidance in %s aligned with copyable command blocks", (source) => {
     const oldGuidance = [
       /CLI code blocks must use the `console` language tag with `\$` prompt/,
       /Code examples use `console` language\*\* with `\$` prompt prefix/,
       /Use code blocks with the `console` language for CLI examples\. Prefix commands with `\$`/,
     ];
 
-    for (const source of styleSources) {
-      const content = fs.readFileSync(source, "utf8");
-      for (const pattern of oldGuidance) {
-        expect(
-          content,
-          `${path.relative(repoRoot, source)} still contains old prompt-prefix guidance`,
-        ).not.toMatch(pattern);
-      }
+    const content = fs.readFileSync(source, "utf8");
+    for (const pattern of oldGuidance) {
+      expect(
+        content,
+        `${path.relative(repoRoot, source)} still contains old prompt-prefix guidance`,
+      ).not.toMatch(pattern);
     }
   });
 });

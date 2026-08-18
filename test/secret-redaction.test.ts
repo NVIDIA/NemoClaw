@@ -14,6 +14,30 @@ import { redactSensitiveText } from "../src/lib/state/onboard-session";
 const require = createRequire(import.meta.url);
 const { redact: runnerRedact } = require("../src/lib/runner");
 
+function linkDebugCommands(fakeBin: string): void {
+  for (const name of [
+    "cat",
+    "dmesg",
+    "free",
+    "head",
+    "ps",
+    "sh",
+    "sort",
+    "tail",
+    "uname",
+    "uptime",
+  ]) {
+    try {
+      const target = spawnSync("bash", ["--noprofile", "--norc", "-c", `command -v ${name}`], {
+        encoding: "utf-8",
+      }).stdout.trim();
+      if (target) symlinkSync(target, join(fakeBin, name));
+    } catch {
+      /* ignore optional command */
+    }
+  }
+}
+
 describe("secret redaction consistency (#1736)", () => {
   // Tokens whose prefix is a literal string that must be redacted by the shared debug redactor.
   const LITERAL_PREFIX_TOKENS = [
@@ -70,14 +94,16 @@ describe("secret redaction consistency (#1736)", () => {
       expect(debugRedact(text)).not.toContain("nvapi-");
     });
 
-    it("redacts complete multi-segment LangSmith keys without exposing their tails", () => {
-      const token = `lsv2_pt_${"a".repeat(36)}_${"tail".repeat(3)}`;
-      for (const redactor of [runnerRedact, debugRedact, redactSensitiveText]) {
+    it.each(Array.from([runnerRedact, debugRedact, redactSensitiveText], (value) => [value]))(
+      "redacts complete multi-segment LangSmith keys without exposing their tails [case %#]",
+      (redactor) => {
+        const token = `lsv2_pt_${"a".repeat(36)}_${"tail".repeat(3)}`;
+
         const redacted = redactor(`provider failed with ${token}`);
         expect(redacted).not.toContain(token);
         expect(redacted).not.toContain("_tailtailtail");
-      }
-    });
+      },
+    );
   });
 
   describe("debug.sh delegates to node when available (#2381)", () => {
@@ -119,27 +145,8 @@ describe("secret redaction consistency (#1736)", () => {
       const tmp = mkdtempSync(join(tmpdir(), "nemoclaw-debug-node-env-redact-"));
       const fakeBin = join(tmp, "bin");
       mkdirSync(fakeBin);
-      for (const name of [
-        "cat",
-        "dmesg",
-        "free",
-        "head",
-        "ps",
-        "sh",
-        "sort",
-        "tail",
-        "uname",
-        "uptime",
-      ]) {
-        try {
-          const target = spawnSync("bash", ["--noprofile", "--norc", "-c", `command -v ${name}`], {
-            encoding: "utf-8",
-          }).stdout.trim();
-          if (target) symlinkSync(target, join(fakeBin, name));
-        } catch {
-          /* ignore optional command */
-        }
-      }
+      linkDebugCommands(fakeBin);
+
       writeFileSync(
         join(fakeBin, "date"),
         "#!/bin/sh\necho nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb sk-cccccccccccccccccccccccc\n",

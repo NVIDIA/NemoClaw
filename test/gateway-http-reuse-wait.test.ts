@@ -167,19 +167,20 @@ describe("isGatewayHttpReady status-code semantics (#3258)", () => {
     expect(await isGatewayHttpReady(2000, url)).toBe(false);
   });
 
-  it("falls back to the default timeout when given a non-positive value", async () => {
-    // A non-positive timeoutMs must not cause the request to be torn down
-    // immediately — the helper falls back to the safe default and lets the
-    // probe complete normally against a healthy server.
-    const server = await startStatusServer(200);
-    try {
-      for (const bad of [0, -1, Number.NaN]) {
-        expect(await isGatewayHttpReady(bad, server.url)).toBe(true);
+  it.each([0, -1, Number.NaN])(
+    "falls back to the default timeout when given %s",
+    async (timeoutMs) => {
+      // A non-positive timeoutMs must not cause the request to be torn down
+      // immediately — the helper falls back to the safe default and lets the
+      // probe complete normally against a healthy server.
+      const server = await startStatusServer(200);
+      try {
+        expect(await isGatewayHttpReady(timeoutMs, server.url)).toBe(true);
+      } finally {
+        await server.close();
       }
-    } finally {
-      await server.close();
-    }
-  });
+    },
+  );
 });
 
 describe("isDockerDriverGatewayHttpReady (#3111)", () => {
@@ -315,8 +316,9 @@ describe("waitForGatewayHttpReady (#3258)", () => {
     expect(sleeps).toEqual([]);
   });
 
-  it("always probes at least once even when maxAttempts is 0 or negative", async () => {
-    for (const bad of [0, -1, -100]) {
+  it.each([0, -1, -100])(
+    "always probes at least once when maxAttempts is %s",
+    async (maxAttempts) => {
       let calls = 0;
       const sleeps: number[] = [];
       const result = await waitForGatewayHttpReady({
@@ -325,17 +327,18 @@ describe("waitForGatewayHttpReady (#3258)", () => {
           return false;
         },
         sleeper: (s: number) => sleeps.push(s),
-        maxAttempts: bad,
+        maxAttempts,
         intervalSeconds: 5,
       });
       expect(result).toBe(false);
       expect(calls).toBe(1);
       expect(sleeps).toEqual([]);
-    }
-  });
+    },
+  );
 
-  it("does not loop forever when maxAttempts is Infinity or NaN", async () => {
-    for (const bad of [Number.POSITIVE_INFINITY, Number.NaN]) {
+  it.each([Number.POSITIVE_INFINITY, Number.NaN])(
+    "does not loop forever when maxAttempts is %s",
+    async (maxAttempts) => {
       let calls = 0;
       const sleeps: number[] = [];
       const result = await waitForGatewayHttpReady({
@@ -344,17 +347,18 @@ describe("waitForGatewayHttpReady (#3258)", () => {
           return false;
         },
         sleeper: (s: number) => sleeps.push(s),
-        maxAttempts: bad,
+        maxAttempts,
         intervalSeconds: 5,
       });
       expect(result).toBe(false);
       expect(calls).toBe(1);
       expect(sleeps).toEqual([]);
-    }
-  });
+    },
+  );
 
-  it("does not pass NaN/Infinity through to the sleeper", async () => {
-    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    "does not pass intervalSeconds %s through to the sleeper",
+    async (intervalSeconds) => {
       let calls = 0;
       const sleeps: number[] = [];
       const result = await waitForGatewayHttpReady({
@@ -364,13 +368,13 @@ describe("waitForGatewayHttpReady (#3258)", () => {
         },
         sleeper: (s: number) => sleeps.push(s),
         maxAttempts: 3,
-        intervalSeconds: bad,
+        intervalSeconds,
       });
       expect(result).toBe(true);
       // One sleep before the second probe — must be 0, not NaN/Infinity.
       expect(sleeps).toEqual([0]);
-    }
-  });
+    },
+  );
 
   it("treats a probe rejection as 'not ready' and continues to the next attempt", async () => {
     let calls = 0;

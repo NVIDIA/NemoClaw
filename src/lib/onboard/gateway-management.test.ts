@@ -160,19 +160,23 @@ describe("gateway management declaration", () => {
     ["a cloud metadata address", "http://169.254.169.254:8080"],
     ["a link-local address", "http://169.254.1.1:8080"],
     ["a non-loopback private address", "http://10.0.0.5:8080"],
-  ])("rejects an endpoint pointing at %s, which onboarding would otherwise request (#6576)", (_label, endpoint) => {
-    const result = parseGatewayManagementDeclaration(externalDeclaration({ endpoint }));
+  ])(
+    "rejects an endpoint pointing at %s, which onboarding would otherwise request (#6576)",
+    (_label, endpoint) => {
+      const result = parseGatewayManagementDeclaration(externalDeclaration({ endpoint }));
 
-    expect(result.ok === false && result.reason).toMatch(/not a supported local gateway origin/);
-  });
+      expect(result.ok === false && result.reason).toMatch(/not a supported local gateway origin/);
+    },
+  );
 
-  it("accepts only numeric loopback endpoint hosts (#6576)", () => {
-    for (const endpoint of ["http://127.0.0.1:8080", "http://[::1]:8080"]) {
+  it.each(["http://127.0.0.1:8080", "http://[::1]:8080"])(
+    "accepts only numeric loopback endpoint hosts [case %#] (#6576)",
+    (endpoint) => {
       expect(parseGatewayManagementDeclaration(externalDeclaration({ endpoint }))).toMatchObject({
         ok: true,
       });
-    }
-  });
+    },
+  );
 
   it("rejects a capability this build does not provide (#6576)", () => {
     const result = parseGatewayManagementDeclaration(
@@ -182,18 +186,24 @@ describe("gateway management declaration", () => {
     expect(result.ok === false && result.reason).toMatch(/unsupported capability/);
   });
 
-  it("does not echo malformed declaration values in errors (#6576)", () => {
+  it.each([
+    { scenario: "version" },
+    { scenario: "mode" },
+    { scenario: "endpoint" },
+    { scenario: "required capabilities" },
+  ])("does not echo malformed declaration values in errors [$scenario] (#6576)", ({ scenario }) => {
     const secret = "sk-live-not-a-real-token";
-    for (const declaration of [
-      externalDeclaration({ version: secret }),
-      externalDeclaration({ mode: secret }),
-      externalDeclaration({ endpoint: secret }),
-      externalDeclaration({ requiredCapabilities: [secret] }),
-    ]) {
-      const result = parseGatewayManagementDeclaration(declaration);
-      expect(result).toMatchObject({ ok: false });
-      expect(result.ok === false && result.reason).not.toContain(secret);
-    }
+    const declaration = (
+      {
+        version: externalDeclaration({ version: secret }),
+        mode: externalDeclaration({ mode: secret }),
+        endpoint: externalDeclaration({ endpoint: secret }),
+        "required capabilities": externalDeclaration({ requiredCapabilities: [secret] }),
+      } as const
+    )[scenario]!;
+    const result = parseGatewayManagementDeclaration(declaration);
+    expect(result).toMatchObject({ ok: false });
+    expect(result.ok === false && result.reason).not.toContain(secret);
   });
 
   it("rejects a relative state directory (#6576)", () => {
@@ -260,8 +270,9 @@ describe("gateway management declaration loading", () => {
 });
 
 describe("supported supervisor kinds (#6576)", () => {
-  it("accepts the systemd kinds it can bind a listener to", () => {
-    for (const kind of ["systemd-system", "systemd-user"]) {
+  it.each(["systemd-system", "systemd-user"])(
+    "accepts the systemd kinds it can bind a listener to [case %#]",
+    (kind) => {
       expect(
         parseGatewayManagementDeclaration(
           externalDeclaration({
@@ -273,8 +284,8 @@ describe("supported supervisor kinds (#6576)", () => {
           }),
         ),
       ).toMatchObject({ ok: true });
-    }
-  });
+    },
+  );
 
   it("rejects the opaque 'external' kind, which could never attach", () => {
     const result = parseGatewayManagementDeclaration(

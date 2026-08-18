@@ -210,10 +210,10 @@ describe("probeUserManagedFiles", () => {
     probeUserManagedFiles("alpha");
     expect(tempSshFiles.size).toBeGreaterThan(0);
     const tmpdir = path.resolve(os.tmpdir());
-    for (const dir of tempSshFiles) {
-      const resolved = path.resolve(dir);
-      expect(resolved.startsWith(tmpdir + path.sep) || resolved === tmpdir).toBe(true);
-    }
+    expect([...tempSshFiles].every((dir) => {
+        const resolved = path.resolve(dir);
+        return resolved.startsWith(tmpdir + path.sep) || resolved === tmpdir;
+      })).toBe(true);
   });
 
   it("shell-quotes unusual but permitted filenames safely", () => {
@@ -234,9 +234,7 @@ describe("probeUserManagedFiles", () => {
     const { probeUserManagedFiles } = loadProbe();
 
     probeUserManagedFiles("alpha");
-    for (const dir of tempSshFiles) {
-      expect(fs.existsSync(dir)).toBe(false);
-    }
+    expect([...tempSshFiles].every((dir) => !fs.existsSync(dir))).toBe(true);
   });
 
   it("cleans up the temp SSH config on SSH failure", () => {
@@ -244,9 +242,7 @@ describe("probeUserManagedFiles", () => {
     const { probeUserManagedFiles } = loadProbe();
 
     expect(() => probeUserManagedFiles("alpha")).toThrow();
-    for (const dir of tempSshFiles) {
-      expect(fs.existsSync(dir)).toBe(false);
-    }
+    expect([...tempSshFiles].every((dir) => !fs.existsSync(dir))).toBe(true);
   });
 
   it("returns empty declared when the agent has no user_managed_files", () => {
