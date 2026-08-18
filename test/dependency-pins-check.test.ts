@@ -206,6 +206,36 @@ describe("dependency pin drift check", () => {
     );
   });
 
+  it("accepts OpenShell 0.0.106 E2E qualification before the 0.0.101 product pin moves", () => {
+    withFixture(
+      "nemoclaw-dependency-pins-openshell-qualification-",
+      {
+        openshellMax: "0.0.101",
+        openshellMin: "0.0.101",
+        workflowPinVersion: "0.0.106",
+      },
+      (root) => expect(verifyDependencyPins(root)).toEqual([]),
+    );
+  });
+
+  it.each(["0.0.105", "0.0.107"])(
+    "rejects OpenShell %s as the E2E target while the product pin is 0.0.101",
+    (workflowPinVersion) => {
+      withFixture(
+        "nemoclaw-dependency-pins-openshell-unapproved-qualification-",
+        {
+          openshellMax: "0.0.101",
+          openshellMin: "0.0.101",
+          workflowPinVersion,
+        },
+        (root) =>
+          expect(verifyDependencyPins(root)).toContain(
+            `.github/workflows/e2e.yaml gateway auth OpenShell version: expected 0.0.106, found ${workflowPinVersion}`,
+          ),
+      );
+    },
+  );
+
   it("reports exact operational consumer drift (#5242)", () => {
     withFixture(
       "nemoclaw-dependency-pins-drift-",

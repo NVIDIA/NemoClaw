@@ -457,6 +457,22 @@ describe("e2e workflow boundary", () => {
     ).toEqual(["snapshot-commands"]);
   });
 
+  it("routes the OpenShell 0.0.106 qualification installer to all five consumers", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["tools/e2e/install-openshell-v00106-qualification.sh"] },
+    );
+
+    expect([...plan.selectedJobs].sort()).toEqual(
+      [
+        "jetson-nvmap-gpu",
+        "mcp-bridge",
+        "openshell-credential-generation-window",
+        "openshell-gateway-auth-contract",
+      ].sort(),
+    );
+  });
+
   it("keeps orchestration jobs within bounded timeouts", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { "timeout-minutes"?: number }>;

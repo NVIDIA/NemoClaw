@@ -13,6 +13,40 @@ import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
   it.each([
+    {
+      expected:
+        "mcp-bridge must run only the exact OpenShell 0.0.106 qualification install and provenance step",
+      jobName: "mcp-bridge",
+    },
+    {
+      expected:
+        "openshell-credential-generation-window must run only the exact OpenShell 0.0.106 qualification install and provenance step",
+      jobName: "openshell-credential-generation-window",
+    },
+  ])("rejects a product reinstall after the exact $jobName qualification install", ({
+    expected,
+    jobName,
+  }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      const install = workflow.jobs[jobName].steps.find(
+        (step) => step.name === "Install OpenShell CLI",
+      );
+      requireFixture(install?.run, `${jobName} qualification installer fixture is missing`);
+      install.run += "bash scripts/install-openshell.sh\n";
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(expected);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
     "mcp-bridge",
     "mcp-bridge-dev",
   ])("rejects missing canonical risk-signal evidence in %s", (jobName) => {
