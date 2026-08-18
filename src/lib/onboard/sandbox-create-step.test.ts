@@ -168,6 +168,34 @@ describe("runSandboxCreateStep", () => {
     );
   });
 
+  it("gates restart-safe persistence on the step's own portable env, not process.env (#9462)", async () => {
+    const launch = makeLaunch({
+      sandboxStartupCommand: ["env", "nemoclaw-start"],
+    });
+    const patch = makePatch();
+    const deps = makeDeps(launch, patch, { status: 0, output: "created" });
+
+    await runSandboxCreateStep(
+      makeContext({
+        agent: { name: "hermes" } as SandboxCreateStepContext["agent"],
+        env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        prebuild: {
+          buildCtx: "/tmp/ctx",
+          buildId: "b1",
+          dockerDriverGateway: true,
+          origin: "generated",
+        },
+      }),
+      deps,
+    );
+
+    expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        persistStartupCommand: false,
+      }),
+    );
+  });
+
   it("persists DCode startup with its exact Docker resource limits", async () => {
     const launch = makeLaunch({
       sandboxStartupCommand: ["env", "nemoclaw-start"],

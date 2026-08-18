@@ -1,16 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Parity guard for SSRF block lists. The CLI
-// (src/lib/private-networks.ts) and the plugin
-// (nemoclaw/src/blueprint/private-networks.ts) both load their rules
-// from the shared nemoclaw-blueprint/private-networks.yaml, so a single
-// data edit propagates to both. This test enforces:
+// Contract guard for the shared private-network boundary. The CLI and plugin
+// keep package-local loaders and caches, then delegate schema parsing and
+// address matching to the generated .cts boundary. This test enforces:
 //
 //   1. Every entry in the YAML ships with a non-empty `purpose` field
 //      so no block lands without a human-reviewable rationale.
-//   2. The CLI and plugin `isPrivateHostname` implementations agree on a
-//      vector per CIDR covering the start of the range, the end, two
+//   2. The shared matcher classifies a vector per CIDR covering the start, end, two
 //      middle points, one address below the start, and one above the
 //      end. Boundary-outside expectations account for adjacent ranges
 //      (e.g., 224.0.0.0/4 meeting 240.0.0.0/4, where the neighbour is
@@ -43,9 +40,19 @@ interface NetworkHelper {
   isPrivateHostname(hostname: string): boolean;
 }
 
-function loadHelper(modulePath: string, buildHint: string): NetworkHelper {
+interface PrivateNetworkMatcher {
+  isPrivateHostname(hostname: string): boolean;
+}
+
+interface PrivateNetworkBoundary {
+  createPrivateNetworkMatcher(
+    networks: ReturnType<NetworkHelper["getNetworkEntries"]>,
+  ): PrivateNetworkMatcher;
+}
+
+function loadHelper<T>(modulePath: string, buildHint: string): T {
   try {
-    return require(modulePath) as NetworkHelper;
+    return require(modulePath) as T;
   } catch (error) {
     const code = (error as { code?: unknown })?.code;
     if (code === "MODULE_NOT_FOUND") {
@@ -59,11 +66,20 @@ function loadHelper(modulePath: string, buildHint: string): NetworkHelper {
   }
 }
 
-const cliHelper = loadHelper("../../dist/lib/private-networks", "`npm run build:cli`");
-const pluginHelper = loadHelper(
+const cliHelper = loadHelper<NetworkHelper>(
+  "../../dist/lib/private-networks",
+  "`npm run build:cli`",
+);
+const pluginHelper = loadHelper<NetworkHelper>(
   "../../nemoclaw/dist/blueprint/private-networks.js",
   "`npm run build` inside nemoclaw/",
 );
+const boundary = loadHelper<PrivateNetworkBoundary>(
+  "../../nemoclaw/dist/shared/private-networks-boundary.cjs",
+  "`npm run build:cli`",
+);
+const sharedNetworks = cliHelper.getNetworkEntries();
+const matcher = boundary.createPrivateNetworkMatcher(sharedNetworks);
 
 function entryLabel(entry: NetworkEntry | NameEntry): string {
   return "address" in entry ? `${entry.address}/${String(entry.prefix)}` : entry.name;
@@ -75,6 +91,7 @@ describe("private-networks.yaml schema", () => {
   it("produces matching entry counts on the CLI and plugin sides", () => {
     const cli = cliHelper.getNetworkEntries();
     const plugin = pluginHelper.getNetworkEntries();
+    expect(cli.ipv4.length).toBe(sharedNetworks.ipv4.length);
     expect(cli.ipv4.length).toBe(plugin.ipv4.length);
     expect(cli.ipv6.length).toBe(plugin.ipv6.length);
     expect(cli.names.length).toBe(plugin.names.length);
@@ -124,7 +141,7 @@ describe("private-networks.yaml schema", () => {
 // end (where defined). Outside-boundary expectations set to `true`
 // where the neighbour happens to live in another blocked range.
 
-describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => {
+describe("shared private-network matcher classifies every CIDR boundary", () => {
   const vectors: [string, boolean, string][] = [
     // 0.0.0.0/8 — This network
     ["0.0.0.0", true, "0.0.0.0/8 start"],
@@ -366,15 +383,14 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
   it.each(vectors.map(([addr, expected, label]) => ({ addr, expected, label })))(
     "classifies $label at $addr as $expected",
     ({ addr, expected }) => {
-      expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
-      expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
+      expect(matcher.isPrivateHostname(addr)).toBe(expected);
     },
   );
 });
 
 // ── Wrapper-level cases (bracket handling, cross-family, DNS) ───────
 
-describe("CLI and plugin isPrivateHostname agree on wrapper-level cases", () => {
+describe("shared private-network matcher classifies wrapper-level inputs", () => {
   const extras: [string, boolean, string][] = [
     ["[::1]", true, "bracketed IPv6 loopback"],
     ["[fe80::1]", true, "bracketed link-local"],
@@ -412,7 +428,13 @@ describe("CLI and plugin isPrivateHostname agree on wrapper-level cases", () => 
       displayedAddr: JSON.stringify(addr),
     })),
   )("classifies $label at $displayedAddr as $expected", ({ addr, expected }) => {
-    expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
-    expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
+    expect(matcher.isPrivateHostname(addr)).toBe(expected);
+  });
+
+  it("keeps both package loaders connected to the shared matcher", () => {
+    expect(cliHelper.isPrivateHostname("LOCALHOST.")).toBe(matcher.isPrivateHostname("LOCALHOST."));
+    expect(pluginHelper.isPrivateHostname("[2606:4700::1]")).toBe(
+      matcher.isPrivateHostname("[2606:4700::1]"),
+    );
   });
 });
