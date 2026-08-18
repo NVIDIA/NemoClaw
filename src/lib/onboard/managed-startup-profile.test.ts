@@ -753,7 +753,6 @@ describe("managed startup profile", () => {
               },
             ],
             agentRender: [
-              ...HERMES_PROFILE.messaging.plan.agentRender,
               {
                 channelId: "slack",
                 agent: "hermes",
@@ -818,7 +817,7 @@ describe("managed startup profile", () => {
           },
         },
       }),
-    ).toThrow(/credential-shaped string data|credential environment alias/);
+    ).toThrow(/credential-shaped string data/);
   });
 
   it.each([
