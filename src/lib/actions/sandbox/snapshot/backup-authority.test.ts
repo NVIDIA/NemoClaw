@@ -34,7 +34,7 @@ import { encodeManagedStartupProfile } from "../../../onboard/managed-startup/pr
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
-import type { BackupOptions, BackupResult, StateFileCaptureRequest } from "../../../state/sandbox";
+import type { BackupOptions, BackupResult } from "../../../state/sandbox";
 import {
   backupSandboxStateWithManagedAuthority,
   captureOpenClawStateFile,
@@ -77,15 +77,6 @@ function sandbox(
     workload: receipt,
   };
 }
-
-function expectOpenClawStateFilesRejected(
-  requests: readonly StateFileCaptureRequest[],
-): void {
-  for (const request of requests) {
-    expect(captureOpenClawStateFile("alpha", request)).toBeNull();
-  }
-}
-
 
 function runtime(handle = "session-1") {
   return {
@@ -325,26 +316,33 @@ describe("managed snapshot backup authority", () => {
     });
   });
 
-  it("does not grant privileged capture to undeclared paths or strategies", () => {
-    const requests: StateFileCaptureRequest[] = [
-      {
+  it.each([
+    {
+      input: "an undeclared OpenClaw state file path",
+      request: {
         sandboxName: "alpha",
         dir: "/sandbox/.openclaw",
         spec: { path: "credentials/token", strategy: "copy" },
       },
-      {
+    },
+    {
+      input: "an undeclared OpenClaw state file strategy",
+      request: {
         sandboxName: "alpha",
         dir: "/sandbox/.openclaw",
         spec: { path: "openclaw.json", strategy: "sqlite_backup" },
       },
-      {
+    },
+    {
+      input: "an undeclared OpenClaw state directory",
+      request: {
         sandboxName: "alpha",
         dir: "/sandbox/other",
         spec: { path: "openclaw.json", strategy: "copy" },
       },
-    ];
-
-    expectOpenClawStateFilesRejected(requests);
+    },
+  ] as const)("rejects $input before privileged capture", ({ request }) => {
+    expect(captureOpenClawStateFile("alpha", request)).toBeNull();
     expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).not.toHaveBeenCalled();
     expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
   });
