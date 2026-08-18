@@ -1777,7 +1777,7 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
   }
   if (
     concurrency["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && inputs.jobs != 'staging-brev-launchable' && !inputs.include_staging_brev_launchable }}"
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !inputs.include_staging_brev_launchable }}"
   ) {
     errors.push("workflow concurrency must not cancel an active Jetson or Launchable dispatch");
   }
@@ -2142,6 +2142,7 @@ function validateTrustedE2ePlannerBoundary(
   requireFullShaAction(errors, trustedPlannerCheckout, "trusted E2E planner checkout");
   if (
     !isDeepStrictEqual(asRecord(trustedPlannerCheckout?.with), {
+      repository: "${{ github.repository }}",
       ref: "${{ github.workflow_sha }}",
       "fetch-depth": 0,
       "persist-credentials": false,

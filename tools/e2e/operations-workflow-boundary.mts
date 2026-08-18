@@ -261,9 +261,11 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   }
   if (
     workflow.concurrency?.["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && inputs.jobs != 'staging-brev-launchable' && !inputs.include_staging_brev_launchable }}"
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !inputs.include_staging_brev_launchable }}"
   ) {
-    errors.push("Manual PR E2E concurrency must not cancel an active Jetson or Launchable dispatch");
+    errors.push(
+      "Manual PR E2E concurrency must not cancel an active Jetson or Launchable dispatch",
+    );
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
@@ -294,9 +296,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};
   if (
     authentication.id !== "candidate_authorization" ||
-    authentication.if !== "${{ inputs.checkout_sha != '' }}"
+    authentication.if !==
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}"
   ) {
-    errors.push("Manual PR authentication must be activated only by checkout_sha");
+    errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
   const authEnvironment = {
     BASE_SHA: "${{ inputs.base_sha }}",
@@ -304,8 +307,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     GITHUB_TOKEN: "${{ github.token }}",
-    INCLUDE_LAUNCHABLE:
-      "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     JOBS: "${{ inputs.jobs }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
     WORKFLOW_EVENT: "${{ github.event_name }}",
@@ -372,7 +374,9 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
-  if (validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}") {
+  if (
+    validation.env?.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
+  ) {
     errors.push("Manual PR checkout validation must bind authenticated NVIDIA ownership");
   }
   for (const fragment of [
@@ -447,6 +451,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       const trustedE2ePlannerCheckout =
         jobName === "generate-matrix" &&
         step.name === "Check out trusted E2E planner" &&
+        step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedReportHelperCheckout =
         jobName === "report-to-pr" &&
@@ -557,7 +562,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         !trustedCheckout &&
         step.with?.repository !== "${{ inputs.checkout_repository || github.repository }}"
       ) {
-        errors.push(`${jobName} checkout must use the selected PR head repository`);
+        errors.push(`${jobName} checkout must use the selected PR source repository`);
       }
     }
   }

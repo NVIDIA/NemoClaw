@@ -87,7 +87,7 @@ permissions:
 
 concurrency:
   group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && inputs.jobs != 'staging-brev-launchable' && !inputs.include_staging_brev_launchable }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !inputs.include_staging_brev_launchable }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
@@ -212,7 +212,7 @@ jobs:
 
       - id: candidate_authorization
         name: Authenticate manual PR dispatch
-        if: ${{ inputs.checkout_sha != '' }}
+        if: ${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -466,6 +466,7 @@ jobs:
       - name: Check out trusted E2E planner
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.repository }}
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false

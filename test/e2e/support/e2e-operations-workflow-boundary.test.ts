@@ -264,6 +264,35 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
+  it("runs authentication for any candidate identity input and permits an empty group", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    const validationError =
+      "Manual PR authentication must run when any candidate identity input is present";
+
+    expect(validateE2eOperationsWorkflow(workflow)).not.toContain(validationError);
+    expect(authentication.if).toBe(
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}",
+    );
+
+    authentication.if = "${{ inputs.checkout_sha != '' }}";
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(validationError);
+  });
+
+  it("pins the trusted planner checkout to the workflow repository", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const checkout = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Check out trusted E2E planner",
+    )!;
+    checkout.with!.repository = "untrusted/repository";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "generate-matrix checkout must use the selected PR source repository",
+    );
+  });
+
   it("rejects changes that bypass E2E credential authorization (#9047)", () => {
     const workflow = readE2eOperationsWorkflow();
     delete workflow.jobs["generate-matrix"].outputs!.e2e_credentials_allowed;
@@ -492,6 +521,90 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
+    },
+  );
+
+  it.each([
+    [
+      "an invalid source repository name",
+      "invalid-repository",
+      "a",
+      "b",
+      "c",
+      "::error::checkout_repository must be an owner/repository name\n",
+    ],
+    [
+      "a PR commit mismatch",
+      "NVIDIA/NemoClaw",
+      "d",
+      "b",
+      "c",
+      "::error::checkout_sha must match the latest PR commit SHA\n",
+    ],
+    [
+      "a PR base commit mismatch",
+      "NVIDIA/NemoClaw",
+      "a",
+      "d",
+      "c",
+      "::error::base_sha must match the PR base SHA\n",
+    ],
+    [
+      "a trusted workflow commit mismatch",
+      "NVIDIA/NemoClaw",
+      "a",
+      "b",
+      "d",
+      "::error::workflow_sha must match the trusted main workflow SHA\n",
+    ],
+  ] as const)(
+    "rejects manual PR authentication for %s",
+    (
+      _caseName,
+      requestedRepository,
+      requestedHeadCharacter,
+      requestedBaseCharacter,
+      expectedWorkflowCharacter,
+      expectedStderr,
+    ) => {
+      const apiHeadSha = "a".repeat(40);
+      const apiBaseSha = "b".repeat(40);
+      const workflowSha = "c".repeat(40);
+      const workflow = readE2eOperationsWorkflow();
+      const authentication = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Authenticate manual PR dispatch",
+      )!;
+      const prefix = [
+        "curl() {",
+        `  printf '%s' '{"state":"open","head":{"repo":{"full_name":"NVIDIA/NemoClaw","owner":{"login":"NVIDIA","type":"Organization"}},"sha":"${apiHeadSha}"},"base":{"repo":{"full_name":"NVIDIA/NemoClaw"},"ref":"main","sha":"${apiBaseSha}"}}'`,
+        "}",
+      ].join("\n");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${authentication.run}`],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            BASE_SHA: requestedBaseCharacter.repeat(40),
+            CHECKOUT_REPOSITORY: requestedRepository,
+            CHECKOUT_SHA: requestedHeadCharacter.repeat(40),
+            EXPECTED_WORKFLOW_SHA: expectedWorkflowCharacter.repeat(40),
+            GITHUB_OUTPUT: "/dev/null",
+            GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+            GITHUB_TOKEN: "token",
+            INCLUDE_LAUNCHABLE: "false",
+            JOBS: "",
+            PR_NUMBER: "42",
+            WORKFLOW_EVENT: "workflow_dispatch",
+            WORKFLOW_REF: "refs/heads/main",
+            WORKFLOW_SHA: workflowSha,
+          },
+        },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toBe(expectedStderr);
     },
   );
 

@@ -78,19 +78,17 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
   });
 
   it.each([
-    [
-      "Jetson",
-      "${{ inputs.checkout_sha != '' && inputs.jobs != 'staging-brev-launchable' && !inputs.include_staging_brev_launchable }}",
-    ],
+    ["Jetson", "${{ inputs.checkout_sha != '' && !inputs.include_staging_brev_launchable }}"],
     ["Launchable", "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"],
   ])("rejects concurrency that cancels active %s dispatches", (_dispatch, cancellation) => {
     const workflow = readWorkflow();
+    const validationError =
+      "workflow concurrency must not cancel an active Jetson or Launchable dispatch";
+    expect(validateE2eWorkflow(workflow)).not.toContain(validationError);
     const concurrency = workflow.concurrency as Record<string, unknown>;
     concurrency["cancel-in-progress"] = cancellation;
 
-    expect(validateE2eWorkflow(workflow)).toContain(
-      "workflow concurrency must not cancel an active Jetson or Launchable dispatch",
-    );
+    expect(validateE2eWorkflow(workflow)).toContain(validationError);
   });
 
   it("rejects candidate execution or credential-bearing controller steps (#8142)", () => {
