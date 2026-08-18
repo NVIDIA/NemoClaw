@@ -72,6 +72,30 @@ describe("MCP bridge onboarding environment", () => {
     expect(env.NEMOCLAW_CORPORATE_CA_BUNDLE).toBe("/tmp/nemoclaw-mcp-tls/ca.crt");
   });
 
+  it("passes exact PR managed-image catalog authority to onboarding commands (#8746)", () => {
+    const revision = "a".repeat(40);
+    const env = buildMcpBridgeOnboardEnv({
+      ...ONBOARD_OPTIONS,
+      baseEnv: {
+        GITHUB_ACTIONS: "true",
+        GITHUB_WORKSPACE: "/test/workspace",
+        NEMOCLAW_E2E_EXPECTED_SHA: revision,
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/test/workspace/managed-pr-catalog.json",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_UNREVIEWED_WORKFLOW_INPUT: "must-not-pass",
+      },
+    });
+
+    expect(env).toMatchObject({
+      GITHUB_ACTIONS: "true",
+      GITHUB_WORKSPACE: "/test/workspace",
+      NEMOCLAW_E2E_EXPECTED_SHA: revision,
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/test/workspace/managed-pr-catalog.json",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
+    });
+    expect(env.NEMOCLAW_UNREVIEWED_WORKFLOW_INPUT).toBeUndefined();
+  });
+
   it("requires the routed-private MCP test CA before onboarding", () => {
     expect(requireMcpBridgeTlsCaCert({ NEMOCLAW_MCP_TLS_CA_CERT: "/tmp/ca.crt" })).toBe(
       "/tmp/ca.crt",
