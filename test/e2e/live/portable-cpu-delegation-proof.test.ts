@@ -8,10 +8,17 @@ import path from "node:path";
 
 import type { PodmanSocketAuthority } from "../../../src/lib/adapters/podman/index.ts";
 import {
+  DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+} from "../../../src/lib/onboard/experimental/docker-network-authority.ts";
+import {
   inspectPortableCpuDelegation,
   type CpuDelegationPreflight,
 } from "../../../src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts";
-import { preparePortableExperimentalHost } from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
+import {
+  portableHostPreparationInternals,
+  preparePortableExperimentalHost,
+} from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
 import { test } from "../fixtures/e2e-test.ts";
 
 type ExpectedState = "missing" | "delegated";
@@ -119,10 +126,29 @@ function proveAdmission(
   const home = fs.mkdtempSync(path.join(artifactRoot, "admitted-home-"));
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
   const authority = socketAuthority(uid, socketPath);
+  const networkName = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
+  const registryContainer = portableHostPreparationInternals.REGISTRY_CONTAINER;
   const dockerResults: ReadonlyMap<string, SpawnResult> = new Map([
-    ["--version", commandResult()],
-    ["network inspect", commandResult(0, JSON.stringify([{ Subnet: "169.254.1.0/24" }]))],
-    ["inspect --format", commandResult(0, "1 true 169.254.1.2")],
+    [JSON.stringify(["--version"]), commandResult()],
+    [
+      JSON.stringify([
+        "network",
+        "inspect",
+        "--format",
+        DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+        networkName,
+      ]),
+      commandResult(0, JSON.stringify([{ Subnet: "169.254.1.0/24" }])),
+    ],
+    [
+      JSON.stringify([
+        "inspect",
+        "--format",
+        `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
+        registryContainer,
+      ]),
+      commandResult(0, "1 true 169.254.1.2"),
+    ],
   ]);
   try {
     const prepared = preparePortableExperimentalHost(
@@ -155,7 +181,7 @@ function proveAdmission(
         },
         docker: (args) => {
           effects.push(`docker-compatible ${args.join(" ")}`);
-          const result = dockerResults.get(args.slice(0, 2).join(" "));
+          const result = dockerResults.get(JSON.stringify(args));
           assert.ok(result, `Unexpected Docker-compatible proof command: ${args.join(" ")}`);
           return result;
         },
