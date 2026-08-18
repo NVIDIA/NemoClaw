@@ -95,7 +95,7 @@ describe("voice session and committed turn boundary", () => {
       {
         idempotencyKey: "turn",
         message: "repository status",
-        sessionKey: expect.stringMatching(/^agent:main:nemoclaw-voice:[A-Za-z0-9_-]{43}$/u),
+        sessionKey: expect.stringMatching(/^agent:main:nemoclaw-voice:[a-z0-9_-]{43}$/u),
       },
     ]);
     expect(client.calls[0]?.sessionKey).not.toContain("runtime-conversation");

@@ -279,7 +279,7 @@ describe("experimental voice gateway composed boundary", () => {
       {
         idempotencyKey: "turn",
         message: "repository status",
-        sessionKey: expect.stringMatching(/^agent:main:nemoclaw-voice:[A-Za-z0-9_-]{43}$/u),
+        sessionKey: expect.stringMatching(/^agent:main:nemoclaw-voice:[a-z0-9_-]{43}$/u),
         credential: OPENCLAW_CREDENTIAL,
       },
     ]);

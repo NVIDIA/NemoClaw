@@ -583,7 +583,7 @@ function runLiveIssue2603Repro(sandboxName: string): LiveIssue2603Trace {
 
   execOpenShell(["sandbox", "upload", sandboxName, localScript, remoteScript], { timeout: 30_000 });
 
-  const sessionKey = `issue2603-${Date.now()}-${randomUUID()}`;
+  const sessionKey = `agent:main:issue2603-${Date.now()}-${randomUUID()}`;
   const tokenExpression =
     "JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json','utf8')).gateway?.auth?.token||''";
   const output = execInSandbox(

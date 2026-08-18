@@ -80,7 +80,10 @@ function deriveAgentSessionKey(
     options.sandbox,
     runtimeConversationId,
   ]);
-  const bindingHash = createHash("sha256").update(binding).digest("base64url");
+  const bindingHash = createHash("sha256")
+    .update(binding)
+    .digest("base64url")
+    .toLowerCase();
   return `agent:${options.agent}:nemoclaw-voice:${bindingHash}`;
 }
 

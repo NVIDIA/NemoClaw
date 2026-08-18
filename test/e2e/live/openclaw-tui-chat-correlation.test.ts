@@ -499,7 +499,7 @@ async function runLiveIssue2603Repro(
       );
     }
 
-    const sessionKey = `issue2603-${Date.now()}-${randomUUID()}`;
+    const sessionKey = `agent:main:issue2603-${Date.now()}-${randomUUID()}`;
     const tokenExpression =
       "JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json','utf8')).gateway?.auth?.token||''";
     const driver = await sandbox.execShell(
