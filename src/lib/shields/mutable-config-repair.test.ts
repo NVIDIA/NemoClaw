@@ -29,7 +29,10 @@ function normalizerFailure(overrides: Record<string, unknown>): Error {
     {
       signal: null,
       status: 1,
-      stderr: Buffer.from("untrusted stderr /sandbox/.openclaw/private-value\n"),
+      stderr: Buffer.from(
+        "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:fixed-file-link:private-value\n" +
+          "untrusted stderr /sandbox/.openclaw/private-value\n",
+      ),
     },
     overrides,
   );
@@ -151,47 +154,6 @@ describe("mutable OpenClaw config repair", () => {
     expect(dockerExecFileSync).toHaveBeenCalledTimes(2);
   });
 
-  it("reports a mutable configuration validation failure without Docker stderr (#9215)", () => {
-    const privilegedArgv = mockPrivilegedArgv();
-    const failure = normalizerFailure({
-      stderr: Buffer.from(
-        "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:mutable-config-validation\n" +
-          "untrusted stderr /sandbox/.openclaw/private-value\n",
-      ),
-    });
-    const dockerExecFileSync = vi
-      .spyOn(dockerExec, "dockerExecFileSync")
-      .mockReturnValueOnce("1000\n")
-      .mockReturnValueOnce("1001\n")
-      .mockImplementationOnce(() => {
-        throw failure;
-      });
-
-    const message = captureFailureMessage(() =>
-      normalizeMutableOpenClawConfig("alpha", "/sandbox/.openclaw"),
-    );
-    expect(message).toBe(
-      "Mutable OpenClaw configuration repair failed: mutable configuration validation failed",
-    );
-    expect(message).not.toContain("private-value");
-    expect(message).not.toContain("docker exec");
-    expect(privilegedArgv).toHaveBeenLastCalledWith(
-      "alpha",
-      [
-        ...NORMALIZER_WATCHDOG,
-        "/usr/bin/python3",
-        "-I",
-        NORMALIZER,
-        "/sandbox/.openclaw",
-        "1000",
-        "1001",
-      ],
-      false,
-      true,
-    );
-    expect(dockerExecFileSync).toHaveBeenCalledTimes(3);
-  });
-
   it("preserves a pre-exec authority rejection (#9215)", () => {
     const authorityFailure = new Error("provider fence owns privileged execution");
     const privilegedArgv = mockPrivilegedArgv()
@@ -216,58 +178,47 @@ describe("mutable OpenClaw config repair", () => {
 
   it.each([
     {
-      name: "the first trusted fixed-file label",
-      failure: normalizerFailure({
-        stderr:
-          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:fixed-file-link:config-hash\n" +
-          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:mutable-config-validation\n" +
-          "untrusted stderr /sandbox/.openclaw/private-value\n",
-      }),
+      name: "configuration directory validation",
+      failure: normalizerFailure({ status: 40 }),
       expected:
-        "Mutable OpenClaw configuration repair failed: configuration hash link-count validation failed",
+        "Mutable OpenClaw configuration repair failed: configuration directory validation failed",
     },
     {
-      name: "an unknown helper label",
-      failure: normalizerFailure({
-        stderr:
-          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:untrusted-value\n" +
-          "untrusted stderr /sandbox/.openclaw/private-value\n",
-      }),
-      expected:
-        "Mutable OpenClaw configuration repair failed: Docker repair command exited without a trusted helper diagnostic",
+      name: "fixed-file validation",
+      failure: normalizerFailure({ status: 41 }),
+      expected: "Mutable OpenClaw configuration repair failed: fixed-file validation failed",
     },
     {
-      name: "status 1 without a helper label",
-      failure: normalizerFailure({}),
+      name: "mutable configuration tree traversal",
+      failure: normalizerFailure({ status: 42 }),
       expected:
-        "Mutable OpenClaw configuration repair failed: Docker repair command exited without a trusted helper diagnostic",
+        "Mutable OpenClaw configuration repair failed: mutable configuration tree traversal failed",
     },
     {
-      name: "a malformed helper label",
-      failure: normalizerFailure({
-        stderr:
-          "untrusted-NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:tree-walk\n" +
-          "untrusted stderr /sandbox/.openclaw/private-value\n",
-      }),
-      expected:
-        "Mutable OpenClaw configuration repair failed: Docker repair command exited without a trusted helper diagnostic",
+      name: "configuration recovery",
+      failure: normalizerFailure({ status: 43 }),
+      expected: "Mutable OpenClaw configuration repair failed: configuration recovery failed",
     },
     {
-      name: "an unknown label before a trusted label",
-      failure: normalizerFailure({
-        stderr:
-          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:untrusted-value\n" +
-          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:tree-walk\n" +
-          "untrusted stderr /sandbox/.openclaw/private-value\n",
-      }),
+      name: "final path binding validation",
+      failure: normalizerFailure({ status: 44 }),
       expected:
-        "Mutable OpenClaw configuration repair failed: Docker repair command exited without a trusted helper diagnostic",
+        "Mutable OpenClaw configuration repair failed: final path binding validation failed",
+    },
+    {
+      name: "sandbox identity transition",
+      failure: normalizerFailure({ status: 45 }),
+      expected: "Mutable OpenClaw configuration repair failed: sandbox identity transition failed",
+    },
+    {
+      name: "directory descriptor handoff",
+      failure: normalizerFailure({ status: 46 }),
+      expected: "Mutable OpenClaw configuration repair failed: directory descriptor handoff failed",
     },
     {
       name: "the in-sandbox watchdog",
       failure: normalizerFailure({ status: 124 }),
-      expected:
-        "Mutable OpenClaw configuration repair failed: 15-second helper watchdog timed out",
+      expected: "Mutable OpenClaw configuration repair failed: 15-second helper watchdog timed out",
     },
     {
       name: "status 137",
@@ -286,17 +237,12 @@ describe("mutable OpenClaw config repair", () => {
       expected:
         "Mutable OpenClaw configuration repair failed: host Docker command was terminated by a signal",
     },
-    {
-      name: "an unclassified Docker repair command exit",
-      failure: normalizerFailure({
-        status: 125,
-        stderr:
-          "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:tree-walk\n" +
-          "untrusted stderr /sandbox/.openclaw/private-value\n",
-      }),
+    ...[39, 47, 125, 126, 127].map((status) => ({
+      name: `untrusted status ${status}`,
+      failure: normalizerFailure({ status }),
       expected: "Mutable OpenClaw configuration repair failed: Docker repair command failed",
-    },
-  ])("reports $name without Docker stderr (#9215)", ({ failure, expected }) => {
+    })),
+  ])("classifies $name without exposing Docker stderr (#9215)", ({ failure, expected }) => {
     mockPrivilegedArgv();
     vi.spyOn(dockerExec, "dockerExecFileSync")
       .mockReturnValueOnce("1000\n")

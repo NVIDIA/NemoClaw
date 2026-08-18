@@ -491,6 +491,93 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     }
   });
 
+  it("propagates only allowlisted child exit statuses when the descriptor channel closes before a packet (#9215)", () => {
+    const harness = String.raw`
+import importlib.util
+import errno
+import sys
+from unittest.mock import Mock
+
+spec = importlib.util.spec_from_file_location("normalizer", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+module.socket.SO_PASSCRED = getattr(module.socket, "SO_PASSCRED", 16)
+
+def run_case(packet, wait_status, expected_status):
+    parent_socket = Mock()
+    child_socket = Mock()
+    child_pid = 4242
+    parent_socket.recvmsg.return_value = packet
+    module.os.getgroups = lambda: [1000]
+    module.socket.socketpair = Mock(return_value=(parent_socket, child_socket))
+    module.os.fork = Mock(return_value=child_pid)
+    module.os.waitpid = Mock(return_value=(child_pid, wait_status))
+    try:
+        module.run_root_supervisor("/unused", 1000, 1000)
+    except module.RepairStageFailure as error:
+        assert error.status == expected_status
+    else:
+        raise AssertionError("expected the descriptor handoff to fail")
+    module.os.waitpid.assert_called_once_with(child_pid, 0)
+    parent_socket.close.assert_called_once_with()
+    child_socket.close.assert_called_once_with()
+
+eof_packet = (b"", [], 0, None)
+run_case(eof_packet, 41 << 8, 41)
+run_case(eof_packet, 39 << 8, 1)
+run_case(eof_packet, 9, 1)
+
+read_fd, write_fd = module.os.pipe()
+try:
+    rights = module.array.array("i", [read_fd]).tobytes()
+    malformed_packet = (
+        module.READY_NORMAL,
+        [(module.socket.SOL_SOCKET, module.socket.SCM_RIGHTS, rights)],
+        0,
+        None,
+    )
+    run_case(malformed_packet, 41 << 8, 46)
+    try:
+        module.os.fstat(read_fd)
+    except OSError as error:
+        assert error.errno == errno.EBADF
+    else:
+        raise AssertionError("expected malformed ancillary descriptor to close")
+finally:
+    module.os.close(write_fd)
+
+class ChildExit(Exception):
+    pass
+
+parent_socket = Mock()
+child_socket = Mock()
+module.socket.socketpair = Mock(return_value=(parent_socket, child_socket))
+module.os.fork = Mock(return_value=0)
+module.drop_to_owner = Mock()
+module.normalize_owner_tree = Mock(side_effect=KeyError())
+module.os._exit = Mock(side_effect=lambda status: (_ for _ in ()).throw(ChildExit(status)))
+try:
+    module.run_root_supervisor("/unused", 1000, 1000)
+except ChildExit as error:
+    assert error.args == (1,)
+else:
+    raise AssertionError("expected the owner child to exit")
+parent_socket.close.assert_called_once_with()
+child_socket.close.assert_called_once_with()
+print("owner-handoff-status-ok")
+`;
+
+    const result = spawnSync("python3", ["-I", "-", NORMALIZER_SCRIPT], {
+      encoding: "utf-8",
+      input: harness,
+      timeout: 10_000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("owner-handoff-status-ok");
+  });
+
   it("never chmods a protected target during background symlink swaps (#6047)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-race-"));
     const configDir = path.join(root, ".openclaw");

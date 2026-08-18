@@ -18,7 +18,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentStateLockPlan } from "../src/lib/agent/definition-types";
-import { buildStateFileRestoreCommand } from "../src/lib/state/state-file-restore";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const MUTABLE_CONFIG_NORMALIZER = path.join(
@@ -118,7 +117,7 @@ function modeBits(filePath: string): number {
   return fs.statSync(filePath).mode;
 }
 
-function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
+function mutableConfigNormalizerFixture(configDir: string, ownedPaths: string[]) {
   const testRoot = path.dirname(configDir);
   const normalizerPath = path.join(testRoot, "normalize_mutable_config_perms.py");
   fs.copyFileSync(MUTABLE_CONFIG_NORMALIZER, normalizerPath);
@@ -133,6 +132,8 @@ function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
     },
     timeout: 5000,
   };
+  let expectedUid = process.getuid?.() ?? fs.statSync(configDir).uid;
+  let expectedGid = process.getgid?.() ?? fs.statSync(configDir).gid;
   switch (process.getuid?.()) {
     case 0: {
       const unprivilegedId = 65534;
@@ -141,9 +142,16 @@ function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
       }
       spawnOptions.uid = unprivilegedId;
       spawnOptions.gid = unprivilegedId;
+      expectedUid = unprivilegedId;
+      expectedGid = unprivilegedId;
       break;
     }
   }
+  return { expectedGid, expectedUid, normalizerPath, spawnOptions };
+}
+
+function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
+  const { spawnOptions } = mutableConfigNormalizerFixture(configDir, ownedPaths);
   return spawnSync(
     "bash",
     [
@@ -154,6 +162,18 @@ function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
         "normalize_mutable_config_perms",
       ].join("\n"),
     ],
+    spawnOptions,
+  );
+}
+
+function runMutableConfigNormalizerDirect(configDir: string, ownedPaths: string[]) {
+  const { expectedGid, expectedUid, normalizerPath, spawnOptions } = mutableConfigNormalizerFixture(
+    configDir,
+    ownedPaths,
+  );
+  return spawnSync(
+    "python3",
+    ["-I", normalizerPath, configDir, String(expectedUid), String(expectedGid)],
     spawnOptions,
   );
 }
@@ -487,86 +507,6 @@ describe("mutable agent config permissions", () => {
     }
   });
 
-  it("reports a seeded `.config-hash` hardlink rejection after state restoration (#9215)", () => {
-    const tmpDir = mkdtempOnPosixFs("nemoclaw-9215-post-restore-");
-    const binDir = path.join(tmpDir, "bin");
-    const configDir = path.join(tmpDir, ".openclaw");
-    const configFile = path.join(configDir, "openclaw.json");
-    const hashFile = path.join(configDir, ".config-hash");
-    const externalHashAlias = path.join(tmpDir, "external-config-hash");
-
-    try {
-      fs.mkdirSync(binDir);
-      fs.mkdirSync(configDir);
-      fs.writeFileSync(externalHashAlias, "legacy-hash\n");
-      fs.linkSync(externalHashAlias, hashFile);
-      // Retained #9215 artifacts do not identify the live helper branch. This
-      // seeded proxy reproduces successful state restoration followed by
-      // permission-repair failure.
-      fs.writeFileSync(
-        path.join(binDir, "sha256sum"),
-        "#!/usr/bin/env bash\nprintf '%064d  %s\\n' 0 \"$1\"\n",
-        { mode: 0o755 },
-      );
-
-      const restore = spawnSync(
-        "bash",
-        [
-          "-c",
-          buildStateFileRestoreCommand(
-            configDir,
-            { path: "openclaw.json", strategy: "copy" },
-            true,
-          ),
-        ],
-        {
-          encoding: "utf-8",
-          env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
-          input: '{"gateway":{"mode":"local"}}\n',
-          timeout: 5000,
-        },
-      );
-      expect(restore.status, restore.stderr).toBe(0);
-
-      const doctor = spawnSync(
-        "bash",
-        [
-          "-c",
-          'chmod 700 "$1"; chmod 600 "$2" "$3"; exit 255',
-          "doctor-fixture",
-          configDir,
-          configFile,
-          hashFile,
-        ],
-        { encoding: "utf-8", timeout: 5000 },
-      );
-      expect(doctor.status).toBe(255);
-
-      const aliasBeforeNormalizer = fs.readFileSync(externalHashAlias, "utf-8");
-      const aliasModeBeforeNormalizer = modeBits(externalHashAlias);
-      expect(fs.statSync(hashFile).nlink).toBe(2);
-
-      const result = runMutableConfigNormalizer(configDir, [
-        tmpDir,
-        configDir,
-        configFile,
-        hashFile,
-        externalHashAlias,
-      ]);
-
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain(
-        "NEMOCLAW_MUTABLE_CONFIG_NORMALIZER_FAILURE:fixed-file-link:config-hash",
-      );
-      expect(result.stderr).not.toContain(externalHashAlias);
-      expect(fs.readFileSync(externalHashAlias, "utf-8")).toBe(aliasBeforeNormalizer);
-      expect(modeBits(externalHashAlias)).toBe(aliasModeBeforeNormalizer);
-      expect(fs.statSync(hashFile).nlink).toBe(2);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("rejects a hardlinked fixed config before changing either alias mode", () => {
     const tmpDir = mkdtempOnPosixFs("nemoclaw-6047-hardlink-");
     const configDir = path.join(tmpDir, ".openclaw");
@@ -581,9 +521,13 @@ describe("mutable agent config permissions", () => {
       fs.linkSync(externalAlias, earlierTreeAlias);
       fs.linkSync(externalAlias, configFile);
 
-      const result = runMutableConfigNormalizer(configDir, [tmpDir, configDir, externalAlias]);
+      const result = runMutableConfigNormalizerDirect(configDir, [
+        tmpDir,
+        configDir,
+        externalAlias,
+      ]);
 
-      expect(result.status).not.toBe(0);
+      expect(result.status).toBe(41);
       expect(fs.statSync(configFile).ino).toBe(fs.statSync(externalAlias).ino);
       expect(fs.statSync(earlierTreeAlias).ino).toBe(fs.statSync(externalAlias).ino);
       expect(modeBits(configFile) & 0o7777).toBe(0o600);
