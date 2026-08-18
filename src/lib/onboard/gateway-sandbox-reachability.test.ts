@@ -107,7 +107,10 @@ describe("isSandboxBridgeGatewayReachable", () => {
     });
 
     expect(inspectNetworkImpl).toHaveBeenCalledWith("portable-custom");
-    expect(capturedArgs).toContain("portable-custom");
+    const networkIndex = capturedArgs.indexOf("--network");
+    expect(networkIndex).toBeGreaterThanOrEqual(0);
+    expect(capturedArgs[networkIndex + 1]).toBe("portable-custom");
+    expect(result.ok).toBe(true);
     expect(result.networkName).toBe("portable-custom");
   });
 
