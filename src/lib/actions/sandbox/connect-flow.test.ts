@@ -49,6 +49,8 @@ describe("connectSandbox flow", () => {
   });
 
   it("runs readiness checks, recovery probes, auto-pair approval, and opens the OpenShell shell", async () => {
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
     const harness = createConnectHarness();
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -60,19 +62,19 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalledTimes(1);
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw");
-    expect(harness.runConnectChildWithShieldsRelockNoticeSpy).toHaveBeenCalledWith(
+    expect(harness.runSandboxExecChildSpy).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
       expect.objectContaining({
         hostCwd: expect.any(String),
-        hostEnv: expect.any(Object),
         stdin: true,
       }),
-      "alpha",
-      true,
     );
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 1_000);
+    const watcherTimer = setIntervalSpy.mock.results[setIntervalSpy.mock.results.length - 1]?.value;
+    expect(clearIntervalSpy).toHaveBeenCalledWith(watcherTimer);
     expect(
-      harness.runConnectChildWithShieldsRelockNoticeSpy.mock.invocationCallOrder[0]!,
+      harness.runSandboxExecChildSpy.mock.invocationCallOrder[0]!,
     ).toBeLessThan(exitSpy.mock.invocationCallOrder[0]!);
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("existing SSH sessions");
@@ -81,6 +83,7 @@ describe("connectSandbox flow", () => {
   });
 
   it("does not watch Shields audit state for a terminal-runtime connect session (#9453)", async () => {
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const harness = createConnectHarness({
       agentName: "langchain-deepagents-code",
       sessionAgent: {
@@ -91,13 +94,12 @@ describe("connectSandbox flow", () => {
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
-    expect(harness.runConnectChildWithShieldsRelockNoticeSpy).toHaveBeenCalledWith(
+    expect(harness.runSandboxExecChildSpy).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
-      "alpha",
-      false,
     );
+    expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 1_000);
   });
 
   it("uses the owning OpenShell gateway for auto-pair when an ambient gateway has the same sandbox name (#8942)", async () => {

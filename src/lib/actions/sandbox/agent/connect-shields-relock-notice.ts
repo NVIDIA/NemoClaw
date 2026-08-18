@@ -26,12 +26,6 @@ export interface ConnectShieldsRelockWatcher {
   stop(): void;
 }
 
-type ConnectChildRunner = (
-  binary: string,
-  args: readonly string[],
-  options: SandboxExecChildOptions,
-) => Promise<SpawnLikeResult>;
-
 function formatConnectShieldsRelockNotice(
   sandboxName: string,
   timeoutSeconds: number | null,
@@ -108,16 +102,10 @@ export async function runConnectChildWithShieldsRelockNotice(
   options: SandboxExecChildOptions,
   sandboxName: string,
   watchShields: boolean,
-  deps: {
-    runChild?: ConnectChildRunner;
-    startWatcher?: typeof startConnectShieldsRelockWatcher;
-  } = {},
 ): Promise<SpawnLikeResult> {
-  const watcher = watchShields
-    ? (deps.startWatcher ?? startConnectShieldsRelockWatcher)(sandboxName)
-    : null;
+  const watcher = watchShields ? startConnectShieldsRelockWatcher(sandboxName) : null;
   try {
-    return await (deps.runChild ?? runSandboxExecChild)(binary, args, options);
+    return await runSandboxExecChild(binary, args, options);
   } finally {
     watcher?.stop();
   }

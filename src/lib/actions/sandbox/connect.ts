@@ -56,13 +56,14 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
+import { runConnectChildWithShieldsRelockNotice } from "./agent/connect-shields-relock-notice";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
   printGatewayIntegrityRepairGuidance,
-  runInteractiveConnectSession,
 } from "./connect-boundary-refusal";
+import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
   buildGatewayInferenceGetArgs,
@@ -1432,13 +1433,13 @@ export async function connectSandbox(
     // OPENSHELL_SANDBOX) and covers every other interactive entry path too.
     console.log("");
   }
-  const result = await runInteractiveConnectSession(
+  prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+  const result = await runConnectChildWithShieldsRelockNotice(
     getOpenshellBinary(),
+    ["sandbox", "connect", sandboxName],
+    { hostCwd: ROOT, stdin: true },
     sandboxName,
-    agent,
-    sb?.agent,
-    ROOT,
-    process.env,
+    agent?.name === "openclaw" || sb?.agent === "openclaw",
   );
   result.releaseSignals?.();
   exitWithConnectSpawnResult(sandboxName, result);

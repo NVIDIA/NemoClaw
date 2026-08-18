@@ -6,7 +6,6 @@ import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import {
   type ConnectShieldsRelockNoticeState,
   pollConnectShieldsRelockNotice,
-  runConnectChildWithShieldsRelockNotice,
   startConnectShieldsRelockWatcher,
 } from "./connect-shields-relock-notice";
 
@@ -97,48 +96,5 @@ describe("connected-session Shields auto-relock notice", () => {
     vi.advanceTimersByTime(2_000);
     expect(readRecent).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
-  });
-
-  it("stops the watcher after the shared child supervisor settles (#9453)", async () => {
-    const lifecycle: string[] = [];
-    const stop = vi.fn(() => lifecycle.push("stop"));
-    const startWatcher = vi.fn(() => {
-      lifecycle.push("start");
-      return { stop };
-    });
-    const runChild = vi.fn(async () => {
-      lifecycle.push("child");
-      return { status: 0 };
-    });
-
-    await expect(
-      runConnectChildWithShieldsRelockNotice(
-        "openshell",
-        ["sandbox", "connect", "alpha"],
-        { stdin: true },
-        "alpha",
-        true,
-        { runChild, startWatcher },
-      ),
-    ).resolves.toEqual({ status: 0 });
-
-    expect(lifecycle).toEqual(["start", "child", "stop"]);
-    expect(stop).toHaveBeenCalledOnce();
-  });
-
-  it("skips the watcher for non-OpenClaw sessions (#9453)", async () => {
-    const startWatcher = vi.fn();
-    const runChild = vi.fn(async () => ({ status: 0 }));
-
-    await runConnectChildWithShieldsRelockNotice(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
-      {},
-      "alpha",
-      false,
-      { runChild, startWatcher },
-    );
-
-    expect(startWatcher).not.toHaveBeenCalled();
   });
 });

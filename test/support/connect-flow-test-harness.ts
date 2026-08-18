@@ -54,7 +54,7 @@ export type ConnectHarness = {
   resolveAgentConfigSpy: MockInstance;
   restoreSandboxStartupState: RestoreSandboxStartupState;
   runAutoPairSpy: MockInstance;
-  runConnectChildWithShieldsRelockNoticeSpy: MockInstance;
+  runSandboxExecChildSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
@@ -169,11 +169,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
   const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
-  const shieldsRelockNotice = requireDist(
-    "../../src/lib/actions/sandbox/agent/connect-shields-relock-notice.js",
-  );
-  const runConnectChildWithShieldsRelockNoticeSpy = vi
-    .spyOn(shieldsRelockNotice, "runConnectChildWithShieldsRelockNotice")
+  const sandboxExec = requireDist("../../src/lib/actions/sandbox/exec.js");
+  const runSandboxExecChildSpy = vi
+    .spyOn(sandboxExec, "runSandboxExecChild")
     .mockResolvedValue({
       status: spawnStatusFromOptions(options),
       signal: options.spawnSignal ?? null,
@@ -390,7 +388,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     resolveAgentConfigSpy,
     restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,
     runAutoPairSpy,
-    runConnectChildWithShieldsRelockNoticeSpy,
+    runSandboxExecChildSpy,
     settlePortablePairingSpy,
     runOpenshellSpy,
     runSetupDnsProxySpy,
