@@ -14,8 +14,22 @@ const evidencePath = path.join(
   ".agents/skills/nemoclaw-maintainer-cut-release-tag/references/candidate-evidence.md",
 );
 const evidence = fs.readFileSync(evidencePath, "utf8");
-const bashBlocks = [...evidence.matchAll(/```bash\n([\s\S]*?)```/gu)].map((match) => match[1]);
-const releaseEntryBlock = bashBlocks[1] ?? "";
+
+function bashBlockUnder(heading: string): string {
+  const headingStart = evidence.indexOf(heading);
+  if (headingStart === -1) {
+    throw new Error(`candidate-evidence.md is missing ${heading}`);
+  }
+  const nextHeading = evidence.indexOf("\n## ", headingStart + heading.length);
+  const section = evidence.slice(headingStart, nextHeading === -1 ? undefined : nextHeading);
+  const block = /```bash\n([\s\S]*?)```/u.exec(section)?.[1];
+  if (!block) {
+    throw new Error(`candidate-evidence.md is missing a bash block under ${heading}`);
+  }
+  return block;
+}
+
+const releaseEntryBlock = bashBlockUnder("## Release Entry and Pi Result");
 const temporaryDirectories: string[] = [];
 
 const shellHelpers = String.raw`

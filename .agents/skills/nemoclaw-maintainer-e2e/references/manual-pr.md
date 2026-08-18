@@ -80,6 +80,7 @@ The trusted pre-checkout step requires current repository `maintain` or `admin` 
 ## Find and Verify the Run
 
 ```bash
+set -euo pipefail
 RUN_TITLE="E2E PR #${PR_NUMBER} (${CORRELATION_ID})"
 MATCHES='[]'
 for POLL_INDEX in $(seq 1 30); do

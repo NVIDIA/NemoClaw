@@ -45,6 +45,7 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(mainRuns).toContain("every release-required job must succeed");
     expect(mainRuns).toContain('-f "include_staging_brev_launchable=${INCLUDE_LAUNCHABLE}"');
     expect(mainRuns).toContain('RUN_TITLE="E2E full main (${CORRELATION_ID})"');
+    expect(mainRuns).toMatch(/Find it with bounded reads:\n\n```bash\nset -euo pipefail/u);
     expect(mainRuns).toContain('test "$RUN_SHA" = "$CANDIDATE_SHA"');
     expect(mainRuns).toContain("It is not a tag-authorization rule");
     expect(mainRuns).toContain("launchable-e2e.json");
@@ -76,6 +77,7 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(manualPr).toContain('-f "base_sha=${BASE_SHA}"');
     expect(manualPr).toContain('-f "workflow_sha=${WORKFLOW_SHA}"');
     expect(manualPr).toContain("nemoclaw-e2e-dispatch-v2");
+    expect(manualPr).toMatch(/## Find and Verify the Run\n\n```bash\nset -euo pipefail/u);
     expect(manualPr).toContain("The Exact staging Brev Launchable path is not available");
   });
 });

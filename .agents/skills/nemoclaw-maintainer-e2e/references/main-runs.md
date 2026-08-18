@@ -90,6 +90,7 @@ gh workflow run .github/workflows/e2e.yaml \
 Do not dispatch again because the run is slow to appear. Find it with bounded reads:
 
 ```bash
+set -euo pipefail
 RUN_TITLE="E2E main (${CORRELATION_ID})"
 if [[ "$RUN_MODE" == full ]]; then
   RUN_TITLE="E2E full main (${CORRELATION_ID})"
