@@ -180,19 +180,23 @@ jobs:
             fi
             install -m 0644 "$source_file" "$destination_file"
           done
-          support_relative=scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
-          support_source="$candidate_root/$support_relative"
-          support_parent="$staging_root/scripts/security/patches"
-          support_destination="$staging_root/$support_relative"
-          if [ ! -f "$support_source" ] || [ -L "$support_source" ] || [ ! -d "$support_parent" ] || [ -L "$support_parent" ] || [ -L "$support_destination" ]; then
-            echo "ERROR: staging QA Dockerfile support file is missing, unsafe, or changed shape: $support_relative" >&2
-            exit 1
-          fi
-          if [ -e "$support_destination" ] && [ ! -f "$support_destination" ]; then
-            echo "ERROR: staging QA Dockerfile support destination changed shape: $support_relative" >&2
-            exit 1
-          fi
-          install -m 0644 "$support_source" "$support_destination"
+          for support_relative in \
+            scripts/lib/bundled-npm-package.mts \
+            scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
+          do
+            support_source="$candidate_root/$support_relative"
+            support_parent="$staging_root/$(dirname "$support_relative")"
+            support_destination="$staging_root/$support_relative"
+            if [ ! -f "$support_source" ] || [ -L "$support_source" ] || [ ! -d "$support_parent" ] || [ -L "$support_parent" ] || [ -L "$support_destination" ]; then
+              echo "ERROR: staging QA Dockerfile support file is missing, unsafe, or changed shape: $support_relative" >&2
+              exit 1
+            fi
+            if [ -e "$support_destination" ] && [ ! -f "$support_destination" ]; then
+              echo "ERROR: staging QA Dockerfile support destination changed shape: $support_relative" >&2
+              exit 1
+            fi
+            install -m 0644 "$support_source" "$support_destination"
+          done
           printf '\nCandidate dependency inputs: %s\n' "$CANDIDATE_SHA" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Reproduce staging discovery permission drift

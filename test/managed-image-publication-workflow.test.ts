@@ -688,6 +688,7 @@ describe("complete managed-image publication workflow", () => {
     const steps = qaBuilder.steps ?? [];
     const prCheckout = step(qaBuilder, "Checkout latest PR commit");
     const baseCheckout = step(qaBuilder, "Checkout exact staging QA base source");
+    const overlay = step(qaBuilder, "Overlay exact PR dependency inputs on staging QA base");
     const drift = step(qaBuilder, "Reproduce staging discovery permission drift");
     const baseBuild = step(qaBuilder, "Rebuild staging QA Deep Agents Code base from exact source");
     const finalBuild = step(qaBuilder, "Build latest PR commit against reproduced staging QA base");
@@ -722,10 +723,19 @@ describe("complete managed-image publication workflow", () => {
       step(managedPrBuilder(workflow), "Reproduce reviewed discovery permission drift").run,
     );
     expect(drift["working-directory"]).toBe("candidate");
-    expect(steps.indexOf(prCheckout)).toBeLessThan(steps.indexOf(drift));
+    expect(steps.indexOf(prCheckout)).toBeLessThan(steps.indexOf(overlay));
+    expect(steps.indexOf(overlay)).toBeLessThan(steps.indexOf(drift));
     expect(steps.indexOf(drift)).toBeLessThan(steps.indexOf(baseBuild));
     expect(steps.indexOf(baseBuild)).toBeLessThan(steps.indexOf(finalBuild));
     expect(steps.indexOf(finalBuild)).toBeLessThan(steps.indexOf(contract));
+
+    const overlaySource = required(overlay.run, "staging QA dependency overlay is missing");
+    expect(overlaySource).toContain("agents/langchain-deepagents-code/Dockerfile.base");
+    expect(overlaySource).toContain("agents/langchain-deepagents-code/requirements.lock");
+    expect(overlaySource).toContain("scripts/lib/bundled-npm-package.mts");
+    expect(overlaySource).toContain(
+      "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
+    );
 
     const baseSource = required(baseBuild.run, "staging QA base build is missing");
     expect(baseBuild.env?.DOCKER_BUILDKIT).toBe("1");
