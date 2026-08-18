@@ -70,7 +70,7 @@ function managedRuntimeInspect({
 }: {
   entrypoint?: string[];
   command?: string[] | null;
-  environment?: string[];
+  environment?: unknown;
 } = {}): string {
   return JSON.stringify([
     {
@@ -183,6 +183,14 @@ describe("gateway guard legacy keepalive fixture", () => {
       inspect: managedRuntimeInspect({ environment: [] }),
     },
     {
+      name: "a non-array managed runtime environment",
+      inspect: managedRuntimeInspect({ environment: {} }),
+    },
+    {
+      name: "a non-string managed runtime environment entry",
+      inspect: managedRuntimeInspect({ environment: [MANAGED_RUNTIME_COMMAND_ENV, 42] }),
+    },
+    {
       name: "duplicate managed startup commands",
       inspect: managedRuntimeInspect({
         environment: [MANAGED_RUNTIME_COMMAND_ENV, MANAGED_RUNTIME_COMMAND_ENV],
@@ -230,7 +238,7 @@ describe("gateway guard legacy keepalive fixture", () => {
     },
   ])("rejects $name before legacy recreation (#9364)", ({ inspect }) => {
     expect(() => rewriteManagedInspectForLegacyKeepalive(inspect, OLD_CONTAINER_ID)).toThrow(
-      "requires the reviewed managed-image process contract",
+      "requires the reviewed managed-image or OpenShell-managed runtime process contract",
     );
   });
 
@@ -240,7 +248,7 @@ describe("gateway guard legacy keepalive fixture", () => {
         managedImageInspect(["/unreviewed/supervisor"]),
         OLD_CONTAINER_ID,
       ),
-    ).toThrow("requires the reviewed managed-image process contract");
+    ).toThrow("requires the reviewed managed-image or OpenShell-managed runtime process contract");
   });
 
   it("rejects an unreviewed managed-image command before legacy recreation (#9364)", () => {
@@ -249,7 +257,7 @@ describe("gateway guard legacy keepalive fixture", () => {
         managedImageInspect(["/usr/local/bin/nemoclaw-start"], OLD_CONTAINER_ID, ["/bin/sh"]),
         OLD_CONTAINER_ID,
       ),
-    ).toThrow("requires the reviewed managed-image process contract");
+    ).toThrow("requires the reviewed managed-image or OpenShell-managed runtime process contract");
   });
 
   it("rejects Docker inspect output for a different container before legacy recreation (#9364)", () => {

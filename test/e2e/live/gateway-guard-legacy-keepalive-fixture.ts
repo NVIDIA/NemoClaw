@@ -153,7 +153,7 @@ export function rewriteManagedInspectForLegacyKeepalive(
     (hasExactTokens(configRecord.Entrypoint, MANAGED_IMAGE_ENTRYPOINT) &&
       hasExactTokens(configRecord.Cmd, MANAGED_IMAGE_COMMAND)) ||
       hasReviewedManagedRuntimeProcess(configRecord),
-    "legacy keepalive fixture requires the reviewed managed-image process contract",
+    "legacy keepalive fixture requires the reviewed managed-image or OpenShell-managed runtime process contract",
   );
 
   // The replacement container runs the exact pre-0.0.99 OpenShell supervisor
