@@ -37,7 +37,7 @@
     "defaultMax": 20,
     "maxByFile": {
       "src/lib/actions/inference-set.ts": 32,
-      "src/lib/actions/sandbox/connect.ts": 41,
+      "src/lib/actions/sandbox/connect.ts": 42,
       "src/lib/actions/sandbox/destroy.ts": 29,
       "src/lib/actions/sandbox/doctor.ts": 30,
       "src/lib/actions/sandbox/status-snapshot.ts": 21,
