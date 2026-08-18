@@ -793,11 +793,7 @@ describe.sequential("dual-DGX Station trust and resume-state boundaries", () => 
   });
 
   it("pins the Station preparation endpoint after the strict SSH policy (#9519)", () => {
-    const args = stationPrepSshArgs(
-      sshBinding(),
-      "/tmp/nemoclaw-known-hosts",
-      "python3 -",
-    );
+    const args = stationPrepSshArgs(sshBinding(), "/tmp/nemoclaw-known-hosts", "python3 -");
     expect(args).toEqual([
       ...strictVllmSshTransportArgs(),
       "-o",
@@ -956,9 +952,7 @@ fi
     }
   });
 
-  it.each(
-    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
-  )(
+  it.each(["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"])(
     "uses only deterministic rail candidates without trust enrollment or network discovery [%s]",
     (command) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-command-boundary-"));
@@ -1019,9 +1013,7 @@ fi
     },
   );
 
-  it.each(
-    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
-  )(
+  it.each(["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"])(
     "keeps forbidden discovery and trust enrollment unreachable through pair qualification [%s]",
     (command) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-ready-boundary-"));

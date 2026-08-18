@@ -510,11 +510,7 @@ function knownHostEvidence(
 
 export function inspectPretrustedSshTarget(target: string): PretrustedSshTarget | null {
   validateStationPeerTarget(target);
-  const configResult = runCommand(
-    "ssh",
-    ["-G", ...strictVllmSshTransportArgs(), "--", target],
-    "",
-  );
+  const configResult = runCommand("ssh", ["-G", ...strictVllmSshTransportArgs(), "--", target], "");
   if (!commandSucceeded(configResult, true)) return null;
   const config = parseSshConfig(configResult.stdout);
   assertStrictSshConfig(config);
