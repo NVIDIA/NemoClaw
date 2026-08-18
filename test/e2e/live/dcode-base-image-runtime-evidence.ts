@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/label-codec.ts";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
 import {
+  DCODE_BASE_IMAGE_TARGET_PLATFORM,
   type DcodeBaseImageContract,
   type DcodePlatform,
   parseDcodeBaseImageContract,
@@ -76,9 +77,12 @@ export function parseDcodeBaseImagePublicationEvidence(
     );
   }
   const contract = parseDcodeBaseImageContract(evidence.base);
-  if (requireDcodeBaseImageReference(environment) !== contract.reference) {
+  if (
+    requireDcodeBaseImageReference(environment) !==
+    contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM]
+  ) {
     throw new Error(
-      "Deep Agents Code onboarding reference does not match the published base contract",
+      "Deep Agents Code onboarding reference does not match the published amd64 platform reference",
     );
   }
   return contract;
@@ -123,6 +127,11 @@ export function verifyDcodeBaseImageRuntimeEvidence(
     throw new Error("Deep Agents Code sandbox image is missing base resolution metadata");
   }
   const platform = platformFor(metadata);
+  if (platform !== DCODE_BASE_IMAGE_TARGET_PLATFORM) {
+    throw new Error(
+      `Deep Agents Code sandbox image did not use the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base digest`,
+    );
+  }
   const expectedDigest = contract.platformDigests[platform];
   const expectedReference = contract.platformReferences[platform];
   if (

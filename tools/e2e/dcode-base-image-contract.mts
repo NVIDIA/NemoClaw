@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const AGENT = "langchain-deepagents-code";
 const IMAGE = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base";
 const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
+export const DCODE_BASE_IMAGE_TARGET_PLATFORM = "linux/amd64" as const;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const IMPORT_MARKER = "nemoclaw-dcode-base-imports-ok";
@@ -120,10 +121,7 @@ export function validateDcodeBaseImageContract(
   if (contract.sourceRevision !== expected.headSha) {
     throw new Error("base contract source revision does not match the selected publication");
   }
-  if (
-    contract.run.id !== expected.runId ||
-    contract.run.attempt !== expected.runAttempt
-  ) {
+  if (contract.run.id !== expected.runId || contract.run.attempt !== expected.runAttempt) {
     throw new Error("base contract run does not match the selected publication");
   }
   return contract;
@@ -186,10 +184,11 @@ export function main(argv = process.argv.slice(2), env = process.env): void {
       headSha: env.PUBLICATION_HEAD_SHA ?? "",
     },
   );
-  validateDcodeBaseImageImports(contract.reference);
+  const amd64Reference = contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
+  validateDcodeBaseImageImports(amd64Reference);
   appendFileSync(
     outputPath,
-    `base_ref=${contract.reference}\ncontract=${JSON.stringify(contract)}\n`,
+    `base_ref=${amd64Reference}\ncontract=${JSON.stringify(contract)}\n`,
     "utf8",
   );
 }
