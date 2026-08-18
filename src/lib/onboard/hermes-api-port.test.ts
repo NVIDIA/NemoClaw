@@ -75,16 +75,14 @@ describe("readHermesApiPort", () => {
     expect(readHermesApiPort({})).toBe(8642);
   });
 
-  it.each([
-    "8641",
-    "8653",
-    "9000",
-    "²",
-  ])("rejects %s outside the allocated Hermes API-port range", (value) => {
-    expect(() => readHermesApiPort({ [HERMES_API_PORT_ENV]: value })).toThrow(
-      /integer from 8642 through 8652/,
-    );
-  });
+  it.each(["8641", "8653", "9000", "²"])(
+    "rejects %s outside the allocated Hermes API-port range",
+    (value) => {
+      expect(() => readHermesApiPort({ [HERMES_API_PORT_ENV]: value })).toThrow(
+        /integer from 8642 through 8652/,
+      );
+    },
+  );
 });
 
 describe("findAvailableHermesApiPort", () => {
@@ -185,9 +183,11 @@ describe("reserveCreateSandboxHermesApiPort", () => {
   });
 
   it("reports EADDRINUSE for a durable sandbox without a port instead of allocating (#9291)", async () => {
-    const reservePort = vi.fn().mockRejectedValueOnce(
-      Object.assign(new Error("port 8642 is already held"), { code: "EADDRINUSE" }),
-    );
+    const reservePort = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("port 8642 is already held"), { code: "EADDRINUSE" }),
+      );
     const env: NodeJS.ProcessEnv = {};
 
     await expect(
@@ -207,9 +207,11 @@ describe("reserveCreateSandboxHermesApiPort", () => {
   });
 
   it("reports EADDRINUSE for a created sandbox that still has pendingRouteReservation (#9291)", async () => {
-    const reservePort = vi.fn().mockRejectedValueOnce(
-      Object.assign(new Error("port 8642 is already held"), { code: "EADDRINUSE" }),
-    );
+    const reservePort = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("port 8642 is already held"), { code: "EADDRINUSE" }),
+      );
     const env: NodeJS.ProcessEnv = {};
 
     await expect(
@@ -430,9 +432,13 @@ describe("resolveVerifyAgentApiPort (#9290)", () => {
 
   it("keeps a non-Hermes agent's declared probe port", () => {
     expect(
-      resolveVerifyAgentApiPort("sb", { name: "other", healthProbe: { port: 9000 } }, {
-        getSandbox: () => ({ hermesApiPort: 8643 }),
-      }),
+      resolveVerifyAgentApiPort(
+        "sb",
+        { name: "other", healthProbe: { port: 9000 } },
+        {
+          getSandbox: () => ({ hermesApiPort: 8643 }),
+        },
+      ),
     ).toBe(9000);
   });
 
