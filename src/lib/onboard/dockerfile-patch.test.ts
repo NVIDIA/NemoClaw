@@ -187,7 +187,7 @@ describe("dockerfile patch helpers", () => {
       ].join("\n"),
     );
 
-    expect(() =>
+    const patch = (options: { agentName?: string } = {}) =>
       patchStagedDockerfile(
         dockerfilePath,
         "custom-model",
@@ -200,8 +200,11 @@ describe("dockerfile patch helpers", () => {
         false,
         null,
         [],
-      ),
-    ).toThrow(/Dockerfile is missing ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT/);
+        options,
+      );
+
+    expect(patch).toThrow(/Dockerfile is missing ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT/);
+    expect(() => patch({ agentName: "hermes" })).toThrow(/is not supported by hermes/);
   });
 
   it("patches base image, inference, proxy, and messaging plan args", () => {
