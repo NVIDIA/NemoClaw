@@ -675,6 +675,22 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.removePreset).not.toHaveBeenCalled();
   });
 
+  it("skips provider inspection for empty managed MCP recovery state (#9388)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+    });
+
+    const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
+    await preparation.revalidateBeforeDelete?.();
+
+    expect(preparation.entries).toEqual([]);
+    expect(testState.runOpenshellProviderCommand).not.toHaveBeenCalled();
+    expect(testState.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(testState.getPresetContentGatewayState).not.toHaveBeenCalled();
+  });
+
   it("inspects attached providers once per read-only checkpoint for complete MCP state (#9388)", async () => {
     registry.registerSandbox({
       name: "alpha",

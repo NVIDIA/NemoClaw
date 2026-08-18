@@ -168,6 +168,7 @@ export function assertNoAttachedProviderCredentialCollisions(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
 ): void {
+  if (entries.length === 0) return;
   const inspection = inspectMcpProviderAttachments(sandboxName);
   if (!inspection.attachments) {
     throw new McpBridgeError(
@@ -183,7 +184,7 @@ export function assertNoAttachedProviderCredentialCollisions(
     );
     if (collision) {
       throw new McpBridgeError(
-        `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to reserve the key for MCP before provider activation.`,
+        `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to continue managed MCP while this sandbox receives that key from another provider.`,
       );
     }
   }
