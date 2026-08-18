@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type DockerGpuRoutePlan,
-  resolveAgentPlan,
   resolveDockerGpuSandboxCreatePlan,
+  resolveProfileGpuCreatePlan,
 } from "./docker-gpu-sandbox-create";
 
 describe("resolveDockerGpuSandboxCreatePlan", () => {
@@ -156,7 +156,7 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     expect(log).not.toHaveBeenCalledWith(expect.stringMatching(/compatibility-only/iu));
   });
 
-  it("keeps non-OpenClaw portable agents on their existing GPU route (#9068)", () => {
+  it("honors an explicit non-portable lifecycle flag at the create-plan boundary (#9068)", () => {
     const result = resolveDockerGpuSandboxCreatePlan(
       { sandboxGpuEnabled: true },
       {
@@ -165,7 +165,6 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
         portableLifecycle: false,
         env: {
           NEMOCLAW_DOCKER_GPU_PATCH: "1",
-          NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
         },
         platform: "linux",
       },
@@ -174,23 +173,25 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     expect(result.gpuRoutePlan).toBe("compatibility-only");
   });
 
-  it("selects the portable lifecycle route only for OpenClaw (#9068)", () => {
-    const env = {
-      NEMOCLAW_DOCKER_GPU_PATCH: "1",
-      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
-    };
-
-    expect(resolveAgentPlan({ sandboxGpuEnabled: true }, null, true, env, "linux").gpuRoutePlan).toBe(
-      "native-only",
-    );
+  it("keeps the portable profile on native GPU routing at the resolver boundary (#9462)", () => {
     expect(
-      resolveAgentPlan(
+      resolveProfileGpuCreatePlan(
         { sandboxGpuEnabled: true },
-        { name: "hermes" },
         true,
-        env,
+        { NEMOCLAW_DOCKER_GPU_PATCH: "1", NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         "linux",
       ).gpuRoutePlan,
-    ).toBe("compatibility-only");
+    ).toBe("native-only");
+  });
+
+  it("keeps portable Jetson hosts off the compatibility-only default (#9462)", () => {
+    expect(
+      resolveProfileGpuCreatePlan(
+        { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
+        true,
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        "linux",
+      ).gpuRoutePlan,
+    ).toBe("native-only");
   });
 });
