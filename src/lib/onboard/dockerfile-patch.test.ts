@@ -707,7 +707,7 @@ describe("dockerfile patch helpers", () => {
         { channelId: "telegram", active: true },
       ],
       agentRender: [
-        { agent: "openclaw", channelId: "discord", target: "config", path: ["discord"] },
+        { agent: "openclaw", channelId: "discord", target: "openclaw.json", path: ["discord"] },
       ],
     });
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-plan-"));
