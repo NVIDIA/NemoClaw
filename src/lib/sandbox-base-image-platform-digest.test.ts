@@ -197,13 +197,24 @@ describe("sandbox base-image pinned platform digest resolution", () => {
     });
   });
 
-  it("falls back to the Dockerfile-pinned digest when RepoDigests JSON is malformed", () => {
+  it("preserves metadata for an exact digest when RepoDigests JSON is malformed (#9386)", () => {
     dockerMocks.imageInspect.mockImplementation((ref: string) => ({
       status: ref === REF ? 0 : 1,
     }));
     dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
       (
-        new Map([[`{{json .RepoDigests}}\0${REF}`, "{not-json"]]).get(`${format}\0${ref}`) ?? ""
+        new Map([
+          [`{{json .RepoDigests}}\0${REF}`, "{not-json"],
+          [
+            `{{json .}}\0${REF}`,
+            JSON.stringify({
+              Id: IMAGE_ID,
+              RepoDigests: [],
+              Os: "linux",
+              Architecture: "amd64",
+            }),
+          ],
+        ]).get(`${format}\0${ref}`) ?? ""
       ).trim(),
     );
 
@@ -218,6 +229,11 @@ describe("sandbox base-image pinned platform digest resolution", () => {
       digest: DIGEST,
       source: "pinned",
       pinnedRemoteRef: REF,
+      metadata: {
+        ref: REF,
+        digest: DIGEST,
+        imageId: IMAGE_ID,
+      },
     });
     expect(traceMocks.add).toHaveBeenCalledWith(
       "nemoclaw.sandbox_base_image.repodigest_parse_failed",

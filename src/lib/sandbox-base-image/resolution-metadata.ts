@@ -89,7 +89,16 @@ export function createSandboxBaseImageResolutionMetadata(
   if (resolution.digest) {
     const expectedRepoDigest = `${options.imageName}@${resolution.digest}`;
     const repoDigests = Array.isArray(inspected?.RepoDigests) ? inspected.RepoDigests : [];
-    if (!repoDigests.some((entry) => String(entry) === expectedRepoDigest)) return null;
+    // Docker may omit RepoDigests after resolving an exact platform manifest.
+    // The resolver's exact same-repository digest ref remains immutable proof.
+    const exactResolvedReference =
+      /^sha256:[0-9a-f]{64}$/u.test(resolution.digest) && resolution.ref === expectedRepoDigest;
+    if (
+      !exactResolvedReference &&
+      !repoDigests.some((entry) => String(entry) === expectedRepoDigest)
+    ) {
+      return null;
+    }
   }
 
   return {
