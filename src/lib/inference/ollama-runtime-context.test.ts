@@ -371,7 +371,7 @@ describe("Ollama runtime context helpers", () => {
     expect(failure.message).not.toContain("Select a model");
   });
 
-  it("parses the native context length from arch-prefixed model_info keys", () => {
+  it("parses the native context length for the declared model architecture (#9458)", () => {
     expect(
       parseOllamaNativeContextLength({
         model_info: { "general.architecture": "qwen2", "qwen2.context_length": 32_768 },
@@ -379,9 +379,12 @@ describe("Ollama runtime context helpers", () => {
     ).toBe(32_768);
     expect(
       parseOllamaNativeContextLength({
-        model_info: { "llama.context_length": "131072" },
+        model_info: { "general.architecture": " llama ", "llama.context_length": "131072" },
       }),
     ).toBe(131_072);
+  });
+
+  it("rejects native context metadata without an exact architecture match (#9458)", () => {
     expect(parseOllamaNativeContextLength({ model_info: {} })).toBeNull();
     expect(parseOllamaNativeContextLength({})).toBeNull();
     expect(parseOllamaNativeContextLength(null)).toBeNull();
@@ -399,7 +402,15 @@ describe("Ollama runtime context helpers", () => {
       parseOllamaNativeContextLength({
         model_info: { "llama.context_length": 131_072, "qwen2.context_length": 32_768 },
       }),
-    ).toBe(131_072);
+    ).toBeNull();
+    expect(
+      parseOllamaNativeContextLength({
+        model_info: {
+          "general.architecture": "qwen2",
+          "llama.context_length": 131_072,
+        },
+      }),
+    ).toBeNull();
     expect(
       parseOllamaNativeContextLength({
         model_info: {

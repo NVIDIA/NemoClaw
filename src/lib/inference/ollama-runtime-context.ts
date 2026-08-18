@@ -207,27 +207,19 @@ export interface OllamaNativeContextStatus {
  *
  * Ollama publishes the model card's `max_position_embeddings` under
  * `model_info["<architecture>.context_length"]` (e.g.
- * `qwen2.context_length`). Older daemons and custom registries may omit
- * `model_info` entirely, so every missing or malformed shape returns `null`
- * and callers fall back to the daemon-focused remediation.
+ * `qwen2.context_length`). The declared architecture and its exact associated
+ * key must both be present. Every missing or malformed shape returns `null`,
+ * so callers fall back to the daemon-focused remediation.
  */
 export function parseOllamaNativeContextLength(payload: unknown): number | null {
   const modelInfo = (payload as { model_info?: unknown } | null)?.model_info;
   if (!modelInfo || typeof modelInfo !== "object") return null;
   const info = modelInfo as Record<string, unknown>;
-  const architecture = info["general.architecture"];
-  const archKey = typeof architecture === "string" ? `${architecture}.context_length` : null;
-  const candidates =
-    archKey && archKey in info
-      ? [info[archKey]]
-      : Object.entries(info)
-          .filter(([key]) => key.endsWith(".context_length"))
-          .map(([, value]) => value);
-  for (const candidate of candidates) {
-    const parsed = parsePositiveInteger(candidate);
-    if (parsed && parsed <= MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW) return parsed;
-  }
-  return null;
+  const architecture =
+    typeof info["general.architecture"] === "string" ? info["general.architecture"].trim() : "";
+  if (!architecture) return null;
+  const parsed = parsePositiveInteger(info[`${architecture}.context_length`]);
+  return parsed && parsed <= MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW ? parsed : null;
 }
 
 /**
@@ -270,9 +262,7 @@ export function probeOllamaModelNativeContextLength(
   if (!output || !String(output).trim()) return { probed: false };
   try {
     const nativeContextLength = parseOllamaNativeContextLength(JSON.parse(String(output)));
-    return nativeContextLength
-      ? { probed: true, nativeContextLength }
-      : { probed: true };
+    return nativeContextLength ? { probed: true, nativeContextLength } : { probed: true };
   } catch {
     return { probed: false };
   }
