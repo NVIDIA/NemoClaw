@@ -3,6 +3,7 @@
 
 import { findDashboardForwardOwner } from "./dashboard-port";
 import { resolveGatewayName } from "./gateway-binding";
+import type { InferenceRouteState } from "./inference-route";
 import type { PortProbeResult } from "./preflight";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
 import {
@@ -195,7 +196,7 @@ export type AuthoritativeRebuildTargetDeps = {
   runFatalRuntimePreflight(): unknown | Promise<unknown>;
   ensureOpenshell(): unknown;
   assertGatewayReadiness(): unknown | Promise<unknown>;
-  inferenceRouteReady(provider: string, model: string): boolean;
+  inferenceRouteState(provider: string, model: string): InferenceRouteState;
   captureForwardList(): string | null;
   checkPort(port: number): Promise<PortProbeResult>;
   env?: NodeJS.ProcessEnv;
@@ -223,10 +224,12 @@ export async function preflightAuthoritativeRebuildTarget(
     // Prepared-backup recovery can run after the installer has replaced a
     // legacy gateway. That fresh gateway has no inference route to validate
     // yet; authoritative onboarding configures and verifies the pinned route
-    // before recreating the sandbox. Normal rebuilds must still match here.
+    // before recreating the sandbox. A gateway that cannot answer at all leaves
+    // the route unknown, which onboarding resolves the same way. Only a gateway
+    // that answers with a different route contradicts the rebuild target.
     if (
       target.deferInferenceRouteUntilOnboard !== true &&
-      !deps.inferenceRouteReady(target.provider, target.model)
+      deps.inferenceRouteState(target.provider, target.model) === "mismatched"
     ) {
       fail(
         `OpenShell inference route does not match provider '${target.provider}' and model '${target.model}'.`,

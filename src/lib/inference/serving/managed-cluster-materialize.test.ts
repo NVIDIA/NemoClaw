@@ -338,16 +338,16 @@ describe("managed-cluster vLLM materializer", () => {
     const plan = materializeManagedClusterVllmPlan(selection);
     const headArguments = plan.roles[0].command.arguments;
 
-    for (const argument of selection.recipe.spec.serve.arguments) {
+    selection.recipe.spec.serve.arguments.forEach((argument) => {
       const index = headArguments.indexOf(argument.name);
       expect(index).toBeGreaterThan(-1);
-    }
-    for (const argument of selection.recipe.spec.serve.arguments.filter(
+    });
+    selection.recipe.spec.serve.arguments.filter(
       ({ value }) => value !== undefined,
-    )) {
+    ).forEach((argument) => {
       const index = headArguments.indexOf(argument.name);
       expect(headArguments[index + 1]).toBe(String(argument.value));
-    }
+    });
     expect(headArguments).not.toContain("--api-key");
     expect(plan.roles[1].command.arguments).not.toContain("--api-key");
   });

@@ -168,13 +168,12 @@ jobs:
 
       - name: Download immutable Deep Agents Code base contract
         if: ${{ steps.publication_mode.outputs.required == '1' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          github-token: ${{ github.token }}
-          name: managed-base-${{ steps.publication.outputs.run_id }}-${{ steps.publication.outputs.run_attempt }}-langchain-deepagents-code
-          path: ${{ runner.temp }}/dcode-base-contract
-          repository: NVIDIA/NemoClaw
-          run-id: ${{ steps.publication.outputs.run_id }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
+          PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"
 
       - id: validate_dcode_base
         name: Validate immutable Deep Agents Code base

@@ -231,7 +231,7 @@ describe("launch readiness validation", () => {
   function deps(): LaunchReadinessDeps {
     return {
       getSandbox: () => sandbox,
-      listAgents: () => ["openclaw", "langchain-deepagents-code"],
+      listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
       loadAgent,
       observeSandbox: (request) => {
         externalEvents.push("sandbox-get");
@@ -291,6 +291,7 @@ describe("launch readiness validation", () => {
           requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
         };
       },
+      classifyPortableLifecycleReceipt: () => ({ kind: "absent" }),
       readLease: () =>
         readKind === "valid" && publishedIdentity
           ? { kind: "valid", lease: lease(publishedIdentity) }
@@ -419,34 +420,45 @@ describe("launch readiness validation", () => {
     });
   });
 
-  it("falls back when the OpenClaw gateway or lifecycle binding changes (#9023)", async () => {
-    const currentDeps = await createAcceptedLease();
-    const stored = publishedIdentity?.session;
-    expect(stored).toMatchObject({ kind: "openclaw-pairing" });
-    const qualification = stored as LaunchReadinessOpenClawSessionQualification;
-    currentDeps.observeOpenClawPairingQualification = () => qualification;
-    currentDeps.fenceLease = () => ({
-      ...fence(),
-      gatewayName: sandbox.gatewayName ?? GATEWAY_NAME,
-      gatewayPort: sandbox.gatewayPort ?? GATEWAY_PORT,
-    });
-    currentDeps.readLease = (_sandboxName, gatewayName) => ({
-      kind: gatewayName === GATEWAY_NAME ? "valid" : "identity",
-      lease: lease(publishedIdentity!),
-    });
-    const original = sandbox;
+  it.each([
+    { scenario: "gateway binding" },
+    { scenario: "lifecycle generation" },
+    { scenario: "live identity fingerprint" },
+  ])(
+    "falls back when the OpenClaw gateway or lifecycle binding changes [$scenario] (#9023)",
+    async ({ scenario }) => {
+      const currentDeps = await createAcceptedLease();
+      const stored = publishedIdentity?.session;
+      expect(stored).toMatchObject({ kind: "openclaw-pairing" });
+      const qualification = stored as LaunchReadinessOpenClawSessionQualification;
+      currentDeps.observeOpenClawPairingQualification = () => qualification;
+      currentDeps.fenceLease = () => ({
+        ...fence(),
+        gatewayName: sandbox.gatewayName ?? GATEWAY_NAME,
+        gatewayPort: sandbox.gatewayPort ?? GATEWAY_PORT,
+      });
+      currentDeps.readLease = (_sandboxName, gatewayName) => ({
+        kind: gatewayName === GATEWAY_NAME ? "valid" : "identity",
+        lease: lease(publishedIdentity!),
+      });
+      const original = sandbox;
 
-    for (const { changed, category } of [
-      {
-        changed: { ...original, gatewayName: "nemoclaw-8081", gatewayPort: 8081 },
-        category: "identity",
-      },
-      { changed: { ...original, lifecycleGeneration: "generation-2" }, category: "config" },
-      {
-        changed: { ...original, lifecycleLiveIdentityFingerprint: "5".repeat(64) },
-        category: "identity",
-      },
-    ]) {
+      const { changed, category } = (
+        {
+          "gateway binding": {
+            changed: { ...original, gatewayName: "nemoclaw-8081", gatewayPort: 8081 },
+            category: "identity",
+          },
+          "lifecycle generation": {
+            changed: { ...original, lifecycleGeneration: "generation-2" },
+            category: "config",
+          },
+          "live identity fingerprint": {
+            changed: { ...original, lifecycleLiveIdentityFingerprint: "5".repeat(64) },
+            category: "identity",
+          },
+        } as const
+      )[scenario]!;
       sandbox = changed;
       await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
         kind: "fallback",
@@ -454,9 +466,10 @@ describe("launch readiness validation", () => {
         fence: { epochId: EPOCH },
         recoveryBlocked: false,
       });
-    }
-    sandbox = original;
-  });
+
+      sandbox = original;
+    },
+  );
 
   it("uses the complete fallback when current OpenClaw pairing observation fails (#9023)", async () => {
     const currentDeps = await createAcceptedLease();
@@ -970,6 +983,10 @@ describe("launch readiness validation", () => {
       ].sort(),
     );
     expect(projection.version).toBe(2);
+    expect(projection.portableLifecycleReceipt).toBeUndefined();
+    expect(
+      launchReadinessDigest(buildLaunchReadinessRegistryProjection(sandbox, agent, DIGEST)),
+    ).not.toBe(launchReadinessDigest(projection));
     const original = launchReadinessDigest(projection);
     const mutations: SandboxEntry[] = [
       { ...sandbox, agentVersion: "1.0.1" },
@@ -1029,11 +1046,155 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    for (const mutation of mutations) {
-      expect(
-        launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
-      ).not.toBe(original);
-    }
+    expect(mutations.every((mutation) =>
+          !Object.is(
+            launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
+            original,
+          ))).toBe(true);
+  });
+
+  it("binds current Portable lifecycle state into final readiness publication (#9207)", async () => {
+    const currentDeps = deps();
+    const runtimeAuthority = {
+      schemaVersion: 1 as const,
+      kind: "podman" as const,
+      ownership: "current-user" as const,
+      uid: 1001,
+      homeDir: "/home/operator",
+      configHome: "/home/operator/.config",
+      runtimeDir: "/run/user/1001",
+      socketPath: "/run/user/1001/podman/podman.sock",
+    };
+    currentDeps.classifyPortableLifecycleReceipt = () => ({
+      kind: "current",
+      registryGeneration: "generation-1",
+      runtimeAuthority,
+    });
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+
+    expect(decision.kind).toBe("fallback");
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toEqual({ kind: "published" });
+    expect(publishedIdentity?.registry).toBe(
+      launchReadinessDigest(
+        buildLaunchReadinessRegistryProjection(
+          sandbox,
+          loadAgent("openclaw"),
+          launchReadinessDigest(runtimeAuthority),
+        ),
+      ),
+    );
+  });
+
+  it("invalidates a Portable OpenClaw lease when runtime authority changes (#9207)", async () => {
+    let socketPath = "/run/user/1001/podman/podman.sock";
+    const currentDeps = deps();
+    currentDeps.classifyPortableLifecycleReceipt = () => ({
+      kind: "current",
+      registryGeneration: "generation-1",
+      runtimeAuthority: {
+        schemaVersion: 1,
+        kind: "podman",
+        ownership: "current-user",
+        uid: 1001,
+        homeDir: "/home/operator",
+        configHome: "/home/operator/.config",
+        runtimeDir: "/run/user/1001",
+        socketPath,
+      },
+    });
+    await createAcceptedLease(currentDeps);
+
+    socketPath = "/run/user/1001/podman/changed.sock";
+
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      category: "config",
+    });
+  });
+
+  it("keeps Portable Hermes outside the receipt digest and pairing observer (#9207)", async () => {
+    sandbox = { ...sandbox, agent: "hermes" };
+    const currentDeps = deps();
+    currentDeps.classifyPortableLifecycleReceipt = () => ({
+      kind: "current",
+      registryGeneration: "generation-1",
+      runtimeAuthority: {
+        schemaVersion: 1,
+        kind: "podman",
+        ownership: "current-user",
+        uid: 1001,
+        homeDir: "/home/operator",
+        configHome: "/home/operator/.config",
+        runtimeDir: "/run/user/1001",
+        socketPath: "/run/user/1001/podman/podman.sock",
+      },
+    });
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toEqual({ kind: "published" });
+    expect(publishedIdentity?.registry).toBe(
+      launchReadinessDigest(buildLaunchReadinessRegistryProjection(sandbox, loadAgent("hermes"))),
+    );
+    expect(externalEvents).not.toContain("pairing-qualification");
+  });
+
+  it("fails closed when a Portable receipt has no explicit registry agent (#9207)", async () => {
+    sandbox = { ...sandbox, agent: undefined };
+    const currentDeps = deps();
+    currentDeps.classifyPortableLifecycleReceipt = () => ({
+      kind: "current",
+      registryGeneration: "generation-1",
+      runtimeAuthority: {
+        schemaVersion: 1,
+        kind: "podman",
+        ownership: "current-user",
+        uid: 1001,
+        homeDir: "/home/operator",
+        configHome: "/home/operator/.config",
+        runtimeDir: "/run/user/1001",
+        socketPath: "/run/user/1001/podman/podman.sock",
+      },
+    });
+
+    const publishLease = vi.fn();
+    currentDeps.publishLease = publishLease;
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toEqual({ kind: "validation-failed", category: "config" });
+    expect(publishLease).not.toHaveBeenCalled();
+  });
+
+  it("publishes no readiness lease for a policy-incomplete Portable receipt (#9207)", async () => {
+    const currentDeps = deps();
+    currentDeps.classifyPortableLifecycleReceipt = () => ({
+      kind: "current",
+      registryGeneration: "generation-1",
+      runtimeAuthority: {
+        schemaVersion: 1,
+        kind: "podman",
+        ownership: "current-user",
+        uid: 1001,
+        homeDir: "/home/operator",
+        configHome: "/home/operator/.config",
+        runtimeDir: "/run/user/1001",
+        socketPath: "/run/user/1001/podman/podman.sock",
+      },
+    });
+    sandbox = { ...sandbox, policyPresetsFinalized: undefined };
+    const publishLease = vi.fn();
+    currentDeps.publishLease = publishLease;
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toEqual({ kind: "validation-failed", category: "config" });
+    expect(publishLease).not.toHaveBeenCalled();
   });
 
   it("binds every host mount field without projecting the host source path (#8942)", () => {
@@ -1092,11 +1253,11 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    for (const mutation of mutations) {
-      expect(
-        launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
-      ).not.toBe(original);
-    }
+    expect(mutations.every((mutation) =>
+          !Object.is(
+            launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
+            original,
+          ))).toBe(true);
     expect(() =>
       buildLaunchReadinessRegistryProjection(
         {
@@ -1141,16 +1302,16 @@ describe("launch readiness validation", () => {
       { ...originalProfile, estimatedImageDownloadBytes: 1_001 },
       { ...originalProfile, estimatedModelDownloadBytes: 2_001 },
     ];
-    for (const mutation of mutations) {
-      expect(
-        launchReadinessDigest(
-          buildLaunchReadinessRegistryProjection(
-            { ...sandbox, servingProfileProvenance: mutation },
-            agent,
-          ),
-        ),
-      ).not.toBe(original);
-    }
+    expect(mutations.every((mutation) =>
+          !Object.is(
+            launchReadinessDigest(
+              buildLaunchReadinessRegistryProjection(
+                { ...sandbox, servingProfileProvenance: mutation },
+                agent,
+              ),
+            ),
+            original,
+          ))).toBe(true);
   });
 
   it("excludes diagnostic timestamps, source paths, and GPU detail from the projection", () => {

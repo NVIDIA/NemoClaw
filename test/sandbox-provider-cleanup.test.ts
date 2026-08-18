@@ -178,13 +178,13 @@ describe("detachSandboxProviders", () => {
 
     expect(result.failures).toEqual([]);
     expect(runOpenshell).toHaveBeenCalledTimes(SANDBOX_PROVIDER_SUFFIXES.length);
-    for (const [, opts] of runOpenshell.mock.calls) {
+    runOpenshell.mock.calls.forEach(([, opts]) => {
       expect(opts).toMatchObject({
         ignoreError: true,
         suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
-    }
+    });
   });
 
   it("collects non-tolerated failures without aborting the loop", () => {

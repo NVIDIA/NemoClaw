@@ -16,14 +16,14 @@ describe("compatible endpoint gateway routing", () => {
   it.each(["localhost", "127.0.0.1", "[::1]"])(
     "rewrites exact HTTP loopback hosts on bundled local-inference ports [case %#] (#5744)",
     (host) => {
-      for (const port of COMPATIBLE_ENDPOINT_GATEWAY_PORTS) {
-        expect(
-          gatewayReachableCompatibleEndpointUrl(
-            "compatible-endpoint",
-            `http://${host}:${port}/v1/`,
-          ),
-        ).toBe(`http://host.openshell.internal:${port}/v1`);
-      }
+      expect(COMPATIBLE_ENDPOINT_GATEWAY_PORTS.every((port) =>
+          Object.is(
+            gatewayReachableCompatibleEndpointUrl(
+              "compatible-endpoint",
+              `http://${host}:${port}/v1/`,
+            ),
+            `http://host.openshell.internal:${port}/v1`,
+          ))).toBe(true);
     },
   );
 
@@ -74,11 +74,11 @@ describe("compatible endpoint gateway routing", () => {
       "not a URL",
     ];
 
-    for (const endpointUrl of unchanged) {
-      expect(gatewayReachableCompatibleEndpointUrl("compatible-endpoint", endpointUrl)).toBe(
-        endpointUrl,
-      );
-    }
+    expect(unchanged.every((endpointUrl) =>
+        Object.is(
+          gatewayReachableCompatibleEndpointUrl("compatible-endpoint", endpointUrl),
+          endpointUrl,
+        ))).toBe(true);
     expect(
       gatewayReachableCompatibleEndpointUrl(
         "compatible-anthropic-endpoint",

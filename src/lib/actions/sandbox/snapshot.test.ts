@@ -463,35 +463,35 @@ describe("runSandboxSnapshot", () => {
 
     const probeScript = capturedDcodeProbeScript();
     const shellCommandLine = probeScript.replace(/\s+/g, " ");
-    for (const processLine of [
+    [
       "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
       "123 /opt/venv/bin/python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
       "123 /opt/venv/bin/python3 -I -m deepagents_code --sandbox none --no-mcp -n work\n",
       "124 /usr/local/bin/dcode task\n",
       "125 /opt/bin/deepagents_code task\n",
       "126 /opt/bin/deepagents-code task\n",
-    ]) {
+    ].forEach((processLine) => {
       expect(runProbeScriptWithProcesses(probeScript, processLine)).toMatchObject({
         status: 0,
         output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=active"),
       });
-    }
+    });
     expect(
       runProbeScriptWithProcesses(probeScript, `999 sh -c ${shellCommandLine}\n`),
     ).toMatchObject({
       status: 0,
       output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=no-runtime"),
     });
-    for (const processLine of [
+    [
       "127 cat /tmp/dcode\n",
       "128 grep deepagents-code notes.txt\n",
       "129 sh -lc python3 -m deepagents_code\n",
-    ]) {
+    ].forEach((processLine) => {
       expect(runProbeScriptWithProcesses(probeScript, processLine)).toMatchObject({
         status: 0,
         output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=no-runtime"),
       });
-    }
+    });
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   }, 15_000);
 

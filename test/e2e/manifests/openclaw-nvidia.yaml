@@ -16,7 +16,7 @@ spec:
     agent: openclaw
     provider: nvidia
     modelRoute: inference-local
-    policyTier: balanced
+    policyTier: personal
     messaging: []
   state:
     workspaceRef: default

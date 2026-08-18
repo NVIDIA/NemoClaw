@@ -929,6 +929,7 @@ const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAM
 const {
   verifyInferenceRoute,
   isInferenceRouteReady,
+  readInferenceRouteState,
   checkGatewayRouteCompatibility,
   preflightGatewayRouteDiscovery,
 } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
@@ -2904,6 +2905,7 @@ const setupOpenclaw = createOpenclawSetup({
 
 const {
   buildChain,
+  buildAgentVerifyChain,
   buildControlUiUrls,
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
@@ -3018,7 +3020,7 @@ async function preflightAuthoritativeRebuildTarget(
             fail(`OpenShell component preflight exited with code ${String(code)}`),
           ),
         assertGatewayReadiness: onboardPreflightGatewayAuthority.collectGatewayReadiness,
-        inferenceRouteReady: (p, m) => isInferenceRouteReady(authoritativeGateway.name, p, m),
+        inferenceRouteState: (p, m) => readInferenceRouteState(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
         checkPort: (port) => checkPortAvailable(port),
       },
@@ -3639,8 +3641,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
-        buildVerifyChain: (chatUiUrl) =>
-          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe?.port, gatewayHealthEndpoint: agent?.healthProbe?.url }),
+        buildVerifyChain: (chatUiUrl, name) => buildAgentVerifyChain(chatUiUrl, name, agent),
         verifyDeployment: async (name, chain) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =
             require("./verify-deployment");

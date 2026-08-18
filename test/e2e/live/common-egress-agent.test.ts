@@ -6,7 +6,6 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe } from "vitest";
-
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -28,14 +27,17 @@ import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   classifyHermesAgentAssertion,
-  classifyOpenClawAgentAssertion,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
   parseChatContent,
-  parseOpenClawAgentText,
   runHermesAgentAssertionRetry,
-  runOpenClawAgentAssertionRetry,
 } from "./common-egress-agent-helpers.ts";
+import {
+  runOpenClawAgentAssertion,
+  runPersonalStockAgentAssertion,
+  type OpenClawAgentAssertionEvidence,
+} from "./openclaw-agent-assertion.ts";
+import { assertPersonalRuntimeEgress } from "./personal-egress-live-proof.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
 //
@@ -48,12 +50,12 @@ const OPENCLAW_BALANCED_SANDBOX =
   process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_BALANCED_SANDBOX ?? "e2e-oc-bal";
 const OPENCLAW_OPEN_SANDBOX =
   process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_OPEN_SANDBOX ?? "e2e-oc-open";
+const OPENCLAW_PERSONAL_SANDBOX =
+  process.env.NEMOCLAW_COMMON_EGRESS_OPENCLAW_PERSONAL_SANDBOX ?? "e2e-oc-personal";
 const HERMES_SANDBOX = process.env.NEMOCLAW_COMMON_EGRESS_HERMES_SANDBOX ?? "e2e-hm-open";
 const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
-const AGENT_TURN_TIMEOUT_MS = 3 * 60_000;
 const HERMES_AGENT_TIMEOUT_MS = 150_000;
-const OPENCLAW_AGENT_ATTEMPTS = 3;
 const HERMES_AGENT_ATTEMPTS = 3;
 const KEEP_SANDBOX =
   process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1" ||
@@ -61,6 +63,7 @@ const KEEP_SANDBOX =
 
 validateSandboxName(OPENCLAW_BALANCED_SANDBOX);
 validateSandboxName(OPENCLAW_OPEN_SANDBOX);
+validateSandboxName(OPENCLAW_PERSONAL_SANDBOX);
 validateSandboxName(HERMES_SANDBOX);
 
 type NemoEnv = NodeJS.ProcessEnv;
@@ -277,7 +280,7 @@ async function runOnboard(
     hosted: HostedInferenceConfig;
     sandboxName: string;
     skip: SkipFn;
-    tier: "balanced" | "open";
+    tier: "balanced" | "open" | "personal";
     extraEnv?: NemoEnv;
     extraRedactionValues?: string[];
   },
@@ -407,100 +410,6 @@ async function addPolicyPreset(
   );
   expect(result.exitCode, text(result)).toBe(0);
   await sleep(2_000);
-}
-
-async function runOpenClawAgentAssertion(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  artifacts: ArtifactSink,
-  args: {
-    apiKey: string;
-    expected: string;
-    label: string;
-    prompt: string;
-    sandboxName: string;
-  },
-): Promise<void> {
-  const sshConfig = await sandbox.openshell(["sandbox", "ssh-config", args.sandboxName], {
-    artifactName: `ssh-config-${args.label}`,
-    env: commandEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(sshConfig.exitCode, text(sshConfig)).toBe(0);
-  const sshConfigPath = await artifacts.writeText(
-    `ssh/${args.label}-${args.sandboxName}.config`,
-    sshConfig.stdout,
-  );
-
-  let lastFailure = "";
-  const execution = await runOpenClawAgentAssertionRetry({
-    attempts: OPENCLAW_AGENT_ATTEMPTS,
-    delayMs: (attempt) => attempt * 15_000,
-    onEvidence: async (evidence) => {
-      await artifacts.writeJson(`retry/${args.label}-agent-retry-evidence.json`, evidence);
-    },
-    run: async (attempt) => {
-      const sessionId = `e2e-common-egress-${Date.now()}-${process.pid}-${attempt}`;
-      const sessionRoot = "/sandbox/.openclaw/agents/main/sessions";
-      const remoteCommand = [
-        `rm -f ${shellQuote(`${sessionRoot}/${sessionId}.jsonl.lock`)} ${shellQuote(
-          `${sessionRoot}/${sessionId}.trajectory.jsonl`,
-        )} 2>/dev/null || true`,
-        `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
-          sessionId,
-        )} -m ${shellQuote(args.prompt)}`,
-      ].join("; ");
-      const agent = await host.command(
-        "ssh",
-        [
-          "-F",
-          sshConfigPath,
-          "-o",
-          "StrictHostKeyChecking=no",
-          "-o",
-          "UserKnownHostsFile=/dev/null",
-          "-o",
-          "ConnectTimeout=10",
-          "-o",
-          "LogLevel=ERROR",
-          `openshell-${args.sandboxName}.default`,
-          remoteCommand,
-        ],
-        {
-          artifactName: `${args.label}-openclaw-agent-attempt-${attempt}`,
-          env: commandEnv(),
-          redactionValues: [args.apiKey],
-          timeoutMs: AGENT_TURN_TIMEOUT_MS,
-        },
-      );
-      const combined = text(agent);
-      const reply = parseOpenClawAgentText(agent.stdout);
-      lastFailure = `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
-        0,
-        240,
-      )}' stderr='${agent.stderr.slice(0, 240)}'`;
-      return classifyOpenClawAgentAssertion({
-        exitCode: agent.exitCode,
-        expected: args.expected,
-        reply,
-        response: combined,
-      });
-    },
-    recover: async (_attempt, attemptNumber) => {
-      const recover = await host.command("node", [CLI_ENTRYPOINT, args.sandboxName, "recover"], {
-        artifactName: `${args.label}-recover-after-attempt-${attemptNumber}`,
-        env: commandEnv(),
-        timeoutMs: 120_000,
-      });
-      if (recover.exitCode !== 0) {
-        lastFailure = `recovery exit=${recover.exitCode}`;
-        return false;
-      }
-      return true;
-    },
-  });
-  if (execution.outcome === "passed") return;
-  throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
 
 function buildHermesReferencePrompt(): string {
@@ -853,6 +762,78 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
       await artifacts.target.complete({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",
+        status: "passed",
+      });
+    },
+  );
+
+  openClawTest(
+    "C4 Personal permits keyless public fetches with OpenClaw as the NVDA witness",
+    {
+      timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
+      meta: {
+        e2ePhases: [
+          "validate hosted representative-agent prerequisites",
+          "onboard a representative OpenClaw sandbox with Personal and no web search",
+          "verify Personal policy and provider-free fetch state",
+          "fetch a public website with curl and Python",
+          "deny loopback and link-local targets",
+          "fetch the latest NVDA quote with representative OpenClaw web fetch",
+        ],
+      },
+    },
+    async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+      const hosted = await assertPrerequisites(host, secrets, skip);
+      const apiKey = hosted.apiKey;
+      await artifacts.target.declare({
+        id: "common-egress-agent",
+        case: "openclaw-personal-stock-price",
+        sandboxName: OPENCLAW_PERSONAL_SANDBOX,
+        contract: [
+          "Personal onboarding applies one broad public web policy for every sandbox binary",
+          "curl and Python fetch a public website without a Brave Search or Tavily Search API key",
+          "the Personal policy does not permit loopback or link-local web targets",
+          "OpenClaw is one representative agent witness that chooses a public source and fetches a recent NVDA price through web_fetch",
+          "the reduced agent trajectory contains no web_search, Brave Search, or Tavily Search call",
+        ],
+      });
+      await registerSandboxCleanup(cleanup, artifacts, host, sandbox, OPENCLAW_PERSONAL_SANDBOX);
+
+      progress.phase("onboard a representative OpenClaw sandbox with Personal and no web search");
+      await runOnboard(host, {
+        agent: "openclaw",
+        artifacts,
+        hosted,
+        sandboxName: OPENCLAW_PERSONAL_SANDBOX,
+        skip,
+        tier: "personal",
+        extraEnv: {
+          BRAVE_API_KEY: "",
+          NEMOCLAW_POLICY_PRESETS: "",
+          NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+          NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+          TAVILY_API_KEY: "",
+        },
+      });
+
+      progress.phase("verify Personal policy and provider-free fetch state");
+      expect(
+        await listActivePolicyPresets(host, OPENCLAW_PERSONAL_SANDBOX, "c4-personal-initial"),
+      ).toContainEqual({ name: "personal-open-internet", provenance: "from personal tier" });
+      await assertPersonalRuntimeEgress(sandbox, OPENCLAW_PERSONAL_SANDBOX, "c4-personal", {
+        beforeDeniedTargets: () => progress.phase("deny loopback and link-local targets"),
+        beforePublicFetch: () => progress.phase("fetch a public website with curl and Python"),
+      });
+
+      progress.phase("fetch the latest NVDA quote with representative OpenClaw web fetch");
+      await runPersonalStockAgentAssertion(host, sandbox, artifacts, {
+        apiKey,
+        label: "c4-agent-personal-stock",
+        sandboxName: OPENCLAW_PERSONAL_SANDBOX,
+      });
+      await artifacts.target.complete({
+        id: "common-egress-agent",
+        case: "openclaw-personal-stock-price",
         status: "passed",
       });
     },

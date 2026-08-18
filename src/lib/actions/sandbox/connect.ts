@@ -82,8 +82,10 @@ import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   inspectLaunchReadiness,
+  portableOpenClawPairingIncompleteMessage,
   publicationFromDecision,
   publishLaunchReadiness,
+  settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 import {
@@ -258,6 +260,15 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
+async function settlePortablePairingOrExit(sandboxName: string): Promise<boolean> {
+  const result = await settlePortableOpenClawPairing(sandboxName);
+  if (result.kind === "incomplete") {
+    console.error(`  ${portableOpenClawPairingIncompleteMessage(sandboxName, result.reason)}`);
+    process.exit(1);
+  }
+  return result.kind === "settled";
+}
+
 async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
@@ -312,7 +323,9 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
-    runConnectAutoPairApprovalPass(sandboxName);
+    if (!(await settlePortablePairingOrExit(sandboxName))) {
+      runConnectAutoPairApprovalPass(sandboxName);
+    }
     if (processCheck.forwardRecovered) {
       console.log(
         `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
@@ -325,7 +338,9 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   if (processCheck.recovered) {
     await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
-    runConnectAutoPairApprovalPass(sandboxName);
+    if (!(await settlePortablePairingOrExit(sandboxName))) {
+      runConnectAutoPairApprovalPass(sandboxName);
+    }
     const managedControlCompletion =
       "managedControlCompletion" in processCheck
         ? (processCheck.managedControlCompletion as ManagedGatewayControlCompletion)
@@ -1268,7 +1283,9 @@ export async function prepareInteractiveSession(
   // After the sandbox is Ready, verify and recover the route before SSH.
   const agent = agentRuntime.getSessionAgent(sandboxName);
   sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
-  completeInteractiveSessionSetup(sandboxName, sb);
+  if (!(await settlePortablePairingOrExit(sandboxName))) {
+    completeInteractiveSessionSetup(sandboxName, sb);
+  }
 
   return { agent, sb };
 }

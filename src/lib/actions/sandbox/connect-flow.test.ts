@@ -83,6 +83,38 @@ describe("connectSandbox flow", () => {
     expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw-8091");
   });
 
+  it("uses strict settlement and skips ordinary approval for a completed Portable sandbox (#9207)", async () => {
+    const harness = createConnectHarness({
+      portablePairingSettlementResult: { kind: "settled" },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(harness.settlePortablePairingSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+  });
+
+  it("stops connect with an incomplete-onboarding diagnosis when Portable settlement fails (#9207)", async () => {
+    const harness = createConnectHarness({
+      portablePairingSettlementResult: {
+        kind: "incomplete",
+        reason: "portable-policy-incomplete",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(output).toContain("Portable onboarding for 'alpha' is incomplete");
+    expect(output).toContain("Resume or rerun onboarding");
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("restores the terminal and prints reconnect guidance when SSH disconnects", async () => {
     const setRawModeSpy = vi.fn();
     Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });

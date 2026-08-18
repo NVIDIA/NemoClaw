@@ -388,7 +388,7 @@ describe.skipIf(!canRun)(
           },
         ];
 
-        for (const testCase of cases) {
+        cases.forEach((testCase) => {
           const fixture = buildFixture(dir, testCase.config);
           addAgentDir(fixture, testCase.agent);
           const run = runBashWrapper(fixture, ["status"], {});
@@ -396,11 +396,9 @@ describe.skipIf(!canRun)(
           expect(run.status).toBe(0);
           expect(run.launched).toBe(false);
           expect(run.stdout).toContain("Agent:    agent (default)");
-          for (const rejected of testCase.rejected) {
-            expect(run.stdout).not.toContain(rejected);
-          }
+          expect(testCase.rejected.every((rejected) => !run.stdout.includes(rejected))).toBe(true);
           expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
-        }
+        });
       });
     });
 
@@ -419,7 +417,7 @@ describe.skipIf(!canRun)(
           "https://example.test/v1%253Fapi_key%253Dopaque-secret",
           "https",
         ];
-        for (const endpoint of unsafeEndpoints) {
+        unsafeEndpoints.forEach((endpoint) => {
           for (const source of ["config", "runtime"] as const) {
             const config =
               source === "config"
@@ -433,7 +431,7 @@ describe.skipIf(!canRun)(
             expect(`${run.stdout}\n${run.stderr}`).not.toContain(endpoint);
             expect(run.stdout).not.toContain("Endpoint:");
           }
-        }
+        });
       });
     });
 

@@ -24,6 +24,25 @@ function packageFiles(packageRoot: string): string[] {
   return packageJson.files ?? [];
 }
 
+const runtimeValidatorDependencies = [
+  "ajv",
+  "fast-deep-equal",
+  "fast-uri",
+  "json-schema-traverse",
+  "require-from-string",
+  "yaml",
+] as const;
+
+function copyRuntimeValidatorDependencies(installedNodeModules: string): void {
+  for (const dependency of runtimeValidatorDependencies) {
+    fs.cpSync(
+      path.join(repoRoot, "node_modules", dependency),
+      path.join(installedNodeModules, dependency),
+      { recursive: true },
+    );
+  }
+}
+
 describe("OpenShell policy boundary package contract", () => {
   it.each([repoRoot, path.join(repoRoot, "nemoclaw")])(
     "pins the YAML parser used by both production package boundaries [case %#]",
@@ -181,16 +200,17 @@ describe("OpenShell policy boundary package contract", () => {
     ).toBe(false);
   });
 
-  it("ships the Hermes host broker with its canonical sandbox-name boundary", () => {
+  it.each(
+    [
+        "managed-tool-gateway-matrix.json",
+        "runtime-refresh-credentials.ts",
+        "tool-gateway-broker.ts",
+        "tool-gateway-control-contract.ts",
+      ],
+  )("ships the Hermes host broker with its canonical sandbox-name boundary [%s]", (file) => {
     expect(packageFiles(repoRoot)).toContain("agents/hermes/host/");
-    for (const file of [
-      "managed-tool-gateway-matrix.json",
-      "runtime-refresh-credentials.ts",
-      "tool-gateway-broker.ts",
-      "tool-gateway-control-contract.ts",
-    ]) {
-      expect(fs.existsSync(path.join(repoRoot, "agents", "hermes", "host", file))).toBe(true);
-    }
+
+    expect(fs.existsSync(path.join(repoRoot, "agents", "hermes", "host", file))).toBe(true);
 
     const controlContractPath = path.join(
       repoRoot,
@@ -266,21 +286,7 @@ describe("OpenShell policy boundary package contract", () => {
           path.join(installedRoot, "dist", "lib", "policy", "sandbox-policy-validation.js"),
         ),
       ).toBe(true);
-      const installedNodeModules = path.join(installedRoot, "node_modules");
-      for (const dependency of [
-        "ajv",
-        "fast-deep-equal",
-        "fast-uri",
-        "json-schema-traverse",
-        "require-from-string",
-        "yaml",
-      ]) {
-        fs.cpSync(
-          path.join(repoRoot, "node_modules", dependency),
-          path.join(installedNodeModules, dependency),
-          { recursive: true },
-        );
-      }
+      copyRuntimeValidatorDependencies(path.join(installedRoot, "node_modules"));
 
       const validatorPath = path.join(
         installedRoot,

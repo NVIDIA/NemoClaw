@@ -334,14 +334,14 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
       );
 
       expect(child).toEqual({ PRESERVED: "yes" });
-      for (const name of [
+      [
         ...OPENCLAW_APPLICATION_RUNTIME_NAMES,
         "NEMOCLAW_DASHBOARD_BIND",
         "NEMOCLAW_MINIMAL_BOOTSTRAP",
-      ]) {
+      ].forEach((name) => {
         expect(script).toContain(`unset ${name}`);
         expect(script).not.toContain(`export ${name}=`);
-      }
+      });
     },
   );
 
@@ -384,9 +384,9 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
       false,
       mapped.configurationEnvironment,
     );
-    for (const name of PROXY_ENV_NAMES) {
+    PROXY_ENV_NAMES.forEach((name) => {
       expect(script).not.toMatch(new RegExp(`(?:export|unset) ${name}(?:=|$)`, "mu"));
-    }
+    });
   });
 
   it.each(Array.from(PROXY_ENV_NAMES, (value) => [value]))(

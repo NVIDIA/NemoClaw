@@ -17,6 +17,7 @@ import {
   type PlatformIdentity,
   projectPlatformQualification,
 } from "./platform-qualification.js";
+import { measureObservationAge, staleEvidence } from "./observation-age.js";
 import { buildSystemReadinessProbeEnv, createSystemReadinessCapture } from "./probe-env.js";
 import { sanitizeReadinessText } from "./sanitize.js";
 import {
@@ -69,9 +70,9 @@ export interface HostObservations {
 
 export interface HostObservationSnapshot {
   observedAt: string;
+  completedAt: string;
   observations?: Readonly<HostObservations>;
   failure?: string;
-  reusable?: boolean;
 }
 
 export interface CollectHostObservationsOptions {
@@ -146,10 +147,19 @@ function adaptHostAssessment(
   };
 }
 
+/** Stamp the completion of a collection so its own duration cannot age it out. */
 export function collectHostObservations(
   options: CollectHostObservationsOptions = {},
 ): HostObservationSnapshot {
-  const observedAt = (options.now ?? (() => new Date()))().toISOString();
+  const now = options.now ?? (() => new Date());
+  const observed = observeHost(options, now().toISOString());
+  return { ...observed, completedAt: now().toISOString() };
+}
+
+function observeHost(
+  options: CollectHostObservationsOptions,
+  observedAt: string,
+): Omit<HostObservationSnapshot, "completedAt"> {
   try {
     const probeEnv = buildSystemReadinessProbeEnv();
     const runCaptureImpl = createSystemReadinessCapture(probeEnv);
@@ -212,13 +222,11 @@ export function collectHostObservations(
         )(),
         wslDockerDesktopGpuProofPassed,
       ),
-      reusable: false,
     };
   } catch (error) {
     return {
       observedAt,
       failure: safeReportText(error instanceof Error ? error.message : String(error)),
-      reusable: false,
     };
   }
 }
@@ -320,19 +328,17 @@ export function projectHostReadiness(
   options: CreateHostReadinessReportOptions,
 ): SystemReadinessReport {
   const now = (options.now ?? (() => new Date()))();
-  const age = now.getTime() - Date.parse(snapshot.observedAt);
-  const stale =
-    !Number.isFinite(age) || age < 0 || age > (options.maxObservationAgeMs ?? DEFAULT_MAX_AGE_MS);
-  const unsafeReuse = stale && snapshot.reusable !== true;
+  const unsafeReuse = measureObservationAge(
+    snapshot.completedAt,
+    now,
+    options.maxObservationAgeMs ?? DEFAULT_MAX_AGE_MS,
+  );
   const evidence: ReadinessEvidence[] = [];
   if (snapshot.failure) {
     evidence.push({ id: "host.probe.failure", summary: safeReportText(snapshot.failure) });
   }
   if (unsafeReuse) {
-    evidence.push({
-      id: "host.probe.stale",
-      summary: "Host observations exceeded their safe reuse window.",
-    });
+    evidence.push(staleEvidence("host.probe.stale", "Host", snapshot.completedAt, unsafeReuse));
   }
 
   let observations: ReadinessObservation[];
