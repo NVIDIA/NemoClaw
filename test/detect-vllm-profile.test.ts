@@ -15,6 +15,7 @@ describe("detectVllmProfile", () => {
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Spark");
     expect(profile!.defaultModel.id).toBe("nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(profile!.defaultModel.envValue).toBe("qwen3.6-35b-a3b-nvfp4");
     expect(profile!.image).toBe(
       "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
     );
