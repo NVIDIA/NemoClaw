@@ -17,40 +17,45 @@ function readAgentFile(name: string): string {
 }
 
 describe("LangChain Deep Agents Code auto-approval image contracts", () => {
-  it("bakes an exact root-owned capability without env trust (#6478)", () => {
-    const dockerfile = readAgentFile("Dockerfile");
-    const launcher = readAgentFile("dcode-launcher.sh");
-    const start = readAgentFile("start.sh");
-    const wrapper = readAgentFile("dcode-wrapper.sh");
-    const runtime = readAgentFile("managed-dcode-runtime.py");
+  it.each([{ scenario: "launcher" }, { scenario: "start script" }, { scenario: "wrapper" }])(
+    "bakes an exact root-owned capability without env trust [$scenario] (#6478)",
+    ({ scenario }) => {
+      const dockerfile = readAgentFile("Dockerfile");
+      const launcher = readAgentFile("dcode-launcher.sh");
+      const start = readAgentFile("start.sh");
+      const wrapper = readAgentFile("dcode-wrapper.sh");
+      const runtime = readAgentFile("managed-dcode-runtime.py");
 
-    expect(dockerfile).toContain("ARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled");
-    expect(dockerfile).toContain("disabled|thread-opt-in)");
-    expect(dockerfile).toContain(
-      `printf '%s\\n' "$NEMOCLAW_DCODE_AUTO_APPROVAL" > /usr/local/share/nemoclaw/dcode-auto-approval`,
-    );
-    expect(dockerfile).toContain(
-      "chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval",
-    );
-    expect(dockerfile).toContain(
-      "chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval",
-    );
-    const envBlock = dockerfile.slice(dockerfile.indexOf("ENV HOME="));
-    expect(envBlock).not.toContain("NEMOCLAW_DCODE_AUTO_APPROVAL");
+      expect(dockerfile).toContain("ARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled");
+      expect(dockerfile).toContain("disabled|thread-opt-in)");
+      expect(dockerfile).toContain(
+        `printf '%s\\n' "$NEMOCLAW_DCODE_AUTO_APPROVAL" > /usr/local/share/nemoclaw/dcode-auto-approval`,
+      );
+      expect(dockerfile).toContain(
+        "chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval",
+      );
+      expect(dockerfile).toContain(
+        "chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval",
+      );
+      const envBlock = dockerfile.slice(dockerfile.indexOf("ENV HOME="));
+      expect(envBlock).not.toContain("NEMOCLAW_DCODE_AUTO_APPROVAL");
 
-    for (const source of [launcher, start, wrapper]) {
+      const source = ({ launcher: launcher, "start script": start, wrapper: wrapper } as const)[
+        scenario
+      ]!;
       expect(source).toContain("compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL");
-    }
-    expect(start).not.toContain("write_export_if_set NEMOCLAW_DCODE_AUTO_APPROVAL");
-    expect(wrapper).toContain(
-      'readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"',
-    );
-    expect(runtime).toContain(
-      '_AUTO_APPROVAL_FILE = Path(\n    "/usr/local/share/nemoclaw/dcode-auto-approval"\n)',
-    );
-    expect(runtime).toContain("def managed_auto_approval_mode() -> str:");
-    expect(runtime).toContain("def managed_auto_approval_enabled() -> bool:");
-  });
+
+      expect(start).not.toContain("write_export_if_set NEMOCLAW_DCODE_AUTO_APPROVAL");
+      expect(wrapper).toContain(
+        'readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"',
+      );
+      expect(runtime).toContain(
+        '_AUTO_APPROVAL_FILE = Path(\n    "/usr/local/share/nemoclaw/dcode-auto-approval"\n)',
+      );
+      expect(runtime).toContain("def managed_auto_approval_mode() -> str:");
+      expect(runtime).toContain("def managed_auto_approval_enabled() -> bool:");
+    },
+  );
 
   it("strips ambient hints without serializing them into shell state (#6478)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-env-"));

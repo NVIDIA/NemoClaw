@@ -329,9 +329,7 @@ describe("listMessagingBridgeProfiles (real registry + co-located YAML)", () => 
     const binaries = YAML.parse(fs.readFileSync(gc!.profilePath, "utf-8"))?.binaries;
     expect(Array.isArray(binaries)).toBe(true);
     expect(binaries.length).toBeGreaterThan(0);
-    for (const bin of binaries as string[]) {
-      expect(bin).toMatch(/\/node$/);
-    }
+    expect((binaries as string[]).every((bin) => /\/node$/.test(bin))).toBe(true);
     expect((binaries as string[]).some((bin) => bin.includes("curl"))).toBe(false);
   });
 });

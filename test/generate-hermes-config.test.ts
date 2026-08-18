@@ -744,29 +744,32 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
   });
 
-  it("preserves Hermes remote platform toolsets while keeping CLI defaults unpinned", async () => {
-    const { config } = await runConfigScriptWithMessaging({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
-        "discord",
-        "slack",
-        "telegram",
-        "wechat",
-        "whatsapp",
-      ]),
-      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
-        accountId: "test_account_42",
-        baseUrl: "https://ilinkai.wechat.com",
-        userId: "operator_self_id",
-      }),
-    });
+  it.each(
+    ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"],
+  )(
+    "preserves Hermes remote platform toolsets while keeping CLI defaults unpinned [%s]",
+    async (platform) => {
+      const { config } = await runConfigScriptWithMessaging({
+        NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
+          "discord",
+          "slack",
+          "telegram",
+          "wechat",
+          "whatsapp",
+        ]),
+        NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
+          accountId: "test_account_42",
+          baseUrl: "https://ilinkai.wechat.com",
+          userId: "operator_self_id",
+        }),
+      });
 
-    for (const platform of ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"]) {
       expectRemotePlatformToolsets(config.platform_toolsets[platform]);
-    }
 
-    // The local Hermes CLI keeps upstream defaults.
-    expect(config.platform_toolsets.cli).toBeUndefined();
-  });
+      // The local Hermes CLI keeps upstream defaults.
+      expect(config.platform_toolsets.cli).toBeUndefined();
+    },
+  );
 
   it("generates managed-tool gateway config and env for selected Nous presets", () => {
     const { config, envFile } = runConfigScript({

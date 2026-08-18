@@ -170,9 +170,8 @@ for (const [targetIndex, target] of listTargets().entries()) {
       expect(checkScripts).toEqual(
         cloudExperimentalChecksForOnboarding(target.environment.onboarding),
       );
-      for (const scriptPath of checkScripts) {
-        expect(fs.existsSync(path.join(REPO_ROOT, scriptPath))).toBe(true);
-      }
+      expect(checkScripts.every((scriptPath) =>
+          Object.is(fs.existsSync(path.join(REPO_ROOT, scriptPath)), true))).toBe(true);
       expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
       await runE2eCloudExperimentalChecks(target.id, instance.sandboxName, checkScripts, {
         artifacts,

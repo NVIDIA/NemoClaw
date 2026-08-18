@@ -51,6 +51,13 @@ runpy.run_path(script, run_name="__main__")
   return wrapper;
 }
 
+function writeTextFixtures(paths: readonly string[]): void {
+  for (const fixturePath of paths) {
+    fs.mkdirSync(path.dirname(fixturePath), { recursive: true });
+    fs.writeFileSync(fixturePath, "test\n", { mode: 0o666 });
+  }
+}
+
 describe("Hermes doctor and config hash boundary", () => {
   it("detects a remaining session preview patcher during Hermes upgrades (#5254)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
@@ -144,7 +151,7 @@ describe("Hermes doctor and config hash boundary", () => {
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(nestedDir, { recursive: true, mode: 0o777 });
       fs.mkdirSync(profileDir, { recursive: true });
-      for (const relativePath of [
+      writeTextFixtures([
         path.join(binDir, "nemoclaw-start"),
         path.join(binDir, "nemoclaw-managed-startup-hold"),
         path.join(binDir, "nemoclaw-managed-bootstrap"),
@@ -177,10 +184,8 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(preloadsDir, "gateway-safety-net.js"),
         path.join(nestedDir, "ciao-preload.js"),
         bashrcPath,
-      ]) {
-        fs.mkdirSync(path.dirname(relativePath), { recursive: true });
-        fs.writeFileSync(relativePath, "test\n", { mode: 0o666 });
-      }
+      ]);
+
       fs.writeFileSync(runtimeStateMutationControlPath, "# controller fixture\n");
       fs.writeFileSync(runtimeStateMutationStartupGatePath, "# startup gate fixture\n");
       fs.writeFileSync(runtimeStateMutationPublisherPath, "# publisher fixture\n");

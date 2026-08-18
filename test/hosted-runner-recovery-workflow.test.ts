@@ -73,22 +73,27 @@ describe("hosted-runner recovery workflow boundary", () => {
     expect(Object.keys(value.jobs)).toEqual(["recover"]);
   });
 
-  it("fails closed on controller, source, repository, branch, event, and path (#7140)", () => {
-    const guard = workflow().jobs.recover.if ?? "";
-    for (const fragment of [
-      "github.run_attempt == 1",
-      "github.repository == 'NVIDIA/NemoClaw'",
-      "github.event.workflow_run.run_attempt == 1",
-      "github.event.workflow_run.status == 'completed'",
-      "github.event.workflow_run.conclusion == 'failure'",
-      "github.event.workflow_run.head_branch == 'main'",
-      "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
-      "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
-    ]) {
+  it.each(
+    [
+        "github.run_attempt == 1",
+        "github.repository == 'NVIDIA/NemoClaw'",
+        "github.event.workflow_run.run_attempt == 1",
+        "github.event.workflow_run.status == 'completed'",
+        "github.event.workflow_run.conclusion == 'failure'",
+        "github.event.workflow_run.head_branch == 'main'",
+        "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
+        "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
+      ],
+  )(
+    "fails closed on controller, source, repository, branch, event, and path [%s] (#7140)",
+    (fragment) => {
+      const guard = workflow().jobs.recover.if ?? "";
+
       expect(guard).toContain(fragment);
-    }
-    expect(guard).not.toContain("pull_request");
-  });
+
+      expect(guard).not.toContain("pull_request");
+    },
+  );
 
   it("uses only the least privileges and trusted default-branch controller (#7140)", () => {
     const job = workflow().jobs.recover;

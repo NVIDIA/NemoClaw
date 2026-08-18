@@ -171,45 +171,52 @@ describe("patchMcpToolsListTimeoutText", () => {
     );
   });
 
-  it("composes with managed transport diagnostics in either order", () => {
-    const timeoutThenDiagnostics = patchManagedTransportDiagnosticsText(
-      patchMcpToolsListTimeoutText(bundleMcpRuntimeFixture(), "fixture.js").text,
-      "fixture.js",
-    ).text;
-    const diagnosticsThenTimeout = patchMcpToolsListTimeoutText(
-      patchManagedTransportDiagnosticsText(bundleMcpRuntimeFixture(), "fixture.js").text,
-      "fixture.js",
-    ).text;
+  it.each([{ scenario: "timeout then diagnostics" }, { scenario: "diagnostics then timeout" }])(
+    "composes with managed transport diagnostics in either order [$scenario]",
+    ({ scenario }) => {
+      const timeoutThenDiagnostics = patchManagedTransportDiagnosticsText(
+        patchMcpToolsListTimeoutText(bundleMcpRuntimeFixture(), "fixture.js").text,
+        "fixture.js",
+      ).text;
+      const diagnosticsThenTimeout = patchMcpToolsListTimeoutText(
+        patchManagedTransportDiagnosticsText(bundleMcpRuntimeFixture(), "fixture.js").text,
+        "fixture.js",
+      ).text;
 
-    for (const composed of [timeoutThenDiagnostics, diagnosticsThenTimeout]) {
+      const composed = (
+        {
+          "timeout then diagnostics": timeoutThenDiagnostics,
+          "diagnostics then timeout": diagnosticsThenTimeout,
+        } as const
+      )[scenario]!;
       expect(composed).toContain(MARKER);
       expect(composed).toContain("nemoclaw managed transport diagnostics (#7957)");
       expect(patchMcpToolsListTimeoutText(composed, "fixture.js").status).toBe("already-patched");
       expect(patchManagedTransportDiagnosticsText(composed, "fixture.js").status).toBe(
         "already-patched",
       );
-    }
-  });
+    },
+  );
 });
 
 describe("patchOpenClawMcpToolsListTimeout", () => {
-  it.each([
-    "2026.3.11",
-    "2026.4.24",
-  ])("skips the unsupported legacy OpenClaw %s fixture before bundle discovery", (version) => {
-    const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-timeout-"));
-    const distDir = path.join(packageRoot, "dist");
-    fs.mkdirSync(distDir);
-    fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version }));
-    try {
-      expect(patchOpenClawMcpToolsListTimeout(distDir)).toEqual({
-        status: "skipped-unsupported-version",
-        version,
-      });
-    } finally {
-      fs.rmSync(packageRoot, { recursive: true, force: true });
-    }
-  });
+  it.each(["2026.3.11", "2026.4.24"])(
+    "skips the unsupported legacy OpenClaw %s fixture before bundle discovery",
+    (version) => {
+      const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-timeout-"));
+      const distDir = path.join(packageRoot, "dist");
+      fs.mkdirSync(distDir);
+      fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version }));
+      try {
+        expect(patchOpenClawMcpToolsListTimeout(distDir)).toEqual({
+          status: "skipped-unsupported-version",
+          version,
+        });
+      } finally {
+        fs.rmSync(packageRoot, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("keeps the exact-shape patch enabled for the supported OpenClaw version", () => {
     expect(SUPPORTED_OPENCLAW_VERSION).toBe("2026.7.1");
@@ -248,32 +255,29 @@ describe("injected MCP tools/list timeout override", () => {
     expect(result.stderr).toEqual([]);
   });
 
-  it.each([
-    TOOLS_LIST_TIMEOUT_MIN_MS,
-    3000,
-    5000,
-    TOOLS_LIST_TIMEOUT_MAX_MS,
-  ])("accepts the bounded %i ms override and logs it once", (timeoutMs) => {
-    const result = loadOverride({
-      OPENSHELL_SANDBOX: "1",
-      [TOOLS_LIST_TIMEOUT_ENV]: String(timeoutMs),
-    });
+  it.each([TOOLS_LIST_TIMEOUT_MIN_MS, 3000, 5000, TOOLS_LIST_TIMEOUT_MAX_MS])(
+    "accepts the bounded %i ms override and logs it once",
+    (timeoutMs) => {
+      const result = loadOverride({
+        OPENSHELL_SANDBOX: "1",
+        [TOOLS_LIST_TIMEOUT_ENV]: String(timeoutMs),
+      });
 
-    expect(result.value).toBe(timeoutMs);
-    expect(result.stderr).toEqual([`[nemoclaw] mcp_tools_list_timeout_override_ms=${timeoutMs}\n`]);
-  });
+      expect(result.value).toBe(timeoutMs);
+      expect(result.stderr).toEqual([
+        `[nemoclaw] mcp_tools_list_timeout_override_ms=${timeoutMs}\n`,
+      ]);
+    },
+  );
 
-  it.each([
-    "1499",
-    "10001",
-    "3000.5",
-    "3s",
-    "+3000",
-    "03000",
-    "1e4",
-  ])("rejects the invalid %s override before OpenClaw starts", (value) => {
-    expect(() => loadOverride({ OPENSHELL_SANDBOX: "1", [TOOLS_LIST_TIMEOUT_ENV]: value })).toThrow(
-      `${TOOLS_LIST_TIMEOUT_ENV} must be an integer from ${TOOLS_LIST_TIMEOUT_MIN_MS} to ${TOOLS_LIST_TIMEOUT_MAX_MS} milliseconds`,
-    );
-  });
+  it.each(["1499", "10001", "3000.5", "3s", "+3000", "03000", "1e4"])(
+    "rejects the invalid %s override before OpenClaw starts",
+    (value) => {
+      expect(() =>
+        loadOverride({ OPENSHELL_SANDBOX: "1", [TOOLS_LIST_TIMEOUT_ENV]: value }),
+      ).toThrow(
+        `${TOOLS_LIST_TIMEOUT_ENV} must be an integer from ${TOOLS_LIST_TIMEOUT_MIN_MS} to ${TOOLS_LIST_TIMEOUT_MAX_MS} milliseconds`,
+      );
+    },
+  );
 });
