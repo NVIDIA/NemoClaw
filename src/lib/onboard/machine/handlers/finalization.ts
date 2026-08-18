@@ -65,7 +65,10 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     readRegistryAgent(sandboxName: string): string | null;
     settlePortablePairing(
       sandboxName: string,
-      options: { readonly portableRequired: true },
+      options: {
+        readonly portableRequired: true;
+        readonly onboardingExpectedAgent: "openclaw";
+      },
     ): Promise<PortableOpenClawPairingSettlementResult>;
     portablePairingIncompleteMessage(
       sandboxName: string,
@@ -279,7 +282,10 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   if (portableAgent !== "ordinary") {
     const pairing =
       portableAgent === "strict-openclaw"
-        ? await deps.settlePortablePairing(sandboxName, { portableRequired: true })
+        ? await deps.settlePortablePairing(sandboxName, {
+            portableRequired: true,
+            onboardingExpectedAgent: "openclaw",
+          })
         : ({
             kind: "incomplete",
             reason: "portable-runtime-identity-invalid",

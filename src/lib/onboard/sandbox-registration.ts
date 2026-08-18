@@ -39,6 +39,10 @@ import {
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
 import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
+import {
+  requirePortableOpenClawRegistryIdentity,
+  type PortableLifecycleReceiptClassifier,
+} from "./experimental/portable-openclaw-registry-identity";
 
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
@@ -93,6 +97,9 @@ export interface CreatedSandboxRegistryEntryInput {
 }
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
+  portableLifecycle?: boolean;
+  environment?: NodeJS.ProcessEnv;
+  classifyPortableLifecycleReceipt?: PortableLifecycleReceiptClassifier;
   registerSandbox?(entry: SandboxEntry): void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
 }
@@ -322,6 +329,19 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       ? {}
       : { hostLocalInferenceProvenance: pendingHostLocalInferenceProvenance }),
   });
+  if (input.portableLifecycle === true) {
+    if (getRequestedSandboxAgentName(input.agent) !== "openclaw") {
+      throw new RuntimeProviderSelectionError(
+        "Portable lifecycle registration requires the OpenClaw agent.",
+      );
+    }
+    entry.agent = requirePortableOpenClawRegistryIdentity(
+      input.sandboxName,
+      input.lifecycleGeneration,
+      input.environment ?? process.env,
+      input.classifyPortableLifecycleReceipt,
+    );
+  }
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,
     input.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,

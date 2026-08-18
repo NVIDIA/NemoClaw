@@ -183,6 +183,7 @@ describe("finalization handlers", () => {
     expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
     expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
       portableRequired: true,
+      onboardingExpectedAgent: "openclaw",
     });
   });
 

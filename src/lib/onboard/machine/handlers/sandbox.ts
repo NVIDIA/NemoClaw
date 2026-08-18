@@ -1918,6 +1918,12 @@ class SandboxStateFlow<
       // image must not stamp it with the current version and hide build drift.
       const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
         this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
+      const registeredAgent = this.deps.getSandboxRegistryEntry(sandboxName)?.agent;
+      // Registration may persist explicit OpenClaw only after it validates a
+      // Portable lifecycle receipt. Preserve that authority; never infer it here.
+      if (agentRegistryFields.agent === null && registeredAgent === "openclaw") {
+        agentRegistryFields.agent = registeredAgent;
+      }
       // Preserve the validated route and credential env-var name, never a credential value.
       this.deps.updateSandboxRegistry(sandboxName, {
         model: this.options.model,

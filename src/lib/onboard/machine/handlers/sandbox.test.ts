@@ -115,6 +115,35 @@ describe("handleSandboxState", () => {
     expect(result.session?.checkpoint?.messaging).toEqual(decisionDeclined());
   });
 
+  it("preserves an explicitly registered Portable OpenClaw identity after creation (#9207)", async () => {
+    const { deps, calls } = createDeps({
+      getSandboxRegistryEntry: (name) => ({
+        name,
+        agent: "openclaw",
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        lifecycleGeneration: "generation-1",
+        webSearchEnabled: false,
+        toolDisclosure: "progressive",
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+      }),
+    });
+
+    await handleSandboxState({ ...baseOptions(deps), fresh: true });
+
+    expect(calls.updateSandbox).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({
+        agent: "openclaw",
+        model: "model",
+        provider: "provider",
+      }),
+    );
+  });
+
   it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
     const { deps } = createDeps({
       configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
