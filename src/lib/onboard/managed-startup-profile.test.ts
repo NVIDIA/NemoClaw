@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HERMES_API_PORT_RANGE_END, HERMES_API_PORT_RANGE_START } from "../core/ports";
+import { listMessagingCredentialEnvAssignments } from "../messaging/channels/metadata";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
@@ -762,8 +763,9 @@ describe("managed startup profile", () => {
                   "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
                   "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
                   "TELEGRAM_BOT_TOKEN=openshell:resolve:env:v1_TELEGRAM_BOT_TOKEN",
-                  "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
-                  "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
+                  ...listMessagingCredentialEnvAssignments({ agent: "hermes" })
+                    .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+                    .map(({ targetEnvKey, placeholder }) => `${targetEnvKey}=${placeholder}`),
                 ],
                 templateRefs: ["credential.slackBotToken.placeholder"],
               },
@@ -777,10 +779,7 @@ describe("managed startup profile", () => {
   it.each([
     ["a raw credential", `SLACK_BOT_TOKEN=xoxb-${"a".repeat(32)}`],
     ["a malformed assignment", "SLACK_BOT_TOKEN =openshell:resolve:env:SLACK_BOT_TOKEN"],
-    [
-      "more than one assignment",
-      "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN=FORGED",
-    ],
+    ["more than one assignment", "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN=FORGED"],
     [
       "a placeholder assigned to a non-credential environment key",
       "CHANNEL_NAME=openshell:resolve:env:SLACK_BOT_TOKEN",
