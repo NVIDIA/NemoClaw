@@ -60,10 +60,9 @@ it("retains a Homebrew-managed OpenShell and reports its removal command (#8882)
     rmSync: vi.fn((target) => removed.push(String(target))),
     run: vi.fn((command, args) => {
       calls.push([command, ...args]);
-      if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
-        return ok(JSON.stringify([{ name: "nemoclaw" }]));
-      }
-      return ok();
+      return command === "openshell" && args[0] === "gateway" && args[1] === "list"
+        ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+        : ok();
     }),
     runDocker: () => ok(),
   });
