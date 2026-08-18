@@ -20,6 +20,7 @@ import path from "node:path";
 import JSON5 from "json5";
 import { create as createTar } from "tar";
 import type { PluginLogger } from "../index.js";
+import { reserveSnapshotDir } from "../blueprint/snapshot-directory.js";
 import {
   CREDENTIAL_SENSITIVE_BASENAMES,
   isSensitiveFile,
@@ -752,28 +753,6 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
   }
 
   return preparedStateDir;
-}
-
-// Reserves one snapshot directory for this operation alone. The leaf mkdir is non-recursive, so
-// the reservation is one atomic syscall: EEXIST means another snapshot already owns that second,
-// and this operation never writes into, or cleans up, a directory it did not create. The retention
-// reader accepts only ^\d{8}T\d{6}Z$ (snapshot-management.ts), so a taken second advances to the
-// next second instead of taking a suffix the reader would reject. Each attempt names a later
-// second than the last, so the loop ends at the first unused one.
-function reserveSnapshotDir(snapshotsDir: string, startedAt: number): string {
-  mkdirSync(snapshotsDir, { recursive: true });
-  for (let at = startedAt; ; at += 1000) {
-    const candidate = path.join(
-      snapshotsDir,
-      new Date(at).toISOString().replace(/[-:]|\.\d+(?=Z)/g, ""),
-    );
-    try {
-      mkdirSync(candidate);
-      return candidate;
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    }
-  }
 }
 
 export function createSnapshotBundle(
