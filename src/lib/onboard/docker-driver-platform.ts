@@ -22,6 +22,7 @@ export {
   PORTABLE_EXPERIMENTAL_PROFILE,
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_LOCAL_REGISTRY,
+  PORTABLE_REGISTRY_IP,
   resolveExperimentalOnboardProfile,
 } from "./experimental/portable-profile";
 

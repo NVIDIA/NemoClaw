@@ -93,6 +93,20 @@ describe("OpenShell gateway auth source contract helpers", () => {
     expect(valuesAfterFlag(args, "--add-host")).toEqual(["host.openshell.internal:127.0.0.1"]);
   });
 
+  it("uses an explicit portable host gateway on the selected network", () => {
+    const args = buildSandboxTokenContainerProbeDockerArgs({
+      dockerBin: "podman",
+      hostGatewayIp: "169.254.1.2",
+      networkName: "openshell-docker",
+      payload: Buffer.from("sandbox request"),
+      port: 8080,
+      stateDir: path.resolve("/tmp/nemoclaw-auth-source-state"),
+    });
+
+    expect(valuesAfterFlag(args, "--network")).toEqual(["openshell-docker"]);
+    expect(valuesAfterFlag(args, "--add-host")).toEqual(["host.openshell.internal:169.254.1.2"]);
+  });
+
   it("hard-fails unavailable Docker probe images on GitHub Actions", () => {
     const skip = vi.fn();
 
@@ -184,21 +198,20 @@ describe("OpenShell gateway auth source contract helpers", () => {
     });
   });
 
-  it.each([
-    "jwt/signing.pem",
-    "jwt/kid",
-    "openshell-gateway.toml",
-  ])("rejects sensitive artifact path %s", (relativePath) => {
-    withArtifactDir((dir) => {
-      const target = path.join(dir, relativePath);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, "redacted\n");
+  it.each(["jwt/signing.pem", "jwt/kid", "openshell-gateway.toml"])(
+    "rejects sensitive artifact path %s",
+    (relativePath) => {
+      withArtifactDir((dir) => {
+        const target = path.join(dir, relativePath);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, "redacted\n");
 
-      expect(() => assertOpenShellGatewayAuthArtifactsSafe(dir)).toThrow(
-        /sensitive auth file name/,
-      );
-    });
-  });
+        expect(() => assertOpenShellGatewayAuthArtifactsSafe(dir)).toThrow(
+          /sensitive auth file name/,
+        );
+      });
+    },
+  );
 
   it("removes rejected artifacts before an unconditional workflow upload can run (#7101)", async () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-artifact-scan-"));
@@ -427,15 +440,15 @@ describe("OpenShell gateway auth source contract helpers", () => {
       );
     } finally {
       openSpy.mockRestore();
-      [scanSourceFd, copySourceFd].filter(
-        (candidate): candidate is number => candidate !== undefined,
-      ).forEach((descriptor) => {
-        try {
-          fs.closeSync(descriptor);
-        } catch {
-          // The implementation already closed the descriptor.
-        }
-      });
+      [scanSourceFd, copySourceFd]
+        .filter((candidate): candidate is number => candidate !== undefined)
+        .forEach((descriptor) => {
+          try {
+            fs.closeSync(descriptor);
+          } catch {
+            // The implementation already closed the descriptor.
+          }
+        });
       fs.rmSync(parent, { recursive: true, force: true });
     }
   });

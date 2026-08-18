@@ -19,6 +19,7 @@ import {
   portableHostPreparationInternals,
   preparePortableExperimentalHost,
 } from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
+import { PORTABLE_REGISTRY_IP } from "../../../src/lib/onboard/experimental/portable-profile.ts";
 import { test } from "../fixtures/e2e-test.ts";
 
 type ExpectedState = "missing" | "delegated";
@@ -147,7 +148,7 @@ function proveAdmission(
         `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
         registryContainer,
       ]),
-      commandResult(0, "1 true 169.254.1.2"),
+      commandResult(0, `1 true ${PORTABLE_REGISTRY_IP}`),
     ],
   ]);
   try {

@@ -21,8 +21,8 @@ import {
   isPortableExperimentalProfile,
   parseDockerNetworkIpamEntries,
   PORTABLE_DOCKER_NETWORK_SUBNET,
-  PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_LOCAL_REGISTRY,
+  PORTABLE_REGISTRY_IP,
   resolveDockerDriverNetworkName,
 } from "../docker-driver-platform";
 import {
@@ -345,16 +345,16 @@ function ensureRegistryContainer(
       `Refusing to replace existing unmanaged container '${REGISTRY_CONTAINER}'. Rename or remove it and retry.`,
     );
   }
-  if (exists && networkIp && networkIp !== PORTABLE_HOST_GATEWAY_IP) {
+  if (exists && networkIp && networkIp !== PORTABLE_REGISTRY_IP) {
     throw new Error(
-      `Refusing to move managed container '${REGISTRY_CONTAINER}' from unexpected network address '${networkIp}'. Expected ${PORTABLE_HOST_GATEWAY_IP}.`,
+      `Refusing to move managed container '${REGISTRY_CONTAINER}' from unexpected network address '${networkIp}'. Expected ${PORTABLE_REGISTRY_IP}.`,
     );
   }
-  if (exists && running === "true" && networkIp === PORTABLE_HOST_GATEWAY_IP) return;
+  if (exists && running === "true" && networkIp === PORTABLE_REGISTRY_IP) return;
   if (exists && running === "true") {
     requireCommand(
       docker(
-        ["network", "connect", "--ip", PORTABLE_HOST_GATEWAY_IP, networkName, REGISTRY_CONTAINER],
+        ["network", "connect", "--ip", PORTABLE_REGISTRY_IP, networkName, REGISTRY_CONTAINER],
         env,
       ),
       "Connecting the managed portable registry to the sandbox network",
@@ -379,7 +379,7 @@ function ensureRegistryContainer(
         "--network",
         networkName,
         "--ip",
-        PORTABLE_HOST_GATEWAY_IP,
+        PORTABLE_REGISTRY_IP,
         "-p",
         "127.0.0.1:5000:5000",
         "--restart=always",
