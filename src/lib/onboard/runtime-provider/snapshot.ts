@@ -36,6 +36,7 @@ const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._-]{1,512}$/u;
 const DOCKER_CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const MANAGED_STARTUP_RUNTIME_EXECUTABLE =
   "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
+const MANAGED_STARTUP_NODE_EXECUTABLE = "/usr/local/bin/node";
 const LIFECYCLE_GENERATION_PATTERN = /^[A-Za-z0-9._:/=-]{1,512}$/u;
 const ANSI_PATTERN = /\u001b\[[0-9;]*m/gu;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -111,6 +112,7 @@ function gatewayScopedManagedProfileVerifyArgs(
     "--timeout",
     "10",
     "--",
+    MANAGED_STARTUP_NODE_EXECUTABLE,
     MANAGED_STARTUP_RUNTIME_EXECUTABLE,
     "--verify-completion",
     "--agent",
