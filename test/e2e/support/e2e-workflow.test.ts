@@ -508,10 +508,10 @@ describe("e2e workflow boundary", () => {
     ).toEqual(["snapshot-commands"]);
   });
 
-  it("routes the OpenShell 0.0.106 qualification installer to all five consumers", () => {
+  it("routes the OpenShell qualification identity to all five consumers", () => {
     const plan = buildE2eWorkflowPlan(
       {},
-      { changedFiles: ["tools/e2e/install-openshell-v00106-qualification.sh"] },
+      { changedFiles: ["tools/e2e/openshell-qualification.mts"] },
     );
 
     expect([...plan.selectedJobs].sort()).toEqual(

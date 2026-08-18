@@ -1185,11 +1185,11 @@ describe("installer hash verification", () => {
     ],
     [
       "multiple-installer-versions",
-      "openshell_pinned_sha256 must contain exactly one release version, found 0.0.72, 0.0.73",
+      `installer pin table for 0.0.72 must contain the exact consumed asset set; missing=[${ASSETS[0]}]`,
     ],
     [
       "mismatched-table-versions",
-      "installer and Brev launchable pin tables must use the same release version, found 0.0.72, 0.0.73",
+      "installer pin table has no assets for selected release 0.0.73",
     ],
   ] as const)("fails closed for %s", (mode, diagnostic) => {
     const result = runFixture(mode, undefined, true);

@@ -3223,8 +3223,6 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_CANDIDATE_VERSION: "0.0.106"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3245,13 +3243,25 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - id: openshell_qualification
+        name: Select OpenShell qualification release
+        run: node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts select "$GITHUB_OUTPUT"
+
       - name: Install OpenShell CLI
-        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash tools/e2e/install-openshell-v00106-qualification.sh
+        env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          NEMOCLAW_OPENSHELL_MAX_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+          NEMOCLAW_OPENSHELL_MIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+          NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Pre-pull pinned gateway auth probe image
         run: docker pull "$DOCKER_GRPC_PROBE_IMAGE"
 
       - name: Run OpenShell gateway auth contract live test
+        env:
+          NEMOCLAW_CANDIDATE_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+          NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -3309,7 +3319,6 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -3551,26 +3560,25 @@ jobs:
       - name: Generate MCP test TLS
         run: bash test/e2e/setup-mcp-test-tls.sh
 
+      - id: openshell_qualification
+        name: Select OpenShell qualification release
+        run: node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts select "$GITHUB_OUTPUT"
+
       - name: Install OpenShell CLI
-        run: |
-          set -euo pipefail
-          bash tools/e2e/install-openshell-v00106-qualification.sh
-          if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
-            mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
-            jq -n '{
-              schemaVersion: 1,
-              sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.106",
-              sourceSha: "c4b500a7de64d0b66e3ee8098f58d14299092162",
-              artifacts: {
-                cli: {binarySha256: "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59"},
-                gateway: {binarySha256: "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c"},
-                standaloneSandbox: {binarySha256: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8"}
-              }
-            }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
-          fi
+        env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          NEMOCLAW_OPENSHELL_MAX_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+          NEMOCLAW_OPENSHELL_MIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+          NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Write OpenShell provenance
+        if: ${{ matrix.agent == 'deepagents' }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts provenance "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
 
       - name: Run MCP OpenShell provider live test
+        env:
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ${{ steps.openshell_qualification.outputs.supervisor_image }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -3629,7 +3637,6 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3671,24 +3678,24 @@ jobs:
       - name: Generate MCP test TLS
         run: bash test/e2e/setup-mcp-test-tls.sh
 
+      - id: openshell_qualification
+        name: Select OpenShell qualification release
+        run: node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts select "$GITHUB_OUTPUT"
+
       - name: Install OpenShell CLI
-        run: |
-          set -euo pipefail
-          bash tools/e2e/install-openshell-v00106-qualification.sh
-          mkdir -p "$E2E_ARTIFACT_DIR/openshell-credential-generation-window"
-          jq -n '{
-            schemaVersion: 1,
-            sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.106",
-            sourceSha: "c4b500a7de64d0b66e3ee8098f58d14299092162",
-            artifacts: {
-              cli: {binarySha256: "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59"},
-              gateway: {binarySha256: "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c"},
-              standaloneSandbox: {binarySha256: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8"}
-            }
-          }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
+        env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          NEMOCLAW_OPENSHELL_MAX_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+          NEMOCLAW_OPENSHELL_MIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+          NEMOCLAW_OPENSHELL_PIN_VERSION: ${{ steps.openshell_qualification.outputs.version }}
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Write OpenShell provenance
+        run: node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts provenance "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 
       - name: Run OpenShell credential generation-window live test
+        env:
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ${{ steps.openshell_qualification.outputs.supervisor_image }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"

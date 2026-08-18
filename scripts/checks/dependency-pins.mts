@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url";
 
 import { parse as parseYaml } from "yaml";
 
+import {
+  OPENSHELL_QUALIFICATION,
+  OPENSHELL_QUALIFICATION_INSTALL_ENV,
+  OPENSHELL_QUALIFICATION_SELECT_STEP,
+} from "../../tools/e2e/openshell-qualification.mts";
+
 type OpenShellPins = Readonly<{
   maxVersion: string;
   minVersion: string;
@@ -38,10 +44,9 @@ const OPENSHELL_RELEASE_MANIFESTS = [
 ] as const;
 
 function expectedOpenShellE2eVersion(pins: OpenShellPins): string {
-  // Qualify the accepted 0.0.106 migration against the exact trusted release
-  // before the supported product pin moves from 0.0.101.
-  return pins.minVersion === "0.0.101" && pins.maxVersion === "0.0.101"
-    ? "0.0.106"
+  return pins.minVersion === OPENSHELL_QUALIFICATION.supportedProductVersion &&
+    pins.maxVersion === OPENSHELL_QUALIFICATION.supportedProductVersion
+    ? OPENSHELL_QUALIFICATION.version
     : pins.maxVersion;
 }
 
@@ -121,6 +126,65 @@ function extractMappingString(
   }
   if (!value) failures.push(`${label}: expected non-empty value at ${keys.join(".")}`);
   return value;
+}
+
+function verifyOpenShellE2eQualification(
+  workflow: Record<string, unknown>,
+  pins: OpenShellPins,
+  failures: string[],
+): void {
+  const label = ".github/workflows/e2e.yaml gateway auth OpenShell qualification";
+  if (expectedOpenShellE2eVersion(pins) === pins.maxVersion) {
+    compare(
+      extractMappingString(
+        workflow,
+        ["jobs", "openshell-gateway-auth-contract", "env", "NEMOCLAW_OPENSHELL_PIN_VERSION"],
+        `${label} version`,
+        failures,
+      ),
+      pins.maxVersion,
+      `${label} version`,
+      failures,
+    );
+    return;
+  }
+
+  const jobs = workflow.jobs;
+  const job = isRecord(jobs) ? jobs["openshell-gateway-auth-contract"] : undefined;
+  const steps = isRecord(job) ? job.steps : undefined;
+  if (!Array.isArray(steps)) {
+    failures.push(`${label}: expected qualification workflow steps`);
+    return;
+  }
+  const select = steps.find(
+    (step) => isRecord(step) && step.name === OPENSHELL_QUALIFICATION_SELECT_STEP.name,
+  );
+  const install = steps.find((step) => isRecord(step) && step.name === "Install OpenShell CLI");
+  if (!isRecord(select)) {
+    failures.push(`${label}: expected the shared qualification selector`);
+  } else {
+    compare(
+      typeof select.id === "string" ? select.id : "",
+      OPENSHELL_QUALIFICATION_SELECT_STEP.id,
+      `${label} selector id`,
+      failures,
+    );
+    compare(
+      typeof select.run === "string" ? select.run : "",
+      OPENSHELL_QUALIFICATION_SELECT_STEP.run,
+      `${label} selector command`,
+      failures,
+    );
+  }
+  const installEnv = isRecord(install) && isRecord(install.env) ? install.env : {};
+  compare(
+    typeof installEnv.NEMOCLAW_OPENSHELL_PIN_VERSION === "string"
+      ? installEnv.NEMOCLAW_OPENSHELL_PIN_VERSION
+      : "",
+    OPENSHELL_QUALIFICATION_INSTALL_ENV.NEMOCLAW_OPENSHELL_PIN_VERSION,
+    `${label} installer version input`,
+    failures,
+  );
 }
 
 function openclawArgSuffix(version: string): string {
@@ -396,17 +460,7 @@ function verifyOpenShellPins(
     "Brev launchable stable OpenShell default",
     failures,
   );
-  compare(
-    extractMappingString(
-      sources.e2eWorkflow,
-      ["jobs", "openshell-gateway-auth-contract", "env", "NEMOCLAW_OPENSHELL_PIN_VERSION"],
-      ".github/workflows/e2e.yaml gateway auth OpenShell version",
-      failures,
-    ),
-    expectedOpenShellE2eVersion(pins),
-    ".github/workflows/e2e.yaml gateway auth OpenShell version",
-    failures,
-  );
+  verifyOpenShellE2eQualification(sources.e2eWorkflow, pins, failures);
   compare(
     extractMappingString(
       sources.credentialBoundary,

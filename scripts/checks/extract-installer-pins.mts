@@ -1136,16 +1136,11 @@ export function extractInstallerPins(source: string, options: ExtractOptions): I
   if (pins.length === 0) {
     fail(`${options.functionName} contains no versioned pins`);
   }
-  const releaseVersions = [...new Set(pins.map((pin) => pin.releaseVersion))].sort();
-  if (releaseVersions.length !== 1) {
-    fail(
-      `${options.functionName} must contain exactly one release version, found ${releaseVersions.join(", ")}`,
-    );
-  }
-
+  const releaseVersions = [...new Set(pins.map((pin) => pin.releaseVersion))];
   const duplicateAssets = pins
-    .map((pin) => pin.asset)
-    .filter((asset, index, assets) => assets.indexOf(asset) !== index);
+    .map((pin) => `${pin.releaseVersion}:${pin.asset}`)
+    .filter((asset, index, assets) => assets.indexOf(asset) !== index)
+    .map((asset) => (releaseVersions.length === 1 ? asset.slice(asset.indexOf(":") + 1) : asset));
   if (duplicateAssets.length > 0) {
     fail(
       `${options.functionName} contains duplicate assets: ${[...new Set(duplicateAssets)].join(", ")}`,
@@ -1212,16 +1207,30 @@ function runCli(): void {
     functionName: "openshell_cli_pinned_sha256",
     sourceLabel: "Brev launchable",
   });
-  assertExactAssetSet(installerPins, EXPECTED_INSTALLER_ASSETS, "installer pin table");
-  assertExactAssetSet(brevPins, EXPECTED_BREV_ASSETS, "Brev pin table");
-  const pins = [...installerPins, ...brevPins];
-  const releaseVersions = [...new Set(pins.map((pin) => pin.releaseVersion))].sort();
-  if (releaseVersions.length !== 1) {
-    fail(
-      `installer and Brev launchable pin tables must use the same release version, found ${releaseVersions.join(", ")}`,
+  const installerReleaseVersions = [
+    ...new Set(installerPins.map((pin) => pin.releaseVersion)),
+  ].sort();
+  for (const version of installerReleaseVersions) {
+    assertExactAssetSet(
+      installerPins.filter((pin) => pin.releaseVersion === version),
+      EXPECTED_INSTALLER_ASSETS,
+      installerReleaseVersions.length === 1
+        ? "installer pin table"
+        : `installer pin table for ${version}`,
     );
   }
-  const releaseVersion = releaseVersions[0] ?? fail("installer pin tables contain no release");
+  assertExactAssetSet(brevPins, EXPECTED_BREV_ASSETS, "Brev pin table");
+  const brevReleaseVersions = [...new Set(brevPins.map((pin) => pin.releaseVersion))].sort();
+  if (brevReleaseVersions.length !== 1) {
+    fail(
+      `Brev launchable pin table must contain exactly one release version, found ${brevReleaseVersions.join(", ")}`,
+    );
+  }
+  const releaseVersion = brevReleaseVersions[0] ?? fail("Brev pin table contains no release");
+  if (!installerReleaseVersions.includes(releaseVersion)) {
+    fail(`installer pin table has no assets for selected release ${releaseVersion}`);
+  }
+  const pins = [...installerPins, ...brevPins];
   const sandboxBuildPins = extractSandboxBuildPins(installerSource);
   assertTrustedSandboxBuildPins(sandboxBuildPins, releaseVersion);
   const supervisorManifestPins = extractSupervisorManifestPins(supervisorRuntimeSource);

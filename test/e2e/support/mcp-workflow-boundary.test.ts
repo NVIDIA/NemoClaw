@@ -15,12 +15,12 @@ describe("MCP workflow artifact boundary", () => {
   it.each([
     {
       expected:
-        "mcp-bridge must run only the exact OpenShell 0.0.106 qualification install and provenance step",
+        "mcp-bridge must run only the exact OpenShell 0.0.106 qualification install",
       jobName: "mcp-bridge",
     },
     {
       expected:
-        "openshell-credential-generation-window must run only the exact OpenShell 0.0.106 qualification install and provenance step",
+        "openshell-credential-generation-window must run only the exact OpenShell 0.0.106 qualification install",
       jobName: "openshell-credential-generation-window",
     },
   ])("rejects a product reinstall after the exact $jobName qualification install", ({
