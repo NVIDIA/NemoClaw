@@ -516,12 +516,11 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it("omits credentialed catalogue profiles when checkout_sha is set", () => {
+  it("includes every catalogue profile for an authorized NVIDIA-owned candidate", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-pr-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
-    const plan = prCandidatePlan(buildE2eWorkflowPlan());
-
+    const plan = buildE2eWorkflowPlan();
     try {
       writeE2eWorkflowPlanCiOutput(
         {},
@@ -529,6 +528,7 @@ describe("E2E workflow plan", () => {
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         },
       );
@@ -540,7 +540,68 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("allows manual PR dispatch only for standard-profile targets", () => {
+  it("limits an unauthorized candidate without selectors to credential-free matrices", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-fork-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    try {
+      writeE2eWorkflowPlanCiOutput(
+        {},
+        {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+      );
+
+      const outputLines = readFileSync(output, "utf8").split("\n");
+      expect(outputLines).toEqual(
+        expect.arrayContaining([
+          "catalogue_nvidia_api_matrix=[]",
+          "catalogue_nvidia_inference_matrix=[]",
+          "catalogue_github_read_matrix=[]",
+          "catalogue_brave_nvidia_inference_matrix=[]",
+          "selected_jobs=[]",
+          "hermes_selected=false",
+        ]),
+      );
+      expect(outputLines).not.toContain("catalogue_standard_matrix=[]");
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("retains controller-approved jobs for an unauthorized candidate", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-fork-jobs-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    try {
+      writeE2eWorkflowPlanCiOutput(
+        { jobs: "managed-image-protected-runtime" },
+        {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+      );
+
+      const outputLines = readFileSync(output, "utf8").split("\n");
+      expect(outputLines).toEqual(
+        expect.arrayContaining([
+          'selected_jobs=["managed-image-protected-runtime"]',
+          "hermes_selected=false",
+        ]),
+      );
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("classifies only standard-profile targets as credential-free PR candidates", () => {
     expect(
       Object.fromEntries(
         E2E_TARGET_CATALOGUE.map((target) => [
@@ -751,6 +812,7 @@ describe("E2E workflow plan", () => {
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
           JOBS: "launchable-smoke",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
           TARGETS: "",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         },
@@ -758,10 +820,9 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      const expectedPlan = prCandidatePlan(plan);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(expectedPlan));
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
-        renderE2eWorkflowPlanSummary(expectedPlan, { includeCoverageAudit: false }),
+        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -784,6 +845,7 @@ describe("E2E workflow plan", () => {
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
           JOBS: [activeJobs, ...retiredControllerSelectorIds()].join(","),
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
           TARGETS: "",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         },
@@ -791,10 +853,9 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      const expectedPlan = prCandidatePlan(plan);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(expectedPlan));
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
-        renderE2eWorkflowPlanSummary(expectedPlan, { includeCoverageAudit: false }),
+        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
     } finally {
       rmSync(directory, { force: true, recursive: true });
