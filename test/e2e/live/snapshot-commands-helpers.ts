@@ -84,25 +84,6 @@ export function classifySnapshotRestoreResult(result: {
   return /\bRestored\b/.test(output) ? "restored" : "missing-restored-marker";
 }
 
-export async function verifySnapshotCloneResult(
-  classification: SnapshotRestoreResultClassification,
-  branches: {
-    readonly managedCloneDormancy: () => Promise<void>;
-    readonly restoredLegacyClone: () => Promise<void>;
-  },
-): Promise<void> {
-  switch (classification) {
-    case "managed-clone-rebind-required":
-      await branches.managedCloneDormancy();
-      return;
-    case "restored":
-      await branches.restoredLegacyClone();
-      return;
-    default:
-      throw new Error(`Unexpected snapshot clone result classification: ${classification}`);
-  }
-}
-
 /**
  * Builds the child env for the snapshot-commands live target.
  *
