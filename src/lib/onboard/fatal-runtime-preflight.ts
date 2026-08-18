@@ -35,7 +35,6 @@ import {
   printCdiSpecUnavailableError,
   printDockerNotReachableError,
   printUnsupportedRuntimeError,
-  warnIfHeadlessDockerDesktopCredentialStore,
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
@@ -120,6 +119,8 @@ export interface OnboardHostReadinessOptions {
   allowStorageRemediation?: boolean;
   allowPortableHostPreparation?: boolean;
   allowDeferredN1xManagedVllm?: boolean;
+  /** Print warning-severity host advisories before returning an admitted report. */
+  presentAdvisories?: boolean;
   exitProcess?: (code: number) => never;
   observedAt?: string;
   now?: () => Date;
@@ -171,7 +172,17 @@ export function assertOnboardSystemReadiness(
       options.allowDeferredN1xManagedVllm ??
       process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
   });
-  if (admission.admitted) return readinessReport;
+  const advisories = planHostAdvisories(host, { resuming: options.resuming });
+  const presentableAdvisories =
+    options.presentAdvisories === false
+      ? advisories.filter(({ severity }) => severity !== "warning")
+      : advisories;
+  if (admission.admitted) {
+    if (options.presentAdvisories === true) {
+      printRemediationActions(presentableAdvisories.filter(({ severity }) => severity === "warning"));
+    }
+    return readinessReport;
+  }
   const jetsonRuntimeMissing = admission.findingIds.includes("host.gpu.nvidia_runtime_missing");
 
   if (
@@ -191,11 +202,10 @@ export function assertOnboardSystemReadiness(
   } else {
     printReadinessFailure(readinessReport, admission.findingIds, admission.capabilityIds);
   }
-  const advisories = planHostAdvisories(host, { resuming: options.resuming });
   printRemediationActions(
     jetsonRuntimeMissing
-      ? advisories.filter(({ id }) => !JETSON_INAPPLICABLE_CDI_ADVISORY_IDS.has(id))
-      : advisories,
+      ? presentableAdvisories.filter(({ id }) => !JETSON_INAPPLICABLE_CDI_ADVISORY_IDS.has(id))
+      : presentableAdvisories,
   );
   exitProcess(1);
   throw new Error("Onboarding continued after a blocking system readiness result.");
@@ -427,7 +437,10 @@ export function assertOnboardHostReadiness(
     now: observedAt ? () => new Date(observedAt) : now,
   });
   const readinessReport = projectHostReadiness(snapshot, { ...getBuildIdentity(), now });
-  return assertOnboardSystemReadiness(readinessReport, host, options);
+  return assertOnboardSystemReadiness(readinessReport, host, {
+    ...options,
+    presentAdvisories: options.presentAdvisories ?? true,
+  });
 }
 
 /** Run runtime probes that may pull an image or start a short-lived container. */
@@ -439,10 +452,6 @@ export function runOnboardRuntimeEffectfulPreflightChecks(
   exitOnSandboxGpuConfigErrors(result.sandboxGpuConfig, exitProcess);
   console.log("  ✓ Docker is running");
   (context.warnIfHostProxyMissesLoopback ?? warnIfHostProxyMissesLoopback)();
-  // Warn before the first image pull (the bridge probe below may pull) so a
-  // headless Docker Desktop credential store surfaces during preflight instead
-  // of at a later pull failure (#9457).
-  warnIfHeadlessDockerDesktopCredentialStore(result.host);
   (context.validateSandboxGpuPreflight ?? validateSandboxGpuPreflight)(
     result.sandboxGpuConfig,
     {},

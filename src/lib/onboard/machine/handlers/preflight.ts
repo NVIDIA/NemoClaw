@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
-import { warnIfHeadlessDockerDesktopCredentialStore } from "../../preflight-messages";
 import { withPreflightTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -59,6 +58,7 @@ export interface PreflightStateOptions<
         wslDockerDesktopGpuProofPassed?: boolean;
         allowDeferredN1xManagedVllm?: boolean;
         resuming: true;
+        presentAdvisories?: boolean;
       },
     ): void;
     /** Revalidate canonical gateway ownership before resume probe effects. */
@@ -72,11 +72,6 @@ export interface PreflightStateOptions<
      * that haven't been updated yet.
      */
     assertDockerBridgeAndContainerDnsHealthy?(host: Host): void;
-    /**
-     * Warn-and-proceed credential-store advisory re-evaluated per invocation
-     * on cached resume (#9457). Defaults to the production printer.
-     */
-    warnIfHeadlessDockerDesktopCredentialStore?(host: Host): boolean;
     resolveSandboxGpuConfig(
       gpu: Gpu,
       options: {
@@ -187,16 +182,6 @@ export async function handlePreflightState<
       allowDeferredN1xManagedVllm,
       resuming: true,
     });
-    // Session state (SSH markers, DISPLAY, Docker client config) is a
-    // per-invocation fact a cached preflight cannot carry, so re-evaluate the
-    // credential-store warning before any pull-capable effect: the GPU proof
-    // in deps.detectGpu() below can pull, and so can the bridge backstop
-    // (#9457). The default reads only optional advisory fields and no-ops
-    // when the host assessment does not carry them.
-    (
-      deps.warnIfHeadlessDockerDesktopCredentialStore ??
-      (warnIfHeadlessDockerDesktopCredentialStore as unknown as (host: Host) => boolean)
-    )(resumeHost);
     // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
     // behind both live readiness gates, and skip it entirely for CPU-only
     // intent. Replace gateway and host facts after that effect before any
@@ -219,6 +204,7 @@ export async function handlePreflightState<
         ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
         allowDeferredN1xManagedVllm,
         resuming: true,
+        presentAdvisories: false,
       });
     }
     deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);

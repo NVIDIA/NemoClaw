@@ -195,39 +195,6 @@ describe("handlePreflightState", () => {
     expect(result.resumePreflight).toBe(true);
   });
 
-  it("re-evaluates the headless credential-store warning on cached resume before any pull-capable effect (#9457)", async () => {
-    const session = createSession();
-    session.steps.preflight.status = "complete";
-    session.gpuPassthrough = false;
-    const callOrder: string[] = [];
-    const warnIfHeadlessDockerDesktopCredentialStore = vi.fn(() => {
-      callOrder.push("credential-store-warning");
-      return false;
-    });
-    const detectGpu = vi.fn(() => {
-      callOrder.push("detect-gpu");
-      return { type: "nvidia" } as Gpu;
-    });
-    const assertDockerBridgeAndContainerDnsHealthy = vi.fn(() => {
-      callOrder.push("bridge-probe");
-    });
-    const harness = createDeps({
-      warnIfHeadlessDockerDesktopCredentialStore,
-      detectGpu,
-      assertDockerBridgeAndContainerDnsHealthy,
-    });
-
-    await handlePreflightState({
-      ...baseOptions(harness.deps, session),
-      resume: true,
-    });
-
-    expect(warnIfHeadlessDockerDesktopCredentialStore).toHaveBeenCalledWith({
-      cdiNvidiaGpuSpecMissing: false,
-    });
-    expect(callOrder).toEqual(["credential-store-warning", "detect-gpu", "bridge-probe"]);
-  });
-
   it("carries verified N1x intent through cached resume readiness (#9292)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
@@ -278,7 +245,7 @@ describe("handlePreflightState", () => {
     expect(assertDockerBridgeAndContainerDnsHealthy).not.toHaveBeenCalled();
   });
 
-  it("admits live host and gateway facts before resolving a cached resume GPU proof (#7411)", async () => {
+  it("admits live host and gateway facts and presents advisories before a cached resume GPU proof (#7411)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
     const calls: string[] = [];
@@ -291,8 +258,11 @@ describe("handlePreflightState", () => {
         calls.push("gpu-observation");
         return null;
       },
-      assertOnboardHostReadiness: () => {
+      assertOnboardHostReadiness: (_host, _gpu, options) => {
         calls.push("host-admission");
+        calls.push(
+          options.presentAdvisories === false ? "host-advisories-suppressed" : "host-advisories",
+        );
       },
       assertGatewayReadiness: async () => {
         calls.push("gateway-admission");
@@ -319,10 +289,12 @@ describe("handlePreflightState", () => {
       "gpu-observation",
       "gateway-admission",
       "host-admission",
+      "host-advisories",
       "gpu-runtime-proof",
       "host-observation",
       "gateway-admission",
       "host-admission",
+      "host-advisories-suppressed",
       "gpu-validation",
       "bridge-dns",
     ]);

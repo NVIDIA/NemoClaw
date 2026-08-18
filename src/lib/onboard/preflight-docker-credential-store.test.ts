@@ -10,9 +10,12 @@ import {
   runOnboardRuntimeEffectfulPreflightChecks,
 } from "./fatal-runtime-preflight";
 import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight";
-import { warnIfHeadlessDockerDesktopCredentialStore } from "./preflight-messages";
 
 const CREDENTIAL_STORE_ADVISORY_ID = "docker_desktop_credential_store_headless";
+const DOCKER_DESKTOP_INFO = JSON.stringify({
+  ServerVersion: "29.0.0",
+  OperatingSystem: "Docker Desktop",
+});
 
 function raiseEnoent(filePath: string): never {
   const error = new Error(`ENOENT: no such file or directory, open '${filePath}'`);
@@ -24,6 +27,7 @@ function assessWithDockerConfig(
   env: NodeJS.ProcessEnv,
   configJson: string | undefined,
   commandOutputs: Record<string, string> = {},
+  dockerInfoOutput = DOCKER_DESKTOP_INFO,
 ): HostAssessment {
   const files: Record<string, string | undefined> = {
     "/fake/docker-config/config.json": configJson,
@@ -33,7 +37,7 @@ function assessWithDockerConfig(
     env: { DOCKER_CONFIG: "/fake/docker-config", ...env },
     release: "5.15.0-generic",
     procVersion: "",
-    dockerInfoOutput: "",
+    dockerInfoOutput,
     commandExistsImpl: (name: string) => name === "docker",
     runCaptureImpl: (command: readonly string[]) => commandOutputs[command.join(" ")] ?? "",
     gpuProbeImpl: () => false,
@@ -78,6 +82,7 @@ describe("assessHost Docker credential store detection (#9457)", () => {
     );
 
     expect(assessment.dockerCredsStore).toBe("desktop.exe");
+    expect(assessment.dockerCredsStorePath).toBe("$DOCKER_CONFIG/config.json");
     expect(assessment.isSshSession).toBe(true);
   });
 
@@ -177,6 +182,19 @@ describe("docker_desktop_credential_store_headless advisory (#9457)", () => {
     expect(ids).not.toContain(CREDENTIAL_STORE_ADVISORY_ID);
   });
 
+  it("stays silent on Linux Docker Engine with a copied Docker Desktop credsStore (#9457)", () => {
+    const assessment = assessWithDockerConfig(
+      { SSH_CONNECTION: "203.0.113.5 52014 203.0.113.9 22" },
+      JSON.stringify({ credsStore: "desktop" }),
+      {},
+      JSON.stringify({ ServerVersion: "29.0.0", OperatingSystem: "Docker Engine" }),
+    );
+
+    const ids = planHostAdvisories(assessment).map((advisory) => advisory.id);
+    expect(assessment.runtime).toBe("docker");
+    expect(ids).not.toContain(CREDENTIAL_STORE_ADVISORY_ID);
+  });
+
   it.each([
     ["a GUI session", "desktop", { TERM_PROGRAM: "Apple_Terminal" }],
     [
@@ -199,7 +217,7 @@ describe("onboard preflight credential-store warning (#9457)", () => {
 
   it("warns about the headless Docker Desktop credential store before the first image pull and proceeds", () => {
     const events: string[] = [];
-    vi.spyOn(console, "warn").mockImplementation((message?: unknown) => {
+    vi.spyOn(console, "error").mockImplementation((message?: unknown) => {
       events.push(String(message));
     });
     vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -222,23 +240,14 @@ describe("onboard preflight credential-store warning (#9457)", () => {
     const output = events.join("\n");
     expect(output).toContain('credsStore "desktop.exe"');
     expect(output).toContain("(docker_desktop_credential_store_headless)");
-    expect(output).toContain("DOCKER_CONFIG=$(mktemp -d) docker pull");
+    expect(output).toContain("DOCKER_CONFIG=$(mktemp -d) nemoclaw onboard --resume");
     const warningIndex = events.findIndex((event) =>
       event.includes("docker_desktop_credential_store_headless"),
     );
     expect(warningIndex).toBeGreaterThanOrEqual(0);
     expect(warningIndex).toBeLessThan(events.indexOf("bridge-probe"));
-  });
-
-  it("prints nothing for a host without headless or SSH markers", () => {
-    const warn = vi.fn();
-
-    const warned = warnIfHeadlessDockerDesktopCredentialStore(
-      { ...headlessDockerDesktopHost(), isHeadlessLikely: false, isSshSession: false },
-      warn,
-    );
-
-    expect(warned).toBe(false);
-    expect(warn).not.toHaveBeenCalled();
+    expect(
+      events.filter((event) => event.includes("docker_desktop_credential_store_headless")),
+    ).toHaveLength(1);
   });
 });

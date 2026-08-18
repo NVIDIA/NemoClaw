@@ -82,7 +82,12 @@ describe("Docker host advisories (#3213)", () => {
   it("warns about a Docker Desktop credential store in a headless session (#9457)", () => {
     const result = runAdvisories(
       DOCKER_HOST_ADVISORY_CHECKS,
-      host({ dockerReachable: true, dockerCredsStore: "desktop", isHeadlessLikely: true }),
+      host({
+        runtime: "docker-desktop",
+        dockerReachable: true,
+        dockerCredsStore: "desktop",
+        isHeadlessLikely: true,
+      }),
       { phase: "preflight.host" },
     );
 
@@ -97,6 +102,7 @@ describe("Docker host advisories (#3213)", () => {
       DOCKER_HOST_ADVISORY_CHECKS,
       host({
         isWsl: true,
+        runtime: "docker-desktop",
         dockerReachable: true,
         dockerCredsStore: "desktop.exe",
         dockerCredentialHelperUnresponsive: true,
@@ -116,9 +122,25 @@ describe("Docker host advisories (#3213)", () => {
       DOCKER_HOST_ADVISORY_CHECKS,
       host({
         isWsl: true,
+        runtime: "docker-desktop",
         dockerReachable: true,
         dockerCredsStore: "desktop.exe",
         dockerCredentialHelperUnresponsive: false,
+        isHeadlessLikely: true,
+      }),
+      { phase: "preflight.host" },
+    );
+
+    expect(result.advisories.map((advisory) => advisory.id)).toEqual([]);
+  });
+
+  it("stays silent on Docker Engine with a copied Docker Desktop credential store (#9457)", () => {
+    const result = runAdvisories(
+      DOCKER_HOST_ADVISORY_CHECKS,
+      host({
+        runtime: "docker",
+        dockerReachable: true,
+        dockerCredsStore: "desktop",
         isHeadlessLikely: true,
       }),
       { phase: "preflight.host" },

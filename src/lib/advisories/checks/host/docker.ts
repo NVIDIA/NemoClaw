@@ -165,6 +165,7 @@ export const dockerDesktopCredentialStoreHeadless: AdvisoryCheck<HostAssessment>
   severity: "warning",
   resumeSafe: false,
   check(host) {
+    if (host.runtime !== "docker-desktop") return null;
     const credsStore = host.dockerCredsStore ?? "";
     if (!DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES.has(credsStore)) return null;
     // In WSL the helper runs on the Windows side: WSLg can inject DISPLAY into
@@ -177,17 +178,18 @@ export const dockerDesktopCredentialStoreHeadless: AdvisoryCheck<HostAssessment>
     const sessionEvidence = host.isWsl
       ? "The credential helper did not answer a read-only probe from this WSL session"
       : "This session looks headless";
+    const configPath = host.dockerCredsStorePath ?? "the active Docker client config";
     return hostAdvisory(dockerDesktopCredentialStoreHeadless, {
       title: "Avoid Docker Desktop credential store pull failures",
       kind: "manual",
       reason:
-        `The Docker client config sets credsStore "${credsStore}", ` +
+        `The active Docker client config (${configPath}) sets credsStore "${credsStore}", ` +
         "which needs the Docker Desktop GUI session. " +
         `${sessionEvidence}, so the credential helper can fail ` +
         "and block every image pull, even for public images.",
       commands: [
-        "DOCKER_CONFIG=$(mktemp -d) docker pull <image>   # pull a failing image with an isolated Docker config",
-        '# or temporarily remove the "credsStore" entry from the Docker client config, then rerun `nemoclaw onboard`.',
+        "DOCKER_CONFIG=$(mktemp -d) nemoclaw onboard --resume   # resume with an isolated Docker config",
+        `# or temporarily remove the "credsStore" entry from ${configPath}, then rerun \`nemoclaw onboard\`.`,
       ],
     });
   },

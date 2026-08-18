@@ -145,6 +145,8 @@ export interface HostAssessment {
   isSshSession?: boolean;
   /** `credsStore` credential-helper name from the Docker client config (#9457). */
   dockerCredsStore?: string;
+  /** Active Docker client config path that supplied `credsStore` (#9457). */
+  dockerCredsStorePath?: string;
   /**
    * True when the probed Docker Desktop credential helper did not answer a
    * read-only `list` call; undefined when not probed (#9457).
@@ -473,19 +475,22 @@ function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
 function readDockerCredsStore(
   env: NodeJS.ProcessEnv,
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
-): string | undefined {
+): { credsStore?: string; configPath?: string } {
   try {
     // os.homedir() can throw on HOME-less containers; degrade like a missing
     // config instead of failing the host assessment.
     const configDir = env.DOCKER_CONFIG || path.join(os.homedir(), ".docker");
+    const configPath = env.DOCKER_CONFIG
+      ? "$DOCKER_CONFIG/config.json"
+      : "~/.docker/config.json";
     const parsed: { credsStore?: unknown } = JSON.parse(
       readFileImpl(path.join(configDir, "config.json"), "utf-8"),
     );
     return typeof parsed.credsStore === "string" && parsed.credsStore !== ""
-      ? parsed.credsStore
-      : undefined;
+      ? { credsStore: parsed.credsStore, configPath }
+      : {};
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -659,7 +664,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     runtime = "docker";
   }
   const isWslHost = detectWsl({ platform, env, release, procVersion });
-  const dockerCredsStore = readDockerCredsStore(env, readFileImpl);
+  const dockerCredentialStore = readDockerCredsStore(env, readFileImpl);
+  const dockerCredsStore = dockerCredentialStore.credsStore;
   // Session markers cannot see the Windows side of WSL interop, so probe the
   // helper there; the advisory check consumes this instead of DISPLAY/SSH
   // heuristics on WSL hosts (#9457).
@@ -765,6 +771,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     isHeadlessLikely: isHeadlessLikely(env),
     isSshSession: isSshSession(env),
     dockerCredsStore,
+    dockerCredsStorePath: dockerCredentialStore.configPath,
     dockerCredentialHelperUnresponsive,
     hasNvidiaGpu,
     ...cdiAssessment,
