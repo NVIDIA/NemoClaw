@@ -36,7 +36,13 @@ function currentSources(): PiArtifactSources {
     manifest: readRepoFile("agents/pi/manifest.yaml"),
     packageJson: readRepoFile("agents/pi/pi-runtime/package.json"),
     policyAdditions: readRepoFile("agents/pi/policy-additions.yaml"),
+    startScript: readRepoFile("agents/pi/start.sh"),
   };
+}
+
+function withStartScript(mutate: (startScript: string) => string): PiArtifactSources {
+  const sources = currentSources();
+  return { ...sources, startScript: mutate(sources.startScript) };
 }
 
 function withPolicy(mutate: (policy: Record<string, any>) => void): PiArtifactSources {
@@ -223,6 +229,7 @@ describe("Pi runtime boundaries", () => {
     expect(verifyPiTrustBoundary(sources)).toEqual([
       "agents/pi/policy-additions.yaml: managed_inference must declare exactly one endpoint",
       "agents/pi/policy-additions.yaml: the baseline permits only inference.local:443",
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found POST /v1/chat/completions",
     ]);
   });
 
@@ -376,6 +383,93 @@ describe("Pi runtime boundaries", () => {
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
       "agents/pi/manifest.yaml: defaultProjectTrust must stay outside the restore allowlist so a backup cannot widen project trust",
+    );
+  });
+
+  it("rejects a managed inference route set that widens beyond the approved routes (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules = [
+        { allow: { method: "POST", path: "/v1/**" } },
+      ];
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found POST /v1/**",
+    );
+  });
+
+  it("rejects a state directory that drops its read-only trust classification (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_dirs.find((dir: Record<string, any>) => dir.path === "tools").shields =
+        "confidential";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_dirs.tools must stay shields read-only so its trust classification cannot widen",
+    );
+  });
+
+  it("rejects executable resource state entering backup (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_dirs.find((dir: Record<string, any>) => dir.path === "bin").backup = true;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_dirs.bin must stay outside backup so executable resource state is reconstructed instead of restored",
+    );
+  });
+
+  it("rejects an undeclared extension directory added to the manifest state (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_dirs.push({ path: "skills", shields: "read-only" });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_dirs must stay bin, prompts, sessions, themes, tools, found bin, prompts, sessions, skills, themes, tools",
+    );
+  });
+
+  it("rejects a restore contract that drops the key allowlist (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      delete manifest.state_files[0].restore.merge;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: settings.json must stay restore.merge key-allowlist so a restore cannot carry a key outside the allowlist",
+    );
+  });
+
+  it("rejects an entrypoint that stops keeping state owner-only (#7924)", () => {
+    const sources = withStartScript((startScript) =>
+      startScript.replace(/^umask 077$/mu, "umask 022"),
+    );
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/start.sh: the entrypoint must declare umask 077 so Pi configuration and session files stay owner-only",
+    );
+  });
+
+  it("rejects an entrypoint that re-enables version checks and package updates (#7924)", () => {
+    const sources = withStartScript((startScript) =>
+      startScript.replace(/^export PI_OFFLINE=1$/mu, "export PI_OFFLINE=0"),
+    );
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/start.sh: the entrypoint must declare export PI_OFFLINE=1 so the runtime runs no version check and no package update",
+    );
+  });
+
+  it("rejects an entrypoint that re-enables install telemetry (#7924)", () => {
+    const sources = withStartScript((startScript) =>
+      startScript.replace(/^export PI_TELEMETRY=0$/mu, "export PI_TELEMETRY=1"),
+    );
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/start.sh: the entrypoint must declare export PI_TELEMETRY=0 so the runtime sends no install telemetry",
+    );
+  });
+
+  it("rejects an entrypoint that keeps a privileged phase across startup (#7924)", () => {
+    const sources = withStartScript((startScript) =>
+      startScript.replace(
+        "exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups",
+        "exec /usr/bin/setpriv --reuid=root --regid=root --init-groups",
+      ),
+    );
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/start.sh: the entrypoint must drop to the sandbox user before it starts Pi so no privileged phase survives startup",
     );
   });
 });

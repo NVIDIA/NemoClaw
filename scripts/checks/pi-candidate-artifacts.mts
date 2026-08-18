@@ -15,15 +15,20 @@
  * It also binds the accepted Pi trust boundary:
  *
  * - The baseline network policy permits only the managed inference route,
- *   enforced over REST with at least one explicit /v1/ rule, and only
- *   root-owned image binaries carry network capability.
+ *   enforced over REST across an exact set of /v1 routes, and only root-owned
+ *   image binaries carry network capability.
  * - The read-write paths stay /dev/null, /sandbox, /sandbox/.pi, and /tmp, and
  *   Landlock stays strict so filesystem policy fails closed.
  * - Pi runs as the sandbox user and group.
  * - The headless command passes the flag that ignores project-local resources,
  *   MCP stays disabled, and device pairing stays off.
+ * - Each skill, extension, and prompt directory keeps its trust classification,
+ *   and executable resource state stays outside backup.
  * - Neither the project-trust store nor the project-trust setting is declared
- *   in the manifest state that backup and restore carry.
+ *   in the manifest state that backup and restore carry, and every state file
+ *   keeps the allowlisted restore contract that makes those rules apply.
+ * - The entrypoint keeps state owner-only, runs no version check, update, or
+ *   telemetry, and drops to the sandbox user before it starts Pi.
  */
 
 import { createHash } from "node:crypto";
@@ -39,11 +44,18 @@ const COHORT_CONTRACT_ARTIFACT_PREFIX = "managed-pr-contract-";
 const CANDIDATE_CONTRACT_ARTIFACT_PREFIX = "managed-candidate-contract-";
 const PI_MANIFEST_PATH = "agents/pi/manifest.yaml";
 const PI_POLICY_PATH = "agents/pi/policy-additions.yaml";
+const PI_START_SCRIPT_PATH = "agents/pi/start.sh";
 
 const MANAGED_INFERENCE_POLICY = "managed_inference";
 const MANAGED_INFERENCE_HOST = "inference.local";
 const MANAGED_INFERENCE_PORT = 443;
 const MANAGED_INFERENCE_PROTOCOL = "rest";
+const APPROVED_INFERENCE_ROUTES = [
+  "GET /v1/models",
+  "GET /v1/models/**",
+  "POST /v1/chat/completions",
+  "POST /v1/completions",
+];
 const APPROVED_NETWORK_BINARIES = [
   "/usr/local/bin/node",
   "/usr/local/bin/pi",
@@ -55,6 +67,25 @@ const REQUIRED_SANDBOX_IDENTITY = "sandbox";
 const NON_INTERACTIVE_APPROVAL_FLAG = "--no-approve";
 const PROJECT_TRUST_STORE = "trust.json";
 const PROJECT_TRUST_SETTING = "defaultProjectTrust";
+const REQUIRED_RESTORE_MERGE = "key-allowlist";
+
+const APPROVED_STATE_DIRS: Readonly<
+  Record<string, { readonly shields: string; readonly backup: boolean }>
+> = {
+  bin: { shields: "read-only", backup: false },
+  prompts: { shields: "read-only", backup: true },
+  sessions: { shields: "confidential", backup: true },
+  themes: { shields: "read-only", backup: true },
+  tools: { shields: "read-only", backup: false },
+};
+
+const REQUIRED_START_DIRECTIVES: Readonly<Record<string, string>> = {
+  "export PI_OFFLINE=1": "the runtime runs no version check and no package update",
+  "export PI_TELEMETRY=0": "the runtime sends no install telemetry",
+  "umask 077": "Pi configuration and session files stay owner-only",
+};
+const PRIVILEGE_DROP_COMMAND =
+  "exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups";
 
 const REQUIRED_ARTIFACTS = [
   "agents/pi/Dockerfile",
@@ -78,6 +109,7 @@ export type PiArtifactSources = Readonly<{
   manifest: string;
   packageJson: string;
   policyAdditions: string;
+  startScript: string;
 }>;
 
 function readDockerfileArg(source: string, name: string): string | null {
@@ -328,6 +360,19 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
         );
       }
     }
+    const routes = sortedStrings(
+      rules.map((rule) => {
+        const allow = asRecord(asRecord(rule).allow);
+        return typeof allow.method === "string" && typeof allow.path === "string"
+          ? `${allow.method} ${allow.path}`
+          : null;
+      }),
+    );
+    if (rules.length > 0 && !sameSet(routes, APPROVED_INFERENCE_ROUTES)) {
+      failures.push(
+        `${PI_POLICY_PATH}: the managed inference routes must stay ${APPROVED_INFERENCE_ROUTES.join(", ")}, found ${routes.join(", ") || "none"}`,
+      );
+    }
   }
   const binaries = sortedStrings(
     Array.isArray(managed.binaries) ? managed.binaries.map((entry) => asRecord(entry).path) : [],
@@ -384,6 +429,55 @@ function verifyApprovalBoundary(manifest: LooseRecord): string[] {
   return failures;
 }
 
+function verifyExtensionBoundary(manifest: LooseRecord): string[] {
+  const failures: string[] = [];
+  const stateDirs = Array.isArray(manifest.state_dirs) ? manifest.state_dirs : [];
+  const declared = sortedStrings(stateDirs.map((entry) => asRecord(entry).path));
+  const approved = Object.keys(APPROVED_STATE_DIRS).sort();
+  if (!sameSet(declared, approved)) {
+    return [
+      `${PI_MANIFEST_PATH}: state_dirs must stay ${approved.join(", ")}, found ${declared.join(", ") || "none"}`,
+    ];
+  }
+  for (const entry of stateDirs) {
+    const stateDir = asRecord(entry);
+    const name = typeof stateDir.path === "string" ? stateDir.path : "";
+    const expected = APPROVED_STATE_DIRS[name];
+    if (!expected) continue;
+    if (stateDir.shields !== expected.shields) {
+      failures.push(
+        `${PI_MANIFEST_PATH}: state_dirs.${name} must stay shields ${expected.shields} so its trust classification cannot widen`,
+      );
+    }
+    if ((stateDir.backup !== false) !== expected.backup) {
+      failures.push(
+        expected.backup
+          ? `${PI_MANIFEST_PATH}: state_dirs.${name} must stay in backup so declared user state survives a rebuild`
+          : `${PI_MANIFEST_PATH}: state_dirs.${name} must stay outside backup so executable resource state is reconstructed instead of restored`,
+      );
+    }
+  }
+  return failures;
+}
+
+function verifyRuntimeHardeningBoundary(startScript: string): string[] {
+  const failures: string[] = [];
+  const lines = startScript.split("\n").map((line) => line.trimEnd());
+  for (const [directive, reason] of Object.entries(REQUIRED_START_DIRECTIVES)) {
+    if (!lines.includes(directive)) {
+      failures.push(
+        `${PI_START_SCRIPT_PATH}: the entrypoint must declare ${directive} so ${reason}`,
+      );
+    }
+  }
+  if (!startScript.includes(PRIVILEGE_DROP_COMMAND)) {
+    failures.push(
+      `${PI_START_SCRIPT_PATH}: the entrypoint must drop to the ${REQUIRED_SANDBOX_IDENTITY} user before it starts Pi so no privileged phase survives startup`,
+    );
+  }
+  return failures;
+}
+
 function verifyProjectTrustBoundary(manifest: LooseRecord): string[] {
   const failures: string[] = [];
   const stateDirs = Array.isArray(manifest.state_dirs) ? manifest.state_dirs : [];
@@ -396,12 +490,16 @@ function verifyProjectTrustBoundary(manifest: LooseRecord): string[] {
   }
   for (const entry of stateFiles) {
     const stateFile = asRecord(entry);
-    const userKeys = Array.isArray(asRecord(stateFile.restore).user_keys)
-      ? (asRecord(stateFile.restore).user_keys as unknown[])
-      : [];
+    const restore = asRecord(stateFile.restore);
+    const userKeys = Array.isArray(restore.user_keys) ? (restore.user_keys as unknown[]) : [];
     if (userKeys.map((key) => asRecord(key).key).includes(PROJECT_TRUST_SETTING)) {
       failures.push(
         `${PI_MANIFEST_PATH}: ${PROJECT_TRUST_SETTING} must stay outside the restore allowlist so a backup cannot widen project trust`,
+      );
+    }
+    if (restore.merge !== REQUIRED_RESTORE_MERGE) {
+      failures.push(
+        `${PI_MANIFEST_PATH}: ${typeof stateFile.path === "string" ? stateFile.path : "every state file"} must stay restore.merge ${REQUIRED_RESTORE_MERGE} so a restore cannot carry a key outside the allowlist`,
       );
     }
   }
@@ -415,7 +513,9 @@ export function verifyPiTrustBoundary(sources: PiArtifactSources): string[] {
     ...verifyNetworkBoundary(policy),
     ...verifyFilesystemBoundary(policy),
     ...verifyApprovalBoundary(manifest),
+    ...verifyExtensionBoundary(manifest),
     ...verifyProjectTrustBoundary(manifest),
+    ...verifyRuntimeHardeningBoundary(sources.startScript),
   ];
 }
 
@@ -451,6 +551,7 @@ function main(): void {
     manifest: readRepoFile(PI_MANIFEST_PATH),
     packageJson: readRepoFile("agents/pi/pi-runtime/package.json"),
     policyAdditions: readRepoFile(PI_POLICY_PATH),
+    startScript: readRepoFile(PI_START_SCRIPT_PATH),
   });
   if (failures.length > 0) {
     console.error(failures.join("\n"));
