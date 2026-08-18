@@ -5,16 +5,33 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as dockerRunNamespace from "../../../src/lib/adapters/docker/run.ts";
+import * as managedBootstrapAdapterNamespace from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import type { DockerGpuPatchDeps } from "../../../src/lib/onboard/docker-gpu-patch-types.ts";
+import * as startupCommandEnvNamespace from "../../../src/lib/onboard/docker-startup-command-env.ts";
 import * as startupCommandPatchNamespace from "../../../src/lib/onboard/docker-startup-command-patch.ts";
 import { redactString } from "../fixtures/redaction.ts";
 
 const LEGACY_KEEPALIVE_COMMAND = ["sleep", "infinity"] as const;
 const MANAGED_IMAGE_ENTRYPOINT = ["/usr/local/bin/nemoclaw-start"] as const;
 const MANAGED_IMAGE_COMMAND = ["/bin/bash"] as const;
-const LEGACY_OPENSHELL_ENTRYPOINT = ["/opt/openshell/bin/openshell-sandbox"] as const;
+const OPENSHELL_SANDBOX_ENTRYPOINT = ["/opt/openshell/bin/openshell-sandbox"] as const;
+const OPENSHELL_WORKDIR_COMMAND = ["--workdir", "/sandbox"] as const;
+const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
+const MANAGED_STARTUP_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const DEFAULT_RECREATE_TIMEOUT_SECS = 180;
 const DOCKER_CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/i;
+const managedBootstrapAdapter = (
+  "default" in managedBootstrapAdapterNamespace
+    ? managedBootstrapAdapterNamespace.default
+    : managedBootstrapAdapterNamespace
+) as typeof import("../../../src/lib/onboard/managed-bootstrap/adapter.ts");
+const { assertManagedBootstrapSafeProcessEnvironmentKey } = managedBootstrapAdapter;
+const startupCommandEnv = (
+  "default" in startupCommandEnvNamespace
+    ? startupCommandEnvNamespace.default
+    : startupCommandEnvNamespace
+) as typeof import("../../../src/lib/onboard/docker-startup-command-env.ts");
+const { openshellSandboxCommandEnvValue } = startupCommandEnv;
 const startupCommandPatch = (
   "default" in startupCommandPatchNamespace
     ? startupCommandPatchNamespace.default
@@ -57,6 +74,51 @@ function hasExactTokens(value: unknown, expected: readonly string[]): boolean {
   );
 }
 
+function isReviewedEmptyCommand(value: unknown): boolean {
+  return value === null || value === undefined || hasExactTokens(value, []);
+}
+
+function hasReviewedManagedRuntimeWorkload(environment: unknown): boolean {
+  if (!Array.isArray(environment) || !environment.every((entry) => typeof entry === "string")) {
+    return false;
+  }
+  const prefix = `${OPENSHELL_SANDBOX_COMMAND_ENV}=`;
+  const commandEntries = environment.filter(
+    (entry) => entry === OPENSHELL_SANDBOX_COMMAND_ENV || entry.startsWith(prefix),
+  );
+  if (commandEntries.length !== 1 || !commandEntries[0].startsWith(prefix)) return false;
+
+  const command = commandEntries[0].slice(prefix.length);
+  const tokens = command.split(" ");
+  if (tokens.length < 2 || tokens[0] !== "env" || tokens.at(-1) !== MANAGED_IMAGE_ENTRYPOINT[0]) {
+    return false;
+  }
+  try {
+    const assignmentKeys = new Set<string>();
+    for (const assignment of tokens.slice(1, -1)) {
+      const separator = assignment.indexOf("=");
+      if (separator <= 0) return false;
+      const key = assignment.slice(0, separator);
+      if (!MANAGED_STARTUP_ENV_KEY.test(key) || assignmentKeys.has(key)) {
+        return false;
+      }
+      assertManagedBootstrapSafeProcessEnvironmentKey(key);
+      assignmentKeys.add(key);
+    }
+    return openshellSandboxCommandEnvValue(tokens) === command;
+  } catch {
+    return false;
+  }
+}
+
+function hasReviewedManagedRuntimeProcess(config: Record<string, unknown>): boolean {
+  return (
+    hasExactTokens(config.Entrypoint, OPENSHELL_SANDBOX_ENTRYPOINT) &&
+    (isReviewedEmptyCommand(config.Cmd) || hasExactTokens(config.Cmd, OPENSHELL_WORKDIR_COMMAND)) &&
+    hasReviewedManagedRuntimeWorkload(config.Env)
+  );
+}
+
 export function rewriteManagedInspectForLegacyKeepalive(
   output: string,
   expectedContainerId: string,
@@ -88,14 +150,15 @@ export function rewriteManagedInspectForLegacyKeepalive(
   );
   const configRecord = config as Record<string, unknown>;
   requireFixtureInput(
-    hasExactTokens(configRecord.Entrypoint, MANAGED_IMAGE_ENTRYPOINT) &&
-      hasExactTokens(configRecord.Cmd, MANAGED_IMAGE_COMMAND),
+    (hasExactTokens(configRecord.Entrypoint, MANAGED_IMAGE_ENTRYPOINT) &&
+      hasExactTokens(configRecord.Cmd, MANAGED_IMAGE_COMMAND)) ||
+      hasReviewedManagedRuntimeProcess(configRecord),
     "legacy keepalive fixture requires the reviewed managed-image process contract",
   );
 
   // The replacement container runs the exact pre-0.0.99 OpenShell supervisor
   // contract. The production recreation helper still rejects other shapes.
-  configRecord.Entrypoint = [...LEGACY_OPENSHELL_ENTRYPOINT];
+  configRecord.Entrypoint = [...OPENSHELL_SANDBOX_ENTRYPOINT];
   configRecord.Cmd = [];
   return JSON.stringify(parsed);
 }

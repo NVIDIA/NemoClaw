@@ -18,6 +18,9 @@ import {
 
 const OLD_CONTAINER_ID = "a".repeat(64);
 const NEW_CONTAINER_ID = "b".repeat(64);
+const MANAGED_RUNTIME_STARTUP_COMMAND =
+  "env CHAT_UI_URL=http://127.0.0.1:18789 NEMOCLAW_DASHBOARD_PORT=18789 NEMOCLAW_SANDBOX_NAME=e2e-2701 /usr/local/bin/nemoclaw-start";
+const MANAGED_RUNTIME_COMMAND_ENV = `OPENSHELL_SANDBOX_COMMAND=${MANAGED_RUNTIME_STARTUP_COMMAND}`;
 const FIXTURE_PATH = fileURLToPath(
   new URL("../live/gateway-guard-legacy-keepalive-fixture.ts", import.meta.url),
 );
@@ -60,7 +63,15 @@ function managedImageInspect(
   ]);
 }
 
-function managedRuntimeInspect(): string {
+function managedRuntimeInspect({
+  entrypoint = ["/opt/openshell/bin/openshell-sandbox"],
+  command = ["--workdir", "/sandbox"],
+  environment = [MANAGED_RUNTIME_COMMAND_ENV],
+}: {
+  entrypoint?: string[];
+  command?: string[] | null;
+  environment?: string[];
+} = {}): string {
   return JSON.stringify([
     {
       Id: OLD_CONTAINER_ID,
@@ -68,11 +79,9 @@ function managedRuntimeInspect(): string {
       Name: "/openshell-e2e-2701",
       Config: {
         Image: "nemoclaw-managed:test",
-        Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-        Cmd: ["--workdir", "/sandbox"],
-        Env: [
-          "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:18789 NEMOCLAW_DASHBOARD_PORT=18789 NEMOCLAW_SANDBOX_NAME=e2e-2701 /usr/local/bin/nemoclaw-start",
-        ],
+        Entrypoint: entrypoint,
+        Cmd: command,
+        Env: environment,
       },
       HostConfig: {},
     },
@@ -81,7 +90,7 @@ function managedRuntimeInspect(): string {
 
 describe("gateway guard legacy keepalive fixture", () => {
   it("recreates only the pinned sandbox container with the reviewed legacy supervisor contract (#9364)", () => {
-    const dockerCapture = vi.fn(() => managedImageInspect());
+    const dockerCapture = vi.fn(() => managedRuntimeInspect());
     const recreate = vi.fn((_, deps: Parameters<LegacyKeepaliveFixtureDeps["recreate"]>[1]) => {
       const rewritten = JSON.parse(
         deps?.dockerCapture?.(["inspect", "--type", "container", OLD_CONTAINER_ID], {
@@ -125,6 +134,104 @@ describe("gateway guard legacy keepalive fixture", () => {
       Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
       Cmd: [],
     });
+  });
+
+  it("accepts the reviewed empty OpenShell supervisor command before legacy recreation (#9364)", () => {
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(
+        managedRuntimeInspect({ command: [] }),
+        OLD_CONTAINER_ID,
+      ),
+    ).not.toThrow();
+  });
+
+  it("accepts the reviewed nullable empty OpenShell supervisor command before legacy recreation (#9364)", () => {
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(
+        managedRuntimeInspect({ command: null }),
+        OLD_CONTAINER_ID,
+      ),
+    ).not.toThrow();
+  });
+
+  it("accepts an omitted empty OpenShell supervisor command before legacy recreation (#9364)", () => {
+    const inspect = JSON.parse(managedRuntimeInspect());
+    delete inspect[0].Config.Cmd;
+
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(JSON.stringify(inspect), OLD_CONTAINER_ID),
+    ).not.toThrow();
+  });
+
+  it("retains the reviewed raw managed-image process contract before legacy recreation (#9364)", () => {
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(managedImageInspect(), OLD_CONTAINER_ID),
+    ).not.toThrow();
+  });
+
+  it.each([
+    {
+      name: "an unreviewed OpenShell supervisor",
+      inspect: managedRuntimeInspect({ entrypoint: ["/unreviewed/openshell-sandbox"] }),
+    },
+    {
+      name: "an unreviewed OpenShell supervisor command",
+      inspect: managedRuntimeInspect({ command: ["--workdir", "/unexpected"] }),
+    },
+    {
+      name: "a missing managed startup command",
+      inspect: managedRuntimeInspect({ environment: [] }),
+    },
+    {
+      name: "duplicate managed startup commands",
+      inspect: managedRuntimeInspect({
+        environment: [MANAGED_RUNTIME_COMMAND_ENV, MANAGED_RUNTIME_COMMAND_ENV],
+      }),
+    },
+    {
+      name: "a conflicting malformed startup command entry",
+      inspect: managedRuntimeInspect({
+        environment: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_COMMAND"],
+      }),
+    },
+    {
+      name: "an arbitrary startup workload",
+      inspect: managedRuntimeInspect({
+        environment: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"],
+      }),
+    },
+    {
+      name: "a shell-shaped startup assignment",
+      inspect: managedRuntimeInspect({
+        environment: ["OPENSHELL_SANDBOX_COMMAND=env VALUE=$(id) /usr/local/bin/nemoclaw-start"],
+      }),
+    },
+    {
+      name: "a non-assignment startup prefix",
+      inspect: managedRuntimeInspect({
+        environment: ["OPENSHELL_SANDBOX_COMMAND=env bash /usr/local/bin/nemoclaw-start"],
+      }),
+    },
+    {
+      name: "a process-injection startup assignment",
+      inspect: managedRuntimeInspect({
+        environment: [
+          "OPENSHELL_SANDBOX_COMMAND=env NODE_OPTIONS=--require=/tmp/payload.cjs /usr/local/bin/nemoclaw-start",
+        ],
+      }),
+    },
+    {
+      name: "duplicate startup assignment names",
+      inspect: managedRuntimeInspect({
+        environment: [
+          "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:18789 CHAT_UI_URL=http://127.0.0.1:18790 /usr/local/bin/nemoclaw-start",
+        ],
+      }),
+    },
+  ])("rejects $name before legacy recreation (#9364)", ({ inspect }) => {
+    expect(() => rewriteManagedInspectForLegacyKeepalive(inspect, OLD_CONTAINER_ID)).toThrow(
+      "requires the reviewed managed-image process contract",
+    );
   });
 
   it("rejects an unreviewed managed-image entrypoint before legacy recreation (#9364)", () => {
