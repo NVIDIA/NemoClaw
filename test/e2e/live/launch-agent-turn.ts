@@ -16,13 +16,15 @@ export const OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT =
 // root-owned device path from a separate sandbox command.
 export const OPENCLAW_PTY_INPUT_MODE_MONITOR_SCRIPT = String.raw`
 const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 
-const [role, parentPidText, runId, runRoot, ttyPath, dev, ino, rdev, sttyCommand] =
+const [role, parentPidText, runId, publicKeyBase64, runRoot, ttyPath, dev, ino, rdev, sttyCommand] =
   process.argv.slice(1);
 const socketPath = path.join(runRoot, "pty-input-mode.sock");
+const MAX_REQUEST_BYTES = 1024;
 const MAX_RESPONSE_BYTES = 1024;
 const MAX_STDERR_BYTES = 256;
 const parentPid = Number(parentPidText);
@@ -33,7 +35,12 @@ let retired = false;
 let socketDev;
 let socketIno;
 
-function response(state, result = null, fallbackCode = null) {
+function exactKeys(value, expected) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+}
+
+function response(requestId, state, result = null, fallbackCode = null) {
   const status =
     Number.isInteger(result && result.status) && result.status >= 0 && result.status <= 255
       ? result.status
@@ -48,7 +55,10 @@ function response(state, result = null, fallbackCode = null) {
     typeof resultCode === "string" && /^[A-Z0-9_]{1,64}$/.test(resultCode)
       ? resultCode
       : fallbackCode;
-  return {
+  const unsigned = {
+    schemaVersion: 1,
+    runId,
+    requestId,
     ttyPath,
     dev,
     ino,
@@ -61,6 +71,10 @@ function response(state, result = null, fallbackCode = null) {
       .replace(/[^\x20-\x7e]/g, " ")
       .trim()
       .slice(0, MAX_STDERR_BYTES),
+  };
+  return {
+    ...unsigned,
+    signature: crypto.sign(null, Buffer.from(JSON.stringify(unsigned)), privateKey).toString("base64"),
   };
 }
 
@@ -135,16 +149,12 @@ function send(client, observation) {
   if (observation.state !== "canonical") retire();
 }
 
-function observe(client) {
-  clients.add(client);
-  client.once("close", () => clients.delete(client));
-  client.setTimeout(3_000, () => client.destroy());
-  client.resume();
+function observeRequest(client, requestId) {
   if (process.ppid !== parentPid || retired || !sameRoot() || !sameSocket()) {
     return client.destroy();
   }
   if (!sameTty()) {
-    return send(client, response("unavailable", null, "PTY_IDENTITY_CHANGED"));
+    return send(client, response(requestId, "unavailable", null, "PTY_IDENTITY_CHANGED"));
   }
   const result = childProcess.spawnSync(sttyCommand, ["-a"], {
     encoding: "utf8",
@@ -156,19 +166,50 @@ function observe(client) {
   });
   if (process.ppid !== parentPid) return client.destroy();
   if (!sameTty()) {
-    return send(client, response("unavailable", null, "PTY_IDENTITY_CHANGED"));
+    return send(client, response(requestId, "unavailable", null, "PTY_IDENTITY_CHANGED"));
   }
   if (result.error) {
-    return send(client, response("unavailable", result, "PTY_TERMIOS_QUERY_FAILED"));
+    return send(client, response(requestId, "unavailable", result, "PTY_TERMIOS_QUERY_FAILED"));
   }
-  if (result.status !== 0) return send(client, response("unavailable", result));
+  if (result.status !== 0) return send(client, response(requestId, "unavailable", result));
   if (/(^|[\s;])-icanon([\s;]|$)/.test(result.stdout)) {
-    return send(client, response("noncanonical"));
+    return send(client, response(requestId, "noncanonical"));
   }
   if (/(^|[\s;])icanon([\s;]|$)/.test(result.stdout)) {
-    return send(client, response("canonical"));
+    return send(client, response(requestId, "canonical"));
   }
-  return send(client, response("unavailable", result, "PTY_TERMIOS_OUTPUT_INVALID"));
+  return send(client, response(requestId, "unavailable", result, "PTY_TERMIOS_OUTPUT_INVALID"));
+}
+
+function observe(client) {
+  clients.add(client);
+  client.once("close", () => clients.delete(client));
+  client.on("error", () => {});
+  client.setEncoding("utf8");
+  client.setTimeout(3_000, () => client.destroy());
+  let raw = "";
+  client.on("data", (chunk) => {
+    raw += chunk;
+    if (Buffer.byteLength(raw) > MAX_REQUEST_BYTES) return client.destroy();
+    if (!raw.endsWith("\n")) return;
+    let request;
+    try {
+      request = JSON.parse(raw);
+    } catch {
+      return client.destroy();
+    }
+    if (
+      !exactKeys(request, ["schemaVersion", "runId", "requestId"]) ||
+      request.schemaVersion !== 1 ||
+      request.runId !== runId ||
+      !/^[0-9a-f]{32}$/.test(request.requestId || "")
+    ) {
+      return client.destroy();
+    }
+    client.removeAllListeners("data");
+    observeRequest(client, request.requestId);
+  });
+  client.resume();
 }
 
 function accept(client) {
@@ -181,12 +222,31 @@ function accept(client) {
 if (role !== "nemoclaw-pty-input-mode-monitor") process.exit(74);
 if (!Number.isSafeInteger(parentPid) || parentPid < 2) process.exit(74);
 if (!/^[0-9a-f]{32}$/.test(runId || "")) process.exit(74);
+if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(publicKeyBase64 || "")) process.exit(74);
 if (runRoot !== "/tmp/nemoclaw-launch-turn-" + runId) process.exit(74);
 if (!/^\/dev\/pts\/\d+$/.test(ttyPath || "")) process.exit(74);
 if (![dev, ino, rdev].every((value) => /^(0|[1-9]\d{0,24})$/.test(value || ""))) {
   process.exit(74);
 }
 if (sttyCommand !== "/usr/bin/stty" && !path.isAbsolute(sttyCommand || "")) process.exit(74);
+
+let privateKey;
+try {
+  const privateKeyBase64 = fs.readFileSync(3, "utf8").trim();
+  fs.closeSync(3);
+  privateKey = crypto.createPrivateKey({
+    key: Buffer.from(privateKeyBase64, "base64"),
+    format: "der",
+    type: "pkcs8",
+  });
+  const derivedPublicKey = crypto
+    .createPublicKey(privateKey)
+    .export({ format: "der", type: "spki" })
+    .toString("base64");
+  if (derivedPublicKey !== publicKeyBase64) process.exit(74);
+} catch {
+  process.exit(74);
+}
 
 const rootStats = fs.lstatSync(runRoot, { bigint: true });
 if (
@@ -227,6 +287,7 @@ server.listen(socketPath, () => {
       pendingClient = undefined;
       observe(client);
     }
+    process.stdout.write("READY\n");
   } catch {
     retire();
   }
@@ -255,7 +316,8 @@ const fs = require("node:fs");
 const monitorScript = ${JSON.stringify(OPENCLAW_PTY_INPUT_MODE_MONITOR_SCRIPT)};
 const termiosCommand = "/usr/bin/stty";
 
-const [runId, runRoot, ...originalArgv] = process.argv.slice(1);
+const [runId, runRoot, publicKeyBase64, privateKeyBase64, ...originalArgv] =
+  process.argv.slice(1);
 
 function fail(reason) {
   process.stderr.write(JSON.stringify({ reason }) + "\n");
@@ -284,6 +346,12 @@ function validateRunRoot() {
 }
 
 if (!/^[0-9a-f]{32}$/.test(runId || "")) fail("pty_run_id_invalid");
+if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(publicKeyBase64 || "")) {
+  fail("pty_public_key_invalid");
+}
+if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(privateKeyBase64 || "")) {
+  fail("pty_private_key_invalid");
+}
 if (runRoot !== "/tmp/nemoclaw-launch-turn-" + runId) fail("pty_monitor_root_invalid");
 if (originalArgv.length === 0) fail("pty_original_argv_invalid");
 if (typeof process.execve !== "function") fail("pty_execve_unavailable");
@@ -315,6 +383,7 @@ const monitor = childProcess.spawn(
     "nemoclaw-pty-input-mode-monitor",
     process.pid.toString(),
     runId,
+    publicKeyBase64,
     runRoot,
     ttyPath,
     ttyStats.dev.toString(),
@@ -325,14 +394,33 @@ const monitor = childProcess.spawn(
   {
     detached: false,
     env: { LC_ALL: "C" },
-    stdio: [0, "ignore", "ignore"],
+    stdio: [0, "pipe", "ignore", "pipe"],
   },
 );
 if (!Number.isSafeInteger(monitor.pid) || monitor.pid < 2) fail("pty_monitor_spawn_failed");
-monitor.unref();
-
-process.execve("/usr/bin/env", ["/usr/bin/env", ...originalArgv], process.env);
-fail("pty_execve_failed");
+monitor.stdio[3].end(privateKeyBase64);
+let ready = "";
+let started = false;
+const startupTimer = setTimeout(() => fail("pty_monitor_start_timeout"), 3_000);
+monitor.stdout.setEncoding("utf8");
+monitor.stdout.on("data", (chunk) => {
+  if (started) return;
+  ready += chunk;
+  if (Buffer.byteLength(ready) > 64 || !"READY\n".startsWith(ready)) {
+    fail("pty_monitor_start_invalid");
+  }
+  if (ready !== "READY\n") return;
+  started = true;
+  clearTimeout(startupTimer);
+  monitor.stdout.destroy();
+  monitor.unref();
+  process.execve("/usr/bin/env", ["/usr/bin/env", ...originalArgv], process.env);
+  fail("pty_execve_failed");
+});
+monitor.on("error", () => fail("pty_monitor_spawn_failed"));
+monitor.on("exit", () => {
+  if (!started) fail("pty_monitor_start_failed");
+});
 `;
 
 // The host shim replaces argv only for the matching OpenClaw launch. It removes
@@ -357,6 +445,7 @@ const runId = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID;
 const interceptPath = process.env.OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH;
 const monitorStarterScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT;
 const runtimeEnvScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT;
+const keyPath = process.env.OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_KEY_PATH;
 
 function fail(reason) {
   process.stderr.write(JSON.stringify({ reason }) + "\n");
@@ -385,6 +474,39 @@ if (!path.isAbsolute(realOpenShell || "")) fail("openshell_shim_authority_invali
 if (!/^[0-9a-f]{32}$/.test(runId || "")) fail("openshell_shim_run_id_invalid");
 if (!path.isAbsolute(interceptPath || "")) fail("openshell_shim_intercept_path_invalid");
 if (!monitorStarterScript || !runtimeEnvScript) fail("openshell_shim_script_missing");
+if (!path.isAbsolute(keyPath || "")) fail("openshell_shim_key_path_invalid");
+let keyRecord;
+try {
+  const stats = fs.lstatSync(keyPath);
+  if (
+    !stats.isFile() ||
+    stats.isSymbolicLink() ||
+    stats.uid !== process.getuid() ||
+    (stats.mode & 0o777) !== 0o600 ||
+    stats.nlink !== 1 ||
+    stats.size < 2 ||
+    stats.size > 1024
+  ) {
+    fail("openshell_shim_key_file_invalid");
+  }
+  keyRecord = JSON.parse(fs.readFileSync(keyPath, "utf8"));
+} catch {
+  fail("openshell_shim_key_file_invalid");
+}
+if (
+  !keyRecord ||
+  JSON.stringify(Object.keys(keyRecord).sort()) !== JSON.stringify(["privateKey", "publicKey"])
+) {
+  fail("openshell_shim_key_file_invalid");
+}
+const publicKeyBase64 = keyRecord.publicKey;
+const privateKeyBase64 = keyRecord.privateKey;
+if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(publicKeyBase64 || "")) {
+  fail("openshell_shim_public_key_invalid");
+}
+if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(privateKeyBase64 || "")) {
+  fail("openshell_shim_private_key_invalid");
+}
 
 const sameSandbox =
   argv[0] === "sandbox" &&
@@ -444,6 +566,8 @@ const replacement = [
   monitorStarterScript,
   runId,
   monitorRoot,
+  publicKeyBase64,
+  privateKeyBase64,
   ...remoteArgv,
 ];
 runRealOpenShell(replacement);
@@ -459,7 +583,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 
-const [mode, sessionRoot, baselinePath, expectedTurnsText, ptyMonitorRoot, runId] =
+const [mode, sessionRoot, baselinePath, expectedTurnsText, ptyMonitorRoot, runId, publicKeyBase64] =
   process.argv.slice(1);
 const baselineTemporaryPath = baselinePath + ".tmp";
 const ptyMonitorSocketPath = path.join(ptyMonitorRoot, "pty-input-mode.sock");
@@ -481,9 +605,12 @@ function exactMode(stats, mode) {
   return (stats.mode & 0o777) === mode;
 }
 
-function validPtyResponse(response) {
+function validPtyResponse(response, requestId) {
   if (
     !exactKeys(response, [
+      "schemaVersion",
+      "runId",
+      "requestId",
       "ttyPath",
       "dev",
       "ino",
@@ -493,7 +620,12 @@ function validPtyResponse(response) {
       "signal",
       "errorCode",
       "stderr",
+      "signature",
     ]) ||
+    response.schemaVersion !== 1 ||
+    response.runId !== runId ||
+    response.requestId !== requestId ||
+    !/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(response.signature || "") ||
     !["canonical", "noncanonical", "unavailable"].includes(response.state) ||
     !/^\/dev\/pts\/\d+$/.test(response.ttyPath || "") ||
     ![response.dev, response.ino, response.rdev].every(
@@ -522,11 +654,43 @@ function validPtyResponse(response) {
     response.signal === null &&
     response.errorCode === null &&
     response.stderr === "";
-  return response.state === "unavailable" ? !diagnosticIsEmpty : diagnosticIsEmpty;
+  if (response.state === "unavailable" ? diagnosticIsEmpty : !diagnosticIsEmpty) return false;
+  const unsigned = {
+    schemaVersion: response.schemaVersion,
+    runId: response.runId,
+    requestId: response.requestId,
+    ttyPath: response.ttyPath,
+    dev: response.dev,
+    ino: response.ino,
+    rdev: response.rdev,
+    state: response.state,
+    status: response.status,
+    signal: response.signal,
+    errorCode: response.errorCode,
+    stderr: response.stderr,
+  };
+  try {
+    const publicKey = crypto.createPublicKey({
+      key: Buffer.from(publicKeyBase64, "base64"),
+      format: "der",
+      type: "spki",
+    });
+    return crypto.verify(
+      null,
+      Buffer.from(JSON.stringify(unsigned)),
+      publicKey,
+      Buffer.from(response.signature, "base64"),
+    );
+  } catch {
+    return false;
+  }
 }
 
 function validateRunContext() {
   if (!/^[0-9a-f]{32}$/.test(runId || "")) finish(2, "run_id_invalid");
+  if (!/^[A-Za-z0-9+/]{40,256}={0,2}$/.test(publicKeyBase64 || "")) {
+    finish(2, "pty_public_key_invalid");
+  }
   if (baselinePath !== "/tmp/nemoclaw-launch-session-" + runId + ".json") {
     finish(2, "baseline_path_invalid");
   }
@@ -692,7 +856,7 @@ function sameIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function qualifyPtyResponse(raw, rootBefore, socketBefore) {
+function qualifyPtyResponse(raw, rootBefore, socketBefore, requestId) {
   if (
     Buffer.byteLength(raw) < 2 ||
     Buffer.byteLength(raw) > MAX_PTY_RESPONSE_BYTES ||
@@ -707,7 +871,7 @@ function qualifyPtyResponse(raw, rootBefore, socketBefore) {
   } catch {
     finish(2, "pty_termios_response_invalid");
   }
-  if (!validPtyResponse(response)) finish(2, "pty_termios_response_invalid");
+  if (!validPtyResponse(response, requestId)) finish(2, "pty_termios_response_invalid");
   const rootAfter = readPtyMonitorRoot(false);
   const socketAfter = readPtyMonitorSocket(false);
   if (!sameIdentity(rootBefore, rootAfter) || !sameIdentity(socketBefore, socketAfter)) {
@@ -730,13 +894,17 @@ function qualifyPtyResponse(raw, rootBefore, socketBefore) {
 function qualifyTuiInputMode() {
   const rootBefore = readPtyMonitorRoot(true);
   const socketBefore = readPtyMonitorSocket(true);
+  const requestId = crypto.randomBytes(16).toString("hex");
   let raw = "";
   const client = net.createConnection({ path: ptyMonitorSocketPath });
   const responseDeadline = setTimeout(
-    () => finish(2, "pty_termios_response_timeout"),
+    () => finish(1, "pty_termios_response_timeout"),
     PTY_RESPONSE_TIMEOUT_MS,
   );
   client.setEncoding("utf8");
+  client.on("connect", () => {
+    client.write(JSON.stringify({ schemaVersion: 1, runId, requestId }) + "\n");
+  });
   client.on("data", (chunk) => {
     raw += chunk;
     if (Buffer.byteLength(raw) > MAX_PTY_RESPONSE_BYTES) {
@@ -745,9 +913,9 @@ function qualifyTuiInputMode() {
   });
   client.on("end", () => {
     clearTimeout(responseDeadline);
-    qualifyPtyResponse(raw, rootBefore, socketBefore);
+    qualifyPtyResponse(raw, rootBefore, socketBefore, requestId);
   });
-  client.on("error", () => finish(2, "pty_socket_unavailable"));
+  client.on("error", () => finish(1, "pty_socket_unavailable"));
 }
 
 function readCompleteSession(fileName) {
@@ -1002,6 +1170,19 @@ umask 077
 command -v script >/dev/null 2>&1
 command -v timeout >/dev/null 2>&1
 
+read -r pty_monitor_public_key pty_monitor_private_key < <(
+  node -e '
+    const crypto = require("node:crypto");
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+    process.stdout.write(
+      publicKey.export({ format: "der", type: "spki" }).toString("base64") + " " +
+      privateKey.export({ format: "der", type: "pkcs8" }).toString("base64") + "\n",
+    );
+  '
+)
+[[ "$pty_monitor_public_key" =~ ^[A-Za-z0-9+/]{40,256}={0,2}$ ]]
+[[ "$pty_monitor_private_key" =~ ^[A-Za-z0-9+/]{40,256}={0,2}$ ]]
+
 openshell_command="$NEMOCLAW_OPENSHELL_COMMAND"
 openshell_environment=(env)
 while IFS= read -r authority_name; do
@@ -1013,6 +1194,11 @@ done < <(
 )
 
 session_dir="$(mktemp -d "$NEMOCLAW_LAUNCH_HOST_TMP_ROOT/nemoclaw-launch-host.XXXXXX")"
+pty_monitor_key_path="$session_dir/pty-monitor-key.json"
+printf '{"publicKey":"%s","privateKey":"%s"}\n' \
+  "$pty_monitor_public_key" "$pty_monitor_private_key" >"$pty_monitor_key_path"
+chmod 600 "$pty_monitor_key_path"
+unset pty_monitor_private_key
 capture="$session_dir/terminal.log"
 driver_error="$session_dir/pty-driver.err"
 evidence_error="$session_dir/session-evidence.err"
@@ -1117,7 +1303,8 @@ session_evidence() {
     "$baseline_path" \
     "$expected_turns" \
     "$pty_monitor_root" \
-    "$NEMOCLAW_LAUNCH_RUN_ID"
+    "$NEMOCLAW_LAUNCH_RUN_ID" \
+    "$pty_monitor_public_key"
 }
 
 wait_for_turn_count() {
@@ -1182,6 +1369,7 @@ OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX="$NEMOCLAW_LAUNCH_SANDBOX" \
 OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID="$NEMOCLAW_LAUNCH_RUN_ID" \
 OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH="$intercept_path" \
 OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT="$NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT" \
+OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_KEY_PATH="$pty_monitor_key_path" \
 OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT="$NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT" \
 timeout --kill-after=5s 250s \
   script --quiet --return --flush --command "$launch_command" "$capture" \
