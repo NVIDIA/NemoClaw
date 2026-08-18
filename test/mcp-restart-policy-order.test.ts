@@ -11,10 +11,11 @@ import { describe, expect, it } from "vitest";
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
 
 describe("MCP restart policy ordering", () => {
-  it("rejects a foreign attached credential key before policy or provider mutation", () => {
+  it("rejects a later entry's foreign attached credential key before any mutation", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-order-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
+process.env.MCP_PRIMARY_TOKEN = "first-host-only-secret";
 process.env.MCP_TOKEN = "host-only-secret";
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -25,16 +26,29 @@ const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 
 const providerCalls = [];
 let policyApplyCalls = 0;
-const entry = {
-  server: "example",
-  agent: "openclaw",
-  adapter: "mcporter",
-  url: "https://8.8.8.8/mcp",
-  env: ["MCP_TOKEN"],
-  providerName: "alpha-mcp-example",
-  providerId: "11111111-2222-4333-8444-555555555555",
-  policyName: "mcp-bridge-example",
-  addedAt: "2026-06-01T00:00:00.000Z",
+const entries = {
+  first: {
+    server: "first",
+    agent: "openclaw",
+    adapter: "mcporter",
+    url: "https://8.8.8.8/first",
+    env: ["MCP_PRIMARY_TOKEN"],
+    providerName: "alpha-mcp-first",
+    providerId: "11111111-2222-4333-8444-555555555555",
+    policyName: "mcp-bridge-first",
+    addedAt: "2026-06-01T00:00:00.000Z",
+  },
+  second: {
+    server: "second",
+    agent: "openclaw",
+    adapter: "mcporter",
+    url: "https://8.8.8.8/second",
+    env: ["MCP_TOKEN"],
+    providerName: "alpha-mcp-second",
+    providerId: "22222222-3333-4444-8555-666666666666",
+    policyName: "mcp-bridge-second",
+    addedAt: "2026-06-01T00:00:00.000Z",
+  },
 };
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
@@ -55,9 +69,10 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         stderr: "",
       };
     }
+    const entry = Object.values(entries).find((candidate) => candidate.providerName === args[2]);
     return {
       status: 0,
-      stdout: "Id: " + entry.providerId + "\nType: generic\nResource version: 1\nCredential keys: MCP_TOKEN\n",
+      stdout: "Id: " + entry.providerId + "\nType: generic\nResource version: 1\nCredential keys: " + entry.env[0] + "\n",
       stderr: "",
     };
   }
@@ -89,18 +104,20 @@ registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
   gatewayName: "nemoclaw",
-  mcp: { bridges: { example: entry } },
+  mcp: { bridges: entries },
 });
-registry.addCustomPolicy("alpha", {
-  name: entry.policyName,
-  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
-    addresses: ["8.8.8.8"],
-  }),
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-});
+for (const entry of Object.values(entries)) {
+  registry.addCustomPolicy("alpha", {
+    name: entry.policyName,
+    content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
+      addresses: ["8.8.8.8"],
+    }),
+    sourcePath: "generated:nemoclaw-mcp-bridge",
+  });
+}
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
-bridge.restartMcpBridge("alpha", "example").then(
+bridge.restartMcpBridge("alpha").then(
   () => process.exit(9),
   (error) => {
     process.stdout.write(JSON.stringify({

@@ -300,9 +300,15 @@ async function addMcpBridgeUnlocked(
   // Bind the static credential-name deny-list to the OpenShell binary before
   // persisting ownership or mutating a provider, policy, or adapter.
   assertMcpCredentialBoundaryRuntimeVersion();
+  await ensureSandboxGatewaySelected(sandboxName);
+  if (!existingEntry) {
+    // A collision is external state, not an owned partial transaction. Reject
+    // it before recording the durable manifest for a fresh add.
+    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+  }
   // This is the durable ownership manifest for every resource created below.
-  // It intentionally precedes gateway selection and all OpenShell mutations,
-  // so process death can never leave an unowned provider/policy/adapter entry.
+  // It intentionally precedes every OpenShell resource mutation, so process
+  // death can never leave an unowned provider, policy, or adapter entry.
   if (!existingEntry) writeBridgeEntry(sandboxName, entry);
 
   let providerCreated = false;
@@ -311,7 +317,6 @@ async function addMcpBridgeUnlocked(
   let adapterMutationAttempted = false;
   let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
   try {
-    await ensureSandboxGatewaySelected(sandboxName);
     let detachedMissingProviderReference = false;
     if (resumingPreflightedAdd) {
       const providerInspection = inspectMcpProvider(entry.providerName);

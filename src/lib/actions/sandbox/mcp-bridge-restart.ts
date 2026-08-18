@@ -117,6 +117,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   for (const entry of missingProviderEntries) {
     waitForDetachedMcpCredential(sandboxName, entry);
   }
+  assertNoAttachedProviderCredentialCollisions(sandboxName, targetEntries);
   for (const [name, storedEntry] of targets) {
     // Validated as a complete authenticated entry before gateway side effects.
     if (!storedEntry) continue;
@@ -205,6 +206,7 @@ export async function restoreExistingMcpBridgeRuntime(
     assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
   }
   const defaultAdapter = getBridgeAdapter(getSandboxAgent(sandbox));
+  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
   for (const entry of entries) {
     assertGeneratedPolicyMutationSafe(sandboxName, entry);
     const provider = assertMcpProviderRecoverable(entry);

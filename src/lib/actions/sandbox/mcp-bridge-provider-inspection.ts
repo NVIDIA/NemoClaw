@@ -176,16 +176,17 @@ export function assertNoAttachedProviderCredentialCollisions(
     );
   }
   for (const entry of entries) {
-    const credentialKey = entry.env[0];
-    const collision = inspection.attachments.find(
-      (attachment) =>
-        attachment.credentialKeys.includes(credentialKey) &&
-        !(attachment.name === entry.providerName && attachment.providerId === entry.providerId),
-    );
-    if (collision) {
-      throw new McpBridgeError(
-        `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to continue managed MCP while this sandbox receives that key from another provider.`,
+    for (const credentialKey of entry.env) {
+      const collision = inspection.attachments.find(
+        (attachment) =>
+          attachment.credentialKeys.includes(credentialKey) &&
+          !(attachment.name === entry.providerName && attachment.providerId === entry.providerId),
       );
+      if (collision) {
+        throw new McpBridgeError(
+          `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to continue managed MCP while this sandbox receives that key from another provider.`,
+        );
+      }
     }
   }
 }
