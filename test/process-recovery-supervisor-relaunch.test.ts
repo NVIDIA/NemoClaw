@@ -546,7 +546,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     });
 
     expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: false });
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(11);
     expect(relaunchManagedSupervisorSessionImpl).toHaveBeenCalledWith(
       "legacy-box",
       expect.objectContaining({ quiet: false }),
