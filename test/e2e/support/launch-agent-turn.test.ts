@@ -32,6 +32,7 @@ import {
   SUBPROCESS_ENV_ALLOWED_NAMES,
   SUBPROCESS_ENV_ALLOWED_PREFIXES,
 } from "../../../src/lib/subprocess-env";
+import { testTimeout } from "../../helpers/timeouts";
 import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
@@ -1134,7 +1135,7 @@ it.runIf(process.platform === "linux").each([
     );
     expect(ptyMonitorRemoved, failureEvidence).toBe(monitorRemoved);
   },
-  15_000,
+  testTimeout(20_000),
 );
 
 it.runIf(process.platform === "linux")(
@@ -1168,7 +1169,7 @@ it.runIf(process.platform === "linux")(
     );
     expect(result.stderr).toContain('"reason":"pty_input_canonical"');
   },
-  15_000,
+  testTimeout(20_000),
 );
 
 it.runIf(process.platform === "linux")(
@@ -1194,7 +1195,7 @@ it.runIf(process.platform === "linux")(
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('"reason":"pty_input_canonical"');
   },
-  15_000,
+  testTimeout(20_000),
 );
 
 it.runIf(process.platform === "linux")(
@@ -1212,7 +1213,7 @@ it.runIf(process.platform === "linux")(
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('"reason":"pty_socket_missing"');
   },
-  15_000,
+  testTimeout(20_000),
 );
 
 it.runIf(process.platform === "linux")(

@@ -1048,6 +1048,7 @@ cleanup() {
   local original_status=$?
   local cleanup_status=0
   trap - EXIT
+  set +e
   exec 3>&- 2>/dev/null || true
   if [[ -n "$session_pid" ]] && kill -0 "$session_pid" 2>/dev/null; then
     kill -TERM "$session_pid" 2>/dev/null || true
@@ -1057,17 +1058,17 @@ cleanup() {
   if [[ -n "$session_pid" ]]; then
     wait "$session_pid" 2>/dev/null || true
   fi
-  wait_for_pty_monitor_exit
-  if ! remove_pty_monitor >/dev/null 2>&1; then
-    echo "launch PTY monitor cleanup failed" >&2
-    cleanup_status=1
-  fi
   if ! remove_session_baseline >/dev/null 2>&1; then
     echo "structured session baseline cleanup failed" >&2
     cleanup_status=1
   fi
   if ! rm -rf -- "$session_dir"; then
     echo "launch host session cleanup failed" >&2
+    cleanup_status=1
+  fi
+  wait_for_pty_monitor_exit
+  if ! remove_pty_monitor >/dev/null 2>&1; then
+    echo "launch PTY monitor cleanup failed" >&2
     cleanup_status=1
   fi
   if [[ "$original_status" != 0 ]]; then
