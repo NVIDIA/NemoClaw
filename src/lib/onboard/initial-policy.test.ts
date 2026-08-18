@@ -119,18 +119,6 @@ afterEach(() => {
   else process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = originalOtelEnv.sampleRate;
 });
 
-function createStationGb300SysfsDirectories(sysfsRoot: string): void {
-  for (const relativePath of [
-    "devices/system/cpu",
-    "devices/system/memory",
-    "devices/system/node",
-    "module/nvidia/initstate",
-    "module/nvidia_uvm/initstate",
-  ]) {
-    fs.mkdirSync(path.join(sysfsRoot, relativePath), { recursive: true });
-  }
-}
-
 describe("initial sandbox policy helpers", () => {
   it.each([
     ["Dell Pro Max with Station GB300", true],
@@ -153,7 +141,15 @@ describe("initial sandbox policy helpers", () => {
     addPciDevice(sysfsRoot, "0000:03:00.8", "0x10de\n", "0x030000\n");
     addPciDevice(sysfsRoot, "0000:04:00.0", "0x10de\n", "0x030000\n", "0xffff\n");
 
-    createStationGb300SysfsDirectories(sysfsRoot);
+    for (const relativePath of [
+      "devices/system/cpu",
+      "devices/system/memory",
+      "devices/system/node",
+      "module/nvidia/initstate",
+      "module/nvidia_uvm/initstate",
+    ]) {
+      fs.mkdirSync(path.join(sysfsRoot, relativePath), { recursive: true });
+    }
 
     expect(discoverStationGb300SysfsReadOnlyPaths("NVIDIA DGX Station GB300", sysfsRoot)).toEqual(
       STATION_GB300_SYSFS_READ_ONLY_PATHS,

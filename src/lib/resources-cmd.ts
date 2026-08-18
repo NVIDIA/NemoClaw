@@ -18,6 +18,10 @@ import * as YAML from "yaml";
 import { dockerSpawnSync } from "./adapters/docker";
 
 const GATEWAY_NAME = "nemoclaw";
+const UNKNOWN_CPU_MODEL = "unknown";
+const MAX_CPU_MODEL_LENGTH = 256;
+const LSCPU_MAX_OUTPUT_BYTES = 1024 * 1024;
+const CPU_MODEL_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 
 function getGatewayContainer(): string {
   return `openshell-cluster-${GATEWAY_NAME}`;
@@ -58,6 +62,80 @@ export interface HardwareResources {
   profiles: Record<string, ResourceProfile> | null;
 }
 
+interface CpuModelResolutionOptions {
+  platform?: NodeJS.Platform;
+  readLscpu?: () => string | null;
+}
+
+function normalizeCpuModel(value: unknown): string | null {
+  if (typeof value !== "string" || CPU_MODEL_CONTROL_CHARACTERS.test(value)) return null;
+
+  const model = value.trim();
+  if (
+    model.length === 0 ||
+    model.length > MAX_CPU_MODEL_LENGTH ||
+    model === "-" ||
+    model.toLowerCase() === UNKNOWN_CPU_MODEL
+  ) {
+    return null;
+  }
+  return model;
+}
+
+function distinctCpuModels(values: readonly unknown[]): string[] {
+  return [...new Set(values.map(normalizeCpuModel).filter((model) => model !== null))];
+}
+
+function parseLscpuCpuModels(output: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(output);
+    if (!parsed || typeof parsed !== "object") return [];
+
+    const cpus = (parsed as { cpus?: unknown }).cpus;
+    if (!Array.isArray(cpus)) return [];
+
+    return distinctCpuModels(
+      cpus.map((cpu) =>
+        cpu && typeof cpu === "object" ? (cpu as { modelname?: unknown }).modelname : undefined,
+      ),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function readLscpuJson(): string | null {
+  try {
+    const result = spawnSync("lscpu", ["--json", "--extended=CPU,MODELNAME"], {
+      encoding: "utf-8",
+      timeout: 3000,
+      maxBuffer: LSCPU_MAX_OUTPUT_BYTES,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return result.status === 0 && typeof result.stdout === "string" ? result.stdout : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveCpuModel(
+  cpus: readonly { model: string }[],
+  options: CpuModelResolutionOptions = {},
+): string {
+  const nodeModels = distinctCpuModels(cpus.map((cpu) => cpu.model));
+  const hasIncompleteNodeModel =
+    cpus.length === 0 || cpus.some((cpu) => normalizeCpuModel(cpu.model) === null);
+
+  if (!hasIncompleteNodeModel || (options.platform ?? process.platform) !== "linux") {
+    return nodeModels.join(" / ") || UNKNOWN_CPU_MODEL;
+  }
+
+  const lscpuOutput = (options.readLscpu ?? readLscpuJson)();
+  const lscpuModels = lscpuOutput === null ? [] : parseLscpuCpuModels(lscpuOutput);
+  const models = distinctCpuModels([...nodeModels, ...lscpuModels]);
+  return models.join(" / ") || UNKNOWN_CPU_MODEL;
+}
+
 // ── Implementation ───────────────────────────────────────────────
 
 /**
@@ -67,7 +145,7 @@ export interface HardwareResources {
  */
 export function getHardwareResources(): HardwareResources {
   const cpus = os.cpus();
-  const cpuModel = cpus[0]?.model?.trim() || "unknown";
+  const cpuModel = resolveCpuModel(cpus);
 
   let totalMB = 0;
   let swapMB = 0;

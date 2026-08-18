@@ -441,6 +441,144 @@ export function waitForManagedGatewaySupervisor(
   return false;
 }
 
+type FinalRelaunchManagedSupervisorReadiness = { ready: true } | { detail: string; ready: false };
+
+function waitForFinalRelaunchManagedSupervisor(
+  sandboxName: string,
+  requestGatewaySupervisorAction: typeof executeGatewaySupervisorAction,
+): FinalRelaunchManagedSupervisorReadiness {
+  let probeResult: ManagedGatewaySupervisorActionResult | null = null;
+  try {
+    const ready = waitForManagedGatewaySupervisor(sandboxName, {
+      intervalSeconds: readNonNegativeNumberEnv(
+        "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
+        3,
+      ),
+      requestGatewaySupervisorActionImpl: (name, action, timeout) => {
+        probeResult = requestGatewaySupervisorAction(name, action, timeout);
+        return probeResult;
+      },
+    });
+    if (ready) return { ready: true };
+  } catch {
+    return {
+      detail:
+        "the replacement container identity changed during the final managed supervisor health check",
+      ready: false,
+    };
+  }
+  const failure = classifyGatewayRestartFailure(probeResult);
+  return { detail: `${failure.layer}: ${failure.detail}`, ready: false };
+}
+
+function finalRelaunchContainerFailureDetail(
+  completion: ReturnType<ManagedSupervisorRelaunch["finalize"]>,
+): string | null {
+  if (completion.replacementStoppedForCommit === false) {
+    return "Docker could not stop the replacement container for the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
+  }
+  if (completion.replacementRestarted === false) {
+    return "Docker could not start the replacement container to complete the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
+  }
+  return null;
+}
+
+type FinalRelaunchRecoveryFailure = {
+  checked: true;
+  forwardRecovered: false;
+  forwardRecoveryFailed?: undefined;
+  forwardRecoveryFailureDetail?: undefined;
+  recovered: false;
+  recoveryFailureDetail?: string;
+  wasRunning: false;
+};
+
+function finalRelaunchRecoveryFailure(
+  recoveryFailureDetail?: string,
+): FinalRelaunchRecoveryFailure {
+  const failure = {
+    checked: true,
+    forwardRecovered: false,
+    recovered: false,
+    wasRunning: false,
+  } as const;
+  return recoveryFailureDetail ? { ...failure, recoveryFailureDetail } : failure;
+}
+
+function finalizeRelaunchedRecovery(
+  sandboxName: string,
+  relaunch: ManagedSupervisorRelaunch,
+  {
+    printRecoveryHints,
+    quiet,
+    requestManagedProbe,
+    waitForRecoveryReadiness,
+  }: {
+    printRecoveryHints: () => void;
+    quiet: boolean;
+    requestManagedProbe: typeof executeGatewaySupervisorAction;
+    waitForRecoveryReadiness: () => string | null;
+  },
+): FinalRelaunchRecoveryFailure | null {
+  let completion: ReturnType<ManagedSupervisorRelaunch["finalize"]>;
+  try {
+    completion = relaunch.finalize(true);
+    if (completion.stateRestored === false || completion.rolledBack) {
+      const recoveryFailureDetail = completion.rolledBack
+        ? "Sandbox recovery did not complete; the previous container was restored"
+        : "Sandbox recovery failed and the previous container could not be restored automatically";
+      if (!quiet) {
+        console.error(`  ${recoveryFailureDetail}.`);
+        if (completion.rolledBack && completion.stateBackupRemoved === false) {
+          console.error("  Warning: the temporary sandbox state backup could not be removed.");
+        }
+        if (!completion.rolledBack) printRecoveryHints();
+      }
+      return finalRelaunchRecoveryFailure(recoveryFailureDetail);
+    }
+  } catch {
+    if (!quiet) {
+      console.error(
+        "  NemoClaw could not confirm the final replacement container handoff. It did not start the primary dashboard/API host forward.",
+      );
+    }
+    return finalRelaunchRecoveryFailure(
+      "NemoClaw could not confirm the final replacement container handoff. It did not start the primary dashboard/API host forward",
+    );
+  }
+
+  const containerFailureDetail = finalRelaunchContainerFailureDetail(completion);
+  if (containerFailureDetail) return finalRelaunchRecoveryFailure(containerFailureDetail);
+
+  if (completion.replacementRestarted === true) {
+    const managedSupervisor = waitForFinalRelaunchManagedSupervisor(
+      sandboxName,
+      requestManagedProbe,
+    );
+    if (!managedSupervisor.ready) {
+      return finalRelaunchRecoveryFailure(
+        `the managed supervisor health check for the pinned replacement container did not pass after the final replacement container restart. NemoClaw did not start the primary dashboard/API host forward. Managed supervisor health check result: ${managedSupervisor.detail}`,
+      );
+    }
+    const finalReadinessFailureDetail = waitForRecoveryReadiness();
+    if (finalReadinessFailureDetail) {
+      return finalRelaunchRecoveryFailure(finalReadinessFailureDetail);
+    }
+  }
+
+  if (!completion.backupRemoved && !quiet) {
+    console.error(
+      "  Warning: the recovered sandbox is healthy, but its previous container backup could not be removed.",
+    );
+  }
+  if (completion.stateBackupRemoved === false && !quiet) {
+    console.error(
+      "  Warning: the recovered sandbox is healthy, but its temporary state backup could not be removed.",
+    );
+  }
+  return null;
+}
+
 export function confirmRecoveredSandboxGatewayManaged(
   sandboxName: string,
   options: {
@@ -778,15 +916,15 @@ function recreatedSandboxOpenShellReadinessFailureDetail(
   const detail = (() => {
     switch (failure) {
       case "managed-health-definitive-failure":
-        return "the recreated sandbox failed the managed health guard, so the primary dashboard/API host forward was not started";
+        return "the managed supervisor health check for the pinned replacement container did not pass. NemoClaw did not start the primary dashboard/API host forward";
       case "managed-health-inconclusive-timeout":
-        return "the recreated sandbox managed health guard stayed inconclusive within the readiness deadline, so the primary dashboard/API host forward was not started";
+        return "the managed supervisor health check for the pinned replacement container stayed inconclusive within the OpenShell readiness deadline. NemoClaw did not start the primary dashboard/API host forward";
       case "openshell-readiness-failure":
-        return "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started";
+        return "the recreated sandbox did not become ready in OpenShell. NemoClaw did not start the primary dashboard/API host forward";
     }
   })();
   const managedHealthResult = managedHealthFailureDetail
-    ? ` Managed health result: ${managedHealthFailureDetail}`
+    ? ` Managed supervisor health check result: ${managedHealthFailureDetail}`
     : "";
   const openshellResult = openshellError
     ? ` Last OpenShell readiness error: ${openshellError}`
@@ -795,7 +933,7 @@ function recreatedSandboxOpenShellReadinessFailureDetail(
 }
 
 // Default seconds to wait for OpenShell to re-register a recreated sandbox as
-// Ready before giving up and surfacing the manual-recover hint. Aligned with
+// Ready before returning a classified recovery failure. Aligned with
 // `connect`'s readiness budget (`waitForSandboxReadyOrExit` defaults to 120s):
 // both prove the same post-recreate sandbox readiness, but this path used to
 // give up 4x sooner (30s), so a cold-start `phase: Error` settling window that
@@ -1145,11 +1283,12 @@ function isHermesAgent(
  * whose OpenClaw processes are not running. Also re-establishes the
  * host-side dashboard port-forward when it has gone dead independently
  * of the gateway. Returns an object describing the outcome:
- * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, secretBoundaryRefused?, secretBoundaryReason? }`.
+ * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, recoveryFailureDetail?, secretBoundaryRefused?, secretBoundaryReason? }`.
  * `onRecoveryFailureLayer` reports the classified managed-restart failure so a
  * quiet caller (`recover`, `connect --probe-only`) can still explain why
  * recovery is not retryable instead of printing a generic "check the gateway
- * log". The result shape is unchanged so existing callers keep their contract.
+ * log". Failures before forward recovery use `recoveryFailureDetail`; actual
+ * forward failures retain `forwardRecoveryFailed` and their forward detail.
  */
 function checkAndRecoverSandboxProcessesWithoutHostLock(
   sandboxName: string,
@@ -1367,7 +1506,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       ? (name: string, action: "restart" | "recover" | "probe", timeout = 210000) =>
           requestPinnedGatewaySupervisorAction(name, action, timeout, relaunch.containerId)
       : requestGatewaySupervisorAction;
-    let relaunchedIdentityRejected = false;
+    let relaunchedIdentityChanged = false;
     let relaunchedManagedHealthFailureDetail: string | null = null;
     const confirmRelaunchedManagedHealth = relaunch
       ? (timeout = OPENSHELL_PROBE_TIMEOUT_MS) => {
@@ -1380,7 +1519,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
               },
             });
             if (confirmed === false) {
-              relaunchedIdentityRejected = true;
               const failure = classifyGatewayRestartFailure(probeResult);
               relaunchedManagedHealthFailureDetail = `${failure.layer}: ${failure.detail}`;
             } else if (confirmed === true) {
@@ -1388,7 +1526,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
             }
             return confirmed;
           } catch {
-            relaunchedIdentityRejected = true;
+            relaunchedIdentityChanged = true;
             relaunchedManagedHealthFailureDetail =
               "the pinned replacement sandbox identity changed during the managed probe";
             return false;
@@ -1457,8 +1595,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           wasRunning: false,
           recovered: false,
           forwardRecovered: false,
-          forwardRecoveryFailed: true,
-          forwardRecoveryFailureDetail: `the recreated sandbox failed the managed health guard while waiting for its gateway. Managed health result: ${relaunchedManagedHealthFailureDetail}`,
+          recoveryFailureDetail: `the managed supervisor health check for the recreated sandbox did not pass while NemoClaw waited for its gateway. Managed supervisor health check result: ${relaunchedManagedHealthFailureDetail}`,
         };
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
@@ -1467,30 +1604,29 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     // recovery has already passed its authenticated control and health gates;
     // a replacement also rechecks its pinned identity before readiness.
     const recoveryRequiresReadiness = recovery.kind === "managed" || relaunch;
-    const readinessFailureDetail = recoveryRequiresReadiness
-      ? (() => {
-          const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
-            beforeProbe: relaunch
-              ? (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null
+    const waitForRecoveryReadiness = () => {
+      const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
+        beforeProbe: relaunch
+          ? (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null
+          : undefined,
+      };
+      const readiness =
+        waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
+          ? waitForRecreatedSandboxOpenShellReadyResult(sandboxName, readinessOptions)
+          : waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, readinessOptions)
+            ? ({ ready: true } as const)
+            : ({ failure: "openshell-readiness-failure", ready: false } as const);
+      return readiness.ready
+        ? null
+        : recreatedSandboxOpenShellReadinessFailureDetail(
+            readiness.failure,
+            "openshellError" in readiness ? readiness.openshellError : undefined,
+            readiness.failure === "managed-health-definitive-failure"
+              ? (relaunchedManagedHealthFailureDetail ?? undefined)
               : undefined,
-          };
-          const readiness =
-            waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady
-              ? waitForRecreatedSandboxOpenShellReadyResult(sandboxName, readinessOptions)
-              : waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, readinessOptions)
-                ? ({ ready: true } as const)
-                : ({ failure: "openshell-readiness-failure", ready: false } as const);
-          return readiness.ready
-            ? null
-            : recreatedSandboxOpenShellReadinessFailureDetail(
-                readiness.failure,
-                "openshellError" in readiness ? readiness.openshellError : undefined,
-                readiness.failure === "managed-health-definitive-failure"
-                  ? (relaunchedManagedHealthFailureDetail ?? undefined)
-                  : undefined,
-              );
-        })()
-      : null;
+          );
+    };
+    const readinessFailureDetail = recoveryRequiresReadiness ? waitForRecoveryReadiness() : null;
     if (readinessFailureDetail) {
       try {
         relaunch?.finalize(false);
@@ -1503,55 +1639,22 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         wasRunning: false,
         recovered: false,
         forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail: readinessFailureDetail,
+        recoveryFailureDetail: readinessFailureDetail,
       };
     }
     if (relaunch) {
-      try {
-        const completion = relaunch.finalize(true);
-        if (completion.stateRestored === false || completion.rolledBack) {
-          if (!quiet) {
-            console.error(
-              completion.rolledBack
-                ? "  Sandbox recovery did not complete; the previous container was restored."
-                : "  Sandbox recovery failed and the previous container could not be restored automatically.",
-            );
-            if (completion.rolledBack && completion.stateBackupRemoved === false) {
-              console.error("  Warning: the temporary sandbox state backup could not be removed.");
-            }
-            if (!completion.rolledBack) {
-              printHostManagedGatewayRecoveryHints(
-                sandboxName,
-                recoveryAgent,
-                managedRecoveryFailureLayer,
-              );
-            }
-          }
-          return {
-            checked: true,
-            wasRunning: false,
-            recovered: false,
-            forwardRecovered: false,
-          };
-        }
-        if (!completion.backupRemoved && !quiet) {
-          console.error(
-            "  Warning: the recovered sandbox is healthy, but its previous container backup could not be removed.",
-          );
-        }
-        if (completion.stateBackupRemoved === false && !quiet) {
-          console.error(
-            "  Warning: the recovered sandbox is healthy, but its temporary state backup could not be removed.",
-          );
-        }
-      } catch {
-        if (!quiet) {
-          console.error(
-            "  Warning: the recovered sandbox is healthy, but container transaction cleanup could not be confirmed.",
-          );
-        }
-      }
+      const finalizationFailure = finalizeRelaunchedRecovery(sandboxName, relaunch, {
+        printRecoveryHints: () =>
+          printHostManagedGatewayRecoveryHints(
+            sandboxName,
+            recoveryAgent,
+            managedRecoveryFailureLayer,
+          ),
+        quiet,
+        requestManagedProbe,
+        waitForRecoveryReadiness,
+      });
+      if (finalizationFailure) return finalizationFailure;
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
@@ -1560,16 +1663,16 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
       isWsl: isWslOverride,
     });
-    if (!forwardRecovered && relaunchedIdentityRejected) {
-      return withManagedControlCompletion({
+    if (!forwardRecovered && relaunchedManagedHealthFailureDetail) {
+      return {
         checked: true,
         wasRunning: false,
-        recovered: true,
+        recovered: false,
         forwardRecovered: false,
-        forwardRecoveryFailed: true,
-        forwardRecoveryFailureDetail:
-          "the primary dashboard/API host forward could not be re-established",
-      });
+        recoveryFailureDetail: relaunchedIdentityChanged
+          ? "the replacement container identity changed during the primary dashboard/API host forward check"
+          : `the managed supervisor health check for the pinned replacement container did not pass during the primary dashboard/API host forward check. Managed supervisor health check result: ${relaunchedManagedHealthFailureDetail}`,
+      };
     }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
     const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });

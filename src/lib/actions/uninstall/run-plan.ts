@@ -757,6 +757,28 @@ function runOptional(
   return false;
 }
 
+// Homebrew owns its formula and executable links. NemoClaw can report the
+// removal command, but it must not infer that it installed the formula. (#8882)
+const OPENSHELL_HOMEBREW_FORMULA = "nvidia/openshell/openshell";
+
+function reportRetainedMacOsOpenShell(runtime: UninstallRuntime): void {
+  if (!runtime.commandExists("brew")) {
+    runtime.log(
+      `Kept OpenShell executables because Homebrew is unavailable. If Homebrew manages OpenShell, make brew available through PATH, then run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`,
+    );
+    return;
+  }
+  const installed = runtime.run("brew", ["list", "--formula", OPENSHELL_HOMEBREW_FORMULA], {
+    env: runtime.env,
+    stdio: "ignore",
+  });
+  runtime.log(
+    installed.status === 0
+      ? `Kept Homebrew-managed OpenShell. To remove it, run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`
+      : `Kept OpenShell executables because Homebrew did not confirm ${OPENSHELL_HOMEBREW_FORMULA}. Check the formula before removing OpenShell.`,
+  );
+}
+
 function deleteSelectedGatewaySandbox(
   runtime: UninstallRuntime,
   gatewayName: string,
@@ -2830,6 +2852,8 @@ function executePlan(
           runtime.log(binaryKeepMessage);
         } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
           runtime.log("Keeping OpenShell binaries used by the default gateway service.");
+        } else if (runtime.platform === "darwin") {
+          reportRetainedMacOsOpenShell(runtime);
         } else {
           for (const target of paths.openshellInstallPaths)
             removeFileWithOptionalSudo(target, runtime);

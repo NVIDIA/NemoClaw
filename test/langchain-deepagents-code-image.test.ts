@@ -302,7 +302,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     }
   });
 
-  function verifyManagedRuntimeProxyReplacement() {
+  it("replaces inherited host proxy values with the managed runtime proxy (#6191)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
     const { envFile, scriptPath } = makeStartScriptFixture(tempDir, {
       markerDir: dcodeStateDir(tempDir),
@@ -378,12 +378,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(combined).not.toContain("user");
     expect(combined).not.toContain("password");
     expect(combined).not.toContain("corp.internal");
-  }
-
-  it(
-    "replaces inherited host proxy values with the managed runtime proxy (#6191)",
-    verifyManagedRuntimeProxyReplacement,
-  );
+  });
 
   it("keeps all Deep Agents Code entry points behind the managed wrapper boundary", () => {
     const dockerfile = readAgentFile("Dockerfile");
@@ -637,7 +632,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     }
   });
 
-  function verifyDeepAgentsLivePolicyChecks() {
+  it("ships live policy behavior checks for Deep Agents Code", () => {
     const landlockCheck = fs.readFileSync(
       path.join(
         process.cwd(),
@@ -839,9 +834,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
       "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
     ]);
-  }
-
-  it("ships live policy behavior checks for Deep Agents Code", verifyDeepAgentsLivePolicyChecks);
+  });
   it.each(
     [
         'sandbox_exec "test -d /sandbox/.deepagents"',

@@ -24,25 +24,6 @@ function packageFiles(packageRoot: string): string[] {
   return packageJson.files ?? [];
 }
 
-const runtimeValidatorDependencies = [
-  "ajv",
-  "fast-deep-equal",
-  "fast-uri",
-  "json-schema-traverse",
-  "require-from-string",
-  "yaml",
-] as const;
-
-function copyRuntimeValidatorDependencies(installedNodeModules: string): void {
-  for (const dependency of runtimeValidatorDependencies) {
-    fs.cpSync(
-      path.join(repoRoot, "node_modules", dependency),
-      path.join(installedNodeModules, dependency),
-      { recursive: true },
-    );
-  }
-}
-
 describe("OpenShell policy boundary package contract", () => {
   it.each([repoRoot, path.join(repoRoot, "nemoclaw")])(
     "pins the YAML parser used by both production package boundaries [case %#]",
@@ -286,7 +267,21 @@ describe("OpenShell policy boundary package contract", () => {
           path.join(installedRoot, "dist", "lib", "policy", "sandbox-policy-validation.js"),
         ),
       ).toBe(true);
-      copyRuntimeValidatorDependencies(path.join(installedRoot, "node_modules"));
+      const installedNodeModules = path.join(installedRoot, "node_modules");
+      for (const dependency of [
+        "ajv",
+        "fast-deep-equal",
+        "fast-uri",
+        "json-schema-traverse",
+        "require-from-string",
+        "yaml",
+      ]) {
+        fs.cpSync(
+          path.join(repoRoot, "node_modules", dependency),
+          path.join(installedNodeModules, dependency),
+          { recursive: true },
+        );
+      }
 
       const validatorPath = path.join(
         installedRoot,

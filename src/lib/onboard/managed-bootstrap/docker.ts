@@ -4,6 +4,7 @@
 import fs from "node:fs";
 
 import {
+  dockerLogs as defaultDockerLogs,
   dockerRename as defaultDockerRename,
   dockerRm as defaultDockerRm,
   dockerStart as defaultDockerStart,
@@ -15,6 +16,10 @@ import {
 } from "../../adapters/docker/run";
 import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
+import {
+  captureDockerContainerFailureEvidence,
+  formatDockerContainerState,
+} from "./docker-container-failure-evidence";
 import {
   buildDockerGpuCloneRunArgs,
   dockerContainerName,
@@ -176,6 +181,7 @@ type DockerCommandResult = {
 export type DockerManagedBootstrapDeps = Pick<
   DockerGpuPatchDeps,
   | "dockerCapture"
+  | "dockerLogs"
   | "dockerRename"
   | "dockerRm"
   | "dockerRun"
@@ -184,6 +190,7 @@ export type DockerManagedBootstrapDeps = Pick<
   | "runCaptureOpenshell"
   | "runOpenshell"
   | "sleep"
+  | "errorPhaseDebouncePolls"
   | "now"
 > & {
   readonly createBootstrapIdentity?: () => string;
@@ -196,6 +203,7 @@ type ResolvedDeps = Required<
   Pick<
     DockerManagedBootstrapDeps,
     | "dockerCapture"
+    | "dockerLogs"
     | "dockerRename"
     | "dockerRm"
     | "dockerRun"
@@ -223,6 +231,7 @@ function resolveDeps(deps: DockerManagedBootstrapDeps): ResolvedDeps {
   }
   return {
     dockerCapture: defaultDockerCapture,
+    dockerLogs: defaultDockerLogs,
     dockerRename: defaultDockerRename,
     dockerRm: defaultDockerRm,
     dockerRun: defaultDockerRun,
@@ -241,6 +250,18 @@ function commandDetail(result: DockerCommandResult): string {
   )}`
     .trim()
     .slice(-1200);
+}
+
+function supervisorReconnectFailureDetail(runtimeId: string, deps: ResolvedDeps): string {
+  const evidence = captureDockerContainerFailureEvidence(runtimeId, deps);
+  const stateDetail = formatDockerContainerState(evidence.state).join(" ");
+  return [
+    "Managed bootstrap Docker supervisor did not reconnect.",
+    stateDetail ? `Replacement state: ${stateDetail}.` : "",
+    evidence.redactedLogTail ? `Redacted replacement log tail:\n${evidence.redactedLogTail}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function isExactMissingDockerContainer(containerId: string, result: DockerCommandResult): boolean {
@@ -3642,7 +3663,7 @@ export function createDockerManagedBootstrapAdapter(
           deps,
         )
       ) {
-        throw new Error("Managed bootstrap Docker supervisor did not reconnect.");
+        throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
       }
       const afterWaitJournal = deps.journalStore.load(journal.bootstrapIdentity);
       if (!afterWaitJournal || !sameDockerBootstrapJournal(afterWaitJournal, journal)) {

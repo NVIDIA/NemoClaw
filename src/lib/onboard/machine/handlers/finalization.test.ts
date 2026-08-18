@@ -186,6 +186,24 @@ describe("finalization handlers", () => {
     });
   });
 
+  it("uses strict Portable settlement for the default-null OpenClaw resume state (#9200)", async () => {
+    const { deps, calls } = createDeps({ readRegistryAgent: vi.fn(() => null) });
+    const options = {
+      ...baseOptions(deps),
+      agent: null,
+      portableProfileSelected: true,
+    };
+
+    const result = await runFinalizationHandlers(options);
+
+    expect(result.stateResult.type).toBe("complete");
+    expect(calls.warmupScopeUpgrade).not.toHaveBeenCalled();
+    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
+      portableRequired: true,
+    });
+  });
+
   it("fails selected Portable OpenClaw closed before ordinary writers when registry identity is invalid (#9207)", async () => {
     const { deps, calls } = createDeps({
       settlePortablePairing: vi.fn(async () => ({

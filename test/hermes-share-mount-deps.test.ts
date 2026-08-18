@@ -71,12 +71,6 @@ function extractHermesRuntimeGuard(dockerfile: string): string {
     .replace(/\\\n/g, " ");
 }
 
-function createParentDirectories(files: readonly string[]): void {
-  for (const file of files) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-  }
-}
-
 function runLoggedShell(command: string, tmp: string, functionDefs: string[] = []) {
   const logPath = path.join(tmp, "calls.log");
   const scriptPath = path.join(tmp, "run-hermes-apt-layer.sh");
@@ -455,7 +449,9 @@ describe("Hermes share mount package parity (#2947)", () => {
     const scriptPath = path.join(tmp, "run-hermes-runtime-guard.sh");
 
     try {
-      createParentDirectories([agentBrowser, python, tuiEntry, webIndex]);
+      for (const file of [agentBrowser, python, tuiEntry, webIndex]) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+      }
 
       fs.writeFileSync(fakeHermes, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
       fs.writeFileSync(agentBrowser, "#!/bin/sh\nprintf 'agent-browser test\\n'\n", {

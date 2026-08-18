@@ -85,7 +85,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     },
   );
 
-  function verifyOtlpEndpointCredentialContract() {
+  it("pins the OTLP endpoint accept/refuse contract on runtime and dotenv paths (#6466, #6538)", () => {
     // The managed collector URL is not a credential and must pass; everything
     // else refuses with the full contract. The #6538 review requires exact
     // status 2, the variable name present, the rejected value absent (no echo),
@@ -170,12 +170,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
         expect(fs.existsSync(dv.ranMarker)).toBe(false);
       }
     }
-  }
-
-  it(
-    "pins the OTLP endpoint accept/refuse contract on runtime and dotenv paths (#6466, #6538)",
-    verifyOtlpEndpointCredentialContract,
-  );
+  });
 
   it.each([
     { name: "MODEL_NAME", value: "openshell:resolve:env:OTHER_NAME" },
