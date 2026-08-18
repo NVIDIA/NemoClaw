@@ -282,8 +282,16 @@ async function expectProvider(
   }
 }
 
-/** Report whether both OpenClaw Telegram activation gates are enabled. */
-async function openClawHasTelegram(sandbox: SandboxClient, artifactName: string): Promise<boolean> {
+/** Report whether the OpenClaw Telegram entries match the requested probe. */
+async function openClawTelegramMatches(
+  sandbox: SandboxClient,
+  artifactName: string,
+  probe: "active" | "present",
+): Promise<boolean> {
+  const predicate =
+    probe === "active"
+      ? "channel.get('enabled') is True and plugin.get('enabled') is True"
+      : "'telegram' in channels or 'telegram' in plugins";
   const result = await sandbox.exec(
     SANDBOX_NAME,
     [
@@ -292,9 +300,11 @@ async function openClawHasTelegram(sandbox: SandboxClient, artifactName: string)
       [
         "import json",
         "data=json.load(open('/sandbox/.openclaw/openclaw.json'))",
-        "channel=data.get('channels', {}).get('telegram', {})",
-        "plugin=data.get('plugins', {}).get('entries', {}).get('telegram', {})",
-        "print('yes' if channel.get('enabled') is True and plugin.get('enabled') is True else 'no')",
+        "channels=data.get('channels', {})",
+        "plugins=data.get('plugins', {}).get('entries', {})",
+        "channel=channels.get('telegram', {})",
+        "plugin=plugins.get('telegram', {})",
+        `print('yes' if ${predicate} else 'no')`,
       ].join("; "),
     ],
     {
@@ -317,7 +327,15 @@ async function expectOpenClawTelegram(
   expected: boolean,
   artifactName: string,
 ): Promise<void> {
-  await expect(openClawHasTelegram(sandbox, artifactName)).resolves.toBe(expected);
+  await expect(openClawTelegramMatches(sandbox, artifactName, "active")).resolves.toBe(expected);
+}
+
+/** Assert that neither OpenClaw Telegram configuration entry remains. */
+async function expectOpenClawTelegramRemoved(
+  sandbox: SandboxClient,
+  artifactName: string,
+): Promise<void> {
+  await expect(openClawTelegramMatches(sandbox, artifactName, "present")).resolves.toBe(false);
 }
 
 /** Detect an active policy preset in the human-readable policy listing. */
@@ -556,7 +574,7 @@ test(
     });
 
     progress.phase("validate Telegram removal");
-    await expectOpenClawTelegram(sandbox, false, "phase-6-openclaw-json-after-remove");
+    await expectOpenClawTelegramRemoved(sandbox, "phase-6-openclaw-json-after-remove");
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");
     expectHostTelegramPlan("removed", "after remove+rebuild");
