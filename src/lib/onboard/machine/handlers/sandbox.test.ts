@@ -92,10 +92,12 @@ describe("handleSandboxState", () => {
       "my-assistant",
       expect.objectContaining({ model: "model", provider: "provider" }),
     );
-    expect(calls.updateSandbox).not.toHaveBeenCalledWith(
-      "my-assistant",
-      expect.objectContaining({ agent: expect.anything() }),
-    );
+    expect(
+      calls.updateSandbox.mock.calls.some(
+        ([sandboxName, patch]) =>
+          sandboxName === "my-assistant" && Object.prototype.hasOwnProperty.call(patch, "agent"),
+      ),
+    ).toBe(false);
     // Default-marking is deferred to finalization (#4614) — the sandbox step must not set it.
     expect(calls.complete).toHaveBeenCalledWith(
       "sandbox",
