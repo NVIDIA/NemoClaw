@@ -3211,9 +3211,9 @@ This injection happens inside the gateway, so `NEMOCLAW_DOCKER_GPU_PATCH=0` does
 Rerun with `--no-gpu`, or set `NEMOCLAW_SANDBOX_GPU=0` and resume onboarding.
 
 If onboarding reports `OpenShell supervisor did not reconnect to the GPU-enabled container.` even though the diagnostic bundle shows the patched container is running and healthy, the supervisor-reconnect wait is treating a transient Error phase (reported while the OpenShell host re-registers the new container) as fatal.
-The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to fifteen consecutive polls of about 30 seconds in total.
+The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to 60 consecutive polls of about 120 seconds in total.
 Increase the debounce window with `NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE` if your host needs more time to re-register the patched container, for example slow WSL2 + Docker Desktop setups.
-Set it to a higher integer such as `30` (about 60 seconds) and rerun onboarding; the value is clamped to a minimum of `1`.
+Set it to an integer above the default of 60, such as `120` (about 240 seconds), and rerun onboarding; the value is clamped to a minimum of `1`.
 If reconnect still fails after the GPU patch, NemoClaw attempts to restore the pre-patch CPU container before exiting.
 When rollback succeeds, the output says the pre-patch sandbox was restored.
 When rollback fails, the error says rollback failed and the pre-patch container was not restored, so inspect Docker state before retrying.
