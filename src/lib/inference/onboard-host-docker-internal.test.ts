@@ -46,42 +46,46 @@ describe("host.docker.internal onboarding inference policy", () => {
     expect(result.message).toMatch(/host\.openshell\.internal:11435/);
   });
 
-  it("recognizes Windows-host Ollama tool calls returned through Docker stdout (#9116)", async () => {
-    const seenCommands: Array<{ command: string; args: readonly string[] }> = [];
-    const containerProbeSpawnSyncImpl = (
-      command: string,
-      args: readonly string[],
-    ): SpawnSyncReturns<string> => {
-      seenCommands.push({ command, args });
-      const body = JSON.stringify({
-        choices: [
-          {
-            message: {
-              tool_calls: [
-                {
-                  id: "call_1",
-                  type: "function",
-                  function: { name: "sessions_send", arguments: '{"message":"hello"}' },
-                },
-              ],
+  it.each([
+    ["required", true],
+    ["optional", false],
+  ] as const)(
+    "recognizes Windows-host Ollama tool calls when strict tool calling is %s (#9116)",
+    async (_label, requireChatCompletionsToolCalling) => {
+      const seenCommands: Array<{ command: string; args: readonly string[] }> = [];
+      const containerProbeSpawnSyncImpl = (
+        command: string,
+        args: readonly string[],
+      ): SpawnSyncReturns<string> => {
+        seenCommands.push({ command, args });
+        const body = JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
             },
-          },
-        ],
-      });
-      const writeOutIndex = args.indexOf("-w");
-      const writeOut = args[writeOutIndex + 1];
-      const stdout = `${body}${writeOut.replace("%{http_code}", "200")}`;
-      return {
-        pid: 123,
-        output: [stdout, ""],
-        stdout,
-        stderr: "",
-        status: 0,
-        signal: null,
+          ],
+        });
+        const writeOutIndex = args.indexOf("-w");
+        const writeOut = args[writeOutIndex + 1];
+        const stdout = `${body}${writeOut.replace("%{http_code}", "200")}`;
+        return {
+          pid: 123,
+          output: [stdout, ""],
+          stdout,
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
       };
-    };
 
-    for (const requireChatCompletionsToolCalling of [true, false]) {
       const result = await probeOpenAiLikeEndpointOptimized(
         "http://host.docker.internal:11434/v1",
         "openai/nemotron-mini",
@@ -99,15 +103,15 @@ describe("host.docker.internal onboarding inference policy", () => {
         api: "openai-completions",
         label: "Chat Completions API",
       });
-    }
-    expect(seenCommands).toHaveLength(2);
-    seenCommands.forEach(({ command, args }) => {
-      expect(command).toBe("docker");
-      expect(args).toContain("curlimages/curl:8.10.1");
-      expect(args).toContain("http://host.docker.internal:11434/v1/chat/completions");
-      expect(args).not.toContain("--volume");
-    });
-  });
+      expect(seenCommands).toHaveLength(1);
+      seenCommands.forEach(({ command, args }) => {
+        expect(command).toBe("docker");
+        expect(args).toContain("curlimages/curl:8.10.1");
+        expect(args).toContain("http://host.docker.internal:11434/v1/chat/completions");
+        expect(args).not.toContain("--volume");
+      });
+    },
+  );
 
   it.each([
     {
