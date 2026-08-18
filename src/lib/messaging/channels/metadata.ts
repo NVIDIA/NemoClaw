@@ -115,6 +115,7 @@ export function listMessagingCredentialEnvAssignments(
       ]),
     );
     return manifest.render.flatMap((render) => {
+      if (options.agent && render.agent !== options.agent) return [];
       if (render.kind !== "env-lines") return [];
       return render.lines.flatMap((line) => {
         const separator = line.indexOf("=");

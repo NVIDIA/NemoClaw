@@ -92,6 +92,11 @@ describe("built-in messaging channel metadata", () => {
         targetEnvKey: "TEAMS_CLIENT_SECRET",
       },
     ]);
+    expect(
+      listMessagingCredentialEnvAssignments({ agent: "openclaw" }).filter(
+        ({ channelId }) => channelId === "teams",
+      ),
+    ).toEqual([]);
   });
 
   it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
