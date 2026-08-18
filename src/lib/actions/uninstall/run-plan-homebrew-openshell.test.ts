@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -12,12 +14,12 @@ import {
 } from "./run-plan";
 
 const FORMULA = "nvidia/openshell/openshell";
-const EXECUTABLE_NAMES = new Set([
+const EXECUTABLE_NAMES = [
   "openshell",
   "openshell-driver-vm",
   "openshell-gateway",
   "openshell-sandbox",
-]);
+] as const;
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
@@ -42,43 +44,54 @@ function runUninstallPlan(deps: UninstallRunDeps) {
   );
 }
 
-function uninstallOnMacOs(options: { brewAvailable: boolean; brewStatus: number | null }) {
+function uninstallOpenShell(options: {
+  brewAvailable: boolean;
+  brewStatus: number | null;
+  platform?: NodeJS.Platform;
+}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-homebrew-"));
+  const userBin = path.join(home, ".local", "bin");
+  const executablePaths = EXECUTABLE_NAMES.map((name) => path.join(userBin, name));
+  fs.mkdirSync(userBin, { mode: 0o700, recursive: true });
+  for (const executablePath of executablePaths) {
+    fs.writeFileSync(executablePath, "", { mode: 0o755 });
+  }
+
   const calls: string[][] = [];
   const logs: string[] = [];
   const removed: string[] = [];
+  const existing = new Set(executablePaths);
 
-  const result = runUninstallPlan({
-    commandExists: (command) =>
-      command === "openshell" || (command === "brew" && options.brewAvailable),
-    env: { HOME: "/tmp/nemoclaw-uninstall-homebrew" } as NodeJS.ProcessEnv,
-    existsSync: (target) =>
-      EXECUTABLE_NAMES.has(path.basename(String(target))) &&
-      path.basename(path.dirname(String(target))) === "bin",
-    hasPortableRuntimeCleanup: () => false,
-    isTty: false,
-    log: (line) => logs.push(line),
-    platform: "darwin",
-    rmSync: vi.fn((target) => removed.push(String(target))),
-    run: vi.fn((command, args) => {
-      calls.push([command, ...args]);
-      return command === "openshell" && args[0] === "gateway" && args[1] === "list"
-        ? ok(JSON.stringify([{ name: "nemoclaw" }]))
-        : command === "brew" && args[0] === "list"
-          ? { status: options.brewStatus, stdout: "", stderr: "" }
-          : ok();
-    }),
-    runDocker: () => ok(),
-  });
+  try {
+    const result = runUninstallPlan({
+      commandExists: (command) =>
+        command === "openshell" || (command === "brew" && options.brewAvailable),
+      env: { HOME: home } as NodeJS.ProcessEnv,
+      existsSync: (target) => existing.has(target) && fs.existsSync(target),
+      hasPortableRuntimeCleanup: () => false,
+      isTty: false,
+      log: (line) => logs.push(line),
+      platform: options.platform ?? "darwin",
+      rmSync: vi.fn((target) => removed.push(String(target))),
+      run: vi.fn((command, args) => {
+        calls.push([command, ...args]);
+        return command === "openshell" && args[0] === "gateway" && args[1] === "list"
+          ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+          : command === "brew" && args[0] === "list"
+            ? { status: options.brewStatus, stdout: "", stderr: "" }
+            : ok();
+      }),
+      runDocker: () => ok(),
+    });
 
-  return { calls, logs, removed, result };
-}
-
-function removedOpenShellExecutables(removed: readonly string[]): string[] {
-  return removed.filter((target) => EXECUTABLE_NAMES.has(path.basename(target)));
+    return { calls, executablePaths, logs, removed, result };
+  } finally {
+    fs.rmSync(home, { force: true, recursive: true });
+  }
 }
 
 it("retains a Homebrew-managed OpenShell and reports its removal command (#8882)", () => {
-  const { calls, logs, removed, result } = uninstallOnMacOs({
+  const { calls, logs, removed, result } = uninstallOpenShell({
     brewAvailable: true,
     brewStatus: 0,
   });
@@ -86,7 +99,7 @@ it("retains a Homebrew-managed OpenShell and reports its removal command (#8882)
   expect(result.exitCode).toBe(0);
   expect(calls).toContainEqual(["brew", "list", "--formula", FORMULA]);
   expect(calls.some((call) => call[0] === "brew" && call[1] === "uninstall")).toBe(false);
-  expect(removedOpenShellExecutables(removed)).toEqual([]);
+  expect(removed).toEqual([]);
   expect(logs).toContain(
     `Kept Homebrew-managed OpenShell. To remove it, run: brew uninstall ${FORMULA}`,
   );
@@ -112,12 +125,24 @@ it.each([
     report: `Kept OpenShell executables because Homebrew did not confirm ${FORMULA}. Check the formula before removing OpenShell.`,
   },
 ])("retains OpenShell when $label (#8882)", ({ brewAvailable, brewStatus, report }) => {
-  const { calls, logs, removed, result } = uninstallOnMacOs({ brewAvailable, brewStatus });
+  const { calls, logs, removed, result } = uninstallOpenShell({ brewAvailable, brewStatus });
 
   expect(result.exitCode).toBe(0);
   expect(calls.filter((call) => call[0] === "brew")).toEqual(
     brewAvailable ? [["brew", "list", "--formula", FORMULA]] : [],
   );
-  expect(removedOpenShellExecutables(removed)).toEqual([]);
+  expect(removed).toEqual([]);
   expect(logs).toContain(report);
+});
+
+it("removes managed OpenShell executables on Linux (#8882)", () => {
+  const { executablePaths, removed, result } = uninstallOpenShell({
+    brewAvailable: false,
+    brewStatus: 0,
+    platform: "linux",
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(new Set(removed)).toEqual(new Set(executablePaths));
+  expect(removed).toHaveLength(executablePaths.length);
 });
