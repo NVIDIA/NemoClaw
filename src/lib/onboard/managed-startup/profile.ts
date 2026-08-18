@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { authorizeMessagingManagedStartupPlaceholders } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
@@ -996,7 +997,7 @@ function valueLooksLikeSecret(value: string): boolean {
 function isMessagingCredentialPlaceholder(
   path: readonly string[],
   value: unknown,
-  allowedWechatAccountBuildStepIndexes: ReadonlySet<string>,
+  allowedBuildStepPlaceholders: ReadonlySet<string>,
 ): boolean {
   if (typeof value !== "string" || !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) {
     return false;
@@ -1015,63 +1016,18 @@ function isMessagingCredentialPlaceholder(
     path[2] === "agentRender" &&
     JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
     path[4] === "value";
-  const isWechatAccountTokenPlaceholder =
-    path.length === 7 &&
-    path[0] === "messaging" &&
-    path[1] === "plan" &&
-    path[2] === "buildSteps" &&
-    allowedWechatAccountBuildStepIndexes.has(path[3] ?? "") &&
-    path[4] === "value" &&
-    path[5] === "content" &&
-    path[6] === "token" &&
-    messagingCredentialPlaceholderEnvKey(value) === "WECHAT_BOT_TOKEN";
+  const isAuthorizedBuildStepPlaceholder = allowedBuildStepPlaceholders.has(
+    buildStepPlaceholderKey(path, value),
+  );
   return (
     isCredentialBindingPlaceholder ||
     isAgentRenderValuePlaceholder ||
-    isWechatAccountTokenPlaceholder
+    isAuthorizedBuildStepPlaceholder
   );
 }
 
-function isCanonicalWechatAccountBuildFilePath(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const prefix = "openclaw-weixin/accounts/";
-  const suffix = ".json";
-  if (!value.startsWith(prefix) || !value.endsWith(suffix)) return false;
-  const accountId = value.slice(prefix.length, -suffix.length);
-  return (
-    accountId.length > 0 &&
-    accountId === accountId.trim() &&
-    accountId !== "." &&
-    accountId !== ".." &&
-    !/[\\/\0-\x1F\x7F]/u.test(accountId) &&
-    !accountId.includes("..")
-  );
-}
-
-function isCanonicalWechatAccountBuildStep(
-  path: readonly string[],
-  value: Record<string, unknown>,
-): boolean {
-  if (
-    path.length !== 4 ||
-    path[0] !== "messaging" ||
-    path[1] !== "plan" ||
-    path[2] !== "buildSteps" ||
-    !JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "")
-  ) {
-    return false;
-  }
-  const buildValue = ownDataPropertyValue(value, "value");
-  return (
-    ownDataPropertyValue(value, "channelId") === "wechat" &&
-    ownDataPropertyValue(value, "kind") === "build-file" &&
-    ownDataPropertyValue(value, "hookId") === "wechat-seed-openclaw-account" &&
-    ownDataPropertyValue(value, "handler") === "wechat.seedOpenClawAccount" &&
-    ownDataPropertyValue(value, "outputId") === "openclawWeixinAccountFile" &&
-    ownDataPropertyValue(value, "required") === true &&
-    isPlainObject(buildValue) &&
-    isCanonicalWechatAccountBuildFilePath(ownDataPropertyValue(buildValue, "path"))
-  );
+function buildStepPlaceholderKey(path: readonly string[], value: string): string {
+  return JSON.stringify([path, value]);
 }
 
 function messagingCredentialPlaceholderEnvKey(value: string): string | null {
@@ -1508,7 +1464,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
     path: readonly string[];
   }> = [{ value: root, depth: 0, path: [] }];
   const allowedRuntimeAliasIndexes = new Set<string>();
-  const allowedWechatAccountBuildStepIndexes = new Set<string>();
+  const allowedBuildStepPlaceholders = new Set<string>();
   let discoveredNodes = 1;
   let observedBytes = 0;
 
@@ -1540,7 +1496,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         !isMessagingCredentialPlaceholder(
           current.path,
           current.value,
-          allowedWechatAccountBuildStepIndexes,
+          allowedBuildStepPlaceholders,
         ) &&
         !isMessagingCredentialPlaceholderAssignment(current.path, current.value) &&
         (valueLooksLikeSecret(current.value) ||
@@ -1603,8 +1559,18 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       if (isCanonicalMessagingRuntimeEnvAlias(current.path, current.value)) {
         allowedRuntimeAliasIndexes.add(current.path[4] as string);
       }
-      if (isCanonicalWechatAccountBuildStep(current.path, current.value)) {
-        allowedWechatAccountBuildStepIndexes.add(current.path[3] as string);
+      if (
+        current.path.length === 4 &&
+        current.path[0] === "messaging" &&
+        current.path[1] === "plan" &&
+        current.path[2] === "buildSteps" &&
+        JSON_ARRAY_INDEX_SEGMENT_RE.test(current.path[3] ?? "")
+      ) {
+        for (const authorization of authorizeMessagingManagedStartupPlaceholders(current.value)) {
+          allowedBuildStepPlaceholders.add(
+            buildStepPlaceholderKey([...current.path, ...authorization.path], authorization.value),
+          );
+        }
       }
       const keys = Object.getOwnPropertyNames(current.value);
       if (
@@ -1638,7 +1604,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
           !isMessagingCredentialPlaceholder(
             [...current.path, key],
             child,
-            allowedWechatAccountBuildStepIndexes,
+            allowedBuildStepPlaceholders,
           ) &&
           !isMessagingPackagePin([...current.path, key], child)
         ) {
@@ -1966,10 +1932,7 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     if (primaryModelRef !== null || compatibility !== null || inputModalities !== null) {
       invalid(`${agent} does not support primaryModelRef, compatibility, or inputModalities`);
     }
-    if (
-      agent === "langchain-deepagents-code" &&
-      !isValidDcodeUpstreamProvider(upstreamProvider)
-    ) {
+    if (agent === "langchain-deepagents-code" && !isValidDcodeUpstreamProvider(upstreamProvider)) {
       invalid(
         "inference.upstreamProvider must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode",
       );

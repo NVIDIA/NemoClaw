@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChannelManifest } from "../../manifest";
+import {
+  WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID,
+  WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
+  WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID,
+} from "./hooks/seed-openclaw-account";
 
 export const wechatManifest = {
   schemaVersion: 1,
@@ -193,9 +198,9 @@ export const wechatManifest = {
       ],
     },
     {
-      id: "wechat-seed-openclaw-account",
+      id: WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID,
       phase: "post-agent-install",
-      handler: "wechat.seedOpenClawAccount",
+      handler: WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
       agents: ["openclaw"],
       inputs: [
         "wechatConfig.accountId",
@@ -210,7 +215,7 @@ export const wechatManifest = {
           required: true,
         },
         {
-          id: "openclawWeixinAccountFile",
+          id: WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID,
           kind: "build-file",
           required: true,
         },

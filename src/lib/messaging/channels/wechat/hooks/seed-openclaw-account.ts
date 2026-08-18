@@ -10,6 +10,8 @@ import type {
 import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url";
 
 export const WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID = "wechat.seedOpenClawAccount";
+export const WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID = "wechat-seed-openclaw-account";
+export const WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID = "openclawWeixinAccountFile";
 export const WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 export const WECHAT_PLUGIN_ID = "openclaw-weixin";
 export const WECHAT_PLUGIN_INSTALL_PATH = "/sandbox/.openclaw/extensions/openclaw-weixin";
@@ -61,10 +63,10 @@ export function buildWechatSeedOpenClawAccountOutputs(
         content: [accountId],
       },
     },
-    openclawWeixinAccountFile: {
+    [WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID]: {
       kind: "build-file",
       value: {
-        path: `openclaw-weixin/accounts/${accountId}.json`,
+        path: wechatAccountFilePath(accountId),
         mode: "0600",
         content: {
           token,
@@ -109,15 +111,69 @@ export function buildWechatSeedOpenClawAccountOutputs(
   };
 }
 
-function assertSafeWechatAccountId(accountId: string): void {
+export interface WechatManagedStartupPlaceholderAuthorization {
+  readonly path: readonly string[];
+  readonly value: string;
+}
+
+export function authorizeWechatManagedStartupPlaceholders(
+  step: unknown,
+): readonly WechatManagedStartupPlaceholderAuthorization[] {
+  if (!isPlainDataObject(step)) return [];
+  const value = ownDataPropertyValue(step, "value");
   if (
-    accountId === "." ||
-    accountId === ".." ||
-    /[\\/\0-\x1F\x7F]/.test(accountId) ||
-    accountId.includes("..")
+    ownDataPropertyValue(step, "channelId") !== "wechat" ||
+    ownDataPropertyValue(step, "kind") !== "build-file" ||
+    ownDataPropertyValue(step, "hookId") !== WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID ||
+    ownDataPropertyValue(step, "handler") !== WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID ||
+    ownDataPropertyValue(step, "outputId") !== WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID ||
+    ownDataPropertyValue(step, "required") !== true ||
+    !isPlainDataObject(value) ||
+    !isWechatAccountFilePath(ownDataPropertyValue(value, "path"))
   ) {
+    return [];
+  }
+  return [{ path: ["value", "content", "token"], value: WECHAT_TOKEN_PLACEHOLDER }];
+}
+
+function wechatAccountFilePath(accountId: string): string {
+  return `openclaw-weixin/accounts/${accountId}.json`;
+}
+
+function isWechatAccountFilePath(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const prefix = "openclaw-weixin/accounts/";
+  const suffix = ".json";
+  if (!value.startsWith(prefix) || !value.endsWith(suffix)) return false;
+  const accountId = value.slice(prefix.length, -suffix.length);
+  return accountId === accountId.trim() && isSafeWechatAccountId(accountId);
+}
+
+function assertSafeWechatAccountId(accountId: string): void {
+  if (!isSafeWechatAccountId(accountId)) {
     throw new Error("WeChat account id contains unsafe filename characters.");
   }
+}
+
+function isSafeWechatAccountId(accountId: string): boolean {
+  return (
+    accountId.length > 0 &&
+    accountId !== "." &&
+    accountId !== ".." &&
+    !/[\\/\0-\x1F\x7F]/.test(accountId) &&
+    !accountId.includes("..")
+  );
+}
+
+function isPlainDataObject(value: unknown): value is Record<string, unknown> {
+  return (
+    value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function ownDataPropertyValue(value: Record<string, unknown>, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
 function requiredInputString(inputs: MessagingHookInputMap | undefined, key: string): string {
