@@ -12,7 +12,7 @@ import {
 } from "./mcp-bridge-destroy-preflight";
 import { assertGeneratedPolicyExactReadOnly } from "./mcp-bridge-policy";
 import {
-  assertNoAttachedProviderCredentialCollision,
+  assertNoAttachedProviderCredentialCollisions,
   preflightMcpEntryTargets,
 } from "./mcp-bridge-provider";
 import {
@@ -163,9 +163,9 @@ async function inspectReadOnlyRecoveryState(
     policyByServer.set(entry.server, policyFingerprint(policy));
     const provider = inspectExactMcpDestroyProvider(entry, { allowMissing: false });
     providerByServer.set(entry.server, providerFingerprint(provider));
-    assertNoAttachedProviderCredentialCollision(sandboxName, entry);
     targetsByServer.set(entry.server, targetFingerprint(target));
   }
+  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
   return { policyByServer, providerByServer, targetsByServer };
 }
 

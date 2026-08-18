@@ -675,36 +675,39 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.removePreset).not.toHaveBeenCalled();
   });
 
-  it("permits read-only host recovery only while complete MCP state stays exact (#7062)", async () => {
+  it("inspects attached providers once per read-only checkpoint for complete MCP state (#9388)", async () => {
     registry.registerSandbox({
       name: "alpha",
       agent: "openclaw",
       gatewayName: "nemoclaw",
-      mcp: { bridges: { github: bridgeEntries.github } },
+      mcp: { bridges: { github: bridgeEntries.github, slack: bridgeEntries.slack } },
     });
     registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    registry.addCustomPolicy("alpha", ownedPolicy("slack"));
     const before = registry.getSandbox("alpha");
 
     const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
     await preparation.revalidateBeforeDelete?.();
     preparation.assertDeleteEdgeUnchanged?.();
 
-    expect(preparation.entries).toEqual([bridgeEntries.github]);
+    expect(preparation.entries).toEqual([bridgeEntries.github, bridgeEntries.slack]);
     expect(preparation.detachedProviderEntries).toEqual([]);
     expect(preparation.scrubbedAdapterEntries).toEqual([]);
     expect(registry.getSandbox("alpha")).toEqual(before);
     expect(testState.calls).toEqual([
       "provider get alpha-mcp-github",
+      "provider get alpha-mcp-slack",
       "sandbox provider list alpha",
       "provider get alpha-mcp-github",
       "provider get alpha-mcp-slack",
       "provider get alpha-mcp-github",
+      "provider get alpha-mcp-slack",
       "sandbox provider list alpha",
       "provider get alpha-mcp-github",
       "provider get alpha-mcp-slack",
     ]);
     expect(testState.recoverNamedGatewayRuntime).toHaveBeenCalledTimes(2);
-    expect(testState.getPresetContentGatewayState).toHaveBeenCalledTimes(2);
+    expect(testState.getPresetContentGatewayState).toHaveBeenCalledTimes(4);
     expect(testState.adapterCalls).toEqual([]);
     expect(testState.applyPresetContent).not.toHaveBeenCalled();
     expect(testState.removePreset).not.toHaveBeenCalled();
