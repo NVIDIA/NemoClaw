@@ -31,6 +31,7 @@ import {
 type ResolveManagedImageCatalog = (options: {
   readonly release: string;
   readonly platform: ManagedImagePlatform;
+  readonly revision?: string;
 }) => Promise<ManagedImageContractCatalog>;
 
 export interface PrepareSandboxWorkloadSourceInput {
@@ -41,8 +42,15 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly version: string;
   readonly policy?: ManagedImageSelectionPolicy;
   readonly catalogPath?: string | null;
+  readonly catalogRevision?: string | null;
   /** Contract from the repository-accepted candidate qualification receipt. */
   readonly acceptedCandidateContract?: ManagedImageContractV1 | null;
+}
+
+export function liveE2eManagedImageRevision(environment: NodeJS.ProcessEnv): string | null {
+  if (environment.GITHUB_ACTIONS !== "true") return null;
+  const revision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
+  return revision ? revision : null;
 }
 
 function readExactManagedImageCatalog(catalogPath: string): ManagedImageContractCatalog {
@@ -280,7 +288,11 @@ export async function prepareSandboxWorkloadSource(
       ? readExactManagedImageCatalog(input.catalogPath)
       : await (
           dependencies.resolveCatalog ?? ((options) => resolveManagedImageCatalogFromGhcr(options))
-        )({ release, platform });
+        )({
+          release,
+          platform,
+          ...(input.catalogRevision ? { revision: input.catalogRevision } : {}),
+        });
   } catch (error) {
     if (!(error instanceof ManagedImageCatalogUnavailableError)) {
       throw new SandboxWorkloadPreparationError(

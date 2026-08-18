@@ -349,41 +349,37 @@ describe("CLI dispatch", () => {
     );
   });
 
-  it("points OpenShell-only commands at openshell instead of sandbox connect (#3388)", async () => {
+  it.each([
+    {
+      argv: ["term"],
+      entered: "term",
+      command: "Run: openshell term",
+      notes: [],
+    },
+    {
+      argv: ["policy", "set"],
+      entered: "policy set",
+      command: "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
+      notes: ["nemoclaw <sandbox-name> policy add <preset>"],
+    },
+    {
+      argv: ["gateway", "stop"],
+      entered: "gateway stop",
+      command: "Run: openshell gateway stop -g nemoclaw",
+      notes: [],
+    },
+  ])("points $entered at OpenShell instead of sandbox connect (#3388)", async (testCase) => {
     await withDirectPublicDispatch(async ({ dispatchCli, exitSpy, resetObservedCalls, stderr }) => {
-      const cases = [
-        {
-          argv: ["term"],
-          entered: "term",
-          command: "Run: openshell term",
-          notes: [],
-        },
-        {
-          argv: ["policy", "set"],
-          entered: "policy set",
-          command: "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
-          notes: ["nemoclaw <sandbox-name> policy add <preset>"],
-        },
-        {
-          argv: ["gateway", "stop"],
-          entered: "gateway stop",
-          command: "Run: openshell gateway stop -g nemoclaw",
-          notes: [],
-        },
-      ];
+      resetObservedCalls();
 
-      for (const testCase of cases) {
-        resetObservedCalls();
+      await expect(dispatchCli(testCase.argv)).rejects.toThrow("process.exit:1");
 
-        await expect(dispatchCli(testCase.argv)).rejects.toThrow("process.exit:1");
-
-        const output = stderr.join("\n");
-        expect(output).toContain(`Unknown nemoclaw command: ${testCase.entered}`);
-        expect(output).toContain(testCase.command);
-        expect(testCase.notes.every((note) => output.includes(note))).toBe(true);
-        expect(output).not.toContain("Try: nemoclaw <sandbox-name> connect");
-        expect(exitSpy).toHaveBeenCalledWith(1);
-      }
+      const output = stderr.join("\n");
+      expect(output).toContain(`Unknown nemoclaw command: ${testCase.entered}`);
+      expect(output).toContain(testCase.command);
+      expect(testCase.notes.every((note) => output.includes(note))).toBe(true);
+      expect(output).not.toContain("Try: nemoclaw <sandbox-name> connect");
+      expect(exitSpy).toHaveBeenCalledWith(1);
     });
   });
 

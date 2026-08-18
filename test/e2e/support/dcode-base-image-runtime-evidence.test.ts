@@ -7,6 +7,7 @@ import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbo
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
 import {
   DCODE_BASE_IMAGE_TARGET_ID,
+  dcodeBaseImageReferenceForContract,
   loadDcodeBaseImagePublicationEvidence,
   parseDcodeBaseImagePublicationEvidence,
   verifyDcodeBaseImageRuntimeEvidence,
@@ -74,6 +75,19 @@ function resolutionMetadata(
 }
 
 describe("Deep Agents Code published base runtime evidence", () => {
+  it("selects the linux/amd64 platform reference when trusted manual PR E2E supplies it", () => {
+    const environment = publicationEnvironment({
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_SHA: "f".repeat(40),
+      NEMOCLAW_E2E_EXPECTED_SHA: CANDIDATE_REVISION,
+    });
+    const contract = parseDcodeBaseImagePublicationEvidence(publicationEvidence(), environment);
+
+    expect(dcodeBaseImageReferenceForContract(contract)).toBe(AMD64_REFERENCE);
+    expect(environment[DCODE_BASE_IMAGE_ENV]).toBe(AMD64_REFERENCE);
+  });
+
   it("records the completed sandbox image only when its platform digest matches publication", () => {
     const contract = parseDcodeBaseImagePublicationEvidence(
       publicationEvidence(),
@@ -218,8 +232,17 @@ describe("Deep Agents Code published base runtime evidence", () => {
       /did not use the published linux\/amd64 base digest/,
     ],
     [
-      "the opposite platform digest",
+      "the opposite platform digest for amd64",
       resolutionMetadata({ digest: ARM64_DIGEST, ref: ARM64_REFERENCE }),
+      /did not use the published linux\/amd64 base digest/,
+    ],
+    [
+      "self-consistent opposite-platform metadata",
+      resolutionMetadata({
+        architecture: "arm64",
+        digest: ARM64_DIGEST,
+        ref: ARM64_REFERENCE,
+      }),
       /did not use the published linux\/amd64 base digest/,
     ],
     [
@@ -240,7 +263,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
     [
       "an unsupported platform",
       resolutionMetadata({ architecture: "ppc64le" }),
-      /used unsupported platform/,
+      /did not use the published linux\/amd64 base digest/,
     ],
   ])("rejects %s", (_label, metadata, expectedError) => {
     const contract = parseDcodeBaseImagePublicationEvidence(
