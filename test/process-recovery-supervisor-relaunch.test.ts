@@ -10,6 +10,7 @@ import {
 import { relaunchManagedSupervisorSession } from "../src/lib/actions/sandbox/supervisor-relaunch.ts";
 import * as openshellRuntime from "../src/lib/adapters/openshell/runtime.ts";
 import * as agentRuntime from "../src/lib/agent/runtime.ts";
+import { finalizeDockerGpuPatchBackup } from "../src/lib/onboard/docker-gpu-patch-finalize.ts";
 import * as registry from "../src/lib/state/registry.ts";
 
 const OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR = `Error:   × status: Unavailable, message: "relay
@@ -47,13 +48,17 @@ function setImmediateRecoveryPolling() {
   vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
 }
 
-function composedRelaunchTransaction(order: string[]) {
-  const finalizeTransaction = vi.fn(({ supervisorReady }: { supervisorReady: boolean }) => {
-    order.push(supervisorReady ? "commit-container" : "rollback-container");
-    return supervisorReady
-      ? { backupRemoved: true, rolledBack: false }
-      : { backupRemoved: false, rolledBack: true };
-  });
+function composedRelaunchTransaction(
+  order: string[],
+  finalizeTransaction: typeof finalizeDockerGpuPatchBackup = vi.fn(
+    ({ supervisorReady }: { supervisorReady: boolean }) => {
+      order.push(supervisorReady ? "commit-container" : "rollback-container");
+      return supervisorReady
+        ? { backupRemoved: true, rolledBack: false }
+        : { backupRemoved: false, rolledBack: true };
+    },
+  ),
+) {
   const resolveContainer = vi
     .fn()
     .mockReturnValueOnce("old-container-id")
@@ -683,6 +688,113 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ supervisorReady: true }),
+    );
+  });
+
+  it("reports the missing readiness pass after a legacy replacement restart (#9364)", () => {
+    mockOpenClawSandbox("legacy-handoff-box");
+    setImmediateRecoveryPolling();
+    const order: string[] = [];
+    let forwardStarted = false;
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRm = vi.fn(() => ({ status: 0 }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const finalizeTransaction = vi.fn(
+      (options: Parameters<typeof finalizeDockerGpuPatchBackup>[0]) =>
+        finalizeDockerGpuPatchBackup(options, { dockerStop, dockerRm, dockerStart }),
+    );
+    const { relaunchManagedSupervisorSessionImpl } = composedRelaunchTransaction(
+      order,
+      finalizeTransaction,
+    );
+    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
+      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
+    );
+    const missingSupervisor = {
+      status: 1,
+      stdout: "",
+      stderr: "SUPERVISOR_NOT_RUNNING",
+    };
+    const acceptedProbe = {
+      status: 0,
+      stdout: "GATEWAY_PID=4242\n",
+      stderr: "",
+    };
+    const restartedGateway = {
+      status: 0,
+      stdout: `v1 ${"c".repeat(64)} complete ok 4242 4343\nGATEWAY_PID=4343`,
+      stderr: "",
+    };
+    const requestPinnedGatewaySupervisorAction = vi
+      .fn()
+      .mockReturnValueOnce(missingSupervisor)
+      .mockReturnValueOnce(acceptedProbe)
+      .mockReturnValueOnce(acceptedProbe)
+      .mockReturnValueOnce(restartedGateway)
+      .mockReturnValueOnce(missingSupervisor)
+      .mockReturnValue(acceptedProbe);
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
+      (_name: string, options?: { beforeProbe?: (timeoutMs: number) => boolean | null }) =>
+        options?.beforeProbe?.(1000) === true,
+    );
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((args) => {
+      const responses = {
+        "forward list": () => ({
+          status: 0,
+          output: forwardStarted
+            ? "SANDBOX  BIND  PORT  PID  STATUS\nlegacy-handoff-box  127.0.0.1  18789  12345  running"
+            : "SANDBOX  BIND  PORT  PID  STATUS",
+        }),
+      };
+      return (
+        responses[args.join(" ") as keyof typeof responses]?.() ?? {
+          status: 1,
+          output: "",
+          stdout: "",
+          stderr: "unexpected openshell command",
+        }
+      );
+    });
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
+      forwardStarted ||= args.join(" ") === "forward start --background 18789 legacy-handoff-box";
+      return { status: 0 } as never;
+    });
+
+    const result = checkAndRecoverSandboxProcesses("legacy-handoff-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: false,
+      forwardRecoveryFailed: true,
+      forwardRecoveryFailureDetail:
+        "the primary dashboard/API host forward could not be re-established",
+    });
+    expect(dockerStop).toHaveBeenCalledWith(
+      "replacement-container-id",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerRm).toHaveBeenCalledWith(
+      "openshell-recovery-box-nemoclaw-backup",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerStart).toHaveBeenCalledWith(
+      "replacement-container-id",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["forward", "start", "--background", "18789", "legacy-handoff-box"],
+      expect.objectContaining({ ignoreError: true }),
     );
   });
 
