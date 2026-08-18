@@ -13,7 +13,7 @@ import {
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   assertOpenShellGatewayAuthArtifactsSafe,
-  buildSandboxTokenContainerProbeDockerArgs,
+  buildSandboxTokenContainerProbeInvocation,
   registerSandboxJwtArtifactRedaction,
   skipUnavailableProbeImage,
   withOpenShellGatewayAuthArtifactSafety,
@@ -33,10 +33,11 @@ function withArtifactDir(fn: (dir: string) => void): void {
 }
 
 describe("OpenShell gateway auth source contract helpers", () => {
-  it("mounts only TLS material into the sandbox JWT Docker probe", () => {
+  it("passes the sandbox JWT through stdin without adding it to container arguments", () => {
     const stateDir = path.resolve("/tmp/nemoclaw-auth-source-state");
-    const args = buildSandboxTokenContainerProbeDockerArgs({
-      authorization: "Bearer sandbox-token",
+    const sandboxToken = "Bearer sandbox-token";
+    const { args, input } = buildSandboxTokenContainerProbeInvocation({
+      authorization: sandboxToken,
       dockerBin: "docker",
       networkName: "nemoclaw-auth-source-net",
       payload: Buffer.from("sandbox request"),
@@ -51,22 +52,26 @@ describe("OpenShell gateway auth source contract helpers", () => {
     ]);
     expect(valuesAfterFlag(args, "--env")).toEqual(
       expect.arrayContaining([
-        "PROBE_AUTHORIZATION=Bearer sandbox-token",
         "PROBE_CA_PATH=/tmp/nemoclaw-probe-ca.crt",
         "PROBE_CLIENT_CERT_PATH=/tmp/nemoclaw-probe-client.crt",
         "PROBE_CLIENT_KEY_PATH=/tmp/nemoclaw-probe-client.key",
       ]),
     );
+    expect(args).toContain("--interactive");
+    expect(input).toBe(sandboxToken);
+    expect(args.at(-1)).toContain('fs.readFileSync(0, "utf8")');
     expect(args).not.toContain(`${stateDir}:${stateDir}:ro`);
 
     const serializedArgs = args.join("\n");
+    expect(serializedArgs).not.toContain(sandboxToken);
+    expect(serializedArgs).not.toContain("PROBE_AUTHORIZATION");
     expect(serializedArgs).not.toContain("jwt/signing.pem");
     expect(serializedArgs).not.toContain("jwt/kid");
     expect(serializedArgs).not.toContain("openshell-gateway.toml");
   });
 
-  it("omits sandbox JWT material from the mTLS-only Docker probe", () => {
-    const args = buildSandboxTokenContainerProbeDockerArgs({
+  it("uses empty stdin for the mTLS-only Docker probe", () => {
+    const { args, input } = buildSandboxTokenContainerProbeInvocation({
       dockerBin: "docker",
       networkName: "nemoclaw-auth-source-net",
       payload: Buffer.from("sandbox request"),
@@ -77,10 +82,11 @@ describe("OpenShell gateway auth source contract helpers", () => {
     expect(
       valuesAfterFlag(args, "--env").some((value) => value.startsWith("PROBE_AUTHORIZATION=")),
     ).toBe(false);
+    expect(input).toBe("");
   });
 
   it("uses host networking to reach a loopback-only Linux gateway", () => {
-    const args = buildSandboxTokenContainerProbeDockerArgs({
+    const { args } = buildSandboxTokenContainerProbeInvocation({
       dockerBin: "docker",
       networkName: "nemoclaw-auth-source-net",
       payload: Buffer.from("sandbox request"),
@@ -94,7 +100,7 @@ describe("OpenShell gateway auth source contract helpers", () => {
   });
 
   it("uses an explicit portable host gateway on the selected network", () => {
-    const args = buildSandboxTokenContainerProbeDockerArgs({
+    const { args } = buildSandboxTokenContainerProbeInvocation({
       dockerBin: "podman",
       hostGatewayIp: "169.254.1.2",
       networkName: "openshell-docker",

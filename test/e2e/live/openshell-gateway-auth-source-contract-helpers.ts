@@ -29,7 +29,7 @@ import {
   runSandboxTokenContainerProbe,
 } from "./openshell-gateway-auth-probe.ts";
 
-export { buildSandboxTokenContainerProbeDockerArgs } from "./openshell-gateway-auth-probe.ts";
+export { buildSandboxTokenContainerProbeInvocation } from "./openshell-gateway-auth-probe.ts";
 
 type SkipFn = (message?: string) => void;
 

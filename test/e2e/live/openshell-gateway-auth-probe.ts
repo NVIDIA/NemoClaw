@@ -32,6 +32,11 @@ export type SandboxTokenContainerProbeOptions = {
   useHostNetwork?: boolean;
 };
 
+export type SandboxTokenContainerProbeInvocation = {
+  args: string[];
+  input: string;
+};
+
 function varint(value: number): Buffer {
   const out: number[] = [];
   let remaining = value;
@@ -98,7 +103,7 @@ const http2 = require("node:http2");
 
 const port = process.env.PROBE_GATEWAY_PORT;
 const path = process.env.PROBE_GRPC_PATH;
-const authorization = process.env.PROBE_AUTHORIZATION;
+const authorization = fs.readFileSync(0, "utf8");
 const payload = Buffer.from(process.env.PROBE_PAYLOAD_B64 || "", "base64");
 
 let settled = false;
@@ -163,52 +168,57 @@ req.end(grpcFrame);
 `;
 }
 
-export function buildSandboxTokenContainerProbeDockerArgs(
+export function buildSandboxTokenContainerProbeInvocation(
   options: SandboxTokenContainerProbeOptions,
-): string[] {
+): SandboxTokenContainerProbeInvocation {
   const bundle = getDockerDriverGatewayLocalTlsBundle(options.stateDir);
-  return [
-    "run",
-    "--rm",
-    ...containerProbeNetworkArgs(
-      options.networkName,
-      options.useHostNetwork ?? false,
-      options.hostGatewayIp,
-    ),
-    "--volume",
-    `${path.resolve(bundle.caPath)}:${CONTAINER_PROBE_CA_PATH}:ro`,
-    "--volume",
-    `${path.resolve(bundle.clientCertPath)}:${CONTAINER_PROBE_CLIENT_CERT_PATH}:ro`,
-    "--volume",
-    `${path.resolve(bundle.clientKeyPath)}:${CONTAINER_PROBE_CLIENT_KEY_PATH}:ro`,
-    ...(options.authorization ? ["--env", `PROBE_AUTHORIZATION=${options.authorization}`] : []),
-    "--env",
-    "PROBE_GRPC_PATH=/openshell.v1.OpenShell/GetSandboxConfig",
-    "--env",
-    `PROBE_GATEWAY_PORT=${String(options.port)}`,
-    "--env",
-    `PROBE_PAYLOAD_B64=${options.payload.toString("base64")}`,
-    "--env",
-    `PROBE_CA_PATH=${CONTAINER_PROBE_CA_PATH}`,
-    "--env",
-    `PROBE_CLIENT_CERT_PATH=${CONTAINER_PROBE_CLIENT_CERT_PATH}`,
-    "--env",
-    `PROBE_CLIENT_KEY_PATH=${CONTAINER_PROBE_CLIENT_KEY_PATH}`,
-    DOCKER_GRPC_PROBE_IMAGE,
-    "node",
-    "-e",
-    sandboxTokenContainerProbeScript(),
-  ];
+  return {
+    args: [
+      "run",
+      "--rm",
+      "--interactive",
+      ...containerProbeNetworkArgs(
+        options.networkName,
+        options.useHostNetwork ?? false,
+        options.hostGatewayIp,
+      ),
+      "--volume",
+      `${path.resolve(bundle.caPath)}:${CONTAINER_PROBE_CA_PATH}:ro`,
+      "--volume",
+      `${path.resolve(bundle.clientCertPath)}:${CONTAINER_PROBE_CLIENT_CERT_PATH}:ro`,
+      "--volume",
+      `${path.resolve(bundle.clientKeyPath)}:${CONTAINER_PROBE_CLIENT_KEY_PATH}:ro`,
+      "--env",
+      "PROBE_GRPC_PATH=/openshell.v1.OpenShell/GetSandboxConfig",
+      "--env",
+      `PROBE_GATEWAY_PORT=${String(options.port)}`,
+      "--env",
+      `PROBE_PAYLOAD_B64=${options.payload.toString("base64")}`,
+      "--env",
+      `PROBE_CA_PATH=${CONTAINER_PROBE_CA_PATH}`,
+      "--env",
+      `PROBE_CLIENT_CERT_PATH=${CONTAINER_PROBE_CLIENT_CERT_PATH}`,
+      "--env",
+      `PROBE_CLIENT_KEY_PATH=${CONTAINER_PROBE_CLIENT_KEY_PATH}`,
+      DOCKER_GRPC_PROBE_IMAGE,
+      "node",
+      "-e",
+      sandboxTokenContainerProbeScript(),
+    ],
+    input: options.authorization ?? "",
+  };
 }
 
 export function runSandboxTokenContainerProbe(
   options: SandboxTokenContainerProbeOptions,
 ): GatewayAuthProbeResult {
-  const result = spawnSync(options.dockerBin, buildSandboxTokenContainerProbeDockerArgs(options), {
+  const invocation = buildSandboxTokenContainerProbeInvocation(options);
+  const result = spawnSync(options.dockerBin, invocation.args, {
     encoding: "utf-8",
     env: process.env,
+    input: invocation.input,
     killSignal: "SIGKILL",
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
     timeout: 60_000,
   });
   return {
