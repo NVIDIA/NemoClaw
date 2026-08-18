@@ -74,7 +74,7 @@ Agents may recommend labels, assignments, Project field changes, comments, merge
 - Record the E2E decision and any plain-language exception reason in the signed Markdown release
   brief. General E2E does not authorize or reject the tag.
 - A later merge does not invalidate the planned candidate while that candidate remains on `main`
-  and its required documentation, image, and exact staging Launchable evidence remains valid.
+  and its required documentation and image evidence remains valid.
 - Open PRs and issues that miss a tagged release carry forward by automatically moving from the released version label to the next patch label after the tag and `latest` are verified.
 - After carry-forward leaves no open item on the released label, delete that repository label. Never rename or reuse it.
 - Durable release history belongs in releases, release notes, or manifests, not in long-lived labels.

@@ -2840,8 +2840,8 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
   filterEnabledChannelsByAgent,
   defaultPolicyPath: path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
   getAgentPolicyPath: (agent) => (agent ? agentOnboard.getAgentPolicyPath(agent) : null),
-  resolveGpuPlan: (config, agent) =>
-    dockerGpuSandboxCreate.resolveAgentPlan(config, agent, isLinuxDockerDriverGatewayEnabled()),
+  resolveGpuPlan: (config) =>
+    dockerGpuSandboxCreate.resolveProfileGpuCreatePlan(config, isLinuxDockerDriverGatewayEnabled()),
   appendResourceCreateArgs: (args, resourceProfile) =>
     appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
       isNonInteractive,
