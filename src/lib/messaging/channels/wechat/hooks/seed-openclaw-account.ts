@@ -7,7 +7,7 @@ import type {
   MessagingHookOutputMap,
   MessagingHookRegistration,
 } from "../../../hooks/types";
-import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url";
+import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url.ts";
 
 export const WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID = "wechat.seedOpenClawAccount";
 export const WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID = "wechat-seed-openclaw-account";
