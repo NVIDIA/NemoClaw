@@ -320,6 +320,7 @@ async function expectOpenClawTelegram(
   await expect(openClawHasTelegram(sandbox, artifactName)).resolves.toBe(expected);
 }
 
+/** Detect an active policy preset in the human-readable policy listing. */
 function policyListHasActivePreset(output: string, preset: string): boolean {
   const activePreset = new RegExp(`^\\s*\\u25cf\\s+${escapeRegex(preset)}\\b`, "im");
   return activePreset.test(stripAnsi(output));
