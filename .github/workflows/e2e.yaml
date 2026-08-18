@@ -2555,6 +2555,9 @@ jobs:
       CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
       E2E_JOB: "1"
       INSTANCE_NAME: nclaw-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_AGENT_RUNTIME: "openclaw"
+      E2E_OBSERVABLE_OUTCOME: "Exact staging image boots and completes the full E2E scenario"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Brev Launchable Docker host; NVIDIA hosted inference"
     steps:
       - name: Checkout trusted Launchable lane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3078,6 +3081,9 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-gateway-auth-contract"
+      E2E_AGENT_RUNTIME: "none"
+      E2E_OBSERVABLE_OUTCOME: "Gateway mTLS and sandbox JWT authentication boundaries hold"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -3156,9 +3162,21 @@ jobs:
       fail-fast: false
       matrix:
         agent: [openclaw, hermes, deepagents]
+        include:
+          - agent: openclaw
+            agent_runtime: openclaw
+            coverage_variant: openclaw
+          - agent: hermes
+            agent_runtime: hermes
+            coverage_variant: hermes
+          - agent: deepagents
+            agent_runtime: langchain-deepagents-code
+            coverage_variant: deepagents
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
+      E2E_OBSERVABLE_OUTCOME: "Stable OpenShell MCP bridge reaches tools and inference"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
@@ -3483,6 +3501,9 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-credential-generation-window"
+      E2E_AGENT_RUNTIME: "openclaw"
+      E2E_OBSERVABLE_OUTCOME: "Credential expiry rotation detach and rebuild preserve the intended access window"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-credential-generation-window
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_OPENSHELL_CHANNEL: stable
@@ -3641,9 +3662,21 @@ jobs:
       fail-fast: false
       matrix:
         agent: [openclaw, hermes, deepagents]
+        include:
+          - agent: openclaw
+            agent_runtime: openclaw
+            coverage_variant: openclaw
+          - agent: hermes
+            agent_runtime: hermes
+            coverage_variant: hermes
+          - agent: deepagents
+            agent_runtime: langchain-deepagents-code
+            coverage_variant: deepagents
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge-dev"
+      E2E_OBSERVABLE_OUTCOME: "Development OpenShell MCP bridge reaches tools and inference"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
@@ -3842,13 +3875,19 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-24.04
             shard: linux-amd64
+            environment_or_inference_endpoint: "AMD64 Ubuntu; exact managed image startup"
+            coverage_variant: linux-amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             shard: linux-arm64
+            environment_or_inference_endpoint: "Arm64 Ubuntu; exact managed image startup"
+            coverage_variant: linux-arm64
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "managed-image-multiarch-startup"
+      E2E_AGENT_RUNTIME: "openclaw + hermes + langchain-deepagents-code"
+      E2E_OBSERVABLE_OUTCOME: "Exact managed images start directly on the native architecture"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-multiarch-activation-v1.json
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -4272,6 +4311,10 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification
       E2E_JOB: "1"
       E2E_TARGET_ID: "llama-cpp-dgx-spark-qualification"
+      E2E_AGENT_RUNTIME: "unresolved"
+      E2E_OBSERVABLE_OUTCOME: "Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "NVIDIA DGX Spark GB10; local llama.cpp inference"
+      E2E_UNRESOLVED_REASON: "The protected plan can enable or skip its OpenClaw subqualification"
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
       NEMOCLAW_E2E_SHARD: linux-arm64-gpu-dgx-spark-gb10
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
@@ -4463,6 +4506,9 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime
       E2E_JOB: "1"
       E2E_TARGET_ID: "managed-image-protected-runtime"
+      E2E_AGENT_RUNTIME: "openclaw + hermes + langchain-deepagents-code"
+      E2E_OBSERVABLE_OUTCOME: "Protected GPU runtime supports Ollama vLLM NIM rollback and cleanup"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "NVIDIA GPU runner; local and hosted inference services"
       E2E_WORKLOAD_SOURCE: "managed-image"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-runtime-activation-v1.json
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -4741,6 +4787,9 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-e2e"
+      E2E_AGENT_RUNTIME: "hermes"
+      E2E_OBSERVABLE_OUTCOME: "Install onboarding health inference lifecycle dashboard and security succeed"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; mock or NVIDIA hosted inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -4831,13 +4880,21 @@ jobs:
         include:
           - scenario: native
             sandbox_name: e2e-hgpu-native
+            observable_outcome: "Native GPU startup reaches the stable Ready route"
+            coverage_variant: native
           - scenario: fallback
             sandbox_name: e2e-hgpu-fallback
+            observable_outcome: "Fallback GPU startup reaches the stable Ready route"
+            coverage_variant: fallback
           - scenario: compatibility-only
             sandbox_name: e2e-hgpu-compat
+            observable_outcome: "Compatibility-only GPU startup reaches the stable Ready route"
+            coverage_variant: compatibility-only
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-gpu-startup"
+      E2E_AGENT_RUNTIME: "hermes"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "NVIDIA GPU runner; local GPU inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}
       E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
@@ -5139,6 +5196,9 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "cloud-onboard"
+      E2E_AGENT_RUNTIME: "openclaw"
+      E2E_OBSERVABLE_OUTCOME: "Public install onboarding hosted inference and security checks succeed"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; NVIDIA hosted inference"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/cloud-onboard
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5261,6 +5321,9 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "messaging-providers"
+      E2E_AGENT_RUNTIME: "openclaw"
+      E2E_OBSERVABLE_OUTCOME: "Provider configuration redaction and optional real sends succeed"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; NVIDIA hosted inference and messaging providers"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/messaging-providers
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5326,6 +5389,9 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-plugin-runtime-exdev-release"
+      E2E_AGENT_RUNTIME: "openclaw"
+      E2E_OBSERVABLE_OUTCOME: "Release baseline plugin runtime survives the EXDEV boundary"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; release baseline package; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev-release
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5398,6 +5464,9 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
+      E2E_AGENT_RUNTIME: "openclaw"
+      E2E_OBSERVABLE_OUTCOME: "Current plugin lifecycle rebuild and dependencies survive the EXDEV boundary"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; current package; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"

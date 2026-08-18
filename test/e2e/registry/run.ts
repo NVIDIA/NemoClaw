@@ -4,6 +4,11 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import {
+  type E2eAgentRuntime,
+  validateE2eExecutionMetadata,
+} from "../../../tools/e2e/execution-coverage.mts";
+
 import { listTargets, requireTargets } from "./registry.ts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
 import { type LiveTargetSupport, liveTargetSupport } from "./runtime-support.ts";
@@ -17,6 +22,10 @@ interface Args {
 
 export interface LiveTargetMatrixEntry {
   id: string;
+  agentRuntime: E2eAgentRuntime;
+  observableOutcome: string;
+  environmentOrInferenceEndpoint: string;
+  unresolvedReason: string;
   runner: string;
   label: string;
   platform: string;
@@ -92,8 +101,23 @@ function liveMatrixEntry(
   support: LiveTargetSupport,
 ): LiveTargetMatrixEntry {
   const { runner } = resolveRunnerForTarget(target);
+  if (support.supported && !target.executionCoverage) {
+    throw new Error(
+      `Executable typed E2E target ${target.id} requires execution coverage metadata`,
+    );
+  }
+  const executionCoverage = validateE2eExecutionMetadata(
+    target.executionCoverage ?? {
+      agentRuntime: "unresolved",
+      observableOutcome: "unresolved",
+      environmentOrInferenceEndpoint: "unresolved",
+      unresolvedReason: "This typed registry declaration has no executable owner",
+    },
+    `Typed E2E target ${target.id}`,
+  );
   return {
     id: target.id,
+    ...executionCoverage,
     runner,
     label: buildLabel(target),
     platform: target.environment?.platform ?? "unknown",

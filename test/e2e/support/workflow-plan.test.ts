@@ -8,7 +8,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { discoverCredentialFreeTests } from "../../../tools/e2e/credential-free-tests.mts";
+import {
+  credentialFreeTestCoverage,
+  discoverCredentialFreeTests,
+} from "../../../tools/e2e/credential-free-tests.mts";
+import { E2E_AGENT_RUNTIMES } from "../../../tools/e2e/execution-coverage.mts";
 import { RETIRED_CONTROLLER_SELECTOR_IDS } from "../../../tools/e2e/retired-selector-compatibility.mts";
 import {
   catalogueTarget,
@@ -25,6 +29,7 @@ import {
   runE2eWorkflowPlanCli,
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
+  withoutCredentialedCatalogueProfiles,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -66,15 +71,14 @@ function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string
 function prCandidatePlan(
   plan: ReturnType<typeof buildE2eWorkflowPlan>,
 ): ReturnType<typeof buildE2eWorkflowPlan> {
-  return {
-    ...plan,
-    catalogueMatrices: Object.fromEntries(
-      Object.entries(plan.catalogueMatrices).map(([profile, rows]) => [
-        profile,
-        rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id))),
-      ]),
-    ) as ReturnType<typeof buildE2eWorkflowPlan>["catalogueMatrices"],
-  };
+  return withoutCredentialedCatalogueProfiles(plan);
+}
+
+function expectExplicitCatalogueCoverage(): void {
+  for (const target of E2E_TARGET_CATALOGUE) {
+    expect(E2E_AGENT_RUNTIMES).toContain(target.agentRuntime);
+    expect(target.agentRuntime === "unresolved").toBe(target.unresolvedReason !== "");
+  }
 }
 
 describe("E2E workflow plan", () => {
@@ -84,11 +88,66 @@ describe("E2E workflow plan", () => {
     expect(plan.matrix).toEqual(buildLiveTargetMatrix());
     expect(plan.testMatrix).toEqual(discoverCredentialFreeTests());
     expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
+    expect(
+      plan.coverageMatrix.reduce<Record<string, number>>((counts, row) => {
+        counts[row.source] = (counts[row.source] ?? 0) + 1;
+        return counts;
+      }, {}),
+    ).toEqual({
+      catalogue: E2E_TARGET_CATALOGUE.length,
+      "typed-registry": 4,
+      "shared-e2e": 2,
+      "retained-workflow": 19,
+      staging: 1,
+    });
+    expect(plan.coverageMatrix.filter((row) => row.unresolvedReason !== "")).toEqual([
+      expect.objectContaining({
+        id: "spark-install",
+        agentRuntime: "unresolved",
+      }),
+    ]);
     expect(plan.hermesSelected).toBe(true);
     expect(plan.explicitOnlyJobs).toEqual(["llama-cpp-dgx-spark-qualification"]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
+  });
+
+  it("keeps multiple inert declarations visibly unresolved without treating them as evidence (#9167)", () => {
+    const plan = buildE2eWorkflowPlan({
+      targets: "ubuntu-repo-cloud-hermes,ubuntu-repo-cloud-hermes-slack",
+    });
+
+    expect(plan.matrix).toHaveLength(2);
+    expect(plan.matrix.every((row) => !row.supported)).toBe(true);
+    expect(plan.coverageMatrix).toEqual([
+      expect.objectContaining({ id: "ubuntu-repo-cloud-hermes", agentRuntime: "unresolved" }),
+      expect.objectContaining({
+        id: "ubuntu-repo-cloud-hermes-slack",
+        agentRuntime: "unresolved",
+      }),
+    ]);
+    expect(() => validateE2eWorkflowPlan(plan)).not.toThrow();
+  });
+
+  it("includes staging only when the execution plan selects it (#9167)", () => {
+    const stagingPlan = buildE2eWorkflowPlan({ jobs: "staging-brev-launchable" });
+
+    expect(stagingPlan.selectedJobs).toEqual(["staging-brev-launchable"]);
+    expect(stagingPlan.coverageMatrix).toEqual([
+      expect.objectContaining({ id: "staging-brev-launchable", source: "staging" }),
+    ]);
+
+    const hermesPlan = buildE2eWorkflowPlan({ jobs: "hermes-e2e" });
+    const stagingRow = buildE2eWorkflowPlan().coverageMatrix.find(
+      (row) => row.id === "staging-brev-launchable",
+    )!;
+    expect(() =>
+      validateE2eWorkflowPlan({
+        ...hermesPlan,
+        coverageMatrix: [stagingRow, ...hermesPlan.coverageMatrix],
+      }),
+    ).toThrow("execution coverage that does not match its execution plan");
   });
 
   it("validates jobs and selects only matching credential-free tests", () => {
@@ -374,6 +433,26 @@ describe("E2E workflow plan", () => {
     expect(catalogueTarget(id)).toMatchObject(contract);
   });
 
+  it("requires explicit execution coverage for every catalogue target (#9167)", () => {
+    expectExplicitCatalogueCoverage();
+
+    const target = catalogueTarget("cloud-inference");
+    expect(() =>
+      validateE2eTargetCatalogue([{ ...target, agentRuntime: "unresolved", unresolvedReason: "" }]),
+    ).toThrow("must declare an unresolved reason");
+    expect(() =>
+      validateE2eTargetCatalogue([
+        { ...target, displayName: "Inference: preserves the operator's selected route" },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("rejects inherited properties as credential-free coverage IDs (#9167)", () => {
+    expect(() => credentialFreeTestCoverage("constructor")).toThrow(
+      "Credential-free test constructor requires execution coverage metadata",
+    );
+  });
+
   it.each([
     [
       "bedrock-runtime-compatible-anthropic",
@@ -441,11 +520,7 @@ describe("E2E workflow plan", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-pr-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
-    const plan = buildE2eWorkflowPlan();
-    plan.catalogueMatrices["nvidia-api"] = [];
-    plan.catalogueMatrices["nvidia-inference"] = [];
-    plan.catalogueMatrices["github-read"] = [];
-    plan.catalogueMatrices["brave-nvidia-inference"] = [];
+    const plan = prCandidatePlan(buildE2eWorkflowPlan());
 
     try {
       writeE2eWorkflowPlanCiOutput(
@@ -685,7 +760,9 @@ describe("E2E workflow plan", () => {
       expect(result.status, result.stderr).toBe(0);
       const expectedPlan = prCandidatePlan(plan);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(expectedPlan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(expectedPlan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(expectedPlan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -716,7 +793,9 @@ describe("E2E workflow plan", () => {
       expect(result.status, result.stderr).toBe(0);
       const expectedPlan = prCandidatePlan(plan);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(expectedPlan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(expectedPlan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(expectedPlan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -738,6 +817,7 @@ describe("E2E workflow plan", () => {
           "github-read": [],
           "brave-nvidia-inference": [],
         },
+        coverageMatrix: [],
         selectedJobs: [],
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -780,6 +860,7 @@ describe("E2E workflow plan", () => {
           "github-read": [],
           "brave-nvidia-inference": [],
         },
+        coverageMatrix: [],
         selectedJobs: ["jetson-nvmap-gpu"],
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -801,6 +882,7 @@ describe("E2E workflow plan", () => {
         "github-read": [],
         "brave-nvidia-inference": [],
       },
+      coverageMatrix: [],
       selectedJobs: [],
       hermesSelected: false,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -882,8 +964,10 @@ describe("E2E workflow plan", () => {
     const validPlan = buildE2eWorkflowPlan();
     const [registryRow] = validPlan.matrix;
     const [testRow] = validPlan.testMatrix;
+    const [coverageRow] = validPlan.coverageMatrix;
     expect(registryRow).toBeDefined();
     expect(testRow).toBeDefined();
+    expect(coverageRow).toBeDefined();
     const { explicitOnlyJobs: _omitted, ...missingField } = validPlan;
     const malformedPlans = [
       missingField,
@@ -894,6 +978,14 @@ describe("E2E workflow plan", () => {
         testMatrix: [{ ...testRow, project: "e2e-live", file: "test/e2e/live/../secret.test.ts" }],
       },
       { ...validPlan, testMatrix: [{ ...testRow, id: registryRow.id }] },
+      { ...validPlan, coverageMatrix: [...validPlan.coverageMatrix, { ...coverageRow }] },
+      {
+        ...validPlan,
+        coverageMatrix: [
+          { ...coverageRow, observableOutcome: "Injected | Markdown row" },
+          ...validPlan.coverageMatrix.slice(1),
+        ],
+      },
       { ...validPlan, hermesSelected: "false" },
     ];
 
@@ -902,6 +994,17 @@ describe("E2E workflow plan", () => {
         "E2E planner returned an invalid output schema",
       );
     });
+  });
+
+  it("rejects execution coverage that differs from its execution owner (#9167)", () => {
+    const plan = buildE2eWorkflowPlan({ jobs: "cloud-inference" });
+    const coverageMatrix = plan.coverageMatrix.map((row) =>
+      row.id === "cloud-inference" ? { ...row, observableOutcome: "Different valid outcome" } : row,
+    );
+
+    expect(() => validateE2eWorkflowPlan({ ...plan, coverageMatrix })).toThrow(
+      "execution coverage that does not match its execution plan",
+    );
   });
 
   it("writes byte-compatible GitHub outputs and the execution-plan summary", () => {
@@ -921,7 +1024,9 @@ describe("E2E workflow plan", () => {
       );
 
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -984,6 +1089,7 @@ describe("E2E workflow plan", () => {
       "selectedJobs",
       "hermesSelected",
       "explicitOnlyJobs",
+      "coverageMatrix",
     ]);
     expect(output).toBe(`${JSON.stringify(parsed)}\n`);
   });
@@ -998,9 +1104,9 @@ describe("E2E workflow plan", () => {
     expect(filtered.status, filtered.stderr).toBe(0);
     expect(filtered.stdout).toBe(`## E2E Execution Plan
 
-| Target or job | Execution | Runner |
-| --- | --- | --- |
-| \`hermes-e2e\` | retained workflow job | declared by job |
+| Target or job | Agent runtime | Observable outcome | Environment or inference endpoint | Source | Unresolved reason |
+| --- | --- | --- | --- | --- | --- |
+| \`hermes-e2e\` | hermes | Install onboarding health inference lifecycle dashboard and security succeed | Ubuntu; mock or NVIDIA hosted inference | retained-workflow |  |
 `);
 
     const complete = spawnSync(TSX, [PLANNER_CLI, "--summary"], {
@@ -1011,17 +1117,35 @@ describe("E2E workflow plan", () => {
 
     expect(complete.status, complete.stderr).toBe(0);
     expect(complete.stdout).toContain(
-      "| `cloud-onboard` | retained workflow job | declared by job |",
+      "| `cloud-onboard` | openclaw | Public install onboarding hosted inference and security checks succeed | Ubuntu; NVIDIA hosted inference | retained-workflow |  |",
     );
     expect(complete.stdout).toContain(
-      "| `ubuntu-repo-cloud-openclaw` | typed registry | `ubuntu-latest` |",
+      "| `ubuntu-repo-cloud-openclaw` | openclaw | Repository install onboarding and hosted inference succeed | Ubuntu Docker host; NVIDIA hosted inference | typed-registry |  |",
     );
-    expect(complete.stdout).toContain("| shared E2E job | `ubuntu-latest` |");
-    expect(complete.stdout).toContain("| `channels-add-remove` | `standard` profile |");
     expect(complete.stdout).toContain(
-      "| `model-router-provider-routed-inference` | `nvidia-api` profile |",
+      "| `vllm-docker-storage` | none | vLLM storage gate accepts and rejects the intended host states | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
     );
-    expect(complete.stdout).toContain("| `cloud-inference` | `nvidia-inference` profile |");
+    expect(complete.stdout).toContain(
+      "| `channels-add-remove` | openclaw | Messaging: adds and removes Telegram configuration | Ubuntu; no inference endpoint | catalogue |  |",
+    );
+    expect(complete.stdout).toContain(
+      "| `model-router-provider-routed-inference` | openclaw | Inference: Model Router returns a provider-routed response | Ubuntu; NVIDIA API and Model Router | catalogue |  |",
+    );
+    expect(complete.stdout).toContain(
+      "| `spark-install` | unresolved | Install: leaves NemoClaw and OpenShell usable after standard installation | Ubuntu; NVIDIA hosted inference | catalogue | The test asserts CLI usability but does not assert an agent runtime |",
+    );
+    expect(complete.stdout).toContain("### Repeated outcomes with distinct evidence");
+    expect(complete.stdout).toContain(
+      "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw` | agent runtime |",
+    );
+    expect(complete.stdout).toContain("### Intentional exclusions");
+    expect(complete.stdout).toContain(
+      "| `llama-cpp-dgx-spark-qualification` | unresolved | Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence | NVIDIA DGX Spark GB10; local llama.cpp inference | Explicit dispatch only; excluded from the default release matrix | The protected plan can enable or skip its OpenClaw subqualification |",
+    );
+    expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
+    expect(complete.stdout).toMatch(/The \d+ inert typed declarations above/);
+    expect(complete.stdout).toContain("#8285");
+    expect(complete.stdout).toContain("#8286");
   });
 
   it("keeps CI and readable summary output modes separate", () => {
@@ -1065,7 +1189,9 @@ describe("E2E workflow plan", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -1094,7 +1220,9 @@ describe("E2E workflow plan", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

@@ -4,11 +4,13 @@
 import { appendFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { buildLiveTargetMatrix, type LiveTargetMatrixEntry } from "../../test/e2e/registry/run.ts";
 import { buildRiskPlan } from "../advisors/risk-plan.mts";
 import {
   type CredentialFreeTestMatrixRow,
+  credentialFreeTestCoverage,
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
@@ -32,6 +34,12 @@ import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
 } from "./workflow-boundary.mts";
+import {
+  e2eExecutionLabel,
+  type E2eExecutionRow,
+  validateE2eExecutionRows,
+  validateE2eExecutionMetadata,
+} from "./execution-coverage.mts";
 
 export type WorkflowPlanSelectors = {
   jobs?: string;
@@ -42,6 +50,7 @@ export type E2eWorkflowPlan = {
   matrix: LiveTargetMatrixEntry[];
   testMatrix: CredentialFreeTestMatrixRow[];
   catalogueMatrices: Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
+  coverageMatrix: E2eExecutionRow[];
   selectedJobs: string[];
   hermesSelected: boolean;
   explicitOnlyJobs: string[];
@@ -107,15 +116,43 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+function hasValidExecutionMetadata(value: Record<string, unknown>): boolean {
+  if (
+    typeof value.agentRuntime !== "string" ||
+    typeof value.observableOutcome !== "string" ||
+    typeof value.environmentOrInferenceEndpoint !== "string" ||
+    typeof value.unresolvedReason !== "string"
+  ) {
+    return false;
+  }
+  try {
+    validateE2eExecutionMetadata(
+      {
+        agentRuntime: value.agentRuntime as E2eExecutionRow["agentRuntime"],
+        observableOutcome: value.observableOutcome,
+        environmentOrInferenceEndpoint: value.environmentOrInferenceEndpoint,
+        unresolvedReason: value.unresolvedReason,
+      },
+      "E2E workflow plan row",
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry {
   if (!isRecord(value)) return false;
   if (
     !hasExactKeys(value, [
+      "agentRuntime",
+      "environmentOrInferenceEndpoint",
       "expectedStateId",
       "id",
       "install",
       "label",
       "onboarding",
+      "observableOutcome",
       "pendingRuntimeSuites",
       "platform",
       "requiredSecrets",
@@ -124,6 +161,7 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
       "suites",
       "supportReasons",
       "supported",
+      "unresolvedReason",
     ])
   ) {
     return false;
@@ -139,11 +177,16 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
     typeof value.runtime === "string" &&
     typeof value.onboarding === "string" &&
     typeof value.expectedStateId === "string" &&
+    typeof value.agentRuntime === "string" &&
+    typeof value.observableOutcome === "string" &&
+    typeof value.environmentOrInferenceEndpoint === "string" &&
+    typeof value.unresolvedReason === "string" &&
     typeof value.supported === "boolean" &&
     isStringArray(value.suites) &&
     isStringArray(value.requiredSecrets) &&
     isStringArray(value.supportReasons) &&
-    isStringArray(value.pendingRuntimeSuites)
+    isStringArray(value.pendingRuntimeSuites) &&
+    hasValidExecutionMetadata(value)
   );
 }
 
@@ -176,15 +219,18 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     isRecord(value) &&
     hasExactKeys(value, [
       "artifact_layout",
+      "agent_runtime",
       "cloudflared",
       "compatible_api_key",
       "id",
       "display_name",
+      "environment_or_inference_endpoint",
       "host_preparation",
       "host_packages",
       "install_mode",
       "install_non_interactive",
       "restore_cli",
+      "observable_outcome",
       "runner",
       "runner_comparison",
       "runner_key",
@@ -193,11 +239,16 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
       "target_id",
       "test_file",
       "timeout_minutes",
+      "unresolved_reason",
     ]) &&
     typeof value.id === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.id) &&
     typeof value.display_name === "string" &&
     /^[A-Z][A-Za-z0-9 .'+()-]+: [^/\r\n]{1,72}$/u.test(value.display_name) &&
+    typeof value.agent_runtime === "string" &&
+    typeof value.observable_outcome === "string" &&
+    typeof value.environment_or_inference_endpoint === "string" &&
+    typeof value.unresolved_reason === "string" &&
     typeof value.runner === "string" &&
     /^[A-Za-z0-9._-]+$/u.test(value.runner) &&
     typeof value.runner_key === "string" &&
@@ -225,8 +276,51 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&
-    typeof value.restore_cli === "boolean"
+    typeof value.restore_cli === "boolean" &&
+    hasValidExecutionMetadata({
+      agentRuntime: value.agent_runtime,
+      observableOutcome: value.observable_outcome,
+      environmentOrInferenceEndpoint: value.environment_or_inference_endpoint,
+      unresolvedReason: value.unresolved_reason,
+    })
   );
+}
+
+function isE2eExecutionRow(value: unknown): value is E2eExecutionRow {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "agentRuntime",
+      "environmentOrInferenceEndpoint",
+      "id",
+      "observableOutcome",
+      "source",
+      "unresolvedReason",
+      "variant",
+    ]) ||
+    typeof value.id !== "string" ||
+    typeof value.variant !== "string" ||
+    typeof value.source !== "string" ||
+    !hasValidExecutionMetadata(value)
+  ) {
+    return false;
+  }
+  try {
+    validateE2eExecutionRows([value as unknown as E2eExecutionRow]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isE2eExecutionRows(value: unknown): value is E2eExecutionRow[] {
+  if (!Array.isArray(value) || !value.every(isE2eExecutionRow)) return false;
+  try {
+    validateE2eExecutionRows(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isCatalogueMatrixRowForProfile(
@@ -239,6 +333,10 @@ function isCatalogueMatrixRowForProfile(
     target?.profile === profile &&
     target.targetId === value.target_id &&
     target.displayName === value.display_name &&
+    target.agentRuntime === value.agent_runtime &&
+    target.displayName === value.observable_outcome &&
+    target.environmentOrInferenceEndpoint === value.environment_or_inference_endpoint &&
+    target.unresolvedReason === value.unresolved_reason &&
     target.runner === value.runner &&
     target.runnerKey === value.runner_key &&
     target.testFile === value.test_file &&
@@ -376,9 +474,59 @@ function emptyE2eWorkflowPlan(): E2eWorkflowPlan {
     matrix: [],
     testMatrix: [],
     catalogueMatrices: emptyCatalogueMatrices(),
+    coverageMatrix: [],
     selectedJobs: [],
     hermesSelected: false,
     explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+  };
+}
+
+type E2eWorkflowPlanWithoutCoverage = Omit<E2eWorkflowPlan, "coverageMatrix">;
+
+function coverageMatrixForPlan(
+  plan: E2eWorkflowPlanWithoutCoverage,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+): E2eExecutionRow[] {
+  const catalogueRows = E2E_EXECUTION_PROFILES.flatMap((profile) =>
+    plan.catalogueMatrices[profile].map((row) => ({
+      id: row.id,
+      variant: "",
+      source: "catalogue" as const,
+      agentRuntime: row.agent_runtime,
+      observableOutcome: row.observable_outcome,
+      environmentOrInferenceEndpoint: row.environment_or_inference_endpoint,
+      unresolvedReason: row.unresolved_reason,
+    })),
+  );
+  const registryRows = plan.matrix.map((row) => ({
+    id: row.id,
+    variant: "",
+    source: "typed-registry" as const,
+    agentRuntime: row.agentRuntime,
+    observableOutcome: row.observableOutcome,
+    environmentOrInferenceEndpoint: row.environmentOrInferenceEndpoint,
+    unresolvedReason: row.unresolvedReason,
+  }));
+  const sharedRows = plan.testMatrix.map((row) => ({
+    id: row.id,
+    variant: "",
+    source: "shared-e2e" as const,
+    ...credentialFreeTestCoverage(row.id),
+  }));
+  const selectedJobs = new Set(plan.selectedJobs);
+  const workflowRows = inventory.coverageRows.filter((row) => selectedJobs.has(row.id));
+  const rows = [...catalogueRows, ...registryRows, ...sharedRows, ...workflowRows];
+  validateE2eExecutionRows(rows);
+  return rows;
+}
+
+function withCoverageMatrix(
+  plan: E2eWorkflowPlanWithoutCoverage,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+): E2eWorkflowPlan {
+  return {
+    ...plan,
+    coverageMatrix: coverageMatrixForPlan(plan, inventory),
   };
 }
 
@@ -433,14 +581,17 @@ export function buildE2eWorkflowPlan(
     (jobs.length === 1 && jobs[0] === JETSON_DISPATCH_TARGET && targets.length === 0) ||
     (targets.length === 1 && targets[0] === JETSON_DISPATCH_TARGET && jobs.length === 0);
   if (jetsonDispatchSelected) {
-    return {
-      matrix: [],
-      testMatrix: [],
-      catalogueMatrices: emptyCatalogueMatrices(),
-      selectedJobs: [JETSON_DISPATCH_TARGET],
-      hermesSelected: false,
-      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-    };
+    return withCoverageMatrix(
+      {
+        matrix: [],
+        testMatrix: [],
+        catalogueMatrices: emptyCatalogueMatrices(),
+        selectedJobs: [JETSON_DISPATCH_TARGET],
+        hermesSelected: false,
+        explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+      },
+      inventory,
+    );
   }
   const credentialFreeTests = discoverCredentialFreeTests();
   const catalogueIds = new Set(
@@ -475,14 +626,17 @@ export function buildE2eWorkflowPlan(
       selectedJobSet.add("openshell-credential-generation-window");
     }
     const selectedJobs = [...selectedJobSet];
-    return {
-      matrix: registryTargets.length > 0 ? buildLiveTargetMatrix(registryTargets) : [],
-      testMatrix: selectTestRows(credentialFreeTests, [...jobs, ...targets]),
-      catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
-      selectedJobs,
-      hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
-      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-    };
+    return withCoverageMatrix(
+      {
+        matrix: registryTargets.length > 0 ? buildLiveTargetMatrix(registryTargets) : [],
+        testMatrix: selectTestRows(credentialFreeTests, [...jobs, ...targets]),
+        catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
+        selectedJobs,
+        hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
+        explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+      },
+      inventory,
+    );
   }
 
   if (options.changedFiles) {
@@ -538,24 +692,32 @@ export function buildE2eWorkflowPlan(
       ...registryTargetsForChangedFiles(changedFiles),
       ...(riskTargetIds.length > 0 ? buildLiveTargetMatrix(riskTargetIds) : []),
     ].filter((entry, index, rows) => rows.findIndex((row) => row.id === entry.id) === index);
-    return {
-      matrix: registryMatrix,
-      testMatrix: selectedTests,
-      catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
-      selectedJobs,
-      hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
-      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-    };
+    return withCoverageMatrix(
+      {
+        matrix: registryMatrix,
+        testMatrix: selectedTests,
+        catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
+        selectedJobs,
+        hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
+        explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+      },
+      inventory,
+    );
   }
 
-  return {
-    matrix: buildLiveTargetMatrix(),
-    testMatrix: credentialFreeTests,
-    catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE),
-    selectedJobs: inventory.workflowJobs.filter((job) => !inventory.explicitOnlyJobs.includes(job)),
-    hermesSelected: true,
-    explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-  };
+  return withCoverageMatrix(
+    {
+      matrix: buildLiveTargetMatrix(),
+      testMatrix: credentialFreeTests,
+      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE),
+      selectedJobs: inventory.workflowJobs.filter(
+        (job) => !inventory.explicitOnlyJobs.includes(job),
+      ),
+      hermesSelected: true,
+      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+    },
+    inventory,
+  );
 }
 
 export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
@@ -566,6 +728,7 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
       "explicitOnlyJobs",
       "hermesSelected",
       "matrix",
+      "coverageMatrix",
       "selectedJobs",
       "testMatrix",
     ])
@@ -584,6 +747,7 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
     !plan.matrix.every(isLiveTargetMatrixEntry) ||
     !Array.isArray(plan.testMatrix) ||
     !plan.testMatrix.every(isCredentialFreeTestMatrixRow) ||
+    !isE2eExecutionRows(plan.coverageMatrix) ||
     !hasUniqueIds([...plan.matrix, ...plan.testMatrix, ...catalogueMatrixRows]) ||
     !isStringArray(plan.selectedJobs) ||
     !plan.selectedJobs.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
@@ -594,6 +758,16 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
     new Set(plan.explicitOnlyJobs).size !== plan.explicitOnlyJobs.length
   ) {
     throw new Error("E2E planner returned an invalid output schema");
+  }
+  const { coverageMatrix, ...planWithoutCoverage } = plan as E2eWorkflowPlan;
+  const expectedCoverageMatrix = coverageMatrixForPlan(
+    planWithoutCoverage,
+    readFreeStandingJobsInventory(),
+  );
+  if (!isDeepStrictEqual(coverageMatrix, expectedCoverageMatrix)) {
+    throw new Error(
+      "E2E planner returned execution coverage that does not match its execution plan",
+    );
   }
   return plan as E2eWorkflowPlan;
 }
@@ -609,41 +783,105 @@ function expectedHermesSelection(
   return (selected.length === 0 && !retiredSelectorSelected) || selected.includes(HERMES_JOB_ID);
 }
 
-function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
+export function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
   const eligibleRows = (rows: E2eCatalogueMatrixRow[]) =>
     rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id)));
+  const catalogueMatrices = Object.fromEntries(
+    E2E_EXECUTION_PROFILES.map((profile) => [
+      profile,
+      eligibleRows(plan.catalogueMatrices[profile]),
+    ]),
+  ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
+  const eligibleCatalogueIds = new Set(
+    E2E_EXECUTION_PROFILES.flatMap((profile) => catalogueMatrices[profile].map((row) => row.id)),
+  );
   return {
     ...plan,
-    catalogueMatrices: Object.fromEntries(
-      E2E_EXECUTION_PROFILES.map((profile) => [
-        profile,
-        eligibleRows(plan.catalogueMatrices[profile]),
-      ]),
-    ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>,
+    catalogueMatrices,
+    coverageMatrix: plan.coverageMatrix.filter(
+      (row) => row.source !== "catalogue" || eligibleCatalogueIds.has(row.id),
+    ),
   };
 }
 
-export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
+export function renderE2eWorkflowPlanSummary(
+  plan: E2eWorkflowPlan,
+  options: { includeCoverageAudit?: boolean } = {},
+): string {
   const lines = [
     "## E2E Execution Plan",
     "",
-    "| Target or job | Execution | Runner |",
-    "| --- | --- | --- |",
+    "| Target or job | Agent runtime | Observable outcome | Environment or inference endpoint | Source | Unresolved reason |",
+    "| --- | --- | --- | --- | --- | --- |",
   ];
-  for (const job of plan.selectedJobs) {
-    lines.push(`| \`${job}\` | retained workflow job | declared by job |`);
+  for (const row of plan.coverageMatrix) {
+    lines.push(
+      `| \`${e2eExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.source} | ${row.unresolvedReason} |`,
+    );
   }
-  for (const row of plan.matrix) {
-    lines.push(`| \`${row.id}\` | typed registry | \`${row.runner}\` |`);
+  if (options.includeCoverageAudit === false) {
+    return `${lines.join("\n")}\n`;
   }
-  for (const row of plan.testMatrix) {
-    lines.push(`| \`${row.id}\` | shared E2E job | \`ubuntu-latest\` |`);
+  const inventory = readFreeStandingJobsInventory();
+  const explicitOnlyRows = inventory.coverageRows.filter((row) =>
+    plan.explicitOnlyJobs.includes(row.id),
+  );
+  const unsupportedDeclarations = plan.matrix.filter((row) => !row.supported);
+  const outcomeRows = new Map<string, E2eExecutionRow[]>();
+  for (const row of plan.coverageMatrix) {
+    const rows = outcomeRows.get(row.observableOutcome) ?? [];
+    rows.push(row);
+    outcomeRows.set(row.observableOutcome, rows);
   }
-  for (const profile of E2E_EXECUTION_PROFILES) {
-    for (const row of plan.catalogueMatrices[profile]) {
-      lines.push(`| \`${row.id}\` | \`${profile}\` profile | \`${row.runner}\` |`);
-    }
+  const repeatedOutcomes = [...outcomeRows].filter(([, rows]) => rows.length > 1);
+  lines.push(
+    "",
+    "### Repeated outcomes with distinct evidence",
+    "",
+    "| Observable outcome | Rows | Distinguishing dimensions |",
+    "| --- | --- | --- |",
+  );
+  for (const [outcome, rows] of repeatedOutcomes) {
+    const dimensions = [
+      new Set(rows.map((row) => row.agentRuntime)).size > 1 ? "agent runtime" : "",
+      new Set(rows.map((row) => row.environmentOrInferenceEndpoint)).size > 1
+        ? "environment or inference endpoint"
+        : "",
+    ].filter(Boolean);
+    lines.push(
+      `| ${outcome} | ${rows.map((row) => `\`${e2eExecutionLabel(row)}\``).join(", ")} | ${dimensions.join(" and ")} |`,
+    );
   }
+  lines.push(
+    "",
+    "### Intentional exclusions",
+    "",
+    "| Target or job | Agent runtime | Observable outcome | Environment or inference endpoint | Exclusion | Unresolved reason |",
+    "| --- | --- | --- | --- | --- | --- |",
+  );
+  for (const row of explicitOnlyRows) {
+    lines.push(
+      `| \`${e2eExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | Explicit dispatch only; excluded from the default release matrix | ${row.unresolvedReason} |`,
+    );
+  }
+  lines.push(
+    "",
+    "### Unsupported or unresolved typed declarations",
+    "",
+    "| Declaration | Agent runtime | Observable outcome | Environment or inference endpoint | Missing executable ownership |",
+    "| --- | --- | --- | --- | --- |",
+  );
+  for (const row of unsupportedDeclarations) {
+    lines.push(
+      `| \`${row.id}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.supportReasons.join("; ")} |`,
+    );
+  }
+  lines.push(
+    "",
+    "### Combinatorial gaps",
+    "",
+    `The ${unsupportedDeclarations.length} inert typed declarations above are not executable matrix cells. #8285 owns the decision on the inert cross-runtime foundation, and #8286 owns executable-only registry cleanup after that decision. Unlisted Cartesian-product cells are not required without an accepted supported combination. This migration removes no execution, so no duplicate-to-retained-evidence mapping is required.`,
+  );
   return `${lines.join("\n")}\n`;
 }
 
@@ -696,7 +934,12 @@ export function writeE2eWorkflowPlanCiOutput(
       "",
     ].join("\n"),
   );
-  appendFileSync(summary, renderE2eWorkflowPlanSummary(plan));
+  appendFileSync(
+    summary,
+    renderE2eWorkflowPlanSummary(plan, {
+      includeCoverageAudit: !hasPlannerSelectors && changedFiles === undefined,
+    }),
+  );
 }
 
 function parseArgs(argv: readonly string[]): WorkflowPlanCliOptions {
@@ -737,7 +980,11 @@ export function runE2eWorkflowPlanCli(argv = process.argv.slice(2)): void {
   }
   const plan = buildE2eWorkflowPlan(options);
   process.stdout.write(
-    options.summary ? renderE2eWorkflowPlanSummary(plan) : `${JSON.stringify(plan)}\n`,
+    options.summary
+      ? renderE2eWorkflowPlanSummary(plan, {
+          includeCoverageAudit: !options.jobs && !options.targets,
+        })
+      : `${JSON.stringify(plan)}\n`,
   );
 }
 
