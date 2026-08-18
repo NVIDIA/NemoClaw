@@ -316,6 +316,10 @@ describe("Docker managed bootstrap adapter", () => {
         metadata: handle.plan.metadata,
       }),
     ).rejects.toThrow("one exact persisted bootstrap identity");
+    expect(fake.replacement).toBeNull();
+    expect(fake.journal).toBeNull();
+    expect(fake.events).not.toContain("create:replacement");
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 
   it("publishes durable commit authority before deleting the rollback backup after lost acknowledgements", async () => {
@@ -511,10 +515,11 @@ describe("Docker managed bootstrap adapter", () => {
       return { status: 1 };
     });
     fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
-    fake.deps.dockerLogs = vi.fn(
-      () =>
-        `${"oversized diagnostic context ".repeat(60)}managed startup failed with NVIDIA_API_KEY=${secret}`,
-    );
+    fake.deps.dockerLogs = vi.fn((id, options) => {
+      expect(id).toBe(NEW_ID);
+      expect(options).toEqual({ tail: 120, timeout: 2_000 });
+      return `${"oversized diagnostic context ".repeat(60)}managed startup failed with NVIDIA_API_KEY=${secret}`;
+    });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request, snapshot } = authority();
     const prepared = await adapter.prepareBootstrapReplacement({
@@ -547,10 +552,14 @@ describe("Docker managed bootstrap adapter", () => {
     expect(redactedLogTail!.length).toBeLessThanOrEqual(1_200);
   });
 
-  it("reports an exited replacement before exact rollback cleanup (#9465)", async () => {
+  it("reports an exited replacement through exact authorized cleanup (#9465)", async () => {
     const fake = fixture({ agent: "openclaw" });
     const secret = "replacement-diagnostic-secret";
-    fake.deps.dockerLogs = vi.fn(() => `managed startup rejected SLACK_BOT_TOKEN=${secret}`);
+    fake.deps.dockerLogs = vi.fn((id, options) => {
+      expect(id).toBe(NEW_ID);
+      expect(options).toEqual({ tail: 120, timeout: 2_000 });
+      return `managed startup rejected SLACK_BOT_TOKEN=${secret}`;
+    });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request, snapshot } = authority("openclaw");
     const prepared = await adapter.prepareBootstrapReplacement({
@@ -608,6 +617,22 @@ describe("Docker managed bootstrap adapter", () => {
       Name: "/openshell-alpha",
       State: { Running: false },
     });
+
+    fake.removeOriginalExternally();
+    await expect(adapter.recoverUnfinishedTransactions()).resolves.toMatchObject({
+      receipts: [
+        {
+          bootstrapIdentity: IDENTITY,
+          sourcePhase: "owner-cleanup-required",
+          outcome: "rolled-back",
+        },
+      ],
+      failures: [],
+    });
+    expect(fake.original).toBeNull();
+    expect(fake.replacement).toBeNull();
+    expect(fake.journal).toBeNull();
+    expect(fake.finalization?.phase).toBe("rolled-back");
   });
 
   it("preserves commit validation failure details when the replacement cannot be quiesced", async () => {
@@ -660,7 +685,11 @@ describe("Docker managed bootstrap adapter", () => {
   it("publishes durable rollback authority before deleting the replacement after restart", async () => {
     const fake = fixture();
     const secret = "post-start-provider-secret";
-    fake.deps.dockerLogs = vi.fn(() => `startup failed with NVIDIA_API_KEY=${secret}`);
+    fake.deps.dockerLogs = vi.fn((id, options) => {
+      expect(id).toBe(NEW_ID);
+      expect(options).toEqual({ tail: 120, timeout: 2_000 });
+      return `startup failed with NVIDIA_API_KEY=${secret}`;
+    });
     const dockerStarts: Record<
       string,
       () => { status: number; stdout?: string; stderr: string }
