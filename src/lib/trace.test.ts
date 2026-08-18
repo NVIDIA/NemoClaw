@@ -213,12 +213,24 @@ describe("onboard trace artifacts", () => {
     expect(getTraceCollector()).toBeNull();
 
     // "2" enables the collector without being canonically truthy; the span must agree.
-    process.env[TRACE_ENABLED_ENV] = "2";
-    withTraceFile((traceFile) => {
-      finishOnboardTrace(startOnboardTrace({}, process.env), true);
+    const originalCwd = process.cwd();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trace-noncanonical-"));
+    try {
+      process.chdir(tmpDir);
+      process.env[TRACE_ENABLED_ENV] = "2";
+      resetTraceForTests();
+
+      const handle = startOnboardTrace({}, process.env);
+      const traceFile = handle.collector?.outputPath ?? "";
+      expect(traceFile).toContain(path.join(".e2e", "traces", "nemoclaw-trace-"));
+      finishOnboardTrace(handle, true);
+
       const root = readTraceArtifact(traceFile).resource_spans[0].scope_spans[0].spans[0];
       expect(root.attributes.trace_enabled).toBe(true);
-    });
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tmpDir, { force: true, recursive: true });
+    }
   });
 
   it("removes the registered exit listener when resetting tests", () => {
