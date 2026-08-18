@@ -464,15 +464,13 @@ print(json.dumps({"exit_code": module.main()}))
       expect(result.status, result.stdout).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
       expect(result.stderr).toContain("<REDACTED>");
-      for (const secret of [
-        "SAFE_MCP_TOKEN",
-        "runtime-secret-123",
-        "second-secret-456",
-        "password",
-        "query-secret-789",
-      ]) {
-        expect(result.stderr).not.toContain(secret);
-      }
+      expect([
+            "SAFE_MCP_TOKEN",
+            "runtime-secret-123",
+            "second-secret-456",
+            "password",
+            "query-secret-789",
+          ].every((secret) => !result.stderr.includes(secret))).toBe(true);
       expect(result.stderr).not.toContain("\u001b");
       expect(result.stderr).not.toContain("\u202e");
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
@@ -497,7 +495,7 @@ print(json.dumps([
       expect(representations.status, representations.stderr).toBe(0);
       const sanitized = JSON.parse(representations.stdout) as string[];
       expect(sanitized).toHaveLength(4);
-      for (const message of sanitized) expect(message).toContain("<REDACTED>");
+      expect(sanitized.every((message) => message.includes("<REDACTED>"))).toBe(true);
 
       expect(sanitized.join("\n")).not.toContain(secret);
     },
@@ -745,11 +743,9 @@ print(json.dumps(results, sort_keys=True))
     for (const [name, scenario] of Object.entries(scenarios)) {
       expect(scenario.blocked, name).toBe(true);
       expect(scenario.error, `${name}.error`).toBe(expectedErrors[name]);
-      for (const [property, value] of Object.entries(scenario).filter(
-        ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
-      )) {
-        expect(value, `${name}.${property}`).toBe(true);
-      }
+      expect(Object.entries(scenario).filter(
+            ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
+          ).every(([property, value]) => Object.is(value, true))).toBe(true);
     }
   });
 

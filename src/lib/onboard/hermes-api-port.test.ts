@@ -13,6 +13,7 @@ import {
   reserveCreateSandboxHermesApiPort,
   resolveOnboardHermesApiPort,
   resolveSandboxHermesApiPort,
+  resolveVerifyAgentApiPort,
   retargetHermesApiPortInUrl,
   withHermesApiPortReservationScope,
 } from "./hermes-api-port";
@@ -321,5 +322,36 @@ describe("retargetHermesApiPortInUrl", () => {
     expect(retargetHermesApiPortInUrl("http://localhost:8642/health", 8642)).toBe(
       "http://localhost:8642/health",
     );
+  });
+});
+
+describe("resolveVerifyAgentApiPort (#9290)", () => {
+  const hermes = { name: "hermes", healthProbe: { port: 8642 } };
+
+  it("targets the port this Hermes sandbox actually owns", () => {
+    // A second Hermes sandbox serves its API on a reallocated port; probing the
+    // manifest default would report a sibling sandbox's port as unreachable.
+    expect(
+      resolveVerifyAgentApiPort("second", hermes, { getSandbox: () => ({ hermesApiPort: 8643 }) }),
+    ).toBe(8643);
+  });
+
+  it("falls back to the manifest default when the sandbox is not registered yet", () => {
+    expect(resolveVerifyAgentApiPort("fresh", hermes, { getSandbox: () => null })).toBe(8642);
+  });
+
+  it("keeps a non-Hermes agent's declared probe port", () => {
+    expect(
+      resolveVerifyAgentApiPort("sb", { name: "other", healthProbe: { port: 9000 } }, {
+        getSandbox: () => ({ hermesApiPort: 8643 }),
+      }),
+    ).toBe(9000);
+  });
+
+  it("returns undefined when the agent declares no health probe port", () => {
+    expect(resolveVerifyAgentApiPort("sb", { name: "openclaw" }, { getSandbox: () => null })).toBe(
+      undefined,
+    );
+    expect(resolveVerifyAgentApiPort("sb", null, { getSandbox: () => null })).toBe(undefined);
   });
 });

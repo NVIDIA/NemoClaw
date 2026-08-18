@@ -757,194 +757,240 @@ describe("sandbox build context staging", () => {
     }
   });
 
-  it("optimized staging excludes blueprint .venv and extra scripts while preserving required files", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-opt-"));
+  it.each([
+    { scenario: "JSON types" },
+    { scenario: "ports" },
+    { scenario: "bootstrap envelope" },
+    { scenario: "bootstrap image runtime" },
+    { scenario: "startup image runtime" },
+    { scenario: "credential hash" },
+    { scenario: "state paths" },
+    { scenario: "state root" },
+  ])(
+    "optimized staging excludes blueprint .venv and extra scripts while preserving required files [$scenario]",
+    ({ scenario }) => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-opt-"));
 
-    try {
-      const { buildCtx } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
-      for (const relativePath of [
-        path.join("src", "lib", "core", "json-types.ts"),
-        path.join("src", "lib", "core", "ports.ts"),
-        path.join("src", "lib", "onboard", "managed-bootstrap", "envelope.ts"),
-        path.join("src", "lib", "onboard", "managed-bootstrap", "image-runtime.ts"),
-        path.join("src", "lib", "onboard", "managed-startup", "image-runtime.ts"),
-        path.join("src", "lib", "security", "credential-hash.ts"),
-        path.join("src", "lib", "state", "paths.ts"),
-        path.join("src", "lib", "state", "state-root.ts"),
-      ]) {
+      try {
+        const { buildCtx } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
+        const relativePath = (
+          {
+            "JSON types": path.join("src", "lib", "core", "json-types.ts"),
+            ports: path.join("src", "lib", "core", "ports.ts"),
+            "bootstrap envelope": path.join(
+              "src",
+              "lib",
+              "onboard",
+              "managed-bootstrap",
+              "envelope.ts",
+            ),
+            "bootstrap image runtime": path.join(
+              "src",
+              "lib",
+              "onboard",
+              "managed-bootstrap",
+              "image-runtime.ts",
+            ),
+            "startup image runtime": path.join(
+              "src",
+              "lib",
+              "onboard",
+              "managed-startup",
+              "image-runtime.ts",
+            ),
+            "credential hash": path.join("src", "lib", "security", "credential-hash.ts"),
+            "state paths": path.join("src", "lib", "state", "paths.ts"),
+            "state root": path.join("src", "lib", "state", "state-root.ts"),
+          } as const
+        )[scenario]!;
         expect(fs.existsSync(path.join(buildCtx, relativePath)), relativePath).toBe(true);
+
+        expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
+        expect(
+          fs.readFileSync(path.join(buildCtx, "ci", "npm-audit-exceptions.json"), "utf8"),
+        ).toBe(fs.readFileSync(path.join(repoRoot, "ci", "npm-audit-exceptions.json"), "utf8"));
+        expectStagedOpenClawRuntimeGraphs(buildCtx, repoRoot);
+        expectStagedMcpToolDiscoveryRuntime(buildCtx, repoRoot);
+        expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
+        expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(
+          true,
+        );
+        expect(
+          fs.existsSync(
+            path.join(buildCtx, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "scripts", "http-proxy-fix.js")),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(
+              buildCtx,
+              "nemoclaw-blueprint",
+              "openclaw-plugins",
+              "kimi-inference-compat",
+              "openclaw.plugin.json",
+            ),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(
+              buildCtx,
+              "nemoclaw-blueprint",
+              "openclaw-plugins",
+              "gemini-inference-compat",
+              "openclaw.plugin.json",
+            ),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(
+              buildCtx,
+              "nemoclaw-blueprint",
+              "openclaw-plugins",
+              "gemini-inference-compat",
+              "index.ts",
+            ),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(
+              buildCtx,
+              "nemoclaw-blueprint",
+              "model-specific-setup",
+              "openclaw",
+              "kimi-k2.6-managed-inference.json",
+            ),
+          ),
+        ).toBe(true);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "managed-bootstrap-entrypoint.c")),
+        ).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "managed-bootstrap-trampoline.sh")),
+        ).toBe(true);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "gateway-control.sh"))).toBe(true);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-gateway-control.py"))).toBe(
+          true,
+        );
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "state-dir-guard.py"))).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "agents", "openclaw", "state-lock-plan.json")),
+        ).toBe(true);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "openclaw-config-guard.py"))).toBe(
+          true,
+        );
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "codex-acp-wrapper.sh"))).toBe(true);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.mts"))).toBe(
+          true,
+        );
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "validate-openclaw-tool-search.mts")),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(
+              buildCtx,
+              "src",
+              "lib",
+              "messaging",
+              "applier",
+              "build",
+              "messaging-build-applier.mts",
+            ),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(buildCtx, "src", "lib", "messaging", "hooks", "common", "static-outputs.ts"),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(buildCtx, "scripts", "lib", "openclaw_device_approval_policy.py"),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "lib", "clean_runtime_shell_env_shim.py")),
+        ).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "lib", "normalize_mutable_config_perms.py")),
+        ).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.mts")),
+        ).toBe(true);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.mts"))).toBe(
+          true,
+        );
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.js"))).toBe(
+          false,
+        );
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-npx.mts"))).toBe(
+          true,
+        );
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-reliability.mts")),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(buildCtx, "scripts", "patch-openclaw-mcp-tools-list-timeout.mts"),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(buildCtx, "scripts", "patch-openclaw-issue-4434-diagnostics.mts"),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(buildCtx, "scripts", "patch-openclaw-managed-transport-diagnostics.mts"),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.mts")),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(buildCtx, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
+          ),
+        ).toBe(true);
+        expect(
+          fs.existsSync(
+            path.join(buildCtx, "scripts", "patch-openclaw-shared-state-permissions.mts"),
+          ),
+        ).toBe(true);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-tar.mts"))).toBe(
+          true,
+        );
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-brace-expansion.mts")),
+        ).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-bundled-npm-ip-address.mts")),
+        ).toBe(true);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "upgrade-bundled-npm.mts"))).toBe(true);
+        expect(
+          fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.ts")),
+        ).toBe(false);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "gateway-supervisor.sh"))).toBe(
+          true,
+        );
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-rlimits.sh"))).toBe(
+          true,
+        );
+        expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
       }
-      expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
-      expect(fs.readFileSync(path.join(buildCtx, "ci", "npm-audit-exceptions.json"), "utf8")).toBe(
-        fs.readFileSync(path.join(repoRoot, "ci", "npm-audit-exceptions.json"), "utf8"),
-      );
-      expectStagedOpenClawRuntimeGraphs(buildCtx, repoRoot);
-      expectStagedMcpToolDiscoveryRuntime(buildCtx, repoRoot);
-      expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
-      expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(buildCtx, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-        ),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "scripts", "http-proxy-fix.js")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(
-            buildCtx,
-            "nemoclaw-blueprint",
-            "openclaw-plugins",
-            "kimi-inference-compat",
-            "openclaw.plugin.json",
-          ),
-        ),
-      ).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(
-            buildCtx,
-            "nemoclaw-blueprint",
-            "openclaw-plugins",
-            "gemini-inference-compat",
-            "openclaw.plugin.json",
-          ),
-        ),
-      ).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(
-            buildCtx,
-            "nemoclaw-blueprint",
-            "openclaw-plugins",
-            "gemini-inference-compat",
-            "index.ts",
-          ),
-        ),
-      ).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(
-            buildCtx,
-            "nemoclaw-blueprint",
-            "model-specific-setup",
-            "openclaw",
-            "kimi-k2.6-managed-inference.json",
-          ),
-        ),
-      ).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-bootstrap-entrypoint.c"))).toBe(
-        true,
-      );
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-bootstrap-trampoline.sh"))).toBe(
-        true,
-      );
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "gateway-control.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-gateway-control.py"))).toBe(
-        true,
-      );
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "state-dir-guard.py"))).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "agents", "openclaw", "state-lock-plan.json"))).toBe(
-        true,
-      );
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "openclaw-config-guard.py"))).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "codex-acp-wrapper.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.mts"))).toBe(
-        true,
-      );
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "validate-openclaw-tool-search.mts")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(
-            buildCtx,
-            "src",
-            "lib",
-            "messaging",
-            "applier",
-            "build",
-            "messaging-build-applier.mts",
-          ),
-        ),
-      ).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(buildCtx, "src", "lib", "messaging", "hooks", "common", "static-outputs.ts"),
-        ),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "lib", "openclaw_device_approval_policy.py")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "lib", "clean_runtime_shell_env_shim.py")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "lib", "normalize_mutable_config_perms.py")),
-      ).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.mts"))).toBe(
-        true,
-      );
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.mts"))).toBe(
-        true,
-      );
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.js"))).toBe(
-        false,
-      );
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-npx.mts"))).toBe(
-        true,
-      );
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-reliability.mts")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-tools-list-timeout.mts")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-issue-4434-diagnostics.mts")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(buildCtx, "scripts", "patch-openclaw-managed-transport-diagnostics.mts"),
-        ),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.mts")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(buildCtx, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
-        ),
-      ).toBe(true);
-      expect(
-        fs.existsSync(
-          path.join(buildCtx, "scripts", "patch-openclaw-shared-state-permissions.mts"),
-        ),
-      ).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-tar.mts"))).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-brace-expansion.mts")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-bundled-npm-ip-address.mts")),
-      ).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "upgrade-bundled-npm.mts"))).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.ts")),
-      ).toBe(false);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "gateway-supervisor.sh"))).toBe(
-        true,
-      );
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-rlimits.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it.runIf(DOCKER_CAPABLE_LINUX_CI)("provides Buildx on Docker-capable Linux CI", () => {
     expect(BUILDX_COMMAND).not.toBeNull();

@@ -4,15 +4,20 @@
 import { getBuildIdentity } from "../core/version";
 import { detectGpu, type GpuDetection } from "../inference/nim";
 import {
-  createGatewayReadinessProjection,
+  collectGatewayObservations,
+  type GatewayObservationSnapshot,
   type GatewayReadinessProjection,
-  refreshGatewayReadinessProjection,
+  projectGatewayReadiness,
 } from "../readiness/gateway";
 import {
   createProductionGatewayReadinessDependencies,
   type ProductionGatewayReadinessOptions,
 } from "../readiness/gateway-production";
-import { collectHostObservations, projectHostReadiness } from "../readiness/host";
+import {
+  collectHostObservations,
+  type HostObservationSnapshot,
+  projectHostReadiness,
+} from "../readiness/host";
 import {
   evaluateOnboardGatewayReadinessAdmission,
   evaluateOnboardReadinessAdmission,
@@ -85,8 +90,13 @@ export type ReadinessGatedRuntimePreflightContext = Omit<
   FatalRuntimePreflightContext,
   "allowStorageRemediation" | "deferEffectfulChecks"
 > & {
-  collectGatewayReadiness(): Promise<GatewayReadinessProjection>;
+  collectGatewayReadiness(): Promise<CollectedGatewayReadiness>;
 };
+
+export interface CollectedGatewayReadiness {
+  projection: GatewayReadinessProjection;
+  snapshot: GatewayObservationSnapshot;
+}
 
 export interface ReadinessGatedRuntimePreflightResult extends FatalRuntimePreflightResult {
   gatewayReadiness: GatewayReadinessProjection;
@@ -203,15 +213,16 @@ export function assertOnboardGatewayReadiness(
   throw new Error("Onboarding continued after an unsafe gateway readiness result.");
 }
 
-/** Collect and admit the production gateway projection before onboarding effects. */
+/** Collect and admit production gateway facts before onboarding effects. */
 export async function collectOnboardGatewayReadiness(
   options: ProductionGatewayReadinessOptions,
-): Promise<GatewayReadinessProjection> {
-  const gatewayReadiness = await createGatewayReadinessProjection(
+): Promise<CollectedGatewayReadiness> {
+  const snapshot = await collectGatewayObservations(
     createProductionGatewayReadinessDependencies(options),
   );
-  assertOnboardGatewayReadiness(gatewayReadiness);
-  return gatewayReadiness;
+  const projection = projectGatewayReadiness(snapshot);
+  assertOnboardGatewayReadiness(projection);
+  return { projection, snapshot };
 }
 
 function isManagedGatewayReadiness(gateway: GatewayReadinessProjection): boolean {
@@ -236,17 +247,24 @@ function requiresRuntimeGpuProof(
   );
 }
 
-function refreshOnboardHostReadiness(
+interface RuntimeGpuReadiness {
+  value: GpuDetection | null;
+  wslDockerDesktopGpuProofPassed?: boolean;
+  gpuTrustGateRejection?: string;
+}
+
+interface CollectedOnboardHostReadiness {
+  result: FatalRuntimePreflightResult;
+  snapshot: HostObservationSnapshot;
+}
+
+function collectOnboardHostReadiness(
   options: FatalRuntimePreflightOptions,
   context: FatalRuntimePreflightContext,
   allowStorageRemediation: boolean,
-  runtimeGpu?: {
-    value: GpuDetection | null;
-    wslDockerDesktopGpuProofPassed?: boolean;
-  },
-): FatalRuntimePreflightResult {
+  runtimeGpu?: RuntimeGpuReadiness,
+): CollectedOnboardHostReadiness {
   const now = context.now ?? (() => new Date());
-  const observedAt = now().toISOString();
   const host = (context.assessHost ?? assessHost)();
   let gpuTrustGateRejection: string | undefined;
   const gpu = runtimeGpu
@@ -261,7 +279,14 @@ function refreshOnboardHostReadiness(
     flag: resolveSandboxGpuFlagFromOptions(options),
     device: options.sandboxGpuDevice ?? null,
   });
-  const readinessReport = assertOnboardHostReadiness(host, gpu, {
+  const snapshot = collectHostObservations({
+    assess: () => host,
+    detectGpu: () => gpu,
+    wslDockerDesktopGpuProofPassed: runtimeGpu?.wslDockerDesktopGpuProofPassed,
+    now,
+  });
+  const readinessReport = projectHostReadiness(snapshot, { ...getBuildIdentity(), now });
+  assertOnboardSystemReadiness(readinessReport, host, {
     explicitlyOptedOutGpuPassthrough:
       sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
     wslDockerDesktopGpuProofPassed: runtimeGpu?.wslDockerDesktopGpuProofPassed,
@@ -269,16 +294,95 @@ function refreshOnboardHostReadiness(
     allowStorageRemediation,
     allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
     exitProcess: context.exitProcess,
-    observedAt,
-    now,
   });
   return {
-    gpu,
-    host,
-    readinessReport,
-    sandboxGpuConfig,
-    ...(gpuTrustGateRejection ? { gpuTrustGateRejection } : {}),
+    result: {
+      gpu,
+      host,
+      readinessReport,
+      sandboxGpuConfig,
+      ...(runtimeGpu?.gpuTrustGateRejection || gpuTrustGateRejection
+        ? { gpuTrustGateRejection: runtimeGpu?.gpuTrustGateRejection ?? gpuTrustGateRejection }
+        : {}),
+    },
+    snapshot,
   };
+}
+
+function refreshOnboardHostReadiness(
+  options: FatalRuntimePreflightOptions,
+  context: FatalRuntimePreflightContext,
+  allowStorageRemediation: boolean,
+  runtimeGpu?: RuntimeGpuReadiness,
+): FatalRuntimePreflightResult {
+  return collectOnboardHostReadiness(options, context, allowStorageRemediation, runtimeGpu).result;
+}
+
+function projectCollectedHostReadiness(
+  collected: CollectedOnboardHostReadiness,
+  evaluatedAt: Date,
+): CollectedOnboardHostReadiness {
+  return {
+    ...collected,
+    result: {
+      ...collected.result,
+      readinessReport: projectHostReadiness(collected.snapshot, {
+        ...getBuildIdentity(),
+        now: () => evaluatedAt,
+      }),
+    },
+  };
+}
+
+function hasStaleHostEvidence(report: SystemReadinessReport): boolean {
+  return report.evidence.some(({ id }) => id === "host.probe.stale");
+}
+
+async function collectAdmittedReadinessPair(
+  collectedHost: CollectedOnboardHostReadiness,
+  options: FatalRuntimePreflightOptions,
+  context: ReadinessGatedRuntimePreflightContext,
+  runtimeGpu?: RuntimeGpuReadiness,
+): Promise<{
+  host: CollectedOnboardHostReadiness;
+  gateway: GatewayReadinessProjection;
+  report: SystemReadinessReport;
+}> {
+  const exitProcess = context.exitProcess ?? exitProcessByDefault;
+  const now = context.now ?? (() => new Date());
+  let collectedGateway = await context.collectGatewayReadiness();
+  assertOnboardGatewayReadiness(collectedGateway.projection, exitProcess);
+
+  let evaluatedAt = now();
+  let gateway = projectGatewayReadiness(collectedGateway.snapshot, { now: () => evaluatedAt });
+  assertOnboardGatewayReadiness(gateway, exitProcess);
+  let host = projectCollectedHostReadiness(collectedHost, evaluatedAt);
+
+  if (hasStaleHostEvidence(host.result.readinessReport)) {
+    host = collectOnboardHostReadiness(
+      options,
+      context,
+      isManagedGatewayReadiness(gateway),
+      runtimeGpu,
+    );
+    collectedGateway = await context.collectGatewayReadiness();
+    assertOnboardGatewayReadiness(collectedGateway.projection, exitProcess);
+    evaluatedAt = now();
+    gateway = projectGatewayReadiness(collectedGateway.snapshot, { now: () => evaluatedAt });
+    assertOnboardGatewayReadiness(gateway, exitProcess);
+    host = projectCollectedHostReadiness(host, evaluatedAt);
+  }
+
+  const report = composeSystemReadinessReport(host.result.readinessReport, gateway);
+  assertOnboardSystemReadiness(report, host.result.host, {
+    explicitlyOptedOutGpuPassthrough:
+      host.result.sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
+    resuming: context.resuming,
+    allowStorageRemediation: isManagedGatewayReadiness(gateway),
+    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+    exitProcess,
+  });
+  return { host, gateway, report };
 }
 
 /** Resolve the bounded WSL GPU proof only after canonical readiness admission. */
@@ -356,51 +460,35 @@ export async function runReadinessGatedRuntimePreflight(
   context: ReadinessGatedRuntimePreflightContext,
 ): Promise<ReadinessGatedRuntimePreflightResult> {
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
-  const gatewayBeforePreparation = await context.collectGatewayReadiness();
+  const gatewayBeforePreparation = (await context.collectGatewayReadiness()).projection;
   assertOnboardGatewayReadiness(gatewayBeforePreparation, exitProcess);
   runFatalOnboardRuntimePreflight(options, {
     ...context,
     allowStorageRemediation: isManagedGatewayReadiness(gatewayBeforePreparation),
     deferEffectfulChecks: true,
   });
-  let gatewayReadiness = await context.collectGatewayReadiness();
+  let gatewayReadiness = (await context.collectGatewayReadiness()).projection;
   assertOnboardGatewayReadiness(gatewayReadiness, exitProcess);
   let managedGatewayReadiness = isManagedGatewayReadiness(gatewayReadiness);
-  // Gateway collection can be slow. Replace the earlier host observation so
-  // the composite gate never stamps an old assessment with a fresh timestamp.
-  let refreshedResult = refreshOnboardHostReadiness(options, context, managedGatewayReadiness);
-  gatewayReadiness = refreshGatewayReadinessProjection(gatewayReadiness);
-  assertOnboardGatewayReadiness(gatewayReadiness, exitProcess);
+  let collectedHost = collectOnboardHostReadiness(options, context, managedGatewayReadiness);
+  let admitted = await collectAdmittedReadinessPair(collectedHost, options, context);
+  collectedHost = admitted.host;
+  let refreshedResult = collectedHost.result;
+  gatewayReadiness = admitted.gateway;
   managedGatewayReadiness = isManagedGatewayReadiness(gatewayReadiness);
-  let readinessReport = composeSystemReadinessReport(
-    refreshedResult.readinessReport,
-    gatewayReadiness,
-  );
-  assertOnboardSystemReadiness(readinessReport, refreshedResult.host, {
-    explicitlyOptedOutGpuPassthrough:
-      refreshedResult.sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
-    resuming: context.resuming,
-    allowStorageRemediation: managedGatewayReadiness,
-    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
-    exitProcess,
-  });
+
   // The only GPU detection path that may pull or start a container is delayed
   // until both canonical host and gateway reports have admitted the run.
   const runtimeGpu = resolveRuntimeGpuProof(refreshedResult, options, {
     ...context,
     allowStorageRemediation: managedGatewayReadiness,
   });
-  refreshedResult = runtimeGpu.result;
+  let runtimeGpuReadiness: RuntimeGpuReadiness | undefined;
   if (runtimeGpu.proofRan) {
     // An explicit GPU request cannot fall back to CPU after a failed proof.
     // Reject that known configuration error before any later container probe.
-    exitOnSandboxGpuConfigErrors(refreshedResult.sandboxGpuConfig, exitProcess);
-    // The bounded proof may pull an image or start a short-lived container.
-    // Replace both host and gateway observations again before later probes.
-    gatewayReadiness = await context.collectGatewayReadiness();
-    assertOnboardGatewayReadiness(gatewayReadiness, exitProcess);
-    managedGatewayReadiness = isManagedGatewayReadiness(gatewayReadiness);
-    refreshedResult = refreshOnboardHostReadiness(options, context, managedGatewayReadiness, {
+    exitOnSandboxGpuConfigErrors(runtimeGpu.result.sandboxGpuConfig, exitProcess);
+    runtimeGpuReadiness = {
       value: runtimeGpu.result.gpu,
       // `detectGpu()` rejects a failed bounded proof by returning null. Keep
       // that negative outcome distinct from the observation-only phase's
@@ -410,28 +498,25 @@ export async function runReadinessGatedRuntimePreflight(
         runtimeGpu.result.gpu === null
           ? false
           : runtimeGpu.result.gpu.wslDockerDesktopGpuProofPassed,
-    });
-    // The refresh reuses the proof-phase GPU value without re-detecting, so
-    // carry the proof-phase rejection reason alongside it (#9000).
-    refreshedResult = {
-      ...refreshedResult,
-      ...(runtimeGpu.result.gpuTrustGateRejection
-        ? { gpuTrustGateRejection: runtimeGpu.result.gpuTrustGateRejection }
-        : {}),
+      gpuTrustGateRejection: runtimeGpu.result.gpuTrustGateRejection,
     };
+    collectedHost = collectOnboardHostReadiness(
+      options,
+      context,
+      managedGatewayReadiness,
+      runtimeGpuReadiness,
+    );
   }
-  gatewayReadiness = refreshGatewayReadinessProjection(gatewayReadiness);
-  assertOnboardGatewayReadiness(gatewayReadiness, exitProcess);
-  managedGatewayReadiness = isManagedGatewayReadiness(gatewayReadiness);
-  readinessReport = composeSystemReadinessReport(refreshedResult.readinessReport, gatewayReadiness);
-  assertOnboardSystemReadiness(readinessReport, refreshedResult.host, {
-    explicitlyOptedOutGpuPassthrough:
-      refreshedResult.sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
-    resuming: context.resuming,
-    allowStorageRemediation: managedGatewayReadiness,
-    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
-    exitProcess,
-  });
+
+  admitted = await collectAdmittedReadinessPair(
+    collectedHost,
+    options,
+    context,
+    runtimeGpuReadiness,
+  );
+  refreshedResult = admitted.host.result;
+  gatewayReadiness = admitted.gateway;
+  const readinessReport = admitted.report;
   const gatedResult = {
     ...refreshedResult,
     readinessReport,

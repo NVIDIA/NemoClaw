@@ -141,7 +141,9 @@ describe("buildGatewayLogScanScript", () => {
     expect(script).toContain("echo GATEWAY_LOG_PROBED");
   });
 
-  it("isolates the current launch segment with awk before grepping", () => {
+  it.each(
+    ["telegram", "discord", "slack", "whatsapp", "wechat", "openclaw-weixin"],
+  )("isolates the current launch segment with awk before grepping [%s]", (token) => {
     // Without launch-segment isolation a stale channel mention from a
     // previous gateway run would still satisfy the probe even though the
     // *current* OpenClaw process never started the channel (#4156 review).
@@ -151,9 +153,9 @@ describe("buildGatewayLogScanScript", () => {
     expect(script).toContain("(launched|respawning)");
     expect(script).toContain('buf=""');
     expect(script).toContain("grep -iwoE '");
-    for (const token of ["telegram", "discord", "slack", "whatsapp", "wechat", "openclaw-weixin"]) {
-      expect(script).toContain(token);
-    }
+
+    expect(script).toContain(token);
+
     expect(script).not.toContain("tail -n");
     expect(script).not.toContain("grep -m 1 -iwF 'telegram'");
   });

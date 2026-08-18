@@ -26,6 +26,7 @@ import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import { resolveOnboardHermesApiPort } from "./hermes-api-port";
+import { isManagedImageAgent, MANAGED_IMAGE_REPOSITORIES } from "./managed-image/contract";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -37,7 +38,7 @@ import {
   requireRuntimeProviderBundleForSandbox,
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
-import { getSandboxAgentRegistryFields } from "./sandbox-agent";
+import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
 
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
@@ -224,13 +225,26 @@ export function buildCreatedSandboxRegistryEntry(
       hostLocalInferenceReceipt,
     );
   }
+  const agentFields = getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown);
+  if (workload?.kind === "managed-image") {
+    const requestedAgent = getRequestedSandboxAgentName(input.agent);
+    if (
+      !isManagedImageAgent(requestedAgent) ||
+      !workload.reference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[requestedAgent]}@sha256:`)
+    ) {
+      throw new RuntimeProviderSelectionError(
+        "Sandbox agent identity does not match its managed workload receipt.",
+      );
+    }
+    agentFields.agent = requestedAgent;
+  }
 
   return {
     name: input.sandboxName,
     servingProfileProvenance,
     ...inferenceSelectionRegistryFields(input.inferenceSelection),
     ...input.runtimeFields,
-    ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
+    ...agentFields,
     imageTag: input.imageTag,
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),

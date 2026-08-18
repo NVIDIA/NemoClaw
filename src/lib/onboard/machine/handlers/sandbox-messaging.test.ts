@@ -390,13 +390,13 @@ describe("reconcileReusedSandboxMessaging", () => {
 
   it("omits a retired host-backed channel from a reused sandbox selection (#9283)", () => {
     const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
-    const clearPlanEnv = vi.fn();
+    const deps = { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() };
     vi.stubEnv("DISCORD_BOT_TOKEN", "");
 
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv, note: vi.fn(), writePlanToEnv: vi.fn() },
+      deps,
       plan,
     );
 
@@ -407,7 +407,7 @@ describe("reconcileReusedSandboxMessaging", () => {
       selectedChannels: [],
       changed: true,
     });
-    expect(clearPlanEnv).not.toHaveBeenCalled();
+    expect(deps.clearPlanEnv).not.toHaveBeenCalled();
   });
 
   it("keeps a still-configured channel in a reused sandbox selection (#9283)", () => {

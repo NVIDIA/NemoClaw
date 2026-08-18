@@ -63,7 +63,7 @@
     },
     {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
-      "test": "flags %s",
+      "test": "runs the trusted Vitest guardrails against pull request data",
       "category": "security"
     },
     {

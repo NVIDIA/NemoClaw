@@ -503,72 +503,75 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("rejects Docker publish aliases before inserting one loopback mapping at the image boundary (#8667)", () => {
-    const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
-    const containerPort = 9_081;
-    const options = () => ({
-      containerPort,
-      imageReference,
-      loopbackPublishAuthority: loopbackPublishAuthority(),
-    });
-    const consumedAuthority = loopbackPublishAuthority();
+  it.each([
+    { publishArgv: ["--publish", "0.0.0.0:8081:8081"] },
+    { publishArgv: ["--publish=0.0.0.0:8081:8081"] },
+    { publishArgv: ["-p", "0.0.0.0:8081:8081"] },
+    { publishArgv: ["-p0.0.0.0:8081:8081"] },
+    { publishArgv: ["--publish-all"] },
+    { publishArgv: ["--publish-all=true"] },
+    { publishArgv: ["-P"] },
+    { publishArgv: ["-P=true"] },
+  ])(
+    "rejects Docker publish aliases before inserting one loopback mapping at the image boundary [case %#] (#8667)",
+    ({ publishArgv }) => {
+      const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
+      const containerPort = 9_081;
+      const options = () => ({
+        containerPort,
+        imageReference,
+        loopbackPublishAuthority: loopbackPublishAuthority(),
+      });
+      const consumedAuthority = loopbackPublishAuthority();
 
-    expect(
-      insertQualificationLoopbackPublishArgv(["run", imageReference], {
-        ...options(),
-        loopbackPublishAuthority: consumedAuthority,
-      }),
-    ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
-    expect(() =>
-      insertQualificationLoopbackPublishArgv(["run", imageReference], {
-        ...options(),
-        loopbackPublishAuthority: consumedAuthority,
-      }),
-    ).toThrow(/already consumed/u);
-    const authorityAfterRejectedBoundary = loopbackPublishAuthority();
-    expect(() =>
-      insertQualificationLoopbackPublishArgv(["run"], {
-        ...options(),
-        loopbackPublishAuthority: authorityAfterRejectedBoundary,
-      }),
-    ).toThrow(/exactly one Docker image reference/u);
-    expect(
-      insertQualificationLoopbackPublishArgv(["run", imageReference], {
-        ...options(),
-        loopbackPublishAuthority: authorityAfterRejectedBoundary,
-      }),
-    ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
-    expect(() =>
-      insertQualificationLoopbackPublishArgv(["run", imageReference, imageReference], options()),
-    ).toThrow(/exactly one Docker image reference/u);
-    for (const publishArgv of [
-      ["--publish", "0.0.0.0:8081:8081"],
-      ["--publish=0.0.0.0:8081:8081"],
-      ["-p", "0.0.0.0:8081:8081"],
-      ["-p0.0.0.0:8081:8081"],
-      ["--publish-all"],
-      ["--publish-all=true"],
-      ["-P"],
-      ["-P=true"],
-    ]) {
+      expect(
+        insertQualificationLoopbackPublishArgv(["run", imageReference], {
+          ...options(),
+          loopbackPublishAuthority: consumedAuthority,
+        }),
+      ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
+      expect(() =>
+        insertQualificationLoopbackPublishArgv(["run", imageReference], {
+          ...options(),
+          loopbackPublishAuthority: consumedAuthority,
+        }),
+      ).toThrow(/already consumed/u);
+      const authorityAfterRejectedBoundary = loopbackPublishAuthority();
+      expect(() =>
+        insertQualificationLoopbackPublishArgv(["run"], {
+          ...options(),
+          loopbackPublishAuthority: authorityAfterRejectedBoundary,
+        }),
+      ).toThrow(/exactly one Docker image reference/u);
+      expect(
+        insertQualificationLoopbackPublishArgv(["run", imageReference], {
+          ...options(),
+          loopbackPublishAuthority: authorityAfterRejectedBoundary,
+        }),
+      ).toEqual(["run", "--publish", `127.0.0.1::${String(containerPort)}`, imageReference]);
+      expect(() =>
+        insertQualificationLoopbackPublishArgv(["run", imageReference, imageReference], options()),
+      ).toThrow(/exactly one Docker image reference/u);
+
       expect(() =>
         insertQualificationLoopbackPublishArgv(["run", ...publishArgv, imageReference], options()),
       ).toThrow(/must not publish/u);
-    }
-    expect(
-      insertQualificationLoopbackPublishArgv(
-        ["run", imageReference, "-p", "guard-value"],
-        options(),
-      ),
-    ).toEqual([
-      "run",
-      "--publish",
-      `127.0.0.1::${String(containerPort)}`,
-      imageReference,
-      "-p",
-      "guard-value",
-    ]);
-  });
+
+      expect(
+        insertQualificationLoopbackPublishArgv(
+          ["run", imageReference, "-p", "guard-value"],
+          options(),
+        ),
+      ).toEqual([
+        "run",
+        "--publish",
+        `127.0.0.1::${String(containerPort)}`,
+        imageReference,
+        "-p",
+        "guard-value",
+      ]);
+    },
+  );
 
   it("accepts only the exact NVIDIA OpenClaw ARM64 managed-image labels", () => {
     const labels = {

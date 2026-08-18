@@ -522,9 +522,8 @@ describe("managed startup profile", () => {
           MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
         ).not.toContain(obligation.input);
       }
-      for (const agent of obligation.supportedFor) {
-        expect(supportedAgents).toContain(agent);
-      }
+      expect(obligation.supportedFor.every((agent) =>
+          supportedAgents.some((supportedAgent) => supportedAgent === agent))).toBe(true);
     },
   );
 
@@ -727,6 +726,119 @@ describe("managed startup profile", () => {
         },
       }),
     ).toThrow(/credential-shaped field name/);
+  });
+
+  it("accepts schema-owned messaging package pins and credential placeholder lines (#9355)", () => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        messaging: {
+          plan: {
+            ...OPENCLAW_PROFILE.messaging.plan,
+            buildSteps: [
+              {
+                channelId: "slack",
+                kind: "package-install",
+                outputId: "slack-openclaw-plugin",
+                required: true,
+                value: {
+                  manager: "npm",
+                  spec: "@slack/web-api@7.9.3",
+                  pin: true,
+                },
+              },
+            ],
+            agentRender: [
+              ...OPENCLAW_PROFILE.messaging.plan.agentRender,
+              {
+                channelId: "slack",
+                agent: "hermes",
+                target: "~/.hermes/.env",
+                kind: "env-lines",
+                lines: [
+                  "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                  "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+                  "TELEGRAM_BOT_TOKEN=openshell:resolve:env:v1_TELEGRAM_BOT_TOKEN",
+                ],
+                templateRefs: ["credential.slackBotToken.placeholder"],
+              },
+            ],
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["a raw credential", `SLACK_BOT_TOKEN=xoxb-${"a".repeat(32)}`],
+    ["a malformed assignment", "SLACK_BOT_TOKEN =openshell:resolve:env:SLACK_BOT_TOKEN"],
+    [
+      "a placeholder for a different environment key",
+      "SLACK_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+    ],
+    [
+      "a versioned placeholder for a different environment key",
+      "SLACK_BOT_TOKEN=openshell:resolve:env:v1_DISCORD_BOT_TOKEN",
+    ],
+  ])("rejects %s in messaging environment lines (#9355)", (_label, line) => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        messaging: {
+          plan: {
+            ...OPENCLAW_PROFILE.messaging.plan,
+            agentRender: [
+              {
+                channelId: "slack",
+                agent: "hermes",
+                target: "~/.hermes/.env",
+                kind: "env-lines",
+                lines: [line],
+                templateRefs: ["credential.slackBotToken.placeholder"],
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow(/credential-shaped string data/);
+  });
+
+  it.each([
+    [
+      "a package pin outside buildSteps[*].value",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        buildSteps: [{ pin: true }],
+      },
+    ],
+    [
+      "a non-boolean package pin",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        buildSteps: [{ value: { pin: "true" } }],
+      },
+    ],
+    [
+      "a credential placeholder assignment outside agentRender[*].lines[*]",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        note: "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+    ],
+    [
+      "a direct credential placeholder outside schema-owned fields",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        note: "openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+    ],
+  ])("rejects %s (#9355)", (_label, plan) => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        messaging: { plan },
+      }),
+    ).toThrow(/credential-shaped/);
   });
 
   it.each([
