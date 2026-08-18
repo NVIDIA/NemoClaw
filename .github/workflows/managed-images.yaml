@@ -863,31 +863,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          npm ci --ignore-scripts
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
-          [[ "${#contracts[@]}" -eq 3 ]] || {
-            echo "ERROR: exact all-agent activation requires three contracts" >&2
-            exit 1
-          }
-          jq -se \
-            --arg revision "$CANDIDATE_SHA" '
-              if (
-                length == 3 and
-                ([.[].agent] | sort) == ["hermes", "langchain-deepagents-code", "openclaw"] and
-                ([.[].source.revision] | unique) == [$revision] and
-                ([.[].source.cohort] | unique | length) == 1 and
-                ([.[].platform] | unique) == ["linux/amd64"]
-              )
-              then map({key: .agent, value: .}) | from_entries
-              else error("published PR contracts do not form one exact all-agent cohort")
-              end
-            ' "${contracts[@]}" > "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG"
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/pr-managed-image-publication.mts assemble \
+            "$CANDIDATE_SHA" \
+            "$NEMOCLAW_MANAGED_ACTIVATION_CATALOG" \
+            "${contracts[@]}"
 
       - name: Build exact candidate CLI
-        run: |
-          npm ci --ignore-scripts
-          npm run build:cli
+        run: npm run build:cli
 
       - name: Install OpenShell CLI
         shell: bash
@@ -904,7 +891,7 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell)"
           "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run \
+          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
             --test-path test/e2e/live/managed-image-activation-e2e.test.ts
 
       - name: Upload managed runtime activation evidence
@@ -913,6 +900,134 @@ jobs:
         with:
           name: managed-image-activation-${{ github.run_id }}-${{ github.run_attempt }}
           path: e2e-artifacts/live/managed-image-activation/
+          if-no-files-found: error
+          retention-days: 1
+
+  pr-openclaw-mcp-discovery:
+    name: PR exact OpenClaw trusted-private MCP discovery (pass ${{ matrix.pass }})
+    needs: pr-build-and-entrypoint
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        pass: [1, 2]
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/pr-exact-mcp/pass-${{ matrix.pass }}
+      E2E_JOB: "1"
+      E2E_TARGET_ID: mcp-bridge
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: ${{ github.workspace }}/managed-pr-catalog.json
+      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
+      NEMOCLAW_E2E_SHARD: openclaw
+      NEMOCLAW_MCP_BRIDGE_AGENT: openclaw
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-pr-exact-mcp-${{ matrix.pass }}
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Bind E2E correlation identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          correlation_id="$(node --input-type=module -e \
+            'import { randomUUID } from "node:crypto"; console.log(randomUUID())')"
+          [[ "$correlation_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]
+          printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\n' "$correlation_id" >> "$GITHUB_ENV"
+
+      - name: Download exact published all-agent contracts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: managed-pr-contract-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/managed-pr-contracts
+          merge-multiple: false
+
+      - name: Assemble exact all-agent MCP catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          mapfile -d '' contracts < <(
+            find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
+          )
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/pr-managed-image-publication.mts assemble \
+            "$CANDIDATE_SHA" \
+            "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG" \
+            "${contracts[@]}"
+
+      - name: Build exact candidate CLI
+        run: npm run build:cli
+
+      - name: Install and verify cloudflared prerequisite
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
+            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
+            exit 1
+          fi
+          sudo dpkg -i "${cloudflared_deb}"
+          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
+
+      - name: Generate MCP test TLS
+        run: bash test/e2e/setup-mcp-test-tls.sh
+
+      - name: Install OpenShell CLI
+        env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+        run: bash scripts/install-openshell.sh
+
+      - name: Run exact OpenClaw trusted-private MCP discovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] || {
+            echo "ERROR: MCP discovery checkout does not match the exact PR head" >&2
+            exit 1
+          }
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/mcp-bridge.test.ts
+
+      - id: mcp_artifact_secret_scan
+        name: Scan MCP artifacts for fixture credentials
+        if: always()
+        run: npx --no-install tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts "$E2E_ARTIFACT_DIR"
+
+      - name: Upload exact MCP discovery evidence
+        if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-exact-openclaw-mcp-${{ github.run_id }}-${{ github.run_attempt }}-pass-${{ matrix.pass }}
+          path: e2e-artifacts/live/pr-exact-mcp/pass-${{ matrix.pass }}/
           if-no-files-found: error
           retention-days: 1
 

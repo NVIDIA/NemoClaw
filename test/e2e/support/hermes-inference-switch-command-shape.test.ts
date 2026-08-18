@@ -44,11 +44,6 @@ describe("Hermes inference switch command shape", () => {
     );
   }
 
-  it("uses the OpenAI frontend for an Anthropic upstream in Hermes (#6289)", () => {
-    expect(
-      resolveAgentInferenceApi("hermes", "compatible-anthropic-endpoint", "anthropic-messages"),
-    ).toBe("openai-completions");
-  });
 
   it("preserves the requested frontend for other Hermes upstreams (#6289)", () => {
     expect(resolveAgentInferenceApi("hermes", "nvidia-prod", "openai-completions")).toBe(

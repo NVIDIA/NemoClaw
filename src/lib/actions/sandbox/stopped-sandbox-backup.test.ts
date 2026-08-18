@@ -255,6 +255,25 @@ describe("backupStartedSandboxState", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
+  it("allows managed startup to exceed the legacy eight-second readiness window (#9356)", async () => {
+    vi.useFakeTimers();
+    adapterMocks.backupWithAuthority
+      .mockReturnValueOnce(unreachable)
+      .mockReturnValueOnce(unreachable)
+      .mockReturnValueOnce(unreachable)
+      .mockReturnValueOnce(unreachable)
+      .mockReturnValueOnce(unreachable)
+      .mockReturnValueOnce(unreachable)
+      .mockReturnValueOnce(ok);
+
+    const pending = backupStartedSandboxState("my-sb");
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual(ok);
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledTimes(7);
+    vi.useRealTimers();
+  });
+
   it("returns a non-transport failure without retrying", async () => {
     const backup = vi.fn().mockReturnValue(denied);
     const sleep = vi.fn().mockResolvedValue(undefined);
