@@ -54,7 +54,20 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
     }
   });
 
-  it("rejects a stale hash when the config directory is root-owned (#9530)", () => {
+  it.each([
+    {
+      title: "rejects a stale hash when the config directory is root-owned (#9530)",
+      initialHash: () => `${"0".repeat(64)}  openclaw.json\n`,
+      expectedStatus: 15,
+      expectedStderr: "root-owned OpenClaw config hash does not match openclaw.json\n",
+    },
+    {
+      title: "accepts a matching hash when the config directory is root-owned (#9530)",
+      initialHash: (configPath: string) => `${sha256Hex(configPath)}  openclaw.json\n`,
+      expectedStatus: 0,
+      expectedStderr: "",
+    },
+  ])("$title", ({ initialHash, expectedStatus, expectedStderr }) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-root-hash-"));
     const configDir = path.join(tmpDir, ".openclaw");
     const binDir = path.join(tmpDir, "bin");
@@ -63,34 +76,7 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
     try {
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(configPath, '{"gateway":{"auth":{"token":"fresh"}}}\n');
-      fs.writeFileSync(hashPath, `${"0".repeat(64)}  openclaw.json\n`);
-      installRootOwnerStat(binDir);
-
-      const result = runRefresh(configDir, {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-      });
-
-      expect(result.status).toBe(15);
-      expect(result.stderr).toBe(
-        "root-owned OpenClaw config hash does not match openclaw.json\n",
-      );
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${"0".repeat(64)}  openclaw.json\n`);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("accepts a matching hash when the config directory is root-owned (#9530)", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-valid-root-hash-"));
-    const configDir = path.join(tmpDir, ".openclaw");
-    const binDir = path.join(tmpDir, "bin");
-    const configPath = path.join(configDir, "openclaw.json");
-    const hashPath = path.join(configDir, ".config-hash");
-    try {
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(configPath, '{"gateway":{"auth":{"token":"fresh"}}}\n');
-      const expectedHash = `${sha256Hex(configPath)}  openclaw.json\n`;
+      const expectedHash = initialHash(configPath);
       fs.writeFileSync(hashPath, expectedHash);
       installRootOwnerStat(binDir);
 
@@ -99,8 +85,8 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
       });
 
-      expect(result.stderr).toBe("");
-      expect(result.status).toBe(0);
+      expect(result.status).toBe(expectedStatus);
+      expect(result.stderr).toBe(expectedStderr);
       expect(fs.readFileSync(hashPath, "utf-8")).toBe(expectedHash);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
