@@ -16,6 +16,7 @@ import {
   disposePreparedDcodeRebuildImage,
   prepareManagedDcodeRebuildImage,
 } from "./rebuild-managed-image-preflight";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 
 describe("managed DCode rebuild image configuration", () => {
   it("pins recorded reasoning and web search while restoring ambient state (#6195)", async () => {
@@ -105,6 +106,64 @@ describe("managed DCode rebuild image configuration", () => {
         expect.objectContaining({ dcodeAutoApprovalMode: "thread-opt-in" }),
       );
       expect(expectPreparedImage(result).dcodeAutoApprovalMode).toBe("thread-opt-in");
+      disposePreparedDcodeRebuildImage(expectPreparedImage(result));
+    } finally {
+      fs.rmSync(testRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("carries staged base resolution into a named DCode rebuild image (#9386)", async () => {
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-base-resolution-"));
+    const stagedDockerfile = path.join(testRoot, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    const digest = `sha256:${"a".repeat(64)}`;
+    const metadata = {
+      schema: 1,
+      key: "dcode-platform-base",
+      imageName: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+      ref: `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@${digest}`,
+      digest,
+      source: "override",
+      imageId: `sha256:${"b".repeat(64)}`,
+      os: "linux",
+      architecture: "amd64",
+      glibcVersion: "2.41",
+      requireOpenshellSandboxAbi: true,
+      minGlibcVersion: "2.39",
+    } satisfies SandboxBaseImageResolutionMetadata;
+    const prepareDockerfilePatch = vi.fn(async () => ({
+      buildId: "dcode-base-resolution",
+      dashboardRemoteBindPrepared: false,
+      resolvedBaseImage: null,
+    }));
+
+    try {
+      const result = await prepareManagedDcodeRebuildImage(
+        dcodeInput({ dcodeAutoApprovalMode: "thread-opt-in" }),
+        {
+          stageBuildContext: () => ({
+            buildCtx: testRoot,
+            stagedDockerfile,
+            baseImageResolutionMetadata: metadata,
+            origin: "generated" as const,
+            cleanupBuildCtx: () => {
+              fs.rmSync(testRoot, { recursive: true, force: true });
+              return true;
+            },
+          }),
+          prepareDockerfilePatch,
+          buildImage: () => ({ status: 0 }) as never,
+          removeImage: () => ({ status: 0 }) as never,
+        },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(prepareDockerfilePatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dcodeAutoApprovalMode: "thread-opt-in",
+          preResolvedBaseImageMetadata: metadata,
+        }),
+      );
       disposePreparedDcodeRebuildImage(expectPreparedImage(result));
     } finally {
       fs.rmSync(testRoot, { recursive: true, force: true });
