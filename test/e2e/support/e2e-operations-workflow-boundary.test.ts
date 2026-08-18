@@ -264,7 +264,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("runs authentication for any candidate identity input and permits an empty group", () => {
+  it("runs authentication when any candidate identity input is present and skips it when all are empty", () => {
     const workflow = readE2eOperationsWorkflow();
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
