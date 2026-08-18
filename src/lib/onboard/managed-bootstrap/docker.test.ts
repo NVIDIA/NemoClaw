@@ -495,6 +495,52 @@ describe("Docker managed bootstrap adapter", () => {
     dateNow.mockRestore();
   });
 
+  it("preserves redacted replacement evidence before reconnect rollback", async () => {
+    const fake = fixture();
+    const secret = "diagnostic-secret-canary";
+    fake.deps.errorPhaseDebouncePolls = 1;
+    fake.deps.runOpenshell = vi.fn(() => {
+      assert(fake.replacement?.State);
+      Object.assign(fake.replacement.State, {
+        Status: "exited",
+        Running: false,
+        ExitCode: 137,
+        OOMKilled: true,
+        Error: "startup terminated",
+      });
+      return { status: 1 };
+    });
+    fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
+    fake.deps.dockerLogs = vi.fn(() => `managed startup failed with NVIDIA_API_KEY=${secret}`);
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority();
+    const prepared = await adapter.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await adapter.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+    const failure = await adapter
+      .awaitBootstrap({ handle, snapshot, replacement, timeoutSecs: 1 })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      "Replacement state: status=exited running=false exit_code=137 oom_killed=true error=startup terminated",
+    );
+    expect((failure as Error).message).toContain(
+      "managed startup failed with NVIDIA_API_KEY=<REDACTED>",
+    );
+    expect((failure as Error).message).not.toContain(secret);
+  });
+
   it("preserves commit validation failure details when the replacement cannot be quiesced", async () => {
     const fake = fixture({
       sharedState: "pending",
