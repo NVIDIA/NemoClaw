@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
@@ -102,6 +106,31 @@ describe("managed workload onboard orchestration", () => {
     expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ catalogRevision }),
     );
+  });
+
+  it("binds fresh onboarding to the exact PR catalog (#9464)", async () => {
+    const catalogRevision = "b".repeat(40);
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    try {
+      const { prepared, runtime } = createFreshOnboardingRuntime({
+        GITHUB_ACTIONS: "true",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: catalogRevision,
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+      });
+
+      await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+      expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          catalogPath,
+          expectedCatalogRevision: catalogRevision,
+        }),
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
   });
 
   it("omits the qualification catalog revision outside GitHub Actions (#9385)", async () => {

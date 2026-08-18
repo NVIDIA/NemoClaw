@@ -20,6 +20,7 @@ export type SnapshotGatewayProbeClassification =
 export type SnapshotRestoreResultClassification =
   | "restored"
   | "restored-pairing-unverified"
+  | "managed-clone-rebind-required"
   | "command-failure"
   | "missing-restored-marker";
 
@@ -70,6 +71,14 @@ export function classifySnapshotRestoreResult(result: {
     /gateway pairing could not be verified/i.test(output)
   ) {
     return "restored-pairing-unverified";
+  }
+  if (
+    result.exitCode !== null &&
+    result.exitCode !== 0 &&
+    /requires managed-profile clone rebind/i.test(output) &&
+    /Destination '.+' was not changed/i.test(output)
+  ) {
+    return "managed-clone-rebind-required";
   }
   if (result.exitCode !== 0) return "command-failure";
   return /\bRestored\b/.test(output) ? "restored" : "missing-restored-marker";

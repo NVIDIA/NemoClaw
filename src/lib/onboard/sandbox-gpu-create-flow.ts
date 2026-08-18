@@ -78,7 +78,7 @@ export function resolveAgentCreateInput(
   env: NodeJS.ProcessEnv = process.env,
 ) {
   return {
-    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
+    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway, env),
     portableLifecycle: resolvePortableLifecycleMode(agent, env),
   };
 }
