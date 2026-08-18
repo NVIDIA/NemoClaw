@@ -769,4 +769,24 @@ assert_status_mode disabled
 
     expect(env[DCODE_BASE_IMAGE_ENV]).toBe(baseImageReference);
   });
+
+  it("forwards the contract-selected Deep Agents Code base image reference instead of the ambient publication index", () => {
+    const indexReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+    const platformReference = `${DCODE_BASE_IMAGE}@sha256:${"b".repeat(64)}`;
+    const env = buildCloudExperimentalCommandEnv(
+      "deepagents-sandbox",
+      "secret-key",
+      {
+        HOME: "/home/runner",
+        PATH: "/usr/bin",
+        [DCODE_BASE_IMAGE_ENV]: indexReference,
+      },
+      {
+        dcodeBaseImageReference: platformReference,
+        forwardDcodeBaseImage: true,
+      },
+    );
+
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBe(platformReference);
+  });
 });

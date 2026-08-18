@@ -23,11 +23,32 @@ import {
 
 export const HERMES_API_PORT_ENV = "NEMOCLAW_HERMES_API_PORT";
 
+/** Registry fields the Hermes API-port allocator reads for identity vs allocation. */
+export type HermesApiPortSandboxLookup = {
+  hermesApiPort?: number | null;
+  pendingRouteReservation?: true;
+  createdAt?: string;
+};
+
+/**
+ * Durable sandboxes keep a recorded (or legacy-default) API port. A route-only
+ * inference reservation is only a pre-create lock and must not pin the default
+ * port before allocation runs (#9291).
+ */
+function durableHermesApiPortSandbox(
+  registered: HermesApiPortSandboxLookup | null | undefined,
+): HermesApiPortSandboxLookup | null {
+  if (registered == null || registry.isRouteOnlySandboxReservation(registered)) {
+    return null;
+  }
+  return registered;
+}
+
 export interface HermesApiPortReservationInput {
   agentName?: string | null;
   sandboxName: string;
   env: NodeJS.ProcessEnv;
-  getSandbox(name: string): { hermesApiPort?: number | null } | null | undefined;
+  getSandbox(name: string): HermesApiPortSandboxLookup | null | undefined;
   captureForwardList(): string | null;
   reservePort?(port: number): Promise<DashboardPortReservation>;
   warn(message: string): void;
@@ -181,7 +202,7 @@ function isAddressInUse(error: unknown): boolean {
 export async function reserveCreateSandboxHermesApiPort(options: {
   sandboxName: string;
   env?: NodeJS.ProcessEnv;
-  getSandbox?: (name: string) => { hermesApiPort?: number | null } | null | undefined;
+  getSandbox?: (name: string) => HermesApiPortSandboxLookup | null | undefined;
   allowRegisteredOverride?: boolean;
   forwardListOutput?: string | null;
   isPortBoundCheck?: (port: number) => boolean;
@@ -191,7 +212,7 @@ export async function reserveCreateSandboxHermesApiPort(options: {
 }): Promise<ReservedCreateSandboxHermesApiPortResult> {
   const env = options.env ?? process.env;
   const getSandbox = options.getSandbox ?? registry.getSandbox;
-  const registered = getSandbox(options.sandboxName);
+  const registered = durableHermesApiPortSandbox(getSandbox(options.sandboxName));
   const hasRequestedPort = Boolean(env[HERMES_API_PORT_ENV]?.trim());
   const forwardListOutput = options.forwardListOutput ?? null;
   const forwardOwners = getOccupiedPorts(forwardListOutput);
@@ -205,9 +226,11 @@ export async function reserveCreateSandboxHermesApiPort(options: {
     return { effectivePort, reservation: await reservePort(effectivePort) };
   };
 
-  // Explicit and already-registered ports are identity, not allocation hints.
-  // Preserve them and report a bind collision instead of silently changing the
-  // sandbox's configured endpoint.
+  // Explicit and durable registered ports pin the sandbox endpoint, not
+  // allocation hints. Preserve them and report a bind collision instead of
+  // silently changing the sandbox's configured endpoint. Route-only inference
+  // reservations are not a durable sandbox and must allocate like an
+  // unregistered name (#9291).
   if (hasRequestedPort || registered) {
     const effectivePort = resolveOnboardHermesApiPort(options.sandboxName, {
       env,
@@ -335,11 +358,12 @@ export function retargetHermesApiPortInUrl(url: string, apiPort: number): string
  * argument through the onboarding entrypoint. The ready summary instead reads
  * the registry, which is equivalent because registration precedes it.
  *
- * An existing sandbox keeps its recorded port unless the caller is the actual
- * create/recreate or created-sandbox registration boundary. Other consumers
- * reject a conflicting explicit value before they mutate a host forward. A
- * registered sandbox without a port predates this feature and already runs on
- * the default.
+ * An existing durable sandbox keeps its recorded port unless the caller is the
+ * actual create/recreate or created-sandbox registration boundary. Other
+ * consumers reject a conflicting explicit value before they mutate a host
+ * forward. A durable registered sandbox without a port predates this feature
+ * and already runs on the default. A route-only inference reservation is not a
+ * durable sandbox and must allocate like an unregistered name (#9291).
  *
  * A recreate keeps its source row, so its create and registration boundaries
  * may apply an explicit value. Without an explicit value, it preserves the
@@ -349,7 +373,7 @@ export function resolveOnboardHermesApiPort(
   sandboxName: string,
   options: {
     env?: NodeJS.ProcessEnv;
-    getSandbox?: (name: string) => { hermesApiPort?: number | null } | null | undefined;
+    getSandbox?: (name: string) => HermesApiPortSandboxLookup | null | undefined;
     allowRegisteredOverride?: boolean;
     forwardListOutput?: string | null;
     findAvailablePort?: typeof findAvailableHermesApiPort;
@@ -363,7 +387,9 @@ export function resolveOnboardHermesApiPort(
     env[HERMES_API_PORT_ENV] = String(port);
     return port;
   };
-  const registered = (options.getSandbox ?? registry.getSandbox)(sandboxName);
+  const registered = durableHermesApiPortSandbox(
+    (options.getSandbox ?? registry.getSandbox)(sandboxName),
+  );
   if (registered) {
     const registeredPort = resolveSandboxHermesApiPort(registered);
     if (

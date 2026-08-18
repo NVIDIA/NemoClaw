@@ -741,7 +741,13 @@ exit 1
     const registryModule = requireForTest(
       path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
     ) as Record<string, any>;
-    const CUSTOM_CONTENT = "network_policies:\n  slack-files-upload:\n    host: files.slack.com\n";
+    const CUSTOM_CONTENT = `preset:
+  name: slack-files-upload
+  description: Allow Slack file uploads
+network_policies:
+  slack-files-upload:
+    host: files.slack.com
+`;
     const BUILTIN_CONTENT = "network_policies:\n  github:\n    host: github.com\n";
     const SOURCE_PATH = "/tmp/slack-files-upload-case.yaml";
 
@@ -841,7 +847,7 @@ exit 1
       }
     });
 
-    it("records the custom preset and returns true when the sandbox is registered", () => {
+    it("applies a well-formed custom preset and records it verbatim (#9406)", () => {
       registryModule.getSandbox = (name: string) => ({ name });
       const addSpy = vi.fn(() => true);
       registryModule.addCustomPolicy = addSpy;

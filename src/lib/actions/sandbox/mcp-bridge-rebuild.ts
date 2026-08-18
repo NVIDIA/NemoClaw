@@ -18,6 +18,7 @@ import {
 } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
+  assertNoAttachedProviderCredentialCollisions,
   attachProvider,
   detachProvider,
   preflightMcpEntryTargets,
@@ -129,6 +130,7 @@ export async function prepareMcpBridgesForRebuild(
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
+  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpBridgeEntry[] = [];
   try {
