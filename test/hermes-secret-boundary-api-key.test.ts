@@ -89,15 +89,16 @@ describe("agents/hermes/validate-hermes-env-secret-boundary API_SERVER_KEY contr
     expect(runtimeEnvResult.stderr).not.toContain(INHERITED_HEX_TOKEN.slice(0, 16));
   });
 
-  it("rejects weak API_SERVER_KEY values in Hermes .env without printing the value", () => {
-    for (const { envLine, redactedValue } of [
-      { envLine: "API_SERVER_KEY=x", redactedValue: "API_SERVER_KEY=x" },
-      { envLine: "API_SERVER_KEY=server-key", redactedValue: "server-key" },
-      {
-        envLine: "export API_SERVER_KEY='server-key'",
-        redactedValue: "server-key",
-      },
-    ]) {
+  it.each([
+    { envLine: "API_SERVER_KEY=x", redactedValue: "API_SERVER_KEY=x" },
+    { envLine: "API_SERVER_KEY=server-key", redactedValue: "server-key" },
+    {
+      envLine: "export API_SERVER_KEY='server-key'",
+      redactedValue: "server-key",
+    },
+  ])(
+    "rejects weak API_SERVER_KEY values in Hermes .env without printing the value [case %#]",
+    ({ envLine, redactedValue }) => {
       const result = runEnvFileValidator(
         ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1", envLine, ""].join("\n"),
       );
@@ -105,8 +106,8 @@ describe("agents/hermes/validate-hermes-env-secret-boundary API_SERVER_KEY contr
       expect(result.status, `${envLine}: ${result.stderr}`).toBe(1);
       expect(result.stderr, envLine).toContain("API_SERVER_KEY (line 3)");
       expect(result.stderr, envLine).not.toContain(redactedValue);
-    }
-  });
+    },
+  );
 
   it("rejects weak API_SERVER_KEY values in process env without printing the value", () => {
     const weakKey = "server-key";

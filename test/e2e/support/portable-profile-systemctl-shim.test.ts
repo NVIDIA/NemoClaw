@@ -939,10 +939,15 @@ describe("portable profile systemctl fixture", () => {
     },
   );
 
-  it(
-    "serializes try-restart with a public-socket request and leaves only the recorded backend process active (#9006)",
+  it.each([
+    { scenario: "activator PID" },
+    { scenario: "service PID" },
+    { scenario: "public socket" },
+    { scenario: "backend socket" },
+  ])(
+    "serializes try-restart with a public-socket request and leaves only the recorded backend process active [$scenario] (#9006)",
     { timeout: 30_000 },
-    async () => {
+    async ({ scenario }) => {
       const scope = createFixture();
       const refreshGate = path.join(scope.directory, "refresh-gate");
       const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
@@ -985,14 +990,15 @@ describe("portable profile systemctl fixture", () => {
 
         await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
         expect(backendPids.every((pid) => !pidIsActive(pid))).toBe(true);
-        for (const artifact of [
-          activatorPidFile,
-          servicePidFile,
-          scope.socketPath,
-          backendSocketPath,
-        ]) {
-          expect(fs.existsSync(artifact), artifact).toBe(false);
-        }
+        const artifact = (
+          {
+            "activator PID": activatorPidFile,
+            "service PID": servicePidFile,
+            "public socket": scope.socketPath,
+            "backend socket": backendSocketPath,
+          } as const
+        )[scenario]!;
+        expect(fs.existsSync(artifact), artifact).toBe(false);
       } finally {
         await cleanFixture(scope);
       }
@@ -1029,10 +1035,15 @@ describe("portable profile systemctl fixture", () => {
     },
   );
 
-  it(
-    "stops both fixture processes and removes both sockets during cleanup (#9006)",
+  it.each([
+    { scenario: "activator PID" },
+    { scenario: "service PID" },
+    { scenario: "public socket" },
+    { scenario: "backend socket" },
+  ])(
+    "stops both fixture processes and removes both sockets during cleanup [$scenario] (#9006)",
     { timeout: 30_000 },
-    async () => {
+    async ({ scenario }) => {
       const scope = createFixture();
       const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
       const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
@@ -1056,14 +1067,15 @@ describe("portable profile systemctl fixture", () => {
         await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
 
         expect(pids.every((pid) => !pidIsActive(pid))).toBe(true);
-        for (const artifact of [
-          activatorPidFile,
-          servicePidFile,
-          scope.socketPath,
-          backendSocketPath,
-        ]) {
-          expect(fs.existsSync(artifact), artifact).toBe(false);
-        }
+        const artifact = (
+          {
+            "activator PID": activatorPidFile,
+            "service PID": servicePidFile,
+            "public socket": scope.socketPath,
+            "backend socket": backendSocketPath,
+          } as const
+        )[scenario]!;
+        expect(fs.existsSync(artifact), artifact).toBe(false);
       } finally {
         await cleanFixture(scope);
       }

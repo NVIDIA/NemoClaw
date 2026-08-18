@@ -49,50 +49,53 @@ describe("private E2E controller files", () => {
     }
   });
 
-  it.skipIf(process.platform === "win32")("rejects FIFO paths without blocking", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-fifo-"));
-    const fifo = path.join(directory, "state.json");
-    try {
-      execFileSync("mkfifo", [fifo]);
-      const moduleUrl = pathToFileURL(path.resolve("tools/e2e/private-file.mts")).href;
-      const read = spawnSync(
-        process.execPath,
-        [
-          "--experimental-strip-types",
-          "--input-type=module",
-          "--eval",
-          `import { readPrivateRegularFile } from ${JSON.stringify(moduleUrl)}; readPrivateRegularFile(${JSON.stringify(fifo)}, { maxBytes: 64 });`,
-        ],
-        { encoding: "utf8", timeout: 2_000 },
-      );
-      const write = spawnSync(
-        process.execPath,
-        [
-          "--experimental-strip-types",
-          "--input-type=module",
-          "--eval",
-          `import { writePrivateRegularFile } from ${JSON.stringify(moduleUrl)}; writePrivateRegularFile(${JSON.stringify(fifo)}, "replaced\\n");`,
-        ],
-        { encoding: "utf8", timeout: 2_000 },
-      );
+  it.skipIf(process.platform === "win32").each([{ scenario: "read" }, { scenario: "write" }])(
+    "rejects FIFO paths without blocking [$scenario]",
+    ({ scenario }) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-fifo-"));
+      const fifo = path.join(directory, "state.json");
+      try {
+        execFileSync("mkfifo", [fifo]);
+        const moduleUrl = pathToFileURL(path.resolve("tools/e2e/private-file.mts")).href;
+        const read = spawnSync(
+          process.execPath,
+          [
+            "--experimental-strip-types",
+            "--input-type=module",
+            "--eval",
+            `import { readPrivateRegularFile } from ${JSON.stringify(moduleUrl)}; readPrivateRegularFile(${JSON.stringify(fifo)}, { maxBytes: 64 });`,
+          ],
+          { encoding: "utf8", timeout: 2_000 },
+        );
+        const write = spawnSync(
+          process.execPath,
+          [
+            "--experimental-strip-types",
+            "--input-type=module",
+            "--eval",
+            `import { writePrivateRegularFile } from ${JSON.stringify(moduleUrl)}; writePrivateRegularFile(${JSON.stringify(fifo)}, "replaced\\n");`,
+          ],
+          { encoding: "utf8", timeout: 2_000 },
+        );
 
-      expect(read.error).toBeUndefined();
-      expect(read.status).not.toBe(0);
-      expect(read.stderr).toContain(`Error: ${fifo} must be a private regular file`);
-      expect(write.error).toBeUndefined();
-      expect(write.status).not.toBe(0);
-      expect(write.stderr).toContain("Error: ENXIO:");
-      expect(write.stderr).toContain(`open '${fifo}'`);
-      for (const output of [read.stderr, write.stderr]) {
+        expect(read.error).toBeUndefined();
+        expect(read.status).not.toBe(0);
+        expect(read.stderr).toContain(`Error: ${fifo} must be a private regular file`);
+        expect(write.error).toBeUndefined();
+        expect(write.status).not.toBe(0);
+        expect(write.stderr).toContain("Error: ENXIO:");
+        expect(write.stderr).toContain(`open '${fifo}'`);
+        const output = ({ read: read.stderr, write: write.stderr } as const)[scenario]!;
         expect(output).not.toMatch(
           /ERR_(?:MODULE_NOT_FOUND|UNKNOWN_FILE_EXTENSION|UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING)|Cannot find module|Unknown file extension|bad option: --experimental-strip-types|SyntaxError/u,
         );
+
+        expect(fs.lstatSync(fifo).isFIFO()).toBe(true);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
       }
-      expect(fs.lstatSync(fifo).isFIFO()).toBe(true);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("rejects a regular file that grows beyond maxBytes after fstat", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-growth-"));

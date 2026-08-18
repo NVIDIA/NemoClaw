@@ -373,14 +373,12 @@ install_packages; printf 'POLICY_AFTER=%s\n' "\${APT_TRANSACTION_DRIVER_POLICY:-
     expect(output.match(/^SUDO .*apt-get install .*driver-policy.*$/gm)).toHaveLength(2);
     expect(output).toContain("POLICY_AFTER=");
     expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
-    for (const spec of [
-      "libnvidia-container-tools=1.19.1-1",
-      "libnvidia-container1=1.19.1-1",
-      "nvidia-container-toolkit=1.19.1-1",
-      "nvidia-container-toolkit-base=1.19.1-1",
-    ]) {
-      expect(output).toContain(spec);
-    }
+
+    expect(output).toContain("libnvidia-container-tools=1.19.1-1");
+    expect(output).toContain("libnvidia-container1=1.19.1-1");
+    expect(output).toContain("nvidia-container-toolkit=1.19.1-1");
+    expect(output).toContain("nvidia-container-toolkit-base=1.19.1-1");
+
     expect(output).toContain("prerequisite_packages=ready");
   });
   it("does not refresh CDI when the GPU launch probe already passes", () => {
@@ -589,8 +587,9 @@ install_exact_file_or_reuse "$HOME/source" "$HOME/target" 0644 test_repository_f
     expect(output).toMatch(/refusing to overwrite/);
   });
 
-  it("rejects privileged files with unsafe ownership, mode, type, or parent metadata", () => {
-    for (const metadata of ["1000 0 644", "0 0 666"]) {
+  it.each(["1000 0 644", "0 0 666"])(
+    "rejects privileged files with unsafe ownership, mode, type, or parent metadata [%s]",
+    (metadata) => {
       const { result, output } = runSourced(
         STATION_PREPARE,
         `
@@ -605,11 +604,10 @@ assert_root_regular_file_safe /etc/example 0644 test_file
       );
       expect(result.status, output).not.toBe(0);
       expect(output).toMatch(/root-owned regular file/);
-    }
 
-    const unsafeType = runSourced(
-      STATION_PREPARE,
-      `
+      const unsafeType = runSourced(
+        STATION_PREPARE,
+        `
 sudo() {
   [[ "$*" == "test ! -L /etc/example" ]] && return 0
   [[ "$*" == "test -f /etc/example" ]] && return 1
@@ -617,13 +615,13 @@ sudo() {
 }
 assert_root_regular_file_safe /etc/example 0644 test_file
 `,
-    );
-    expect(unsafeType.result.status, unsafeType.output).not.toBe(0);
-    expect(unsafeType.output).toMatch(/root-owned regular file/);
+      );
+      expect(unsafeType.result.status, unsafeType.output).not.toBe(0);
+      expect(unsafeType.output).toMatch(/root-owned regular file/);
 
-    const unsafeParent = runSourced(
-      STATION_PREPARE,
-      `
+      const unsafeParent = runSourced(
+        STATION_PREPARE,
+        `
 sudo() {
   if [[ "$1" == "test" ]]; then return 0; fi
   if [[ "$1" == "stat" ]]; then printf '0 0 777\n'; return 0; fi
@@ -631,10 +629,11 @@ sudo() {
 }
 assert_root_directory_safe /etc/apt/keyrings test_directory
 `,
-    );
-    expect(unsafeParent.result.status, unsafeParent.output).not.toBe(0);
-    expect(unsafeParent.output).toMatch(/not group- or other-writable/);
-  });
+      );
+      expect(unsafeParent.result.status, unsafeParent.output).not.toBe(0);
+      expect(unsafeParent.output).toMatch(/not group- or other-writable/);
+    },
+  );
 
   it("requires a new login after adding Docker group membership", () => {
     const { result, output } = runSourced(

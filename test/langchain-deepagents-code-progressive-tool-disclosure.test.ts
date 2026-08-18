@@ -687,14 +687,12 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
     expect(second.status, second.stderr).toBe(0);
     expect(snapshot(managedPaths)).toEqual(firstBytes);
 
-    for (const file of fixture.sourcePaths.filter(
-      (sourcePath) =>
-        !sourcePath.endsWith("/__init__.py") && !sourcePath.endsWith("/onboarding.py"),
-    )) {
-      expect(
-        firstBytes[file].match(new RegExp(HARDENING_MARKER.replaceAll(".", "\\."), "g")),
-      ).toHaveLength(1);
-    }
+    expect(fixture.sourcePaths.filter(
+          (sourcePath) =>
+            !sourcePath.endsWith("/__init__.py") && !sourcePath.endsWith("/onboarding.py"),
+        ).every((file) =>
+          (firstBytes[file].match(new RegExp(HARDENING_MARKER.replaceAll(".", "\\."), "g"))
+            ?.length ?? 0) === 1)).toBe(true);
     expect(
       firstBytes[fixture.agentPath].match(/NemoClaw-managed progressive tool disclosure\./g),
     ).toHaveLength(1);
@@ -773,27 +771,30 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
   it.each([
     ["parser", "mainPath", MAIN_ANCHOR],
     ["entrypoint", "entrypointPath", ENTRYPOINT_ANCHOR],
-  ] as const)("fails closed when the exact %s anchor is missing or duplicated", (label, pathKey, anchor) => {
-    for (const mode of ["missing", "duplicate"] as const) {
-      const fixture = makePatchFixture();
-      const target = fixture[pathKey];
-      const original = fs.readFileSync(target, "utf8");
-      fs.writeFileSync(
-        target,
-        mode === "missing"
-          ? original.replace(anchor, "")
-          : original.replace(anchor, anchor + anchor),
-        "utf8",
-      );
-      const before = snapshot(fixture.sourcePaths);
-      const result = runPatcher(fixture);
+  ] as const)(
+    "fails closed when the exact %s anchor is missing or duplicated",
+    (label, pathKey, anchor) => {
+      for (const mode of ["missing", "duplicate"] as const) {
+        const fixture = makePatchFixture();
+        const target = fixture[pathKey];
+        const original = fs.readFileSync(target, "utf8");
+        fs.writeFileSync(
+          target,
+          mode === "missing"
+            ? original.replace(anchor, "")
+            : original.replace(anchor, anchor + anchor),
+          "utf8",
+        );
+        const before = snapshot(fixture.sourcePaths);
+        const result = runPatcher(fixture);
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain(`Expected one Deep Agents Code ${label} marker`);
-      expect(snapshot(fixture.sourcePaths)).toEqual(before);
-      expect(fs.existsSync(fixture.modulePath)).toBe(false);
-    }
-  });
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain(`Expected one Deep Agents Code ${label} marker`);
+        expect(snapshot(fixture.sourcePaths)).toEqual(before);
+        expect(fs.existsSync(fixture.modulePath)).toBe(false);
+      }
+    },
+  );
 
   it("fails closed when the required progressive agent source shape drifts", () => {
     const fixture = makePatchFixture();

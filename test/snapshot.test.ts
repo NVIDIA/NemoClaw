@@ -778,7 +778,7 @@ if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
 if (cmd.includes("find ")) {
   process.exit(0);
 }
-if (cmd.includes("tar -cf -")) {
+if (cmd.includes("-cf -")) {
   const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -875,7 +875,7 @@ if (cmd.includes("find ")) {
   process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
   process.exit(0);
 }
-if (cmd.includes("tar -cf -")) {
+if (cmd.includes("-cf -")) {
   const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -939,7 +939,7 @@ if (cmd.includes("find ")) {
   process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
   process.exit(0);
 }
-if (cmd.includes("tar -cf -")) {
+if (cmd.includes("-cf -")) {
   const r = spawnSync("tar", ["-cf", "-", "-C", openclawDir, ...existingDirs], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1158,7 +1158,7 @@ if (cmd.includes("[ -d ")) {
 if (cmd.includes("find ")) {
   process.exit(0);
 }
-if (cmd.includes("tar -cf -")) {
+if (cmd.includes("-cf -")) {
   const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, "extensions"], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1238,7 +1238,7 @@ if (cmd.includes("find ")) {
   }
   process.exit(0);
 }
-if (cmd.includes("tar -cf -")) {
+if (cmd.includes("-cf -")) {
   const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1407,7 +1407,7 @@ if (cmd.includes("[ -d ")) {
 if (cmd.includes("find ")) {
   process.exit(0);
 }
-if (cmd.includes("tar -cf -")) {
+if (cmd.includes("-cf -")) {
   const r = spawnSync("tar", ["-cf", "-", "-C", deepAgentsDir, ".state", "skills", "agent/skills"], {
     stdio: ["ignore", "pipe", "pipe"],
   });

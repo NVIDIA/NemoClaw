@@ -50,8 +50,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
-    testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
+    pattern: /(?:^|\/)(agents\/(?:hermes|langchain-deepagents-code)\/)?Dockerfile$/,
+    testsToRun: (_file, match) =>
+      match[1]
+        ? ["src/lib/onboard/managed-startup-profile.test.ts"]
+        : [
+            "src/lib/onboard/managed-startup-profile.test.ts",
+            "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+          ],
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,
@@ -174,6 +180,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,
     testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/post-merge-docs\.yaml|tools\/post-merge-docs\/(?:review-policy\.yaml|[^/]+\.mts))$/,
+    testsToRun: runTests("test/post-merge-docs.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,

@@ -10,12 +10,14 @@ import {
 } from "../../../tools/e2e/target-catalogue.mts";
 
 describe("security-posture catalogue boundary", () => {
-  it("keeps one credential-free posture target per agent", () => {
-    expect(() => validateE2eTargetCatalogue(E2E_TARGET_CATALOGUE)).not.toThrow();
-    const openclaw = catalogueTarget("security-posture-openclaw");
-    const hermes = catalogueTarget("security-posture-hermes");
+  it.each([{ scenario: "OpenClaw" }, { scenario: "Hermes" }])(
+    "keeps one credential-free posture target per agent [$scenario]",
+    ({ scenario }) => {
+      expect(() => validateE2eTargetCatalogue(E2E_TARGET_CATALOGUE)).not.toThrow();
+      const openclaw = catalogueTarget("security-posture-openclaw");
+      const hermes = catalogueTarget("security-posture-hermes");
 
-    for (const target of [openclaw, hermes]) {
+      const target = ({ OpenClaw: openclaw, Hermes: hermes } as const)[scenario]!;
       expect(target).toMatchObject({
         targetId: "security-posture",
         profile: "nvidia-inference",
@@ -27,16 +29,17 @@ describe("security-posture catalogue boundary", () => {
           NEMOCLAW_E2E_SECURITY_POSTURE: "1",
         },
       });
-    }
-    expect(openclaw).toMatchObject({
-      shard: "openclaw",
-      testFile: "test/e2e/live/full-e2e.test.ts",
-    });
-    expect(hermes).toMatchObject({
-      shard: "hermes",
-      testFile: "test/e2e/live/hermes-e2e.test.ts",
-      hostPreparation: "hermes-swap",
-      runnerComparison: true,
-    });
-  });
+
+      expect(openclaw).toMatchObject({
+        shard: "openclaw",
+        testFile: "test/e2e/live/full-e2e.test.ts",
+      });
+      expect(hermes).toMatchObject({
+        shard: "hermes",
+        testFile: "test/e2e/live/hermes-e2e.test.ts",
+        hostPreparation: "hermes-swap",
+        runnerComparison: true,
+      });
+    },
+  );
 });

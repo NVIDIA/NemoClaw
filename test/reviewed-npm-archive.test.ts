@@ -125,11 +125,12 @@ describe("reviewed npm archive", () => {
     expect(fs.existsSync(archive.rootDirectory)).toBe(false);
   });
 
-  it("fails before packing when registry integrity or tarball metadata drifts", () => {
-    for (const [field, actual] of [
-      ["dist.integrity", "sha512-drift"],
-      ["dist.tarball", "https://unexpected.invalid/reviewed.tgz"],
-    ] as const) {
+  it.each([
+    ["dist.integrity", "sha512-drift"],
+    ["dist.tarball", "https://unexpected.invalid/reviewed.tgz"],
+  ] as const)(
+    "fails before packing when registry integrity or tarball metadata drifts [case %#]",
+    (field, actual) => {
       const calls: string[][] = [];
       expect(() =>
         verifyReviewedNpmMetadata(request(), (args) => {
@@ -143,8 +144,8 @@ describe("reviewed npm archive", () => {
         }),
       ).toThrow(field === "dist.integrity" ? "npm integrity mismatch" : "npm tarball URL mismatch");
       expect(calls.some((args) => args[0] === "pack")).toBe(false);
-    }
-  });
+    },
+  );
 
   it("removes the fresh directory when packed SRI drifts", () => {
     const reviewed = request();

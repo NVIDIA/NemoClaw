@@ -521,7 +521,15 @@ describe("base-trusted createRequire ratchet", () => {
     );
   });
 
-  it("requires exactly one current and one base checker (#7056)", () => {
+  it.each(
+    Array.from(
+      [
+        `120000 blob ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.ts\0`,
+        `160000 commit ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.ts\0`,
+      ],
+      (value) => [value],
+    ),
+  )("requires exactly one current and one base checker [case %#] (#7056)", (entry) => {
     const root = temporaryRepo();
     writeFixture(root, "scripts/checks/test-create-require-budget.ts", allowlistSource([], []));
     writeFixture(root, "scripts/checks/test-create-require-budget.mts", allowlistSource([], []));
@@ -585,17 +593,13 @@ describe("base-trusted createRequire ratchet", () => {
         BASE_SHA,
       ),
     ).toThrow("trusted base checker tree contains an invalid Git entry");
-    for (const entry of [
-      `120000 blob ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.ts\0`,
-      `160000 commit ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.ts\0`,
-    ]) {
-      expect(() =>
-        requireSingleBaseChecker(
-          checkerTreeRunner({ status: 0, stderr: "", stdout: entry }),
-          BASE_SHA,
-        ),
-      ).toThrow("trusted base createRequire budget checker must be a regular file");
-    }
+
+    expect(() =>
+      requireSingleBaseChecker(
+        checkerTreeRunner({ status: 0, stderr: "", stdout: entry }),
+        BASE_SHA,
+      ),
+    ).toThrow("trusted base createRequire budget checker must be a regular file");
   });
 
   it("allows a clean one-file checker extension migration (#7056)", () => {

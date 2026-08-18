@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { constants, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,23 +11,6 @@ import {
   makeEmptyClaimsJwtFixture,
   makeJwtFixture,
 } from "../../../test/helpers/security-token-fixtures";
-
-const fsControl = vi.hoisted(() => ({
-  noFollowUnavailable: false,
-}));
-
-vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs")>();
-  return {
-    ...original,
-    constants: {
-      ...original.constants,
-      get O_NOFOLLOW(): number | undefined {
-        return fsControl.noFollowUnavailable ? undefined : original.constants.O_NOFOLLOW;
-      },
-    },
-  };
-});
 
 import {
   isCredentialField,
@@ -500,16 +483,14 @@ describe("sanitizeConfigFile", () => {
     expect(readFileSync(configPath, "utf-8")).toBe(source);
   });
 
-  it("preserves empty and comment-only YAML documents", () => {
-    for (const [name, source] of [
-      ["empty.yaml", ""],
-      ["comments.yaml", "# nothing to sanitize\n"],
-    ]) {
-      const configPath = join(tmpDir, name);
-      writeFileSync(configPath, source);
-      expect(sanitizeYamlConfigFile(configPath)).toBe(true);
-      expect(readFileSync(configPath, "utf-8")).toBe(source);
-    }
+  it.each([
+    ["empty.yaml", ""],
+    ["comments.yaml", "# nothing to sanitize\n"],
+  ])("preserves empty and comment-only YAML documents [case %#]", (name, source) => {
+    const configPath = join(tmpDir, name);
+    writeFileSync(configPath, source);
+    expect(sanitizeYamlConfigFile(configPath)).toBe(true);
+    expect(readFileSync(configPath, "utf-8")).toBe(source);
   });
 
   it("sanitizes valid JSON arrays instead of treating them as failures", () => {
@@ -622,23 +603,31 @@ describe("credential filter no-follow boundary", () => {
     const jsonSource = JSON.stringify({ apiKey: "sk-secret-value" });
     const yamlSource = "api_key: sk-secret-value\n";
     const envSource = "API_KEY=sk-secret-value\n";
+    const reflectGet = Reflect.get;
+    const noFollow = vi
+      .spyOn(Reflect, "get")
+      .mockImplementation((...args) =>
+        args[0] === constants && args[1] === "O_NOFOLLOW" ? undefined : reflectGet(...args),
+      );
+    let observed: unknown[] = [];
 
     try {
       writeFileSync(jsonPath, jsonSource);
       writeFileSync(yamlPath, yamlSource);
       writeFileSync(envPath, envSource);
-      fsControl.noFollowUnavailable = true;
-
-      expect(sanitizeConfigFile(jsonPath)).toBe(false);
-      expect(sanitizeYamlConfigFile(yamlPath)).toBe(false);
-      expect(sanitizeEnvFile(envPath)).toBe(false);
-      expect(readFileSync(jsonPath, "utf-8")).toBe(jsonSource);
-      expect(readFileSync(yamlPath, "utf-8")).toBe(yamlSource);
-      expect(readFileSync(envPath, "utf-8")).toBe(envSource);
+      observed = [
+        sanitizeConfigFile(jsonPath),
+        sanitizeYamlConfigFile(yamlPath),
+        sanitizeEnvFile(envPath),
+        readFileSync(jsonPath, "utf-8"),
+        readFileSync(yamlPath, "utf-8"),
+        readFileSync(envPath, "utf-8"),
+      ];
     } finally {
-      fsControl.noFollowUnavailable = false;
+      noFollow.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
+    expect(observed).toEqual([false, false, false, jsonSource, yamlSource, envSource]);
   });
 });
 

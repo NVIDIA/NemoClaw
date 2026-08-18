@@ -14,13 +14,21 @@ describe("compatible endpoint reasoning mode", () => {
     delete process.env.NEMOCLAW_REASONING;
   });
 
-  it("normalizes supported boolean aliases (#3279)", () => {
-    for (const value of ["true", "1", "yes", "y", " YES "]) {
+  it.each(["true", "1", "yes", "y", " YES "])(
+    "normalizes truthy boolean alias %j (#3279)",
+    (value) => {
       expect(normalizeReasoningFlag(value)).toBe("true");
-    }
-    for (const value of ["false", "0", "no", "n", " NO "]) {
+    },
+  );
+
+  it.each(["false", "0", "no", "n", " NO "])(
+    "normalizes falsey boolean alias %j (#3279)",
+    (value) => {
       expect(normalizeReasoningFlag(value)).toBe("false");
-    }
+    },
+  );
+
+  it("rejects an unsupported boolean alias (#3279)", () => {
     expect(normalizeReasoningFlag("maybe")).toBeNull();
   });
 

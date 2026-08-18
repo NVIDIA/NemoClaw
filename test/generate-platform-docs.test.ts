@@ -112,7 +112,9 @@ except ValueError as exc:
     expect(output).not.toContain("NO_ERROR");
   });
 
-  it("rejects malformed platform runtimes via the generator entry path", () => {
+  it.each(
+    ["non-list", "empty-list", "non-string-item", "empty-string-item", "whitespace-string-item"],
+  )("rejects malformed platform runtimes via the generator entry path [%s]", (label) => {
     const tmp = mkdtempSync(path.join(tmpdir(), "genplatform-"));
     try {
       const cases = [
@@ -163,15 +165,9 @@ module.main()
       const output = outputs.join("\n");
       const expected =
         "Error: ci/platform-matrix.json: platforms[0].runtimes must be a non-empty list of non-empty strings";
-      for (const label of [
-        "non-list",
-        "empty-list",
-        "non-string-item",
-        "empty-string-item",
-        "whitespace-string-item",
-      ]) {
-        expect(output).toContain(`${label}:${expected}`);
-      }
+
+      expect(output).toContain(`${label}:${expected}`);
+
       expect(output).not.toContain("NO_ERROR");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -457,7 +453,7 @@ print(block)
   // credential-boundary invariants. Each test reads the actual matrix and
   // docs at the PR head, not a fixture, so a future edit that breaks the
   // invariant fails this suite before the change ships.
-  it("every documented `--agent <id>` selector resolves through production agent selection", () => {
+  function verifyDocumentedAgentSelectors() {
     const repoRoot = path.join(import.meta.dirname, "..");
     const matrix = JSON.parse(
       readFileSync(path.join(repoRoot, "ci", "platform-matrix.json"), "utf-8"),
@@ -487,5 +483,10 @@ print(block)
       ).not.toBeNull();
       expect(loadAgent(canonicalId ?? id).name).toBe(canonicalId);
     }
-  });
+  }
+
+  it(
+    "every documented `--agent <id>` selector resolves through production agent selection",
+    verifyDocumentedAgentSelectors,
+  );
 });

@@ -36,6 +36,14 @@ Custom endpoint onboarding rejects endpoint URLs that contain userinfo, query, o
 NemoClaw does not forward those components to the endpoint.
 Configure the provider credential separately instead of putting it in the endpoint URL.
 
+Custom endpoint onboarding also rejects an endpoint URL that contains control characters, percent-encoded control characters, spaces within the URL, shell metacharacters, or other characters outside the URL-safe ASCII set.
+The URL-safe ASCII set is ASCII letters, digits, and the characters `_ . / : = , @ % + - [ ] ~`.
+NemoClaw trims ASCII spaces at the start and end of the URL before it applies these checks.
+It also rejects an input that is not an absolute HTTP or HTTPS URL.
+This rejection happens before any network request, provider registration, registry write, or sandbox and image mutation, so a rejected input changes no NemoClaw state.
+The `inference set` command applies the same rejection classes to `--endpoint-url` before DNS resolution.
+Sandbox rebuild applies the same rejection classes to recorded custom endpoint metadata and treats a violating value as unknown.
+
 Managed provider defaults that do not provide an explicit custom endpoint through these paths are unaffected.
 
 Custom endpoint onboarding has one narrower operator-controlled exception for corporate inference gateways.

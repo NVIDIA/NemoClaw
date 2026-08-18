@@ -84,165 +84,168 @@ describe("DockerProbe secret hygiene", () => {
     expect(result.error).toContain("[REDACTED]");
   });
 
-  it("writes DockerProbe stdout, stderr, and result artifacts after redaction", async () => {
-    const secret = "docker-probe-artifact-secret";
-    const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-artifacts-"));
-    const artifacts = new ArtifactSink(artifactsRoot);
-    const secrets = new SecretStore({ NEMOCLAW_TOKEN: secret }, (message) => {
-      throw new Error(message ?? "unexpected skip");
-    });
-    const probe = new DockerProbe(
-      artifacts,
-      (text, extraValues) => secrets.redact(text, extraValues),
-      (_command, args) => ({
-        pid: 123,
-        output: [null, `stdout ${secret} ${args.join(" ")}`, `stderr ${secret}`],
-        stdout: `stdout ${secret} ${args.join(" ")}`,
-        stderr: `stderr ${secret}`,
-        status: 17,
-        signal: null,
-        error: new Error(`error ${secret}`),
-      }),
-    );
+  it.each([
+    "docker/001-diag-hermes-logs.stdout.txt",
+    "docker/001-diag-hermes-logs.stderr.txt",
+    "docker/001-diag-hermes-logs.result.json",
+  ])(
+    "writes DockerProbe stdout, stderr, and result artifacts after redaction [case %#]",
+    async (relativePath) => {
+      const secret = "docker-probe-artifact-secret";
+      const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-artifacts-"));
+      const artifacts = new ArtifactSink(artifactsRoot);
+      const secrets = new SecretStore({ NEMOCLAW_TOKEN: secret }, (message) => {
+        throw new Error(message ?? "unexpected skip");
+      });
+      const probe = new DockerProbe(
+        artifacts,
+        (text, extraValues) => secrets.redact(text, extraValues),
+        (_command, args) => ({
+          pid: 123,
+          output: [null, `stdout ${secret} ${args.join(" ")}`, `stderr ${secret}`],
+          stdout: `stdout ${secret} ${args.join(" ")}`,
+          stderr: `stderr ${secret}`,
+          status: 17,
+          signal: null,
+          error: new Error(`error ${secret}`),
+        }),
+      );
 
-    const result = await probe.run(["logs", "hermes"], { artifactName: "diag-hermes-logs" });
+      const result = await probe.run(["logs", "hermes"], { artifactName: "diag-hermes-logs" });
 
-    expect(JSON.stringify(result)).not.toContain(secret);
-    for (const relativePath of [
-      "docker/001-diag-hermes-logs.stdout.txt",
-      "docker/001-diag-hermes-logs.stderr.txt",
-      "docker/001-diag-hermes-logs.result.json",
-    ]) {
+      expect(JSON.stringify(result)).not.toContain(secret);
+
       const artifact = await readArtifact(artifactsRoot, relativePath);
       expect(artifact).not.toContain(secret);
       expect(artifact).toContain("[REDACTED]");
-    }
-  });
+    },
+  );
 
-  it("kills real-branch Docker output at the capture limit without retaining payload (#7101)", async () => {
-    const secret = "DOCKER_OUTPUT_LIMIT_SECRET";
-    const outputBytes = 10 * 1024 * 1024 + Buffer.byteLength(secret);
-    const output = secret.repeat(Math.ceil(outputBytes / Buffer.byteLength(secret)));
-    const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-output-limit-"));
-    const artifacts = new ArtifactSink(artifactsRoot);
-    const stdout = new PassThrough();
-    const stderr = new PassThrough();
-    const childKill = vi.fn(() => true);
-    const childPid = 42_424;
-    const child = Object.assign(new EventEmitter(), {
-      pid: childPid,
-      stdout,
-      stderr,
-      stdin: null,
-      kill: childKill,
-    }) as unknown as ChildProcess;
-    const progress = startTestProgress(
-      "DockerProbe real-branch output limit",
-      ["run noisy Docker command", "verify safe artifacts"],
-      {
-        clearTimer: () => undefined,
-        logLine: () => undefined,
-        setTimer: () => ({}),
-        targetId: "docker-probe-output-limit",
-      },
-    );
-    const processKill = vi.spyOn(process, "kill").mockImplementation((() => {
-      queueMicrotask(() => child.emit("close", null, "SIGKILL"));
-      return true;
-    }) as typeof process.kill);
-    spawnMock.mockReset();
-    spawnMock.mockImplementationOnce(() => {
-      queueMicrotask(() => {
-        stderr.write(`before-limit:${secret}`);
-        stdout.write(output);
-        stderr.write(`after-limit:${secret}`);
-      });
-      return child;
-    });
-    onTestFinished(() => {
-      progress.stop();
-      processKill.mockRestore();
+  it(
+    "kills real-branch Docker output at the capture limit without retaining payload (#7101)",
+    async () => {
+      const secret = "DOCKER_OUTPUT_LIMIT_SECRET";
+      const outputBytes = 10 * 1024 * 1024 + Buffer.byteLength(secret);
+      const output = secret.repeat(Math.ceil(outputBytes / Buffer.byteLength(secret)));
+      const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-output-limit-"));
+      const artifacts = new ArtifactSink(artifactsRoot);
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      const childKill = vi.fn(() => true);
+      const childPid = 42_424;
+      const child = Object.assign(new EventEmitter(), {
+        pid: childPid,
+        stdout,
+        stderr,
+        stdin: null,
+        kill: childKill,
+      }) as unknown as ChildProcess;
+      const progress = startTestProgress(
+        "DockerProbe real-branch output limit",
+        ["run noisy Docker command", "verify safe artifacts"],
+        {
+          clearTimer: () => undefined,
+          logLine: () => undefined,
+          setTimer: () => ({}),
+          targetId: "docker-probe-output-limit",
+        },
+      );
+      const processKill = vi.spyOn(process, "kill").mockImplementation((() => {
+        queueMicrotask(() => child.emit("close", null, "SIGKILL"));
+        return true;
+      }) as typeof process.kill);
       spawnMock.mockReset();
-    });
+      spawnMock.mockImplementationOnce(() => {
+        queueMicrotask(() => {
+          stderr.write(`before-limit:${secret}`);
+          stdout.write(output);
+          stderr.write(`after-limit:${secret}`);
+        });
+        return child;
+      });
+      onTestFinished(async () => {
+        progress.stop();
+        processKill.mockRestore();
+        spawnMock.mockReset();
+        await fs.rm(artifactsRoot, { recursive: true, force: true });
+      });
 
-    const probe = new DockerProbe(artifacts, (text) => text, undefined, progress);
-    const marker = "[docker-probe output exceeded safe capture limit]";
-    const result = await probe.run(["version"], {
-      artifactName: "output-limit",
-      timeoutMs: 10_000,
-    });
-    progress.phase("verify safe artifacts");
+      const probe = new DockerProbe(artifacts, (text) => text, undefined, progress);
+      const marker = "[docker-probe output exceeded safe capture limit]";
+      const result = await probe.run(["version"], {
+        artifactName: "output-limit",
+        timeoutMs: 10_000,
+      });
+      progress.phase("verify safe artifacts");
 
-    expect(spawnMock).toHaveBeenCalledTimes(1);
-    expect(processKill).toHaveBeenCalledWith(-childPid, "SIGKILL");
-    expect(childKill).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      command: ["docker", "version"],
-      exitCode: null,
-      signal: "SIGKILL",
-      stdout: marker,
-      stderr: marker,
-      error: "Docker output exceeded the safe capture limit",
-    });
-    const [stdoutArtifact, stderrArtifact, resultArtifactText] = await Promise.all([
-      readArtifact(artifactsRoot, "docker/001-output-limit.stdout.txt"),
-      readArtifact(artifactsRoot, "docker/001-output-limit.stderr.txt"),
-      readArtifact(artifactsRoot, "docker/001-output-limit.result.json"),
-    ]);
-    expect(stdoutArtifact).toBe(marker);
-    expect(stderrArtifact).toBe(marker);
-    expect(JSON.parse(resultArtifactText)).toEqual(result);
-    for (const published of [
-      JSON.stringify(result),
-      stdoutArtifact,
-      stderrArtifact,
-      resultArtifactText,
-    ]) {
-      expect(published).not.toContain(secret);
-    }
-  });
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(processKill).toHaveBeenCalledWith(-childPid, "SIGKILL");
+      expect(childKill).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        command: ["docker", "version"],
+        exitCode: null,
+        signal: "SIGKILL",
+        stdout: marker,
+        stderr: marker,
+        error: "Docker output exceeded the safe capture limit",
+      });
+      const [stdoutArtifact, stderrArtifact, resultArtifactText] = await Promise.all([
+        readArtifact(artifactsRoot, "docker/001-output-limit.stdout.txt"),
+        readArtifact(artifactsRoot, "docker/001-output-limit.stderr.txt"),
+        readArtifact(artifactsRoot, "docker/001-output-limit.result.json"),
+      ]);
+      expect(stdoutArtifact).toBe(marker);
+      expect(stderrArtifact).toBe(marker);
+      expect(JSON.parse(resultArtifactText)).toEqual(result);
+      expect(JSON.stringify({ result, stdoutArtifact, stderrArtifact, resultArtifactText })).not.toContain(
+        secret,
+      );
+    },
+  );
 
-  it("can return raw Docker output for leak assertions while writing only redacted artifacts", async () => {
-    const leakedSecret = "SENTINEL_RAW_SECRET_VALUE";
-    const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-raw-output-"));
-    const artifacts = new ArtifactSink(artifactsRoot);
-    const secrets = new SecretStore({}, (message) => {
-      throw new Error(message ?? "unexpected skip");
-    });
-    const probe = new DockerProbe(
-      artifacts,
-      (text, extraValues) => secrets.redact(text, extraValues),
-      () => ({
-        pid: 123,
-        output: [null, "", `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`],
-        stdout: "",
-        stderr: `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`,
-        status: 1,
-        signal: null,
-      }),
-    );
+  it.each([
+    "docker/001-startup-rejects-env-file-devtest-api-token.stderr.txt",
+    "docker/001-startup-rejects-env-file-devtest-api-token.result.json",
+  ])(
+    "can return raw Docker output for leak assertions while writing only redacted artifacts [case %#]",
+    async (relativePath) => {
+      const leakedSecret = "SENTINEL_RAW_SECRET_VALUE";
+      const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-raw-output-"));
+      const artifacts = new ArtifactSink(artifactsRoot);
+      const secrets = new SecretStore({}, (message) => {
+        throw new Error(message ?? "unexpected skip");
+      });
+      const probe = new DockerProbe(
+        artifacts,
+        (text, extraValues) => secrets.redact(text, extraValues),
+        () => ({
+          pid: 123,
+          output: [null, "", `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`],
+          stdout: "",
+          stderr: `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`,
+          status: 1,
+          signal: null,
+        }),
+      );
 
-    const result = await probe.run(["run", "hermes"], {
-      artifactName: "startup-rejects-env-file-devtest-api-token",
-      artifactRedactionValues: [leakedSecret],
-      returnRaw: true,
-    });
+      const result = await probe.run(["run", "hermes"], {
+        artifactName: "startup-rejects-env-file-devtest-api-token",
+        artifactRedactionValues: [leakedSecret],
+        returnRaw: true,
+      });
 
-    expect(result.stderr).toContain(leakedSecret);
-    const stdoutArtifact = await readArtifact(
-      artifactsRoot,
-      "docker/001-startup-rejects-env-file-devtest-api-token.stdout.txt",
-    );
-    expect(stdoutArtifact).not.toContain(leakedSecret);
-    for (const relativePath of [
-      "docker/001-startup-rejects-env-file-devtest-api-token.stderr.txt",
-      "docker/001-startup-rejects-env-file-devtest-api-token.result.json",
-    ]) {
+      expect(result.stderr).toContain(leakedSecret);
+      const stdoutArtifact = await readArtifact(
+        artifactsRoot,
+        "docker/001-startup-rejects-env-file-devtest-api-token.stdout.txt",
+      );
+      expect(stdoutArtifact).not.toContain(leakedSecret);
+
       const artifact = await readArtifact(artifactsRoot, relativePath);
       expect(artifact).not.toContain(leakedSecret);
       expect(artifact).toContain("[REDACTED]");
-    }
-  });
+    },
+  );
 
   it("rejects raw Docker output from expect to keep thrown diagnostics redacted", async () => {
     const leakedSecret = "SENTINEL_RAW_SECRET_VALUE";

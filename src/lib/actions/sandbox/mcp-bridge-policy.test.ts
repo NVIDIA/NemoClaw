@@ -145,30 +145,29 @@ describe("MCP OpenShell policy", () => {
     });
   });
 
-  it.each([
-    "mcporter",
-    "hermes-config",
-    "deepagents-config",
-  ] as const)("renders an exactly authorized private IPv4 target for %s (#8267)", (adapter) => {
-    const replay = replayTrustedPrivateEndpoint("10.20.30.40", ["10.20.30.40"]);
-    const policy = YAML.parse(
-      buildMcpBridgePolicyYaml("local", "https://10.20.30.40/mcp", adapter, {
-        addresses: [...replay.addresses],
-        trustedPrivateCapability: replay.trustedPrivateCapability,
-        trustedPrivateHost: replay.host,
-      }),
-    ) as {
-      network_policies: Record<
-        string,
-        { endpoints: Array<{ allowed_ips: string[]; host: string }> }
-      >;
-    };
+  it.each(["mcporter", "hermes-config", "deepagents-config"] as const)(
+    "renders an exactly authorized private IPv4 target for %s (#8267)",
+    (adapter) => {
+      const replay = replayTrustedPrivateEndpoint("10.20.30.40", ["10.20.30.40"]);
+      const policy = YAML.parse(
+        buildMcpBridgePolicyYaml("local", "https://10.20.30.40/mcp", adapter, {
+          addresses: [...replay.addresses],
+          trustedPrivateCapability: replay.trustedPrivateCapability,
+          trustedPrivateHost: replay.host,
+        }),
+      ) as {
+        network_policies: Record<
+          string,
+          { endpoints: Array<{ allowed_ips: string[]; host: string }> }
+        >;
+      };
 
-    expect(policy.network_policies.mcp_bridge_local.endpoints[0]).toMatchObject({
-      host: "10.20.30.40",
-      allowed_ips: ["10.20.30.40"],
-    });
-  });
+      expect(policy.network_policies.mcp_bridge_local.endpoints[0]).toMatchObject({
+        host: "10.20.30.40",
+        allowed_ips: ["10.20.30.40"],
+      });
+    },
+  );
 
   it("requires host-bound capability authority for a trusted private DNS policy (#8267)", () => {
     const replay = replayTrustedPrivateEndpoint("mcp.corp.internal", ["10.20.30.40"]);
@@ -264,35 +263,35 @@ describe("MCP OpenShell policy", () => {
     expect(gatewayState).toHaveBeenCalledWith("alpha", content);
   });
 
-  it.each([
-    "owned-first",
-    "unowned-first",
-  ])("rejects duplicate same-name ownership records regardless of order (%s)", (order) => {
-    const entry = githubBridgeEntry();
-    const pins = ["8.8.8.8"];
-    const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", {
-      addresses: pins,
-    });
-    const owned = {
-      name: entry.policyName,
-      content,
-      sourcePath: MCP_BRIDGE_POLICY_SOURCE,
-    };
-    const unowned = {
-      name: entry.policyName,
-      content: `${content}\n# conflicting duplicate`,
-      sourcePath: "/tmp/operator-policy.yaml",
-    };
-    vi.spyOn(registry, "getCustomPolicies").mockReturnValue(
-      order === "owned-first" ? [owned, unowned] : [unowned, owned],
-    );
-    const gatewayState = vi.spyOn(policies, "getPresetContentGatewayState");
+  it.each(["owned-first", "unowned-first"])(
+    "rejects duplicate same-name ownership records regardless of order (%s)",
+    (order) => {
+      const entry = githubBridgeEntry();
+      const pins = ["8.8.8.8"];
+      const content = buildMcpBridgePolicyYaml(entry.server, entry.url, "mcporter", {
+        addresses: pins,
+      });
+      const owned = {
+        name: entry.policyName,
+        content,
+        sourcePath: MCP_BRIDGE_POLICY_SOURCE,
+      };
+      const unowned = {
+        name: entry.policyName,
+        content: `${content}\n# conflicting duplicate`,
+        sourcePath: "/tmp/operator-policy.yaml",
+      };
+      vi.spyOn(registry, "getCustomPolicies").mockReturnValue(
+        order === "owned-first" ? [owned, unowned] : [unowned, owned],
+      );
+      const gatewayState = vi.spyOn(policies, "getPresetContentGatewayState");
 
-    expect(() =>
-      assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", { addresses: pins }),
-    ).toThrow(/ownership is missing or ambiguous/);
-    expect(gatewayState).not.toHaveBeenCalled();
-  });
+      expect(() =>
+        assertGeneratedPolicyExactReadOnly("alpha", entry, "mcporter", { addresses: pins }),
+      ).toThrow(/ownership is missing or ambiguous/);
+      expect(gatewayState).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects individually valid policy records that disagree with their bridge definition", () => {
     const entry = githubBridgeEntry();
@@ -435,20 +434,21 @@ describe("MCP OpenShell policy", () => {
     expect(endpoint).not.toHaveProperty("tls");
   });
 
-  it("refuses to generate authenticated policies for unpinnable OpenShell host aliases", () => {
-    for (const host of [
-      "host.openshell.internal",
-      "host.openshell.internal.",
-      "host.docker.internal",
-      "host.containers.internal",
-    ]) {
+  it.each([
+    "host.openshell.internal",
+    "host.openshell.internal.",
+    "host.docker.internal",
+    "host.containers.internal",
+  ])(
+    "refuses to generate authenticated policies for unpinnable OpenShell host aliases [case %#]",
+    (host) => {
       expect(() =>
         buildMcpBridgePolicyYaml("local", `https://${host}:31337/mcp`, "mcporter", {
           addresses: ["8.8.8.8"],
         }),
       ).toThrow(/does not expose an attested driver gateway address/);
-    }
-  });
+    },
+  );
 
   it("scopes binaries to the selected agent adapter", () => {
     const hermes = YAML.parse(

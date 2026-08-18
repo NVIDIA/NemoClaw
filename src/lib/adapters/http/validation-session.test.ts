@@ -137,17 +137,17 @@ describe("provider validation session", () => {
     expect(lookup).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    "127.0.0.1",
-    "10.0.0.1",
-  ])("falls back when DNS resolves to private address %s", async (address) => {
-    await expect(
-      createValidationSession("https://provider.example.test/v1", {
-        env: {},
-        lookup: async () => [{ address, family: 4 }],
-      }),
-    ).resolves.toBeNull();
-  });
+  it.each(["127.0.0.1", "10.0.0.1"])(
+    "falls back when DNS resolves to private address %s",
+    async (address) => {
+      await expect(
+        createValidationSession("https://provider.example.test/v1", {
+          env: {},
+          lookup: async () => [{ address, family: 4 }],
+        }),
+      ).resolves.toBeNull();
+    },
+  );
 
   it("falls back before DNS pre-resolution when a proxy applies", async () => {
     const lookup = vi.fn();
@@ -228,15 +228,15 @@ describe("provider validation session", () => {
       allowPrivateAddressesForTesting: true,
     });
 
-    for (const path of ["responses", "chat/completions"]) {
-      await expect(
-        session!.request({
-          url: `http://provider.example.test:${port}/v1/${path}`,
-          body: "{}",
-          timeoutMs: 1_000,
-        }),
-      ).resolves.toMatchObject({ ok: true });
-    }
+    const request = (path: string) =>
+      session!.request({
+        url: `http://provider.example.test:${port}/v1/${path}`,
+        body: "{}",
+        timeoutMs: 1_000,
+      });
+    await expect(request("responses")).resolves.toMatchObject({ ok: true });
+    await expect(request("chat/completions")).resolves.toMatchObject({ ok: true });
+
     session!.close();
 
     expect(lookup).toHaveBeenCalledTimes(1);
@@ -299,15 +299,14 @@ describe("provider validation session", () => {
     );
   });
 
-  it.each([
-    "CURL_CA_BUNDLE",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-  ] as const)("keeps the %s curl-specific TLS override on curl", (envName) => {
-    expect(
-      getValidationSessionIneligibility("https://provider.example.test/v1", {
-        [envName]: "/tmp/corporate-ca",
-      }),
-    ).toBe("curl_tls_configured");
-  });
+  it.each(["CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR"] as const)(
+    "keeps the %s curl-specific TLS override on curl",
+    (envName) => {
+      expect(
+        getValidationSessionIneligibility("https://provider.example.test/v1", {
+          [envName]: "/tmp/corporate-ca",
+        }),
+      ).toBe("curl_tls_configured");
+    },
+  );
 });

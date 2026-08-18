@@ -50,64 +50,68 @@ describe("shared credential filter", () => {
     expect(isConfigValue(["model", new Date()])).toBe(false);
   });
 
-  it("classifies credential names without treating public keys as secrets (#8291)", () => {
-    for (const field of [
-      "botToken",
-      "bot_token",
-      "appToken",
-      "access_token",
-      "personal_access_token",
-      "refresh-token",
-      "client_secret",
-      "auth_token",
-      "oauth_token",
-      "apikey",
-      "Token",
-      "GITHUB_TOKEN",
-      "Authorization",
-      "X-API-Key",
-      "DB_PASS",
-    ]) {
-      expect(isCredentialField(field), field).toBe(true);
-    }
-    for (const field of ["publicKey", "public.key", "GITHUB_PUBLIC_KEY", "NODE_ENV", "model"]) {
-      expect(isCredentialField(field), field).toBe(false);
-    }
+  it.each([
+    "botToken",
+    "bot_token",
+    "appToken",
+    "access_token",
+    "personal_access_token",
+    "refresh-token",
+    "client_secret",
+    "auth_token",
+    "oauth_token",
+    "apikey",
+    "Token",
+    "GITHUB_TOKEN",
+    "Authorization",
+    "X-API-Key",
+    "DB_PASS",
+  ])("classifies credential field %s as sensitive (#8291)", (field) => {
+    expect(isCredentialField(field), field).toBe(true);
   });
 
-  it("recognizes raw secrets while preserving credential references (#8291)", () => {
-    for (const value of [
-      "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
-      "Bearer opaque-migration-secret",
-      "GITHUB_TOKEN=opaque-secret-value-123",
-      ["-----BEGIN", "PRIVATE KEY-----\nopaque\n-----END PRIVATE KEY-----"].join(" "),
-    ]) {
-      expect(valueLooksLikeSecret(value), value).toBe(true);
-    }
-    for (const value of [
-      "unused",
-      "Bearer unused",
-      "openshell:resolve:env:GITHUB_TOKEN",
-      "Bearer openshell:resolve:env:REMOTE_MCP_TOKEN",
-      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_TOKEN",
-    ]) {
-      expect(isSafeCredentialPlaceholder(value), value).toBe(true);
-    }
+  it.each(["publicKey", "public.key", "GITHUB_PUBLIC_KEY", "NODE_ENV", "model"])(
+    "classifies non-credential field %s as non-sensitive (#8291)",
+    (field) => {
+      expect(isCredentialField(field), field).toBe(false);
+    },
+  );
+
+  it.each([
+    "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+    "Bearer opaque-migration-secret",
+    "GITHUB_TOKEN=opaque-secret-value-123",
+    ["-----BEGIN", "PRIVATE KEY-----\nopaque\n-----END PRIVATE KEY-----"].join(" "),
+  ])("recognizes raw secret vector %# (#8291)", (value) => {
+    expect(valueLooksLikeSecret(value), value).toBe(true);
+  });
+
+  it.each([
+    "unused",
+    "Bearer unused",
+    "openshell:resolve:env:GITHUB_TOKEN",
+    "Bearer openshell:resolve:env:REMOTE_MCP_TOKEN",
+    "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_TOKEN",
+  ])("preserves credential reference %s (#8291)", (value) => {
+    expect(isSafeCredentialPlaceholder(value), value).toBe(true);
+  });
+
+  it("preserves a value that has no secret shape (#8291)", () => {
     expect(valueLooksLikeSecret("keep-me")).toBe(false);
   });
 
-  it("freezes exported pattern collections and tolerates caller lastIndex state (#8291)", () => {
-    for (const patterns of [
-      TOKEN_PREFIX_PATTERNS,
-      STRUCTURED_TOKEN_PATTERNS,
-      CONTEXT_PATTERNS,
-      SECRET_BLOCK_PATTERNS,
-      SECRET_PATTERNS,
-    ]) {
-      expect(Object.isFrozen(patterns)).toBe(true);
-      expect(() => (patterns as RegExp[]).push(/caller-added-secret/g)).toThrow(TypeError);
-    }
+  it.each([
+    ["token prefix", TOKEN_PREFIX_PATTERNS],
+    ["structured token", STRUCTURED_TOKEN_PATTERNS],
+    ["context", CONTEXT_PATTERNS],
+    ["secret block", SECRET_BLOCK_PATTERNS],
+    ["secret", SECRET_PATTERNS],
+  ] as const)("freezes the %s pattern collection (#8291)", (_name, patterns) => {
+    expect(Object.isFrozen(patterns)).toBe(true);
+    expect(() => (patterns as RegExp[]).push(/caller-added-secret/g)).toThrow(TypeError);
+  });
 
+  it("tolerates caller lastIndex state (#8291)", () => {
     TOKEN_PREFIX_PATTERNS[0].lastIndex = Number.MAX_SAFE_INTEGER;
     expect(valueLooksLikeSecret("nvapi-abcdefghijklmnop")).toBe(true);
   });
