@@ -122,6 +122,22 @@ function asSteps(job: UnknownRecord): UnknownRecord[] {
   return Array.isArray(steps) ? steps.map(asRecord) : [];
 }
 
+function receivesForbiddenCredentials(job: UnknownRecord): boolean {
+  const steps = asSteps(job);
+  const credentialInputs = [
+    asRecord(job.env),
+    ...steps.flatMap((step) => [asRecord(step.env), asRecord(step.with)]),
+  ];
+  if (FORBIDDEN_INFERENCE_SECRETS.test(JSON.stringify(credentialInputs))) return true;
+  return steps.some((step) => {
+    const expressions = asString(step.run).match(/\$\{\{[^}]+\}\}/gu) ?? [];
+    return expressions.some(
+      (expression) =>
+        FORBIDDEN_INFERENCE_SECRETS.test(expression) || /\bgithub\.token\b/iu.test(expression),
+    );
+  });
+}
+
 function namedStep(job: UnknownRecord, name: string): UnknownRecord {
   return asSteps(job).find((step) => step.name === name) ?? {};
 }
@@ -304,7 +320,7 @@ function validateJobSecurity(
       errors.push(`${jobName} checkout must set persist-credentials:false`);
     }
   }
-  if (FORBIDDEN_INFERENCE_SECRETS.test(JSON.stringify(job))) {
+  if (receivesForbiddenCredentials(job)) {
     errors.push(`${jobName} must not receive inference or GitHub credentials`);
   }
 
@@ -786,7 +802,7 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
   ) {
     errors.push(`${DEV_ARTIFACT_JOB} must expose only the immutable artifact identity`);
   }
-  if (FORBIDDEN_INFERENCE_SECRETS.test(JSON.stringify(job))) {
+  if (receivesForbiddenCredentials(job)) {
     errors.push(`${DEV_ARTIFACT_JOB} must not receive inference or GitHub credentials`);
   }
 

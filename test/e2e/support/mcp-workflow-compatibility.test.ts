@@ -12,6 +12,26 @@ import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-wor
 import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow runtime compatibility", () => {
+  it("rejects inference credentials passed to the stable MCP job", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { env: Record<string, string> }>;
+      };
+      const job = workflow.jobs["mcp-bridge"];
+      requireFixture(job, "stable MCP job fixture is missing");
+      job.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge must not receive inference or GitHub credentials",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("accepts compatibility-step keys in any order (#6426)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
