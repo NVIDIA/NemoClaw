@@ -183,7 +183,12 @@ describe("managed startup messaging build files", () => {
     ).toThrow(/credential-shaped/);
   });
 
-  it("rejects the WeChat token placeholder in another build file (#9397)", () => {
+  it.each([
+    ["an unrelated build file", "unrelated/accounts/wechat-account.json"],
+    ["a parent-traversal account file", "openclaw-weixin/accounts/../other.json"],
+    ["a nested account file", "openclaw-weixin/accounts/a/b.json"],
+    ["a whitespace-prefixed account file", "openclaw-weixin/accounts/ account.json"],
+  ])("rejects the WeChat token placeholder in %s (#9397)", (_label, path) => {
     const step = wechatAccountBuildStep();
     const value = step.value as ManagedStartupJsonObject;
     expect(() =>
@@ -191,7 +196,7 @@ describe("managed startup messaging build files", () => {
         profileWithBuildSteps([
           {
             ...step,
-            value: { ...value, path: "unrelated/accounts/wechat-account.json" },
+            value: { ...value, path },
           },
         ]),
       ),
