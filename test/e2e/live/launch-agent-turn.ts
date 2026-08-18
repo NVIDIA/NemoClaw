@@ -1577,11 +1577,13 @@ if [[ -n "$NEMOCLAW_LAUNCH_EXIT_COMMAND" ]]; then
   # The TUI may finish cleanly immediately after publishing the two required
   # structured turns. Preserve that successful child status even when its
   # input reader wins the race with the best-effort exit command.
+  trap '' PIPE
   if printf '%s\r' "$NEMOCLAW_LAUNCH_EXIT_COMMAND" >&3; then
     :
   else
     exit_command_write_status=$?
   fi
+  trap - PIPE
 else
   # Some TUIs have no exit command. They may close the FIFO after the first
   # interrupt, so ignore SIGPIPE while sending the second one.
