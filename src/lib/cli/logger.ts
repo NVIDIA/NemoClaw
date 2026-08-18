@@ -65,6 +65,9 @@ function normalizeForSerialization(value: unknown, seen = new WeakSet<object>())
       if (value.cause !== undefined) {
         normalized.cause = normalizeForSerialization(value.cause, seen);
       }
+      if (value instanceof AggregateError) {
+        normalized.errors = normalizeForSerialization(value.errors, seen);
+      }
       for (const [key, entry] of Object.entries(value)) {
         normalized[key] = normalizeForSerialization(entry, seen);
       }
