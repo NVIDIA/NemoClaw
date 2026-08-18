@@ -15,8 +15,8 @@
  * It also binds the accepted Pi trust boundary:
  *
  * - The baseline network policy permits only the managed inference route,
- *   enforced over REST across an exact set of /v1 routes, and only root-owned
- *   image binaries carry network capability.
+ *   enforced over REST across an exact set of /v1 routes that refuse an encoded
+ *   slash, and only root-owned image binaries carry network capability.
  * - The read-write paths stay /dev/null, /sandbox, /sandbox/.pi, and /tmp, and
  *   Landlock stays strict so filesystem policy fails closed.
  * - Pi runs as the sandbox user and group.
@@ -25,8 +25,9 @@
  * - Each skill, extension, and prompt directory keeps its trust classification,
  *   and executable resource state stays outside backup.
  * - Neither the project-trust store nor the project-trust setting is declared
- *   in the manifest state that backup and restore carry, and every state file
- *   keeps the allowlisted restore contract that makes those rules apply.
+ *   in the manifest state that backup and restore carry, and settings.json
+ *   keeps the exact key-allowlist restore contract that makes those rules
+ *   apply.
  * - The entrypoint keeps state owner-only, runs no version check, update, or
  *   telemetry, and drops to the sandbox user before it starts Pi.
  */
@@ -35,6 +36,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -50,6 +52,7 @@ const MANAGED_INFERENCE_POLICY = "managed_inference";
 const MANAGED_INFERENCE_HOST = "inference.local";
 const MANAGED_INFERENCE_PORT = 443;
 const MANAGED_INFERENCE_PROTOCOL = "rest";
+const REQUIRED_ALLOW_ENCODED_SLASH = false;
 const APPROVED_INFERENCE_ROUTES = [
   "GET /v1/models",
   "GET /v1/models/**",
@@ -67,7 +70,23 @@ const REQUIRED_SANDBOX_IDENTITY = "sandbox";
 const NON_INTERACTIVE_APPROVAL_FLAG = "--no-approve";
 const PROJECT_TRUST_STORE = "trust.json";
 const PROJECT_TRUST_SETTING = "defaultProjectTrust";
-const REQUIRED_RESTORE_MERGE = "key-allowlist";
+const SETTINGS_FILE = "settings.json";
+const APPROVED_SETTINGS_RESTORE = {
+  merge: "key-allowlist",
+  user_keys: [
+    { key: "theme", type: "string", max_length: 128 },
+    { key: "hideThinkingBlock", type: "boolean" },
+    { key: "showCacheMissNotices", type: "boolean" },
+    { key: "quietStartup", type: "boolean" },
+    { key: "steeringMode", type: "enum", values: ["all", "one-at-a-time"] },
+    { key: "followUpMode", type: "enum", values: ["all", "one-at-a-time"] },
+    {
+      key: "defaultThinkingLevel",
+      type: "enum",
+      values: ["off", "minimal", "low", "medium", "high", "xhigh"],
+    },
+  ],
+} as const;
 
 const APPROVED_STATE_DIRS: Readonly<
   Record<string, { readonly shields: string; readonly backup: boolean }>
@@ -340,6 +359,11 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
         `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must enforce protocol ${MANAGED_INFERENCE_PROTOCOL}, not ${typeof endpoint.protocol === "string" ? endpoint.protocol : "an unset protocol"}`,
       );
     }
+    if (endpoint.allow_encoded_slash !== REQUIRED_ALLOW_ENCODED_SLASH) {
+      failures.push(
+        `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must set allow_encoded_slash to false`,
+      );
+    }
     if (endpoint.enforcement !== "enforce") {
       failures.push(
         `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must stay enforced, not observed`,
@@ -488,6 +512,15 @@ function verifyProjectTrustBoundary(manifest: LooseRecord): string[] {
       `${PI_MANIFEST_PATH}: ${PROJECT_TRUST_STORE} must stay undeclared so a restore cannot carry a project-trust decision`,
     );
   }
+  const settingsFiles = stateFiles.filter((entry) => asRecord(entry).path === SETTINGS_FILE);
+  if (
+    settingsFiles.length !== 1 ||
+    !isDeepStrictEqual(asRecord(settingsFiles[0]).restore, APPROVED_SETTINGS_RESTORE)
+  ) {
+    failures.push(
+      `${PI_MANIFEST_PATH}: ${SETTINGS_FILE} must retain the exact key-allowlist restore contract`,
+    );
+  }
   for (const entry of stateFiles) {
     const stateFile = asRecord(entry);
     const restore = asRecord(stateFile.restore);
@@ -495,11 +528,6 @@ function verifyProjectTrustBoundary(manifest: LooseRecord): string[] {
     if (userKeys.map((key) => asRecord(key).key).includes(PROJECT_TRUST_SETTING)) {
       failures.push(
         `${PI_MANIFEST_PATH}: ${PROJECT_TRUST_SETTING} must stay outside the restore allowlist so a backup cannot widen project trust`,
-      );
-    }
-    if (restore.merge !== REQUIRED_RESTORE_MERGE) {
-      failures.push(
-        `${PI_MANIFEST_PATH}: ${typeof stateFile.path === "string" ? stateFile.path : "every state file"} must stay restore.merge ${REQUIRED_RESTORE_MERGE} so a restore cannot carry a key outside the allowlist`,
       );
     }
   }
