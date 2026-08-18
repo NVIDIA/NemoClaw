@@ -75,16 +75,11 @@ export function parseDcodeBaseImagePublicationEvidence(
       "Deep Agents Code base evidence candidate SHA does not match the selected candidate",
     );
   }
-  const contract = parseDcodeBaseImageContract(evidence.base);
-  if (
-    requireDcodeBaseImageReference(environment) !==
-    contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM]
-  ) {
-    throw new Error(
-      "Deep Agents Code onboarding reference does not match the published amd64 platform reference",
-    );
-  }
-  return contract;
+  return parseDcodeBaseImageContract(evidence.base);
+}
+
+export function dcodeBaseImageReferenceForContract(contract: DcodeBaseImageContract): string {
+  return contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
 }
 
 export function loadDcodeBaseImagePublicationEvidence(
@@ -93,8 +88,8 @@ export function loadDcodeBaseImagePublicationEvidence(
   environment: NodeJS.ProcessEnv = process.env,
 ): DcodeBaseImageContract | undefined {
   if (targetId !== DCODE_BASE_IMAGE_TARGET_ID) return undefined;
-  requireDcodeBaseImageReference(environment);
   if (!fs.existsSync(evidencePath)) {
+    requireDcodeBaseImageReference(environment);
     if (environment.GITHUB_ACTIONS === "true") {
       throw new Error("Deep Agents Code GitHub Actions run is missing published base evidence");
     }
@@ -123,7 +118,7 @@ export function verifyDcodeBaseImageRuntimeEvidence(
     );
   }
   const expectedDigest = contract.platformDigests[DCODE_BASE_IMAGE_TARGET_PLATFORM];
-  const expectedReference = contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
+  const expectedReference = dcodeBaseImageReferenceForContract(contract);
   if (
     metadata.schema !== 1 ||
     metadata.imageName !== contract.image ||

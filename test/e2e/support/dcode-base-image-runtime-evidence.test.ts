@@ -7,6 +7,7 @@ import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbo
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
 import {
   DCODE_BASE_IMAGE_TARGET_ID,
+  dcodeBaseImageReferenceForContract,
   loadDcodeBaseImagePublicationEvidence,
   parseDcodeBaseImagePublicationEvidence,
   verifyDcodeBaseImageRuntimeEvidence,
@@ -74,6 +75,20 @@ function resolutionMetadata(
 }
 
 describe("Deep Agents Code published base runtime evidence", () => {
+  it("selects the linux/amd64 platform reference when trusted manual PR E2E supplies the publication index", () => {
+    const environment = publicationEnvironment({
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_SHA: "f".repeat(40),
+      NEMOCLAW_E2E_EXPECTED_SHA: CANDIDATE_REVISION,
+      [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
+    });
+    const contract = parseDcodeBaseImagePublicationEvidence(publicationEvidence(), environment);
+
+    expect(dcodeBaseImageReferenceForContract(contract)).toBe(AMD64_REFERENCE);
+    expect(environment[DCODE_BASE_IMAGE_ENV]).toBe(INDEX_REFERENCE);
+  });
+
   it("records the completed sandbox image only when its platform digest matches publication", () => {
     const contract = parseDcodeBaseImagePublicationEvidence(
       publicationEvidence(),
@@ -97,19 +112,6 @@ describe("Deep Agents Code published base runtime evidence", () => {
       source: "override",
       sourceRevision: PUBLICATION_REVISION,
     });
-  });
-
-  it.each([
-    ["the publication index", INDEX_REFERENCE],
-    ["the opposite platform", ARM64_REFERENCE],
-    ["a different official digest", `${DCODE_BASE_IMAGE}@sha256:${"f".repeat(64)}`],
-  ])("rejects %s as the amd64 onboarding reference", (_label, reference) => {
-    expect(() =>
-      parseDcodeBaseImagePublicationEvidence(
-        publicationEvidence(),
-        publicationEnvironment({ [DCODE_BASE_IMAGE_ENV]: reference }),
-      ),
-    ).toThrow(/does not match the published amd64 platform reference/);
   });
 
   it("prefers the selected manual candidate over the trusted workflow SHA", () => {
