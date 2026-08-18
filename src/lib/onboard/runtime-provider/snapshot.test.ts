@@ -503,45 +503,46 @@ describe("OpenShell snapshot observation", () => {
     ).toBe(expected);
   });
 
-  it.each(
-    [
-        { status: 1, output: "not found", stdout: "", stderr: "" },
-        {
-          status: 0,
-          signal: "SIGTERM",
-          output: "Id: sandbox-id\nState: Ready\nGeneration: generation-1\n",
-          stdout: "",
-          stderr: "",
-        },
-      ],
-  )("rejects mismatched provider, failed inspection, or missing generation [case %#]", (result) => {
-    const capture = vi.fn();
-    expect(() =>
-      observeOpenShellRuntimeSnapshot(sandbox({ openshellDriver: "docker" }), "mxc", {
-        capture: capture as never,
-      }),
-    ).toThrow(/belongs to another runtime provider/u);
-    expect(capture).not.toHaveBeenCalled();
+  it.each([
+    { status: 1, output: "not found", stdout: "", stderr: "" },
+    {
+      status: 0,
+      signal: "SIGTERM",
+      output: "Id: sandbox-id\nState: Ready\nGeneration: generation-1\n",
+      stdout: "",
+      stderr: "",
+    },
+  ])(
+    "rejects mismatched provider, failed inspection, or missing generation [case %#]",
+    (result) => {
+      const capture = vi.fn();
+      expect(() =>
+        observeOpenShellRuntimeSnapshot(sandbox({ openshellDriver: "docker" }), "mxc", {
+          capture: capture as never,
+        }),
+      ).toThrow(/belongs to another runtime provider/u);
+      expect(capture).not.toHaveBeenCalled();
 
-    expect(() =>
-      observeOpenShellRuntimeSnapshot(sandbox(), "mxc", {
-        capture: (() => result) as never,
-        observeAcceleration: () => ({ kind: "none" }),
-      }),
-    ).toThrow(/runtime identity could not be inspected/u);
+      expect(() =>
+        observeOpenShellRuntimeSnapshot(sandbox(), "mxc", {
+          capture: (() => result) as never,
+          observeAcceleration: () => ({ kind: "none" }),
+        }),
+      ).toThrow(/runtime identity could not be inspected/u);
 
-    expect(() =>
-      observeOpenShellRuntimeSnapshot(sandbox(), "mxc", {
-        capture: (() => ({
-          status: 0,
-          output: "Id: sandbox-id\nState: Ready\n",
-          stdout: "",
-          stderr: "",
-        })) as never,
-        observeAcceleration: () => ({ kind: "none" }),
-      }),
-    ).toThrow(/lifecycle generation cannot be represented/u);
-  });
+      expect(() =>
+        observeOpenShellRuntimeSnapshot(sandbox(), "mxc", {
+          capture: (() => ({
+            status: 0,
+            output: "Id: sandbox-id\nState: Ready\n",
+            stdout: "",
+            stderr: "",
+          })) as never,
+          observeAcceleration: () => ({ kind: "none" }),
+        }),
+      ).toThrow(/lifecycle generation cannot be represented/u);
+    },
+  );
 });
 
 function dockerSnapshot(
@@ -768,6 +769,7 @@ describe("Docker provider snapshot evidence", () => {
           "--timeout",
           "10",
           "--",
+          "/usr/local/bin/node",
           "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           "--verify-completion",
           "--agent",
