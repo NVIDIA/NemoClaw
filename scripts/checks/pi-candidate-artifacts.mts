@@ -17,11 +17,12 @@
  * - The baseline network policy permits only the managed inference route,
  *   enforced over REST across an exact set of /v1 routes that refuse an encoded
  *   slash, and only root-owned image binaries carry network capability.
- * - The read-write paths stay /dev/null, /sandbox, /sandbox/.pi, and /tmp, and
- *   Landlock stays strict so filesystem policy fails closed.
+ * - The workspace inclusion setting and exact read-only and read-write path
+ *   sets stay fixed, and Landlock stays strict so filesystem policy fails
+ *   closed.
  * - Pi runs as the sandbox user and group.
- * - The headless command passes the flag that ignores project-local resources,
- *   MCP stays disabled, and device pairing stays off.
+ * - The exact headless command ignores project-local resources, MCP stays
+ *   disabled, and device pairing stays off.
  * - Each skill, extension, and prompt directory keeps its trust classification,
  *   and executable resource state stays outside backup.
  * - Neither the project-trust store nor the project-trust setting is declared
@@ -53,6 +54,16 @@ const MANAGED_INFERENCE_HOST = "inference.local";
 const MANAGED_INFERENCE_PORT = 443;
 const MANAGED_INFERENCE_PROTOCOL = "rest";
 const REQUIRED_ALLOW_ENCODED_SLASH = false;
+const APPROVED_ENDPOINT_FIELDS = [
+  "allow_encoded_slash",
+  "enforcement",
+  "host",
+  "port",
+  "protocol",
+  "rules",
+];
+const APPROVED_INFERENCE_RULE_FIELDS = ["allow"];
+const APPROVED_INFERENCE_ALLOW_FIELDS = ["method", "path"];
 const APPROVED_INFERENCE_ROUTES = [
   "GET /v1/models",
   "GET /v1/models/**",
@@ -64,10 +75,20 @@ const APPROVED_NETWORK_BINARIES = [
   "/usr/local/bin/pi",
   "/usr/local/lib/nemoclaw/pi-runtime/**",
 ];
+const REQUIRED_INCLUDE_WORKDIR = true;
+const APPROVED_READ_ONLY_PATHS = [
+  "/dev/urandom",
+  "/etc",
+  "/lib",
+  "/proc",
+  "/usr",
+  "/var/lib/dpkg",
+  "/var/log",
+];
 const APPROVED_READ_WRITE_PATHS = ["/dev/null", "/sandbox", "/sandbox/.pi", "/tmp"];
 const REQUIRED_LANDLOCK_COMPATIBILITY = "strict";
 const REQUIRED_SANDBOX_IDENTITY = "sandbox";
-const NON_INTERACTIVE_APPROVAL_FLAG = "--no-approve";
+const APPROVED_HEADLESS_COMMAND = "pi --no-approve --print";
 const PROJECT_TRUST_STORE = "trust.json";
 const PROJECT_TRUST_SETTING = "defaultProjectTrust";
 const SETTINGS_FILE = "settings.json";
@@ -87,6 +108,9 @@ const APPROVED_SETTINGS_RESTORE = {
     },
   ],
 } as const;
+const APPROVED_STATE_FILES = [
+  { path: SETTINGS_FILE, restore: APPROVED_SETTINGS_RESTORE },
+] as const;
 
 const APPROVED_STATE_DIRS: Readonly<
   Record<string, { readonly shields: string; readonly backup: boolean }>
@@ -103,8 +127,13 @@ const REQUIRED_START_DIRECTIVES: Readonly<Record<string, string>> = {
   "export PI_TELEMETRY=0": "the runtime sends no install telemetry",
   "umask 077": "Pi configuration and session files stay owner-only",
 };
-const PRIVILEGE_DROP_COMMAND =
-  "exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups";
+const ROOT_IDENTITY_BRANCH = 'if [ "$(id -u)" -eq 0 ]; then';
+const ROOT_PRIVILEGE_DROP_ENABLEMENT = "  _NEMOCLAW_PI_DROP_PRIVILEGES=1";
+const ROOT_STARTUP_CALL = "merge_corporate_proxy_ca";
+const ROOT_STARTUP_BRANCH = 'if [ "$_NEMOCLAW_PI_DROP_PRIVILEGES" -eq 1 ]; then';
+const APPROVED_PRIVILEGE_DROP_COMMAND =
+  "  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \\";
+const APPROVED_PRIVILEGE_DROP_TARGET = '    /usr/local/bin/nemoclaw-start "$@"';
 
 const REQUIRED_ARTIFACTS = [
   "agents/pi/Dockerfile",
@@ -330,6 +359,88 @@ function sameSet(actual: readonly string[], approved: readonly string[]): boolea
   );
 }
 
+function normalizeInferenceRule(rule: unknown): string | null {
+  const ruleRecord = asRecord(rule);
+  if (!sameSet(Object.keys(ruleRecord).sort(), APPROVED_INFERENCE_RULE_FIELDS)) return null;
+  const allow = asRecord(ruleRecord.allow);
+  if (!sameSet(Object.keys(allow).sort(), APPROVED_INFERENCE_ALLOW_FIELDS)) return null;
+  return typeof allow.method === "string" && typeof allow.path === "string"
+    ? `${allow.method} ${allow.path}`
+    : null;
+}
+
+function rootBranchEnablesPrivilegeDrop(lines: readonly string[]): boolean {
+  const branchIndexes = lines.flatMap((line, index) =>
+    line === ROOT_IDENTITY_BRANCH ? [index] : [],
+  );
+  if (branchIndexes.length !== 1) return false;
+
+  let ifDepth = 1;
+  for (let index = branchIndexes[0] + 1; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (/^if\b/u.test(trimmed)) {
+      ifDepth += 1;
+    } else if (trimmed === "fi") {
+      ifDepth -= 1;
+      if (ifDepth === 0) return false;
+    } else if (ifDepth === 1 && trimmed.startsWith("elif ")) {
+      return false;
+    } else if (ifDepth === 1 && lines[index] === ROOT_PRIVILEGE_DROP_ENABLEMENT) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasApprovedRootStartupBranch(startScript: string): boolean {
+  const lines = startScript.split("\n");
+  if (!rootBranchEnablesPrivilegeDrop(lines)) return false;
+  const callIndexes = lines.flatMap((line, index) =>
+    line === ROOT_STARTUP_CALL ? [index] : [],
+  );
+  if (callIndexes.length !== 1) return false;
+  const branchStart = callIndexes[0] + 2;
+  if (lines[branchStart] !== ROOT_STARTUP_BRANCH) return false;
+
+  let controlDepth = 1;
+  let foundPrivilegeDrop = false;
+  let heredocDelimiter: string | null = null;
+  for (let index = branchStart + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (heredocDelimiter !== null) {
+      if (trimmed === heredocDelimiter) heredocDelimiter = null;
+      continue;
+    }
+    const heredoc = trimmed.match(/<<-?\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?/u);
+    if (heredoc) {
+      heredocDelimiter = heredoc[1];
+      continue;
+    }
+    if (/^(?:fi|done|esac|\})$/u.test(trimmed)) {
+      controlDepth -= 1;
+      if (controlDepth === 0) return foundPrivilegeDrop;
+      continue;
+    }
+    if (
+      /^(?:if|for|while|until|select|case)\b/u.test(trimmed) ||
+      /(?:^|\s)\{\s*$/u.test(trimmed)
+    ) {
+      controlDepth += 1;
+      continue;
+    }
+    if (controlDepth !== 1 || trimmed.startsWith("#")) continue;
+    if (line === APPROVED_PRIVILEGE_DROP_COMMAND) {
+      if (lines[index + 1] !== APPROVED_PRIVILEGE_DROP_TARGET || foundPrivilegeDrop) return false;
+      foundPrivilegeDrop = true;
+      index += 1;
+      continue;
+    }
+    if (/^(?:exec|exit|false|return)\b/u.test(trimmed)) return false;
+  }
+  return false;
+}
+
 function verifyNetworkBoundary(policy: LooseRecord): string[] {
   const failures: string[] = [];
   const networkPolicies = asRecord(policy.network_policies);
@@ -349,6 +460,12 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
   }
   for (const entry of endpoints) {
     const endpoint = asRecord(entry);
+    const endpointFields = Object.keys(endpoint).sort();
+    if (!sameSet(endpointFields, APPROVED_ENDPOINT_FIELDS)) {
+      failures.push(
+        `${PI_POLICY_PATH}: managed inference endpoint fields must stay ${APPROVED_ENDPOINT_FIELDS.join(", ")}, found ${endpointFields.join(", ") || "none"}`,
+      );
+    }
     if (endpoint.host !== MANAGED_INFERENCE_HOST || endpoint.port !== MANAGED_INFERENCE_PORT) {
       failures.push(
         `${PI_POLICY_PATH}: the baseline permits only ${MANAGED_INFERENCE_HOST}:${String(MANAGED_INFERENCE_PORT)}`,
@@ -370,31 +487,15 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
       );
     }
     const rules = Array.isArray(endpoint.rules) ? endpoint.rules : [];
-    if (rules.length === 0) {
+    const routes = rules.map(normalizeInferenceRule);
+    const normalizedRoutes = routes.filter((route): route is string => route !== null).sort();
+    if (
+      normalizedRoutes.length !== rules.length ||
+      !sameSet(normalizedRoutes, APPROVED_INFERENCE_ROUTES)
+    ) {
+      const found = routes.map((route) => route ?? "a malformed rule").sort();
       failures.push(
-        `${PI_POLICY_PATH}: every managed inference endpoint must declare at least one explicit /v1/ route`,
-      );
-    }
-    for (const rule of rules) {
-      const allow = asRecord(asRecord(rule).allow);
-      const rulePath = typeof allow.path === "string" ? allow.path : "";
-      if (!Object.hasOwn(asRecord(rule), "allow") || !rulePath.startsWith("/v1/")) {
-        failures.push(
-          `${PI_POLICY_PATH}: every managed inference rule must allow an explicit /v1/ route, found ${rulePath || "an unreadable rule"}`,
-        );
-      }
-    }
-    const routes = sortedStrings(
-      rules.map((rule) => {
-        const allow = asRecord(asRecord(rule).allow);
-        return typeof allow.method === "string" && typeof allow.path === "string"
-          ? `${allow.method} ${allow.path}`
-          : null;
-      }),
-    );
-    if (rules.length > 0 && !sameSet(routes, APPROVED_INFERENCE_ROUTES)) {
-      failures.push(
-        `${PI_POLICY_PATH}: the managed inference routes must stay ${APPROVED_INFERENCE_ROUTES.join(", ")}, found ${routes.join(", ") || "none"}`,
+        `${PI_POLICY_PATH}: the managed inference routes must stay ${APPROVED_INFERENCE_ROUTES.join(", ")}, found ${found.join(", ") || "none"}`,
       );
     }
   }
@@ -412,6 +513,15 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
 function verifyFilesystemBoundary(policy: LooseRecord): string[] {
   const failures: string[] = [];
   const filesystem = asRecord(policy.filesystem_policy);
+  if (filesystem.include_workdir !== REQUIRED_INCLUDE_WORKDIR) {
+    failures.push(`${PI_POLICY_PATH}: filesystem_policy.include_workdir must stay true`);
+  }
+  const readOnly = sortedStrings(filesystem.read_only);
+  if (!sameSet(readOnly, APPROVED_READ_ONLY_PATHS)) {
+    failures.push(
+      `${PI_POLICY_PATH}: read-only paths must stay ${APPROVED_READ_ONLY_PATHS.join(", ")}, found ${readOnly.join(", ") || "none"}`,
+    );
+  }
   const readWrite = sortedStrings(filesystem.read_write);
   if (!sameSet(readWrite, APPROVED_READ_WRITE_PATHS)) {
     failures.push(
@@ -438,10 +548,9 @@ function verifyFilesystemBoundary(policy: LooseRecord): string[] {
 function verifyApprovalBoundary(manifest: LooseRecord): string[] {
   const failures: string[] = [];
   const runtime = asRecord(manifest.runtime);
-  const headless = typeof runtime.headless_command === "string" ? runtime.headless_command : "";
-  if (!headless.split(/\s+/u).includes(NON_INTERACTIVE_APPROVAL_FLAG)) {
+  if (runtime.headless_command !== APPROVED_HEADLESS_COMMAND) {
     failures.push(
-      `${PI_MANIFEST_PATH}: runtime.headless_command must pass ${NON_INTERACTIVE_APPROVAL_FLAG} so non-interactive runs ignore project-local resources`,
+      `${PI_MANIFEST_PATH}: runtime.headless_command must stay ${APPROVED_HEADLESS_COMMAND}`,
     );
   }
   if (asRecord(manifest.mcp).support !== "disabled") {
@@ -494,9 +603,9 @@ function verifyRuntimeHardeningBoundary(startScript: string): string[] {
       );
     }
   }
-  if (!startScript.includes(PRIVILEGE_DROP_COMMAND)) {
+  if (!hasApprovedRootStartupBranch(startScript)) {
     failures.push(
-      `${PI_START_SCRIPT_PATH}: the entrypoint must drop to the ${REQUIRED_SANDBOX_IDENTITY} user before it starts Pi so no privileged phase survives startup`,
+      `${PI_START_SCRIPT_PATH}: the active root startup branch must execute setpriv as the ${REQUIRED_SANDBOX_IDENTITY} user into /usr/local/bin/nemoclaw-start`,
     );
   }
   return failures;
@@ -512,13 +621,9 @@ function verifyProjectTrustBoundary(manifest: LooseRecord): string[] {
       `${PI_MANIFEST_PATH}: ${PROJECT_TRUST_STORE} must stay undeclared so a restore cannot carry a project-trust decision`,
     );
   }
-  const settingsFiles = stateFiles.filter((entry) => asRecord(entry).path === SETTINGS_FILE);
-  if (
-    settingsFiles.length !== 1 ||
-    !isDeepStrictEqual(asRecord(settingsFiles[0]).restore, APPROVED_SETTINGS_RESTORE)
-  ) {
+  if (!isDeepStrictEqual(stateFiles, APPROVED_STATE_FILES)) {
     failures.push(
-      `${PI_MANIFEST_PATH}: ${SETTINGS_FILE} must retain the exact key-allowlist restore contract`,
+      `${PI_MANIFEST_PATH}: state_files must contain only ${SETTINGS_FILE} with its exact key-allowlist restore contract`,
     );
   }
   for (const entry of stateFiles) {

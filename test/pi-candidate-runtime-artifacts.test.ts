@@ -262,7 +262,42 @@ describe("Pi runtime boundaries", () => {
       });
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/policy-additions.yaml: every managed inference rule must allow an explicit /v1/ route, found /**",
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found GET /**, GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions",
+    );
+  });
+
+  it.each([
+    ["access", "full"],
+    ["credential_source", "sandbox"],
+  ])(
+    "rejects the unapproved managed inference endpoint field %s (#7924)",
+    (field, value) => {
+      const sources = withPolicy((policy) => {
+        policy.network_policies.managed_inference.endpoints[0][field] = value;
+      });
+      expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
+        "agents/pi/policy-additions.yaml: managed inference endpoint fields must stay allow_encoded_slash, enforcement, host, port, protocol, rules",
+      );
+    },
+  );
+
+  it("rejects a managed inference rule with an unapproved field (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules[0].access = "full";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found GET /v1/models, GET /v1/models/**, POST /v1/completions, a malformed rule",
+    );
+  });
+
+  it("rejects a managed inference allow rule with an unapproved field (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules[0].allow.headers = {
+        authorization: "credential-placeholder",
+      };
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found GET /v1/models, GET /v1/models/**, POST /v1/completions, a malformed rule",
     );
   });
 
@@ -316,7 +351,7 @@ describe("Pi runtime boundaries", () => {
       policy.network_policies.managed_inference.endpoints[0].rules = [];
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/policy-additions.yaml: every managed inference endpoint must declare at least one explicit /v1/ route",
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found none",
     );
   });
 
@@ -325,7 +360,7 @@ describe("Pi runtime boundaries", () => {
       delete policy.network_policies.managed_inference.endpoints[0].rules;
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/policy-additions.yaml: every managed inference endpoint must declare at least one explicit /v1/ route",
+      "agents/pi/policy-additions.yaml: the managed inference routes must stay GET /v1/models, GET /v1/models/**, POST /v1/chat/completions, POST /v1/completions, found none",
     );
   });
 
@@ -344,6 +379,24 @@ describe("Pi runtime boundaries", () => {
     });
     expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
       "read-write paths must stay /dev/null, /sandbox, /sandbox/.pi, /tmp",
+    );
+  });
+
+  it("rejects a filesystem policy that excludes the workspace (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.filesystem_policy.include_workdir = false;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: filesystem_policy.include_workdir must stay true",
+    );
+  });
+
+  it("rejects a credential-bearing path added to the read-only set (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.filesystem_policy.read_only.push("/run/credentials");
+    });
+    expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
+      "read-only paths must stay /dev/urandom, /etc, /lib, /proc, /usr, /var/lib/dpkg, /var/log",
     );
   });
 
@@ -370,7 +423,16 @@ describe("Pi runtime boundaries", () => {
       manifest.runtime.headless_command = "pi --print";
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/manifest.yaml: runtime.headless_command must pass --no-approve so non-interactive runs ignore project-local resources",
+      "agents/pi/manifest.yaml: runtime.headless_command must stay pi --no-approve --print",
+    );
+  });
+
+  it("rejects an arbitrary headless command that contains --no-approve (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.runtime.headless_command = "sh -c collect-credentials --no-approve";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: runtime.headless_command must stay pi --no-approve --print",
     );
   });
 
@@ -397,7 +459,7 @@ describe("Pi runtime boundaries", () => {
       delete manifest.state_files[0].restore;
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/manifest.yaml: settings.json must retain the exact key-allowlist restore contract",
+      "agents/pi/manifest.yaml: state_files must contain only settings.json with its exact key-allowlist restore contract",
     );
   });
 
@@ -406,7 +468,16 @@ describe("Pi runtime boundaries", () => {
       manifest.state_files[0].restore.merge = "openclaw-config";
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/manifest.yaml: settings.json must retain the exact key-allowlist restore contract",
+      "agents/pi/manifest.yaml: state_files must contain only settings.json with its exact key-allowlist restore contract",
+    );
+  });
+
+  it("rejects a credential-bearing file added to portable state (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_files.push({ path: "auth.json" });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: state_files must contain only settings.json with its exact key-allowlist restore contract",
     );
   });
 
@@ -489,15 +560,39 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("rejects an entrypoint that keeps a privileged phase across startup (#7924)", () => {
+  it("rejects a disabled privilege drop when a comment retains the setpriv command (#7924)", () => {
     const sources = withStartScript((startScript) =>
       startScript.replace(
-        "exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups",
-        "exec /usr/bin/setpriv --reuid=root --regid=root --init-groups",
+        '  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \\\n    /usr/local/bin/nemoclaw-start "$@"',
+        '  # exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /usr/local/bin/nemoclaw-start\n  exec /usr/local/bin/nemoclaw-start "$@"',
       ),
     );
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/start.sh: the entrypoint must drop to the sandbox user before it starts Pi so no privileged phase survives startup",
+      "agents/pi/start.sh: the active root startup branch must execute setpriv as the sandbox user into /usr/local/bin/nemoclaw-start",
+    );
+  });
+
+  it("rejects a setpriv command retained only in an unreachable branch (#7924)", () => {
+    const sources = withStartScript((startScript) =>
+      startScript.replace(
+        '  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \\\n    /usr/local/bin/nemoclaw-start "$@"',
+        '  if false; then\n    exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \\\n      /usr/local/bin/nemoclaw-start "$@"\n  fi\n  exec /usr/local/bin/nemoclaw-start "$@"',
+      ),
+    );
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/start.sh: the active root startup branch must execute setpriv as the sandbox user into /usr/local/bin/nemoclaw-start",
+    );
+  });
+
+  it("rejects a setpriv branch that root startup cannot reach (#7924)", () => {
+    const sources = withStartScript((startScript) =>
+      startScript.replace(
+        "  _NEMOCLAW_PI_DROP_PRIVILEGES=1",
+        "  _NEMOCLAW_PI_DROP_PRIVILEGES=0",
+      ),
+    );
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/start.sh: the active root startup branch must execute setpriv as the sandbox user into /usr/local/bin/nemoclaw-start",
     );
   });
 });
