@@ -21,7 +21,7 @@ Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly
 
 Use this mode when a repository-authorized dispatcher requests E2E for a pull request.
 GitHub's permission to dispatch the workflow is the actor authorization; do not add a second repository-role check.
-The run executes an E2E selection against the current PR head commit while the workflow definition remains on `main`.
+The run executes an E2E selection against the latest PR commit while the workflow definition remains on `main`.
 It is advisory and does not create a required PR check.
 
 An empty-selector NVIDIA-owned PR run exposes these values to candidate-controlled job processes:
