@@ -76,10 +76,7 @@ function addSandboxBuildPins(
   );
 }
 
-function sandboxBuildPins(
-  version: string,
-  digests: readonly [string, string],
-): string {
+function sandboxBuildPins(version: string, digests: readonly [string, string]): string {
   return `    ${digests[0]} | \\
       ${digests[1]})
       printf '%s\\n' "${version}"
@@ -103,11 +100,14 @@ function remapSandboxBuildPins(
   digests: readonly [string, string],
 ): string {
   const currentPins = sandboxBuildPins(currentVersion, digests);
-  return source.includes(currentPins)
-    ? mutateSandboxBuildFunction(source, (functionSource) =>
-        functionSource.replace(currentPins, sandboxBuildPins(remappedVersion, digests)),
-      )
-    : addSandboxBuildPins(source, remappedVersion, digests);
+  const remappedPins = sandboxBuildPins(remappedVersion, digests);
+  expect(source).toContain(currentPins);
+  const result = mutateSandboxBuildFunction(source, (functionSource) =>
+    functionSource.replace(currentPins, remappedPins),
+  );
+  expect(result).not.toContain(currentPins);
+  expect(result).toContain(remappedPins);
+  return result;
 }
 
 function runParser(mutate: (source: string) => string = (source) => source) {
@@ -171,7 +171,12 @@ describe("standalone sandbox build trust", () => {
 
   it("rejects the OpenShell 0.0.106 sandbox identities when they are remapped", () => {
     const result = runParser((source) =>
-      remapSandboxBuildPins(source, "0.0.106", "0.0.105", V00106_SANDBOX_BUILD_DIGESTS),
+      remapSandboxBuildPins(
+        ensureSandboxBuildPins(source, "0.0.106", V00106_SANDBOX_BUILD_DIGESTS),
+        "0.0.106",
+        "0.0.105",
+        V00106_SANDBOX_BUILD_DIGESTS,
+      ),
     );
 
     expect(result.status).toBe(1);

@@ -83,17 +83,13 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // manifest and formula identities consumed by the shell checker.
 const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
   {
-    brevTemplateSha256: [
-      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
-    ],
+    brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],
     formula: {
       asset: "openshell.rb",
       sha256: "4b75a7e3a7630eb8954d73ca828b394d5e0646adbaa4b087b2435329d53b61b3",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72/openshell.rb",
     },
-    installerTemplateSha256: [
-      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
-    ],
+    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -122,24 +118,18 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       image: "ghcr.io/nvidia/openshell/supervisor",
       manifestDigest: "sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
       required: true,
-      runtimeTemplateSha256: [
-        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
-      ],
+      runtimeTemplateSha256: ["c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068"],
     },
     version: "0.0.72",
   },
   {
-    brevTemplateSha256: [
-      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
-    ],
+    brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],
     formula: {
       asset: "openshell.rb",
       sha256: "fa54640184e22fa74500ab24f5b4372582616c7e12a1152cb6983bc0738c5a74",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.82/openshell.rb",
     },
-    installerTemplateSha256: [
-      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
-    ],
+    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -168,17 +158,13 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     version: "0.0.82",
   },
   {
-    brevTemplateSha256: [
-      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
-    ],
+    brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],
     formula: {
       asset: "openshell.rb",
       sha256: "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.85/openshell.rb",
     },
-    installerTemplateSha256: [
-      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
-    ],
+    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -198,17 +184,13 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     version: "0.0.85",
   },
   {
-    brevTemplateSha256: [
-      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
-    ],
+    brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],
     formula: {
       asset: "openshell.rb",
       sha256: "8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.99/openshell.rb",
     },
-    installerTemplateSha256: [
-      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
-    ],
+    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -237,16 +219,12 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       image: "ghcr.io/nvidia/openshell/supervisor",
       manifestDigest: "sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6",
       required: true,
-      runtimeTemplateSha256: [
-        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
-      ],
+      runtimeTemplateSha256: ["c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068"],
     },
     version: "0.0.99",
   },
   {
-    brevTemplateSha256: [
-      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
-    ],
+    brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],
     formula: {
       asset: "openshell.rb",
       sha256: "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2",
@@ -284,24 +262,18 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       image: "ghcr.io/nvidia/openshell/supervisor",
       manifestDigest: "sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
       required: true,
-      runtimeTemplateSha256: [
-        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
-      ],
+      runtimeTemplateSha256: ["c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068"],
     },
     version: "0.0.101",
   },
   {
-    brevTemplateSha256: [
-      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
-    ],
+    brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],
     formula: {
       asset: "openshell.rb",
       sha256: "95a290f0e0e2f57d7d46ba9171fca6e99e5226875cd12e12391b7338f6c219f9",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.103/openshell.rb",
     },
-    installerTemplateSha256: [
-      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
-    ],
+    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -330,9 +302,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       image: "ghcr.io/nvidia/openshell/supervisor",
       manifestDigest: "sha256:96228f110362ffd415bb12d3b7f584063c3c52c0c93f3ccf59faada1dc2dd5d3",
       required: false,
-      runtimeTemplateSha256: [
-        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
-      ],
+      runtimeTemplateSha256: ["c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068"],
     },
     version: "0.0.103",
   },
@@ -346,10 +316,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.106/openshell.rb",
     },
-    installerTemplateSha256: [
-      "5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0",
-      "cd1adf3073dd9c2fb70ff517c2002099db58ef3c2757c45b4b5979f474652b2e",
-    ],
+    // Reviewed normalized template from the downstream 0.0.106 pin PR. This
+    // trust prerequisite intentionally leaves the selected product release
+    // unchanged until that separately reviewed pin update lands.
+    installerTemplateSha256: ["5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0"],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -378,9 +348,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       image: "ghcr.io/nvidia/openshell/supervisor",
       manifestDigest: "sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
       required: false,
-      runtimeTemplateSha256: [
-        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
-      ],
+      runtimeTemplateSha256: ["c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068"],
     },
     version: "0.0.106",
   },
@@ -454,9 +422,11 @@ function trustedRelease(version: string): OpenShellReleaseTrust {
     (candidate, index, versions) => versions.indexOf(candidate) !== index,
   );
   if (duplicateVersions.length > 0) {
-    fail(`trusted OpenShell release records contain duplicate versions: ${[
-      ...new Set(duplicateVersions),
-    ].join(", ")}`);
+    fail(
+      `trusted OpenShell release records contain duplicate versions: ${[
+        ...new Set(duplicateVersions),
+      ].join(", ")}`,
+    );
   }
   for (const release of TRUSTED_OPENSHELL_RELEASES) validateTrustedRelease(release);
   const release = TRUSTED_OPENSHELL_RELEASES.find((candidate) => candidate.version === version);
@@ -1033,9 +1003,10 @@ function assertTrustedSandboxBuildPins(
     );
   }
 
-  const missing = trustedPins.filter(
-    (pin) => (pin.required || pin.version === release.version) && !actualKeys.has(pinKey(pin)),
-  )
+  const missing = trustedPins
+    .filter(
+      (pin) => (pin.required || pin.version === release.version) && !actualKeys.has(pinKey(pin)),
+    )
     .map(pinKey)
     .sort();
   const unexpected = pins
@@ -1134,9 +1105,10 @@ function assertTrustedSupervisorManifestPins(
     );
   }
 
-  const missing = trustedPins.filter(
-    (pin) => (pin.required || pin.version === release.version) && !actualKeys.has(pinKey(pin)),
-  )
+  const missing = trustedPins
+    .filter(
+      (pin) => (pin.required || pin.version === release.version) && !actualKeys.has(pinKey(pin)),
+    )
     .map(pinKey)
     .sort();
   const unexpected = pins
@@ -1507,12 +1479,12 @@ function runCli(): void {
   const installerReleases = installerReleaseVersions.map(trustedRelease);
   const sandboxBuildPins = extractSandboxBuildPins(installerSource);
   assertTrustedSandboxBuildPins(sandboxBuildPins, release);
-  const supervisor = release.supervisor ??
-    fail(`release ${release.version} must have exactly one base-trusted supervisor manifest identity`);
-  const supervisorManifestPins = extractSupervisorManifestPins(
-    supervisorRuntimeSource,
-    supervisor,
-  );
+  const supervisor =
+    release.supervisor ??
+    fail(
+      `release ${release.version} must have exactly one base-trusted supervisor manifest identity`,
+    );
+  const supervisorManifestPins = extractSupervisorManifestPins(supervisorRuntimeSource, supervisor);
   assertTrustedSupervisorManifestPins(supervisorManifestPins, release);
   assertTrustedTemplate(
     installerSource,
@@ -1561,8 +1533,7 @@ function runCli(): void {
             `formula\t${installerRelease.version}\t${installerRelease.formula.url}\t${installerRelease.formula.asset}\t${installerRelease.formula.sha256}`,
         ),
         ...pins.map(
-          (pin) =>
-            `pin\t${pin.releaseVersion}\t${pin.source}\t${pin.asset}\t${pin.sha256}`,
+          (pin) => `pin\t${pin.releaseVersion}\t${pin.source}\t${pin.asset}\t${pin.sha256}`,
         ),
       ].join("\n"),
     );
