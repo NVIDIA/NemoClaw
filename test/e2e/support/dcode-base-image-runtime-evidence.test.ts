@@ -229,7 +229,11 @@ describe("Deep Agents Code published base runtime evidence", () => {
     ],
     [
       "the opposite platform digest",
-      resolutionMetadata({ digest: ARM64_DIGEST, ref: ARM64_REFERENCE }),
+      resolutionMetadata({
+        architecture: "arm64",
+        digest: ARM64_DIGEST,
+        ref: ARM64_REFERENCE,
+      }),
       /did not use the published linux\/amd64 base digest/,
     ],
     [
@@ -250,7 +254,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
     [
       "an unsupported platform",
       resolutionMetadata({ architecture: "ppc64le" }),
-      /used unsupported platform/,
+      /did not use the published linux\/amd64 base digest/,
     ],
   ])("rejects %s", (_label, metadata, expectedError) => {
     const contract = parseDcodeBaseImagePublicationEvidence(
