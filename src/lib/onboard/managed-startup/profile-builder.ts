@@ -411,10 +411,10 @@ function normalizeMessagingPlan(
         continue;
       }
       // Package pins govern image construction. A managed image already owns
-      // the exact installed package, so carrying this derived build-only flag
-      // into its runtime profile has no effect. Omitting it also keeps a
-      // current host compatible with the published v1 image validator, which
-      // treated the schema-owned field name as credential-shaped (#9399).
+      // the exact installed package, so this derived build-only flag does not
+      // belong in the managed startup profile consumed at runtime. Validate
+      // and hydrate the full plan before this projection so malformed or
+      // misplaced pins still fail closed (#9399).
       delete step.value.pin;
     }
   }

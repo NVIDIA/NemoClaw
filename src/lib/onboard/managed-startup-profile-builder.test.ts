@@ -243,7 +243,7 @@ describe("buildManagedStartupProfile", () => {
     });
   });
 
-  it("omits a derived package pin from the managed runtime profile (#9399)", () => {
+  it("omits a derived package pin from the managed startup profile (#9399)", () => {
     const built = buildManagedStartupProfile(
       openClawInput({
         messagingPlan: {
