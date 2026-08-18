@@ -233,12 +233,21 @@ describe("Station Express onboarding session state (#7048)", () => {
   });
 
   it.each([
-    { provider: "vllm-local", model: null },
-    { provider: null, model: "nvidia/nemotron-3-ultra-550b-a55b" },
-    { provider: "ollama-local", model: "nvidia/nemotron-3-ultra-550b-a55b" },
-    { provider: "vllm-local", model: "unsafe model" },
+    { name: "missing model", provider: "vllm-local", model: null },
+    {
+      name: "missing provider",
+      provider: null,
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+    },
+    {
+      name: "alternate provider",
+      provider: "ollama-local",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+    },
+    { name: "unsafe model", provider: "vllm-local", model: "unsafe model" },
+    { name: "oversized model", provider: "vllm-local", model: "a".repeat(513) },
   ])(
-    "rejects invalid in-progress Station Express provider state $provider / $model (#9522)",
+    "rejects invalid in-progress Station Express provider state: $name (#9522)",
     ({ provider, model }) => {
       const candidate = session.createSession({
         mode: "non-interactive",
