@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  DCODE_BASE_IMAGE_ONBOARD_PLATFORM,
+  DCODE_BASE_IMAGE_TARGET_PLATFORM,
   main,
   validateDcodeBaseImageContract,
   validateDcodeBaseImageImports,
@@ -19,10 +19,11 @@ const RUN_ATTEMPT = 2;
 const HEAD_SHA = "a".repeat(40);
 const IMAGE = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base";
 const DIGEST = `sha256:${"b".repeat(64)}`;
+const AMD64_DIGEST = `sha256:${"c".repeat(64)}`;
+const ARM64_DIGEST = `sha256:${"d".repeat(64)}`;
+const AMD64_REFERENCE = `${IMAGE}@${AMD64_DIGEST}`;
 
 function contract(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  const amd64 = `sha256:${"c".repeat(64)}`;
-  const arm64 = `sha256:${"d".repeat(64)}`;
   return {
     contractVersion: 1,
     agent: "langchain-deepagents-code",
@@ -30,10 +31,10 @@ function contract(overrides: Record<string, unknown> = {}): Record<string, unkno
     digest: DIGEST,
     reference: `${IMAGE}@${DIGEST}`,
     platforms: ["linux/amd64", "linux/arm64"],
-    platformDigests: { "linux/amd64": amd64, "linux/arm64": arm64 },
+    platformDigests: { "linux/amd64": AMD64_DIGEST, "linux/arm64": ARM64_DIGEST },
     platformReferences: {
-      "linux/amd64": `${IMAGE}@${amd64}`,
-      "linux/arm64": `${IMAGE}@${arm64}`,
+      "linux/amd64": AMD64_REFERENCE,
+      "linux/arm64": `${IMAGE}@${ARM64_DIGEST}`,
     },
     sourceRevision: HEAD_SHA,
     run: { id: RUN_ID, attempt: RUN_ATTEMPT },
@@ -72,7 +73,7 @@ describe("Deep Agents Code E2E base contract", () => {
       "run",
       "--rm",
       "--platform",
-      DCODE_BASE_IMAGE_ONBOARD_PLATFORM,
+      DCODE_BASE_IMAGE_TARGET_PLATFORM,
       "--network",
       "none",
       "--cap-drop",
@@ -128,4 +129,5 @@ describe("Deep Agents Code E2E base contract", () => {
       /did not prove both required imports/u,
     );
   });
+
 });
