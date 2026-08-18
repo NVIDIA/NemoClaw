@@ -1208,7 +1208,13 @@ describe("connectSandbox flow", () => {
       portableRecoveryResult: { kind: "already-running" },
     });
     harness.inspectPortableReceiptDispositionSpy
-      .mockReturnValueOnce({ kind: "hermes", phase: "active" })
+      .mockReturnValueOnce({
+        kind: "hermes",
+        phase: "active",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+        liveIdentityFingerprint: "f".repeat(64),
+      })
       .mockReturnValue({ kind: "absent" });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(

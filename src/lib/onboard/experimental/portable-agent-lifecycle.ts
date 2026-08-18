@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
+import type { SandboxEntry } from "../../state/registry/types";
 import {
   assertHermesPortableSandboxLifecycleAuthority,
   buildHermesPortableOpenShellCommandAuthority,
@@ -43,6 +44,32 @@ export type PortableAgentReceiptDisposition =
       readonly liveIdentityFingerprint: string | null;
     };
 
+export type HermesPortableAgentLifecycleAuthority = Extract<
+  PortableAgentReceiptDisposition,
+  { readonly kind: "hermes" }
+> & {
+  readonly entry: SandboxEntry | null;
+};
+
+export type PortableAgentLifecycleAuthority =
+  | Exclude<PortableAgentReceiptDisposition, { readonly kind: "hermes" }>
+  | HermesPortableAgentLifecycleAuthority;
+
+export type HermesPortableActiveLifecycleAuthority = Omit<
+  HermesPortableAgentLifecycleAuthority,
+  "entry" | "phase"
+> & {
+  readonly phase: "active";
+  readonly entry: SandboxEntry;
+};
+
+export interface PortableAgentLifecycleAuthorityDeps {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly stateDir?: string;
+  readonly inspectReceiptDisposition?: (sandboxName: string) => PortableAgentReceiptDisposition;
+  readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
+}
+
 /** Strictly distinguish absent, schema-4 OpenClaw, and schema-5 Hermes authority. */
 export function inspectPortableAgentReceiptDisposition(
   sandboxName: string,
@@ -63,6 +90,62 @@ export function inspectPortableAgentReceiptDisposition(
         ? null
         : createHash("sha256").update(receipt.container.sandboxId).digest("hex"),
   };
+}
+
+/** Classify receipt authority and enforce the shared schema-5 registry invariant. */
+export function qualifyPortableAgentLifecycleAuthority(
+  sandboxName: string,
+  deps: PortableAgentLifecycleAuthorityDeps = {},
+): PortableAgentLifecycleAuthority {
+  const disposition = deps.inspectReceiptDisposition
+    ? deps.inspectReceiptDisposition(sandboxName)
+    : inspectPortableAgentReceiptDisposition(sandboxName, deps.env ?? process.env, deps.stateDir);
+  if (disposition.kind !== "hermes") return disposition;
+
+  if (!deps.readRegistry) {
+    throw new Error("Hermes portable registry authority reader is required.");
+  }
+  const entry = deps.readRegistry(sandboxName);
+  if (!entry) {
+    if (disposition.phase !== "active") return { ...disposition, entry: null };
+    throw new Error("Hermes portable active receipt is missing its registry authority.");
+  }
+  if (
+    entry.name !== sandboxName ||
+    entry.agent !== "hermes" ||
+    entry.openshellDriver !== "docker" ||
+    entry.gatewayName !== disposition.gatewayName ||
+    entry.lifecycleGeneration !== disposition.lifecycleGeneration ||
+    (disposition.phase !== "pending" &&
+      entry.lifecycleLiveIdentityFingerprint !== disposition.liveIdentityFingerprint)
+  ) {
+    throw new Error("Hermes portable receipt and registry authority disagree.");
+  }
+  if (disposition.phase === "pending") {
+    throw new Error("Hermes portable pending receipt conflicts with an existing registry entry.");
+  }
+  return { ...disposition, entry };
+}
+
+/** Require an active schema-5 receipt and its exact registry authority. */
+export function requireHermesPortableActiveLifecycleAuthority(
+  sandboxName: string,
+  expected?: HermesPortableActiveLifecycleAuthority,
+  deps: PortableAgentLifecycleAuthorityDeps = {},
+): HermesPortableActiveLifecycleAuthority {
+  const current = qualifyPortableAgentLifecycleAuthority(sandboxName, deps);
+  if (current.kind !== "hermes" || current.phase !== "active" || !current.entry) {
+    throw new Error("Hermes portable lifecycle authority is missing or incomplete.");
+  }
+  if (
+    expected &&
+    (current.gatewayName !== expected.gatewayName ||
+      current.lifecycleGeneration !== expected.lifecycleGeneration ||
+      current.liveIdentityFingerprint !== expected.liveIdentityFingerprint)
+  ) {
+    throw new Error("Hermes portable lifecycle authority changed during verification.");
+  }
+  return current as HermesPortableActiveLifecycleAuthority;
 }
 
 /** Build a child environment from the exact active schema-5 runtime authority. */

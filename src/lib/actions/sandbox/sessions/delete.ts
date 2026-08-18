@@ -93,7 +93,10 @@ async function deleteSandboxSessionUnlocked(
   const canonicalKey = buildCanonicalSessionKey(resolvedAgent, rawKey);
   const deleteTranscript = opts.keepTranscript !== true;
 
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  await ensureLiveSandboxOrExit(sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
 
   const { payload, rawOutput } = callOpenclawGateway<SessionsDeletePayload>({
     sandboxName,

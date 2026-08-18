@@ -12,7 +12,8 @@ import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 type ConnectSandbox = (typeof import("../../src/lib/actions/sandbox/connect"))["connectSandbox"];
-type RestoreSandboxStartupState = (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
+type RestoreSandboxStartupState =
+  (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
 type GatewayRouteMutationLock =
   (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
@@ -233,6 +234,29 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const inspectPortableReceiptDispositionSpy = vi
     .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
     .mockReturnValue(portableDisposition);
+  let registryEntries: SandboxEntry[] = [];
+  const qualifyPortableAgentLifecycleAuthority =
+    portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
+  const requireHermesPortableActiveLifecycleAuthority =
+    portableAgentLifecycle.requireHermesPortableActiveLifecycleAuthority;
+  const portableAuthorityDeps = () => ({
+    inspectReceiptDisposition: (sandboxName: string) =>
+      portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+    readRegistry: (sandboxName: string) =>
+      registryEntries.find((candidate) => candidate.name === sandboxName) ?? null,
+  });
+  vi.spyOn(gatewayState, "qualifyPortableAgentLifecycleAuthority").mockImplementation(((
+    sandboxName: string,
+  ) => qualifyPortableAgentLifecycleAuthority(sandboxName, portableAuthorityDeps())) as never);
+  vi.spyOn(gatewayState, "requireHermesPortableActiveLifecycleAuthority").mockImplementation(((
+    sandboxName: string,
+    expected: unknown,
+  ) =>
+    requireHermesPortableActiveLifecycleAuthority(
+      sandboxName,
+      expected,
+      portableAuthorityDeps(),
+    )) as never);
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -278,36 +302,36 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
   const captureOpenshellImplementation = (args: unknown) => {
-      const argv = Array.isArray(args) ? args : [];
-      if (argv[0] === "sandbox" && argv[1] === "list") {
-        return {
-          status: 0,
-          output:
-            listOutputs.shift() ??
-            options.listOutput ??
-            `${options.registryEntry?.name ?? "alpha"} Ready`,
-        };
-      }
-      if (argv[0] === "inference" && argv[1] === "get") {
-        return {
-          status: 0,
-          output:
-            options.inferenceGetOutput ??
-            (options.agentName === "hermes"
-              ? "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n"
-              : "Provider: unknown\nModel: unknown\n"),
-        };
-      }
-      if (
-        argv[0] === "sandbox" &&
-        argv[1] === "exec" &&
-        argv.join(" ").includes("inference.local/v1/models")
-      ) {
-        const response = inferenceProbeResponses.shift() ?? "OK 200";
-        return typeof response === "string" ? { status: 0, output: response } : response;
-      }
-      return { status: 0, output: "" };
-    };
+    const argv = Array.isArray(args) ? args : [];
+    if (argv[0] === "sandbox" && argv[1] === "list") {
+      return {
+        status: 0,
+        output:
+          listOutputs.shift() ??
+          options.listOutput ??
+          `${options.registryEntry?.name ?? "alpha"} Ready`,
+      };
+    }
+    if (argv[0] === "inference" && argv[1] === "get") {
+      return {
+        status: 0,
+        output:
+          options.inferenceGetOutput ??
+          (options.agentName === "hermes"
+            ? "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n"
+            : "Provider: unknown\nModel: unknown\n"),
+      };
+    }
+    if (
+      argv[0] === "sandbox" &&
+      argv[1] === "exec" &&
+      argv.join(" ").includes("inference.local/v1/models")
+    ) {
+      const response = inferenceProbeResponses.shift() ?? "OK 200";
+      return typeof response === "string" ? { status: 0, output: response } : response;
+    }
+    return { status: 0, output: "" };
+  };
   const captureOpenshellSpy = vi
     .spyOn(runtime, "captureOpenshell")
     .mockImplementation(captureOpenshellImplementation);
@@ -368,11 +392,15 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     agent: options.agentName ?? "openclaw",
     provider: options.agentName === "hermes" ? "ollama-local" : null,
     model: options.agentName === "hermes" ? "qwen3-vl:4b" : null,
+    lifecycleLiveIdentityFingerprint:
+      portableDisposition.kind === "hermes"
+        ? portableDisposition.liveIdentityFingerprint
+        : undefined,
     gpuEnabled: false,
     policies: [],
     ...options.registryEntry,
   };
-  const registryEntries: SandboxEntry[] = options.registryEntries
+  registryEntries = options.registryEntries
     ? options.registryEntries.map((candidate) =>
         candidate.name === primaryRegistryEntry.name
           ? { ...primaryRegistryEntry, ...candidate }

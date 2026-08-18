@@ -58,7 +58,9 @@ import {
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
+  qualifyPortableAgentLifecycleAuthority,
   recoverPortableAgentSandboxLifecycle,
+  requireHermesPortableActiveLifecycleAuthority,
 } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { PortableDemoLifecycleRecoveryResult } from "../../onboard/experimental/portable-demo-lifecycle";
 import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
@@ -89,8 +91,17 @@ export type SandboxGatewayState = {
   recoverySandboxVia?: string | null;
 };
 
-export type { PortableAgentReceiptDisposition } from "../../onboard/experimental/portable-agent-lifecycle";
-export { buildHermesPortableCommandAuthority, buildHermesPortableCommandEnvironment };
+export type {
+  HermesPortableActiveLifecycleAuthority,
+  HermesPortableAgentLifecycleAuthority,
+  PortableAgentReceiptDisposition,
+} from "../../onboard/experimental/portable-agent-lifecycle";
+export {
+  buildHermesPortableCommandAuthority,
+  buildHermesPortableCommandEnvironment,
+  qualifyPortableAgentLifecycleAuthority,
+  requireHermesPortableActiveLifecycleAuthority,
+};
 
 export { inspectPortableAgentReceiptDisposition };
 export const withSandboxLifecycleLock = withMcpLifecycleLock;

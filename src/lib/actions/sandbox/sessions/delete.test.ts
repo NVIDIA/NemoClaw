@@ -75,7 +75,10 @@ describe("deleteSandboxSession", () => {
       key: "agent:main:slot-1",
     });
 
-    expect(ensureMock).toHaveBeenCalledWith("sb-1", { allowNonReadyPhase: true });
+    expect(ensureMock).toHaveBeenCalledWith("sb-1", {
+      allowNonReadyPhase: true,
+      exit: expect.any(Function),
+    });
     expect(gatewayMock).toHaveBeenCalledTimes(1);
     expect(gatewayMock.mock.calls[0]?.[0]).toMatchObject({
       sandboxName: "sb-1",
@@ -297,5 +300,30 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     await expect(deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61" })).rejects.toThrow(
       "process.exit:0",
     );
+  });
+
+  it("releases the lifecycle lock before an OpenClaw readiness failure exits", async () => {
+    let lockHeld = false;
+    withLifecycleLockMock.mockImplementationOnce(async (_sandboxName, operation) => {
+      lockHeld = true;
+      try {
+        return await operation();
+      } finally {
+        lockHeld = false;
+      }
+    });
+    hermesAgentMock.mockReturnValue(false);
+    ensureMock.mockImplementationOnce(async (_sandboxName, options) => {
+      options.exit(1);
+    });
+    processExitSpy.mockImplementation(((code?: number) => {
+      expect(lockHeld).toBe(false);
+      throw new Error(`process.exit:${String(code)}`);
+    }) as never);
+
+    await expect(deleteSandboxSession("sb-1", { key: "agent:main:slot-1" })).rejects.toThrow(
+      "process.exit:1",
+    );
+    expect(gatewayMock).not.toHaveBeenCalled();
   });
 });

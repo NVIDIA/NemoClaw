@@ -89,8 +89,15 @@ function createDoctorHarness(
   const doctorToolScope = requireDist("./doctor-tool-scope.js");
   const inferenceRouteHealth = requireDist("./inference-route-health.js");
   const doctorSystemChecks = requireDist("./doctor-system-checks.js");
+  const portableAgentLifecycle = requireDist(
+    "../../onboard/experimental/portable-agent-lifecycle.js",
+  );
 
-  vi.spyOn(doctorSystemChecks, "inspectSandboxDoctorPortableDisposition").mockImplementation(() => {
+  const qualifyPortableAgentLifecycleAuthority =
+    portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
+  vi.spyOn(doctorSystemChecks, "inspectSandboxDoctorPortableAuthority").mockImplementation(((
+    sandboxName: string,
+  ) => {
     const disposition =
       typeof options.portableDisposition === "function"
         ? options.portableDisposition()
@@ -99,9 +106,13 @@ function createDoctorHarness(
       case true:
         throw disposition;
       default:
-        return disposition ?? { kind: "absent" };
+        return qualifyPortableAgentLifecycleAuthority(sandboxName, {
+          inspectReceiptDisposition: () => disposition ?? { kind: "absent" },
+          readRegistry: () =>
+            options.registryEntry === "missing" ? null : (registryEntry as never),
+        });
     }
-  });
+  }) as never);
   const withMcpLifecycleLockSpy = vi
     .spyOn(doctorSystemChecks, "withSandboxDoctorLifecycleLock")
     .mockImplementation(
