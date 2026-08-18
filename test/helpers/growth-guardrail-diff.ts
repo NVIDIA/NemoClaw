@@ -64,18 +64,56 @@ function readFiles(
   return new Map([...new Set(paths)].map((file) => [file, read(file)]));
 }
 
+function selectLocalComparisonBase(
+  mergeBase: string,
+  mergeHead: string | null,
+  mergeHeadIsBaseAncestor: boolean,
+): string {
+  return mergeHead !== null && mergeHeadIsBaseAncestor ? mergeHead : mergeBase;
+}
+
+function parseAncestorProbe(status: number | null, error: Error | undefined): boolean {
+  if (error !== undefined) throw error;
+  if (status === 0) return true;
+  if (status === 1) return false;
+  throw new Error(`git merge-base --is-ancestor failed with status ${status ?? "unknown"}`);
+}
+
+function resolveLocalComparisonBase(baseRef: string): string {
+  const mergeBase = execFileSync("git", ["merge-base", baseRef, "HEAD"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  }).trim();
+  const mergeHeadResult = spawnSync("git", ["rev-parse", "--verify", "MERGE_HEAD"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const mergeHead = mergeHeadResult.status === 0 ? mergeHeadResult.stdout.trim() : null;
+  const ancestorResult =
+    mergeHead === null
+      ? null
+      : spawnSync("git", ["merge-base", "--is-ancestor", mergeHead, baseRef], {
+          cwd: REPO_ROOT,
+          stdio: "ignore",
+        });
+  const mergeHeadIsBaseAncestor =
+    ancestorResult !== null
+      ? parseAncestorProbe(ancestorResult.status, ancestorResult.error)
+      : false;
+
+  return selectLocalComparisonBase(mergeBase, mergeHead, mergeHeadIsBaseAncestor);
+}
+
 function loadLocalDiff(): GrowthGuardrailDiff {
   const baseRef = process.env.NEMOCLAW_GROWTH_BASE_REF ?? "origin/main";
   execFileSync("git", ["rev-parse", "--verify", baseRef], {
     cwd: REPO_ROOT,
     stdio: "ignore",
   });
-  const mergeBase = execFileSync("git", ["merge-base", baseRef, "HEAD"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  }).trim();
+  const comparisonBase = resolveLocalComparisonBase(baseRef);
 
-  const changed = execFileSync("git", ["diff", "--name-status", "-z", "-M", mergeBase, "--"], {
+  const changed = execFileSync("git", ["diff", "--name-status", "-z", "-M", comparisonBase, "--"], {
     cwd: REPO_ROOT,
     encoding: "utf8",
   });
@@ -92,7 +130,7 @@ function loadLocalDiff(): GrowthGuardrailDiff {
   return {
     files,
     async readBase(paths) {
-      return readFiles(paths, (file) => readGitFile(mergeBase, file));
+      return readFiles(paths, (file) => readGitFile(comparisonBase, file));
     },
     async readHead(paths) {
       return readFiles(paths, readWorktreeFile);
@@ -135,4 +173,4 @@ export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
     : Promise.resolve(loadLocalDiff());
 }
 
-export const testOnly = { parseChangedFiles };
+export const testOnly = { parseAncestorProbe, parseChangedFiles, selectLocalComparisonBase };

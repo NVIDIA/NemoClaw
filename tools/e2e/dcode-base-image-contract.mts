@@ -170,7 +170,11 @@ function requiredInteger(value: string | undefined, label: string): number {
   return positiveInteger(Number(value), label);
 }
 
-export function main(argv = process.argv.slice(2), env = process.env): void {
+export function main(
+  argv = process.argv.slice(2),
+  env = process.env,
+  runDocker?: (args: string[]) => string,
+): void {
   if (argv.length !== 1) throw new Error("expected one managed base contract path");
   const outputPath = env.GITHUB_OUTPUT ?? "";
   if (!outputPath || outputPath.includes("\r") || outputPath.includes("\n")) {
@@ -184,11 +188,11 @@ export function main(argv = process.argv.slice(2), env = process.env): void {
       headSha: env.PUBLICATION_HEAD_SHA ?? "",
     },
   );
-  const amd64Reference = contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
-  validateDcodeBaseImageImports(amd64Reference);
+  const baseReference = contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
+  validateDcodeBaseImageImports(baseReference, runDocker);
   appendFileSync(
     outputPath,
-    `base_ref=${amd64Reference}\ncontract=${JSON.stringify(contract)}\n`,
+    `base_ref=${baseReference}\ncontract=${JSON.stringify(contract)}\n`,
     "utf8",
   );
 }

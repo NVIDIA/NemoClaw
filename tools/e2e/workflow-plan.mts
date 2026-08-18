@@ -382,16 +382,14 @@ function emptyE2eWorkflowPlan(): E2eWorkflowPlan {
   };
 }
 
-export function releaseRequiredWorkflowJobs(options?: {
-  waivedJobs?: readonly string[];
-}): string[] {
+export function releaseRequiredWorkflowJobs(): string[] {
   const inventory = readFreeStandingJobsInventory();
   const sharedTestsRun = discoverCredentialFreeTests().length > 0;
   const liveTargetsRun = buildLiveTargetMatrix().length > 0;
   const catalogueJobs = E2E_EXECUTION_PROFILES.filter((profile) =>
     E2E_TARGET_CATALOGUE.some((target) => target.profile === profile && target.releaseRequired),
   ).map((profile) => CATALOGUE_JOB_BY_PROFILE[profile]);
-  const requiredJobs = [
+  return [
     ...new Set([
       ...inventory.workflowJobs,
       ...catalogueJobs,
@@ -402,27 +400,6 @@ export function releaseRequiredWorkflowJobs(options?: {
     .filter((job) => !inventory.explicitOnlyJobs.includes(job))
     .filter((job) => job !== SHARED_E2E_JOB_ID || sharedTestsRun)
     .sort();
-  const waivedJobs = options?.waivedJobs ?? [];
-  if (new Set(waivedJobs).size !== waivedJobs.length) {
-    throw new Error("Release qualification waived jobs must not contain duplicates");
-  }
-  const requiredJobSet = new Set(requiredJobs);
-  const invalidJobs = waivedJobs.filter((job) => !requiredJobSet.has(job));
-  if (invalidJobs.length > 0) {
-    throw new Error(`Cannot waive non-release E2E jobs: ${invalidJobs.join(", ")}`);
-  }
-  const waivedJobSet = new Set(waivedJobs);
-  return requiredJobs.filter((job) => !waivedJobSet.has(job));
-}
-
-export function parseReleaseQualificationWaivedJobs(value: string | undefined): string[] {
-  if (!value) return [];
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*(?:,[a-z0-9]+(?:-[a-z0-9]+)*)*$/u.test(value)) {
-    throw new Error("Release qualification waived jobs must be comma-separated E2E job IDs");
-  }
-  const waivedJobs = value.split(",");
-  releaseRequiredWorkflowJobs({ waivedJobs });
-  return waivedJobs;
 }
 
 export function selectedWorkflowJobs(plan: E2eWorkflowPlan): string[] {
@@ -701,9 +678,6 @@ export function writeE2eWorkflowPlanCiOutput(
   const output = environment.GITHUB_OUTPUT;
   const summary = environment.GITHUB_STEP_SUMMARY;
   if (!output || !summary) throw new Error("GitHub output paths are required");
-  const releaseQualificationWaivedJobs = parseReleaseQualificationWaivedJobs(
-    environment.RELEASE_QUALIFICATION_WAIVED_JOBS,
-  );
   appendFileSync(
     output,
     [
@@ -718,10 +692,7 @@ export function writeE2eWorkflowPlanCiOutput(
       `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
       `hermes_selected=${plan.hermesSelected}`,
       `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-      `release_qualification_waived_jobs=${JSON.stringify(releaseQualificationWaivedJobs)}`,
-      `release_required_jobs=${JSON.stringify(
-        releaseRequiredWorkflowJobs({ waivedJobs: releaseQualificationWaivedJobs }),
-      )}`,
+      `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
       "",
     ].join("\n"),
   );

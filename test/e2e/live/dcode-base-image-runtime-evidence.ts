@@ -75,7 +75,16 @@ export function parseDcodeBaseImagePublicationEvidence(
       "Deep Agents Code base evidence candidate SHA does not match the selected candidate",
     );
   }
-  return parseDcodeBaseImageContract(evidence.base);
+  const contract = parseDcodeBaseImageContract(evidence.base);
+  if (
+    requireDcodeBaseImageReference(environment) !==
+    contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM]
+  ) {
+    throw new Error(
+      `Deep Agents Code onboarding reference does not match the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base contract`,
+    );
+  }
+  return contract;
 }
 
 export function dcodeBaseImageReferenceForContract(contract: DcodeBaseImageContract): string {

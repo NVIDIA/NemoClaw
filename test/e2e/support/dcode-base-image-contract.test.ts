@@ -1,21 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-const mocks = vi.hoisted(() => ({
-  appendFileSync: vi.fn(),
-  execFileSync: vi.fn<(...args: unknown[]) => string>(),
-  readFileSync: vi.fn<(...args: unknown[]) => string>(),
-}));
-
-vi.mock("node:child_process", () => ({ execFileSync: mocks.execFileSync }));
-vi.mock("node:fs", () => ({
-  appendFileSync: mocks.appendFileSync,
-  readFileSync: mocks.readFileSync,
-}));
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  DCODE_BASE_IMAGE_TARGET_PLATFORM,
   main,
   validateDcodeBaseImageContract,
   validateDcodeBaseImageImports,
@@ -52,10 +45,6 @@ function contract(overrides: Record<string, unknown> = {}): Record<string, unkno
 const expected = { runId: RUN_ID, runAttempt: RUN_ATTEMPT, headSha: HEAD_SHA };
 
 describe("Deep Agents Code E2E base contract", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it("accepts the exact immutable publication contract (#9049)", () => {
     expect(validateDcodeBaseImageContract(contract(), expected).reference).toBe(
       `${IMAGE}@${DIGEST}`,
@@ -75,15 +64,16 @@ describe("Deep Agents Code E2E base contract", () => {
     expect(() => validateDcodeBaseImageContract(contract(override), expected)).toThrow(message);
   });
 
-  it("proves both imports from the exact digest in a locked-down container (#9049)", () => {
+  it("proves both imports from the selected platform digest in a locked-down container (#9386)", () => {
     const runDocker = vi.fn(() => "nemoclaw-dcode-base-imports-ok");
-    validateDcodeBaseImageImports(`${IMAGE}@${DIGEST}`, runDocker);
+    const platformReference = `${IMAGE}@sha256:${"c".repeat(64)}`;
+    validateDcodeBaseImageImports(platformReference, runDocker);
 
     expect(runDocker).toHaveBeenCalledWith([
       "run",
       "--rm",
       "--platform",
-      "linux/amd64",
+      DCODE_BASE_IMAGE_TARGET_PLATFORM,
       "--network",
       "none",
       "--cap-drop",
@@ -95,11 +85,43 @@ describe("Deep Agents Code E2E base contract", () => {
       "999:999",
       "--entrypoint",
       "/opt/venv/bin/python3",
-      `${IMAGE}@${DIGEST}`,
+      platformReference,
       "-I",
       "-c",
       'import deepagents; import deepagents_code; print("nemoclaw-dcode-base-imports-ok")',
     ]);
+  });
+
+  it("emits the selected platform reference while preserving the full contract (#9386)", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-dcode-base-contract-"));
+    const contractPath = join(directory, "contract.json");
+    const outputPath = join(directory, "github-output");
+    const contractValue = contract();
+    const platformReference = `${IMAGE}@sha256:${"c".repeat(64)}`;
+    const runDocker = vi.fn(() => "nemoclaw-dcode-base-imports-ok");
+    try {
+      writeFileSync(contractPath, JSON.stringify(contractValue), "utf8");
+
+      main(
+        [contractPath],
+        {
+          GITHUB_OUTPUT: outputPath,
+          PUBLICATION_HEAD_SHA: HEAD_SHA,
+          PUBLICATION_RUN_ATTEMPT: String(RUN_ATTEMPT),
+          PUBLICATION_RUN_ID: String(RUN_ID),
+        },
+        runDocker,
+      );
+
+      const [baseReferenceOutput, contractOutput] = readFileSync(outputPath, "utf8")
+        .trim()
+        .split("\n");
+      expect(baseReferenceOutput).toBe(`base_ref=${platformReference}`);
+      expect(JSON.parse(String(contractOutput).slice("contract=".length))).toEqual(contractValue);
+      expect(runDocker).toHaveBeenCalledWith(expect.arrayContaining([platformReference]));
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("rejects missing or noisy import evidence (#9049)", () => {
@@ -108,23 +130,4 @@ describe("Deep Agents Code E2E base contract", () => {
     );
   });
 
-  it("hands the published amd64 reference to the amd64 live target (#9386)", () => {
-    const value = contract();
-    mocks.readFileSync.mockReturnValue(JSON.stringify(value));
-    mocks.execFileSync.mockReturnValue("nemoclaw-dcode-base-imports-ok");
-
-    main(["contract.json"], {
-      GITHUB_OUTPUT: "/tmp/dcode-github-output",
-      PUBLICATION_HEAD_SHA: HEAD_SHA,
-      PUBLICATION_RUN_ATTEMPT: String(RUN_ATTEMPT),
-      PUBLICATION_RUN_ID: String(RUN_ID),
-    });
-
-    expect(mocks.execFileSync.mock.calls[0]?.[1]).toContain(AMD64_REFERENCE);
-    expect(mocks.appendFileSync).toHaveBeenCalledWith(
-      "/tmp/dcode-github-output",
-      `base_ref=${AMD64_REFERENCE}\ncontract=${JSON.stringify(value)}\n`,
-      "utf8",
-    );
-  });
 });
