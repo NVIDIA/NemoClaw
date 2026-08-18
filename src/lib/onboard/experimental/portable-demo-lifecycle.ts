@@ -655,7 +655,7 @@ export function createPortablePodmanLifecycleTransport(
 
 function matchingPortableSandboxContainerIds(
   sandboxName: string,
-  transport: PortablePodmanLifecycleTransport,
+  podman: PortablePodmanLifecycleTransport["podman"],
 ): string[] {
   const args = [
     "ps",
@@ -670,9 +670,9 @@ function matchingPortableSandboxContainerIds(
     "--format",
     "{{.ID}}",
   ] as const;
-  let result = transport.podman(args);
+  let result = podman(args);
   if (result.status === 125) {
-    result = transport.podman(args);
+    result = podman(args);
   }
   requireCommand(result, `Finding portable sandbox '${sandboxName}'`);
   const ids = String(result.stdout ?? "")
@@ -699,7 +699,7 @@ export function preparePortableDemoSandboxRemoval(
   }
   requireCurrentRegistryGeneration(loaded, receiptRecord.registryGeneration);
   transport.assertRuntimeAuthority();
-  const matches = matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport);
+  const matches = matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport.podman);
   if (matches.length > 1 || (matches.length === 1 && matches[0] !== receiptRecord.containerId)) {
     throw new Error(
       `Portable demo lifecycle found a replaced or ambiguous container for sandbox '${receiptRecord.sandboxName}'`,
@@ -752,7 +752,10 @@ export function preparePortableDemoSandboxRemoval(
         `Portable sandbox '${receiptRecord.sandboxName}' still has its recorded Podman container`,
       );
     }
-    const remaining = matchingPortableSandboxContainerIds(receiptRecord.sandboxName, transport);
+    const remaining = matchingPortableSandboxContainerIds(
+      receiptRecord.sandboxName,
+      transport.podman,
+    );
     if (remaining.length !== 0) {
       throw new Error(
         `Portable demo lifecycle found a replacement container for sandbox '${receiptRecord.sandboxName}'`,
