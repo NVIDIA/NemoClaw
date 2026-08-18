@@ -84,6 +84,27 @@ describe("managed startup shared-state transaction", () => {
     );
   }
 
+  function simulateMountedStateRoot(root: string): void {
+    const originalLstatSync = fs.lstatSync.bind(fs);
+    vi.spyOn(fs, "lstatSync").mockImplementation(((
+      target: fs.PathLike,
+      statOptions?: { readonly bigint?: boolean },
+    ) => {
+      const stat =
+        statOptions?.bigint === true
+          ? originalLstatSync(target, { bigint: true })
+          : originalLstatSync(target);
+      const resolved = path.resolve(String(target));
+      if (resolved === root || resolved.startsWith(`${root}${path.sep}`)) {
+        Object.defineProperty(stat, "dev", {
+          configurable: true,
+          value: typeof stat.dev === "bigint" ? stat.dev + 1n : stat.dev + 1,
+        });
+      }
+      return stat;
+    }) as typeof fs.lstatSync);
+  }
+
   function rewriteManifest(
     rewrite: (manifest: Record<string, unknown>) => Record<string, unknown> = (manifest) =>
       manifest,
@@ -162,6 +183,38 @@ describe("managed startup shared-state transaction", () => {
     for (const relativePath of absentManagedPaths[agent]) {
       expect(fs.existsSync(path.join(root, relativePath))).toBe(false);
     }
+    expect(fs.existsSync(transactionDirectory)).toBe(false);
+  });
+
+  it("preserves transaction rollback when the exact Hermes root is a named-volume mount", () => {
+    const root = agentRoot("hermes");
+    fs.mkdirSync(root, { mode: 0o770 });
+    const config = path.join(root, "config.yaml");
+    const env = path.join(root, ".env");
+    fs.writeFileSync(config, "before: true\n");
+    fs.writeFileSync(env, "TOKEN=before\n");
+    simulateMountedStateRoot(root);
+
+    expect(
+      beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("hermes"), options),
+    ).toBe(true);
+    fs.writeFileSync(config, "after: true\n");
+    fs.writeFileSync(env, "TOKEN=after\n");
+
+    expect(rollbackManagedStartupSharedStateTransaction("hermes", options)).toBe(true);
+    expect(fs.readFileSync(config, "utf8")).toBe("before: true\n");
+    expect(fs.readFileSync(env, "utf8")).toBe("TOKEN=before\n");
+  });
+
+  it("retains the no-mounted-state-root boundary for other agents", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "{}\n");
+    simulateMountedStateRoot(root);
+
+    expect(() =>
+      beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options),
+    ).toThrow(/crosses a nested filesystem mount/u);
     expect(fs.existsSync(transactionDirectory)).toBe(false);
   });
 

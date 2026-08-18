@@ -310,10 +310,19 @@ function relativeTarget(target: string, options: ResolvedOptions): string {
   return safeRelativePath(path.relative(options.sandboxRoot, target));
 }
 
-function validateExistingAncestors(target: string, options: ResolvedOptions): void {
+function validateExistingAncestors(
+  target: string,
+  expectedAgent: ManagedStartupAgent,
+  options: ResolvedOptions,
+): void {
   const relative = relativeTarget(target, options);
   const sandboxStat = requireDirectory(options.sandboxRoot, options);
+  const outputRoot = agentRoot(expectedAgent, options.sandboxRoot);
+  if (target !== outputRoot && !target.startsWith(`${outputRoot}${path.sep}`)) {
+    fail(`transaction target escapes the ${expectedAgent} state root: ${target}`);
+  }
   let current = options.sandboxRoot;
+  let expectedDevice = sandboxStat.dev;
   const segments = relative.split("/").slice(0, -1);
   for (const segment of segments) {
     current = path.join(current, segment);
@@ -327,10 +336,35 @@ function validateExistingAncestors(target: string, options: ResolvedOptions): vo
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       fail(`transaction path ancestor is unsafe: ${current}`);
     }
-    if (stat.dev !== sandboxStat.dev) {
+    // Hermes owns one explicitly durable state root. Docker supplies that root
+    // as a named volume, so its exact mountpoint may cross from /sandbox onto
+    // another filesystem. Keep every descendant on that same device and keep
+    // the historical no-nested-mount contract for every other agent.
+    if (current === outputRoot && expectedAgent === "hermes") {
+      expectedDevice = stat.dev;
+    } else if (stat.dev !== expectedDevice) {
       fail(`transaction path crosses a nested filesystem mount: ${current}`);
     }
   }
+}
+
+function managedOutputDevice(expectedAgent: ManagedStartupAgent, options: ResolvedOptions): number {
+  const sandboxStat = requireDirectory(options.sandboxRoot, options);
+  const outputRoot = agentRoot(expectedAgent, options.sandboxRoot);
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(outputRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return sandboxStat.dev;
+    fail(`could not inspect managed output root ${outputRoot}`);
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    fail(`managed output root is unsafe: ${outputRoot}`);
+  }
+  if (expectedAgent !== "hermes" && stat.dev !== sandboxStat.dev) {
+    fail(`managed output root crosses a nested filesystem mount: ${outputRoot}`);
+  }
+  return stat.dev;
 }
 
 function agentRoot(agent: ManagedStartupAgent, sandboxRoot: string): string {
@@ -431,9 +465,10 @@ function managedOutputTargets(
 function snapshotFile(
   target: string,
   index: number,
+  expectedAgent: ManagedStartupAgent,
   options: ResolvedOptions,
 ): { readonly receipt: FileReceipt; readonly bytes: Buffer | null } {
-  validateExistingAncestors(target, options);
+  validateExistingAncestors(target, expectedAgent, options);
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(target);
@@ -449,7 +484,7 @@ function snapshotFile(
   if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1) {
     fail(`managed output is not a safe regular file: ${target}`);
   }
-  if (stat.dev !== requireDirectory(options.sandboxRoot, options).dev) {
+  if (stat.dev !== managedOutputDevice(expectedAgent, options)) {
     fail(`managed output crosses a nested filesystem mount: ${target}`);
   }
   const stable = readStableFile(target, MAX_TRANSACTION_FILE_BYTES);
@@ -470,8 +505,12 @@ function snapshotFile(
   };
 }
 
-function snapshotDirectory(target: string, options: ResolvedOptions): DirectoryReceipt {
-  validateExistingAncestors(path.join(target, ".receipt"), options);
+function snapshotDirectory(
+  target: string,
+  expectedAgent: ManagedStartupAgent,
+  options: ResolvedOptions,
+): DirectoryReceipt {
+  validateExistingAncestors(path.join(target, ".receipt"), expectedAgent, options);
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(target);
@@ -484,7 +523,7 @@ function snapshotDirectory(target: string, options: ResolvedOptions): DirectoryR
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     fail(`managed output directory is unsafe: ${target}`);
   }
-  if (stat.dev !== requireDirectory(options.sandboxRoot, options).dev) {
+  if (stat.dev !== managedOutputDevice(expectedAgent, options)) {
     fail(`managed output directory crosses a nested filesystem mount: ${target}`);
   }
   return {
@@ -1120,12 +1159,16 @@ export function beginManagedStartupSharedStateTransaction(
   if (targets.files.length > MAX_TRANSACTION_FILES) {
     fail("managed startup transaction has too many file targets");
   }
-  const snapshots = targets.files.map((target, index) => snapshotFile(target, index, options));
+  const snapshots = targets.files.map((target, index) =>
+    snapshotFile(target, index, profile.agent, options),
+  );
   const totalBytes = snapshots.reduce((sum, snapshot) => sum + (snapshot.bytes?.length ?? 0), 0);
   if (totalBytes > MAX_TRANSACTION_TOTAL_BYTES) {
     fail("managed startup transaction backup exceeds the total size limit");
   }
-  const directories = targets.directories.map((target) => snapshotDirectory(target, options));
+  const directories = targets.directories.map((target) =>
+    snapshotDirectory(target, profile.agent, options),
+  );
   const manifest: TransactionManifest = {
     schemaVersion: TRANSACTION_SCHEMA_VERSION,
     agent: profile.agent,
@@ -1209,12 +1252,13 @@ export function beginManagedStartupSharedStateTransaction(
 
 function ensureOriginalDirectories(
   receipts: readonly DirectoryReceipt[],
+  expectedAgent: ManagedStartupAgent,
   options: ResolvedOptions,
 ): void {
   for (const receipt of receipts) {
     if (receipt.state !== "directory") continue;
     const target = absoluteTarget(receipt.path, options);
-    validateExistingAncestors(path.join(target, ".restore"), options);
+    validateExistingAncestors(path.join(target, ".restore"), expectedAgent, options);
     let stat: fs.Stats | null = null;
     try {
       stat = fs.lstatSync(target);
@@ -1236,11 +1280,12 @@ function ensureOriginalDirectories(
 function restoreFiles(
   receipts: readonly FileReceipt[],
   backups: ReadonlyMap<string, Buffer>,
+  expectedAgent: ManagedStartupAgent,
   options: ResolvedOptions,
 ): void {
   for (const receipt of receipts) {
     const target = absoluteTarget(receipt.path, options);
-    validateExistingAncestors(target, options);
+    validateExistingAncestors(target, expectedAgent, options);
     if (receipt.state === "absent") {
       let stat: fs.Stats;
       try {
@@ -1365,8 +1410,8 @@ export function rollbackManagedStartupSharedStateTransaction(
     fail("pending transaction belongs to a different bootstrap attempt");
   }
   const backups = verifyAllBackups(manifest.files, options);
-  ensureOriginalDirectories(manifest.directories, options);
-  restoreFiles(manifest.files, backups, options);
+  ensureOriginalDirectories(manifest.directories, expectedAgent, options);
+  restoreFiles(manifest.files, backups, expectedAgent, options);
   restoreDirectoryMetadata(manifest.directories, options);
   verifyRestoration(manifest, options);
   if (!options.readOnlyReceipt) {
