@@ -824,10 +824,10 @@ console.log(JSON.stringify(records));
     // All three hosts get the injection — host is intentionally NOT part
     // of the scope boundary. If this assertion ever changes, the
     // documented contract above must change too.
-    for (const r of records) {
+    records.forEach((r) => {
       const body = JSON.parse(r.writes.join(""));
       expect(body.messages[0].role).toBe("system");
       expect(body.messages[0].content).toMatch(/do not have tools/i);
-    }
+    });
   });
 });

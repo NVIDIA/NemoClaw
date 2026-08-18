@@ -90,13 +90,13 @@ describe("repo skill markdown files", () => {
   it("keeps contributor implementation skills concise and discovery-based", () => {
     const names = ["nemoclaw-contributor-update-dependencies", "nemoclaw-contributor-update-docs"];
 
-    for (const name of names) {
+    names.forEach((name) => {
       const raw = fs.readFileSync(path.join(skillsRoot, name, "SKILL.md"), "utf8");
       expect(raw.split("\n").length, `${name} must stay concise`).toBeLessThan(120);
       expect(raw, `${name} must discover current implementation details`).toContain(
         "../_shared/implementation-discovery.md",
       );
-    }
+    });
 
     const discovery = fs.readFileSync(
       path.join(skillsRoot, "_shared", "implementation-discovery.md"),

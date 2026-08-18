@@ -81,7 +81,7 @@ describe("seedHermesDashboardConfig", () => {
     );
 
     expect(capture).toHaveBeenCalledTimes(3);
-    for (const [binary, args, options] of capture.mock.calls) {
+    capture.mock.calls.forEach(([binary, args, options]) => {
       expect(binary).toBe("/host/OpenShell binary;still-one-argv");
       expect(args.slice(0, 5)).toEqual([
         "sandbox",
@@ -98,7 +98,7 @@ describe("seedHermesDashboardConfig", () => {
         maxBuffer: 17 * 1024 * 1024,
         timeout: 30_000,
       });
-    }
+    });
     expect(sandboxCommand(capture.mock.calls[0][1])).toEqual([PYTHON, "-c", ""]);
     const inspectionCommand = sandboxCommand(capture.mock.calls[1][1]);
     expect(inspectionCommand[0]).toBe(PYTHON);

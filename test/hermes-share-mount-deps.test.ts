@@ -435,9 +435,9 @@ describe("Hermes share mount package parity (#2947)", () => {
       const { cachePaths, result } = runHermesInstallLayer(command, tmp);
 
       expect(result.status, result.stderr).toBe(0);
-      for (const cachePath of cachePaths) {
+      cachePaths.forEach((cachePath) => {
         expect(() => fs.lstatSync(cachePath)).toThrow();
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

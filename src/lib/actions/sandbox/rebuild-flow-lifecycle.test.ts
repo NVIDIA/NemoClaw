@@ -390,9 +390,9 @@ network_policies:
     );
     expect(harness.session.toolDisclosure).toBe("direct");
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
-    for (const [, update] of harness.registryUpdateSpy.mock.calls) {
+    harness.registryUpdateSpy.mock.calls.forEach(([, update]) => {
       expect(update).not.toHaveProperty("toolDisclosure");
-    }
+    });
   });
 
   it("relocks as absent and keeps the journaled row when replacement creation fails (#7734)", async () => {

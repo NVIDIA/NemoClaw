@@ -96,10 +96,10 @@ describe("private-networks.yaml schema", () => {
     (family) => {
       const doc = cliHelper.getNetworkEntries();
 
-      for (const entry of doc[family]) {
+      doc[family].forEach((entry) => {
         expect(entry.purpose, `${family} ${entryLabel(entry)}`).toBeTypeOf("string");
         expect(entry.purpose.trim().length, `${family} ${entryLabel(entry)}`).toBeGreaterThan(0);
-      }
+      });
     },
   );
 

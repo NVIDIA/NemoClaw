@@ -1030,10 +1030,10 @@ describe("agents/hermes/generate-config.ts", () => {
         NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
       });
 
-      for (const platform of MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS) {
+      MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS.forEach((platform) => {
         expect(config.platforms[platform], platform).toEqual({ enabled: false });
         expect(config.platform_toolsets[platform], platform).toBeUndefined();
-      }
+      });
 
       expect(envFile, credential).not.toContain(`${credential}=`);
     },

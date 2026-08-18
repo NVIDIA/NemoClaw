@@ -1526,7 +1526,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       },
     ];
 
-    for (const testCase of cases) {
+    cases.forEach((testCase) => {
       const blueprintDir = path.join(
         tmpDir,
         `fixture-blueprint-${testCase.name.replaceAll(" ", "-")}`,
@@ -1537,7 +1537,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
         testCase.manifest as any,
       );
       expectBuildConfigError({ NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir }, testCase.message);
-    }
+    });
   });
 
   it("rejects unknown OpenClaw effect keys and missing plugin source paths", () => {

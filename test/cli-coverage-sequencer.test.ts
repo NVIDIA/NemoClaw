@@ -181,10 +181,10 @@ describe("stable CLI coverage sharding", () => {
     expect(cliTestTimingHints.defaultDurationMs).toBe(5_000);
     expect(files).toEqual([...files].sort());
     expect(files.length).toBeGreaterThan(50);
-    for (const file of files) {
+    files.forEach((file) => {
       expect(existsSync(path.resolve(file)), file).toBe(true);
       expect(cliTestTimingHints.files[file]).toBeGreaterThan(cliTestTimingHints.defaultDurationMs);
-    }
+    });
     expect(timingWeightForPath("test/new-unprofiled-test.test.ts")).toBe(5_000);
   });
 

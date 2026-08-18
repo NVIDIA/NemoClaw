@@ -95,9 +95,9 @@ for (const [targetIndex, target] of listTargets().entries()) {
         target.id,
         artifacts.pathFor("dcode-base-image.json"),
       );
-      for (const secret of target.requiredSecrets ?? []) {
+      (target.requiredSecrets ?? []).forEach((secret) => {
         secrets.required(secret);
-      }
+      });
 
       expect(
         fs.existsSync(CLI_DIST_ENTRYPOINT),

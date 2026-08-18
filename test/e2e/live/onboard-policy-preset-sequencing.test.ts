@@ -151,14 +151,14 @@ test(
 
     progress.phase("confirm every ordered onboarding step appears in order");
     let searchFrom = 0;
-    for (const marker of ORDERED_STEP_MARKERS) {
+    ORDERED_STEP_MARKERS.forEach((marker) => {
       const index = result.output.indexOf(marker, searchFrom);
       expect(
         index,
         `expected step marker ${JSON.stringify(marker)} after offset ${searchFrom} in the transcript; see onboard-transcript.txt`,
       ).toBeGreaterThanOrEqual(searchFrom);
       searchFrom = index + marker.length;
-    }
+    });
 
     progress.phase("confirm Policy presets is reached before completion");
     const policyIndex = result.output.indexOf("[8/8] Policy presets");

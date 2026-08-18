@@ -219,11 +219,11 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);
     const errors = validateMutation((mutatedWorkflow) => {
-      for (const jobName of requiredJobs) {
+      requiredJobs.forEach((jobName) => {
         mutatedWorkflow.jobs[jobName].steps = mutatedWorkflow.jobs[jobName].steps?.filter(
           (step) => step.name !== AUTH_STEP_NAME && step.name !== CLEANUP_STEP_NAME,
         );
-      }
+      });
     });
 
     expect(errors).toEqual(
@@ -351,21 +351,21 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);
     const errors = validateMutation((mutatedWorkflow) => {
-      for (const jobName of requiredJobs) {
+      requiredJobs.forEach((jobName) => {
         const cleanup = namedStep(mutatedWorkflow.jobs[jobName], CLEANUP_STEP_NAME)!;
         cleanup.run = `${CLEANUP_HELPER_RUN} || true`;
         cleanup["continue-on-error"] = true;
-      }
+      });
     });
 
-    for (const jobName of requiredJobs) {
+    requiredJobs.forEach((jobName) => {
       expect(errors).toContain(
         `${jobName} Docker Hub cleanup step must contain exactly name, if, shell, and run`,
       );
       expect(errors).toContain(
         `${jobName} Docker Hub cleanup step must run only ${CLEANUP_HELPER_RUN}`,
       );
-    }
+    });
   });
 
   it("treats every new E2E job as image-consuming unless it is explicitly exempt", () => {

@@ -173,7 +173,7 @@ describe("onboard policy preset suggestions", () => {
         knownPresetNames: knownNames,
       }).filter((name) => channelPresetSet.has(name));
 
-    for (const channel of channels) {
+    channels.forEach((channel) => {
       // Compare set equality (sorted) rather than incidental array order, so a
       // channel later expanding to multiple presets can't fail this guard on a
       // harmless ordering difference between the two internal paths.
@@ -184,7 +184,7 @@ describe("onboard policy preset suggestions", () => {
       ).toEqual(expected);
       // ...and the suggestion path surfaces the same set.
       expect(channelPresetsFromSuggestions([channel]).slice().sort()).toEqual(expected);
-    }
+    });
 
     // All channels enabled together: both paths agree on the full set.
     const expectedAll = allMessagingChannelPolicyPresets(channels).slice().sort();
