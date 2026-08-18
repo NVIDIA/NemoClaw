@@ -371,8 +371,8 @@ if (process.argv[2] !== "tui") {
   if (!monitorPid) process.exit(71);
   fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_MONITOR_PID, monitorPid);
   if (mode === "pty-response-forgery") {
-    process.stdin.on("data", () => {
-      fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_EARLY_INPUT_MARKER, "");
+    process.stdin.on("data", (chunk) => {
+      if (chunk.includes(13)) fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_EARLY_INPUT_MARKER, "");
     });
     fs.unlinkSync(socketPath);
     const ttyPath = fs.realpathSync("/proc/self/fd/0");
