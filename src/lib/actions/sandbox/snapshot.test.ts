@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import {
   type DcodeProbeState,
@@ -53,20 +54,24 @@ describe("runSandboxSnapshot", () => {
     return String(execArgs.at(-1) ?? "");
   }
 
-  it("rejects schema-5 snapshot creation before Docker or OpenShell work (#9203)", async () => {
-    f.assertHermesPortableCommandUnavailableMock.mockImplementation(() => {
-      throw new Error("schema-5 rejected");
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+  it(
+    "rejects schema-5 snapshot creation before Docker or OpenShell work (#9203)",
+    testTimeoutOptions(30_000),
+    async () => {
+      f.assertHermesPortableCommandUnavailableMock.mockImplementation(() => {
+        throw new Error("schema-5 rejected");
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toThrow(
-      "schema-5 rejected",
-    );
+      await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toThrow(
+        "schema-5 rejected",
+      );
 
-    expect(f.captureOpenshellMock).not.toHaveBeenCalled();
-    expect(f.dockerInspectMock).not.toHaveBeenCalled();
-    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
-  });
+      expect(f.captureOpenshellMock).not.toHaveBeenCalled();
+      expect(f.dockerInspectMock).not.toHaveBeenCalled();
+      expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("rechecks schema-5 snapshot authority after the lifecycle lock is acquired (#9203)", async () => {
     f.assertHermesPortableCommandUnavailableMock

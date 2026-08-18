@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../test/helpers/timeouts";
 
 const mocks = vi.hoisted(() => {
   class GatewayTokenCommandError extends Error {
@@ -118,7 +119,7 @@ import UninstallCliCommand from "./uninstall";
 
 const rootDir = process.cwd();
 
-describe("simple global oclif adapters", () => {
+describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

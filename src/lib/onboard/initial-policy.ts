@@ -569,10 +569,27 @@ export function prepareInitialSandboxCreatePolicy(
   });
 }
 
+function hasSafeHermesPortablePolicySourceMode(
+  stat: { readonly gid: bigint; readonly mode: bigint; readonly uid: bigint },
+  uid: number,
+  gid: number,
+  hostedInstallerMode: bigint,
+): boolean {
+  const permissions = stat.mode & 0o777n;
+  if ((permissions & 0o002n) !== 0n) return false;
+  if ((permissions & 0o020n) === 0n) return true;
+  return (
+    (stat.mode & 0o7777n) === hostedInstallerMode &&
+    stat.uid === BigInt(uid) &&
+    stat.gid === BigInt(gid)
+  );
+}
+
 /** Read one policy source while holding exact current-user file authority. */
 export function readHermesPortableInitialPolicySource(basePolicyPath: string): string {
   const uid = process.getuid?.();
-  if (uid === undefined) {
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
     throw new Error("Hermes portable policy source has no current-user authority.");
   }
   const parentPath = path.dirname(basePolicyPath);
@@ -582,7 +599,7 @@ export function readHermesPortableInitialPolicySource(basePolicyPath: string): s
     !parentBefore.isDirectory() ||
     parentBefore.isSymbolicLink() ||
     (parentBefore.uid !== 0n && parentBefore.uid !== BigInt(uid)) ||
-    (parentBefore.mode & 0o22n) !== 0n ||
+    !hasSafeHermesPortablePolicySourceMode(parentBefore, uid, gid, 0o775n) ||
     !named.isFile() ||
     named.isSymbolicLink()
   ) {
@@ -601,7 +618,7 @@ export function readHermesPortableInitialPolicySource(basePolicyPath: string): s
       before.isSymbolicLink() ||
       before.nlink !== 1n ||
       (before.uid !== 0n && before.uid !== BigInt(uid)) ||
-      (before.mode & 0o22n) !== 0n ||
+      !hasSafeHermesPortablePolicySourceMode(before, uid, gid, 0o664n) ||
       before.size < 1n ||
       before.size > 256n * 1024n ||
       named.dev !== before.dev ||
@@ -618,6 +635,7 @@ export function readHermesPortableInitialPolicySource(basePolicyPath: string): s
       before.ino !== after.ino ||
       before.mode !== after.mode ||
       before.uid !== after.uid ||
+      before.gid !== after.gid ||
       before.nlink !== after.nlink ||
       before.size !== after.size ||
       before.mtimeNs !== after.mtimeNs ||
@@ -628,6 +646,7 @@ export function readHermesPortableInitialPolicySource(basePolicyPath: string): s
       parentBefore.ino !== parentAfter.ino ||
       parentBefore.mode !== parentAfter.mode ||
       parentBefore.uid !== parentAfter.uid ||
+      parentBefore.gid !== parentAfter.gid ||
       parentBefore.mtimeNs !== parentAfter.mtimeNs ||
       parentBefore.ctimeNs !== parentAfter.ctimeNs ||
       BigInt(bytes.byteLength) !== after.size

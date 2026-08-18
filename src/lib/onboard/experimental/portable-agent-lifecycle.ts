@@ -154,7 +154,7 @@ export interface PortableAgentLifecycleAuthorityDeps {
   readonly env?: NodeJS.ProcessEnv;
   readonly stateDir?: string;
   readonly inspectReceiptDisposition?: (sandboxName: string) => PortableAgentReceiptDisposition;
-  readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
+  readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
 }
 /** Strictly distinguish absent, schema-4 OpenClaw, and schema-5 Hermes authority. */
 export function inspectPortableAgentReceiptDisposition(
@@ -181,7 +181,7 @@ export function inspectPortableAgentReceiptDisposition(
 /** Classify receipt authority and enforce the shared schema-5 registry invariant. */
 export function qualifyPortableAgentLifecycleAuthority(
   sandboxName: string,
-  deps: PortableAgentLifecycleAuthorityDeps = {},
+  deps: PortableAgentLifecycleAuthorityDeps,
 ): PortableAgentLifecycleAuthority {
   const disposition = deps.inspectReceiptDisposition
     ? deps.inspectReceiptDisposition(sandboxName)
@@ -216,8 +216,8 @@ export function qualifyPortableAgentLifecycleAuthority(
 /** Require an active schema-5 receipt and its exact registry authority. */
 export function requireHermesPortableActiveLifecycleAuthority(
   sandboxName: string,
-  expected?: HermesPortableActiveLifecycleAuthority,
-  deps: PortableAgentLifecycleAuthorityDeps = {},
+  expected: HermesPortableActiveLifecycleAuthority | undefined,
+  deps: PortableAgentLifecycleAuthorityDeps,
 ): HermesPortableActiveLifecycleAuthority {
   const current = qualifyPortableAgentLifecycleAuthority(sandboxName, deps);
   if (current.kind !== "hermes" || current.phase !== "active" || !current.entry) {

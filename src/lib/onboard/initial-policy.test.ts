@@ -80,6 +80,23 @@ function tmpPolicy(content: string): string {
   return file;
 }
 
+function tmpHostedInstallerPolicy(content: string): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hosted-policy-test-"));
+  tmpRoots.push(root);
+  const policies = path.join(root, "nemoclaw-blueprint", "policies");
+  const presets = path.join(policies, "presets");
+  fs.mkdirSync(presets, { recursive: true });
+  fs.chmodSync(policies, 0o775);
+  fs.chmodSync(presets, 0o775);
+  const basePolicyPath = path.join(policies, "base.yaml");
+  fs.writeFileSync(basePolicyPath, content, { mode: 0o664 });
+  fs.chmodSync(basePolicyPath, 0o664);
+  const presetPath = path.join(presets, "personal-open-internet.yaml");
+  fs.writeFileSync(presetPath, "version: 1\nnetwork_policies: {}\n", { mode: 0o664 });
+  fs.chmodSync(presetPath, 0o664);
+  return basePolicyPath;
+}
+
 function tmpSysfsRoot(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-sysfs-test-"));
   tmpRoots.push(dir);
@@ -143,6 +160,34 @@ describe("initial sandbox policy helpers", () => {
     expect(writeFile).not.toHaveBeenCalled();
   });
 
+  it("accepts the hosted installer policy source owned by the current user and group (#9203)", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const basePolicyPath = tmpHostedInstallerPolicy(
+      "version: 1\nnetwork_policies:\n  base: {}\n",
+    );
+
+    const planned = planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
+      agentName: "hermes",
+      policyTier: "personal",
+      additionalPresets: ["personal-open-internet"],
+    });
+
+    const policies = path.dirname(basePolicyPath);
+    const presets = path.join(policies, "presets");
+    const presetPath = path.join(presets, "personal-open-internet.yaml");
+    const baseStat = fs.statSync(basePolicyPath);
+    const presetStat = fs.statSync(presetPath);
+    expect(fs.statSync(policies).mode & 0o777).toBe(0o775);
+    expect(fs.statSync(presets).mode & 0o777).toBe(0o775);
+    expect(baseStat.mode & 0o777).toBe(0o664);
+    expect(baseStat.uid).toBe(process.getuid?.());
+    expect(baseStat.gid).toBe(process.getgid?.());
+    expect(presetStat.mode & 0o777).toBe(0o664);
+    expect(presetStat.uid).toBe(process.getuid?.());
+    expect(presetStat.gid).toBe(process.getgid?.());
+    expect(planned.sourceBytes?.toString("utf8")).toContain("personal-open-internet");
+  });
+
   it("rejects malformed schema-5 base policy bytes before planning effects (#9203)", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies: {}\n");
@@ -180,6 +225,12 @@ describe("initial sandbox policy helpers", () => {
     fs.unlinkSync(original);
     fs.writeFileSync(original, "version: 1\nnetwork_policies: {}\n", { mode: 0o666 });
     fs.chmodSync(original, 0o666);
+    expect(() => plan(original)).toThrow("source authority is unsafe");
+
+    fs.chmodSync(original, 0o620);
+    expect(() => plan(original)).toThrow("source authority is unsafe");
+
+    fs.chmodSync(original, 0o602);
     expect(() => plan(original)).toThrow("source authority is unsafe");
   });
 

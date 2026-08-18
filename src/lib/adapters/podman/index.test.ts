@@ -65,7 +65,7 @@ describe("Podman container engine command adapter", () => {
     onTestFinished,
   }) => {
     const directory = fs.mkdtempSync(
-      path.join(fs.realpathSync(os.tmpdir()), "nemoclaw-podman-executable-"),
+      path.join(fs.realpathSync(os.homedir()), ".nemoclaw-podman-executable-"),
     );
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
     const executable = path.join(directory, "podman");

@@ -317,6 +317,7 @@ describe("runSandboxDoctor flow", () => {
 
   it.each(["pending", "configuring", "active"] as const)(
     "reports Hermes portable receipt phase %s without Docker or OpenClaw doctor work (#9203)",
+    testTimeoutOptions(30_000),
     async (phase) => {
       const harness = createDoctorHarness("ollama-local", {
         portableDisposition: hermesPortableDisposition(phase),

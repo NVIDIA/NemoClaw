@@ -163,6 +163,7 @@ describe("portable agent lifecycle dispatch", () => {
   });
 
   it.each([
+    { name: "other-sandbox" },
     { agent: "openclaw" },
     { openshellDriver: "kubernetes" },
     { gatewayName: "other-gateway" },
