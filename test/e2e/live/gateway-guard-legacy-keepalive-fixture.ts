@@ -161,10 +161,11 @@ export function rewriteManagedInspectForLegacyKeepalive(
   );
   const configRecord = config as Record<string, unknown>;
   const managedWorkload = reviewedManagedRuntimeWorkload(configRecord.Env);
+  const isManagedRuntimeSource = hasReviewedManagedRuntimeProcess(configRecord);
   requireFixtureInput(
     (hasExactTokens(configRecord.Entrypoint, MANAGED_IMAGE_ENTRYPOINT) &&
       hasExactTokens(configRecord.Cmd, MANAGED_IMAGE_COMMAND)) ||
-      hasReviewedManagedRuntimeProcess(configRecord),
+      isManagedRuntimeSource,
     "legacy keepalive fixture requires the reviewed managed-image or OpenShell-managed runtime process contract",
   );
   requireFixtureInput(
@@ -188,9 +189,27 @@ export function rewriteManagedInspectForLegacyKeepalive(
       entry === OPENSHELL_OCI_IMAGE_USER_ENV ||
       entry.startsWith(`${OPENSHELL_OCI_IMAGE_USER_ENV}=`),
   );
-  if (hasOciImageUser) {
+  if (isManagedRuntimeSource || hasOciImageUser) {
+    const workspaceBoundaryInspect = hasOciImageUser
+      ? record
+      : {
+          ...record,
+          Config: {
+            ...configRecord,
+            Env: [...environment, `${OPENSHELL_OCI_IMAGE_USER_ENV}=fixture-validation`],
+          },
+        };
+    let hasReviewedWorkspaceBoundary = false;
+    try {
+      hasReviewedWorkspaceBoundary = shouldOmitOpenShellOciImageUser(
+        workspaceBoundaryInspect as DockerContainerInspect,
+        managedWorkload,
+      );
+    } catch {
+      // Normalize production identity-metadata failures to the fixture boundary.
+    }
     requireFixtureInput(
-      shouldOmitOpenShellOciImageUser(record as DockerContainerInspect, managedWorkload),
+      hasReviewedWorkspaceBoundary,
       "legacy keepalive fixture requires the reviewed OpenShell OCI workspace identity contract",
     );
   }

@@ -96,6 +96,35 @@ function managedRuntimeInspect({
   ]);
 }
 
+function managedRuntimeInspectWithoutOciImageUser(
+  mutate?: (record: {
+    Config: {
+      User?: string;
+      WorkingDir?: string;
+      Labels?: Record<string, string>;
+    };
+  }) => void,
+): string {
+  const records = JSON.parse(
+    managedRuntimeInspect({
+      environment: [
+        MANAGED_RUNTIME_COMMAND_ENV,
+        "OPENSHELL_SANDBOX_UID=",
+        "OPENSHELL_SANDBOX_GID=",
+      ],
+    }),
+  ) as Array<{
+    Config: {
+      User?: string;
+      WorkingDir?: string;
+      Labels?: Record<string, string>;
+    };
+  }>;
+  const record = records[0]!;
+  mutate?.(record);
+  return JSON.stringify(records);
+}
+
 describe("gateway guard legacy keepalive fixture", () => {
   it("recreates only the pinned sandbox container with the reviewed legacy supervisor contract (#9364)", () => {
     const dockerCapture = vi.fn(() => managedRuntimeInspect());
@@ -172,6 +201,58 @@ describe("gateway guard legacy keepalive fixture", () => {
     expect(() =>
       rewriteManagedInspectForLegacyKeepalive(JSON.stringify(inspect), OLD_CONTAINER_ID),
     ).toThrow("requires the reviewed OpenShell OCI workspace identity contract");
+  });
+
+  it("accepts the reviewed prior-recreation identity metadata without the OCI-user marker (#9364)", () => {
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(
+        managedRuntimeInspectWithoutOciImageUser(),
+        OLD_CONTAINER_ID,
+      ),
+    ).not.toThrow();
+  });
+
+  it.each([
+    {
+      name: "UID-only identity metadata",
+      inspect: managedRuntimeInspect({
+        environment: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_UID="],
+      }),
+    },
+    {
+      name: "GID-only identity metadata",
+      inspect: managedRuntimeInspect({
+        environment: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_GID="],
+      }),
+    },
+    {
+      name: "a non-root user without the OCI-user marker",
+      inspect: managedRuntimeInspectWithoutOciImageUser((record) => {
+        record.Config.User = "1000";
+      }),
+    },
+    {
+      name: "a non-root working directory without the OCI-user marker",
+      inspect: managedRuntimeInspectWithoutOciImageUser((record) => {
+        record.Config.WorkingDir = "/sandbox";
+      }),
+    },
+    {
+      name: "a missing OpenShell management label without the OCI-user marker",
+      inspect: managedRuntimeInspectWithoutOciImageUser((record) => {
+        delete record.Config.Labels;
+      }),
+    },
+    {
+      name: "a changed OpenShell management label without the OCI-user marker",
+      inspect: managedRuntimeInspectWithoutOciImageUser((record) => {
+        record.Config.Labels = { "openshell.ai/managed-by": "unreviewed" };
+      }),
+    },
+  ])("rejects $name before legacy recreation (#9364)", ({ inspect }) => {
+    expect(() => rewriteManagedInspectForLegacyKeepalive(inspect, OLD_CONTAINER_ID)).toThrow(
+      "requires the reviewed OpenShell OCI workspace identity contract",
+    );
   });
 
   it("accepts the reviewed empty OpenShell supervisor command before legacy recreation (#9364)", () => {
