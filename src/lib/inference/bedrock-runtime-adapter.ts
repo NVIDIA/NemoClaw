@@ -8,7 +8,7 @@ import path from "node:path";
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 
 import { BEDROCK_RUNTIME_ADAPTER_PORT } from "../core/ports";
-import { compactText } from "../core/url-utils";
+import { compactText, isLoopbackRemoteAddress } from "../core/url-utils";
 import { run, runCapture, SCRIPTS } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 import {
@@ -154,6 +154,14 @@ export function createBedrockRuntimeAdapterServer(options: {
     try {
       const url = new URL(req.url || "/", "http://127.0.0.1");
       if (req.method === "GET" && url.pathname === "/health") {
+        // Only the host probe needs this route; the 0.0.0.0 bind exists so the
+        // sandbox can reach the completions route, not to publish adapter config.
+        if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
+          sendJson(res, 404, {
+            error: { message: "Not found", type: "not_found", code: "not_found" },
+          });
+          return;
+        }
         sendJson(res, 200, {
           ok: true,
           endpointUrl: options.endpointUrl,
