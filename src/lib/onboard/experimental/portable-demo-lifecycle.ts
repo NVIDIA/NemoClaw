@@ -1338,7 +1338,10 @@ export function stopPortableDemoSandboxLifecycle(
   };
 
   if (!inspection.running) {
-    if (inspection.status !== "stopping") return { kind: "already-stopped" };
+    if (inspection.status === "exited") return { kind: "already-stopped" };
+    if (inspection.status !== "stopping") {
+      throw new Error(`Portable sandbox '${sandboxName}' is not in the exited state`);
+    }
     if (waitFor(STOP_SETTLEMENT_TIMEOUT_MS, timing, inspectExitedState)) {
       return { kind: "already-stopped" };
     }
