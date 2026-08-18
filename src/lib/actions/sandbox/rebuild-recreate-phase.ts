@@ -166,9 +166,17 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
         routerCredentialHash:
           resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerCredentialHash : null,
+        // The inner resume compares its requested host mounts against this
+        // recorded metadata, so the reset must carry the same mounts the
+        // recreate options hand to onboard. Omitting them recorded an empty
+        // mount set and aborted the resume after the old sandbox was already
+        // deleted (#9451).
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
+          ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
+            ? { hostMounts: recreateOptions.hostMounts.map((mount) => ({ ...mount })) }
+            : {}),
         },
       }),
     );
