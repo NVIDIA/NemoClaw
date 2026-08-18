@@ -11,6 +11,12 @@ export const V00103_SANDBOX_BUILD_DIGESTS = [
 ] as const;
 export const V00103_SUPERVISOR_MANIFEST_DIGEST =
   "sha256:96228f110362ffd415bb12d3b7f584063c3c52c0c93f3ccf59faada1dc2dd5d3";
+export const V00106_SANDBOX_BUILD_DIGESTS = [
+  "0031c6b257a23ecc1a2333153918324f3af0005e68abde388858d682ec646c55",
+  "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8",
+] as const;
+export const V00106_SUPERVISOR_MANIFEST_DIGEST =
+  "sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01";
 
 export const V0099_CHECKSUM_MANIFESTS = new Map([
   [
@@ -151,4 +157,51 @@ export const V00103_ASSET_DIGESTS = new Map([
       }),
   ),
   ["openshell.rb", "95a290f0e0e2f57d7d46ba9171fca6e99e5226875cd12e12391b7338f6c219f9"],
+]);
+
+export const V00106_CHECKSUM_MANIFESTS = new Map([
+  [
+    "openshell-checksums-sha256.txt",
+    `d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0  openshell-x86_64-unknown-linux-musl.tar.gz
+ce981904ae8febd9cd6b3fbceb04e1dcfb48da6042bac08eadf0c2211f83fe55  openshell-aarch64-unknown-linux-musl.tar.gz
+969493205e3d3462226ff613eaba0b9cde0f582e3026294169d533d41e87c905  openshell-aarch64-apple-darwin.tar.gz
+1c86ad15a65b5997857443ffd737d549fe155432a5053b6102fd76829efc57aa  openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz
+b7b0fd93ce95a435b955d34b023128499ca8fc4b98228a0282c677fdb0168a01  openshell-driver-vm-aarch64-unknown-linux-gnu.tar.gz
+a0ef279f4ab0998472feff0e5dea4cab0ae0906693472e5d0bfff6d331079b08  openshell-driver-vm-aarch64-apple-darwin.tar.gz
+95ecf3919edc5f58939fee4acccc9728d6b5dee5cfd4ad652d132e6fa46937fd  openshell_0.0.106-1_amd64.deb
+4cafda6d703e5cd6a37dd6adc7da1877b5f99fb21c76786bc1067896260abfd1  openshell_0.0.106-1_arm64.deb
+8512f4c1ec51fff1dfdf06363eb5355e7f7c5a57814c8244217bc9b4116c07f0  openshell-0.0.106-1.fc44.aarch64.rpm
+59655e9233ebf90573ddfe066d313b0f0d1f5c4227800bc121886c168ae9628e  openshell-0.0.106-1.fc44.x86_64.rpm
+ba398a4b378e3071ad371cbf4c1f8730395288f6206657bf4f65220bfb8d31d2  openshell-gateway-0.0.106-1.fc44.aarch64.rpm
+704112743a2f9e91bf2a749219da00da101753e80a10c98941ebd66b898a3904  openshell-gateway-0.0.106-1.fc44.x86_64.rpm
+cd59c6ca6a3745a2afba1198ec390efbaf94d53b36a578467425643ff6195da0  openshell-0.0.106-py3-none-macosx_13_0_arm64.whl
+7ece4d0a9305f0ab3cc902d9acdea4e0f2acc4952c2af9415ebf158123d2e8a0  openshell-0.0.106-py3-none-manylinux_2_39_aarch64.whl
+c9938ebd64afdfcff8818ab696ce13e8398a89a71216a2bd688198d4497c3b95  openshell-0.0.106-py3-none-manylinux_2_39_x86_64.whl
+`,
+  ],
+  [
+    "openshell-gateway-checksums-sha256.txt",
+    `b7760cb752a4363c2f21d32298dd0c683dc438f6edfd16c2e4242bc0baefbb7c  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz
+22b7781249e3487085694d0f0f3797a0e549018b81144cd24b2f1118c730d1c7  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz
+de8f90db9dd0d3b47855b2b6d2542660730917bd1249e53140300990a8690b94  openshell-gateway-aarch64-apple-darwin.tar.gz
+`,
+  ],
+  [
+    "openshell-sandbox-checksums-sha256.txt",
+    `559b8aaad3a8eeab45c511e7de531d9baa98a311282dcb0c2c5f38cc2d4ca355  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz
+5e5d758d53c6abc6d7a936be907dafa9dfce10423289536f39b50abe294dfafd  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz
+`,
+  ],
+]);
+export const V00106_ASSET_DIGESTS = new Map([
+  ...[...V00106_CHECKSUM_MANIFESTS.values()].flatMap((contents) =>
+    contents
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const [digest, asset] = line.split(/\s+/);
+        return [asset, digest] as const;
+      }),
+  ),
+  ["openshell.rb", "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642"],
 ]);
