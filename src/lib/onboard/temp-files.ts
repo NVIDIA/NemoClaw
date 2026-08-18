@@ -165,26 +165,47 @@ export function createExactTempFileCleanup(
       );
       fs.chmodSync(quarantine, 0o700);
       const detachedParent = path.join(quarantine, "source");
-      fs.renameSync(parentDir, detachedParent);
-      const detachedFile = path.join(detachedParent, fileName);
-      const detached = readExactTempFileAuthority(detachedFile);
-      if (
-        detached.parentDev !== authority.parentDev ||
-        detached.parentIno !== authority.parentIno ||
-        detached.fileDev !== authority.fileDev ||
-        detached.fileIno !== authority.fileIno ||
-        detached.bytesSha256 !== authority.bytesSha256
-      ) {
+      let detached = false;
+      const restore = (): boolean => {
+        if (!detached) return true;
+        if (fs.existsSync(parentDir)) return false;
+        try {
+          fs.renameSync(detachedParent, parentDir);
+          detached = false;
+          fs.rmdirSync(quarantine);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      try {
+        fs.renameSync(parentDir, detachedParent);
+        detached = true;
+        const detachedFile = path.join(detachedParent, fileName);
+        const detachedAuthority = readExactTempFileAuthority(detachedFile);
+        const finalNamed = fs.lstatSync(detachedFile, { bigint: true });
+        if (
+          detachedAuthority.parentDev !== authority.parentDev ||
+          detachedAuthority.parentIno !== authority.parentIno ||
+          detachedAuthority.fileDev !== authority.fileDev ||
+          detachedAuthority.fileIno !== authority.fileIno ||
+          detachedAuthority.bytesSha256 !== authority.bytesSha256 ||
+          finalNamed.dev !== authority.fileDev ||
+          finalNamed.ino !== authority.fileIno
+        ) {
+          restore();
+          return false;
+        }
+        fs.unlinkSync(detachedFile);
+        fs.rmdirSync(detachedParent);
+        detached = false;
+        fs.rmdirSync(quarantine);
+        completed = true;
+        return true;
+      } catch {
+        restore();
         return false;
       }
-      const finalNamed = fs.lstatSync(detachedFile, { bigint: true });
-      if (finalNamed.dev !== authority.fileDev || finalNamed.ino !== authority.fileIno)
-        return false;
-      fs.unlinkSync(detachedFile);
-      fs.rmdirSync(detachedParent);
-      fs.rmdirSync(quarantine);
-      completed = true;
-      return true;
     } catch {
       return false;
     }

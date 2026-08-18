@@ -273,7 +273,12 @@ function stopDockerSandboxUnlocked(
       },
     );
     if (portable.kind === "already-stopped") {
-      return portable.portableAgent === "hermes"
+      const registryHermes = input.sandbox.agent === "hermes";
+      const portableHermes = portable.portableAgent === "hermes";
+      if (registryHermes !== portableHermes) {
+        throw new Error("Portable stop authority disagrees with the registered sandbox agent");
+      }
+      return portableHermes
         ? ({
             exitCode: 0,
             state: "already-stopped",
@@ -282,7 +287,12 @@ function stopDockerSandboxUnlocked(
         : { exitCode: 0, state: "already-stopped" };
     }
     if (portable.kind === "stopped") {
-      return portable.portableAgent === "hermes"
+      const registryHermes = input.sandbox.agent === "hermes";
+      const portableHermes = portable.portableAgent === "hermes";
+      if (registryHermes !== portableHermes) {
+        throw new Error("Portable stop authority disagrees with the registered sandbox agent");
+      }
+      return portableHermes
         ? ({
             exitCode: 0,
             state: "stopped",

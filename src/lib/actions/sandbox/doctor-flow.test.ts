@@ -88,20 +88,32 @@ function createDoctorHarness(
   const doctorHostCommand = requireDist("./doctor-host-command.js");
   const doctorToolScope = requireDist("./doctor-tool-scope.js");
   const inferenceRouteHealth = requireDist("./inference-route-health.js");
+  const portableAgentLifecycle = requireDist(
+    "../../onboard/experimental/portable-agent-lifecycle.js",
+  );
   const doctorSystemChecks = requireDist("./doctor-system-checks.js");
 
-  vi.spyOn(doctorSystemChecks, "inspectSandboxDoctorPortableDisposition").mockImplementation(() => {
+  vi.spyOn(doctorSystemChecks, "inspectSandboxDoctorPortableDisposition").mockImplementation(((
+    sandboxName: string,
+    readEntry: () => unknown,
+  ) => {
     const disposition =
       typeof options.portableDisposition === "function"
         ? options.portableDisposition()
         : options.portableDisposition;
     switch (disposition instanceof Error) {
       case true:
-        throw disposition;
-      default:
-        return disposition ?? { kind: "absent" };
+        throw disposition as Error;
+      default: {
+        const authority = disposition as PortableAgentReceiptDisposition | undefined;
+        return portableAgentLifecycle.validateHermesPortableRegistryAuthority(
+          sandboxName,
+          authority ?? { kind: "absent" },
+          authority?.kind === "hermes" ? readEntry() : null,
+        );
+      }
     }
-  });
+  }) as never);
   const withMcpLifecycleLockSpy = vi
     .spyOn(doctorSystemChecks, "withSandboxDoctorLifecycleLock")
     .mockImplementation(

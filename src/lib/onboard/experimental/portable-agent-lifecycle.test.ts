@@ -43,7 +43,10 @@ import {
   assertHermesPortableAgentLifecycleAuthority,
   inspectPortableAgentReceiptDisposition,
   recoverPortableAgentSandboxLifecycle,
+  requireHermesPortableActiveRegistryAuthority,
+  revalidateHermesPortableActiveRegistryAuthority,
   stopPortableAgentSandboxLifecycle,
+  validateHermesPortableRegistryAuthority,
 } from "./portable-agent-lifecycle";
 
 const context = {
@@ -75,7 +78,7 @@ function hermes(phase: "pending" | "configuring" | "active") {
 
 function hermesDisposition(phase: "pending" | "configuring" | "active") {
   return {
-    kind: "hermes",
+    kind: "hermes" as const,
     phase,
     gatewayName: "nemoclaw",
     lifecycleGeneration: "generation-1",
@@ -113,6 +116,78 @@ describe("portable agent lifecycle dispatch", () => {
   ])("strictly classifies receipt authority %# (#9203)", (authority, expected) => {
     mocks.inspect.mockReturnValue(authority);
     expect(inspectPortableAgentReceiptDisposition("alpha")).toEqual(expected);
+  });
+
+  it("ignores non-Hermes receipt authority before registry validation (#9203)", () => {
+    expect(validateHermesPortableRegistryAuthority("alpha", { kind: "openclaw" }, null)).toBeNull();
+  });
+
+  it("accepts a pending Hermes receipt only before registry publication (#9203)", () => {
+    const disposition = hermesDisposition("pending");
+    expect(validateHermesPortableRegistryAuthority("alpha", disposition, null)).toEqual({
+      ...disposition,
+      entry: null,
+    });
+    expect(() =>
+      validateHermesPortableRegistryAuthority("alpha", disposition, {
+        name: "alpha",
+        agent: "hermes",
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      }),
+    ).toThrow("pending receipt conflicts with an existing registry entry");
+  });
+
+  it("requires an active Hermes receipt to have exact registry authority (#9203)", () => {
+    const disposition = hermesDisposition("active");
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: disposition.liveIdentityFingerprint,
+    };
+
+    expect(validateHermesPortableRegistryAuthority("alpha", disposition, entry)).toEqual({
+      ...disposition,
+      entry,
+    });
+    expect(() => validateHermesPortableRegistryAuthority("alpha", disposition, null)).toThrow(
+      "active receipt is missing its registry authority",
+    );
+    expect(() =>
+      validateHermesPortableRegistryAuthority("alpha", disposition, {
+        ...entry,
+        gatewayName: "other-gateway",
+      }),
+    ).toThrow("receipt and registry authority disagree");
+  });
+
+  it("revalidates active Hermes authority against its locked snapshot (#9203)", () => {
+    const disposition = hermesDisposition("active");
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: disposition.liveIdentityFingerprint,
+    };
+    const initial = requireHermesPortableActiveRegistryAuthority("alpha", disposition, entry);
+
+    expect(
+      revalidateHermesPortableActiveRegistryAuthority("alpha", initial, disposition, entry),
+    ).toEqual(initial);
+    expect(() =>
+      revalidateHermesPortableActiveRegistryAuthority(
+        "alpha",
+        initial,
+        { ...disposition, lifecycleGeneration: "generation-2" },
+        { ...entry, lifecycleGeneration: "generation-2" },
+      ),
+    ).toThrow("authority changed");
   });
 
   it("binds schema-5 command children to the receipt runtime namespace (#9203)", () => {

@@ -10,8 +10,9 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
 import {
+  type HermesPortableRegistryAuthority,
   inspectPortableAgentReceiptDisposition,
-  type PortableAgentReceiptDisposition,
+  validateHermesPortableRegistryAuthority,
 } from "./gateway-state";
 import { printSandboxGatewayLookupStatus } from "./status-lookup-rendering";
 import {
@@ -58,38 +59,15 @@ export {
   type ServingProcessHealth,
 } from "./status-snapshot";
 
-type HermesPortableReceiptDisposition = Extract<
-  PortableAgentReceiptDisposition,
-  { readonly kind: "hermes" }
->;
-
-type HermesPortableStatusAuthority = HermesPortableReceiptDisposition & {
-  readonly entry: registry.SandboxEntry | null;
-};
+type HermesPortableStatusAuthority = HermesPortableRegistryAuthority<registry.SandboxEntry>;
 
 function inspectHermesPortableStatus(sandboxName: string): HermesPortableStatusAuthority | null {
   const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
-  if (disposition.kind !== "hermes") return null;
-  const entry = registry.getSandbox(sandboxName);
-  if (!entry) {
-    if (disposition.phase !== "active") return { ...disposition, entry: null };
-    throw new Error("Hermes portable active receipt is missing its registry authority.");
-  }
-  if (
-    entry.name !== sandboxName ||
-    entry.agent !== "hermes" ||
-    entry.openshellDriver !== "docker" ||
-    entry.gatewayName !== disposition.gatewayName ||
-    entry.lifecycleGeneration !== disposition.lifecycleGeneration ||
-    (disposition.phase !== "pending" &&
-      entry.lifecycleLiveIdentityFingerprint !== disposition.liveIdentityFingerprint)
-  ) {
-    throw new Error("Hermes portable receipt and registry authority disagree.");
-  }
-  if (disposition.phase === "pending") {
-    throw new Error("Hermes portable pending receipt conflicts with an existing registry entry.");
-  }
-  return { ...disposition, entry };
+  return validateHermesPortableRegistryAuthority(
+    sandboxName,
+    disposition,
+    disposition.kind === "hermes" ? registry.getSandbox(sandboxName) : null,
+  );
 }
 
 function hermesPortableStatusReport(

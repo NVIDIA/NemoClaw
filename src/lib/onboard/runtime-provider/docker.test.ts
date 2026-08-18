@@ -117,7 +117,10 @@ describe("Docker provider portable lifecycle dispatch", () => {
   });
 
   it("routes active Hermes stop before Docker capture or mutation (#9203)", () => {
-    const stopPortableSandbox = vi.fn(() => ({ kind: "stopped" as const }));
+    const stopPortableSandbox = vi.fn(() => ({
+      kind: "stopped" as const,
+      portableAgent: "hermes" as const,
+    }));
     const provider = createDockerRuntimeProviderBundle({
       hasPortableLifecycleReceipt: () => true,
       stopPortableSandbox,
@@ -130,6 +133,7 @@ describe("Docker provider portable lifecycle dispatch", () => {
     expect(lifecycle.stop(lifecycleInput(), { beforeStop: poison })).toEqual({
       exitCode: 0,
       state: "stopped",
+      hermesPortableVerified: true,
     });
     expect(stopPortableSandbox).toHaveBeenCalledOnce();
   });

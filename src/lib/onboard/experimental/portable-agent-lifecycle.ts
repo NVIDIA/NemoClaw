@@ -31,6 +31,93 @@ export type PortableAgentLifecycleStopResult = PortableDemoLifecycleStopResult &
 
 export const HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE =
   "This command is not supported for an experimental Hermes portable sandbox.";
+export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =
+  "The --fix option is not supported for an experimental Hermes portable sandbox.";
+
+const HERMES_PORTABLE_COMMANDS = new Set([
+  "launch",
+  "sandbox:connect",
+  "sandbox:doctor",
+  "sandbox:recover",
+  "sandbox:start",
+  "sandbox:status",
+  "sandbox:stop",
+]);
+
+const RAW_SANDBOX_NAME_COMMANDS = new Set([
+  "sandbox:agent",
+  "sandbox:agents",
+  "sandbox:agents:add",
+  "sandbox:agents:apply",
+  "sandbox:agents:delete",
+  "sandbox:agents:list",
+  "sandbox:mcp",
+  "sandbox:sessions",
+  "sandbox:sessions:list",
+  "sandbox:skill",
+]);
+
+const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
+
+const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
+  "debug",
+  "inference:get",
+  "list",
+  "stop",
+  "tunnel:start",
+  "tunnel:stop",
+  "upgrade-sandboxes",
+  "use",
+]);
+
+const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status"]);
+
+export type HermesPortableCommandPolicy = {
+  readonly helpRequested: boolean;
+  readonly hostFence: "read" | "deny" | null;
+  readonly multiSandboxLifecycle: boolean;
+  readonly rawSandboxName: boolean;
+};
+
+/** Classify one CLI invocation without treating payload arguments as host help. */
+export function classifyHermesPortableCommand(
+  commandId: string,
+  argv: readonly string[],
+): HermesPortableCommandPolicy {
+  const separator = argv.indexOf("--");
+  const hostArgv = separator === -1 ? argv : argv.slice(0, separator);
+  return {
+    helpRequested: hostArgv.includes("--help") || hostArgv.includes("-h"),
+    hostFence: HERMES_PORTABLE_HOST_FENCED_READS.has(commandId)
+      ? "read"
+      : HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS.has(commandId)
+        ? "deny"
+        : null,
+    multiSandboxLifecycle: MULTI_SANDBOX_LIFECYCLE_COMMANDS.has(commandId),
+    rawSandboxName: RAW_SANDBOX_NAME_COMMANDS.has(commandId),
+  };
+}
+
+/** Reject one unsupported command while schema-5 receipt authority exists. */
+export function assertHermesPortableCommandSupported(
+  commandId: string,
+  sandboxName: string,
+  argv: readonly string[],
+): void {
+  const authority = inspectPortableAgentReceiptAuthority(
+    sandboxName,
+    defaultPortableDemoStateDir(process.env),
+  );
+  const separator = argv.indexOf("--");
+  const hostArgv = separator === -1 ? argv : argv.slice(0, separator);
+  const doctorFix = commandId === "sandbox:doctor" && hostArgv.includes("--fix");
+  const supported = HERMES_PORTABLE_COMMANDS.has(commandId) && !doctorFix;
+  if (authority.kind !== "hermes" || supported) return;
+  if (doctorFix) {
+    throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE} Command: ${commandId}`);
+  }
+  throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`);
+}
 
 export type PortableAgentReceiptDisposition =
   | { readonly kind: "absent" }
@@ -42,6 +129,29 @@ export type PortableAgentReceiptDisposition =
       readonly lifecycleGeneration: string;
       readonly liveIdentityFingerprint: string | null;
     };
+
+export type HermesPortableRegistryEntry = {
+  readonly agent?: string | null;
+  readonly gatewayName?: string | null;
+  readonly lifecycleGeneration?: string | null;
+  readonly lifecycleLiveIdentityFingerprint?: string | null;
+  readonly name: string;
+  readonly openshellDriver?: string | null;
+};
+
+export type HermesPortableRegistryAuthority<
+  Entry extends HermesPortableRegistryEntry = HermesPortableRegistryEntry,
+> = Extract<PortableAgentReceiptDisposition, { readonly kind: "hermes" }> & {
+  readonly entry: Entry | null;
+};
+
+export type HermesPortableActiveRegistryAuthority<
+  Entry extends HermesPortableRegistryEntry = HermesPortableRegistryEntry,
+> = HermesPortableRegistryAuthority<Entry> & {
+  readonly entry: Entry;
+  readonly liveIdentityFingerprint: string;
+  readonly phase: "active";
+};
 
 /** Strictly distinguish absent, schema-4 OpenClaw, and schema-5 Hermes authority. */
 export function inspectPortableAgentReceiptDisposition(
@@ -63,6 +173,74 @@ export function inspectPortableAgentReceiptDisposition(
         ? null
         : createHash("sha256").update(receipt.container.sandboxId).digest("hex"),
   };
+}
+
+/** Bind one Hermes portable receipt to its exact host registry authority. */
+export function validateHermesPortableRegistryAuthority<Entry extends HermesPortableRegistryEntry>(
+  sandboxName: string,
+  disposition: PortableAgentReceiptDisposition,
+  entry: Entry | null,
+): HermesPortableRegistryAuthority<Entry> | null {
+  if (disposition.kind !== "hermes") return null;
+  if (!entry) {
+    if (disposition.phase !== "active") return { ...disposition, entry: null };
+    throw new Error("Hermes portable active receipt is missing its registry authority.");
+  }
+  if (
+    entry.name !== sandboxName ||
+    entry.agent !== "hermes" ||
+    entry.openshellDriver !== "docker" ||
+    entry.gatewayName !== disposition.gatewayName ||
+    entry.lifecycleGeneration !== disposition.lifecycleGeneration ||
+    (disposition.phase !== "pending" &&
+      entry.lifecycleLiveIdentityFingerprint !== disposition.liveIdentityFingerprint)
+  ) {
+    throw new Error("Hermes portable receipt and registry authority disagree.");
+  }
+  if (disposition.phase === "pending") {
+    throw new Error("Hermes portable pending receipt conflicts with an existing registry entry.");
+  }
+  return { ...disposition, entry };
+}
+
+/** Require the exact active Hermes receipt and registry authority. */
+export function requireHermesPortableActiveRegistryAuthority<
+  Entry extends HermesPortableRegistryEntry,
+>(
+  sandboxName: string,
+  disposition: PortableAgentReceiptDisposition,
+  entry: Entry | null,
+): HermesPortableActiveRegistryAuthority<Entry> {
+  const authority = validateHermesPortableRegistryAuthority(sandboxName, disposition, entry);
+  if (
+    !authority ||
+    authority.phase !== "active" ||
+    !authority.entry ||
+    !authority.liveIdentityFingerprint
+  ) {
+    throw new Error("Hermes portable lifecycle authority is missing or incomplete");
+  }
+  return authority as HermesPortableActiveRegistryAuthority<Entry>;
+}
+
+/** Requalify active Hermes authority against an earlier locked snapshot. */
+export function revalidateHermesPortableActiveRegistryAuthority<
+  Entry extends HermesPortableRegistryEntry,
+>(
+  sandboxName: string,
+  previous: HermesPortableActiveRegistryAuthority<Entry>,
+  disposition: PortableAgentReceiptDisposition,
+  entry: Entry | null,
+): HermesPortableActiveRegistryAuthority<Entry> {
+  const current = requireHermesPortableActiveRegistryAuthority(sandboxName, disposition, entry);
+  if (
+    current.gatewayName !== previous.gatewayName ||
+    current.lifecycleGeneration !== previous.lifecycleGeneration ||
+    current.liveIdentityFingerprint !== previous.liveIdentityFingerprint
+  ) {
+    throw new Error("Hermes portable receipt and registry authority changed");
+  }
+  return current;
 }
 
 /** Build a child environment from the exact active schema-5 runtime authority. */

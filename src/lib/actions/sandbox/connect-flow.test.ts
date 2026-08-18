@@ -29,6 +29,26 @@ function captureInferenceRouteThenDrift(
   };
 }
 
+function captureInferenceRouteThenDriftLiveIdentity(
+  harness: ReturnType<typeof createConnectHarness>,
+): (args: unknown) => { status: number; output: string; stderr?: string } {
+  return (args: unknown) => {
+    const argv = Array.isArray(args) ? args : [];
+    switch (argv.slice(0, 2).join("\0")) {
+      case "inference\0get":
+        harness.registryEntries[0]!.lifecycleLiveIdentityFingerprint = "0".repeat(64);
+        return {
+          status: 0,
+          output: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n",
+        };
+      case "sandbox\0exec":
+        return { status: 0, output: "OK 200", stderr: "" };
+      default:
+        return { status: 0, output: "alpha Ready" };
+    }
+  };
+}
+
 describe("connectSandbox flow", () => {
   let exitSpy: MockInstance;
   const originalStdinIsTty = process.stdin.isTTY;
@@ -976,6 +996,32 @@ describe("connectSandbox flow", () => {
   });
 
   it.each([
+    ["runtime driver", { openshellDriver: "podman" }],
+    ["live identity", { lifecycleLiveIdentityFingerprint: "0".repeat(64) }],
+  ] as const)(
+    "rejects initial Hermes registry %s drift before probe mutation (#9203)",
+    async (_label, registryEntry) => {
+      const harness = createConnectHarness({
+        agentName: "hermes",
+        sessionAgent: { name: "hermes" },
+        registryEntry,
+        portableReceiptDisposition: { kind: "hermes", phase: "active" },
+        portableRecoveryResult: { kind: "already-running" },
+      });
+
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+        "receipt and registry authority disagree",
+      );
+      expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+      expect(harness.captureResolvedOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     ["absent", { registryEntry: { provider: null, model: null } }],
     [
       "mismatched",
@@ -1037,6 +1083,25 @@ describe("connectSandbox flow", () => {
     );
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("changed during verification");
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects live-identity drift during schema-5 route verification (#9203)", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+    harness.captureResolvedOpenshellSpy.mockImplementation(
+      captureInferenceRouteThenDriftLiveIdentity(harness),
+    );
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("changed during verification");
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
   });
 
   it("requalifies accepted probe evidence against active schema-5 authority (#9203)", async () => {
@@ -1212,7 +1277,10 @@ describe("connectSandbox flow", () => {
       .mockReturnValue({ kind: "absent" });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "receipt authority changed during connect",
+      "process.exit(1)",
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "receipt and registry authority disagree",
     );
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();

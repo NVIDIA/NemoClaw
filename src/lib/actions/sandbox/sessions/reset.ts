@@ -61,6 +61,10 @@
 //     explicit while the contract is still informal.
 
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+import {
+  deferSandboxLifecycleExit,
+  isSandboxLifecycleDeferredExit,
+} from "../../../core/process-exit";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { callOpenclawGateway } from "./gateway-rpc";
@@ -99,10 +103,17 @@ export async function resetSandboxSession(
   sandboxName: string,
   opts: SessionsResetOptions,
 ): Promise<SessionsResetResult> {
-  return withMcpLifecycleLock(sandboxName, () => {
-    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:sessions:reset");
-    return resetSandboxSessionUnlocked(sandboxName, opts);
-  });
+  let deferredExitCode: number | null = null;
+  try {
+    return await withMcpLifecycleLock(sandboxName, () => {
+      assertHermesPortableCommandUnavailable(sandboxName, "sandbox:sessions:reset");
+      return resetSandboxSessionUnlocked(sandboxName, opts);
+    });
+  } catch (error) {
+    if (!isSandboxLifecycleDeferredExit(error)) throw error;
+    deferredExitCode = error.exitCode;
+  }
+  process.exit(deferredExitCode ?? 1);
 }
 
 async function resetSandboxSessionUnlocked(
@@ -121,30 +132,34 @@ async function resetSandboxSessionUnlocked(
     console.error(
       `  Drop --agent or pass a key under that agent (e.g. agent:${requestedAgent}:...).`,
     );
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
 
   const resolvedAgent = keyAgent ?? requestedAgent ?? DEFAULT_AGENT_ID;
   const canonicalKey = buildCanonicalSessionKey(resolvedAgent, rawKey);
 
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  await ensureLiveSandboxOrExit(sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
 
   const { payload, rawOutput } = callOpenclawGateway<SessionsResetPayload>({
     sandboxName,
     method: "sessions.reset",
     params: { key: canonicalKey, reason },
+    exit: deferSandboxLifecycleExit,
   });
 
   if (payload.ok === false || payload.error) {
     const code = payload.error?.code ?? "unknown";
     const message = payload.error?.message ?? "no message";
     console.error(`  Gateway refused sessions.reset for '${canonicalKey}': [${code}] ${message}`);
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
   if (payload.ok !== true || typeof payload.key !== "string") {
     console.error("  Gateway returned an unexpected sessions.reset payload.");
     console.error(`  ${rawOutput.trim()}`);
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
 
   if (opts.json) {

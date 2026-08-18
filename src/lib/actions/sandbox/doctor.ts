@@ -85,11 +85,6 @@ type DoctorIntent = {
   wantsFix: boolean;
 };
 
-type HermesPortableDoctorDisposition = Extract<
-  ReturnType<typeof inspectSandboxDoctorPortableDisposition>,
-  { readonly kind: "hermes" }
->;
-
 type GatewayProbe = {
   checks: DoctorCheck[];
   connected: boolean;
@@ -114,32 +109,6 @@ function hermesPortableDoctorReport(
       ...(active ? {} : { hint: "resume the existing Hermes portable onboarding transaction" }),
     },
   ]);
-}
-
-function assertHermesPortableDoctorRegistry(
-  sandboxName: string,
-  receipt: HermesPortableDoctorDisposition,
-): void {
-  const { phase } = receipt;
-  const entry = registry.getSandbox(sandboxName);
-  if (!entry) {
-    if (phase !== "active") return;
-    throw new Error("Hermes portable active receipt is missing its registry authority.");
-  }
-  if (
-    entry.name !== sandboxName ||
-    entry.agent !== "hermes" ||
-    entry.openshellDriver !== "docker" ||
-    entry.gatewayName !== receipt.gatewayName ||
-    entry.lifecycleGeneration !== receipt.lifecycleGeneration ||
-    (phase !== "pending" &&
-      entry.lifecycleLiveIdentityFingerprint !== receipt.liveIdentityFingerprint)
-  ) {
-    throw new Error("Hermes portable receipt and registry authority disagree.");
-  }
-  if (phase === "pending") {
-    throw new Error("Hermes portable pending receipt conflicts with an existing registry entry.");
-  }
 }
 
 function parseDoctorIntent(sandboxName: string, args: string[]): DoctorIntent | null {
@@ -665,9 +634,10 @@ export async function runSandboxDoctor(
   if (!intent) return undefined;
 
   const outcome = await withSandboxDoctorLifecycleLock(sandboxName, async () => {
-    const portable = inspectSandboxDoctorPortableDisposition(sandboxName);
-    if (portable.kind === "hermes") {
-      assertHermesPortableDoctorRegistry(sandboxName, portable);
+    const portable = inspectSandboxDoctorPortableDisposition(sandboxName, () =>
+      registry.getSandbox(sandboxName),
+    );
+    if (portable) {
       const report = hermesPortableDoctorReport(sandboxName, portable.phase);
       if (intent.asJson && options.quietJson) return { report };
       const exitCode = renderDoctorReport(report, intent.asJson);

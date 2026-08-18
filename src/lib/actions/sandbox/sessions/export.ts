@@ -43,6 +43,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
+import {
+  deferSandboxLifecycleExit,
+  isSandboxLifecycleDeferredExit,
+} from "../../../core/process-exit";
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../../state/registry";
@@ -108,10 +112,17 @@ const STAGING_DIR_IN_SANDBOX = "/sandbox/.nemoclaw-staging";
 export async function exportSandboxSessions(
   opts: SessionsExportOptions,
 ): Promise<SessionsExportResult> {
-  return withMcpLifecycleLock(opts.sandboxName, () => {
-    assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:sessions:export");
-    return exportSandboxSessionsUnlocked(opts);
-  });
+  let deferredExitCode: number | null = null;
+  try {
+    return await withMcpLifecycleLock(opts.sandboxName, () => {
+      assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:sessions:export");
+      return exportSandboxSessionsUnlocked(opts);
+    });
+  } catch (error) {
+    if (!isSandboxLifecycleDeferredExit(error)) throw error;
+    deferredExitCode = error.exitCode;
+  }
+  process.exit(deferredExitCode ?? 1);
 }
 
 async function exportSandboxSessionsUnlocked(
@@ -124,7 +135,10 @@ async function exportSandboxSessionsUnlocked(
   const trimmedKeys = (opts.keys ?? []).map((value) => validateSessionKey(value));
   enforceAgentScope(agent, trimmedKeys);
 
-  await ensureLiveSandboxOrExit(opts.sandboxName, { allowNonReadyPhase: true });
+  await ensureLiveSandboxOrExit(opts.sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
 
   const format: SessionsExportFormat = opts.format === "tar" ? "tar" : "dir";
   const sourceDir = `/sandbox/.openclaw/agents/${agent}/sessions`;
@@ -340,7 +354,10 @@ async function exportSandboxSessionsUnlocked(
 //     staging + download orchestration unnecessary.
 async function exportHermesSessions(opts: SessionsExportOptions): Promise<SessionsExportResult> {
   rejectOpenClawOnlyOptions(opts);
-  await ensureLiveSandboxOrExit(opts.sandboxName, { allowNonReadyPhase: true });
+  await ensureLiveSandboxOrExit(opts.sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
 
   const hostDest = resolveHermesHostDestination(opts.out, opts.sandboxName);
   const stagingRemote = hermesStagingPath();

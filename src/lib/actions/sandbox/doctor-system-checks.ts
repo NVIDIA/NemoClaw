@@ -12,7 +12,10 @@ import {
   resolveCurrentRuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
-import { inspectPortableAgentReceiptDisposition } from "../../onboard/experimental/portable-agent-lifecycle";
+import {
+  inspectPortableAgentReceiptDisposition,
+  validateHermesPortableRegistryAuthority,
+} from "../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
 import { readCloudflaredState } from "../../tunnel/services";
@@ -25,8 +28,16 @@ import type { DoctorCheck } from "./doctor-report";
 
 export const withSandboxDoctorLifecycleLock = withMcpLifecycleLock;
 
-export function inspectSandboxDoctorPortableDisposition(sandboxName: string) {
-  return inspectPortableAgentReceiptDisposition(sandboxName);
+export function inspectSandboxDoctorPortableDisposition(
+  sandboxName: string,
+  readEntry: () => SandboxEntry | null,
+) {
+  const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
+  return validateHermesPortableRegistryAuthority(
+    sandboxName,
+    disposition,
+    disposition.kind === "hermes" ? readEntry() : null,
+  );
 }
 
 export function oneLine(value = ""): string {

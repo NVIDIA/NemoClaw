@@ -49,10 +49,7 @@ export interface SandboxCreateIntentResolverDeps<Agent, ResourceProfile> {
   filterEnabledChannelsByAgent(enabledChannels: string[] | null, agent: Agent): string[] | null;
   defaultPolicyPath: string;
   getAgentPolicyPath(agent: Agent): string | null;
-  resolveGpuPlan(
-    config: SandboxGpuCreateConfig,
-    agent: Agent,
-  ): {
+  resolveGpuPlan(config: SandboxGpuCreateConfig): {
     gpuRoutePlan: DockerGpuRoutePlan;
     logMessage: string | null;
   };

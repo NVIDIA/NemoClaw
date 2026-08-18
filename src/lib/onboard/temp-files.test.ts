@@ -99,6 +99,28 @@ describe("onboard temp file helpers", () => {
     expect(fs.readFileSync(original, "utf8")).toBe("captured");
   });
 
+  it("restores the task directory after post-detach authority drift (#9203)", () => {
+    const filePath = secureTempFile("nemoclaw-cleanup", ".txt");
+    const parent = path.dirname(filePath);
+    createdParents.push(parent);
+    fs.writeFileSync(filePath, "captured", { mode: 0o600 });
+    const cleanup = createExactTempFileCleanup(filePath, "nemoclaw-cleanup");
+    const rename = fs.renameSync.bind(fs);
+    let quarantine: string | null = null;
+    vi.spyOn(fs, "renameSync").mockImplementationOnce((source, target) => {
+      rename(source, target);
+      quarantine = path.dirname(String(target));
+      fs.writeFileSync(path.join(String(target), path.basename(filePath)), "changed", {
+        mode: 0o600,
+      });
+    });
+
+    expect(cleanup()).toBe(false);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("changed");
+    expect(quarantine).not.toBeNull();
+    expect(fs.existsSync(quarantine!)).toBe(false);
+  });
+
   it("preserves a replaced task directory and fails closed (#9203)", () => {
     const filePath = secureTempFile("nemoclaw-cleanup", ".txt");
     const parent = path.dirname(filePath);

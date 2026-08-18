@@ -669,10 +669,11 @@ describe("Hermes portable onboarding transaction", () => {
     expect(
       fs.existsSync(path.join(hermesPortableReceiptDirectory("alpha", stateDir), "active.json")),
     ).toBe(false);
-    expect(fixture.podman).not.toHaveBeenCalledWith(
-      expect.arrayContaining(["container", "update"]),
-      expect.any(Number),
-    );
+    expect(
+      fixture.podman.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "container" && args[1] === "update",
+      ),
+    ).toBe(false);
   });
 
   it("does not update Podman when a matching registry row has stale live identity (#9203)", async () => {
@@ -690,10 +691,11 @@ describe("Hermes portable onboarding transaction", () => {
     await expect(runHermesPortableOnboardingTransaction(input(), resumed.value)).rejects.toThrow(
       "registry live identity disagrees",
     );
-    expect(resumed.podman).not.toHaveBeenCalledWith(
-      expect.arrayContaining(["container", "update"]),
-      expect.any(Number),
-    );
+    expect(
+      resumed.podman.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "container" && args[1] === "update",
+      ),
+    ).toBe(false);
   });
 
   it("rejects receipt-gateway drift on pending reentry before create (#9203)", async () => {

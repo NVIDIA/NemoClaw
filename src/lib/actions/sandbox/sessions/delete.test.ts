@@ -16,8 +16,16 @@ vi.mock("../exec", () => ({
   execSandbox: vi.fn(async () => undefined),
 }));
 
+const lockState = vi.hoisted(() => ({ held: false }));
 const withLifecycleLockMock = vi.hoisted(() =>
-  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => {
+    lockState.held = true;
+    try {
+      return await operation();
+    } finally {
+      lockState.held = false;
+    }
+  }),
 );
 vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
   withMcpLifecycleLock: withLifecycleLockMock,
@@ -54,6 +62,8 @@ beforeEach(() => {
   hermesAgentMock.mockReturnValue(false);
   execSandboxMock.mockReset();
   execSandboxMock.mockResolvedValue(undefined);
+  withLifecycleLockMock.mockClear();
+  lockState.held = false;
   processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
     throw new Error(`process.exit:${code ?? 0}`);
   });
@@ -75,7 +85,10 @@ describe("deleteSandboxSession", () => {
       key: "agent:main:slot-1",
     });
 
-    expect(ensureMock).toHaveBeenCalledWith("sb-1", { allowNonReadyPhase: true });
+    expect(ensureMock).toHaveBeenCalledWith("sb-1", {
+      allowNonReadyPhase: true,
+      exit: expect.any(Function),
+    });
     expect(gatewayMock).toHaveBeenCalledTimes(1);
     expect(gatewayMock.mock.calls[0]?.[0]).toMatchObject({
       sandboxName: "sb-1",
@@ -84,6 +97,21 @@ describe("deleteSandboxSession", () => {
     });
     expect(result.removedTranscript).toBe(true);
     expect(result.key).toBe("agent:main:slot-1");
+  });
+
+  it("releases lifecycle authority before an OpenClaw readiness exit (#9203)", async () => {
+    ensureMock.mockImplementationOnce(async (_sandboxName, options) => options.exit(1));
+    processExitSpy.mockImplementation((code?: number | string | null) => {
+      expect(lockState.held).toBe(false);
+      throw new Error(`process.exit:${code ?? 0}`);
+    });
+
+    await expect(deleteSandboxSession("sb-1", { key: "agent:main:slot-1" })).rejects.toThrow(
+      /process\.exit:1/,
+    );
+
+    expect(withLifecycleLockMock).toHaveBeenCalledOnce();
+    expect(gatewayMock).not.toHaveBeenCalled();
   });
 
   it("translates --keep-transcript into deleteTranscript=false", async () => {

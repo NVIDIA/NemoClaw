@@ -89,10 +89,19 @@ export type SandboxGatewayState = {
   recoverySandboxVia?: string | null;
 };
 
-export type { PortableAgentReceiptDisposition } from "../../onboard/experimental/portable-agent-lifecycle";
+export type {
+  HermesPortableActiveRegistryAuthority,
+  HermesPortableRegistryAuthority,
+  PortableAgentReceiptDisposition,
+} from "../../onboard/experimental/portable-agent-lifecycle";
 export { buildHermesPortableCommandAuthority, buildHermesPortableCommandEnvironment };
 
-export { inspectPortableAgentReceiptDisposition };
+export {
+  inspectPortableAgentReceiptDisposition,
+  requireHermesPortableActiveRegistryAuthority,
+  revalidateHermesPortableActiveRegistryAuthority,
+  validateHermesPortableRegistryAuthority,
+} from "../../onboard/experimental/portable-agent-lifecycle";
 export const withSandboxLifecycleLock = withMcpLifecycleLock;
 export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
 export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;

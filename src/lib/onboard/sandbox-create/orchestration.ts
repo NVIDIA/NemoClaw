@@ -948,13 +948,23 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       { sandboxName, gatewayName: GATEWAY_NAME },
       getSandboxRecreateObservation,
     );
-    const hermesGpuAuthority = agentCreateInput.hermesPortableLifecycle
+    const hermesPortableAuthority = agentCreateInput.hermesPortableLifecycle
+      ? (() => {
+          if (!agent || agent.name !== "hermes" || !portableRuntimeAuthority) {
+            throw new Error(
+              "Hermes portable onboarding is missing exact agent or runtime authority.",
+            );
+          }
+          return { agent, runtimeAuthority: portableRuntimeAuthority };
+        })()
+      : null;
+    const hermesGpuAuthority = hermesPortableAuthority
       ? sandboxGpuCreateFlow.createHermesPortableGpuProofAuthority({
           sandboxName,
           gatewayName: GATEWAY_NAME,
           sourceEnv: sandboxEnv,
           lifecycleGeneration: createdSandboxLifecycle.generation,
-          runtimeAuthority: portableRuntimeAuthority!,
+          runtimeAuthority: hermesPortableAuthority.runtimeAuthority,
           runOpenshell,
           compactText,
           redact,
@@ -1056,10 +1066,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
     });
 
-    if (agentCreateInput.hermesPortableLifecycle) {
-      if (!agent || agent.name !== "hermes" || !portableRuntimeAuthority) {
-        throw new Error("Hermes portable onboarding is missing exact agent or runtime authority.");
-      }
+    if (hermesPortableAuthority) {
       if (managedBootstrap || !["none", "native-only"].includes(gpuRoutePlan)) {
         throw new Error(
           "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
@@ -1071,10 +1078,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         GATEWAY_NAME,
         createdSandboxLifecycle.generation,
-        portableRuntimeAuthority,
+        hermesPortableAuthority.runtimeAuthority,
         createArgv,
         initialSandboxPolicy.policyPath,
-        { agent, sandboxName, startupArgv: intendedSandboxStartupCommand },
+        {
+          agent: hermesPortableAuthority.agent,
+          sandboxName,
+          startupArgv: intendedSandboxStartupCommand,
+        },
         sandboxMutationLock.withMcpLifecycleLock,
         sandboxEnv,
         openshellArgv,

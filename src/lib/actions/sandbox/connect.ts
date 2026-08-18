@@ -80,10 +80,14 @@ import {
   ensureLiveSandboxOrExit,
   assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
+  type HermesPortableActiveRegistryAuthority,
   inspectPortableAgentReceiptDisposition,
   printGatewayLifecycleHint,
   recoverPortableDemoSandboxLifecycleForConnect,
+  requireHermesPortableActiveRegistryAuthority,
+  revalidateHermesPortableActiveRegistryAuthority,
   startStoppedSandboxContainerForProbeRecovery,
+  validateHermesPortableRegistryAuthority,
   withConnectSandboxLifecycleLock,
 } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
@@ -437,15 +441,17 @@ function verifyHermesPortableInferenceRouteOrExit(
   if (disposition.kind !== "hermes" || disposition.phase !== "active") {
     failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
   }
-  const sandbox = registry.getSandbox(sandboxName);
-  if (
-    !sandbox ||
-    sandbox.agent !== "hermes" ||
-    sandbox.gatewayName !== disposition.gatewayName ||
-    sandbox.lifecycleGeneration !== disposition.lifecycleGeneration
-  ) {
+  let authority: HermesPortableActiveRegistryAuthority<SandboxEntry>;
+  try {
+    authority = requireHermesPortableActiveRegistryAuthority(
+      sandboxName,
+      disposition,
+      registry.getSandbox(sandboxName),
+    );
+  } catch {
     failHermesPortableInferenceRoute(sandboxName, "inconsistent with its lifecycle receipt");
   }
+  const sandbox = authority.entry;
   const inference = registry.getSandboxEntryInference(sandbox);
   if (inference.kind !== "configured") {
     failHermesPortableInferenceRoute(sandboxName, "not configured");
@@ -486,21 +492,26 @@ function verifyHermesPortableInferenceRouteOrExit(
   ) {
     failHermesPortableInferenceRoute(sandboxName, "unreachable");
   }
-  const finalDisposition = inspectPortableAgentReceiptDisposition(sandboxName);
-  const finalSandbox = registry.getSandbox(sandboxName);
+  let finalAuthority: HermesPortableActiveRegistryAuthority<SandboxEntry>;
+  try {
+    finalAuthority = revalidateHermesPortableActiveRegistryAuthority(
+      sandboxName,
+      authority,
+      inspectPortableAgentReceiptDisposition(sandboxName),
+      registry.getSandbox(sandboxName),
+    );
+  } catch {
+    failHermesPortableInferenceRoute(sandboxName, "changed during verification");
+  }
   if (
-    finalDisposition.kind !== "hermes" ||
-    finalDisposition.phase !== "active" ||
-    finalDisposition.gatewayName !== disposition.gatewayName ||
-    finalDisposition.lifecycleGeneration !== disposition.lifecycleGeneration ||
-    finalSandbox?.gatewayName !== routeAuthority.gatewayName ||
-    finalSandbox?.lifecycleGeneration !== routeAuthority.lifecycleGeneration ||
-    finalSandbox?.provider !== routeAuthority.provider ||
-    finalSandbox?.model !== routeAuthority.model
+    finalAuthority.entry.gatewayName !== routeAuthority.gatewayName ||
+    finalAuthority.entry.lifecycleGeneration !== routeAuthority.lifecycleGeneration ||
+    finalAuthority.entry.provider !== routeAuthority.provider ||
+    finalAuthority.entry.model !== routeAuthority.model
   ) {
     failHermesPortableInferenceRoute(sandboxName, "changed during verification");
   }
-  return sandbox;
+  return finalAuthority.entry;
 }
 
 const GATEWAY_UNAVAILABLE_RE =
@@ -1104,9 +1115,7 @@ export function restoreSandboxStartupState(sandboxName: string): SandboxStartupR
   const directRecoveryFailureDetail =
     "recoveryFailureDetail" in processCheck ? processCheck.recoveryFailureDetail : null;
   const recoveryFailureDetail = directRecoveryFailureDetail ?? reportedRecoveryFailureDetail;
-  const recoveryFailureLayer = directRecoveryFailureDetail
-    ? null
-    : reportedRecoveryFailureLayer;
+  const recoveryFailureLayer = directRecoveryFailureDetail ? null : reportedRecoveryFailureLayer;
   return Object.assign(processCheck, { recoveryFailureDetail, recoveryFailureLayer });
 }
 
@@ -1306,41 +1315,70 @@ async function runConnectEntryPreflight(
     try {
       assertNoOpenShellGatewayEndpointOverride();
       const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
-      hermesPortable = disposition.kind === "hermes";
       const registered = registry.getSandbox(sandboxName);
       if (registered?.pendingRouteReservation === true) {
         throw new Error(
           `Sandbox '${sandboxName}' is still being created by onboarding. Wait for onboarding to finish or remove the incomplete sandbox before connecting.`,
         );
       }
+      const portable = validateHermesPortableRegistryAuthority(
+        sandboxName,
+        disposition,
+        disposition.kind === "hermes" ? registered : null,
+      );
+      hermesPortable = portable !== null;
+      let hermesAuthority = hermesPortable
+        ? requireHermesPortableActiveRegistryAuthority(sandboxName, disposition, registered)
+        : null;
       const gatewayName = registered
         ? resolveSandboxGatewayName(registered)
         : getSandboxTargetGatewayName(sandboxName);
       if (registered && registry.getSandboxEntryInference(registered).kind === "configured") {
         assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
       }
-      recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName);
+      const initialRecovery = recoverPortableDemoSandboxLifecycleForConnect(
+        sandboxName,
+        registered,
+        gatewayName,
+      );
+      if (hermesPortable && initialRecovery.kind === "not-installed") {
+        throw new Error("Hermes portable lifecycle authority disappeared during connect");
+      }
+      if (hermesAuthority) {
+        hermesAuthority = revalidateHermesPortableActiveRegistryAuthority(
+          sandboxName,
+          hermesAuthority,
+          inspectPortableAgentReceiptDisposition(sandboxName),
+          registry.getSandbox(sandboxName),
+        );
+      }
       requalify = () => {
         const current = inspectPortableAgentReceiptDisposition(sandboxName);
-        if (
-          current.kind !== disposition.kind ||
-          (current.kind === "hermes" && current.phase !== "active")
-        ) {
+        if (!hermesAuthority) {
+          if (current.kind === disposition.kind) return;
           throw new Error("portable lifecycle receipt authority changed during connect");
         }
-        if (!hermesPortable) return;
-        const currentRegistry = registry.getSandbox(sandboxName);
-        const currentGateway = currentRegistry
-          ? resolveSandboxGatewayName(currentRegistry)
-          : getSandboxTargetGatewayName(sandboxName);
+        hermesAuthority = revalidateHermesPortableActiveRegistryAuthority(
+          sandboxName,
+          hermesAuthority,
+          current,
+          registry.getSandbox(sandboxName),
+        );
+        const currentGateway = resolveSandboxGatewayName(hermesAuthority.entry);
         const recovery = recoverPortableDemoSandboxLifecycleForConnect(
           sandboxName,
-          currentRegistry,
+          hermesAuthority.entry,
           currentGateway,
         );
         if (recovery.kind === "not-installed") {
           throw new Error("Hermes portable lifecycle authority disappeared during connect");
         }
+        hermesAuthority = revalidateHermesPortableActiveRegistryAuthority(
+          sandboxName,
+          hermesAuthority,
+          inspectPortableAgentReceiptDisposition(sandboxName),
+          registry.getSandbox(sandboxName),
+        );
       };
     } catch (error) {
       console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -1514,21 +1552,28 @@ async function connectSandboxWithinLifecycleFence(
           if (disposition.phase !== "active") {
             throw new Error("Hermes portable lifecycle is incomplete during probe");
           }
-          const registered = registry.getSandbox(sandboxName);
-          if (!registered || registered.agent !== "hermes") {
-            throw new Error("Hermes portable registry authority disagrees during probe");
-          }
-          const gatewayName = resolveSandboxGatewayName(registered);
+          let authority = requireHermesPortableActiveRegistryAuthority(
+            sandboxName,
+            disposition,
+            registry.getSandbox(sandboxName),
+          );
+          const gatewayName = resolveSandboxGatewayName(authority.entry);
           const recovery = recoverPortableDemoSandboxLifecycleForConnect(
             sandboxName,
-            registered,
+            authority.entry,
             gatewayName,
           );
           if (recovery.kind === "not-installed") {
             throw new Error("Hermes portable lifecycle authority disappeared during probe");
           }
-          verifyHermesPortableInferenceRouteOrExit(sandboxName, readiness.agent);
-          assertHermesPortableLifecycleForConnect(sandboxName, registered, gatewayName);
+          authority = revalidateHermesPortableActiveRegistryAuthority(
+            sandboxName,
+            authority,
+            inspectPortableAgentReceiptDisposition(sandboxName),
+            registry.getSandbox(sandboxName),
+          );
+          const verified = verifyHermesPortableInferenceRouteOrExit(sandboxName, readiness.agent);
+          assertHermesPortableLifecycleForConnect(sandboxName, verified, gatewayName);
         }
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
         return;
@@ -1650,12 +1695,23 @@ async function connectSandboxWithinLifecycleFence(
     // OPENSHELL_SANDBOX) and covers every other interactive entry path too.
     console.log("");
   }
+  const initialPortableDisposition = inspectPortableAgentReceiptDisposition(sandboxName);
+  let hermesAuthority = hermesPortable
+    ? requireHermesPortableActiveRegistryAuthority(
+        sandboxName,
+        initialPortableDisposition,
+        registry.getSandbox(sandboxName),
+      )
+    : null;
   const requalifyPortableDisposition = () => {
     const current = inspectPortableAgentReceiptDisposition(sandboxName);
-    if (hermesPortable) {
-      if (current.kind !== "hermes" || current.phase !== "active") {
-        throw new Error("Hermes portable lifecycle authority changed during interactive connect");
-      }
+    if (hermesAuthority) {
+      hermesAuthority = revalidateHermesPortableActiveRegistryAuthority(
+        sandboxName,
+        hermesAuthority,
+        current,
+        registry.getSandbox(sandboxName),
+      );
       return;
     }
     if (current.kind === "hermes") {
@@ -1667,19 +1723,26 @@ async function connectSandboxWithinLifecycleFence(
     readonly executablePath: string;
     readonly gatewayName: string;
   } => {
-    const registered = registry.getSandbox(sandboxName);
-    if (!registered || registered.agent !== "hermes") {
+    requalifyPortableDisposition();
+    const qualified = hermesAuthority;
+    if (!qualified) {
       throw new Error("Hermes portable registry authority changed before interactive connect");
     }
-    const gatewayName = resolveSandboxGatewayName(registered);
+    const gatewayName = resolveSandboxGatewayName(qualified.entry);
     const recovery = recoverPortableDemoSandboxLifecycleForConnect(
       sandboxName,
-      registered,
+      qualified.entry,
       gatewayName,
     );
     if (recovery.kind === "not-installed") {
       throw new Error("Hermes portable lifecycle authority disappeared before interactive connect");
     }
+    hermesAuthority = revalidateHermesPortableActiveRegistryAuthority(
+      sandboxName,
+      qualified,
+      inspectPortableAgentReceiptDisposition(sandboxName),
+      registry.getSandbox(sandboxName),
+    );
     return { ...buildHermesPortableCommandAuthority(sandboxName), gatewayName };
   };
   requalifyPortableDisposition();

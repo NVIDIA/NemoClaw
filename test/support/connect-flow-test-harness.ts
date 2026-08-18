@@ -12,7 +12,8 @@ import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 type ConnectSandbox = (typeof import("../../src/lib/actions/sandbox/connect"))["connectSandbox"];
-type RestoreSandboxStartupState = (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
+type RestoreSandboxStartupState =
+  (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
 type GatewayRouteMutationLock =
   (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
@@ -278,36 +279,36 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
   const captureOpenshellImplementation = (args: unknown) => {
-      const argv = Array.isArray(args) ? args : [];
-      if (argv[0] === "sandbox" && argv[1] === "list") {
-        return {
-          status: 0,
-          output:
-            listOutputs.shift() ??
-            options.listOutput ??
-            `${options.registryEntry?.name ?? "alpha"} Ready`,
-        };
-      }
-      if (argv[0] === "inference" && argv[1] === "get") {
-        return {
-          status: 0,
-          output:
-            options.inferenceGetOutput ??
-            (options.agentName === "hermes"
-              ? "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n"
-              : "Provider: unknown\nModel: unknown\n"),
-        };
-      }
-      if (
-        argv[0] === "sandbox" &&
-        argv[1] === "exec" &&
-        argv.join(" ").includes("inference.local/v1/models")
-      ) {
-        const response = inferenceProbeResponses.shift() ?? "OK 200";
-        return typeof response === "string" ? { status: 0, output: response } : response;
-      }
-      return { status: 0, output: "" };
-    };
+    const argv = Array.isArray(args) ? args : [];
+    if (argv[0] === "sandbox" && argv[1] === "list") {
+      return {
+        status: 0,
+        output:
+          listOutputs.shift() ??
+          options.listOutput ??
+          `${options.registryEntry?.name ?? "alpha"} Ready`,
+      };
+    }
+    if (argv[0] === "inference" && argv[1] === "get") {
+      return {
+        status: 0,
+        output:
+          options.inferenceGetOutput ??
+          (options.agentName === "hermes"
+            ? "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n"
+            : "Provider: unknown\nModel: unknown\n"),
+      };
+    }
+    if (
+      argv[0] === "sandbox" &&
+      argv[1] === "exec" &&
+      argv.join(" ").includes("inference.local/v1/models")
+    ) {
+      const response = inferenceProbeResponses.shift() ?? "OK 200";
+      return typeof response === "string" ? { status: 0, output: response } : response;
+    }
+    return { status: 0, output: "" };
+  };
   const captureOpenshellSpy = vi
     .spyOn(runtime, "captureOpenshell")
     .mockImplementation(captureOpenshellImplementation);
@@ -370,6 +371,14 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     model: options.agentName === "hermes" ? "qwen3-vl:4b" : null,
     gpuEnabled: false,
     policies: [],
+    ...(portableDisposition.kind === "hermes"
+      ? {
+          openshellDriver: "docker",
+          gatewayName: portableDisposition.gatewayName,
+          lifecycleGeneration: portableDisposition.lifecycleGeneration,
+          lifecycleLiveIdentityFingerprint: portableDisposition.liveIdentityFingerprint,
+        }
+      : {}),
     ...options.registryEntry,
   };
   const registryEntries: SandboxEntry[] = options.registryEntries

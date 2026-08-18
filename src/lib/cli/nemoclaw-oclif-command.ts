@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command, Flags, type Interfaces } from "@oclif/core";
-import { inspectPortableAgentReceiptAuthority } from "../onboard/experimental/hermes-portable-receipt";
 import {
+  assertHermesPortableCommandSupported,
   assertHermesPortableCommandUnavailable,
+  classifyHermesPortableCommand,
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
+  HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
 } from "../onboard/experimental/portable-agent-lifecycle";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
@@ -23,73 +25,10 @@ export type CommandExitResult = {
   status?: number | null;
 };
 
-const HERMES_PORTABLE_COMMANDS = new Set([
-  "launch",
-  "sandbox:connect",
-  "sandbox:doctor",
-  "sandbox:recover",
-  "sandbox:start",
-  "sandbox:status",
-  "sandbox:stop",
-]);
-
-const RAW_SANDBOX_NAME_COMMANDS = new Set([
-  "sandbox:agent",
-  "sandbox:agents",
-  "sandbox:agents:add",
-  "sandbox:agents:apply",
-  "sandbox:agents:delete",
-  "sandbox:agents:list",
-  "sandbox:mcp",
-  "sandbox:sessions",
-  "sandbox:sessions:list",
-  "sandbox:skill",
-]);
-
-const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
-
-const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
-  "debug",
-  "inference:get",
-  "list",
-  "stop",
-  "tunnel:start",
-  "tunnel:stop",
-  "upgrade-sandboxes",
-  "use",
-]);
-const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status"]);
-
 export { HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE };
 export { assertHermesPortableCommandUnavailable };
 export const withSandboxCommandLifecycleLock = withMcpLifecycleLock;
-export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =
-  "The --fix option is not supported for an experimental Hermes portable sandbox.";
-
-function hasHostHelpFlag(argv: readonly string[]): boolean {
-  const separator = argv.indexOf("--");
-  const hostArgs = separator === -1 ? argv : argv.slice(0, separator);
-  return hostArgs.includes("--help") || hostArgs.includes("-h");
-}
-
-function assertHermesPortableCommandSupported(
-  commandId: string,
-  sandboxName: string,
-  argv: readonly string[],
-): void {
-  const authority = inspectPortableAgentReceiptAuthority(
-    sandboxName,
-    defaultPortableDemoStateDir(process.env),
-  );
-  const supported =
-    HERMES_PORTABLE_COMMANDS.has(commandId) &&
-    !(commandId === "sandbox:doctor" && argv.includes("--fix"));
-  if (authority.kind !== "hermes" || supported) return;
-  if (commandId === "sandbox:doctor" && argv.includes("--fix")) {
-    throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE} Command: ${commandId}`);
-  }
-  throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE} Command: ${commandId}`);
-}
+export { HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE };
 
 /**
  * Shared oclif base for NemoClaw commands.
@@ -132,11 +71,13 @@ export abstract class NemoClawCommand extends Command {
     log.configure({ debug: false, quiet: false });
     const commandId = this.id;
     const sandboxName = this.argv[0];
+    const portablePolicy =
+      typeof commandId === "string" ? classifyHermesPortableCommand(commandId, this.argv) : null;
     if (
       typeof commandId === "string" &&
       sandboxName &&
       (commandId === "launch" || commandId.startsWith("sandbox:")) &&
-      !hasHostHelpFlag(this.argv)
+      !portablePolicy?.helpRequested
     ) {
       assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
     }
@@ -144,43 +85,44 @@ export abstract class NemoClawCommand extends Command {
 
   protected override async _run<T>(): Promise<T> {
     const commandId = this.id;
-    if (
-      typeof commandId === "string" &&
-      HERMES_PORTABLE_HOST_FENCED_READS.has(commandId) &&
-      !hasHostHelpFlag(this.argv)
-    ) {
+    const portablePolicy =
+      typeof commandId === "string" ? classifyHermesPortableCommand(commandId, this.argv) : null;
+    if (portablePolicy?.hostFence === "read" && !portablePolicy.helpRequested) {
       return await withCurrentPortableHostFence(() => super._run<T>());
     }
     if (
       typeof commandId === "string" &&
-      HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS.has(commandId) &&
-      !hasHostHelpFlag(this.argv)
+      portablePolicy?.hostFence === "deny" &&
+      !portablePolicy.helpRequested
     ) {
       return await withCurrentPortableHostFence(() => {
         assertNoHermesPortableHostAuthority(defaultPortableDemoStateDir(process.env), commandId);
         return super._run<T>();
       });
     }
-    const sandboxName = await this.resolveLifecycleSandboxName();
+    const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
     return await withMcpLifecycleLock(sandboxName, () => {
-      if (typeof commandId === "string" && RAW_SANDBOX_NAME_COMMANDS.has(commandId)) {
+      if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
         assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
       }
       return super._run<T>();
     });
   }
 
-  private async resolveLifecycleSandboxName(): Promise<string | null> {
+  private async resolveLifecycleSandboxName(
+    portablePolicy: ReturnType<typeof classifyHermesPortableCommand> | null,
+  ): Promise<string | null> {
     const commandId = this.id;
     if (
       typeof commandId !== "string" ||
       (commandId !== "launch" && !commandId.startsWith("sandbox:")) ||
-      MULTI_SANDBOX_LIFECYCLE_COMMANDS.has(commandId)
+      !portablePolicy ||
+      portablePolicy.multiSandboxLifecycle
     ) {
       return null;
     }
-    if (RAW_SANDBOX_NAME_COMMANDS.has(commandId)) {
+    if (portablePolicy.rawSandboxName) {
       const sandboxName = this.argv[0];
       return sandboxName && sandboxName !== "--help" && sandboxName !== "-h" ? sandboxName : null;
     }

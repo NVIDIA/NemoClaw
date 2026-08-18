@@ -394,16 +394,19 @@ function resolveInitialSandboxCreatePolicy(
   basePolicyPath: string,
   activeMessagingChannels: string[],
   options: InitialPolicyOptions,
-  materialize: PolicyMaterializer,
-  exactCleanup: boolean,
-  sourceBytes: boolean,
-  initialContent?: string,
+  resolution: {
+    readonly materialize: PolicyMaterializer;
+    readonly exactCleanup: boolean;
+    readonly includeSourceBytes: boolean;
+    readonly initialContent?: string;
+  },
 ): InitialSandboxPolicy {
+  const { materialize, exactCleanup, includeSourceBytes, initialContent } = resolution;
   let basePolicy = initialContent ?? fs.readFileSync(basePolicyPath, "utf-8");
   let effectivePolicy: InitialSandboxPolicy = {
     policyPath: basePolicyPath,
     appliedPresets: [],
-    ...(sourceBytes ? { sourceBytes: Buffer.from(basePolicy) } : {}),
+    ...(includeSourceBytes ? { sourceBytes: Buffer.from(basePolicy) } : {}),
   };
   const cleanupFns: Array<() => boolean> = [];
   const exactCleanupFns: Array<() => boolean> = [];
@@ -431,10 +434,13 @@ function resolveInitialSandboxCreatePolicy(
     cleanupFns.length > 0 ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean) : undefined;
   const buildExactCleanup = () =>
     exactCleanupFns.length > 0
-      ? () => [...exactCleanupFns].reverse().map((cleanup) => cleanup()).every(Boolean)
+      ? () =>
+          [...exactCleanupFns]
+            .reverse()
+            .map((cleanup) => cleanup())
+            .every(Boolean)
       : undefined;
-  const exactCleanupResult = () =>
-    exactCleanup ? { cleanupExact: buildExactCleanup() } : {};
+  const exactCleanupResult = () => (exactCleanup ? { cleanupExact: buildExactCleanup() } : {});
   const result = (appliedPresets: string[]): InitialSandboxPolicy => ({
     ...effectivePolicy,
     appliedPresets,
@@ -556,14 +562,86 @@ export function prepareInitialSandboxCreatePolicy(
   options: InitialPolicyOptions = {},
 ): InitialSandboxPolicy {
   const exactCleanup = options.agentName === "hermes" && isPortableExperimentalProfile();
-  return resolveInitialSandboxCreatePolicy(
-    basePolicyPath,
-    activeMessagingChannels,
-    options,
-    createTempPolicyMaterializer(exactCleanup),
+  return resolveInitialSandboxCreatePolicy(basePolicyPath, activeMessagingChannels, options, {
+    materialize: createTempPolicyMaterializer(exactCleanup),
     exactCleanup,
-    false,
+    includeSourceBytes: false,
+  });
+}
+
+/** Read one policy source while holding exact current-user file authority. */
+export function readHermesPortableInitialPolicySource(basePolicyPath: string): string {
+  const uid = process.getuid?.();
+  if (uid === undefined) {
+    throw new Error("Hermes portable policy source has no current-user authority.");
+  }
+  const parentPath = path.dirname(basePolicyPath);
+  const parentBefore = fs.lstatSync(parentPath, { bigint: true });
+  const named = fs.lstatSync(basePolicyPath, { bigint: true });
+  if (
+    !parentBefore.isDirectory() ||
+    parentBefore.isSymbolicLink() ||
+    (parentBefore.uid !== 0n && parentBefore.uid !== BigInt(uid)) ||
+    (parentBefore.mode & 0o22n) !== 0n ||
+    !named.isFile() ||
+    named.isSymbolicLink()
+  ) {
+    throw new Error("Hermes portable policy source authority is unsafe.");
+  }
+  const descriptor = fs.openSync(
+    basePolicyPath,
+    fs.constants.O_RDONLY |
+      fs.constants.O_NOFOLLOW |
+      (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0),
   );
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.isSymbolicLink() ||
+      before.nlink !== 1n ||
+      (before.uid !== 0n && before.uid !== BigInt(uid)) ||
+      (before.mode & 0o22n) !== 0n ||
+      before.size < 1n ||
+      before.size > 256n * 1024n ||
+      named.dev !== before.dev ||
+      named.ino !== before.ino
+    ) {
+      throw new Error("Hermes portable policy source authority is unsafe.");
+    }
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const finalNamed = fs.lstatSync(basePolicyPath, { bigint: true });
+    const parentAfter = fs.lstatSync(parentPath, { bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.mode !== after.mode ||
+      before.uid !== after.uid ||
+      before.nlink !== after.nlink ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs ||
+      finalNamed.dev !== after.dev ||
+      finalNamed.ino !== after.ino ||
+      parentBefore.dev !== parentAfter.dev ||
+      parentBefore.ino !== parentAfter.ino ||
+      parentBefore.mode !== parentAfter.mode ||
+      parentBefore.uid !== parentAfter.uid ||
+      parentBefore.mtimeNs !== parentAfter.mtimeNs ||
+      parentBefore.ctimeNs !== parentAfter.ctimeNs ||
+      BigInt(bytes.byteLength) !== after.size
+    ) {
+      throw new Error("Hermes portable policy source authority changed while reading.");
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new Error("Hermes portable policy source is not strict UTF-8.");
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 /** Plan exact schema-5 policy bytes without creating temporary files. */
@@ -575,89 +653,14 @@ export function planHermesPortableInitialSandboxPolicy(
   if (options.agentName !== "hermes" || !isPortableExperimentalProfile()) {
     throw new Error("Hermes portable policy planning requires the schema-5 profile.");
   }
-  return resolveInitialSandboxCreatePolicy(
-    basePolicyPath,
-    activeMessagingChannels,
-    options,
-    (content) => ({
+  return resolveInitialSandboxCreatePolicy(basePolicyPath, activeMessagingChannels, options, {
+    materialize: (content) => ({
       policyPath: basePolicyPath,
       sourceBytes: Buffer.from(content),
       appliedPresets: [],
     }),
-    false,
-    true,
-    (() => {
-      const uid = process.getuid?.();
-      if (uid === undefined) {
-        throw new Error("Hermes portable policy source has no current-user authority.");
-      }
-      const parentPath = path.dirname(basePolicyPath);
-      const parentBefore = fs.lstatSync(parentPath, { bigint: true });
-      const named = fs.lstatSync(basePolicyPath, { bigint: true });
-      if (
-        !parentBefore.isDirectory() ||
-        parentBefore.isSymbolicLink() ||
-        (parentBefore.uid !== 0n && parentBefore.uid !== BigInt(uid)) ||
-        (parentBefore.mode & 0o22n) !== 0n ||
-        !named.isFile() ||
-        named.isSymbolicLink()
-      ) {
-        throw new Error("Hermes portable policy source authority is unsafe.");
-      }
-      const descriptor = fs.openSync(
-        basePolicyPath,
-        fs.constants.O_RDONLY |
-          fs.constants.O_NOFOLLOW |
-          (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0),
-      );
-      try {
-        const before = fs.fstatSync(descriptor, { bigint: true });
-        if (
-          !before.isFile() ||
-          before.isSymbolicLink() ||
-          before.nlink !== 1n ||
-          (before.uid !== 0n && before.uid !== BigInt(uid)) ||
-          (before.mode & 0o22n) !== 0n ||
-          before.size < 1n ||
-          before.size > 256n * 1024n ||
-          named.dev !== before.dev ||
-          named.ino !== before.ino
-        ) {
-          throw new Error("Hermes portable policy source authority is unsafe.");
-        }
-        const bytes = fs.readFileSync(descriptor);
-        const after = fs.fstatSync(descriptor, { bigint: true });
-        const finalNamed = fs.lstatSync(basePolicyPath, { bigint: true });
-        const parentAfter = fs.lstatSync(parentPath, { bigint: true });
-        if (
-          before.dev !== after.dev ||
-          before.ino !== after.ino ||
-          before.mode !== after.mode ||
-          before.uid !== after.uid ||
-          before.nlink !== after.nlink ||
-          before.size !== after.size ||
-          before.mtimeNs !== after.mtimeNs ||
-          before.ctimeNs !== after.ctimeNs ||
-          finalNamed.dev !== after.dev ||
-          finalNamed.ino !== after.ino ||
-          parentBefore.dev !== parentAfter.dev ||
-          parentBefore.ino !== parentAfter.ino ||
-          parentBefore.mode !== parentAfter.mode ||
-          parentBefore.uid !== parentAfter.uid ||
-          parentBefore.mtimeNs !== parentAfter.mtimeNs ||
-          parentBefore.ctimeNs !== parentAfter.ctimeNs ||
-          BigInt(bytes.byteLength) !== after.size
-        ) {
-          throw new Error("Hermes portable policy source authority changed while reading.");
-        }
-        try {
-          return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        } catch {
-          throw new Error("Hermes portable policy source is not strict UTF-8.");
-        }
-      } finally {
-        fs.closeSync(descriptor);
-      }
-    })(),
-  );
+    exactCleanup: false,
+    includeSourceBytes: true,
+    initialContent: readHermesPortableInitialPolicySource(basePolicyPath),
+  });
 }
