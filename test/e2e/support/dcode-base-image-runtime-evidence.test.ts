@@ -272,6 +272,12 @@ describe("Deep Agents Code published base runtime evidence", () => {
       rejectedValues: [],
     },
     {
+      label: "an unsupported metadata schema version",
+      metadata: resolutionMetadata({ schema: 2 }),
+      expectedMessage: baseContractMismatch("schema"),
+      rejectedValues: ["2"],
+    },
+    {
       label: "the publication index instead of the selected platform",
       metadata: resolutionMetadata({ digest: INDEX_DIGEST, ref: INDEX_REFERENCE }),
       expectedMessage: baseContractMismatch("digest", "reference"),
