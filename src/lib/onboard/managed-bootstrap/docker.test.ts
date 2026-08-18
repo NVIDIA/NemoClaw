@@ -495,6 +495,49 @@ describe("Docker managed bootstrap adapter", () => {
     dateNow.mockRestore();
   });
 
+  it("preserves redacted replacement evidence when Discord startup exits before reconnect (#9399)", async () => {
+    const fake = fixture({ agent: "openclaw" });
+    const secret = "discord-diagnostic-secret-canary";
+    fake.deps.dockerLogs = vi.fn(() => `startup failed with DISCORD_BOT_TOKEN=${secret}`);
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority("openclaw");
+    const prepared = await adapter.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await adapter.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+    assert(fake.replacement?.State);
+    Object.assign(fake.replacement.State, {
+      Status: "exited",
+      Running: false,
+      ExitCode: 1,
+      Error: "startup terminated",
+    });
+
+    const failure = await adapter
+      .awaitBootstrap({ handle, snapshot, replacement, timeoutSecs: 1 })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      "Managed bootstrap Docker replacement is not stably running.",
+    );
+    expect((failure as Error).message).toContain(
+      "Replacement state: status=exited running=false exit_code=1 error=startup terminated",
+    );
+    expect((failure as Error).message).toContain("DISCORD_BOT_TOKEN=<REDACTED>");
+    expect((failure as Error).message).not.toContain(secret);
+    expect(fake.deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("preserves redacted replacement evidence before reconnect rollback", async () => {
     const fake = fixture();
     const secret = "diagnostic-secret-canary";

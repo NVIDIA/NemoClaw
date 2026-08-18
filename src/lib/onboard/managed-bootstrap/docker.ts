@@ -252,11 +252,15 @@ function commandDetail(result: DockerCommandResult): string {
     .slice(-1200);
 }
 
-function supervisorReconnectFailureDetail(runtimeId: string, deps: ResolvedDeps): string {
+function replacementFailureDetail(
+  summary: string,
+  runtimeId: string,
+  deps: ResolvedDeps,
+): string {
   const evidence = captureDockerContainerFailureEvidence(runtimeId, deps);
   const stateDetail = formatDockerContainerState(evidence.state).join(" ");
   return [
-    "Managed bootstrap Docker supervisor did not reconnect.",
+    summary,
     stateDetail ? `Replacement state: ${stateDetail}.` : "",
     evidence.redactedLogTail ? `Redacted replacement log tail:\n${evidence.redactedLogTail}` : "",
   ]
@@ -1201,7 +1205,17 @@ function assertCompletedCutoverRuntimeState(
   assertTransactionOriginal(transaction, original);
   assertTransactionReplacement(transaction, replacement);
   assertExplicitlyStopped(original, "rollback backup");
-  assertStableRunning(replacement, "replacement");
+  try {
+    assertStableRunning(replacement, "replacement");
+  } catch {
+    throw new Error(
+      replacementFailureDetail(
+        "Managed bootstrap Docker replacement is not stably running.",
+        transaction.replacementRuntimeId,
+        deps,
+      ),
+    );
+  }
   if (
     dockerContainerName(original) !== transaction.backupName ||
     dockerContainerName(replacement) !== transaction.originalName
@@ -3663,7 +3677,13 @@ export function createDockerManagedBootstrapAdapter(
           deps,
         )
       ) {
-        throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
+        throw new Error(
+          replacementFailureDetail(
+            "Managed bootstrap Docker supervisor did not reconnect.",
+            replacement.replacementRuntimeId,
+            deps,
+          ),
+        );
       }
       const afterWaitJournal = deps.journalStore.load(journal.bootstrapIdentity);
       if (!afterWaitJournal || !sameDockerBootstrapJournal(afterWaitJournal, journal)) {
