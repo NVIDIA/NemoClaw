@@ -206,6 +206,15 @@ describe("OpenShell supervisor manifest trust", () => {
     },
   );
 
+  it("accepts the exact OpenShell 0.0.106 supervisor identity before version selection", () => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        addSupervisorManifestPin(source, "0.0.106", V00106_SUPERVISOR_MANIFEST_DIGEST),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("rejects a replacement supervisor digest", () => {
     const result = runParser({
       transformSupervisor: (source) =>
@@ -228,7 +237,7 @@ describe("OpenShell supervisor manifest trust", () => {
     expect(result.stderr).toContain("|0.0.104|");
   });
 
-  it("rejects the OpenShell 0.0.106 supervisor digest when it is remapped", () => {
+  it("rejects the OpenShell 0.0.106 supervisor identity remapped to another release", () => {
     const result = runParser({
       transformSupervisor: (source) =>
         addSupervisorManifestPin(source, "0.0.105", V00106_SUPERVISOR_MANIFEST_DIGEST),

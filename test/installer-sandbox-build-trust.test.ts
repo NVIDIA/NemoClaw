@@ -145,6 +145,14 @@ describe("standalone sandbox build trust", () => {
     expect(result.stderr).toContain(`unexpected=[0.0.105:${V00106_SANDBOX_BUILD_DIGESTS[0]}`);
   });
 
+  it("accepts the exact OpenShell 0.0.106 sandbox identities before version selection", () => {
+    const result = runParser((source) =>
+      addSandboxBuildPins(source, "0.0.106", V00106_SANDBOX_BUILD_DIGESTS),
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("rejects an arbitrary structurally valid identity addition", () => {
     const result = runParser((source) =>
       addSandboxBuildPins(source, "0.0.98", ARBITRARY_SANDBOX_BUILD_DIGESTS),
@@ -204,6 +212,16 @@ describe("standalone sandbox build trust", () => {
     expect(result.stderr).toContain(
       "unexpected=[0.0.82:a4b0c38ed90a6dd4b4f312ad3727824a25ec478d88d4e65d22a82377b18e6214",
     );
+  });
+
+  it("rejects OpenShell 0.0.106 sandbox identities remapped to another release", () => {
+    const result = runParser((source) =>
+      addSandboxBuildPins(source, "0.0.105", V00106_SANDBOX_BUILD_DIGESTS),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must use only base-trusted binary identities");
+    expect(result.stderr).toContain(`unexpected=[0.0.105:${V00106_SANDBOX_BUILD_DIGESTS[0]}`);
   });
 
   it.each([
