@@ -757,6 +757,70 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.finalization).toBeNull();
   });
 
+  it("reports retryable restart recovery after exact Hermes restoration-failure cleanup (#9486)", async () => {
+    const metadataFailure =
+      "Managed startup shared-state transaction failed: managed directory metadata was not restored exactly: /sandbox/.hermes";
+    const fake = fixture({
+      agent: "hermes",
+      sharedState: "pending",
+      sharedStateRollbackResult: { status: 1, stderr: metadataFailure },
+    });
+    const first = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority("hermes");
+    const prepared = await first.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    await first.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+
+    const recovered = await createDockerManagedBootstrapAdapter(
+      fake.deps,
+    ).recoverUnfinishedTransactions();
+
+    expect(recovered.receipts).toEqual([]);
+    expect(recovered.failures).toEqual([
+      expect.objectContaining({
+        bootstrapIdentity: IDENTITY,
+        sourcePhase: "owner-cleanup-required",
+        code: "provider-recovery-failed",
+        retryable: true,
+        detail: expect.stringContaining(metadataFailure),
+      }),
+    ]);
+    expect(vi.mocked(fake.deps.dockerRm!)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fake.deps.dockerRm!)).toHaveBeenCalledWith(NEW_ID, expect.any(Object));
+    expect(fake.replacement).toBeNull();
+    expect(fake.original).toMatchObject({
+      Id: OLD_ID,
+      Name: "/openshell-alpha",
+      State: { Running: false },
+    });
+    expect(fake.events).not.toContain(`rm:${OLD_ID}`);
+    expect(fake.events).not.toContain(`start:${OLD_ID}`);
+    expectEventBefore(fake.events, "journal:rollback-authorized", "shared:rollback");
+    expectEventBefore(fake.events, "shared:rollback", `rm:${NEW_ID}`);
+    expectEventBefore(fake.events, `rm:${NEW_ID}`, `rename:${OLD_ID}:openshell-alpha`);
+    expectEventBefore(
+      fake.events,
+      `rename:${OLD_ID}:openshell-alpha`,
+      "journal:owner-cleanup-required",
+    );
+    expect(fake.journal).toMatchObject({
+      phase: "owner-cleanup-required",
+      originalRuntimeId: OLD_ID,
+      replacementRuntimeId: NEW_ID,
+    });
+    expect(fake.finalization).toBeNull();
+  });
+
   it.each([
     {
       driftedRuntime: "original",
