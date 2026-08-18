@@ -7,7 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { target } from "../registry/builder.ts";
 import { listTargets } from "../registry/registry.ts";
-import { buildLiveTargetMatrix } from "../registry/run.ts";
+import { buildLiveTargetInventory, buildLiveTargetMatrix } from "../registry/run.ts";
 import { resolveRunnerForTarget } from "../registry/runner-routing.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
 
@@ -112,6 +112,24 @@ describe("live E2E target matrix", () => {
   it("exposes execution coverage for every executable typed target (#9167)", () => {
     expect(buildLiveTargetMatrix()).toHaveLength(4);
     expectExecutableTypedTargetCoverage();
+  });
+
+  it("keeps every inert declaration in the audit inventory without scheduling it (#9167)", () => {
+    const inventory = buildLiveTargetInventory();
+    const executable = inventory.filter((entry) => entry.supported);
+    const inert = inventory.filter((entry) => !entry.supported);
+
+    expect(executable).toEqual(buildLiveTargetMatrix());
+    expect(inert.length).toBeGreaterThan(0);
+    expect(
+      inert.every(
+        (entry) =>
+          entry.agentRuntime === "unresolved" &&
+          entry.observableOutcome === "unresolved" &&
+          entry.environmentOrInferenceEndpoint === "unresolved" &&
+          entry.unresolvedReason === "This typed registry declaration has no executable owner",
+      ),
+    ).toBe(true);
   });
 
   it("prints a single-line JSON array of supported live E2E targets for --emit-live-matrix", () => {
