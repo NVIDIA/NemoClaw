@@ -21,7 +21,10 @@ import {
   getResumeSandboxGpuOverrides,
   resolveSandboxGpuConfig,
 } from "../../onboard/sandbox-gpu-mode";
-import type { TrustedLocalBaseImageOverride } from "../../sandbox-base-image";
+import type {
+  SandboxBaseImageResolutionMetadata,
+  TrustedLocalBaseImageOverride,
+} from "../../sandbox-base-image";
 import { redact } from "../../security/redact";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -46,6 +49,7 @@ export type DcodeRebuildPreflightBail = (message: string, code?: number) => neve
 
 type PinnedDcodeBaseImage = {
   readonly imageRef: string;
+  readonly resolutionMetadata: SandboxBaseImageResolutionMetadata;
   readonly trustedLocalOverride?: TrustedLocalBaseImageOverride;
   readonly trustedRemoteOverride?: TrustedRemoteBaseImageOverride;
   dispose(): boolean;
@@ -335,6 +339,21 @@ function resolvePinnedDcodeBaseImage(bail: DcodeRebuildPreflightBail): PinnedDco
     }
     fail("DCode base image identity could not be verified", bail);
   }
+  const resolutionMetadata = result.resolutionMetadata;
+  if (
+    !resolutionMetadata ||
+    resolutionMetadata.ref !== imageRef ||
+    resolutionMetadata.imageId !== imageId
+  ) {
+    if (trustedLocalOverride) {
+      try {
+        dockerRmi(imageRef, { ignoreError: true, suppressOutput: true });
+      } catch {
+        // Report the metadata mismatch instead of the Docker cleanup failure.
+      }
+    }
+    fail("DCode base-image resolution metadata does not match the pinned image", bail);
+  }
 
   let disposed = trustedRemoteOverride !== undefined;
   let warned = false;
@@ -359,6 +378,7 @@ function resolvePinnedDcodeBaseImage(bail: DcodeRebuildPreflightBail): PinnedDco
   if (trustedLocalOverride) process.on("exit", dispose);
   return {
     imageRef,
+    resolutionMetadata,
     trustedLocalOverride,
     trustedRemoteOverride,
     dispose,
@@ -433,7 +453,8 @@ export async function prepareDcodeReplacementBeforeMutation(
     pinnedBase = resolvePinnedDcodeBaseImage(bail);
     const sandboxGpuConfig = getRecordedGpuConfig(sandboxName, entry, session);
     if (sandboxGpuConfig.errors.length > 0) fail(sandboxGpuConfig.errors.join(" "), bail);
-    const imageResult = await withPinnedBaseImage(pinnedBase, () =>
+    const pinnedBaseForPreparation = pinnedBase;
+    const imageResult = await withPinnedBaseImage(pinnedBaseForPreparation, () =>
       prepareManagedDcodeRebuildImage({
         agent: loadAgent(DCODE_AGENT_NAME),
         provider: target.provider,
@@ -444,6 +465,7 @@ export async function prepareDcodeReplacementBeforeMutation(
         webSearchConfig,
         toolDisclosure: input.toolDisclosure,
         dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,
+        preResolvedBaseImageMetadata: pinnedBaseForPreparation.resolutionMetadata,
         sandboxGpuConfig,
         gatewayPort,
       }),
