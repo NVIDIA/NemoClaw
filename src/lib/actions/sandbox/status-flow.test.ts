@@ -441,6 +441,23 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
   });
 
+  // The registry-membership claim is the contract under review: for an
+  // unregistered name every other observable (exit code 1, no registry
+  // removal) is identical to the registered case above, so only the claim
+  // itself distinguishes a true answer from a false one.
+  it("reports an unregistered sandbox as not registered when the live gateway also lacks it (#9425)", async () => {
+    const harness = createStatusFlowHarness({ lookupState: "missing", sandboxEntry: null });
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Sandbox 'alpha' is not registered.");
+    expect(output).not.toContain("is registered locally");
+    expect(output).not.toContain("No local registry entry was removed by this status check");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
   it("prints switch guidance without removing registry state for a wrong active gateway (#2276)", async () => {
     const harness = createStatusFlowHarness({
       inferenceHealth: null,

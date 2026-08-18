@@ -27,6 +27,7 @@ async function printGuidance({
 }): Promise<void> {
   await printSandboxGatewayLookupStatus({
     sandboxName: "beta",
+    registered: true,
     lookup: { state: "present", output: `Sandbox:\n  Name: beta\n  Phase: ${phase}` },
     phase,
     dockerRuntime,

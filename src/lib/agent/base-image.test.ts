@@ -53,6 +53,23 @@ function makeDifferingImageInspection(
     : "";
 }
 
+const AGENTS_DIR = path.resolve(import.meta.dirname, "../../../agents");
+
+function declaresCorporateCaBuildArg(dockerfilePath: string): boolean {
+  return (
+    fs.existsSync(dockerfilePath) &&
+    fs.readFileSync(dockerfilePath, "utf8").includes("ARG NEMOCLAW_CORPORATE_CA_B64")
+  );
+}
+
+// Read the agent names from the checked-in Dockerfiles so a base image that
+// starts consuming the corporate CA cannot ship without the build argument.
+const CORPORATE_CA_BASE_IMAGE_AGENTS = fs
+  .readdirSync(AGENTS_DIR)
+  .filter((agentName) =>
+    declaresCorporateCaBuildArg(path.join(AGENTS_DIR, agentName, "Dockerfile.base")),
+  );
+
 describe("agent base image provisioning", () => {
   beforeEach(() => {
     vi.stubEnv("NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS", "");
@@ -487,35 +504,40 @@ describe("agent base image provisioning", () => {
     });
   });
 
-  it("passes the resolved corporate CA into local agent base image builds (#8119)", () => {
-    vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
-    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
-      resolveSandboxBaseImageMock.mockReturnValue({
-        ref: "nemoclaw-dcode-sandbox-base-local:compatible",
-        digest: null,
-        source: "local",
-        glibcVersion: "2.41",
+  it.each(CORPORATE_CA_BASE_IMAGE_AGENTS)(
+    "passes the resolved corporate CA into local %s base image builds (#8119)",
+    (agentName) => {
+      vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
+      withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
+        resolveSandboxBaseImageMock.mockReturnValue({
+          ref: `nemoclaw-${agentName}-sandbox-base-local:compatible`,
+          digest: null,
+          source: "local",
+          glibcVersion: "2.41",
+        });
+
+        ensureAgentBaseImage(
+          makeAgent({
+            name: agentName,
+            displayName: agentName,
+            expectedVersion: "0.1.34",
+            dockerfileBasePath: `/test/root/agents/${agentName}/Dockerfile.base`,
+            dockerfilePath: `/test/root/agents/${agentName}/Dockerfile`,
+          }),
+          { forceBaseImageRebuild: true },
+        );
+
+        const options = dockerBuildMock.mock.calls[0]?.[3] as {
+          buildArgs?: Record<string, string>;
+        };
+        const encoded = options.buildArgs?.NEMOCLAW_CORPORATE_CA_B64;
+        expect(encoded).toBeTypeOf("string");
+        expect(Buffer.from(encoded ?? "", "base64").toString("utf8")).toContain(
+          "BEGIN CERTIFICATE",
+        );
       });
-
-      ensureAgentBaseImage(
-        makeAgent({
-          name: "langchain-deepagents-code",
-          displayName: "LangChain Deep Agents Code",
-          expectedVersion: "0.1.34",
-          dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
-          dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
-        }),
-        { forceBaseImageRebuild: true },
-      );
-
-      const options = dockerBuildMock.mock.calls[0]?.[3] as {
-        buildArgs?: Record<string, string>;
-      };
-      const encoded = options.buildArgs?.NEMOCLAW_CORPORATE_CA_B64;
-      expect(encoded).toBeTypeOf("string");
-      expect(Buffer.from(encoded ?? "", "base64").toString("utf8")).toContain("BEGIN CERTIFICATE");
-    });
-  });
+    },
+  );
 
   it("omits corporate CA build inputs when corporate CA import is disabled (#8119)", () => {
     vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));

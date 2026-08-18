@@ -194,13 +194,15 @@ nemoclaw_state_dir`,
     "08000",
     "08081",
     "11434",
+    "11438",
     "18790",
   ])("rejects conflicting gateway port %s before writing selected state", (gatewayPort) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-port-conflict-"));
     try {
       const result = runInstallerFunctions(
         home,
-        `NEMOCLAW_GATEWAY_PORT=${gatewayPort}
+        `NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT=11500
+NEMOCLAW_GATEWAY_PORT=${gatewayPort}
 save_usage_notice_acceptance_shell "test-version"`,
       );
 

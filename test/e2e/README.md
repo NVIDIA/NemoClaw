@@ -258,11 +258,11 @@ The planner partitions that set into GitHub Actions matrices, one for each execu
 The execution profile owns the credentials available to its target step:
 
 - `standard` displays `no provider credential` and receives no NVIDIA API credential.
-- `nvidia-api` displays `NVIDIA API key` and receives `NVIDIA_API_KEY` on trusted `main` runs.
-- `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
+- `nvidia-api` displays `NVIDIA API key` and receives `NVIDIA_API_KEY` on trusted `main` runs and authenticated NVIDIA-owned PR runs.
+- `nvidia-inference` displays `NVIDIA inference API key` and receives `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated NVIDIA-owned PR runs.
 - `github-read` displays `GitHub read token` and receives the job-scoped `GITHUB_TOKEN` only for the target step when `trusted_main` is `true`.
-  The reusable workflow enforces this boundary; PR revision callers set `trusted_main` to `false`, so their target steps receive no `GITHUB_TOKEN`.
-- `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
+  The reusable workflow enforces this boundary; an authenticated NVIDIA-owned PR caller sets `trusted_main` to `true`, while an external PR caller sets it to `false` and receives no `GITHUB_TOKEN`.
+- `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated NVIDIA-owned PR runs.
 
 `common-egress-agent` runs 4 isolated scenario shards.
 The Personal stock-price shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
@@ -1144,6 +1144,8 @@ teardown discards that filesystem.
 These credentials remain valid until they expire or an administrator revokes
 them in their issuing services. If cleanup fails, remove the recorded Brev
 workspace. Rotate or revoke each credential to remove later access.
+For an NVIDIA-owned PR revision, the job builds and runs the exact candidate commit with this same credential boundary.
+The PR branch must be in `NVIDIA/NemoClaw` because the image producer does not accept a sibling-repository candidate.
 
 The `NEMOCLAW_STAGING_LAUNCHABLE_ID` repository Actions variable selects the
 standing Launchable. Keep its value equal to the Launchable ID in the default
@@ -1159,15 +1161,21 @@ The `totalRunnerMinutes` field contains the cumulative runner time for those sum
 A later successful attempt sets `action` to `passed-after-retry` and `flaky` to `true`.
 The observer ignores manual PR runs and a run superseded by a newer `main` push.
 
-For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
+GitHub's workflow-dispatch permission is the actor authorization for a PR revision run.
+The workflow does not add a second `maintain` or `admin` role gate.
+Before checkout, it verifies the open PR, exact target repository and `main` branch, current source repository and commit, base commit, and trusted workflow commit from the GitHub PR API.
+
+When the API reports that the PR source repository owner is the `NVIDIA` organization, empty `jobs` and `targets` select:
 
 - every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
-- every catalogue target in the `standard` profile;
+- every catalogue target across all credential profiles;
 - every shared credential-free test; and
-- these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
+- every default registry target.
 
-The PR selection does not forward an NVIDIA API key, `BRAVE_API_KEY`, or `GITHUB_TOKEN` to the candidate checkout.
+An NVIDIA-owned PR may also select any supported E2E job or target.
+For an external PR, the bounded controller matrix remains in effect and the workflow does not forward repository credentials to candidate-controlled processes or reusable workflow callers.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
+Jetson and Launchable dispatch additionally require the PR branch to be in `NVIDIA/NemoClaw`; their operator and image-producer backends do not accept a sibling-repository candidate.
 It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
 unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the latest PR commit to the current PR base SHA.
@@ -1185,9 +1193,10 @@ The risk plan selects the `openshell-gateway-upgrade` catalogue target and the
 The catalogue target covers the installer-driven OpenShell gateway upgrade handoff.
 The typed target covers the LangChain Deep Agents Code sandbox recreation path.
 
-A trusted manual `main` run with empty selectors exposes these values to candidate-controlled job processes:
+An NVIDIA-owned PR run with empty selectors exposes these values to candidate-controlled job processes:
 
 - Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
+- Docker Hub credentials from `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`, available to candidate processes through the job's temporary Docker configuration until cleanup.
 - Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
 - The job-scoped `GITHUB_TOKEN`, exposed only to the target step in the `token-rotation` and `openshell-gateway-upgrade` catalogue executions.
   It has `contents: read` access.
@@ -1195,7 +1204,7 @@ A trusted manual `main` run with empty selectors exposes these values to candida
   GitHub Actions invalidates it after the reusable workflow job.
 - Messaging account and channel identifiers from repository secrets: `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_AUTHORIZED_CHAT_IDS`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CHAT_ID_E2E`, `DISCORD_CHANNEL_ID_E2E`, and `SLACK_CHANNEL_ID_E2E`.
 
-The workflow does not rotate or revoke these API keys or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
+The workflow does not rotate or revoke these API keys, Docker Hub credentials, or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
 Live targets can create external resources.
 After a failure, inspect the workflow artifacts and remove resources that target cleanup did not remove.
 
@@ -1213,8 +1222,7 @@ Verify that the old value is invalid.
 After you accept this credential boundary, dispatch `native-runtime-qualification-producer` from trusted `main` for a same-repository open PR.
 Use the first workflow attempt.
 The executing workflow commit and `workflow_sha` input must equal the exact PR-recorded base commit.
-The actor must have repository `maintain` or `admin` permission.
-If `github.triggering_actor` differs from the actor, it must also have one of those permissions.
+The dispatcher must have GitHub permission to run the workflow; the E2E workflow adds no second actor-role check.
 
 The trusted workflow binds the candidate commit, base commit, workflow commit, repository, PR, run, attempt, and 24-case plan.
 The unprivileged installer and live-test processes run with `env -i` under a temporary account.
@@ -1248,9 +1256,8 @@ For a manual PR run, provide these inputs:
 - The PR source repository.
 - The lowercase 40-character PR base SHA.
 - The exact SHA of the trusted workflow commit on `main`.
-- A review reason containing 10 to 500 printable characters.
 
-For the default PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
+For the default NVIDIA-owned PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
 An authorized environment reviewer must approve it before qualification starts.
@@ -1262,8 +1269,10 @@ To select native runtime qualification evidence production, set `jobs=native-run
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
-A trusted `main` workflow pre-checkout step requires current `maintain` or `admin` permission. The workflow validates the exact open PR and selected mode before candidate code runs.
-A second validation after checkout rejects a changed candidate commit, base commit, or PR source repository before preparation.
+A trusted `main` workflow pre-checkout step validates the exact open PR and records whether its source repository has API-confirmed `NVIDIA` organization ownership.
+That ownership authorizes the full ordinary plan and credential profiles; external sources retain the bounded controller plan.
+A second validation after checkout rejects a changed candidate commit, base commit, PR source repository, or NVIDIA ownership before preparation.
+Candidate runs cannot publish release qualification.
 
 The Actions run is advisory for the pull request and is not a required merge context.
 Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, PR source repository, candidate commit SHA, base commit SHA, and executing workflow SHA.
@@ -1297,10 +1306,10 @@ configuration, or the unified E2E workflow. Compatibility schema fields may
 classify that guidance as required, but rendered advisor guidance remains
 non-authoritative. Model advice is additive and cannot downgrade the
 deterministic floor. PR Review Advisor recommendations remain advisory.
-A maintainer decides whether to dispatch this trusted selection for the current PR
-revision. The manual PR selection includes the credential-free
-`inference-routing` catalogue target. It does not dispatch secret-backed targets such as
-`network-policy` for PR revisions. The Advisor comment labels that boundary.
+A repository-authorized user decides whether to dispatch this trusted selection for the current PR revision.
+For API-confirmed NVIDIA-owned sources, the selection may include secret-backed targets such as `network-policy`.
+External PR revisions retain the credential-free controller boundary.
+The Advisor comment labels the requested coverage, but does not restrict an NVIDIA-owned PR to that recommendation.
 No PR E2E controller dispatches the risk plan.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the

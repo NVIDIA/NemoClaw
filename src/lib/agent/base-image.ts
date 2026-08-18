@@ -38,6 +38,7 @@ import {
   parseTemporarySandboxBaseImageId,
   type ResolveBaseImageOptions,
   resolveSandboxBaseImage,
+  reuseSandboxBaseImageResolutionHint,
   SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
   SANDBOX_BASE_RESOLUTION_SCHEMA,
   SANDBOX_BASE_TAG,
@@ -63,7 +64,11 @@ function agentBaseImageBuildArgs(agent: AgentDefinition): Record<string, string>
   if (agent.name === "nemocua") {
     return { NEMOCUA_RUNTIME_IMAGE: getCuaSandboxImageRef() };
   }
-  return agent.name === "langchain-deepagents-code" ? corporateCaBuildArgs() : undefined;
+  // Only these base Dockerfiles declare ARG NEMOCLAW_CORPORATE_CA_B64 and anchor
+  // the decoded certificates before their HTTPS package fetches (#8119).
+  return agent.name === "langchain-deepagents-code" || agent.name === "pi"
+    ? corporateCaBuildArgs()
+    : undefined;
 }
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
@@ -132,6 +137,47 @@ export function pinTrustedAgentRemoteBaseImageOverrideForOperation(
     if (previous) trustedRemoteOverrideLeases.set(overrideEnvVar, previous);
     else trustedRemoteOverrideLeases.delete(overrideEnvVar);
   };
+}
+
+function reuseTrustedAgentRemoteBaseImageOverride(
+  resolutionOptions: ResolveBaseImageOptions,
+  overrideEnvVar: string,
+  override: TrustedRemoteBaseImageOverride,
+): SandboxBaseImageResolution {
+  const usesExplicitOverride = override.resolutionMetadata.source === "override";
+  if (usesExplicitOverride && process.env[overrideEnvVar]?.trim() !== override.ref) {
+    throw new SandboxBaseImageResolutionError(
+      `${resolutionOptions.label || "Sandbox base image"} trust lease no longer matches its explicit override`,
+    );
+  }
+  const trustedEnv = {
+    ...process.env,
+    ...(usesExplicitOverride
+      ? {
+          [overrideEnvVar]: override.ref,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
+        }
+      : {}),
+  };
+  if (!usesExplicitOverride) delete trustedEnv[overrideEnvVar];
+  const trustedOptions = {
+    ...resolutionOptions,
+    ...(usesExplicitOverride ? { localTag: override.ref } : {}),
+    env: trustedEnv,
+    resolutionHint: override.resolutionMetadata,
+  };
+  const expectedKey = createSandboxBaseImageResolutionKey(trustedOptions);
+  const reused = reuseSandboxBaseImageResolutionHint(trustedOptions, expectedKey);
+  if (
+    !reused ||
+    reused.ref !== override.resolutionMetadata.ref ||
+    reused.metadata !== override.resolutionMetadata
+  ) {
+    throw new SandboxBaseImageResolutionError(
+      `${resolutionOptions.label || "Sandbox base image"} trust lease no longer matches its resolution metadata`,
+    );
+  }
+  return reused;
 }
 
 export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
@@ -592,15 +638,13 @@ export function ensureAgentBaseImage(
     ? trustedLocalOverrideLeases.get(overrideEnvVar)
     : undefined;
   const trustedRemoteOverride = trustedRemoteOverrideLeases.get(overrideEnvVar);
-  const canonicalEnv = { ...process.env };
-  delete canonicalEnv[overrideEnvVar];
   const resolved = explicitOverride
     ? trustedRemoteOverride?.ref === explicitOverride
-      ? resolveSandboxBaseImage({
-          ...resolutionOptions,
-          env: canonicalEnv,
-          resolutionHint: trustedRemoteOverride.resolutionMetadata,
-        })
+      ? reuseTrustedAgentRemoteBaseImageOverride(
+          resolutionOptions,
+          overrideEnvVar,
+          trustedRemoteOverride,
+        )
       : resolveExactImage(explicitOverride, trustedLocalOverride)
     : resolveSandboxBaseImage(resolutionOptions);
   if (resolved) {
