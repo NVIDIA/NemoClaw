@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
 import {
-  configureDcodeBaseImageOnboardReference,
   DCODE_BASE_IMAGE_TARGET_ID,
+  dcodeBaseImageReferenceForContract,
   loadDcodeBaseImagePublicationEvidence,
   parseDcodeBaseImagePublicationEvidence,
   verifyDcodeBaseImageRuntimeEvidence,
@@ -24,7 +24,7 @@ const PUBLICATION_REVISION = "e".repeat(40);
 
 function publicationEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
-    [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
+    [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE,
     ...overrides,
   };
 }
@@ -75,6 +75,19 @@ function resolutionMetadata(
 }
 
 describe("Deep Agents Code published base runtime evidence", () => {
+  it("selects the linux/amd64 platform reference when trusted manual PR E2E supplies it", () => {
+    const environment = publicationEnvironment({
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_SHA: "f".repeat(40),
+      NEMOCLAW_E2E_EXPECTED_SHA: CANDIDATE_REVISION,
+    });
+    const contract = parseDcodeBaseImagePublicationEvidence(publicationEvidence(), environment);
+
+    expect(dcodeBaseImageReferenceForContract(contract)).toBe(AMD64_REFERENCE);
+    expect(environment[DCODE_BASE_IMAGE_ENV]).toBe(AMD64_REFERENCE);
+  });
+
   it("records the completed sandbox image only when its platform digest matches publication", () => {
     const contract = parseDcodeBaseImagePublicationEvidence(
       publicationEvidence(),
@@ -100,24 +113,15 @@ describe("Deep Agents Code published base runtime evidence", () => {
     });
   });
 
-  it("selects the contract platform reference for live onboarding (#9386)", () => {
-    const environment = publicationEnvironment();
-    const contract = parseDcodeBaseImagePublicationEvidence(publicationEvidence(), environment);
-
-    configureDcodeBaseImageOnboardReference(contract, environment);
-
-    expect(environment[DCODE_BASE_IMAGE_ENV]).toBe(AMD64_REFERENCE);
-  });
-
-  it("rejects a valid official reference that differs from the publication contract", () => {
+  it("rejects the publication index instead of the validated platform reference (#9386)", () => {
     expect(() =>
       parseDcodeBaseImagePublicationEvidence(
         publicationEvidence(),
         publicationEnvironment({
-          [DCODE_BASE_IMAGE_ENV]: `${DCODE_BASE_IMAGE}@sha256:${"f".repeat(64)}`,
+          [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
         }),
       ),
-    ).toThrow(/does not match the published base contract/);
+    ).toThrow(/does not match the published linux\/amd64 base contract/);
   });
 
   it("prefers the selected manual candidate over the trusted workflow SHA", () => {
@@ -202,7 +206,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
       loadDcodeBaseImagePublicationEvidence(
         DCODE_BASE_IMAGE_TARGET_ID,
         `/missing-dcode-base-evidence-${process.pid}.json`,
-        { [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE },
+        { [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE },
       ),
     ).toBeUndefined();
   });
@@ -214,7 +218,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
         `/missing-dcode-base-evidence-${process.pid}.json`,
         {
           GITHUB_ACTIONS: "true",
-          [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
+          [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE,
         },
       ),
     ).toThrow(/GitHub Actions run is missing published base evidence/);
@@ -228,7 +232,12 @@ describe("Deep Agents Code published base runtime evidence", () => {
       /did not use the published linux\/amd64 base digest/,
     ],
     [
-      "the opposite platform digest",
+      "the opposite platform digest for amd64",
+      resolutionMetadata({ digest: ARM64_DIGEST, ref: ARM64_REFERENCE }),
+      /did not use the published linux\/amd64 base digest/,
+    ],
+    [
+      "self-consistent opposite-platform metadata",
       resolutionMetadata({
         architecture: "arm64",
         digest: ARM64_DIGEST,

@@ -309,6 +309,65 @@ describe("managed workload rebuild preflight", () => {
     expect(Object.isFrozen(handoff?.replacement.source.contract.source)).toBe(true);
   });
 
+  it("retains the live qualification revision during rebuild preflight (#9385)", async () => {
+    const prepare = vi.fn(async () => replacement("langchain-deepagents-code"));
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "a".repeat(40));
+
+    await prepareManagedWorkloadRebuildHandoff(entry("langchain-deepagents-code"), {
+      runtime: runtime(),
+      provider: provider(),
+      version: "0.0.100",
+    });
+
+    expect(prepare).toHaveBeenCalledExactlyOnceWith({
+      agentName: "langchain-deepagents-code",
+      legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+      runtime: runtime(),
+      version: "0.0.100",
+      policy: "require-managed",
+      catalogRevision: "a".repeat(40),
+    });
+  });
+
+  it("rejects a qualification revision that conflicts with durable authority (#9385)", async () => {
+    const prepare = vi.fn(async () => replacement("langchain-deepagents-code"));
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "c".repeat(40));
+
+    await expect(
+      prepareManagedWorkloadRebuildHandoff(entry("langchain-deepagents-code"), {
+        runtime: runtime(),
+        provider: provider(),
+        version: "0.0.100",
+      }),
+    ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("keeps release-catalog rebuild behavior outside GitHub Actions (#9385)", async () => {
+    const prepare = vi.fn(async () => replacement("openclaw"));
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+    vi.stubEnv("GITHUB_ACTIONS", "false");
+    vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "c".repeat(40));
+
+    await prepareManagedWorkloadRebuildHandoff(entry("openclaw"), {
+      runtime: runtime(),
+      provider: provider(),
+      version: "0.0.100",
+    });
+
+    expect(prepare).toHaveBeenCalledExactlyOnceWith({
+      agentName: "openclaw",
+      legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+      runtime: runtime(),
+      version: "0.0.100",
+      policy: "require-managed",
+    });
+  });
+
   it.each(AGENTS)("prepares an arm64 replacement handoff for %s", async (agent) => {
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = vi.fn(async () =>
       replacement(agent, "linux/arm64"),
