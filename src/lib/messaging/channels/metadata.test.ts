@@ -16,6 +16,7 @@ import {
   listBuiltInMessagingChannelManifests,
   listMessagingChannelsWithoutCredentials,
   listMessagingConfigEnvKeys,
+  listMessagingCredentialEnvAssignments,
   listMessagingPackageInstallSpecs,
   listMessagingProviderNamesForChannel,
   listOpenClawManagedChannelNames,
@@ -68,6 +69,34 @@ describe("built-in messaging channel metadata", () => {
       "demo-slack-app",
     ]);
     expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp", "googlechat"]);
+  });
+
+  it("derives credential environment assignments from manifest render metadata", () => {
+    expect(
+      listMessagingCredentialEnvAssignments({ agent: "hermes" })
+        .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+        .map(({ channelId, sourceEnvKey, targetEnvKey }) => ({
+          channelId,
+          sourceEnvKey,
+          targetEnvKey,
+        })),
+    ).toEqual([
+      {
+        channelId: "wechat",
+        sourceEnvKey: "WECHAT_BOT_TOKEN",
+        targetEnvKey: "WEIXIN_TOKEN",
+      },
+      {
+        channelId: "teams",
+        sourceEnvKey: "MSTEAMS_APP_PASSWORD",
+        targetEnvKey: "TEAMS_CLIENT_SECRET",
+      },
+    ]);
+    expect(
+      listMessagingCredentialEnvAssignments({ agent: "openclaw" }).filter(
+        ({ channelId }) => channelId === "teams",
+      ),
+    ).toEqual([]);
   });
 
   it("resolves config env keys from manifests and compatibility aliases from metadata", () => {

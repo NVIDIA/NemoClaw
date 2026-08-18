@@ -75,7 +75,7 @@ Use `--no-verify` only when OpenShell cannot verify the target provider at switc
 This flag does not bypass shared-gateway compatibility checks.
 When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
 It then sends a validation request from the target sandbox before persisting the route in NemoClaw state; the request allows up to 16 output tokens.
-When the switch changes the API family and that request returns HTTP `400` or `404`, NemoClaw retries up to two times after delays of one and two seconds.
+When the switch changes the API family and that request returns HTTP `400` or `404`, NemoClaw retries up to two times after delays of 2 and 4 seconds.
 Each retry allows another 16 output tokens.
 Other failures are not retried.
 If that request fails, NemoClaw attempts to restore the previous OpenShell selection and remove a provider that this switch created.
