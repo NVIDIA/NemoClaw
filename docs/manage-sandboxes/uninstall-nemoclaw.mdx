@@ -29,6 +29,18 @@ It preserves resources from a separate OpenClaw installation while continuing to
 | `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
 
+On macOS, Homebrew owns its OpenShell formula and executable links.
+Full uninstall preserves OpenShell executable paths instead of assuming NemoClaw owns them.
+When Homebrew confirms the `nvidia/openshell/openshell` formula, NemoClaw reports this separate removal command:
+
+```bash
+brew uninstall nvidia/openshell/openshell
+```
+
+Run this command only if you also want Homebrew to remove OpenShell.
+When Homebrew is unavailable or does not confirm the formula, uninstall preserves the executable paths and reports why it could not confirm ownership.
+Make `brew` available through `PATH` or inspect the formula before you remove OpenShell separately.
+
 `NEMOCLAW_GATEWAY_PORT` selects the gateway instance to uninstall (`nemoclaw` for port `8080`, or `nemoclaw-<port>` for a non-default port).
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
