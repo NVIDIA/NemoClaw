@@ -42,6 +42,8 @@ const OPENROUTER_RUNTIME_ADAPTER_CMDLINE =
   "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/openrouter-runtime-adapter-entry.js\n";
 const HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE =
   "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/https-pin-runtime-adapter.js\n";
+const BEDROCK_RUNTIME_ADAPTER_CMDLINE =
+  "/usr/bin/node /home/test/NemoClaw/scripts/bedrock-runtime-adapter.mts\n";
 
 type RunStub = (args: readonly string[]) => RunResult | null;
 
@@ -289,5 +291,82 @@ describe("HTTPS Pin Runtime adapter uninstall cleanup", () => {
     expect(result.exitCode).toBe(0);
     expect(lsofPorts).toContain(":12038");
     expect(killed).not.toContain(99997);
+  });
+});
+
+describe("Bedrock Runtime adapter uninstall cleanup", () => {
+  it("kills the adapter via its persisted PID before the state directory is deleted", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const exited = new Set<number>();
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bedrock-"));
+    const pidFile = path.join(tmpHome, ".nemoclaw", "bedrock-runtime-adapter.pid");
+    fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+    fs.writeFileSync(pidFile, "44325\n");
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target === pidFile,
+          isTty: false,
+          kill: (pid) => {
+            killed.push(pid);
+            exited.add(pid);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          rmSync: vi.fn(),
+          run: runStub({
+            ps: psStub("44325", { exited, cmdline: BEDROCK_RUNTIME_ADAPTER_CMDLINE }),
+          }),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(killed).toContain(44325);
+      expect(logs).toContain("Stopped Bedrock Runtime adapter 44325");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("scans its configured port but never kills a foreign process", () => {
+    const killed: number[] = [];
+    const lsofPorts: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-bedrock-foreign",
+          LOGNAME: "testuser",
+          NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "12036",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          return true;
+        },
+        log: vi.fn(),
+        rmSync: vi.fn(),
+        run: runStub({
+          lsof: lsofPortStub(lsofPorts, new Map([[":12036", ok("99996\n")]])),
+          ps: psStub("99996", {
+            exited: new Set(),
+            cmdline: "/usr/sbin/nginx -g daemon off;\n",
+          }),
+        }),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(lsofPorts).toContain(":12036");
+    expect(killed).not.toContain(99996);
   });
 });

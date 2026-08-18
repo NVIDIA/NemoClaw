@@ -29,6 +29,8 @@ const OPENROUTER_RUNTIME_ADAPTER_CMDLINE_MARK = "openrouter-runtime-adapter";
 const DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT = 11437;
 const HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE_MARK = "https-pin-runtime-adapter";
 const DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT = 11438;
+const BEDROCK_RUNTIME_ADAPTER_CMDLINE_MARK = "bedrock-runtime-adapter";
+const DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT = 11436;
 
 type RuntimeAdapterDescriptor = {
   cmdlineMark: string;
@@ -190,6 +192,25 @@ export function stopHttpsPinRuntimeAdapter(
       envPort: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
       label: "HTTPS Pin Runtime adapter",
       pidFile: "https-pin-runtime-adapter.pid",
+    },
+    options,
+  );
+}
+
+export function stopBedrockRuntimeAdapter(
+  paths: Pick<UninstallPaths, "nemoclawStateDir">,
+  runtime: RuntimeAdapterCleanupRuntime,
+  options: { scanOrphans?: boolean } = {},
+): void {
+  stopRuntimeAdapter(
+    paths,
+    runtime,
+    {
+      cmdlineMark: BEDROCK_RUNTIME_ADAPTER_CMDLINE_MARK,
+      defaultPort: DEFAULT_BEDROCK_RUNTIME_ADAPTER_PORT,
+      envPort: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+      label: "Bedrock Runtime adapter",
+      pidFile: "bedrock-runtime-adapter.pid",
     },
     options,
   );
