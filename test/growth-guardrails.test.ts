@@ -248,6 +248,11 @@ describe("codebase growth guardrail test support", () => {
       "function collect(rows) { for (const row of rows) consume(row); } it('outer', () => collect(rows)); it('nested', () => { function collect(value) { consume(value); } collect(value); });",
       1,
     ],
+    [
+      "uncalled nested helper loop",
+      "it('works', () => { function collect(rows) { for (const row of rows) consume(row); } expect(ok).toBe(true); });",
+      0,
+    ],
     ["support helper loop", "function collect(rows) { for (const row of rows) consume(row); }", 0],
   ])("counts test loops in %s", (_name, source, expected) => {
     expect(checkTestOnly.countTestLoops("test/example.test.ts", source)).toBe(expected);
