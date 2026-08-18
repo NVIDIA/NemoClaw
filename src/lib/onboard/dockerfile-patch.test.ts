@@ -6,27 +6,38 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  discordChannel,
+  makePlan,
+  tgChannel,
+} from "../../../test/helpers/messaging-conflict-fixtures";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
   encodeDockerJsonArg,
   isValidProxyHost,
   isValidProxyPort,
   patchStagedDockerfile,
 } from "./dockerfile-patch";
-import {
-  messagingChannel,
-  setMessagingPlanEnv,
-} from "./__test-helpers__/dockerfile-patch-fixtures";
 
 const tmpRoots: string[] = [];
 
 beforeEach(() => {
-  delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
+  vi.stubEnv("NEMOCLAW_MESSAGING_PLAN_B64", undefined);
   delete process.env.NEMOCLAW_OPENCLAW_OTEL;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
 });
+
+function setMessagingPlanEnv(overrides: Partial<SandboxMessagingPlan> = {}): SandboxMessagingPlan {
+  const plan = makePlan("my-assistant", overrides);
+  vi.stubEnv(
+    "NEMOCLAW_MESSAGING_PLAN_B64",
+    Buffer.from(JSON.stringify(plan), "utf8").toString("base64"),
+  );
+  return plan;
+}
 
 function dockerfileWith(content: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-patch-test-"));
@@ -49,7 +60,7 @@ afterEach(() => {
   for (const dir of tmpRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
+  vi.unstubAllEnvs();
   delete process.env.NEMOCLAW_PROXY_HOST;
   delete process.env.NEMOCLAW_PROXY_PORT;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL;
@@ -188,7 +199,7 @@ describe("dockerfile patch helpers", () => {
     process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME = "nemoclaw-local";
     process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = "0.5";
     const messagingPlan = setMessagingPlanEnv({
-      channels: [messagingChannel("telegram")],
+      channels: [tgChannel()],
       buildSteps: [
         {
           channelId: "telegram",
@@ -689,7 +700,7 @@ describe("dockerfile patch helpers", () => {
 
   it("patches the staged Dockerfile with the manifest messaging plan", () => {
     const messagingPlan = setMessagingPlanEnv({
-      channels: [messagingChannel("discord"), messagingChannel("telegram")],
+      channels: [discordChannel(), tgChannel()],
       agentRender: [
         {
           channelId: "discord",
@@ -764,7 +775,7 @@ describe("dockerfile patch helpers", () => {
   });
 
   it("fails when a messaging plan exists but the staged Dockerfile has no manifest ARG", () => {
-    setMessagingPlanEnv({ channels: [messagingChannel("telegram")] });
+    setMessagingPlanEnv({ channels: [tgChannel()] });
     const dockerfilePath = dockerfileWith(
       [
         "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
