@@ -977,13 +977,19 @@ it.runIf(process.platform === "linux").each(["absent", "ansi", "reordered"] as c
     ]);
     expect(ptyRecordReceipt.record.schemaVersion).toBe(2);
     expect(ptyRecordReceipt.record.observationId).toMatch(/^[0-9a-f]{32}$/);
-    expect(ptyRecordReceipt.record.termios).toEqual({
+    expect(ptyRecordReceipt.record.termios).toMatchObject({
       errorCode: null,
-      requestId: null,
       signal: null,
-      state: "idle",
       status: null,
       stderr: "",
+    });
+    expect([
+      { state: "idle", requestId: null },
+      { state: "requested", requestId: expect.stringMatching(/^[0-9a-f]{32}$/) },
+      { state: "canonical", requestId: expect.stringMatching(/^[0-9a-f]{32}$/) },
+    ]).toContainEqual({
+      state: ptyRecordReceipt.record.termios.state,
+      requestId: ptyRecordReceipt.record.termios.requestId,
     });
     expect(ptyRecordReceipt.recordBytes).toBeLessThanOrEqual(1024);
     expect(ptyRecordReceipt.record.ttyPath).toMatch(/^\/dev\/pts\/\d+$/);
