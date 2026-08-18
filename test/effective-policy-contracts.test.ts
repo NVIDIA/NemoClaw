@@ -45,7 +45,7 @@ const EXISTING_POLICY = YAML.stringify({
   network_policies: {
     existing: {
       name: "existing",
-      endpoints: [{ host: "existing.example", port: 443, access: "full", tls: "skip" }],
+      endpoints: [{ host: "existing.example", port: 8443, access: "full", tls: "skip" }],
     },
   },
 });
@@ -112,14 +112,15 @@ function expectInspectedWebSocket(endpoint: Endpoint): void {
 
 describe("effective built-in policy contracts", () => {
   it.each(["openclaw", "hermes"] as const)(
-    "composes every preset advertised for %s without replacing the existing policy",
+    "composes every preset advertised for %s while retaining existing non-web policy",
     (agent) => {
       const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
       const effective = composePresets(presetNames, agent);
 
-      expect(Object.keys(effective.network_policies ?? {}).length).toBeGreaterThan(
-        presetNames.length,
-      );
+      const policyKeys = Object.keys(effective.network_policies ?? {});
+      expect(policyKeys).toEqual(expect.arrayContaining(["existing", "personal_open_internet"]));
+      expect(policyKeys).not.toContain("npm_yarn");
+      expect(policyKeys).not.toContain("tavily");
     },
   );
 
@@ -133,7 +134,11 @@ describe("effective built-in policy contracts", () => {
         expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
         const endpoints = policy.endpoints ?? [];
         expect(endpoints.every((endpoint) => !methods(endpoint).includes("*"))).toBe(true);
-        expect(endpoints.filter(({ protocol }) => protocol === "rest").every((endpoint) => !Object.is(endpoint.tls, "terminate"))).toBe(true);
+        expect(
+          endpoints
+            .filter(({ protocol }) => protocol === "rest")
+            .every((endpoint) => !Object.is(endpoint.tls, "terminate")),
+        ).toBe(true);
       }
     },
   );
@@ -411,11 +416,14 @@ describe("effective built-in policy contracts", () => {
         (endpoint) => endpoint.host === "host.openshell.internal" && endpoint.port === 11436,
       );
       expect(JSON.stringify(broker), presetName).toContain(new URL(entry.envValue).pathname);
-      expect(vendorHosts.every((host) =>
+      expect(
+        vendorHosts.every((host) =>
           Object.is(
             (policy.endpoints ?? []).some((endpoint) => endpoint.host === host),
             false,
-          ))).toBe(true);
+          ),
+        ),
+      ).toBe(true);
       const browserHosts = (policy.endpoints ?? []).filter((endpoint) =>
         endpoint.host?.endsWith(".browser-use.com"),
       );

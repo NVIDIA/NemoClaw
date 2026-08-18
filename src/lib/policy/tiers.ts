@@ -19,6 +19,7 @@ import { ROOT } from "../runner";
 
 const TIERS_FILE = path.join(ROOT, "nemoclaw-blueprint", "policies", "tiers.yaml");
 export const PERSONAL_POLICY_TIER_NAME = "personal";
+export const PERSONAL_OPEN_INTERNET_PRESET_NAME = "personal-open-internet";
 const ALLOWED_ACCESS: ReadonlySet<string> = new Set(["read", "read-write"]);
 type TierAccess = "read" | "read-write";
 
