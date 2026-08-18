@@ -749,8 +749,9 @@ describe("onboard Model Router setup", () => {
           }),
           resolveProviderCredential: () => null,
           buildSubprocessEnv: () => ({}),
-          // The pre-spawn port guard calls isRouterHealthy without a timeout;
-          // only the startup poll passes one. Answer 2xx for the poll alone.
+          // The pre-spawn port guard calls isRouterHealthy without a timeout.
+          // Return true for timeout-bearing calls so a regression to the old
+          // boolean startup poll cannot accept zero healthy endpoints.
           isRouterHealthy: async (_port: number, timeoutMs) => timeoutMs !== undefined,
           getRouterHealthSnapshot: async () => ({ healthy: true, body: allUnhealthyBody }),
           sleep: async () => undefined,

@@ -469,7 +469,7 @@ export async function startModelRouter(
     );
     healthAttempts += 1;
     const pollSnapshot = await deps.getRouterHealthSnapshot(port, healthTimeoutMs);
-    const healthy = pollSnapshot.healthy && hasHealthyEndpoint(pollSnapshot.body);
+    const healthy = isRouterSnapshotReady(pollSnapshot);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
     if (!processAlive) {
@@ -485,7 +485,7 @@ export async function startModelRouter(
   const finalSnapshot: RouterHealthSnapshot = childExited
     ? { healthy: false, body: null }
     : await deps.getRouterHealthSnapshot(port, ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS);
-  if (finalSnapshot.healthy && hasHealthyEndpoint(finalSnapshot.body) && deps.isProcessAlive(pid)) {
+  if (isRouterSnapshotReady(finalSnapshot) && deps.isProcessAlive(pid)) {
     return pid;
   }
   try {
@@ -504,11 +504,11 @@ export async function startModelRouter(
   );
 }
 
-/** True when the parsed /health body names at least one healthy endpoint. */
-function hasHealthyEndpoint(body: string | null): boolean {
-  if (!body) return false;
+/** Router readiness: /health answered 2xx and names at least one healthy endpoint. */
+function isRouterSnapshotReady(snapshot: RouterHealthSnapshot): boolean {
+  if (!snapshot.healthy || !snapshot.body) return false;
   try {
-    const parsed = JSON.parse(body) as { healthy_endpoints?: readonly unknown[] };
+    const parsed = JSON.parse(snapshot.body) as { healthy_endpoints?: readonly unknown[] };
     return Array.isArray(parsed?.healthy_endpoints) && parsed.healthy_endpoints.length > 0;
   } catch {
     return false;
