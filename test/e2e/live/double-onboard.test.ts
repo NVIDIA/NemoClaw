@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runAttemptsUntil } from "../fixtures/attempt-sequence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -447,9 +446,7 @@ async function prerequisiteOrSkip(
   skip(message);
 }
 
-test(
-  "double-onboard: reuses gateway, preserves sibling sandbox, and recovers stale registry",
-  {
+test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers stale registry", {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -463,21 +460,14 @@ test(
       "remove double-onboard resources",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
   ).toBe(true);
 
   await prerequisiteOrSkip(host, skip, "docker", ["info"], "prereq-docker-info");
-    await prerequisiteOrSkip(
-      host,
-      skip,
-      "bash",
-      ["-lc", "command -v openshell"],
-      "prereq-openshell",
-    );
+  await prerequisiteOrSkip(host, skip, "bash", ["-lc", "command -v openshell"], "prereq-openshell");
   await prerequisiteOrSkip(
     host,
     skip,
@@ -690,16 +680,15 @@ test(
     timeoutMs: 30_000,
   });
   let probe: ShellProbeResult | undefined;
-    await runAttemptsUntil(PROBE_ATTEMPTS, async (attempt) => {
+  for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt += 1) {
     probe = await runProbeOnlyConnect(
       host,
       SANDBOX_B,
       `phase-4-probe-connect-sandbox-b-attempt-${attempt}`,
     );
-      if (probe.exitCode === 0 && !probe.timedOut) return true;
+    if (probe.exitCode === 0 && !probe.timedOut) break;
     if (attempt < PROBE_ATTEMPTS) await sleep(PROBE_DELAY_MS);
-      return false;
-    });
+  }
   expect(probe?.exitCode, probe ? resultText(probe) : "probe did not run").toBe(0);
   expect(probe?.timedOut, probe ? resultText(probe) : "probe did not run").toBe(false);
 
@@ -853,9 +842,7 @@ test(
   expect(postStopText).toMatch(
     /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart/,
   );
-    expect(registryHas(SANDBOX_B), "gateway-stop status removed sandbox B registry entry").toBe(
-      true,
-    );
+  expect(registryHas(SANDBOX_B), "gateway-stop status removed sandbox B registry entry").toBe(true);
 
   progress.phase("remove double-onboard resources");
   // Phase 7: final cleanup with explicit assertions.
@@ -905,5 +892,4 @@ test(
         ),
     },
   });
-  },
-);
+});

@@ -57,7 +57,7 @@ describe("sandbox create intent machine boundary", () => {
     ];
     const resolvedIntents: unknown[] = [];
 
-    await forEachFixtureSequentially(variants, async (variant) => {
+    for (const variant of variants) {
       const session = createSession({ sandboxName: "same-sandbox" });
       const { deps, calls } = createDeps();
       calls.setupMessaging.mockResolvedValue(["telegram"]);
@@ -111,7 +111,7 @@ describe("sandbox create intent machine boundary", () => {
         model: "model",
       });
       expect(session).not.toHaveProperty("resolved");
-    });
+    }
 
     expect(resolvedIntents[1]).toEqual(resolvedIntents[0]);
     expect(resolvedIntents[2]).toEqual(resolvedIntents[0]);
@@ -560,10 +560,3 @@ describe("sandbox create intent machine boundary", () => {
     expect(serializedSession).not.toContain('"resourceCreateArgs"');
   });
 });
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}

@@ -361,7 +361,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       ["M4", "DISCORD_BOT_TOKEN", state.tokens.discord],
       ["M-W3", "WECHAT_BOT_TOKEN", state.tokens.wechat],
     ];
-    await forEachFixtureSequentially(placeholderChecks, async ([assertionId, key, token]) => {
+    for (const [assertionId, key, token] of placeholderChecks) {
       const value = await sandboxOutput(
         sandbox,
         `printenv ${key} 2>/dev/null || true`,
@@ -384,7 +384,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
           `${assertionId}: ${key} uses OpenShell resolve placeholder`,
         );
       }
-    });
+    }
 
     const leakChecks: Array<[string, string, string]> = [
       ["M5a/M5b/M5c", "Telegram", state.tokens.telegram],
@@ -395,10 +395,8 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       ["X6", "extra Telegram", state.tokens.extraTelegramA],
       ["X7", "refused GITHUB_TOKEN", state.tokens.extraGithub],
     ];
-    await forEachFixtureSequentially(leakChecks, async ([assertionId, label, token]) => {
-      await forEachFixtureSequentially(
-        ["env", "process", "filesystem"] as const,
-        async (surface) => {
+    for (const [assertionId, label, token] of leakChecks) {
+      for (const surface of ["env", "process", "filesystem"] as const) {
         const probe = await rawTokenSurfaceProbe(
           sandbox,
           token,
@@ -410,9 +408,8 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
           probe === "ABSENT",
           `${assertionId}: raw ${label} token absent from sandbox ${surface} (${probe.slice(0, 160)})`,
         );
-        },
-      );
-    });
+      }
+    }
 
     const extraA = await sandboxOutput(
       sandbox,
@@ -450,14 +447,12 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
 
     const config = await readOpenClawConfig(sandbox, redactionValues);
-    (
-      [
+    ([
       ["M6a", "telegram", "telegram"],
       ["M6b", "discord", "discord"],
       ["M6c", "slack", "slack"],
       ["M6d", "whatsapp", "whatsapp"],
-      ] as const
-    ).forEach(([assertionId, channel, plugin]) => {
+    ] as const).forEach(([assertionId, channel, plugin]) => {
       check(channelEnabled(config, channel), `${assertionId}: channels.${channel}.enabled is true`);
       check(
         pluginEnabled(config, plugin),
@@ -587,13 +582,11 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const parsedRuntime = JSON.parse(runtimeChannels) as {
       chat?: Record<string, { installed?: unknown; origin?: unknown; accounts?: unknown }>;
     };
-    (
-      [
+    ([
       ["M6e", "telegram", "default"],
       ["M6f", "discord", "default"],
       ["M6g", "slack", "default"],
-      ] as const
-    ).forEach(([assertionId, channel, accountId]) => {
+    ] as const).forEach(([assertionId, channel, accountId]) => {
       const entry = parsedRuntime.chat?.[channel];
       check(
         entry?.installed === true &&
@@ -1179,10 +1172,3 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
     }
   },
 );
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}

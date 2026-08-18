@@ -41,13 +41,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function forEachAttemptSequentially(
-  attempts: number,
-  action: (attempt: number) => Promise<void>,
-): Promise<void> {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) await action(attempt);
-}
-
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
@@ -559,7 +552,7 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   expect(gatewayProcessEvidence(afterEvidence, gatewayB)).toBeUndefined();
 
   const survivorPhases: string[] = [];
-  await forEachAttemptSequentially(POST_UNINSTALL_HEALTH_PROBES, async (probe) => {
+  for (let probe = 1; probe <= POST_UNINSTALL_HEALTH_PROBES; probe += 1) {
     survivorPhases.push(
       await waitForSandboxReady(
         sandbox,
@@ -598,7 +591,7 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
     expect(dashboardProbe.exitCode, resultText(dashboardProbe)).toBe(0);
     expect(dashboardProbe.stdout.trim()).toMatch(/^[23][0-9]{2}$/);
     await (probe < POST_UNINSTALL_HEALTH_PROBES ? sleep(PROBE_DELAY_MS) : Promise.resolve());
-  });
+  }
   await expectPortNotListening(host, GATEWAY_PORT_B, "phase-4-gateway-port-b-stopped");
 
   const listAAfterUninstallB = await command(host, ["list"], {

@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN } from "../../../src/lib/inference/https-pin-runtime.ts";
 import { REGISTRY_FILE, type SandboxEntry } from "../../../src/lib/state/registry.ts";
-import { forEachFixtureSequentially } from "../fixtures/attempt-sequence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
@@ -1251,12 +1250,10 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
   const userinfoEndpoint = new URL(endpointUrl);
   userinfoEndpoint.username = "e2e-user";
   userinfoEndpoint.password = apiKey;
-  await forEachFixtureSequentially(
-    [
-      ["userinfo", userinfoEndpoint.toString()],
-      ["query", `${endpointUrl}?api_key=${encodeURIComponent(apiKey)}`],
-    ] as const,
-    async ([shape, credentialEndpoint]) => {
+  for (const [shape, credentialEndpoint] of [
+    ["userinfo", userinfoEndpoint.toString()],
+    ["query", `${endpointUrl}?api_key=${encodeURIComponent(apiKey)}`],
+  ] as const) {
     const rejected = await runNemoclawCli(
       [
         "inference",
@@ -1289,8 +1286,7 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
     const unchangedRegistry = fs.readFileSync(REGISTRY_FILE, "utf8");
     expect(unchangedRegistry).not.toContain(apiKey);
     expect(unchangedRegistry).not.toContain(endpointHostname);
-    },
-  );
+  }
 
   progress.phase("switch to the DNS-backed HTTPS endpoint");
   const inferenceSet = await runNemoclawCli(

@@ -200,9 +200,7 @@ describe("Deep Agents OTLP trace contract", () => {
     ).toThrow(/forbidden OTLP attribute key __proto__/);
 
     let nested: OtlpAttributeValue = "leaf";
-    repeatFixtureAction(18, () => {
-      nested = [nested];
-    });
+    for (let depth = 0; depth < 18; depth += 1) nested = [nested];
     expect(() =>
       decodeExportTraceServiceRequest(
         traceRequest([{ name: "deep attribute", attributes: { nested } }]),
@@ -492,7 +490,3 @@ describe("bounded private OTLP capture server", () => {
     }
   });
 });
-
-function repeatFixtureAction(count: number, action: (index: number) => void): void {
-  for (let index = 0; index < count; index += 1) action(index);
-}

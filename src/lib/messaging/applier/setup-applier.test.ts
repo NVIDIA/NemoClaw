@@ -205,7 +205,7 @@ describe("MessagingSetupApplier", () => {
       });
       let lifecyclePlan = onboardPlan;
 
-      await forEachFixtureSequentially(E2E_STOP_START_CHANNELS, async (channelId) => {
+      for (const channelId of E2E_STOP_START_CHANNELS) {
         const stopped = await lifecyclePlanner.buildChannelStopPlanFromSandboxEntry({
           sandboxName: "demo",
           agent: "hermes",
@@ -222,9 +222,9 @@ describe("MessagingSetupApplier", () => {
         });
         expect(stopped).not.toBeNull();
         lifecyclePlan = stopped!;
-      });
+      }
 
-      await forEachFixtureSequentially(E2E_STOP_START_CHANNELS, async (channelId) => {
+      for (const channelId of E2E_STOP_START_CHANNELS) {
         const started = await lifecyclePlanner.buildChannelStartPlanFromSandboxEntry({
           sandboxName: "demo",
           agent: "hermes",
@@ -241,7 +241,7 @@ describe("MessagingSetupApplier", () => {
         });
         expect(started).not.toBeNull();
         lifecyclePlan = started!;
-      });
+      }
 
       expect(lifecyclePlan.disabledChannels).toEqual([]);
       const { workflow: onboardWorkflow, ...onboardImageBuildPlan } = onboardPlan;
@@ -361,7 +361,7 @@ describe("MessagingSetupApplier", () => {
       ),
     ];
 
-    await forEachFixtureSequentially(plans, async (plan) => {
+    for (const plan of plans) {
       const request = MessagingSetupApplier.listPreEnableChecks(plan)[0];
       expect(request?.onFailure).toBe("abort");
       await expect(
@@ -375,7 +375,7 @@ describe("MessagingSetupApplier", () => {
         channelId: request?.channelId,
         onFailure: "abort",
       });
-    });
+    }
   });
 
   it("upserts OpenShell generic providers from plan credential bindings", async () => {
@@ -876,7 +876,7 @@ describe("MessagingSetupApplier", () => {
       JSON.parse('{"safe":{"__proto__":{"polluted":true}}}'),
     ];
 
-    await forEachFixtureSequentially(unsafeMerges, async (unsafeMerge) => {
+    for (const unsafeMerge of unsafeMerges) {
       await expect(
         MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
           runOpenshell,
@@ -893,7 +893,7 @@ describe("MessagingSetupApplier", () => {
           }),
         }),
       ).rejects.toThrow("unsafe object key '__proto__'");
-    });
+    }
     expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
   });
 
@@ -1080,10 +1080,3 @@ describe("MessagingSetupApplier", () => {
     });
   });
 });
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}

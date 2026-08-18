@@ -1020,12 +1020,10 @@ describe("sandbox build context staging", () => {
       const hermesBuild = createAgentSandbox(hermesAgent, { rootDir: repoRoot });
 
       try {
-        (
-          [
+        ([
           ["openclaw", stageOptimizedSandboxBuildContext(repoRoot, tmpDir)],
           ["hermes", hermesBuild],
-          ] as const
-        ).forEach(([name, staged]) => {
+        ] as const).forEach(([name, staged]) => {
           const { buildCtx, stagedDockerfile } = staged;
           expect(fs.readFileSync(stagedDockerfile, "utf8")).toContain(
             REVIEWED_RUNTIME_LICENSE_COPY,
@@ -1040,8 +1038,7 @@ describe("sandbox build context staging", () => {
           );
           expect(build.status, [build.stdout, build.stderr].join("\n")).toBe(0);
 
-          (
-            [
+          for (const [sourceRelativePath, outputRelativePath] of [
             [
               path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
               path.join("opt", "mcp-tool-discovery-runtime", "dist", "BUNDLED_PACKAGES.json"),
@@ -1058,12 +1055,11 @@ describe("sandbox build context staging", () => {
               "managed-startup-image-runtime.bundle",
               path.join("out", "managed-startup-image-runtime.cjs"),
             ],
-            ] as const
-          ).forEach(([sourceRelativePath, outputRelativePath]) => {
+          ] as const) {
             expect(fs.readFileSync(path.join(output, outputRelativePath))).toEqual(
               fs.readFileSync(path.join(reviewedRuntimeSource, sourceRelativePath)),
             );
-          });
+          }
         });
       } finally {
         fs.rmSync(hermesBuild.buildCtx, { recursive: true, force: true });

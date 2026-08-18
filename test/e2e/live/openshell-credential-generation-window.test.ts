@@ -321,9 +321,7 @@ async function runFreshRequest(
   }>(result.stdout);
 }
 
-test(
-  "openshell-credential-generation-window",
-  {
+test("openshell-credential-generation-window", {
   timeout: 60 * 60_000,
   meta: {
     e2ePhases: [
@@ -337,8 +335,7 @@ test(
       "remove the MCP bridge and audit denied requests",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, sandbox }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox }) => {
   expect(process.env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF).toBe("1");
   expect(CREDENTIAL_WINDOW_ROTATION_COUNT).toBeGreaterThan(
     OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
@@ -436,8 +433,7 @@ test(
     timeoutMs: 60_000,
   });
   expectExitZero(status, "inspect credential-window MCP bridge");
-    const providerName = (JSON.parse(status.stdout) as { provider: { name: string } }).provider
-      .name;
+  const providerName = (JSON.parse(status.stdout) as { provider: { name: string } }).provider.name;
   expect(providerName).toMatch(/^e2e-cred-window-mcp-fake-[a-f0-9]{16}$/u);
 
   const originalRevision = await observeFreshRevision(
@@ -629,12 +625,12 @@ test(
   try {
     oldChildRevision = await waitForReadyRevision(sandbox);
     expect(oldChildRevision).toBe(restoredRevision);
-      await forEachFixtureSequentially(rotationSecrets.entries(), async ([index, secret]) => {
+    for (const [index, secret] of rotationSecrets.entries()) {
       await rotateCredential(host, fakeMcp, secret, index + 1, allSecrets);
       observedRevisions.push(
         await observeFreshRevision(sandbox, `credential-window-fresh-revision-${index + 1}`),
       );
-      });
+    }
     expect(new Set(observedRevisions).size).toBe(CREDENTIAL_WINDOW_ROTATION_COUNT + 1);
     const currentRevision = observedRevisions.at(-1)!;
     expect(currentRevision).not.toBe(oldChildRevision);
@@ -654,11 +650,7 @@ test(
       CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
       "credential-window-signal-fallback-after-eviction",
     );
-      await waitForAcknowledgement(
-        sandbox,
-        CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
-        "allowed",
-      );
+    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction, "allowed");
     await expect
       .poll(
         () =>
@@ -715,11 +707,7 @@ test(
       CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
       "credential-window-signal-after-key-removal",
     );
-      await waitForAcknowledgement(
-        sandbox,
-        CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
-        "denied",
-      );
+    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval, "denied");
     expect(
       requestEvidence(
         fakeMcp,
@@ -808,11 +796,7 @@ test(
       CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
       "credential-window-signal-fallback-after-restart",
     );
-      await waitForAcknowledgement(
-        sandbox,
-        CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
-        "allowed",
-      );
+    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart, "allowed");
     await expect
       .poll(
         () =>
@@ -944,12 +928,4 @@ test(
     restartedRevision,
     rotations: CREDENTIAL_WINDOW_ROTATION_COUNT,
   });
-  },
-);
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}
+});

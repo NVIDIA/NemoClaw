@@ -192,9 +192,7 @@ async function assertSandboxProcessTableDoesNotExposeSecret(
   expect(result.stdout.trim(), resultText(result)).toBe("SECRET_ABSENT");
 }
 
-test(
-  "Telegram bridge-style message handling treats shell metacharacters as data",
-  {
+test("Telegram bridge-style message handling treats shell metacharacters as data", {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -205,8 +203,7 @@ test(
       "confirm benign message passthrough",
     ],
   },
-  },
-  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = phase6Env({
     sandboxName: SANDBOX_NAME,
@@ -252,17 +249,10 @@ test(
     "NVIDIA endpoint validation was rate-limited before Telegram injection assertions ran",
   );
   expectExitZero(install, "install.sh --non-interactive");
-    await expectSandboxReady(
-      host,
-      SANDBOX_NAME,
-      env,
-      redactions,
-      "sandbox-list-telegram-injection",
-    );
+  await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-telegram-injection");
 
   progress.phase("exercise command-substitution payloads");
-    await forEachFixtureSequentially(
-      [
+  for (const [label, marker, payload] of [
     [
       "command-substitution",
       "/tmp/injection-proof-t1",
@@ -274,8 +264,7 @@ test(
       "/tmp/injection-proof-t3",
       "'; touch /tmp/injection-proof-t3; echo '",
     ],
-      ] as const,
-      async ([label, marker, payload]) => {
+  ] as const) {
     await sandboxSh(sandbox, SANDBOX_NAME, `rm -f ${shellQuote(marker)}`, {
       artifactName: `remove-${label}-marker`,
       redactionValues: redactions,
@@ -324,8 +313,7 @@ test(
     );
     expectExitZero(sshMarkerCheck, `check ${label} ssh marker`);
     expect(sshMarkerCheck.stdout.trim(), resultText(sshMarkerCheck)).toBe("SAFE");
-      },
-    );
+  }
 
   progress.phase("check parameter and process-table secret boundaries");
   await assertParameterPayloadStaysLiteral(host, env, redactions);
@@ -343,7 +331,7 @@ test(
     "../etc/passwd",
     "UPPERCASE",
   ];
-    await forEachFixtureSequentially(invalidNames, async (invalidName) => {
+  for (const invalidName of invalidNames) {
     const validation = await host.command(
       "node",
       [
@@ -361,7 +349,7 @@ test(
     );
     expectExitZero(validation, `validateName ${invalidName}`);
     expect(validation.stdout, invalidName).toContain("REJECTED");
-    });
+  }
 
   progress.phase("confirm benign message passthrough");
   const normal = await sendPayloadViaSandboxStdin(
@@ -394,12 +382,4 @@ test(
       timeoutMs: 60_000,
     }),
   );
-  },
-);
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}
+});

@@ -140,19 +140,18 @@ test(
     const openshellBin = executableOnPath("openshell");
     const gatewayBin = executableOnPath("openshell-gateway");
     const sandboxBin = executableOnPath("openshell-sandbox");
-    await forEachFixtureSequentially([openshellBin, gatewayBin, sandboxBin], async (component) => {
+    for (const component of [openshellBin, gatewayBin, sandboxBin]) {
       expect(
         await runCommand(shellProbe, component, ["--version"], {
           artifactName: `podman-lifecycle-version-${path.basename(component)}`,
         }),
       ).toContain(OPENSHELL_VERSION);
-    });
+    }
 
     const uid = process.getuid?.() ?? -1;
-    expect(
-      uid,
-      "Rootless portable lifecycle evidence requires a non-root Linux UID",
-    ).toBeGreaterThan(0);
+    expect(uid, "Rootless portable lifecycle evidence requires a non-root Linux UID").toBeGreaterThan(
+      0,
+    );
     const runtimeAuthority = {
       schemaVersion: 1,
       kind: "podman",
@@ -197,7 +196,7 @@ exit 1
       ["--user", "stop", "podman.service", "podman.socket"],
       { artifactName: "podman-lifecycle-stop-user-units", timeoutMs: 10_000 },
     );
-    await forEachFixtureSequentially(["podman.service", "podman.socket"], async (unit) => {
+    for (const unit of ["podman.service", "podman.socket"]) {
       expect(
         await runCommand(shellProbe, "systemctl", ["--user", "is-active", unit], {
           allowFailure: true,
@@ -205,7 +204,7 @@ exit 1
           timeoutMs: 10_000,
         }),
       ).not.toBe("active");
-    });
+    }
     const coldReadiness = inspectPortablePodmanReadiness(runtimeAuthority);
     expect(coldReadiness).toMatchObject({ ok: true, timing: { mode: "cold" } });
     const warmReadiness = inspectPortablePodmanReadiness(runtimeAuthority);
@@ -258,7 +257,7 @@ exit 1
       );
 
       progress.phase("activate registered-agent identities through the pinned OpenShell CLI");
-      await forEachFixtureSequentially(AGENTS, async ({ agent, sandboxName }) => {
+      for (const { agent, sandboxName } of AGENTS) {
         // Record the exact proof-owned name before creation so cleanup also
         // covers a sandbox that reaches OpenShell's Error phase.
         createdSandboxes.push(sandboxName);
@@ -317,7 +316,7 @@ exit 1
         ).toBe(agent);
         const activated = inspectContainer(runtimeEngines.sandboxLifecycle, sandboxName);
         expect(activated.State).toMatchObject({ Paused: false, Running: true, Status: "running" });
-      });
+      }
 
       expect(
         await runCommand(
@@ -388,7 +387,7 @@ exit 1
       });
 
       progress.phase("exercise exact-container stop and start");
-      await forEachFixtureSequentially(AGENTS, async ({ agent, sandboxName }) => {
+      for (const { agent, sandboxName } of AGENTS) {
         const agentEngines = engines();
         const agentBundle = createPodmanRuntimeProviderBundle({ engines: agentEngines });
         const lifecycle = supportedLifecycle(agentBundle);
@@ -429,7 +428,7 @@ exit 1
         });
         const final = inspectContainer(agentEngines.sandboxLifecycle, sandboxName, initial.Id);
         expect(final.State).toMatchObject({ Paused: false, Running: false, Status: "exited" });
-      });
+      }
       progress.phase("record successful final at-rest state");
       completed = true;
     } finally {
@@ -447,10 +446,3 @@ exit 1
     }
   },
 );
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}

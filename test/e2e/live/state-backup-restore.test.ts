@@ -125,9 +125,7 @@ async function destroySandboxUntilAbsent(
   );
 }
 
-test(
-  "state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)",
-  {
+test("state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)", {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -140,8 +138,7 @@ test(
       "validate restored workspace and memory",
     ],
   },
-  },
-  async ({
+}, async ({
   artifacts,
   cleanup,
   environment,
@@ -271,7 +268,7 @@ test(
     expected: `${markerContent}_daily`,
   });
 
-    await forEachFixtureSequentially(expectations, async (expectation) => {
+  for (const expectation of expectations) {
     await stateValidation.writeMarkerFile(
       instance,
       path.posix.join(WORKSPACE_PATH, expectation.relativePath),
@@ -282,7 +279,7 @@ test(
         timeoutMs: 60_000,
       },
     );
-    });
+  }
   await artifacts.writeJson("phase-1-marker-summary.json", {
     workspaceFilesWritten: WORKSPACE_FILES.length,
     memoryFilesWritten: 1,
@@ -397,7 +394,7 @@ test(
   progress.phase("validate restored workspace and memory");
   let restoredFiles = 0;
   const mismatches: Array<{ file: string; actual: string }> = [];
-    await forEachFixtureSequentially(WORKSPACE_FILES, async (file) => {
+  for (const file of WORKSPACE_FILES) {
     const remotePath = path.posix.join(WORKSPACE_PATH, file);
     const read = await sandbox.exec(
       SANDBOX_NAME,
@@ -414,7 +411,7 @@ test(
     } else {
       mismatches.push({ file, actual: resultText(read).slice(0, 200) });
     }
-    });
+  }
   await artifacts.writeJson("phase-6-files-restore-summary.json", {
     restoredFiles,
     expectedFiles: WORKSPACE_FILES.length,
@@ -448,12 +445,4 @@ test(
   }
   expect(memoryText).toContain("STATE=EXISTS");
   expect(memoryText).toContain(`${markerContent}_daily`);
-  },
-);
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}
+});

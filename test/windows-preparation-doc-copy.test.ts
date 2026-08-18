@@ -84,11 +84,11 @@ describe("Windows preparation docs copyable commands", () => {
     ];
 
     const content = fs.readFileSync(source, "utf8");
-    oldGuidance.forEach((pattern) => {
+    for (const pattern of oldGuidance) {
       expect(
         content,
         `${path.relative(repoRoot, source)} still contains old prompt-prefix guidance`,
       ).not.toMatch(pattern);
-    });
+    }
   });
 });

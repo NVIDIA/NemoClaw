@@ -383,9 +383,9 @@ describe("PR merge conflict fixer", () => {
 
   it("creates a verified commit from a main-relative tree before the atomic head update (#7542)", async () => {
     const fixture = createConflictFixture();
-    repeatFixtureAction(100, (index) => {
+    for (let index = 0; index < 100; index += 1) {
       write(fixture.repository, `stale-main/${index}.txt`, `main ${index}\n`);
-    });
+    }
     git(fixture.repository, ["add", "stale-main"]);
     git(fixture.repository, ["commit", "-m", "test: advance main beyond the PR head"]);
     fixture.baseSha = git(fixture.repository, ["rev-parse", "HEAD"]);
@@ -679,7 +679,3 @@ describe("PR merge conflict fixer", () => {
     expect(resolverPrompt()).toContain("Stage every resolved conflict with Git.");
   });
 });
-
-function repeatFixtureAction(count: number, action: (index: number) => void): void {
-  for (let index = 0; index < count; index += 1) action(index);
-}

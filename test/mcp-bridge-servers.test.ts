@@ -413,9 +413,9 @@ describe("authenticated MCP live fixtures", () => {
       },
     };
 
-    await forEachFixtureSequentially(
-      MCP_BRIDGE_ALLOWED_METHODS.filter((method) => method.startsWith("notifications/")),
-      async (rpcMethod) => {
+    for (const rpcMethod of MCP_BRIDGE_ALLOWED_METHODS.filter((method) =>
+      method.startsWith("notifications/"),
+    )) {
       const params = paramsByMethod[rpcMethod];
       const response = await request("POST", {
         jsonrpc: "2.0",
@@ -427,12 +427,11 @@ describe("authenticated MCP live fixtures", () => {
         status: 202,
         body: "",
       });
-      },
-    );
+    }
 
-    await forEachFixtureSequentially(
-      MCP_BRIDGE_ALLOWED_METHODS.filter((method) => !method.startsWith("notifications/")).entries(),
-      async ([index, rpcMethod]) => {
+    for (const [index, rpcMethod] of MCP_BRIDGE_ALLOWED_METHODS.filter(
+      (method) => !method.startsWith("notifications/"),
+    ).entries()) {
       const id = index + 1;
       const params = paramsByMethod[rpcMethod];
       const response = await request("POST", {
@@ -449,8 +448,7 @@ describe("authenticated MCP live fixtures", () => {
       });
       expect(JSON.parse(response.body), rpcMethod).not.toHaveProperty("error");
       expect(JSON.parse(response.body), rpcMethod).toHaveProperty("result");
-      },
-    );
+    }
 
     expect(
       server.requests.every(
@@ -826,10 +824,3 @@ describe("authenticated MCP live fixtures", () => {
     });
   });
 });
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}

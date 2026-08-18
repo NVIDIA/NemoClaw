@@ -1062,9 +1062,9 @@ describe("state-dir-guard", () => {
     const { configDir } = fixture();
     const pluginsDir = path.join(configDir, "plugins");
     fs.mkdirSync(pluginsDir);
-    [0, 1, 2, 3, 4].forEach((index) => {
+    for (let index = 0; index < 5; index += 1) {
       fs.writeFileSync(path.join(pluginsDir, `entry-${index}.txt`), "payload\n");
-    });
+    }
 
     const result = runGuard("preflight", configDir, {
       NEMOCLAW_TEST_MAX_ENTRIES: "3",
@@ -1087,9 +1087,9 @@ describe("state-dir-guard", () => {
       const pluginsDir = path.join(configDir, "plugins");
       const pluginPath = path.join(pluginsDir, "entry-0.txt");
       fs.mkdirSync(pluginsDir);
-      [0, 1, 2, 3, 4].forEach((index) => {
+      for (let index = 0; index < 5; index += 1) {
         fs.writeFileSync(path.join(pluginsDir, `entry-${index}.txt`), "payload\n");
-      });
+      }
       const staleFd = fs.openSync(pluginPath, "r+");
 
       try {
@@ -1179,9 +1179,9 @@ describe("state-dir-guard", () => {
 
   it("charges empty workspace roots against the same bounded inventory", () => {
     const { configDir } = fixture();
-    [0, 1, 2, 3, 4].forEach((index) => {
+    for (let index = 0; index < 5; index += 1) {
       fs.mkdirSync(path.join(configDir, `workspace-${index}`));
-    });
+    }
 
     const result = runGuard("preflight", configDir, {
       NEMOCLAW_TEST_MAX_ENTRIES: "3",

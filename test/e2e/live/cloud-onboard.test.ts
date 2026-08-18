@@ -82,9 +82,7 @@ function publicInstallRef(): string {
   return process.env.NEMOCLAW_PUBLIC_INSTALL_REF || process.env.GITHUB_SHA || "main";
 }
 
-test(
-  "cloud onboard: public installer creates healthy sandbox with security checks",
-  {
+test("cloud onboard: public installer creates healthy sandbox with security checks", {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -99,8 +97,7 @@ test(
       "remove cloud sandbox",
     ],
   },
-  },
-  async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
+}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
   const ref = publicInstallRef();
   const installUrl =
@@ -204,10 +201,9 @@ test(
   if (ref !== "main") expect(resultText(install)).toContain(`Resolved install ref: ${ref}`);
 
   progress.phase("verify migrated gateway credential");
-    expect(
-      fs.existsSync(legacyFile),
-      "successful onboard must remove legacy credentials.json",
-    ).toBe(false);
+  expect(fs.existsSync(legacyFile), "successful onboard must remove legacy credentials.json").toBe(
+    false,
+  );
   const providers = await host.command(
     "openshell",
     ["-g", "nemoclaw", "provider", "list", "--names"],
@@ -313,7 +309,7 @@ test(
     .filter((name) => name.endsWith(".sh"))
     .sort();
   expect(checkScripts.length).toBeGreaterThan(0);
-    await forEachFixtureSequentially(checkScripts, async (scriptName) => {
+  for (const scriptName of checkScripts) {
     const result = await host.command("bash", [path.join(CHECKS_DIR, scriptName)], {
       artifactName: `phase-4-check-${scriptName.replace(/\.sh$/, "")}`,
       cwd: REPO_ROOT,
@@ -329,7 +325,7 @@ test(
       timeoutMs: 180_000,
     });
     expect(result.exitCode, `${scriptName}: ${resultText(result)}`).toBe(0);
-    });
+  }
 
   progress.phase("remove cloud sandbox");
   await cleanup(host, sandbox, { home: testHome, label: "final-cleanup", verify: true });
@@ -343,12 +339,4 @@ test(
         !providerNames.includes("OPENSHELL_GATEWAY") && !providerNames.includes("NODE_OPTIONS"),
     },
   });
-  },
-);
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}
+});

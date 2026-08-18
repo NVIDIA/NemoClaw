@@ -160,18 +160,20 @@ describe("managed-image failure diagnostic export", () => {
     const tooLarge = `raw-oversized-canary\n${"x".repeat(
       MANAGED_IMAGE_DIAGNOSTIC_EXPORT_LIMITS.maxSourceFileBytes,
     )}`;
-    repeatFixtureAction(MANAGED_IMAGE_DIAGNOSTIC_EXPORT_LIMITS.maxBundles + 2, (index) => {
+    for (let index = 0; index < MANAGED_IMAGE_DIAGNOSTIC_EXPORT_LIMITS.maxBundles + 2; index++) {
       const diagnosticBundle = bundle(
         sourceRoot,
         `2026-07-29T01-02-${String(index).padStart(2, "0")}-000Z-agent`,
       );
-      ["openshell-gateway-relevant.log", "openshell-gateway-tail.log", "summary.txt"].forEach(
-        (name) => {
+      [
+        "openshell-gateway-relevant.log",
+        "openshell-gateway-tail.log",
+        "summary.txt",
+      ].forEach((name) => {
         fs.writeFileSync(path.join(diagnosticBundle, name), largeButReadable);
-        },
-      );
+      });
       fs.writeFileSync(path.join(diagnosticBundle, "rootfs-console.log"), tooLarge);
-    });
+    }
 
     const result = exportManagedImageFailureDiagnostics({ outputRoot, sourceRoot });
     const outputFiles = fs
@@ -207,7 +209,3 @@ describe("managed-image failure diagnostic export", () => {
     expect(exported).not.toContain("raw-oversized-canary");
   });
 });
-
-function repeatFixtureAction(count: number, action: (index: number) => void): void {
-  for (let index = 0; index < count; index += 1) action(index);
-}

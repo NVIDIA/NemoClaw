@@ -150,11 +150,11 @@ describe("effective built-in policy contracts", () => {
     const publicReference = requireNetworkPolicy(effective, "public_reference");
 
     [pypi, weather, publicReference].forEach((policy) => {
-      (policy.endpoints ?? []).forEach((endpoint) => {
+      for (const endpoint of policy.endpoints ?? []) {
         expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
         expect(endpoint).not.toHaveProperty("access");
         expect(new Set(methods(endpoint))).toEqual(new Set(["GET", "HEAD"]));
-      });
+      }
     });
 
     expect((pypi.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
@@ -284,7 +284,11 @@ describe("effective built-in policy contracts", () => {
         requireEndpoint(teams, host).request_body_credential_rewrite,
       );
     });
-    ["login.microsoftonline.com", "outlook.office365.com", "outlook.office.com"].forEach((host) => {
+    [
+      "login.microsoftonline.com",
+      "outlook.office365.com",
+      "outlook.office.com",
+    ].forEach((host) => {
       expect(methods(requireEndpoint(outlook, host))).toEqual(["GET", "POST"]);
     });
 
@@ -549,11 +553,9 @@ describe("effective built-in policy contracts", () => {
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("tls");
     });
-    (brew.endpoints ?? [])
-      .filter(
+    (brew.endpoints ?? []).filter(
       (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
-      )
-      .forEach((endpoint) => {
+    ).forEach((endpoint) => {
       expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
     });
     expect((claude.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([

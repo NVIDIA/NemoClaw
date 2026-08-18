@@ -99,9 +99,9 @@ describe("E2E fixture primitives", () => {
       expect(fs.realpathSync(artifacts.rootDir)).toBe(
         fs.realpathSync(path.resolve(artifactParent, targetId)),
       );
-      await forEachFixtureSequentially(allowlistedFiles, async (file) => {
+      for (const file of allowlistedFiles) {
         await artifacts.writeJson(file, { targetId, file });
-      });
+      }
       const controller = new AbortController();
       const shellProbe = new ShellProbe({
         artifacts,
@@ -120,16 +120,10 @@ describe("E2E fixture primitives", () => {
 
       expect(shellResult.exitCode).toBe(0);
 
-      expect(
-        allowlistedFiles.every((file) =>
-          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
-        ),
-      ).toBe(true);
-      expect(
-        shellEvidenceFiles.every((file) =>
-          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
-        ),
-      ).toBe(true);
+      expect(allowlistedFiles.every((file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true))).toBe(true);
+      expect(shellEvidenceFiles.every((file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true))).toBe(true);
       expect(fs.existsSync(path.join(artifactParent, targetId, targetId, "run-plan.json"))).toBe(
         false,
       );
@@ -735,10 +729,3 @@ e2eTest(
     ).toBe(true);
   },
 );
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}

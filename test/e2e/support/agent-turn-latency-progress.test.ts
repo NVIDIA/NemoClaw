@@ -90,13 +90,13 @@ describe("live test progress", () => {
   });
 
   it("uses two install attempts when no count is configured", () => {
-      expect(turnLatencyInstallAttemptCount(undefined)).toBe(2);
+    expect(turnLatencyInstallAttemptCount(undefined)).toBe(2);
   });
 
   it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
     "accepts configured install attempt count %i",
     (expected) => {
-        expect(turnLatencyInstallAttemptCount(String(expected))).toBe(expected);
+      expect(turnLatencyInstallAttemptCount(String(expected))).toBe(expected);
     },
   );
 

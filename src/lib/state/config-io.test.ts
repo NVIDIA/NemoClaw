@@ -107,9 +107,9 @@ describe("config-io", () => {
     const original = '{"sandboxes":{"keep-me":{"name":"keep-me"}},}';
     fs.writeFileSync(file, original, { mode: 0o600 });
 
-    repeatFixtureAction(3, () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
       expect(() => readConfigFile(file, { ok: true })).toThrow(ConfigCorruptError);
-    });
+    }
 
     expect(fs.readFileSync(file, "utf-8")).toBe(original);
     expect(fs.readdirSync(dir)).toEqual(["config.json"]);
@@ -392,7 +392,3 @@ describe("config-io", () => {
     expect(legacy.message).toContain("Cannot write config file");
   });
 });
-
-function repeatFixtureAction(count: number, action: (index: number) => void): void {
-  for (let index = 0; index < count; index += 1) action(index);
-}

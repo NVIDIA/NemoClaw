@@ -53,10 +53,10 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       [...legacyReplacements].forEach(([name, replacements]) => {
         const file = path.join(dist, name);
         let source = fs.readFileSync(file, "utf8");
-        replacements.forEach(([current, legacy]) => {
+        for (const [current, legacy] of replacements) {
           expect(source).toContain(current);
           source = source.replace(current, legacy);
-        });
+        }
         fs.writeFileSync(file, source);
       });
 

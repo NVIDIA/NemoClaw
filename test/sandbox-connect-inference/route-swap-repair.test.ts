@@ -108,16 +108,16 @@ describe("sandbox connect inference route swap (#1248)", () => {
         );
       }
       expect(curlCalls.flat().join(" ")).not.toContain("Authorization: Bearer");
-      curlCalls.forEach((call, index) => {
+      for (const [index, call] of curlCalls.entries()) {
         const endpoint = call[call.length - 1];
         if (!endpoint.includes("127.0.0.1") && !endpoint.includes("localhost")) {
-          return;
+          continue;
         }
         const proxyBypass = `${curlEnvs[index]?.NO_PROXY || ""},${curlEnvs[index]?.no_proxy || ""}`;
         expect(proxyBypass).toContain("127.0.0.1");
         expect(proxyBypass).toContain("localhost");
         expect(curlEnvs[index]?.ALL_PROXY || "").toBe("");
-      });
+      }
     },
   );
 });

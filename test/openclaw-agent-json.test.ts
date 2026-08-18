@@ -175,9 +175,9 @@ describe("openclaw-agent-json.py", () => {
 
   it("bounds deep traversal of sandbox-controlled JSON", () => {
     let envelope: unknown = { payloads: [{ text: "too deep to trust" }] };
-    repeatFixtureAction(120, () => {
+    for (let index = 0; index < 120; index += 1) {
       envelope = { payload: envelope };
-    });
+    }
 
     const result = runHelper(JSON.stringify(envelope));
 
@@ -263,7 +263,3 @@ describe("openclaw-agent-json.py", () => {
     );
   });
 });
-
-function repeatFixtureAction(count: number, action: (index: number) => void): void {
-  for (let index = 0; index < count; index += 1) action(index);
-}

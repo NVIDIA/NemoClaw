@@ -24,12 +24,6 @@ function makeExitState(partial: Partial<ChildExitState> = {}): ChildExitState {
   } as ChildExitState;
 }
 
-function occupyAllGatewayArchivePaths(stateDir: string): void {
-  for (let suffix = 1; suffix <= 100; suffix += 1) {
-    fs.mkdirSync(`${stateDir}.incompatible${suffix === 1 ? "" : `-${suffix}`}`);
-  }
-}
-
 describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -367,7 +361,9 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     const stateDir = path.join(dir, "gateway");
     const log = path.join(stateDir, "openshell-gateway.log");
     fs.mkdirSync(stateDir);
-    occupyAllGatewayArchivePaths(stateDir);
+    for (let suffix = 1; suffix <= 100; suffix += 1) {
+      fs.mkdirSync(`${stateDir}.incompatible${suffix === 1 ? "" : `-${suffix}`}`);
+    }
     fs.writeFileSync(
       log,
       "migration 6 was previously applied and is missing in the resolved migrations\n",

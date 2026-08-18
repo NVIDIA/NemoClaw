@@ -51,15 +51,15 @@ describe("DGX Station documentation ownership", () => {
       return value as string;
     });
 
-    pinnedValues.forEach((version) => {
+    for (const version of pinnedValues) {
       expect(stationPreparation).toContain(version);
       expect(prerequisites).not.toContain(version);
       expect(quickstart).not.toContain(version);
-    });
-    ["7.2.0", "7.4.0", "7.5.0", "7.6.x"].forEach((version) => {
+    }
+    for (const version of ["7.2.0", "7.4.0", "7.5.0", "7.6.x"]) {
       expect(stationPreparation).toContain(version);
       expect(quickstart).not.toContain(version);
-    });
+    }
     expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain(
       "OTA-form qualification uses the latest `DGX_OTA_VERSION`",

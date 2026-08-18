@@ -87,6 +87,8 @@ function allEndpoints(policy: SandboxPolicy): Endpoint[] {
   return Object.values(policy.network_policies ?? {}).flatMap((entry) => entry.endpoints ?? []);
 }
 
+
+
 describe("effective sandbox policy behavior", () => {
   it("keeps default OpenClaw egress least-privilege after create-policy preparation", () => {
     const prepared = prepareInitialSandboxCreatePolicy(BASE_POLICY_PATH.pathname, [], {
@@ -103,8 +105,8 @@ describe("effective sandbox policy behavior", () => {
 
       expect(consumed.missingPresets).toEqual([]);
 
-      Object.entries(networkPolicies).forEach(([policyName, entry]) => {
-        (entry.endpoints ?? []).forEach((candidate) => {
+      for (const [policyName, entry] of Object.entries(networkPolicies)) {
+        for (const candidate of entry.endpoints ?? []) {
           expect(methods(candidate), `${policyName}:${candidate.host}`).not.toContain("*");
           if ((candidate.rules ?? []).length > 0) {
             expect(candidate, `${policyName}:${candidate.host}`).toMatchObject({
@@ -112,8 +114,8 @@ describe("effective sandbox policy behavior", () => {
               enforcement: "enforce",
             });
           }
-        });
-      });
+        }
+      }
 
       const nvidia = endpoint(policy, "nvidia", "integrate.api.nvidia.com");
       expect(nvidia.rules).toContainEqual({ allow: { method: "POST", path: "/v1/embeddings" } });
@@ -147,7 +149,7 @@ describe("effective sandbox policy behavior", () => {
       expect(JSON.stringify(networkPolicies)).not.toContain("/usr/local/bin/claude");
 
       const defaultHosts = new Set(allEndpoints(policy).map((candidate) => candidate.host));
-      [
+      for (const optInHost of [
         "github.com",
         "api.github.com",
         "sentry.io",
@@ -155,9 +157,9 @@ describe("effective sandbox policy behavior", () => {
         "discord.com",
         "gateway.discord.gg",
         "slack.com",
-      ].forEach((optInHost) => {
+      ]) {
         expect(defaultHosts, optInHost).not.toContain(optInHost);
-      });
+      }
     } finally {
       prepared.cleanup?.();
     }
@@ -233,9 +235,9 @@ describe("effective sandbox policy behavior", () => {
       expect(hosts).not.toContain("api.github.com");
 
       const pypi = policy.network_policies?.pypi;
-      (pypi?.endpoints ?? []).forEach((candidate) => {
+      for (const candidate of pypi?.endpoints ?? []) {
         expect(methods(candidate)).toEqual(["GET"]);
-      });
+      }
       expect(binaries(policy, "pypi")).toEqual(
         expect.arrayContaining([
           "/opt/hermes/.venv/bin/python",

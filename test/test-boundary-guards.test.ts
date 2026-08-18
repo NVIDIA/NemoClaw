@@ -654,13 +654,13 @@ describe("fast-project transitive import boundary", () => {
           ]);
         } finally {
           fs.rmSync(compiledFixtureRoot, { force: true, recursive: true });
-          parentsToRemove.forEach((parent) => {
+          for (const parent of parentsToRemove) {
             try {
               fs.rmdirSync(parent);
             } catch {
               // Another test or build may now own the generated parent.
             }
-          });
+          }
         }
       },
     );
@@ -735,11 +735,11 @@ describe("Vitest project membership boundary", () => {
     const excluded = ["src/helper.ts", "test/node_modules/dependency.spec.ts"];
 
     try {
-      [...included, ...excluded].forEach((file) => {
+      for (const file of [...included, ...excluded]) {
         const absolutePath = path.join(fixtureRoot, file);
         fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
         fs.writeFileSync(absolutePath, "");
-      });
+      }
 
       expect([...discoverVitestCandidates(fixtureRoot)]).toEqual(
         included.sort((left, right) => left.localeCompare(right)),

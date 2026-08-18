@@ -307,28 +307,18 @@ describe("DockerProbe secret hygiene", () => {
       },
     );
 
-    await forEachFixtureSequentially(diagnostics.keys(), async (artifactName) => {
+    for (const artifactName of diagnostics.keys()) {
       await probe.run(["fake-diagnostic", artifactName], { artifactName });
-    });
+    }
 
     let sequence = 0;
-    await forEachFixtureSequentially(diagnostics.keys(), async (artifactName) => {
+    for (const artifactName of diagnostics.keys()) {
       const artifactBase = `docker/${String(++sequence).padStart(3, "0")}-${artifactName}`;
-      await forEachFixtureSequentially(
-        ["stdout.txt", "stderr.txt", "result.json"],
-        async (suffix) => {
-          const artifact = await readArtifact(artifactsRoot, `${artifactBase}.${suffix}`);
-          expect(artifact, `${artifactBase}.${suffix}`).not.toContain(secret);
-          expect(artifact, `${artifactBase}.${suffix}`).toContain("[REDACTED]");
-        },
-      );
-    });
+      for (const suffix of ["stdout.txt", "stderr.txt", "result.json"]) {
+        const artifact = await readArtifact(artifactsRoot, `${artifactBase}.${suffix}`);
+        expect(artifact, `${artifactBase}.${suffix}`).not.toContain(secret);
+        expect(artifact, `${artifactBase}.${suffix}`).toContain("[REDACTED]");
+      }
+    }
   });
 });
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}

@@ -83,13 +83,13 @@ describe("shields-audit format", () => {
   });
 
   it("each line is valid JSON", () => {
-    repeatFixtureAction(5, (i) => {
+    for (let i = 0; i < 5; i++) {
       appendAuditEntry({
         action: "shields_down",
         sandbox: `sandbox-${i}`,
         timestamp: new Date().toISOString(),
       });
-    });
+    }
 
     const lines = fs.readFileSync(auditPath, "utf-8").trim().split("\n");
     expect(lines).toHaveLength(5);
@@ -162,9 +162,11 @@ describe("shields-audit production redaction", () => {
     expect(line).not.toContain("sk-abcdef");
   }
 
-  it.each(["shields_down", "shields_up", "shields_auto_restore"] as const)(
-    "strips nvapi-/sk-/Bearer secrets from the free-text reason of %s records",
-    async (action) => {
+  it.each([
+    "shields_down",
+    "shields_up",
+    "shields_auto_restore",
+  ] as const)("strips nvapi-/sk-/Bearer secrets from the free-text reason of %s records", async (action) => {
     const appendAuditEntry = await loadAppendAuditEntry();
     appendAuditEntry({
       action,
@@ -179,8 +181,7 @@ describe("shields-audit production redaction", () => {
     const entry = JSON.parse(line);
     expect(entry.action).toBe(action);
     expect(entry.sandbox).toBe("openclaw");
-    },
-  );
+  });
 
   it("strips secrets from the error field while preserving benign fields", async () => {
     const appendAuditEntry = await loadAppendAuditEntry();
@@ -202,7 +203,3 @@ describe("shields-audit production redaction", () => {
     expect(entry.action).toBe("shields_up_failed");
   });
 });
-
-function repeatFixtureAction(count: number, action: (index: number) => void): void {
-  for (let index = 0; index < count; index += 1) action(index);
-}

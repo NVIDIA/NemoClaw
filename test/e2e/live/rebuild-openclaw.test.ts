@@ -655,7 +655,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
 
     // Phase 4.5: apply policy presets through the public CLI, then verify both
     // registry persistence and the live OpenShell gateway policy.
-    await forEachFixtureSequentially(POLICY_PRESETS, async (preset) => {
+    for (const preset of POLICY_PRESETS) {
       const policyAdd = await host.command(
         "node",
         [CLI_ENTRYPOINT, "sandbox", "policy", "add", SANDBOX_NAME, preset, "--yes"],
@@ -667,7 +667,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
         },
       );
       expectExitZero(policyAdd, `policy add ${preset}`);
-    });
+    }
 
     const prePolicy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
       artifactName: "phase-4-live-policy-before-rebuild",
@@ -869,10 +869,3 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     );
   },
 );
-
-async function forEachFixtureSequentially<T>(
-  values: Iterable<T>,
-  action: (value: T) => Promise<void>,
-): Promise<void> {
-  for (const value of values) await action(value);
-}

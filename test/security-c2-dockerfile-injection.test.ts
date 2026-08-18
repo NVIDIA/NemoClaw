@@ -37,28 +37,6 @@ function fixedSource(): string {
   return "const chatUiUrl = process.env.CHAT_UI_URL; " + "console.log(JSON.stringify(chatUiUrl))";
 }
 
-function expectAuthEnvironmentBeforeConfigGenerator(source: string): void {
-  let promoted = false;
-  for (const instruction of dockerfileInstructions(source)) {
-    if (/^FROM\b/.test(instruction.text)) promoted = false;
-    if (
-      /^ENV\b/.test(instruction.text) &&
-      /NEMOCLAW_DISABLE_DEVICE_AUTH[=\s]/.test(instruction.text)
-    ) {
-      promoted = true;
-    }
-    if (
-      /^RUN\s+(?:NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0\s+)?(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/.test(
-        instruction.text,
-      )
-    ) {
-      expect(promoted).toBeTruthy();
-      return;
-    }
-  }
-  throw new Error("expected generate-openclaw-config RUN layer");
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // 1. PoC — vulnerable pattern allows code injection
 // ═══════════════════════════════════════════════════════════════════
@@ -145,6 +123,26 @@ describe("C-2 fix: env var pattern (process.env) is safe", () => {
 describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth defaults", () => {
   it("NEMOCLAW_DISABLE_DEVICE_AUTH is promoted to ENV before the config generator RUN layer", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    expectAuthEnvironmentBeforeConfigGenerator(src);
+    let promoted = false;
+    for (const instruction of dockerfileInstructions(src)) {
+      if (/^FROM\b/.test(instruction.text)) {
+        promoted = false;
+      }
+      if (
+        /^ENV\b/.test(instruction.text) &&
+        /NEMOCLAW_DISABLE_DEVICE_AUTH[=\s]/.test(instruction.text)
+      ) {
+        promoted = true;
+      }
+      if (
+        /^RUN\s+(?:NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0\s+)?(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/.test(
+          instruction.text,
+        )
+      ) {
+        expect(promoted).toBeTruthy();
+        return;
+      }
+    }
+    throw new Error("expected generate-openclaw-config RUN layer");
   });
 });
