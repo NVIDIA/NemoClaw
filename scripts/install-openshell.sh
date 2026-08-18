@@ -219,12 +219,15 @@ fi
 # assets, and GHCR manifests; NemoClaw owns which exact artifacts it trusts.
 # whyNotSourceFix: NemoClaw cannot retroactively make an upstream publication
 # immutable, so it independently pins every consumed archive and supervisor.
-# OpenShell 0.0.101 is the supported product cohort. OpenShell 0.0.106 is the
-# qualification-only cohort. The base-trusted verifier validates each complete
-# nine-asset release cohort independently against GitHub release metadata.
-# removalCondition: remove a cohort when its product support or qualification
-# ends, or replace it with an independently verified release cohort.
+# regressionTest: test/install-openshell-version-check.test.ts exercises all
+# nine mappings, and scripts/check-installer-hash.sh compares them with the
+# GitHub release API on every PR, main push, weekly run, and manual dispatch.
+# removalCondition: remove these entries only when NemoClaw drops that
+# supported release or replaces them with independently verified newer pins.
 openshell_pinned_sha256() {
+  # OpenShell 0.0.101 is the supported product cohort. OpenShell 0.0.106 is the
+  # qualification-only cohort. The base-trusted verifier validates each
+  # complete nine-asset release cohort independently.
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
     v0.0.101:openshell-x86_64-unknown-linux-musl.tar.gz)
