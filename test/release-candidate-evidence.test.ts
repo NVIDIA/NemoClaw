@@ -15,21 +15,21 @@ const evidencePath = path.join(
 );
 const evidence = fs.readFileSync(evidencePath, "utf8");
 
-function bashBlockUnder(heading: string): string {
-  const headingStart = evidence.indexOf(heading);
-  if (headingStart === -1) {
-    throw new Error(`candidate-evidence.md is missing ${heading}`);
-  }
-  const nextHeading = evidence.indexOf("\n## ", headingStart + heading.length);
-  const section = evidence.slice(headingStart, nextHeading === -1 ? undefined : nextHeading);
-  const block = /```bash\n([\s\S]*?)```/u.exec(section)?.[1];
-  if (!block) {
-    throw new Error(`candidate-evidence.md is missing a bash block under ${heading}`);
-  }
-  return block;
+function bashBlockUnder(source: string, heading: string): string {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const block = new RegExp(
+    `^${escapedHeading}\\n(?:(?!^## |^\`\`\`)[\\s\\S])*^\`\`\`bash\\n([\\s\\S]*?)^\`\`\`\\s*$`,
+    "mu",
+  ).exec(source)?.[1];
+  return (
+    block ??
+    (() => {
+      throw new Error(`candidate-evidence.md is missing a bash block under ${heading}`);
+    })()
+  );
 }
 
-const releaseEntryBlock = bashBlockUnder("## Release Entry and Pi Result");
+const releaseEntryBlock = bashBlockUnder(evidence, "## Release Entry and Pi Result");
 const temporaryDirectories: string[] = [];
 
 const shellHelpers = String.raw`
@@ -102,6 +102,16 @@ afterEach(() => {
 });
 
 describe("release candidate evidence commands", () => {
+  it("keeps shell headings inside the selected fenced block", () => {
+    const block = bashBlockUnder(
+      "## Owner\n\n```bash\necho before\n## shell comment\necho after\n```\n\n## Next\n",
+      "## Owner",
+    );
+
+    expect(block).toContain("## shell comment");
+    expect(block).toContain("echo after");
+  });
+
   it("extracts only the exact release H2 section from a multi-entry changelog", () => {
     const input = fixture({
       "docs/changelog/2026-08-17.mdx": [

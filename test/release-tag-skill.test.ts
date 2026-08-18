@@ -117,15 +117,23 @@ describe("release handoff summary", () => {
   it("uses exact range boundaries and renders Markdown QA context (#9234)", () => {
     const previous = "1".repeat(40);
     const candidate = "2".repeat(40);
+    const operationResults = new Map([
+      [`rev-parse ${candidate}^{commit}`, candidate],
+      [`merge-base ${previous} ${candidate}`, previous],
+      [`rev-list --count ${previous}..${candidate}`, "2"],
+      [
+        `diff --name-only ${previous}..${candidate}`,
+        ".github/workflows/e2e.yaml\nsrc/lib/onboard/machine/runner.ts\ndocs/changelog/2026-08-17.mdx",
+      ],
+    ]);
     const command = (_command: string, args: string[]): string => {
       const operation = args.join(" ");
-      if (operation === `rev-parse ${candidate}^{commit}`) return candidate;
-      if (operation === `merge-base ${previous} ${candidate}`) return previous;
-      if (operation === `rev-list --count ${previous}..${candidate}`) return "2";
-      if (operation === `diff --name-only ${previous}..${candidate}`) {
-        return ".github/workflows/e2e.yaml\nsrc/lib/onboard/machine/runner.ts\ndocs/changelog/2026-08-17.mdx";
-      }
-      throw new Error(`Unexpected command: ${operation}`);
+      return (
+        operationResults.get(operation) ??
+        (() => {
+          throw new Error(`Unexpected command: ${operation}`);
+        })()
+      );
     };
 
     const summary = buildHandoffSummary(
