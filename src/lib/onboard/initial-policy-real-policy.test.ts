@@ -52,6 +52,20 @@ function repoPath(...segments: string[]): string {
   return path.join(import.meta.dirname, "..", "..", "..", ...segments);
 }
 
+function normalizeFilesystemPolicyPath(policyPath: string): string {
+  return path.posix.normalize(policyPath).replace(/\/+$/, "") || "/";
+}
+
+function filesystemPolicyAncestors(policyPath: string): string[] {
+  const segments = normalizeFilesystemPolicyPath(policyPath).split("/").filter(Boolean);
+  return [
+    "/",
+    ...segments
+      .slice(0, -1)
+      .map((_, index) => `/${segments.slice(0, index + 1).join("/")}`),
+  ];
+}
+
 function readPreparedPolicy(prepared: {
   policyPath: string;
   cleanup?: () => boolean;
@@ -80,7 +94,29 @@ describe("initial sandbox policy real preset merge", () => {
     },
   ] as const;
 
-  it("covers every shipped managed-image agent in the managed startup CA policy cases", () => {
+  it("covers the complete shipped managed startup CA policy matrix", () => {
+    expect(
+      managedStartupCaPolicyCases.map(({ path: policyPath, agent }) => ({
+        policyPath: policyPath.join("/"),
+        agent,
+      })),
+    ).toEqual([
+      {
+        policyPath: "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+        agent: "openclaw",
+      },
+      {
+        policyPath: "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        agent: "openclaw",
+      },
+      { policyPath: "agents/openclaw/policy-permissive.yaml", agent: "openclaw" },
+      { policyPath: "agents/hermes/policy-additions.yaml", agent: "hermes" },
+      { policyPath: "agents/hermes/policy-permissive.yaml", agent: "hermes" },
+      {
+        policyPath: "agents/langchain-deepagents-code/policy-additions.yaml",
+        agent: "langchain-deepagents-code",
+      },
+    ]);
     expect(new Set(managedStartupCaPolicyCases.map(({ agent }) => agent))).toEqual(
       new Set(SHIPPED_MANAGED_IMAGE_AGENTS),
     );
@@ -95,13 +131,22 @@ describe("initial sandbox policy real preset merge", () => {
       const policy = readPreparedPolicy(prepared);
       const readOnly = policy.filesystem_policy?.read_only ?? [];
       const readWrite = policy.filesystem_policy?.read_write ?? [];
+      const normalizedReadOnly = readOnly.map(normalizeFilesystemPolicyPath);
+      const normalizedReadWrite = readWrite.map(normalizeFilesystemPolicyPath);
+      const managedCaAncestors = filesystemPolicyAncestors(MANAGED_STARTUP_MERGED_CA_FILE);
 
       expect(readOnly, policyCase.path.join("/")).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
-      expect(readWrite, policyCase.path.join("/")).not.toContain(MANAGED_STARTUP_MERGED_CA_FILE);
-      expect(readOnly, policyCase.path.join("/")).not.toContain("/run");
-      expect(readWrite, policyCase.path.join("/")).not.toContain("/run");
-      expect(readOnly, policyCase.path.join("/")).not.toContain("/run/nemoclaw");
-      expect(readWrite, policyCase.path.join("/")).not.toContain("/run/nemoclaw");
+      expect(normalizedReadWrite, policyCase.path.join("/")).not.toContain(
+        MANAGED_STARTUP_MERGED_CA_FILE,
+      );
+      expect(
+        normalizedReadOnly.filter((candidate) => managedCaAncestors.includes(candidate)),
+        policyCase.path.join("/"),
+      ).toEqual([]);
+      expect(
+        normalizedReadWrite.filter((candidate) => managedCaAncestors.includes(candidate)),
+        policyCase.path.join("/"),
+      ).toEqual([]);
     },
   );
 
