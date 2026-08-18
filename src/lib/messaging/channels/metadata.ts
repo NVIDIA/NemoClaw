@@ -8,7 +8,7 @@ import type {
   ChannelPolicyPresetSpec,
   MessagingAgentId,
 } from "../manifest";
-import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins";
+import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins.ts";
 
 const CONFIG_ENV_ALIASES_BY_ENV_KEY: Readonly<Record<string, readonly string[]>> = {
   DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],

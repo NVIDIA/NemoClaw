@@ -9,7 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HERMES_API_PORT_RANGE_END, HERMES_API_PORT_RANGE_START } from "../core/ports";
-import { listMessagingCredentialEnvAssignments } from "../messaging/channels/metadata";
+import { listMessagingCredentialEnvAssignments } from "../messaging/channels/metadata.ts";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,

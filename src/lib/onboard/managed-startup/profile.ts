@@ -4,7 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata";
+import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
