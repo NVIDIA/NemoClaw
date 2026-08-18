@@ -317,14 +317,23 @@ export class GatewayClient {
    * non-ancestor process trees. This matches the legacy 2478 bash test's
    * approach (`gateway_guards_active` -> `proxy_env_contents`).
    *
-   * @throws if the file is missing, unreadable, or empty; an expected marker
-   * is absent; or the sentinel response is invalid.
+   * @throws if the expected marker list is empty or a marker is empty or
+   * contains a carriage return or line feed; the file is missing, unreadable,
+   * or empty; an expected marker is absent; or the sentinel response is invalid.
    */
   async expectGuardChainActive(
     instance: NemoClawInstance,
     options: ExpectGuardChainOptions = {},
   ): Promise<void> {
     const expected = options.expectedMarkers ?? DEFAULT_GUARD_MARKERS;
+    if (
+      expected.length === 0 ||
+      expected.some((marker) => marker.length === 0 || /[\r\n]/u.test(marker))
+    ) {
+      throw new Error(
+        "expectGuardChainActive: expectedMarkers must be a non-empty list of non-empty single-line markers",
+      );
+    }
     const script =
       'set -eu; proxy_env="$1"; sentinel="$2"; shift 2; ' +
       '[ -r "$proxy_env" ] && [ -s "$proxy_env" ] || exit 20; ' +

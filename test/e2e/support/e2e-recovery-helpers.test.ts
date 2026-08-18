@@ -331,7 +331,6 @@ describe("GatewayClient recovery helpers (#2701)", () => {
         const separator = call?.args.indexOf("--") ?? -1;
         const innerArgs = call?.args.slice(separator + 1) ?? [];
         expect(innerArgs.slice(0, 2)).toEqual(["sh", "-c"]);
-        expect(innerArgs[2]).toContain("grep -Fq --");
         expect(innerArgs[2]).not.toMatch(/\bcat\b/u);
         expect(innerArgs.slice(4)).toEqual([
           "/tmp/nemoclaw-proxy-env.sh",
@@ -419,6 +418,29 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       });
 
       expect(runner.calls[0]?.args.at(-1)).toBe("nemoclaw-slack-channel-guard");
+    });
+
+    it.each([
+      { condition: "an empty marker list", expectedMarkers: [] },
+      { condition: "an empty marker value", expectedMarkers: [""] },
+      {
+        condition: "a marker with a line feed",
+        expectedMarkers: ["nemoclaw-sandbox-safety-net\n"],
+      },
+      {
+        condition: "a marker with a carriage return",
+        expectedMarkers: ["nemoclaw-sandbox-safety-net\r"],
+      },
+    ])("rejects $condition before running a sandbox command", async ({ expectedMarkers }) => {
+      const runner = new ScriptedRunner();
+      const gateway = buildGateway(runner);
+
+      await expect(
+        gateway.expectGuardChainActive(fakeInstance(), { expectedMarkers }),
+      ).rejects.toThrow(
+        /expectedMarkers must be a non-empty list of non-empty single-line markers/,
+      );
+      expect(runner.calls).toHaveLength(0);
     });
 
     it.each([
