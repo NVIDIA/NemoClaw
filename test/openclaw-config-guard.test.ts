@@ -341,6 +341,10 @@ function fileIdentity(filePath: string): [number, Buffer] {
   }
 }
 
+function forEachConfigFile(configPath: string, hashPath: string, verify: (path: string) => void) {
+  for (const filePath of [configPath, hashPath]) verify(filePath);
+}
+
 function setUserXattr(filePath: string, value: string): boolean {
   return (
     spawnSync(
@@ -418,7 +422,7 @@ describe("openclaw-config-guard", () => {
     expect(r.status, JSON.stringify(r.lines)).toBe(0);
     expect([mode(configDir), mode(configPath), mode(hashPath)]).toEqual([0o2770, 0o660, 0o660]);
     expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
-    function expectInvalidFileModeRejected(invalidPath: string): void {
+    forEachConfigFile(configPath, hashPath, (invalidPath) => {
       fs.chmodSync(invalidPath, 0o600);
       try {
         const invalid = runGuard("unlock", configDir);
@@ -431,9 +435,7 @@ describe("openclaw-config-guard", () => {
       } finally {
         fs.chmodSync(invalidPath, 0o660);
       }
-    }
-    expectInvalidFileModeRejected(configPath);
-    expectInvalidFileModeRejected(hashPath);
+    });
     const drift = runGuard("unlock", configDir, "mutable-dir-drift");
     expect(drift.lines).toContainEqual(expect.objectContaining({ code: "config-not-mutable" }));
   });

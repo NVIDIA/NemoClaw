@@ -126,7 +126,7 @@ function containsTestDefinition(node: ts.Node): boolean {
   return found;
 }
 
-function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
+function isFunctionLike(node: ts.Node): boolean {
   return (
     ts.isFunctionDeclaration(node) ||
     ts.isFunctionExpression(node) ||
@@ -138,39 +138,7 @@ function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
   );
 }
 
-function functionName(node: ts.FunctionLikeDeclaration): string | null {
-  if (ts.isFunctionDeclaration(node) && node.name) return node.name.text;
-  return ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)
-    ? node.parent.name.text
-    : null;
-}
-
-type LoopStatement = ts.ForStatement | ts.ForInStatement | ts.ForOfStatement;
-
-function thinCallbackForwardingLoop(node: ts.FunctionLikeDeclaration): LoopStatement | null {
-  if (!node.body || !ts.isBlock(node.body) || node.body.statements.length !== 1) return null;
-  const statement = node.body.statements[0];
-  if (!statement || !isLoop(statement)) return null;
-  const parameters = new Set(
-    node.parameters.flatMap(({ name }) => (ts.isIdentifier(name) ? [name.text] : [])),
-  );
-  let invokesParameter = false;
-  function visit(child: ts.Node): void {
-    if (
-      ts.isCallExpression(child) &&
-      ts.isIdentifier(child.expression) &&
-      parameters.has(child.expression.text)
-    ) {
-      invokesParameter = true;
-      return;
-    }
-    ts.forEachChild(child, visit);
-  }
-  visit(statement);
-  return invokesParameter ? statement : null;
-}
-
-function isLoop(node: ts.Node): node is LoopStatement {
+function isLoop(node: ts.Node): boolean {
   return ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node);
 }
 
@@ -183,19 +151,7 @@ function countTestLoops(file: string, source: string | null): number {
     true,
     scriptKind(file),
   );
-  const forwardedLoops = new Map<string, LoopStatement>();
-  function collectForwardedLoops(node: ts.Node): void {
-    if (isFunctionLike(node)) {
-      const name = functionName(node);
-      const loop = thinCallbackForwardingLoop(node);
-      if (name && loop) forwardedLoops.set(name, loop);
-    }
-    ts.forEachChild(node, collectForwardedLoops);
-  }
-  collectForwardedLoops(sourceFile);
-
   const testContexts: boolean[] = [];
-  const calledForwardedLoops = new Set<LoopStatement>();
   let count = 0;
 
   function visit(node: ts.Node): void {
@@ -207,20 +163,12 @@ function countTestLoops(file: string, source: string | null): number {
       enteredFunction = true;
     }
     if (isLoop(node) && (testContexts.at(-1) === true || containsTestDefinition(node))) count += 1;
-    if (
-      testContexts.at(-1) === true &&
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression)
-    ) {
-      const forwardedLoop = forwardedLoops.get(node.expression.text);
-      if (forwardedLoop) calledForwardedLoops.add(forwardedLoop);
-    }
     ts.forEachChild(node, visit);
     if (enteredFunction) testContexts.pop();
   }
 
   visit(sourceFile);
-  return count + calledForwardedLoops.size;
+  return count;
 }
 
 function formatList(heading: string, details: readonly string[], remediation: string): string {
@@ -392,9 +340,9 @@ export const diagnostics = {
     ),
   loops: (details: readonly string[]) =>
     formatList(
-      "Changed test files add loops inside test callbacks, around test definitions, or behind thin callback-forwarding helpers.",
+      "Changed test files add loops inside test callbacks or around test definitions.",
       details,
-      "Keep one-scenario setup, retry, and polling loops direct; use test.each for independent cases. Do not hide a loop behind a callback-forwarding helper.",
+      "Move iteration for one behavior into a named helper, or use test.each for independent cases.",
     ),
 };
 

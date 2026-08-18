@@ -83,7 +83,7 @@ describe("shields-audit format", () => {
   });
 
   it("each line is valid JSON", () => {
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 5; i++) {
       appendAuditEntry({
         action: "shields_down",
         sandbox: `sandbox-${i}`,
@@ -162,9 +162,11 @@ describe("shields-audit production redaction", () => {
     expect(line).not.toContain("sk-abcdef");
   }
 
-  it.each(["shields_down", "shields_up", "shields_auto_restore"] as const)(
-    "strips nvapi-/sk-/Bearer secrets from the free-text reason of %s records",
-    async (action) => {
+  it.each([
+    "shields_down",
+    "shields_up",
+    "shields_auto_restore",
+  ] as const)("strips nvapi-/sk-/Bearer secrets from the free-text reason of %s records", async (action) => {
     const appendAuditEntry = await loadAppendAuditEntry();
     appendAuditEntry({
       action,
@@ -179,8 +181,7 @@ describe("shields-audit production redaction", () => {
     const entry = JSON.parse(line);
     expect(entry.action).toBe(action);
     expect(entry.sandbox).toBe("openclaw");
-    },
-  );
+  });
 
   it("strips secrets from the error field while preserving benign fields", async () => {
     const appendAuditEntry = await loadAppendAuditEntry();

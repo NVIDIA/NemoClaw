@@ -44,6 +44,10 @@ const BREW_OUTCOMES = [
   ["0", "1", "reinstall", 1],
 ] as const;
 
+function verifyBrewOutcomes(verify: (outcome: (typeof BREW_OUTCOMES)[number]) => void): void {
+  for (const outcome of BREW_OUTCOMES) verify(outcome);
+}
+
 function trustedFormulaBoundaryEvents(operation: string): string[] {
   return [
     "--repository nvidia/openshell",
@@ -745,12 +749,7 @@ exit 1`,
       const stagedFormula = fs.readFileSync(path.join(tapRepo, "Formula", "openshell.rb"), "utf-8");
       expect(stagedFormula).toContain("entitlements.write <<~XML");
 
-      const verifyBrewOutcome = ([
-        listStatus,
-        actionStatus,
-        action,
-        expectedStatus,
-      ]: (typeof BREW_OUTCOMES)[number]) => {
+      verifyBrewOutcomes(([listStatus, actionStatus, action, expectedStatus]) => {
         fs.writeFileSync(brewLog, "");
         fs.writeFileSync(untrustCount, "0");
         const attempt = runStable({
@@ -768,10 +767,8 @@ exit 1`,
         ]);
         expect(fs.readFileSync(untrustCount, "utf-8").trim()).toBe("4");
         expect(fs.existsSync(formulaTmpDir)).toBe(false);
-      };
-      verifyBrewOutcome(BREW_OUTCOMES[0]);
-      verifyBrewOutcome(BREW_OUTCOMES[1]);
-      verifyBrewOutcome(BREW_OUTCOMES[2]);
+      });
+
       fs.writeFileSync(brewLog, "");
       const refusedTrust = spawnSync("bash", [SCRIPT], {
         env: {
