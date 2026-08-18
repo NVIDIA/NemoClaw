@@ -260,6 +260,21 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
+function exitOnGatewayRecoveryFailure(
+  sandboxName: string,
+  agentName: string,
+  detail: string,
+): never {
+  const safeDetail = sanitizeSandboxStartupRecoveryDetail(detail);
+  const terminalPunctuation = /[.!?]$/u.test(safeDetail) ? "" : ".";
+  console.error("");
+  console.error(
+    `  Probe failed: NemoClaw could not recover the ${agentName} gateway in '${sandboxName}'.`,
+  );
+  console.error(`  Recovery detail: ${safeDetail}${terminalPunctuation}`);
+  process.exit(1);
+}
+
 async function settlePortablePairingOrExit(sandboxName: string): Promise<boolean> {
   const result = await settlePortableOpenClawPairing(sandboxName);
   if (result.kind === "incomplete") {
@@ -316,6 +331,13 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
       agentName,
       resolveSandboxDashboardPort(sandboxName),
       detail,
+    );
+  }
+  if ("recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail) {
+    exitOnGatewayRecoveryFailure(
+      sandboxName,
+      agentName,
+      String(processCheck.recoveryFailureDetail),
     );
   }
   if (processCheck.wasRunning) {
@@ -958,16 +980,22 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
 }
 
 export function restoreSandboxStartupState(sandboxName: string): SandboxStartupRecoveryResult {
-  let recoveryFailureDetail: string | null = null;
-  let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
+  let reportedRecoveryFailureDetail: string | null = null;
+  let reportedRecoveryFailureLayer: GatewayRestartFailureLayer | null = null;
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
     onRecoveryFailureLayer: (layer, detail) => {
-      recoveryFailureLayer = layer;
-      recoveryFailureDetail = detail ?? null;
+      reportedRecoveryFailureLayer = layer;
+      reportedRecoveryFailureDetail = detail ?? null;
     },
   });
-  return { ...processCheck, recoveryFailureDetail, recoveryFailureLayer };
+  const directRecoveryFailureDetail =
+    "recoveryFailureDetail" in processCheck ? processCheck.recoveryFailureDetail : null;
+  const recoveryFailureDetail = directRecoveryFailureDetail ?? reportedRecoveryFailureDetail;
+  const recoveryFailureLayer = directRecoveryFailureDetail
+    ? null
+    : reportedRecoveryFailureLayer;
+  return Object.assign(processCheck, { recoveryFailureDetail, recoveryFailureLayer });
 }
 
 function restoreInteractiveTerminal(): void {
