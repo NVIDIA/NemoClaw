@@ -17,11 +17,6 @@ export interface StopCommandDeps {
   releaseGatewayPort?: boolean;
 }
 
-export interface StatusCommandDeps {
-  listSandboxes: () => SandboxSummary;
-  showStatus: (options: { sandboxName?: string }) => void;
-}
-
 const SAFE_SANDBOX_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 export function resolveDefaultSandboxName(listSandboxes: () => SandboxSummary): string | undefined {
@@ -45,8 +40,4 @@ export function runStopCommand(deps: StopCommandDeps): void {
   };
   if (deps.releaseGatewayPort) options.releaseGatewayPort = true;
   deps.stopAll(options);
-}
-
-export function runStatusCommand(deps: StatusCommandDeps): void {
-  deps.showStatus({ sandboxName: resolveDefaultSandboxName(deps.listSandboxes) });
 }

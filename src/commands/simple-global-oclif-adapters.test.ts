@@ -41,9 +41,9 @@ const mocks = vi.hoisted(() => {
     runDashboardUrlCommand: vi.fn(() => undefined),
     runGatewayTokenCommand: vi.fn(() => undefined),
     runStartCommand: vi.fn().mockResolvedValue(undefined),
-    runStatusCommand: vi.fn(),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
+    resolveDefaultSandboxName: vi.fn(() => "resolved-sandbox"),
     showRootHelp: vi.fn(),
     showStatus: vi.fn(),
     showVersion: vi.fn(),
@@ -84,8 +84,8 @@ vi.mock("../lib/tunnel/services", () => ({
   stopAll: mocks.stopAll,
 }));
 vi.mock("../lib/tunnel/service-command", () => ({
+  resolveDefaultSandboxName: mocks.resolveDefaultSandboxName,
   runStartCommand: mocks.runStartCommand,
-  runStatusCommand: mocks.runStatusCommand,
   runStopCommand: mocks.runStopCommand,
 }));
 vi.mock("../lib/uninstall-command", () => ({
@@ -308,16 +308,10 @@ describe("simple global oclif adapters", () => {
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
     );
-    // `tunnel status` must resolve the default sandbox the same way `tunnel
-    // start` and `tunnel stop` do, or it reads a different PID directory and
-    // reports a running tunnel as stopped (#4756).
-    expect(mocks.runStatusCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        listSandboxes: expect.any(Function),
-        showStatus: mocks.showStatus,
-      }),
+    expect(mocks.resolveDefaultSandboxName).toHaveBeenCalledWith(expect.any(Function));
+    expect(mocks.showStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxName: "resolved-sandbox" }),
     );
-    expect(mocks.showStatus).not.toHaveBeenCalled();
     expect(mocks.runStopCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), stopAll: mocks.stopAll }),
     );
