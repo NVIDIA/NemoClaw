@@ -481,6 +481,27 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     });
   }
 
+  function createBackupRecoveryScenario() {
+    const harness = createHarness();
+    const recovery = harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "backup-all",
+      throwOnError: true,
+      issuePolicySnapshotRecovery: true,
+    });
+    expect(recovery).toBeDefined();
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as {
+      shieldsPolicySnapshotPath: string;
+    };
+    return {
+      harness,
+      recovery: recovery!,
+      statePath,
+      snapshotPath: state.shieldsPolicySnapshotPath,
+    };
+  }
+
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-openclaw-recovery-"));
     vi.stubEnv("HOME", tmpDir);
@@ -811,6 +832,63 @@ describe("OpenClaw shields flow rollback and recovery", () => {
       /Backup Shields policy recovery failed.*(?:unsafe metadata|no longer matches its binding)/u,
     );
     expect(fs.readFileSync(state.shieldsPolicySnapshotPath, "utf-8")).toBe(changedPolicy);
+  });
+
+  it("rejects a symlinked restrictive snapshot during backup recovery (#9452)", () => {
+    const { harness, recovery, snapshotPath } = createBackupRecoveryScenario();
+    const symlinkTarget = path.join(tmpDir, "untrusted-policy-target.yaml");
+    const targetContent = "version: 1\nnetwork_policies:\n  untrusted: {}\n";
+    fs.writeFileSync(symlinkTarget, targetContent, { mode: 0o600 });
+    fs.rmSync(snapshotPath);
+    fs.symlinkSync(symlinkTarget, snapshotPath);
+
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
+    ).toThrow(/Backup Shields policy recovery failed/u);
+    expect(fs.lstatSync(snapshotPath).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(symlinkTarget, "utf-8")).toBe(targetContent);
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
+    ).toThrow(/Backup Shields policy recovery failed.*authority is invalid/u);
+  });
+
+  it.each([
+    ["unsafe permissions", (snapshotPath: string) => fs.chmodSync(snapshotPath, 0o644)],
+    [
+      "multiple hard links",
+      (snapshotPath: string) => fs.linkSync(snapshotPath, `${snapshotPath}.extra-link`),
+    ],
+  ])("rejects a restrictive snapshot with %s during backup recovery (#9452)", (_label, tamper) => {
+    const { harness, recovery, snapshotPath } = createBackupRecoveryScenario();
+    tamper(snapshotPath);
+
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
+    ).toThrow(/Backup Shields policy recovery failed.*unsafe metadata/u);
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
+    ).toThrow(/Backup Shields policy recovery failed.*authority is invalid/u);
+  });
+
+  it("rejects changed persisted snapshot authorization during backup recovery (#9452)", () => {
+    const { harness, recovery, statePath, snapshotPath } = createBackupRecoveryScenario();
+    const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as Record<string, unknown>;
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        ...state,
+        shieldsPolicySnapshotPath: `${snapshotPath}.unauthorized`,
+      }),
+      { mode: 0o600 },
+    );
+
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
+    ).toThrow(/Backup Shields policy recovery failed.*state no longer authorizes/u);
+    expect(fs.existsSync(snapshotPath)).toBe(true);
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
+    ).toThrow(/Backup Shields policy recovery failed.*authority is invalid/u);
   });
 
   it("consumes a backup recovery receipt only once (#9452)", () => {
