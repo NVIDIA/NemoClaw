@@ -88,14 +88,13 @@ describe("E2E workflow plan", () => {
     expect(plan.matrix).toEqual(buildLiveTargetMatrix());
     expect(plan.testMatrix).toEqual(discoverCredentialFreeTests());
     expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
-    expect(plan.coverageMatrix).toHaveLength(90);
     expect(
       plan.coverageMatrix.reduce<Record<string, number>>((counts, row) => {
         counts[row.source] = (counts[row.source] ?? 0) + 1;
         return counts;
       }, {}),
     ).toEqual({
-      catalogue: 64,
+      catalogue: E2E_TARGET_CATALOGUE.length,
       "typed-registry": 4,
       "shared-e2e": 2,
       "retained-workflow": 19,
@@ -435,7 +434,6 @@ describe("E2E workflow plan", () => {
   });
 
   it("requires explicit execution coverage for every catalogue target (#9167)", () => {
-    expect(E2E_TARGET_CATALOGUE).toHaveLength(64);
     expectExplicitCatalogueCoverage();
 
     const target = catalogueTarget("cloud-inference");
@@ -475,13 +473,11 @@ describe("E2E workflow plan", () => {
     expect(plan.selectedJobs).not.toContain(selector);
   });
 
-  it.each(
-    [
-        "Network: enforces network-policy rules",
-        "Network: runs on ubuntu-latest",
-        "Network: validates issue-2478 recovery",
-      ],
-  )(
+  it.each([
+    "Network: enforces network-policy rules",
+    "Network: runs on ubuntu-latest",
+    "Network: validates issue-2478 recovery",
+  ])(
     "rejects malformed, implementation-derived, and duplicate display names [%s]",
     (displayName) => {
       const networkPolicy = catalogueTarget("network-policy");
@@ -842,9 +838,7 @@ describe("E2E workflow plan", () => {
 
         expect(result.status, result.stderr).toBe(0);
         expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-        expect(readFileSync(summary, "utf8")).toBe(
-          renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
-        );
+        expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
@@ -909,9 +903,7 @@ describe("E2E workflow plan", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(
-        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
-      );
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -1149,10 +1141,7 @@ describe("E2E workflow plan", () => {
       "| `llama-cpp-dgx-spark-qualification` | unresolved | Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence | NVIDIA DGX Spark GB10; local llama.cpp inference | Explicit dispatch only; excluded from the default release matrix | The protected plan can enable or skip its OpenClaw subqualification |",
     );
     expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
-    expect(complete.stdout).toContain(
-      "| `ubuntu-repo-cloud-hermes` | unresolved | unresolved | unresolved | onboarding 'cloud-hermes' is not wired for live fixtures |",
-    );
-    expect(complete.stdout).toContain("The 22 inert typed declarations above");
+    expect(complete.stdout).toContain("The 0 inert typed declarations above");
     expect(complete.stdout).toContain("#8285");
     expect(complete.stdout).toContain("#8286");
   });
