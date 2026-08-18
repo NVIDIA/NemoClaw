@@ -5,6 +5,13 @@ import fs from "node:fs";
 
 import YAML from "yaml";
 import {
+  openShellQualificationProvenanceCommand,
+  OPENSHELL_QUALIFICATION_INSTALL_ENV,
+  OPENSHELL_QUALIFICATION_INSTALL_RUN,
+  OPENSHELL_QUALIFICATION_SELECT_STEP,
+  OPENSHELL_QUALIFICATION_SUPERVISOR_OUTPUT,
+} from "./openshell-qualification.mts";
+import {
   OPENSHELL_DEV_ARTIFACT_DIRECTORY,
   OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME,
   UPLOAD_E2E_ARTIFACTS_ACTION,
@@ -72,24 +79,13 @@ const CREDENTIAL_WINDOW_ARTIFACT_DIR = "e2e-artifacts/live/openshell-credential-
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
-const STABLE_RELEASE_SOURCE_SHA = "8ddd98c3dff62619a3963f99ba1e055b67650e72";
-const STABLE_RELEASE_SUPERVISOR_INDEX =
-  "b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb";
-const STABLE_RELEASE_IDENTITY_TOKENS = [
-  'releaseTag: "v0.0.101"',
-  STABLE_RELEASE_SOURCE_SHA,
-  "1ad48efd5e1de8f3f017a81b3a7177872f350343a1a8d8074c7e844bca4801e9",
-  "a6a5d754605a2144b148637b85a09291d2eeb77e08a4ee34b83685c6920448f5",
-  "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920",
-] as const;
-const STABLE_RELEASE_PROVENANCE_TOKENS = [
-  ...STABLE_RELEASE_IDENTITY_TOKENS,
-  "mcp-bridge-deepagents/openshell-exact-main-provenance.json",
-] as const;
-const CREDENTIAL_WINDOW_PROVENANCE_TOKENS = [
-  ...STABLE_RELEASE_IDENTITY_TOKENS,
-  "openshell-credential-generation-window/openshell-exact-main-provenance.json",
-] as const;
+const QUALIFICATION_PROVENANCE_STEP = "Write OpenShell provenance";
+const MCP_QUALIFICATION_PROVENANCE_RUN = openShellQualificationProvenanceCommand(
+  "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json",
+);
+const CREDENTIAL_WINDOW_PROVENANCE_RUN = openShellQualificationProvenanceCommand(
+  "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json",
+);
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
@@ -124,6 +120,22 @@ function asString(value: unknown): string {
 function asSteps(job: UnknownRecord): UnknownRecord[] {
   const steps = job.steps;
   return Array.isArray(steps) ? steps.map(asRecord) : [];
+}
+
+function receivesForbiddenCredentials(job: UnknownRecord): boolean {
+  const steps = asSteps(job);
+  const credentialInputs = [
+    asRecord(job.env),
+    ...steps.flatMap((step) => [asRecord(step.env), asRecord(step.with)]),
+  ];
+  if (FORBIDDEN_INFERENCE_SECRETS.test(JSON.stringify(credentialInputs))) return true;
+  return steps.some((step) => {
+    const expressions = asString(step.run).match(/\$\{\{[^}]+\}\}/gu) ?? [];
+    return expressions.some(
+      (expression) =>
+        FORBIDDEN_INFERENCE_SECRETS.test(expression) || /\bgithub\.token\b/iu.test(expression),
+    );
+  });
 }
 
 function namedStep(job: UnknownRecord, name: string): UnknownRecord {
@@ -238,12 +250,9 @@ function validateJobIdentity(
       "1",
       "mcp-bridge must enable the exact stable release proof",
     );
-    requireEqual(
-      errors,
-      env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-      `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
-      "mcp-bridge must pin the reviewed stable supervisor image",
-    );
+    if (Object.hasOwn(env, "OPENSHELL_DOCKER_SUPERVISOR_IMAGE")) {
+      errors.push("mcp-bridge must load the supervisor image from the qualification identity");
+    }
     if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
       errors.push("mcp-bridge must remain default-enabled");
     }
@@ -311,7 +320,7 @@ function validateJobSecurity(
       errors.push(`${jobName} checkout must set persist-credentials:false`);
     }
   }
-  if (FORBIDDEN_INFERENCE_SECRETS.test(JSON.stringify(job))) {
+  if (receivesForbiddenCredentials(job)) {
     errors.push(`${jobName} must not receive inference or GitHub credentials`);
   }
 
@@ -402,6 +411,8 @@ function validateJobExecution(
       : "Install OpenShell CLI",
   );
   const run = namedStep(job, "Run MCP OpenShell provider live test");
+  const select = namedStep(job, OPENSHELL_QUALIFICATION_SELECT_STEP.name);
+  const provenance = namedStep(job, QUALIFICATION_PROVENANCE_STEP);
   const compatibility = namedStep(job, DEV_COMPATIBILITY_STEP_NAME);
   const compatibilitySteps = steps.filter((step) =>
     asString(step.run).includes(DEV_COMPATIBILITY_TOOL),
@@ -478,27 +489,45 @@ function validateJobExecution(
       );
     }
   } else {
-    requireEqual(
-      errors,
-      installEnv.NEMOCLAW_OPENSHELL_FORCE_INSTALL,
-      "1",
-      `${jobName} must force the selected OpenShell install`,
-    );
     if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
       errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
     }
-    const installRun = asString(install.run);
-    for (const token of STABLE_RELEASE_PROVENANCE_TOKENS) {
-      if (!installRun.includes(token)) {
-        errors.push(`mcp-bridge stable release provenance is missing reviewed identity: ${token}`);
-      }
+    if (
+      select.id !== OPENSHELL_QUALIFICATION_SELECT_STEP.id ||
+      select.run !== OPENSHELL_QUALIFICATION_SELECT_STEP.run
+    ) {
+      errors.push("mcp-bridge must select the declarative OpenShell qualification identity");
     }
-    requireContains(
+    if (!hasExactEntries(installEnv, OPENSHELL_QUALIFICATION_INSTALL_ENV)) {
+      errors.push("mcp-bridge stable installer must receive only the selected release version");
+    }
+    requireEqual(
       errors,
       install.run,
-      "bash scripts/install-openshell.sh",
-      `${jobName} must use the repository OpenShell installer`,
+      OPENSHELL_QUALIFICATION_INSTALL_RUN,
+      `${jobName} must run only the exact OpenShell 0.0.106 qualification install`,
     );
+    if (
+      provenance.if !== "${{ matrix.agent == 'deepagents' }}" ||
+      provenance.run !== MCP_QUALIFICATION_PROVENANCE_RUN
+    ) {
+      errors.push("mcp-bridge must write Deep Agents provenance from the qualification identity");
+    }
+    if (
+      !hasExactEntries(asRecord(run.env), {
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: OPENSHELL_QUALIFICATION_SUPERVISOR_OUTPUT,
+      })
+    ) {
+      errors.push("mcp-bridge must select the supervisor image from the qualification identity");
+    }
+    if (
+      steps.indexOf(select) <= steps.indexOf(tls) ||
+      steps.indexOf(install) <= steps.indexOf(select) ||
+      steps.indexOf(provenance) <= steps.indexOf(install) ||
+      steps.indexOf(run) <= steps.indexOf(provenance)
+    ) {
+      errors.push("mcp-bridge must select, install, record, and run one qualification release");
+    }
   }
   if (jobName === "mcp-bridge-dev") {
     const trustedCheckout = namedStep(job, DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME);
@@ -773,7 +802,7 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
   ) {
     errors.push(`${DEV_ARTIFACT_JOB} must expose only the immutable artifact identity`);
   }
-  if (FORBIDDEN_INFERENCE_SECRETS.test(JSON.stringify(job))) {
+  if (receivesForbiddenCredentials(job)) {
     errors.push(`${DEV_ARTIFACT_JOB} must not receive inference or GitHub credentials`);
   }
 
@@ -896,7 +925,6 @@ function validateCredentialWindowJob(
     NEMOCLAW_OPENSHELL_CHANNEL: "stable",
     NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
   };
   if (!hasExactEntries(env, expectedEnv)) {
     errors.push(`${CREDENTIAL_WINDOW_JOB} must use only its reviewed exact-stable environment`);
@@ -907,7 +935,9 @@ function validateCredentialWindowJob(
   const prepare = namedStep(job, "Prepare E2E workspace");
   const cloudflared = namedStep(job, "Install and verify cloudflared prerequisite");
   const tls = namedStep(job, "Generate MCP test TLS");
+  const select = namedStep(job, OPENSHELL_QUALIFICATION_SELECT_STEP.name);
   const install = namedStep(job, "Install OpenShell CLI");
+  const provenance = namedStep(job, QUALIFICATION_PROVENANCE_STEP);
   const run = namedStep(job, CREDENTIAL_WINDOW_RUN_STEP);
   const scan = namedStep(job, "Scan credential-window artifacts for fixture credentials");
   const upload = namedStep(job, "Upload credential-window artifacts");
@@ -956,24 +986,46 @@ function validateCredentialWindowJob(
     "bash test/e2e/setup-mcp-test-tls.sh",
     `${CREDENTIAL_WINDOW_JOB} must generate its HTTPS fixture before installation`,
   );
+  if (
+    select.id !== OPENSHELL_QUALIFICATION_SELECT_STEP.id ||
+    select.run !== OPENSHELL_QUALIFICATION_SELECT_STEP.run
+  ) {
+    errors.push(
+      `${CREDENTIAL_WINDOW_JOB} must select the declarative OpenShell qualification identity`,
+    );
+  }
+  if (!hasExactEntries(asRecord(install.env), OPENSHELL_QUALIFICATION_INSTALL_ENV)) {
+    errors.push(`${CREDENTIAL_WINDOW_JOB} installer must receive only the selected release version`);
+  }
   requireEqual(
     errors,
-    asRecord(install.env).NEMOCLAW_OPENSHELL_FORCE_INSTALL,
-    "1",
-    `${CREDENTIAL_WINDOW_JOB} must force the stable OpenShell install`,
-  );
-  requireContains(
-    errors,
     install.run,
-    "bash scripts/install-openshell.sh",
-    `${CREDENTIAL_WINDOW_JOB} must use the repository OpenShell installer`,
+    OPENSHELL_QUALIFICATION_INSTALL_RUN,
+    `${CREDENTIAL_WINDOW_JOB} must run only the exact OpenShell 0.0.106 qualification install`,
   );
-  for (const token of CREDENTIAL_WINDOW_PROVENANCE_TOKENS) {
-    requireContains(
-      errors,
-      install.run,
-      token,
-      `${CREDENTIAL_WINDOW_JOB} stable release provenance is missing reviewed identity: ${token}`,
+  requireEqual(
+    errors,
+    provenance.run,
+    CREDENTIAL_WINDOW_PROVENANCE_RUN,
+    `${CREDENTIAL_WINDOW_JOB} must write provenance from the qualification identity`,
+  );
+  if (
+    !hasExactEntries(asRecord(run.env), {
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: OPENSHELL_QUALIFICATION_SUPERVISOR_OUTPUT,
+    })
+  ) {
+    errors.push(
+      `${CREDENTIAL_WINDOW_JOB} must select the supervisor image from the qualification identity`,
+    );
+  }
+  if (
+    steps.indexOf(select) <= steps.indexOf(tls) ||
+    steps.indexOf(install) <= steps.indexOf(select) ||
+    steps.indexOf(provenance) <= steps.indexOf(install) ||
+    steps.indexOf(run) <= steps.indexOf(provenance)
+  ) {
+    errors.push(
+      `${CREDENTIAL_WINDOW_JOB} must select, install, record, and run one qualification release`,
     );
   }
 

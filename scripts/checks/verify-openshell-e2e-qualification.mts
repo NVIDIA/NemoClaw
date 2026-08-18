@@ -575,7 +575,6 @@ export function extractOpenShellVersion(root: string): string {
     sourceLabel: "Brev launchable",
   });
   const versions = [
-    ...installerPins.map((pin) => pin.releaseVersion),
     ...brevPins.map((pin) => pin.releaseVersion),
     exactVersion(
       installer,
@@ -606,7 +605,11 @@ export function extractOpenShellVersion(root: string): string {
   ];
   const unique = [...new Set(versions)].sort();
   if (unique.length !== 1) fail(`OpenShell version surfaces disagree: ${unique.join(", ")}`);
-  return unique[0] ?? fail("OpenShell version is missing");
+  const version = unique[0] ?? fail("OpenShell version is missing");
+  if (!installerPins.some((pin) => pin.releaseVersion === version)) {
+    fail(`installer has no pin cohort for selected OpenShell version ${version}`);
+  }
+  return version;
 }
 
 function extractUpgradeFixtureRequirement(

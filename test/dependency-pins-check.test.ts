@@ -27,6 +27,9 @@ const OPENSHELL_RELEASE_MANIFESTS = [
 
 type FixtureOverrides = Partial<Record<string, string>>;
 
+const QUALIFICATION_SELECT_RUN =
+  'node --experimental-strip-types --no-warnings tools/e2e/openshell-qualification.mts select "$GITHUB_OUTPUT"';
+
 function openclawSelector(version: string, argVersion: string = version): string {
   const arg = `OPENCLAW_${argVersion.replace(/[.-]/g, "_")}`;
   return (
@@ -59,6 +62,25 @@ function writeFixture(root: string, overrides: FixtureOverrides = {}): void {
       ).map((manifest) => `  "${version}|${manifest}|${MANIFEST_SHA256}"`),
     )
     .join("\n");
+  const e2eWorkflow =
+    openshellMin === "0.0.101" && openshellMax === "0.0.101"
+      ? `
+jobs:
+  openshell-gateway-auth-contract:
+    steps:
+      - id: openshell_qualification
+        name: Select OpenShell qualification release
+        run: ${overrides.workflowSelectRun ?? QUALIFICATION_SELECT_RUN}
+      - name: Install OpenShell CLI
+        env:
+          NEMOCLAW_OPENSHELL_PIN_VERSION: \${{ steps.openshell_qualification.outputs.version }}
+`
+      : `
+jobs:
+  openshell-gateway-auth-contract:
+    env:
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "${overrides.workflowPinVersion ?? openshellMax}"
+`;
 
   const files: Record<string, string> = {
     "nemoclaw-blueprint/blueprint.yaml": `
@@ -80,12 +102,7 @@ case "$NEMOCLAW_REF" in
   stable | auto) OPENSHELL_VERSION="v${overrides.brevVersion ?? openshellMax}" ;;
 esac
 `,
-    ".github/workflows/e2e.yaml": `
-jobs:
-  openshell-gateway-auth-contract:
-    env:
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "${overrides.workflowPinVersion ?? openshellMax}"
-`,
+    ".github/workflows/e2e.yaml": e2eWorkflow,
     [`src/lib/actions/sandbox/${credentialManifestName}`]: JSON.stringify({
       openshellCommit: "f".repeat(40),
       openshellVersion: credentialVersion,
@@ -206,6 +223,35 @@ describe("dependency pin drift check", () => {
     );
   });
 
+  it("accepts OpenShell 0.0.106 E2E qualification before the 0.0.101 product pin moves", () => {
+    withFixture(
+      "nemoclaw-dependency-pins-openshell-qualification-",
+      {
+        openshellMax: "0.0.101",
+        openshellMin: "0.0.101",
+      },
+      (root) => expect(verifyDependencyPins(root)).toEqual([]),
+    );
+  });
+
+  it.each(["0.0.105", "0.0.107"])(
+    "rejects OpenShell %s as the E2E target while the product pin is 0.0.101",
+    (workflowPinVersion) => {
+      withFixture(
+        "nemoclaw-dependency-pins-openshell-unapproved-qualification-",
+        {
+          openshellMax: "0.0.101",
+          openshellMin: "0.0.101",
+          workflowSelectRun: `echo version=${workflowPinVersion}`,
+        },
+        (root) =>
+          expect(verifyDependencyPins(root)).toContain(
+            `.github/workflows/e2e.yaml gateway auth OpenShell qualification selector command: expected ${QUALIFICATION_SELECT_RUN}, found echo version=${workflowPinVersion}`,
+          ),
+      );
+    },
+  );
+
   it("reports exact operational consumer drift (#5242)", () => {
     withFixture(
       "nemoclaw-dependency-pins-drift-",
@@ -245,7 +291,7 @@ describe("dependency pin drift check", () => {
           "OpenShell supervisor manifest digest map: expected a reference to 1.2.4",
           "OpenShell sandbox build version map: expected a reference to 1.2.4",
           "Brev launchable stable OpenShell default: expected 1.2.4, found 1.2.3",
-          ".github/workflows/e2e.yaml gateway auth OpenShell version: expected 1.2.4, found 1.2.3",
+          ".github/workflows/e2e.yaml gateway auth OpenShell qualification version: expected 1.2.4, found 1.2.3",
           "OpenShell credential-boundary manifest version: expected 1.2.4, found 1.2.3",
           "OpenShell credential-boundary import: expected 1.2.4, found 1.2.3",
           "Hermes Dockerfile credential-boundary manifest version: expected 1.2.4, found 1.2.3",

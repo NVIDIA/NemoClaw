@@ -6,6 +6,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
+import {
+  OPENSHELL_QUALIFICATION_INSTALL_ENV,
+  OPENSHELL_QUALIFICATION_INSTALL_RUN,
+  OPENSHELL_QUALIFICATION_SELECT_STEP,
+} from "./openshell-qualification.mts";
 import { PREPARE_E2E_ACTION } from "./prepare-e2e-workflow-boundary.mts";
 import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
@@ -53,6 +58,13 @@ export function readOpenShellGatewayAuthContractWorkflow(
 
 function findStep(job: WorkflowJob, name: string): WorkflowStep {
   return job.steps?.find((step) => step.name === name) ?? {};
+}
+
+function hasExactEntries(
+  actual: Record<string, unknown> | undefined,
+  expected: Readonly<Record<string, unknown>>,
+): boolean {
+  return JSON.stringify(actual ?? {}) === JSON.stringify(expected);
 }
 
 function requireRunContains(errors: string[], step: WorkflowStep, fragment: string): void {
@@ -104,9 +116,10 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   for (const [name, value] of Object.entries(expectedEnv)) {
     if (env[name] !== value) errors.push(`${JOB_NAME} must set ${name}=${value}`);
   }
-  const pinVersion = env.NEMOCLAW_OPENSHELL_PIN_VERSION;
-  if (typeof pinVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(pinVersion)) {
-    errors.push(`${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION to an exact version`);
+  for (const name of ["NEMOCLAW_CANDIDATE_VERSION", "NEMOCLAW_OPENSHELL_PIN_VERSION"]) {
+    if (Object.hasOwn(env, name)) {
+      errors.push(`${JOB_NAME} must load ${name} from the qualification identity`);
+    }
   }
   for (const secret of [
     "DOCKERHUB_USERNAME",
@@ -135,18 +148,27 @@ export function validateOpenShellGatewayAuthContractWorkflow(
     errors.push(`${JOB_NAME} must use the reviewed prepare-e2e action`);
   }
 
-  const install = findStep(job, "Install OpenShell CLI");
-  for (const variable of [
-    "DOCKER_CONFIG",
-    "DOCKERHUB_USERNAME",
-    "DOCKERHUB_TOKEN",
-    "NVIDIA_API_KEY",
-    "NVIDIA_INFERENCE_API_KEY",
-    "GITHUB_TOKEN",
-  ]) {
-    requireRunContains(errors, install, `-u ${variable}`);
+  const select = findStep(job, OPENSHELL_QUALIFICATION_SELECT_STEP.name);
+  if (
+    select.id !== OPENSHELL_QUALIFICATION_SELECT_STEP.id ||
+    select.run !== OPENSHELL_QUALIFICATION_SELECT_STEP.run
+  ) {
+    errors.push(`${JOB_NAME} must select the declarative OpenShell qualification identity`);
   }
-  requireRunContains(errors, install, "bash scripts/install-openshell.sh");
+
+  const install = findStep(job, "Install OpenShell CLI");
+  if (
+    !hasExactEntries(install.env, OPENSHELL_QUALIFICATION_INSTALL_ENV) ||
+    install.run !== OPENSHELL_QUALIFICATION_INSTALL_RUN
+  ) {
+    errors.push(`${JOB_NAME} must run only the exact credential-free OpenShell 0.0.106 install`);
+  }
+  requireStepOrder(
+    errors,
+    steps,
+    OPENSHELL_QUALIFICATION_SELECT_STEP.name,
+    "Install OpenShell CLI",
+  );
 
   const prePull = findStep(job, "Pre-pull pinned gateway auth probe image");
   requireRunContains(errors, prePull, 'docker pull "$DOCKER_GRPC_PROBE_IMAGE"');
@@ -155,7 +177,13 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   const run = findStep(job, runName);
   requireRunContains(errors, run, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, run, "test/e2e/live/openshell-gateway-auth-source-contract.test.ts");
-  if (Object.keys(run.env ?? {}).length > 0 || JSON.stringify(run).includes("secrets.")) {
+  if (
+    !hasExactEntries(run.env, {
+      NEMOCLAW_CANDIDATE_VERSION: "${{ steps.openshell_qualification.outputs.version }}",
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "${{ steps.openshell_qualification.outputs.version }}",
+    }) ||
+    JSON.stringify(run).includes("secrets.")
+  ) {
     errors.push(`${JOB_NAME} live test must not receive workflow credentials`);
   }
 

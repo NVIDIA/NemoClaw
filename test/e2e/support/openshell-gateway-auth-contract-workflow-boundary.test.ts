@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,8 +12,41 @@ import {
   validateOpenShellGatewayAuthContractWorkflow,
   validateOpenShellGatewayAuthContractWorkflowBoundary,
 } from "../../../tools/e2e/openshell-gateway-auth-contract-workflow-boundary.mts";
+import {
+  OPENSHELL_QUALIFICATION,
+  validateOpenShellQualificationInstaller,
+  writeOpenShellQualificationOutputs,
+  writeOpenShellQualificationProvenance,
+} from "../../../tools/e2e/openshell-qualification.mts";
 
 describe("OpenShell gateway auth contract workflow boundary", () => {
+  it("selects and records one coherent OpenShell 0.0.106 qualification release", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-qualification-"));
+    const outputsPath = path.join(directory, "outputs");
+    const provenancePath = path.join(directory, "provenance.json");
+    try {
+      expect(validateOpenShellQualificationInstaller()).toEqual([]);
+
+      writeOpenShellQualificationOutputs(outputsPath);
+      expect(fs.readFileSync(outputsPath, "utf8")).toBe(
+        `version=${OPENSHELL_QUALIFICATION.version}\n` +
+          `supervisor_image=${OPENSHELL_QUALIFICATION.supervisor.image}@${OPENSHELL_QUALIFICATION.supervisor.manifestDigest}\n`,
+      );
+
+      writeOpenShellQualificationProvenance(provenancePath);
+      const provenance = JSON.parse(fs.readFileSync(provenancePath, "utf8")) as {
+        releaseTag: string;
+        sourceSha: string;
+      };
+      expect(provenance).toMatchObject({
+        releaseTag: OPENSHELL_QUALIFICATION.releaseTag,
+        sourceSha: OPENSHELL_QUALIFICATION.sourceSha,
+      });
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("accepts the checked-in workflow and rejects protected trust-boundary mutations", () => {
     expect(validateOpenShellGatewayAuthContractWorkflowBoundary()).toEqual([]);
 
@@ -22,6 +59,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
       ...job.env,
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim",
       E2E_ARTIFACT_DIR: "/tmp/gateway-auth",
+      NEMOCLAW_CANDIDATE_VERSION: "latest",
       NEMOCLAW_OPENSHELL_PIN_VERSION: "latest",
       NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
     };
@@ -33,6 +71,12 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
 
     const prepare = steps.find((step) => step.name === "Prepare E2E workspace")!;
     prepare.uses = "./.github/actions/prepare-e2e";
+
+    const select = steps.find(
+      (step) => step.name === "Select OpenShell qualification release",
+    )!;
+    select.id = "unreviewed_release";
+    select.run = "true";
 
     const install = steps.find((step) => step.name === "Install OpenShell CLI")!;
     install.run = "bash scripts/install-openshell.sh";
@@ -71,12 +115,14 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract must retain its 20 minute resource budget",
         "openshell-gateway-auth-contract must set DOCKER_GRPC_PROBE_IMAGE=node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
         "openshell-gateway-auth-contract must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
-        "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_PIN_VERSION to an exact version",
+        "openshell-gateway-auth-contract must load NEMOCLAW_CANDIDATE_VERSION from the qualification identity",
+        "openshell-gateway-auth-contract must load NEMOCLAW_OPENSHELL_PIN_VERSION from the qualification identity",
         "openshell-gateway-auth-contract must not expose NVIDIA_API_KEY at job scope",
         "openshell-gateway-auth-contract action 'actions/checkout@v6' must pin a full SHA",
         "openshell-gateway-auth-contract checkout must disable persisted credentials",
         "openshell-gateway-auth-contract must use the reviewed prepare-e2e action",
-        "openshell-gateway-auth-contract step 'Install OpenShell CLI' must run: -u DOCKER_CONFIG",
+        "openshell-gateway-auth-contract must select the declarative OpenShell qualification identity",
+        "openshell-gateway-auth-contract must run only the exact credential-free OpenShell 0.0.106 install",
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must run: docker pull \"$DOCKER_GRPC_PROBE_IMAGE\"",
         "openshell-gateway-auth-contract live test must not receive workflow credentials",
         "openshell-gateway-auth-contract final artifact safety scan must run unconditionally with a stable id",
@@ -87,6 +133,18 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must precede 'Run OpenShell gateway auth contract live test'",
         "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must precede 'Upload OpenShell gateway auth contract artifacts'",
       ]),
+    );
+  });
+
+  it("rejects a second product installer after the exact OpenShell 0.0.106 install", () => {
+    const workflow = readOpenShellGatewayAuthContractWorkflow();
+    const install = workflow.jobs["openshell-gateway-auth-contract"].steps!.find(
+      (step) => step.name === "Install OpenShell CLI",
+    )!;
+    install.run += " && bash scripts/install-openshell.sh";
+
+    expect(validateOpenShellGatewayAuthContractWorkflow(workflow)).toContain(
+      "openshell-gateway-auth-contract must run only the exact credential-free OpenShell 0.0.106 install",
     );
   });
 
