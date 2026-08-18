@@ -526,6 +526,7 @@ const interceptPath = process.env.OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH;
 const monitorStarterScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT;
 const runtimeEnvScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT;
 const keyPath = process.env.OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_KEY_PATH;
+const firstInput = process.env.OPENSHELL_NEMOCLAW_LAUNCH_FIRST_INPUT;
 const keyWriterScript = ${JSON.stringify(OPENCLAW_PTY_MONITOR_KEY_WRITER_SCRIPT)};
 
 function fail(reason) {
@@ -607,6 +608,10 @@ const launchLike = sameSandbox && hasExpectedTail;
 
 if (!launchLike) runRealOpenShell(argv);
 
+if (!/^[\x20-\x7e]{1,512}$/.test(firstInput || "")) {
+  fail("openshell_shim_first_input_invalid");
+}
+
 let optionIndex = 4;
 if (argv[optionIndex] === "-g") {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(argv[optionIndex + 1] || "")) {
@@ -659,6 +664,15 @@ const keyWriterArgv = [
 if (invokeRealOpenShell(keyWriterArgv, privateKeyBase64) !== 0) {
   fail("openshell_shim_private_key_write_failed");
 }
+// OpenClaw submits --message only after its Gateway subscription and history
+// load complete. Use a positional parameter so the generated input never
+// enters shell source.
+const launchRemoteArgv = [
+  ...remoteArgv.slice(0, -1),
+  'exec openclaw tui --message "$1"',
+  "nemoclaw-launch-first-turn",
+  firstInput,
+];
 const replacement = [
   ...argv.slice(0, separator + 1),
   "node",
@@ -668,7 +682,7 @@ const replacement = [
   monitorRoot,
   publicKeyBase64,
   privateKeyPath,
-  ...remoteArgv,
+  ...launchRemoteArgv,
 ];
 runRealOpenShell(replacement);
 `;
@@ -1018,6 +1032,12 @@ function qualifyTuiInputMode() {
   client.on("error", () => finish(1, "pty_socket_unavailable"));
 }
 
+function qualifyPtyMonitorReady() {
+  readPtyMonitorRoot(true);
+  readPtyMonitorSocket(true);
+  finish(0);
+}
+
 function readCompleteSession(fileName) {
   let raw;
   try {
@@ -1278,6 +1298,7 @@ function qualifyTurns() {
 try {
   validateRunContext();
   if (mode === "baseline") recordBaseline();
+  else if (mode === "monitor-ready") qualifyPtyMonitorReady();
   else if (mode === "input-mode") qualifyTuiInputMode();
   else if (mode === "qualify") qualifyTurns();
   else if (mode === "cleanup-baseline") removeBaseline();
@@ -1472,6 +1493,25 @@ wait_for_pty_input_mode() {
   fail_launch_session "launch did not observe noncanonical PTY input mode before the session deadline or before the PTY child process exited"
 }
 
+wait_for_pty_monitor_ready() {
+  local evidence_status
+  while (( SECONDS < session_deadline )); do
+    if session_evidence monitor-ready >/dev/null 2>"$evidence_error"; then
+      return 0
+    else
+      evidence_status=$?
+    fi
+    if [[ "$evidence_status" != 1 ]]; then
+      fail_launch_session "OpenClaw PTY monitor evidence was invalid or unavailable (status $evidence_status)"
+    fi
+    if ! kill -0 "$session_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  fail_launch_session "launch did not observe the PTY monitor socket before the session deadline or before the PTY child process exited"
+}
+
 if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
   fail_launch_session "launch could not record the structured session baseline"
 fi
@@ -1494,6 +1534,7 @@ OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND="$NEMOCLAW_OPENSHELL_COMMAND" \
 OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX="$NEMOCLAW_LAUNCH_SANDBOX" \
 OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID="$NEMOCLAW_LAUNCH_RUN_ID" \
 OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH="$intercept_path" \
+OPENSHELL_NEMOCLAW_LAUNCH_FIRST_INPUT="$NEMOCLAW_LAUNCH_FIRST_INPUT" \
 OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT="$NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT" \
 OPENSHELL_NEMOCLAW_LAUNCH_PTY_MONITOR_KEY_PATH="$pty_monitor_key_path" \
 OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT="$NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT" \
@@ -1520,11 +1561,12 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
-wait_for_pty_input_mode
-if ! printf '%s\r' "$NEMOCLAW_LAUNCH_FIRST_INPUT" >&3; then
-  fail_launch_session "launch exited before the first PTY input was submitted"
-fi
+# Establish monitor availability without consuming its single noncanonical
+# observation. A fresh input-mode proof is required after OpenClaw records its
+# startup-aware first turn.
+wait_for_pty_monitor_ready
 wait_for_turn_count 1
+wait_for_pty_input_mode
 if ! printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3; then
   fail_launch_session "launch exited before the second PTY input was submitted"
 fi
