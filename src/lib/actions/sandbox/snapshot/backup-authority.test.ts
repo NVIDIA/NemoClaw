@@ -191,7 +191,7 @@ describe("managed snapshot backup authority", () => {
     privilegedCaptureMocks.withPrivilegedSandboxExecutionLease.mockClear();
   });
 
-  it("captures the exact OpenClaw config through bounded privileged execution", () => {
+  it("captures the exact OpenClaw configuration with bounded privileged execution", () => {
     const data = Buffer.from('{"models":{"default":"nvidia/test"}}\n');
     privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
@@ -247,7 +247,7 @@ describe("managed snapshot backup authority", () => {
     expect(result).toEqual({ outcome: "missing" });
   });
 
-  it("fails closed with a fixed privileged safety reason", () => {
+  it("returns a fixed failure reason when privileged capture rejects unsafe file metadata", () => {
     privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
       status: 11,
       signal: null,

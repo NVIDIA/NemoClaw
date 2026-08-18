@@ -176,7 +176,7 @@ export interface BackupOptions {
    */
   validateBeforePublish?: () => void;
   /**
-   * Internal fallback for a declared state file that the sandbox-user SSH
+   * Internal capture path for a declared state file that the sandbox-user SSH
    * transport cannot read. The caller must independently enforce path,
    * identity, and stable-read constraints before returning bytes.
    */
