@@ -85,11 +85,10 @@ last-updated timestamps, age at inspection, workflow URL, `Release qualification
 failed, cancelled, skipped, queued, or active results.
 
 Treat `Exact staging Brev Launchable` as part of this decision. Record its job status and available
-receipts. If workspace cleanup is not confirmed, require removal of the recorded workspace and
-rotation or revocation of `BREV_API_KEY`, `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and
-`NVIDIA_INFERENCE_API_KEY`. Record completed remediation before proceeding. If immediate
-remediation is unavailable, the signed brief must instead name the workspace, each credential, the
-responsible administrator, and the remediation deadline. Do not claim workspace absence.
+receipts. If a Launchable job ran and workspace cleanup is not confirmed, do not proceed until the
+recorded workspace is removed and `BREV_API_KEY`, `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and
+`NVIDIA_INFERENCE_API_KEY` are rotated or revoked. Record completed remediation without claiming
+that the original cleanup passed.
 
 Offer three choices:
 
@@ -126,6 +125,10 @@ Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the exact plan range. 
 
 Pass that exact Markdown to `release:cut` with `--message-file`. It becomes the signed annotated tag
 message and is the release evidence record. Do not create a separate exception file.
+
+The `Workspace cleanup` line must record verified absence, state that no Launchable check ran, or
+record completed workspace removal and rotation or revocation of all three exposed credentials.
+Unconfirmed or deferred cleanup is not ready for tag confirmation.
 
 Require the full confirmation phrase from the plan. After the script reads the remote tag back and
 confirms that it peels to the candidate, report the tag as cut and return.

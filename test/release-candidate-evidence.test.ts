@@ -200,6 +200,23 @@ describe("release candidate evidence commands", () => {
     });
   });
 
+  it("emits an advisory missing status when no Launchable check exists", () => {
+    const result = selectImageChecks([
+      checkRun(10, "base-image-publication", "completed", "success", "2026-08-18T09:00:00Z"),
+    ]);
+
+    expect(result.status, String(result.stderr)).toBe(0);
+    expect(JSON.parse(String(result.stdout))).toMatchObject({
+      base: { jobId: 1010, status: "completed" },
+      launchable: {
+        conclusion: "missing",
+        jobId: null,
+        runId: null,
+        status: "missing",
+      },
+    });
+  });
+
   it("still requires a successful base-image check", () => {
     const result = selectImageChecks([
       checkRun(10, "base-image-publication", "completed", "failure", "2026-08-18T09:00:00Z"),
@@ -219,9 +236,10 @@ describe("release candidate evidence commands", () => {
     },
   );
 
-  it("requires accountable ownership for deferred Launchable cleanup remediation", () => {
-    expect(releaseSkill).toContain("responsible administrator");
-    expect(releaseSkill).toContain("remediation deadline");
+  it("does not permit deferred Launchable cleanup remediation", () => {
+    expect(releaseSkill).toContain("do not proceed until an administrator removes");
+    expect(releaseSkill).toContain("completed remediation");
+    expect(releaseSkill).not.toContain("remediation deadline");
   });
 
   it("keeps Launchable status advisory in the evening release handoff", () => {

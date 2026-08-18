@@ -6,6 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { completeBrief, failedLaunchableBrief } from "./helpers/release-brief.ts";
 import {
   isCanonicalNemoClawRemote,
   isLocalReleaseFixtureRemote,
@@ -248,42 +250,6 @@ function createPlan(
 
 function confirmationFor(plan: Record<string, string>): string {
   return `CONFIRM RELEASE ${plan.nextTag} ${plan.originMainCommit}`;
-}
-
-function completeBrief(plan: Record<string, string>): string {
-  return [
-    `# NemoClaw ${plan.nextTag} release brief`,
-    "",
-    `- Candidate: \`${plan.originMainCommit}\``,
-    "",
-    "## Canonical release entry",
-    "",
-    `## ${plan.nextTag}`,
-    "",
-    "- Release detail.",
-    "",
-    "## Pi documentation evidence",
-    "",
-    `- Pi candidate: \`${plan.originMainCommit}\``,
-    "- Evidence: approved empty patch.",
-    "",
-    "## Base and managed image evidence",
-    "",
-    `- Base-image candidate: \`${plan.originMainCommit}\``,
-    "- Evidence: successful publication aggregate.",
-    "",
-    "## Exact staging Brev Launchable evidence",
-    "",
-    `- Launchable candidate: \`${plan.originMainCommit}\``,
-    "- Evidence: recorded exact Launchable E2E status and available cleanup receipts.",
-    "",
-    "## General E2E decision",
-    "",
-    "- Decision: proceed.",
-    "",
-    "Exceptions: None",
-    "",
-  ].join("\n");
 }
 
 function writeBrief(fixture: Fixture, content?: string): string {
@@ -774,23 +740,42 @@ describe("release-latest-tag.sh", () => {
     expect(result.stderr).toContain("is not reachable from refs/remotes/origin/main");
   });
 
-  it("signs a release brief with a Launchable exception reason and pushes only the tag", () => {
+  it("rejects a Launchable exception before required cleanup remediation", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
-    const brief = completeBrief(plan)
-      .replace(
-        "- Evidence: recorded exact Launchable E2E status and available cleanup receipts.",
-        "- Evidence: exact staging Launchable failed before cleanup confirmation.",
-      )
-      .replace("- Decision: proceed.", "- Decision: proceed with recorded exception.")
-      .replace(
-        "Exceptions: None",
-        "Exceptions: The maintainer accepted the failed Launchable result. Administrator Release Owner will remove workspace nclaw-e2e-1 and rotate or revoke BREV_API_KEY, NEMOCLAW_IMAGE_DISPATCH_TOKEN, and NVIDIA_INFERENCE_API_KEY by 2026-08-19T00:00:00Z.",
-      );
-    const messageFile = writeBrief(fixture, brief);
+    const brief = failedLaunchableBrief(
+      plan,
+      "- Workspace cleanup: unconfirmed.",
+      "The maintainer accepted the failed result.",
+    );
+
+    const result = cutFromPlan(
+      fixture,
+      planPath,
+      confirmationFor(plan),
+      writeBrief(fixture, brief),
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("unresolved Launchable workspace cleanup");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+  });
+
+  it("signs a release brief with a remediated Launchable exception", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const completedBrief = failedLaunchableBrief(
+      plan,
+      "- Workspace cleanup: remediated: workspace nclaw-e2e-1 was removed; BREV_API_KEY, NEMOCLAW_IMAGE_DISPATCH_TOKEN, and NVIDIA_INFERENCE_API_KEY were rotated or revoked.",
+      "The maintainer accepted the failed Launchable result after completed cleanup remediation.",
+    );
+    const messageFile = writeBrief(fixture, completedBrief);
     const hookPath = path.join(fixture.work, ".git", "hooks", "pre-push");
     fs.writeFileSync(hookPath, "#!/usr/bin/env bash\nexit 97\n", "utf8");
     fs.chmodSync(hookPath, 0o755);
@@ -824,7 +809,7 @@ describe("release-latest-tag.sh", () => {
     expect(rawTag).toContain("-----BEGIN SSH SIGNATURE-----");
     const messageStart = rawTag.indexOf("\n\n") + 2;
     const signatureStart = rawTag.indexOf("-----BEGIN SSH SIGNATURE-----", messageStart);
-    expect(rawTag.slice(messageStart, signatureStart)).toBe(brief);
+    expect(rawTag.slice(messageStart, signatureStart)).toBe(completedBrief);
   });
 
   it("signs the validated brief snapshot when the source file changes before tagging", () => {
@@ -833,7 +818,15 @@ describe("release-latest-tag.sh", () => {
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
-    const brief = completeBrief(plan);
+    const brief = completeBrief(plan)
+      .replace(
+        "- Evidence: no exact staging Launchable check exists for the candidate.",
+        "- Evidence: successful exact staging Launchable run and cleanup receipt.",
+      )
+      .replace(
+        "- Workspace cleanup: not applicable: no Launchable check ran",
+        "- Workspace cleanup: confirmed absent: receipt verified at 2026-08-18T14:00:00Z",
+      );
     const messageFile = writeBrief(fixture, brief);
     const mockBin = path.join(fixture.root, "mock-bin");
     const mutationMarker = path.join(fixture.root, "brief-mutated");

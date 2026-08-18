@@ -138,6 +138,25 @@ printf -v expected_launchable_candidate -- "- Launchable candidate: \`%s\`" "$ta
 require_brief_line_once "$expected_pi_candidate" "plan-bound Pi candidate"
 require_brief_line_once "$expected_base_candidate" "plan-bound base-image candidate"
 require_brief_line_once "$expected_launchable_candidate" "plan-bound Launchable candidate"
+workspace_cleanup_count="$(awk '/^- Workspace cleanup: / { count++ } END { print count + 0 }' "$brief_snapshot")" \
+  || fail "Could not validate the Launchable workspace cleanup record"
+[[ "$workspace_cleanup_count" == "1" ]] \
+  || fail "Release brief must contain exactly one Launchable workspace cleanup record"
+workspace_cleanup="$(awk '/^- Workspace cleanup: / { sub(/^- Workspace cleanup: /, ""); print }' "$brief_snapshot")" \
+  || fail "Could not read the Launchable workspace cleanup record"
+case "$workspace_cleanup" in
+  confirmed\ absent:* | "not applicable: no Launchable check ran") ;;
+  remediated:*)
+    [[ "$workspace_cleanup" == *workspace* && "$workspace_cleanup" == *removed* ]] \
+      || fail "Launchable remediation must record completed workspace removal"
+    [[ "$workspace_cleanup" == *BREV_API_KEY* &&
+      "$workspace_cleanup" == *NEMOCLAW_IMAGE_DISPATCH_TOKEN* &&
+      "$workspace_cleanup" == *NVIDIA_INFERENCE_API_KEY* &&
+      "$workspace_cleanup" == *"rotated or revoked"* ]] \
+      || fail "Launchable remediation must record rotation or revocation of every exposed credential"
+    ;;
+  *) fail "Release brief has unresolved Launchable workspace cleanup" ;;
+esac
 if grep -Eq -- "TODO_RELEASE_BRIEF|Complete before confirmation" "$brief_snapshot"; then
   fail "Release brief still contains unresolved prompts"
 fi

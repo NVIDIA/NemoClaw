@@ -166,6 +166,16 @@ Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 - the maintainer's E2E choice; and
 - a final `Exceptions: None` line or `Exceptions: <plain-language reason>` line.
 
+Resolve the brief's `Workspace cleanup` field with exactly one of these records:
+
+- `confirmed absent: <receipt and verification time>` after successful cleanup verification;
+- `not applicable: no Launchable check ran` when the candidate has no Launchable check; or
+- `remediated: <workspace identity> was removed; BREV_API_KEY,
+  NEMOCLAW_IMAGE_DISPATCH_TOKEN, and NVIDIA_INFERENCE_API_KEY were rotated or revoked` after
+  completed failure remediation.
+
+Do not request confirmation while that field records unconfirmed or deferred cleanup.
+
 Keep the helper's compact range counts and QA focus. Do not duplicate every commit or risky file;
 the canonical release entry and compare range already preserve that detail.
 
@@ -218,12 +228,10 @@ retried without moving the semver tag. Do not call it promotion-only.
   with the general E2E proceed decision.
 - `Exact staging Brev Launchable` or its workspace cleanup fails: inspect the available `lane.log`,
   `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` artifacts. Offer a focused Launchable
-  rerun or let the maintainer proceed with the displayed status. If cleanup is not confirmed,
-  require an administrator to remove the recorded workspace and rotate or revoke `BREV_API_KEY`,
-  `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and `NVIDIA_INFERENCE_API_KEY`. Record completed remediation
-  before proceeding. If immediate remediation is unavailable, the signed brief must instead name
-  the workspace, each credential, the responsible administrator, and the remediation deadline. Do
-  not claim workspace absence.
+  rerun or let the maintainer proceed with the displayed status. If the job ran and cleanup is not
+  confirmed, do not proceed until an administrator removes the recorded workspace and rotates or
+  revokes `BREV_API_KEY`, `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and `NVIDIA_INFERENCE_API_KEY`. Record
+  completed remediation without claiming that the original cleanup passed.
 - General E2E is old, incomplete, failed, or from another SHA: show it and offer focused, full, or
   proceed. Record the decision and reason in the brief.
 - Candidate is no longer on `origin/main`, the previous release changed, or the version is no longer

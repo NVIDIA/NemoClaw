@@ -210,36 +210,51 @@ run_or_stop "image check-run selection" jq -er '
     else
       owned_check($check)
     end;
-  def latest_check($name):
+  def optional_latest_check($name):
     ([.[].check_runs[]? | select(.name == $name)] |
       sort_by([.created_at // "", .id // 0]) | last) as $check |
     if $check == null then
-      error("No candidate check run named \($name) was found")
+      {
+        name: $name,
+        runId: null,
+        jobId: null,
+        jobUrl: null,
+        status: "missing",
+        conclusion: "missing",
+        createdAt: null,
+        completedAt: null
+      }
     else
       owned_check($check)
     end;
   {
     base: successful_check("base-image-publication"),
-    launchable: latest_check("Exact staging Brev Launchable")
+    launchable: optional_latest_check("Exact staging Brev Launchable")
   }
 ' "$CHECK_RUNS_FILE" >"$SELECTED_CHECKS_FILE"
 SELECTED_CHECK_FIELDS_FILE="$EVIDENCE_DIR/selected-image-check-fields.txt"
 run_or_stop "image check-run field read" jq -er '
-  [.base.runId, .base.jobId, .launchable.runId, .launchable.jobId] | .[]
+  [
+    .base.runId,
+    .base.jobId,
+    (.launchable.runId // ""),
+    (.launchable.jobId // ""),
+    .launchable.status,
+    (.launchable.conclusion // "pending")
+  ] | .[]
 ' "$SELECTED_CHECKS_FILE" >"$SELECTED_CHECK_FIELDS_FILE"
 {
   IFS= read -r BASE_IMAGE_RUN_ID
   IFS= read -r BASE_IMAGE_JOB_ID
   IFS= read -r LAUNCHABLE_RUN_ID
   IFS= read -r LAUNCHABLE_JOB_ID
+  IFS= read -r LAUNCHABLE_STATUS
+  IFS= read -r LAUNCHABLE_CONCLUSION
 } <"$SELECTED_CHECK_FIELDS_FILE"
 
 BASE_IMAGE_JOB_FILE="$EVIDENCE_DIR/base-image-job.json"
-LAUNCHABLE_JOB_FILE="$EVIDENCE_DIR/launchable-job.json"
 run_or_stop "base image job read" gh api \
   "repos/NVIDIA/NemoClaw/actions/jobs/${BASE_IMAGE_JOB_ID}" >"$BASE_IMAGE_JOB_FILE"
-run_or_stop "Launchable job read" gh api \
-  "repos/NVIDIA/NemoClaw/actions/jobs/${LAUNCHABLE_JOB_ID}" >"$LAUNCHABLE_JOB_FILE"
 run_or_stop "base image job validation" jq -e --arg sha "$CANDIDATE_SHA" \
   --argjson run "$BASE_IMAGE_RUN_ID" --argjson job "$BASE_IMAGE_JOB_ID" '
   .id == $job and .run_id == $run and
@@ -248,13 +263,6 @@ run_or_stop "base image job validation" jq -e --arg sha "$CANDIDATE_SHA" \
   .name == "base-image-publication" and
   .status == "completed" and .conclusion == "success"
 ' "$BASE_IMAGE_JOB_FILE" >/dev/null
-run_or_stop "Launchable job validation" jq -e --arg sha "$CANDIDATE_SHA" \
-  --argjson run "$LAUNCHABLE_RUN_ID" --argjson job "$LAUNCHABLE_JOB_ID" '
-  .id == $job and .run_id == $run and
-  (.run_attempt | type) == "number" and .run_attempt >= 1 and
-  .run_attempt == (.run_attempt | floor) and .head_sha == $sha and
-  .name == "Exact staging Brev Launchable"
-' "$LAUNCHABLE_JOB_FILE" >/dev/null
 IMAGE_JOB_FIELDS_FILE="$EVIDENCE_DIR/image-job-fields.txt"
 run_or_stop "base image job field read" jq -er '[.run_attempt, .html_url] | .[]' \
   "$BASE_IMAGE_JOB_FILE" >"$IMAGE_JOB_FIELDS_FILE"
@@ -262,6 +270,20 @@ run_or_stop "base image job field read" jq -er '[.run_attempt, .html_url] | .[]'
   IFS= read -r BASE_IMAGE_ATTEMPT
   IFS= read -r BASE_IMAGE_JOB_URL
 } <"$IMAGE_JOB_FIELDS_FILE"
+LAUNCHABLE_ATTEMPT=""
+LAUNCHABLE_JOB_URL=""
+LAUNCHABLE_RUN_URL=""
+if [[ "$LAUNCHABLE_STATUS" != "missing" ]]; then
+LAUNCHABLE_JOB_FILE="$EVIDENCE_DIR/launchable-job.json"
+run_or_stop "Launchable job read" gh api \
+  "repos/NVIDIA/NemoClaw/actions/jobs/${LAUNCHABLE_JOB_ID}" >"$LAUNCHABLE_JOB_FILE"
+run_or_stop "Launchable job validation" jq -e --arg sha "$CANDIDATE_SHA" \
+  --argjson run "$LAUNCHABLE_RUN_ID" --argjson job "$LAUNCHABLE_JOB_ID" '
+  .id == $job and .run_id == $run and
+  (.run_attempt | type) == "number" and .run_attempt >= 1 and
+  .run_attempt == (.run_attempt | floor) and .head_sha == $sha and
+  .name == "Exact staging Brev Launchable"
+' "$LAUNCHABLE_JOB_FILE" >/dev/null
 run_or_stop "Launchable job field read" jq -er \
   '[.run_attempt, .html_url, .status, (.conclusion // "pending")] | .[]' \
   "$LAUNCHABLE_JOB_FILE" >"$IMAGE_JOB_FIELDS_FILE"
@@ -271,12 +293,15 @@ run_or_stop "Launchable job field read" jq -er \
   IFS= read -r LAUNCHABLE_STATUS
   IFS= read -r LAUNCHABLE_CONCLUSION
 } <"$IMAGE_JOB_FIELDS_FILE"
+fi
 
 OWNING_RUNS_FILE="$EVIDENCE_DIR/image-owning-runs.txt"
 run_or_stop "image owning run selection" jq -nr \
   --arg baseRun "$BASE_IMAGE_RUN_ID" --arg baseAttempt "$BASE_IMAGE_ATTEMPT" \
   --arg launchableRun "$LAUNCHABLE_RUN_ID" --arg launchableAttempt "$LAUNCHABLE_ATTEMPT" '
-  [[$baseRun, $baseAttempt], [$launchableRun, $launchableAttempt]] | unique | .[] | @tsv
+  ([[$baseRun, $baseAttempt]] +
+    if $launchableRun == "" then [] else [[$launchableRun, $launchableAttempt]] end) |
+  unique | .[] | @tsv
 ' >"$OWNING_RUNS_FILE"
 while IFS=$'\t' read -r RUN_ID RUN_ATTEMPT; do
   RUN_FILE="$EVIDENCE_DIR/e2e-run-${RUN_ID}-${RUN_ATTEMPT}.json"
@@ -284,26 +309,28 @@ while IFS=$'\t' read -r RUN_ID RUN_ATTEMPT; do
     "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}" >"$RUN_FILE"
 done <"$OWNING_RUNS_FILE"
 BASE_IMAGE_RUN_FILE="$EVIDENCE_DIR/e2e-run-${BASE_IMAGE_RUN_ID}-${BASE_IMAGE_ATTEMPT}.json"
-LAUNCHABLE_RUN_FILE="$EVIDENCE_DIR/e2e-run-${LAUNCHABLE_RUN_ID}-${LAUNCHABLE_ATTEMPT}.json"
 run_or_stop "base image run validation" jq -e --arg sha "$CANDIDATE_SHA" \
   --argjson attempt "$BASE_IMAGE_ATTEMPT" '
   .head_sha == $sha and .run_attempt == $attempt and
   .path == ".github/workflows/e2e.yaml" and .head_branch == "main" and
   (.event == "push" or .event == "workflow_dispatch")
 ' "$BASE_IMAGE_RUN_FILE" >/dev/null
+IMAGE_RUN_FIELDS_FILE="$EVIDENCE_DIR/image-run-fields.txt"
+run_or_stop "base image run field read" jq -er '.html_url' \
+  "$BASE_IMAGE_RUN_FILE" >"$IMAGE_RUN_FIELDS_FILE"
+IFS= read -r BASE_IMAGE_RUN_URL <"$IMAGE_RUN_FIELDS_FILE"
+if [[ "$LAUNCHABLE_STATUS" != "missing" ]]; then
+LAUNCHABLE_RUN_FILE="$EVIDENCE_DIR/e2e-run-${LAUNCHABLE_RUN_ID}-${LAUNCHABLE_ATTEMPT}.json"
 run_or_stop "Launchable run validation" jq -e --arg sha "$CANDIDATE_SHA" \
   --argjson attempt "$LAUNCHABLE_ATTEMPT" '
   .head_sha == $sha and .run_attempt == $attempt and
   .path == ".github/workflows/e2e.yaml" and .head_branch == "main" and
   (.event == "push" or .event == "workflow_dispatch")
 ' "$LAUNCHABLE_RUN_FILE" >/dev/null
-IMAGE_RUN_FIELDS_FILE="$EVIDENCE_DIR/image-run-fields.txt"
-run_or_stop "base image run field read" jq -er '.html_url' \
-  "$BASE_IMAGE_RUN_FILE" >"$IMAGE_RUN_FIELDS_FILE"
-IFS= read -r BASE_IMAGE_RUN_URL <"$IMAGE_RUN_FIELDS_FILE"
 run_or_stop "Launchable run field read" jq -er '.html_url' \
   "$LAUNCHABLE_RUN_FILE" >"$IMAGE_RUN_FIELDS_FILE"
 IFS= read -r LAUNCHABLE_RUN_URL <"$IMAGE_RUN_FIELDS_FILE"
+fi
 ```
 
 Record these values:
@@ -312,10 +339,10 @@ Record these values:
 - `BASE_IMAGE_ATTEMPT`;
 - `BASE_IMAGE_RUN_URL`;
 - `BASE_IMAGE_JOB_URL`;
-- `LAUNCHABLE_RUN_ID`;
-- `LAUNCHABLE_ATTEMPT`;
-- `LAUNCHABLE_RUN_URL`; and
-- `LAUNCHABLE_JOB_URL`;
+- available `LAUNCHABLE_RUN_ID`;
+- available `LAUNCHABLE_ATTEMPT`;
+- available `LAUNCHABLE_RUN_URL`;
+- available `LAUNCHABLE_JOB_URL`;
 - `LAUNCHABLE_STATUS`; and
 - `LAUNCHABLE_CONCLUSION`.
 
@@ -401,11 +428,10 @@ If the Launchable result is missing or non-successful, offer Launchable mode or 
 proceed with the displayed status. A new dispatch always tests current `origin/main`; it cannot
 create evidence for an older planned candidate. If the base-image aggregate is missing or failed,
 repair or rerun the affected publisher workflow and verifier. The E2E decision cannot replace the
-base-image result. When workspace absence is not confirmed, require an administrator to remove the
-recorded workspace and rotate or revoke `BREV_API_KEY`, `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and
-`NVIDIA_INFERENCE_API_KEY`. Record completed remediation before proceeding. If immediate
-remediation is unavailable, the signed brief must instead name the workspace, each credential, the
-responsible administrator, and the remediation deadline. Do not claim workspace absence.
+base-image result. When a Launchable job ran and workspace absence is not confirmed, do not proceed
+until an administrator removes the recorded workspace and rotates or revokes `BREV_API_KEY`,
+`NEMOCLAW_IMAGE_DISPATCH_TOKEN`, and `NVIDIA_INFERENCE_API_KEY`. Record completed remediation and
+do not claim that the original cleanup passed.
 
 ## Final Documentation Recheck
 

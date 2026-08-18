@@ -202,6 +202,7 @@ export function renderHandoffMarkdown(summary: HandoffOutput): string {
     "",
     `- Launchable candidate: ${code(summary.candidateCommit)}`,
     `- Evidence: ${INCOMPLETE}`,
+    `- Workspace cleanup: ${INCOMPLETE}`,
     "",
     "## General E2E decision",
     "",

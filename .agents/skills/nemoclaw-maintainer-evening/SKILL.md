@@ -104,7 +104,8 @@ tag. Draft the public Announcement later with
 - Never cut a tag without the maintainer's exact confirmation phrase.
 - Never bypass the release entry, approved-empty Pi result, or applicable GHCR evidence.
 - Treat exact staging Brev Launchable status as E2E context. Record an exception reason and the
-  required workspace and credential remediation when its cleanup is not confirmed.
+  required completed workspace and credential remediation when a job ran and its cleanup is not
+  confirmed.
 - Never make a different candidate stale merely because `main` advanced or a later documentation PR opened.
 - Never wait for `latest`, label retirement, public documentation, release images, `lkg`, or the Announcement
   before reporting the tag as cut.
