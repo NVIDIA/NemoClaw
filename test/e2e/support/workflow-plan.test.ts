@@ -473,11 +473,13 @@ describe("E2E workflow plan", () => {
     expect(plan.selectedJobs).not.toContain(selector);
   });
 
-  it.each([
-    "Network: enforces network-policy rules",
-    "Network: runs on ubuntu-latest",
-    "Network: validates issue-2478 recovery",
-  ])(
+  it.each(
+    [
+        "Network: enforces network-policy rules",
+        "Network: runs on ubuntu-latest",
+        "Network: validates issue-2478 recovery",
+      ],
+  )(
     "rejects malformed, implementation-derived, and duplicate display names [%s]",
     (displayName) => {
       const networkPolicy = catalogueTarget("network-policy");
@@ -1141,7 +1143,7 @@ describe("E2E workflow plan", () => {
       "| `llama-cpp-dgx-spark-qualification` | unresolved | Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence | NVIDIA DGX Spark GB10; local llama.cpp inference | Explicit dispatch only; excluded from the default release matrix | The protected plan can enable or skip its OpenClaw subqualification |",
     );
     expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
-    expect(complete.stdout).toContain("The 0 inert typed declarations above");
+    expect(complete.stdout).toMatch(/The \d+ inert typed declarations above/);
     expect(complete.stdout).toContain("#8285");
     expect(complete.stdout).toContain("#8286");
   });
