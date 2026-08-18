@@ -602,16 +602,23 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 The next installer run must continue past the OpenShell installation step without reporting a version mismatch.
 
-### Docker Driver Gateway Reports a Missing Migration
+### Docker Driver Gateway Reports an Incompatible Migration
 
-Onboarding can stop when the Docker driver gateway log contains both parts of this error:
+Onboarding can stop when the Docker driver gateway log contains both parts of either error:
 
 ```text
 migration N was previously applied
 is missing in the resolved migrations
 ```
 
-NemoClaw identifies `<selected-state-dir>/openshell.db` as incompatible with the installed OpenShell migration set.
+```text
+migration N was previously applied
+has been modified
+```
+
+The first error means the installed OpenShell migration set does not contain migration N.
+The second error means that migration set defines migration N with different contents.
+NemoClaw identifies `<selected-state-dir>/openshell.db` as incompatible with the installed OpenShell migration set for both errors.
 This failure can happen after an OpenShell downgrade.
 Installing a NemoClaw release that is older than the installed one performs that downgrade, because each release pins one OpenShell version and the installer reinstalls OpenShell at the pin.
 You reach that state in one of three ways:

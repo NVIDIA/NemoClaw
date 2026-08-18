@@ -73,6 +73,23 @@ describe("classifyGatewayStartFailure", () => {
     });
   });
 
+  it("classifies a modified applied migration as an incompatible database (#9293)", () => {
+    const output = [
+      "Error:   × execution error: migration error: migration 4 was previously applied but",
+      "  │ has been modified",
+    ].join("\n");
+
+    expect(classifyGatewayStartFailure(output)).toEqual({
+      kind: "database_migration_incompatible",
+    });
+  });
+
+  it("does not classify an on-disk migration-file edit as incompatible database state (#9293)", () => {
+    const output = "the file containing migration 6 has been modified on disk";
+
+    expect(classifyGatewayStartFailure(output)).toEqual({ kind: "unknown" });
+  });
+
   it("does not classify an unrelated SQLite migration failure as incompatible database state (#8797)", () => {
     const output = "database is locked while applying migration 6";
 
