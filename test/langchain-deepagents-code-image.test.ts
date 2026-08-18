@@ -1200,16 +1200,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(e2ePluginVersion).toBe(pluginVersion);
     expectVersionsMatchLock(requirementsLock, e2eVersions, REQUIRED_MANAGED_DISTRIBUTIONS);
 
-    const pluginTest = fs.readFileSync(
-      path.join(repoRoot, "test", "langchain-deepagents-code-nemotron-profile-plugin.test.ts"),
-      "utf8",
-    );
-    expect(pluginTest).toContain(
-      `const EXPECTED_DEEPAGENTS_VERSION = "${lockedRequirementVersion(
-        requirementsLock,
-        "deepagents",
-      )}";`,
-    );
   });
 
   it.each([

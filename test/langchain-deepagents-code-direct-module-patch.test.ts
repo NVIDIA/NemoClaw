@@ -79,11 +79,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       expect(source.match(/NemoClaw-managed Deep Agents Code hardening v2\./g)).toHaveLength(1);
     });
     expect(fs.existsSync(path.join(packageDir, "hooks.py"))).toBe(false);
-    const server = fs.readFileSync(path.join(packageDir, "client/launch/server.py"), "utf8");
-    expect(server).toContain("pass_fds=nemoclaw_mcp_pass_fds");
-    expect(server).toContain('start_new_session=(sys.platform != "win32")');
     const main = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
-
     expect(main).toContain(expected);
   });
   it.each([
@@ -713,7 +709,7 @@ child = (
     "import json, os; from deepagents_code.mcp_tools import load_mcp_config; "
     "config = load_mcp_config(os.environ['DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH']); "
     "assert 'NEMOCLAW_DCODE_MCP_BINDING' not in os.environ; "
-    "print(json.dumps(config), end='')"
+    "print(json.dumps({'config': config, 'session_id': os.getsid(0)}), end='')"
 )
 def server_for_path(config_path):
     env = os.environ.copy()
@@ -775,6 +771,7 @@ for descriptor in (unsealed_descriptor, empty_descriptor, oversized_descriptor):
 print(json.dumps({
     "path": snapshot_path,
     "kind": binding["kind"],
+    "parent_session_id": os.getsid(0),
     "outputs": [json.loads(output) for output in server.outputs],
 }))
 `,
@@ -792,11 +789,14 @@ print(json.dumps({
       const proof = JSON.parse(result.stdout) as {
         path: string;
         kind: string;
-        outputs: unknown[];
+        parent_session_id: number;
+        outputs: Array<{ config: unknown; session_id: number }>;
       };
       expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
       expect(proof.kind).toBe(snapshotKind);
-      expect(proof.outputs).toEqual([managedConfig, managedConfig]);
+      expect(proof.outputs.map(({ config }) => config)).toEqual([managedConfig, managedConfig]);
+      const childSessions = proof.outputs.map(({ session_id }) => session_id);
+      expect(childSessions).not.toContain(proof.parent_session_id);
       expect(result.stdout).not.toContain("attacker");
     },
   );

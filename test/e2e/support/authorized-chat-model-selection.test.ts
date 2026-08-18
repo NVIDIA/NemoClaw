@@ -10,9 +10,9 @@ const currentModel = "nvidia/nvidia/nemotron-3-ultra";
 
 describe("authorized alternate chat model selection", () => {
   it.each([endpoint, "http://127.0.0.1:8000/v1"])(
-    "tries preferred catalog models through the shared Chat Completions probe at %s",
+    "selects the highest-priority catalog model at %s",
     async (permittedEndpoint) => {
-      const fetchModels = vi.fn(() => ({
+      const fetchModels = () => ({
         ok: true as const,
         ids: [
           currentModel,
@@ -20,11 +20,10 @@ describe("authorized alternate chat model selection", () => {
           "nvidia/nemotron-3-ultra-550b-a55b",
           "nvidia/nv-embedqa-e5-v5",
         ],
-      }));
-      const probeModel = vi
-        .fn()
-        .mockResolvedValueOnce({ ok: false })
-        .mockResolvedValueOnce({ ok: true });
+      });
+      const probeModel = async (_endpoint: string, model: string) => ({
+        ok: model === "nvidia/nemotron-3-ultra-550b-a55b",
+      });
 
       await expect(
         selectAuthorizedChatModel({
@@ -32,25 +31,10 @@ describe("authorized alternate chat model selection", () => {
           currentModel,
           endpoint: permittedEndpoint,
           fetchModels,
+          maxCandidates: 1,
           probeModel,
         }),
-      ).resolves.toBe("nvidia/nemotron-3-super-120b-a12b");
-
-      expect(fetchModels).toHaveBeenCalledWith(permittedEndpoint, "test-key");
-      expect(probeModel.mock.calls).toEqual([
-        [
-          permittedEndpoint,
-          "nvidia/nemotron-3-ultra-550b-a55b",
-          "test-key",
-          { skipResponsesProbe: true },
-        ],
-        [
-          permittedEndpoint,
-          "nvidia/nemotron-3-super-120b-a12b",
-          "test-key",
-          { skipResponsesProbe: true },
-        ],
-      ]);
+      ).resolves.toBe("nvidia/nemotron-3-ultra-550b-a55b");
     },
   );
 

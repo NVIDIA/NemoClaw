@@ -32,8 +32,11 @@ const pythonBin = execFileSync("python3", ["-c", "import sys; print(sys.executab
   encoding: "utf8",
 }).trim();
 
-const EXPECTED_DCODE_VERSION = "0.1.55";
-const EXPECTED_DEEPAGENTS_VERSION = "0.7.5";
+const requirementsLock = fs.readFileSync(path.join(agentDir, "requirements.lock"), "utf8");
+const EXPECTED_DCODE_VERSION = /^deepagents-code==([^\s;]+)/m.exec(requirementsLock)?.[1];
+const EXPECTED_DEEPAGENTS_VERSION = /^deepagents==([^\s;]+)/m.exec(requirementsLock)?.[1];
+assert(EXPECTED_DCODE_VERSION, "requirements.lock must pin deepagents-code");
+assert(EXPECTED_DEEPAGENTS_VERSION, "requirements.lock must pin deepagents");
 const NATIVE_PROFILE_SHA256 = "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a";
 const UNMODIFIED_BOOTSTRAP_SHA256 =
   "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf";
