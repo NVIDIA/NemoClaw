@@ -6,7 +6,7 @@ import {
   WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID,
   WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
   WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID,
-} from "./hooks/seed-openclaw-account.ts";
+} from "./contract.ts";
 
 export const wechatManifest = {
   schemaVersion: 1,

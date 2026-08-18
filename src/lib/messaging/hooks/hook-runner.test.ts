@@ -271,6 +271,36 @@ describe("MessagingHookRegistry", () => {
     ).toThrow("Duplicate messaging hook handler id 'wechat.ilinkLogin'");
   });
 
+  it("keeps managed startup placeholder authorization on the registered hook output", () => {
+    const registry = new MessagingHookRegistry([
+      {
+        id: "wechat.seedOpenClawAccount",
+        handler: () => ({}),
+        managedStartupPlaceholderAuthorizers: {
+          accountFile: (value) =>
+            value === "canonical"
+              ? [{ path: ["content", "token"], value: "openshell:resolve:env:BOT_TOKEN" }]
+              : [],
+        },
+      },
+    ]);
+
+    expect(
+      registry.authorizeManagedStartupPlaceholders(
+        "wechat.seedOpenClawAccount",
+        "accountFile",
+        "canonical",
+      ),
+    ).toEqual([{ path: ["content", "token"], value: "openshell:resolve:env:BOT_TOKEN" }]);
+    expect(
+      registry.authorizeManagedStartupPlaceholders(
+        "wechat.seedOpenClawAccount",
+        "anotherOutput",
+        "canonical",
+      ),
+    ).toEqual([]);
+  });
+
   it("reports missing handlers deterministically", async () => {
     await expect(
       runMessagingHook(HOST_QR_HOOK, new MessagingHookRegistry(), {

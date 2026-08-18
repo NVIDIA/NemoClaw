@@ -4,14 +4,23 @@
 import type {
   MessagingHookHandler,
   MessagingHookInputMap,
+  MessagingManagedStartupPlaceholderAuthorization,
   MessagingHookOutputMap,
   MessagingHookRegistration,
 } from "../../../hooks/types";
+import {
+  WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID,
+  WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
+  WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID,
+} from "../contract.ts";
 import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url.ts";
 
-export const WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID = "wechat.seedOpenClawAccount";
-export const WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID = "wechat-seed-openclaw-account";
-export const WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID = "openclawWeixinAccountFile";
+export {
+  WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID,
+  WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
+  WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID,
+} from "../contract.ts";
+
 export const WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 export const WECHAT_PLUGIN_ID = "openclaw-weixin";
 export const WECHAT_PLUGIN_INSTALL_PATH = "/sandbox/.openclaw/extensions/openclaw-weixin";
@@ -36,6 +45,9 @@ export function createWechatSeedOpenClawAccountHookRegistration(
   return {
     id: WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
     handler: createWechatSeedOpenClawAccountHook(options),
+    managedStartupPlaceholderAuthorizers: {
+      [WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID]: authorizeWechatAccountFilePlaceholders,
+    },
   };
 }
 
@@ -111,29 +123,13 @@ export function buildWechatSeedOpenClawAccountOutputs(
   };
 }
 
-export interface WechatManagedStartupPlaceholderAuthorization {
-  readonly path: readonly string[];
-  readonly value: string;
-}
-
-export function authorizeWechatManagedStartupPlaceholders(
-  step: unknown,
-): readonly WechatManagedStartupPlaceholderAuthorization[] {
-  if (!isPlainDataObject(step)) return [];
-  const value = ownDataPropertyValue(step, "value");
-  if (
-    ownDataPropertyValue(step, "channelId") !== "wechat" ||
-    ownDataPropertyValue(step, "kind") !== "build-file" ||
-    ownDataPropertyValue(step, "hookId") !== WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID ||
-    ownDataPropertyValue(step, "handler") !== WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID ||
-    ownDataPropertyValue(step, "outputId") !== WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID ||
-    ownDataPropertyValue(step, "required") !== true ||
-    !isPlainDataObject(value) ||
-    !isWechatAccountFilePath(ownDataPropertyValue(value, "path"))
-  ) {
+function authorizeWechatAccountFilePlaceholders(
+  value: unknown,
+): readonly MessagingManagedStartupPlaceholderAuthorization[] {
+  if (!isPlainDataObject(value) || !isWechatAccountFilePath(ownDataPropertyValue(value, "path"))) {
     return [];
   }
-  return [{ path: ["value", "content", "token"], value: WECHAT_TOKEN_PLACEHOLDER }];
+  return [{ path: ["content", "token"], value: WECHAT_TOKEN_PLACEHOLDER }];
 }
 
 function wechatAccountFilePath(accountId: string): string {
