@@ -25,6 +25,14 @@ export function inspectLocalImageMetadata(imageRef: string): LocalImageMetadata 
   }
 }
 
+function isExactSameRepositoryDigestRef(
+  imageName: string,
+  digest: string,
+  ref: string,
+): boolean {
+  return /^sha256:[0-9a-f]{64}$/u.test(digest) && ref === `${imageName}@${digest}`;
+}
+
 export function validateSandboxBaseImageResolutionMetadata(input: {
   metadata: SandboxBaseImageResolutionMetadata;
   expectedKey: string;
@@ -67,7 +75,10 @@ export function validateSandboxBaseImageResolutionMetadata(input: {
   if (metadata.digest) {
     const expectedRepoDigest = `${input.imageName}@${metadata.digest}`;
     const repoDigests = Array.isArray(inspected.RepoDigests) ? inspected.RepoDigests : [];
-    if (!repoDigests.some((entry) => String(entry) === expectedRepoDigest)) {
+    if (
+      !isExactSameRepositoryDigestRef(input.imageName, metadata.digest, metadata.ref) &&
+      !repoDigests.some((entry) => String(entry) === expectedRepoDigest)
+    ) {
       return { ok: false, reason: "repo_digest_missing" };
     }
   }
@@ -89,7 +100,19 @@ export function createSandboxBaseImageResolutionMetadata(
   if (resolution.digest) {
     const expectedRepoDigest = `${options.imageName}@${resolution.digest}`;
     const repoDigests = Array.isArray(inspected?.RepoDigests) ? inspected.RepoDigests : [];
-    if (!repoDigests.some((entry) => String(entry) === expectedRepoDigest)) return null;
+    // Docker may omit RepoDigests after resolving an exact platform manifest.
+    // The resolver's exact same-repository digest ref remains immutable proof.
+    const exactResolvedReference = isExactSameRepositoryDigestRef(
+      options.imageName,
+      resolution.digest,
+      resolution.ref,
+    );
+    if (
+      !exactResolvedReference &&
+      !repoDigests.some((entry) => String(entry) === expectedRepoDigest)
+    ) {
+      return null;
+    }
   }
 
   return {
@@ -115,7 +138,11 @@ export function finalizeSandboxBaseImageResolution(
   resolution: SandboxBaseImageResolution,
 ): SandboxBaseImageResolution {
   let locallyProvenResolution = resolution;
-  if (resolution.digest) {
+  const preserveExactOverride =
+    resolution.source === "override" &&
+    resolution.digest !== null &&
+    isExactSameRepositoryDigestRef(options.imageName, resolution.digest, resolution.ref);
+  if (resolution.digest && !preserveExactOverride) {
     const inspected = inspectLocalImageMetadata(resolution.ref);
     const expectedRepoDigest = `${options.imageName}@${resolution.digest}`;
     const matchingRepoDigests = Array.isArray(inspected?.RepoDigests)

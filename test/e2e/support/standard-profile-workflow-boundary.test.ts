@@ -54,6 +54,18 @@ describe("standard E2E execution profile", () => {
     );
   });
 
+  it("rejects an unguarded existing catalogue caller secret", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { secrets: Record<string, string> }>;
+    };
+    workflow.jobs["catalogue-nvidia-api"]!.secrets.NVIDIA_API_KEY =
+      "${{ secrets.NVIDIA_API_KEY }}";
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue-nvidia-api must receive only its profile secrets",
+    );
+  });
+
   it("rejects catalogue callers that bypass E2E credential authorization (#9047)", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { with: Record<string, string> }>;

@@ -164,6 +164,7 @@ describe("uninstall run plan", () => {
           hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: (line) => logs.push(line),
+          platform: "linux",
           rmSync: vi.fn((target: fs.PathLike) => {
             removed.push(String(target));
           }),

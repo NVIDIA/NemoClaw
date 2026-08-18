@@ -58,6 +58,22 @@ describe("sandbox base-image resolution validation", () => {
     });
   });
 
+  it("validates an exact digest reference when Docker reports another repository digest (#9386)", () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const exactMetadata = {
+      ...metadata,
+      ref: `${metadata.imageName}@${digest}`,
+      digest,
+    };
+
+    expect(
+      validate(exactMetadata, {
+        ...inspected,
+        RepoDigests: [`${metadata.imageName}@sha256:${"b".repeat(64)}`],
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it("validates local fallback images by identity without RepoDigests (#4680)", () => {
     expect(
       validate(

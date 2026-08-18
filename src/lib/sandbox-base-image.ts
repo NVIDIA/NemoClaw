@@ -116,6 +116,7 @@ function hasCurrentLocalBuildProvenance(
 function getRepoDigest(
   imageName: string,
   imageRef: string,
+  preserveExactDigestRef = false,
 ): { digest: string; ref: string } | null {
   const referencesExpectedRepository =
     imageRef === imageName ||
@@ -147,6 +148,7 @@ function getRepoDigest(
     });
     return pinnedDigest;
   }
+  if (preserveExactDigestRef && pinnedDigest) return pinnedDigest;
   const repoDigest = Array.isArray(repoDigests)
     ? repoDigests.find((entry) => String(entry).startsWith(`${imageName}@sha256:`))
     : null;
@@ -157,6 +159,7 @@ function getRepoDigest(
 
 type PulledCandidateOptions = {
   pinnedRemoteRef?: string;
+  preserveExactDigestRef?: boolean;
   refreshBeforeValidation?: boolean;
   refreshIfLocalInvalid?: boolean;
 };
@@ -299,7 +302,11 @@ function validatePulledCandidate(
     return null;
   }
 
-  const repoDigest = getRepoDigest(imageName, imageRef);
+  const repoDigest = getRepoDigest(
+    imageName,
+    imageRef,
+    candidateOptions.preserveExactDigestRef === true,
+  );
   return {
     ref: repoDigest?.ref || imageRef,
     digest: repoDigest?.digest || null,
@@ -485,6 +492,7 @@ export function resolveSandboxBaseImage(
       );
     }
     const resolved = resolvePulledCandidate(options.imageName, override, "override", options, {
+      preserveExactDigestRef: true,
       refreshBeforeValidation: true,
     });
     if (resolved?.digest) return finish(resolved);

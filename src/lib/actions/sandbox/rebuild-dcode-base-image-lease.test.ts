@@ -18,6 +18,34 @@ const trustedLocalOverride = {
   provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
 };
 const trustedRemoteRef = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:${"d".repeat(64)}`;
+const trustedLocalResolutionMetadata = {
+  schema: 1,
+  key: "trusted-local-dcode-base",
+  imageName: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+  ref: trustedLocalOverride.ref,
+  digest: null,
+  source: "local",
+  imageId: `sha256:${"a".repeat(64)}`,
+  os: "linux",
+  architecture: "amd64",
+  glibcVersion: "2.41",
+  requireOpenshellSandboxAbi: true,
+  minGlibcVersion: "2.39",
+};
+const trustedRemoteResolutionMetadata = {
+  schema: 1,
+  key: "trusted-remote-dcode-base",
+  imageName: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+  ref: trustedRemoteRef,
+  digest: `sha256:${"d".repeat(64)}`,
+  source: "source-sha",
+  imageId: "sha256:dcode-base",
+  os: "linux",
+  architecture: "amd64",
+  glibcVersion: "2.41",
+  requireOpenshellSandboxAbi: true,
+  minGlibcVersion: "2.39",
+};
 
 describe("rebuildSandbox DCode flow: base-image trust lease", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
@@ -36,9 +64,13 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
       leaseActive = true;
       return harness.restoreTrustedAgentBaseImageOverrideSpy;
     });
-    harness.prepareManagedDcodeRebuildImageSpy.mockImplementation(async () => {
+    harness.prepareManagedDcodeRebuildImageSpy.mockImplementation(async (input) => {
       expect(leaseActive).toBe(true);
       expect(process.env[overrideEnvName]).toBe(trustedLocalOverride.ref);
+      expect(input.preResolvedBaseImageMetadata).toMatchObject({
+        ref: trustedLocalOverride.ref,
+        imageId: `sha256:${"a".repeat(64)}`,
+      });
       return { ok: true, prepared: harness.preparedDcodeBuildContext };
     });
 
@@ -60,10 +92,7 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
       sandboxEntry: makeDcodeSandboxEntry(),
     });
     configureDcodeSession(harness);
-    const resolutionMetadata = {
-      ref: trustedRemoteRef,
-      source: "source-sha",
-    };
+    const resolutionMetadata = trustedRemoteResolutionMetadata;
     harness.ensureAgentBaseImageSpy.mockReturnValue({
       imageTag: trustedRemoteRef,
       built: false,
@@ -77,9 +106,10 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
       leaseActive = true;
       return harness.restoreTrustedAgentRemoteBaseImageOverrideSpy;
     });
-    harness.prepareManagedDcodeRebuildImageSpy.mockImplementation(async () => {
+    harness.prepareManagedDcodeRebuildImageSpy.mockImplementation(async (input) => {
       expect(leaseActive).toBe(true);
       expect(process.env[overrideEnvName]).toBe(trustedRemoteRef);
+      expect(input.preResolvedBaseImageMetadata).toBe(resolutionMetadata);
       return { ok: true, prepared: harness.preparedDcodeBuildContext };
     });
 
@@ -120,6 +150,7 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
         imageTag: trustedLocalOverride.ref,
         built: true,
         trustedLocalOverride,
+        resolutionMetadata: trustedLocalResolutionMetadata,
       });
     let leaseActive = false;
     harness.restoreTrustedAgentBaseImageOverrideSpy.mockImplementation(() => {
@@ -129,9 +160,10 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
       leaseActive = true;
       return harness.restoreTrustedAgentBaseImageOverrideSpy;
     });
-    harness.prepareManagedDcodeRebuildImageSpy.mockImplementation(async () => {
+    harness.prepareManagedDcodeRebuildImageSpy.mockImplementation(async (input) => {
       expect(leaseActive).toBe(true);
       expect(process.env[overrideEnvName]).toBe(trustedLocalOverride.ref);
+      expect(input.preResolvedBaseImageMetadata).toBe(trustedLocalResolutionMetadata);
       return { ok: true, prepared: harness.preparedDcodeBuildContext };
     });
 
@@ -166,10 +198,7 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
       sandboxEntry: makeDcodeSandboxEntry(),
     });
     configureDcodeSession(harness);
-    const resolutionMetadata = {
-      ref: trustedRemoteRef,
-      source: "source-sha",
-    };
+    const resolutionMetadata = trustedRemoteResolutionMetadata;
     harness.ensureAgentBaseImageSpy.mockReturnValue({
       imageTag: trustedRemoteRef,
       built: false,
@@ -245,5 +274,32 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
     } finally {
       restoreEnv();
     }
+  });
+
+  it("rejects base-image resolution metadata for a different local image (#9386)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+    });
+    configureDcodeSession(harness);
+    harness.ensureAgentBaseImageSpy.mockReturnValue({
+      imageTag: trustedLocalOverride.ref,
+      built: true,
+      trustedLocalOverride,
+      resolutionMetadata: {
+        ...trustedLocalResolutionMetadata,
+        imageId: `sha256:${"e".repeat(64)}`,
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("DCode base-image resolution metadata does not match the pinned image");
+
+    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expect(harness.dockerRmiSpy).toHaveBeenCalledWith(trustedLocalOverride.ref, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
   });
 });

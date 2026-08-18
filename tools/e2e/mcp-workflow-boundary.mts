@@ -43,8 +43,7 @@ const DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME = "Checkout trusted OpenShell dev tooli
 const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
 const DEV_ARTIFACT_TRUSTED_PATHS =
   "scripts/install-openshell.sh\ntools/e2e/openshell-dev-artifact.mts\n";
-const DEV_ARTIFACT_SHARD_TRUSTED_PATHS =
-  `.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
+const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
 const DEV_ARTIFACT_TRUSTED_TOOL = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
 const DEV_ARTIFACT_TRUSTED_INSTALLER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/scripts/install-openshell.sh`;
 const DEV_ARTIFACT_SOURCE_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.source_commit }}";
@@ -584,9 +583,7 @@ function validateJobExecution(
       trustedCheckoutIndex !== dockerAuthIndex + 1 ||
       prepareIndex !== installIndex + 1 ||
       restoreCliIndex !== prepareIndex + 1 ||
-      trustedInstallSequence.some(
-        (step, offset) => steps[trustedCheckoutIndex + offset] !== step,
-      )
+      trustedInstallSequence.some((step, offset) => steps[trustedCheckoutIndex + offset] !== step)
     ) {
       errors.push(
         "mcp-bridge-dev must complete trusted Node.js setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
@@ -594,12 +591,9 @@ function validateJobExecution(
     }
     if (
       installIndex < 0 ||
-      contentSha256(steps.slice(0, installIndex + 1)) !==
-        MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
+      contentSha256(steps.slice(0, installIndex + 1)) !== MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
     ) {
-      errors.push(
-        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
-      );
+      errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
     }
     if (
       prepareIndex < 0 ||
@@ -891,6 +885,11 @@ function validateCredentialWindowJob(
   const expectedEnv = {
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
+    E2E_AGENT_RUNTIME: "openclaw",
+    E2E_OBSERVABLE_OUTCOME:
+      "Credential expiry rotation detach and rebuild preserve the intended access window",
+    E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
+      "Ubuntu Docker host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
     NEMOCLAW_OPENSHELL_CHANNEL: "stable",
