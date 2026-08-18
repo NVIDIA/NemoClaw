@@ -245,6 +245,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
 
   await printSandboxGatewayLookupStatus({
     sandboxName,
+    registered: sb !== null,
     lookup,
     phase,
     dockerRuntime,

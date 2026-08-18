@@ -55,7 +55,7 @@ function expectStartupCandidatesRejected(
   agent: AgentDefinition,
   candidates: readonly string[][],
 ): void {
-  for (const candidateArgv of candidates) {
+  candidates.forEach((candidateArgv) => {
     expect(() =>
       assertCurrentHermesPortableStartupContract(contract, {
         agent,
@@ -63,13 +63,13 @@ function expectStartupCandidatesRejected(
         startupArgv: candidateArgv,
       }),
     ).toThrow("current startup authority disagrees");
-  }
+  });
 }
 
 afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
+  temporaryDirectories.splice(0).forEach((directory) => {
     fs.rmSync(directory, { recursive: true, force: true });
-  }
+  });
 });
 
 describe("Hermes portable startup contract", () => {

@@ -74,17 +74,19 @@ async function expectUnsupportedHermesPortableSources(
   },
   expectedDockerfilePath: string,
 ): Promise<void> {
-  for (const source of [
-    { ...prepared.source, reason: "custom-dockerfile" as const },
-    { ...prepared.source, dockerfilePath: "/workspace/replacement/Dockerfile" },
-  ]) {
-    await expect(
-      prepareHermesPortableSandboxWorkloadForLifecycle(
-        { ...runtime, ensurePreparedWorkload: vi.fn(async () => ({ ...prepared, source })) },
-        expectedDockerfilePath,
-      ),
-    ).rejects.toThrow("requires the shipped Hermes Dockerfile source");
-  }
+  await Promise.all(
+    [
+      { ...prepared.source, reason: "custom-dockerfile" as const },
+      { ...prepared.source, dockerfilePath: "/workspace/replacement/Dockerfile" },
+    ].map((source) =>
+      expect(
+        prepareHermesPortableSandboxWorkloadForLifecycle(
+          { ...runtime, ensurePreparedWorkload: vi.fn(async () => ({ ...prepared, source })) },
+          expectedDockerfilePath,
+        ),
+      ).rejects.toThrow("requires the shipped Hermes Dockerfile source"),
+    ),
+  );
 }
 
 describe("managed workload onboard orchestration", () => {

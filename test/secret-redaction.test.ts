@@ -14,30 +14,6 @@ import { redactSensitiveText } from "../src/lib/state/onboard-session";
 const require = createRequire(import.meta.url);
 const { redact: runnerRedact } = require("../src/lib/runner");
 
-function linkDebugCommands(fakeBin: string): void {
-  for (const name of [
-    "cat",
-    "dmesg",
-    "free",
-    "head",
-    "ps",
-    "sh",
-    "sort",
-    "tail",
-    "uname",
-    "uptime",
-  ]) {
-    try {
-      const target = spawnSync("bash", ["--noprofile", "--norc", "-c", `command -v ${name}`], {
-        encoding: "utf-8",
-      }).stdout.trim();
-      if (target) symlinkSync(target, join(fakeBin, name));
-    } catch {
-      /* ignore optional command */
-    }
-  }
-}
-
 describe("secret redaction consistency (#1736)", () => {
   // Tokens whose prefix is a literal string that must be redacted by the shared debug redactor.
   const LITERAL_PREFIX_TOKENS = [
@@ -145,7 +121,27 @@ describe("secret redaction consistency (#1736)", () => {
       const tmp = mkdtempSync(join(tmpdir(), "nemoclaw-debug-node-env-redact-"));
       const fakeBin = join(tmp, "bin");
       mkdirSync(fakeBin);
-      linkDebugCommands(fakeBin);
+      for (const name of [
+        "cat",
+        "dmesg",
+        "free",
+        "head",
+        "ps",
+        "sh",
+        "sort",
+        "tail",
+        "uname",
+        "uptime",
+      ]) {
+        try {
+          const target = spawnSync("bash", ["--noprofile", "--norc", "-c", `command -v ${name}`], {
+            encoding: "utf-8",
+          }).stdout.trim();
+          if (target) symlinkSync(target, join(fakeBin, name));
+        } catch {
+          /* ignore optional command */
+        }
+      }
 
       writeFileSync(
         join(fakeBin, "date"),

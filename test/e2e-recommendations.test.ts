@@ -49,27 +49,6 @@ const ADVERSARIAL_E2E_TEXT = [
   "command aws secretsmanager get-secret-value --secret-id prod",
 ];
 const E2E_CONTROL_PLANE_JOB_IDS = new Set(["cloud-onboard", "cloud-inference", "security-posture"]);
-const RUNTIME_INVENTORY_FILES = [
-  "tools/advisors/e2e-recommendations.mts",
-  "tools/advisors/e2e-text.mts",
-  "tools/advisors/json.mts",
-  "tools/advisors/risk-plan.mts",
-  "tools/e2e/execution-coverage.mts",
-  "tools/e2e/target-catalogue.mts",
-  "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
-  "scripts/checks/protected-managed-image-contract.ts",
-  "tools/e2e/module-tags.mts",
-  ".github/workflows/e2e.yaml",
-  "test/vllm-docker-storage.test.ts",
-] as const;
-
-function copyRuntimeInventoryFiles(destinationRoot: string): void {
-  for (const file of RUNTIME_INVENTORY_FILES) {
-    const destination = path.join(destinationRoot, file);
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.copyFileSync(path.join(REPO_ROOT, file), destination);
-  }
-}
 
 function withoutControlPlaneRecommendations<T extends { id: string }>(
   recommendations: readonly T[],
@@ -139,7 +118,23 @@ describe("E2E recommendation normalizer", () => {
   it("loads the trusted inventory without repository development dependencies", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-recommendations-runtime-"));
     try {
-      copyRuntimeInventoryFiles(tmp);
+      for (const file of [
+        "tools/advisors/e2e-recommendations.mts",
+        "tools/advisors/e2e-text.mts",
+        "tools/advisors/json.mts",
+        "tools/advisors/risk-plan.mts",
+        "tools/e2e/execution-coverage.mts",
+        "tools/e2e/target-catalogue.mts",
+        "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
+        "scripts/checks/protected-managed-image-contract.ts",
+        "tools/e2e/module-tags.mts",
+        ".github/workflows/e2e.yaml",
+        "test/vllm-docker-storage.test.ts",
+      ]) {
+        const destination = path.join(tmp, file);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.copyFileSync(path.join(REPO_ROOT, file), destination);
+      }
       fs.cpSync(path.join(REPO_ROOT, "test/e2e/registry"), path.join(tmp, "test/e2e/registry"), {
         recursive: true,
       });
@@ -216,7 +211,7 @@ describe("E2E recommendation normalizer", () => {
     expect(JSON.stringify(normalized)).not.toMatch(/gh workflow run|--ref attacker/u);
   });
 
-  function verifyE2eRecommendationCommandFiltering() {
+  it("rejects arbitrary executables and shell token tricks without dropping ordinary prose", () => {
     for (const command of COMMAND_SHAPED_E2E_TEXT) {
       expect(isCommandShapedE2eText(command), command).toBe(true);
     }
@@ -260,12 +255,7 @@ describe("E2E recommendation normalizer", () => {
     }
     const normalized = JSON.stringify({ coverage, targets });
     for (const prose of untrustedProse) expect(normalized).not.toContain(prose);
-  }
-
-  it(
-    "rejects arbitrary executables and shell token tricks without dropping ordinary prose",
-    verifyE2eRecommendationCommandFiltering,
-  );
+  });
 
   it("rejects missing and unknown selector types instead of inferring them", () => {
     const normalized = normalizeE2eTargetAdvisorResult(

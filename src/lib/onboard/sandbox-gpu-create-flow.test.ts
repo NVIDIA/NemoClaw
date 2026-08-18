@@ -515,12 +515,22 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
     );
   });
 
-  it("retries structured nvidia-smi failure only when host config proves no GPU attachment (#6110)", async () => {
+  it("inspects the exact recreated native container before authorizing compatibility fallback", async () => {
     const deps = createDeps();
+    const replacementContainerId = "b".repeat(64);
     vi.mocked(deps.verifyDirectSandboxGpu)
       .mockReturnValueOnce(NVIDIA_SMI_FAILED_PROOF)
       .mockReturnValue(VERIFIED_PROOF);
-    mockRuntimeSnapshot();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce({
+      ...createPatch(),
+      replacementRuntimeId: vi.fn(() => replacementContainerId),
+    });
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockImplementation(
+      (_sandboxName, _deps, options) =>
+        options?.expectedContainerId === replacementContainerId
+          ? { ...DEFAULT_RUNTIME_SNAPSHOT, containerId: replacementContainerId }
+          : { ok: false, error: "expected one labeled sandbox container, found 2" },
+    );
 
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
       route: "compatibility",
@@ -528,6 +538,11 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
     });
 
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledWith(
+      "alpha",
+      {},
+      { expectedContainerId: replacementContainerId },
+    );
     expect(deps.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ suppressOutput: true }),

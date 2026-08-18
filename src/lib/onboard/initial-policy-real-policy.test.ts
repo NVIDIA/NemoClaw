@@ -386,19 +386,35 @@ describe("initial sandbox policy real preset merge", () => {
     expect(effective.network_policies?.["observability-otlp-local"]).toBeDefined();
   });
 
-  function verifyShippingPolicyMethods() {
-    const policyCases = [
-      { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },
-      {
-        path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
-        agent: "openclaw",
-      },
-      { path: ["agents", "openclaw", "policy-permissive.yaml"], agent: "openclaw" },
-      { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
-      { path: ["agents", "hermes", "policy-permissive.yaml"], agent: "hermes" },
-    ];
-
-    for (const policyCase of policyCases) {
+  it.each([
+    {
+      label: "restricted OpenClaw policy",
+      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
+      agent: "openclaw",
+    },
+    {
+      label: "permissive OpenClaw blueprint policy",
+      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
+      agent: "openclaw",
+    },
+    {
+      label: "permissive OpenClaw agent policy",
+      path: ["agents", "openclaw", "policy-permissive.yaml"],
+      agent: "openclaw",
+    },
+    {
+      label: "Hermes policy additions",
+      path: ["agents", "hermes", "policy-additions.yaml"],
+      agent: "hermes",
+    },
+    {
+      label: "permissive Hermes policy",
+      path: ["agents", "hermes", "policy-permissive.yaml"],
+      agent: "hermes",
+    },
+  ] as const)(
+    "keeps shipping policy methods explicit and avoids deprecated REST TLS mode for $label",
+    (policyCase) => {
       const effective = readPreparedPolicy(
         prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
           agentName: policyCase.agent,
@@ -416,12 +432,7 @@ describe("initial sandbox policy real preset merge", () => {
           expect(endpoint.tls).not.toBe("terminate");
         }
       }
-    }
-  }
-
-  it(
-    "keeps effective shipping policy methods explicit and avoids deprecated REST TLS mode",
-    verifyShippingPolicyMethods,
+    },
   );
 
   it("keeps the Restricted OpenClaw npm baseline inspected and GET-only (#8497)", () => {

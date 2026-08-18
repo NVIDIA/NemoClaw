@@ -89,17 +89,20 @@ export type StatusFlowHarnessOptions = {
   gatewayRunning?: boolean;
   preflight?: SandboxStatusPreflightResult;
   postRecoveryPreflight?: SandboxStatusPreflightResult;
-  sandboxEntry?: Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
-    agent?: string | null;
-    agentVersion?: string | null;
-    dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
-    baselineExclusions?: Array<{ version: 1; agent: string; key: string; digest: string }>;
-    baselineExclusionTransition?: BaselineExclusionTransition;
-    preferredInferenceApi?: string | null;
-    compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
-    hostMounts?: SandboxHostMount[];
-    dashboardRemoteBindPrepared?: boolean;
-  };
+  /** `null` models a sandbox name that the local registry does not hold. */
+  sandboxEntry?:
+    | (Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
+        agent?: string | null;
+        agentVersion?: string | null;
+        dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
+        baselineExclusions?: Array<{ version: 1; agent: string; key: string; digest: string }>;
+        baselineExclusionTransition?: BaselineExclusionTransition;
+        preferredInferenceApi?: string | null;
+        compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
+        hostMounts?: SandboxHostMount[];
+        dashboardRemoteBindPrepared?: boolean;
+      })
+    | null;
   shieldsPosture?: {
     mode: "locked" | "mutable_default" | "mutable";
     detail: string;
@@ -161,7 +164,8 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
           recoverySandboxVia: "docker unpause",
         });
 
-  const sandboxEntry = { ...baseSandboxEntry, ...options.sandboxEntry };
+  const sandboxEntry =
+    options.sandboxEntry === null ? null : { ...baseSandboxEntry, ...options.sandboxEntry };
   const inspectPortableAgentReceiptDispositionSpy = vi
     .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
     .mockImplementation(() => {
@@ -198,15 +202,15 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       sb: sandboxEntry,
       lookup,
       rpcIssue: null,
-      currentModel: options.currentModel ?? sandboxEntry.model,
+      currentModel: options.currentModel ?? sandboxEntry?.model,
       currentProvider: options.currentProvider ?? "ollama-local",
       recordedRoute: {
-        provider: sandboxEntry.provider,
-        model: sandboxEntry.model,
+        provider: sandboxEntry?.provider,
+        model: sandboxEntry?.model,
       },
       liveRoute: {
         provider: options.currentProvider ?? "ollama-local",
-        model: options.currentModel ?? sandboxEntry.model,
+        model: options.currentModel ?? sandboxEntry?.model,
       },
       routeDrift: options.routeDrift ?? null,
       inferenceHealth:
@@ -233,7 +237,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       terminalRuntimeHealth: null,
       servingProcessHealth:
         options.servingProcessHealth === undefined
-          ? sandboxEntry.agent === "langchain-deepagents-code"
+          ? sandboxEntry?.agent === "langchain-deepagents-code"
             ? null
             : { checked: false }
           : options.servingProcessHealth,

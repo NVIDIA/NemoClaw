@@ -36,11 +36,11 @@ function result(
 
 function deeplyNestedPolicyAuthority(): Record<string, unknown> {
   const root: Record<string, unknown> = {};
-  let current = root;
-  for (let index = 0; index < 70; index += 1) {
-    current.next = {};
-    current = current.next as Record<string, unknown>;
-  }
+  Array.from({ length: 70 }).reduce<Record<string, unknown>>((current) => {
+    const next: Record<string, unknown> = {};
+    current.next = next;
+    return next;
+  }, root);
   return root;
 }
 

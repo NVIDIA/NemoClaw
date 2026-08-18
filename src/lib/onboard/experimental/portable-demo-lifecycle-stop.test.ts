@@ -64,6 +64,7 @@ function socketAuthorityDeps(): PodmanSocketAuthorityDeps {
 
 function createPodman() {
   let running = true;
+  let status: string | null = "running";
   let containerId = CONTAINER_ID;
   const podman = vi.fn(
     (args: readonly string[], _env?: NodeJS.ProcessEnv): PortablePodmanLifecycleCommandResult => {
@@ -89,12 +90,13 @@ function createPodman() {
                     "openshell.ai/sandbox-workspace": "default",
                   },
                 },
-                State: { Running: running },
+                State: { Running: running, Status: status },
               },
             ]),
           };
         case "stop":
           running = false;
+          status = "exited";
           return { status: 0 };
         case "update":
           return { status: 0 };
@@ -108,8 +110,9 @@ function createPodman() {
     setContainerId(value: string) {
       containerId = value;
     },
-    setRunning(value: boolean) {
+    setState(value: boolean, nextStatus: string | null) {
       running = value;
+      status = nextStatus;
     },
   };
 }
@@ -200,7 +203,7 @@ function timedOutStop(
   });
 }
 
-function stopAfterSecondInspection(harness: ReturnType<typeof createStopHarness>) {
+function settleAfterSecondInspection(harness: ReturnType<typeof createStopHarness>) {
   let inspectionsAfterStop = 0;
   return (command: readonly string[]): undefined => {
     switch (command[0]) {
@@ -208,10 +211,30 @@ function stopAfterSecondInspection(harness: ReturnType<typeof createStopHarness>
         inspectionsAfterStop += 1;
         switch (inspectionsAfterStop) {
           case 2:
-            harness.runtime.setRunning(false);
+            harness.runtime.setState(false, "exited");
         }
     }
   };
+}
+
+function successfulStop(
+  harness: ReturnType<typeof createStopHarness>,
+  afterStop?: (command: readonly string[]) => PortablePodmanLifecycleCommandResult | undefined,
+) {
+  let stopAttempted = false;
+  harness.runtime.podman.mockImplementation((args, env) => {
+    const command = args[0] === "--url" ? args.slice(2) : args;
+    switch (command[0]) {
+      case "stop":
+        stopAttempted = true;
+        harness.runtime.setState(false, "stopping");
+        return { status: 0 };
+      default: {
+        const result = stopAttempted ? afterStop?.(command) : undefined;
+        return result ?? harness.originalPodman(args, env);
+      }
+    }
+  });
 }
 
 function replaceContainerOnInspection(harness: ReturnType<typeof createStopHarness>) {
@@ -242,10 +265,97 @@ afterEach(() => {
 });
 
 describe("portable demo sandbox stop reconciliation", () => {
+  it("waits for an already-stopping container to settle without another mutation (#9200)", () => {
+    const harness = createStopHarness();
+    let now = 0;
+    let inspections = 0;
+    harness.runtime.setState(false, "stopping");
+    harness.runtime.podman.mockImplementation((args, env) => {
+      const command = args[0] === "--url" ? args.slice(2) : args;
+      switch (command[0]) {
+        case "inspect":
+          inspections += 1;
+          switch (inspections) {
+            case 3:
+              harness.runtime.setState(false, "exited");
+          }
+      }
+      return harness.originalPodman(args, env);
+    });
+    const beforeStop = vi.fn();
+
+    expect(
+      stopSandbox(
+        harness,
+        {
+          now: () => now,
+          sleep: (milliseconds) => {
+            now += milliseconds;
+          },
+        },
+        beforeStop,
+      ),
+    ).toEqual({ kind: "already-stopped" });
+
+    expect(beforeStop).not.toHaveBeenCalled();
+    expect(now).toBe(1_000);
+    expectReceiptUnchanged(harness);
+    expect(
+      harness.runtime.podman.mock.calls.some(([args]) => {
+        const command = args[0] === "--url" ? args.slice(2) : args;
+        return command[0] === "stop";
+      }),
+    ).toBe(false);
+  });
+
+  it("waits for a successful stop to settle before returning (#9200)", () => {
+    const harness = createStopHarness();
+    let now = 0;
+    successfulStop(harness, settleAfterSecondInspection(harness));
+    const beforeStop = vi.fn();
+
+    expect(
+      stopSandbox(
+        harness,
+        {
+          now: () => now,
+          sleep: (milliseconds) => {
+            now += milliseconds;
+          },
+        },
+        beforeStop,
+      ),
+    ).toEqual({ kind: "stopped" });
+
+    expect(beforeStop).toHaveBeenCalledExactlyOnceWith();
+    expect(now).toBe(1_000);
+    expectReceiptUnchanged(harness);
+    expectOnlyExactStopAndInspects(harness);
+  });
+
+  it("fails after bounded settlement when a successful stop remains transitional (#9200)", () => {
+    const harness = createStopHarness();
+    let now = 0;
+    successfulStop(harness);
+
+    expect(() =>
+      stopSandbox(harness, {
+        now: () => now,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+      }),
+    ).toThrow("did not settle into the exited state");
+
+    expect(now).toBe(30_000);
+    expectReceiptUnchanged(harness);
+    expectOnlyExactStopAndInspects(harness);
+  });
+
   it("reconciles an ETIMEDOUT stop to the exact receipt-owned container state (#9200)", () => {
     const harness = createStopHarness();
     let now = 0;
-    timedOutStop(harness, stopAfterSecondInspection(harness));
+    timedOutStop(harness, settleAfterSecondInspection(harness));
     const beforeStop = vi.fn();
 
     expect(

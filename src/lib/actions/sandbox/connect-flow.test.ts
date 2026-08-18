@@ -176,37 +176,37 @@ describe("connectSandbox flow", () => {
   ] as const)(
     "restores the terminal and preserves the exit code when SSH ends with %s",
     async (signal, exitCode) => {
-    const setRawModeSpy = vi.fn();
-    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
-    Object.defineProperty(process.stdin, "setRawMode", {
-      configurable: true,
-      value: setRawModeSpy,
-    });
-    const harness = createConnectHarness({
-      agentName: "langchain-deepagents-code",
-      sessionAgent: {
-        name: "langchain-deepagents-code",
-        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
-      },
-      spawnSignal: signal,
-      spawnStatus: null,
-    });
+      const setRawModeSpy = vi.fn();
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+      Object.defineProperty(process.stdin, "setRawMode", {
+        configurable: true,
+        value: setRawModeSpy,
+      });
+      const harness = createConnectHarness({
+        agentName: "langchain-deepagents-code",
+        sessionAgent: {
+          name: "langchain-deepagents-code",
+          runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+        },
+        spawnSignal: signal,
+        spawnStatus: null,
+      });
 
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow(`process.exit(${exitCode})`);
+      await expect(harness.connectSandbox("alpha")).rejects.toThrow(`process.exit(${exitCode})`);
 
-    expect(setRawModeSpy).toHaveBeenCalledWith(false);
-    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
-      "stty",
-      ["sane"],
-      expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
-    );
+      expect(setRawModeSpy).toHaveBeenCalledWith(false);
+      expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
+        "stty",
+        ["sane"],
+        expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
+      );
       const errorOutput = harness.errorSpy.mock.calls
         .map((call) => String(call[0] ?? ""))
         .join("\n");
-    expect(errorOutput).toContain(
-      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(exitCode);
+      expect(errorOutput).toContain(
+        "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
+      );
+      expect(exitSpy).toHaveBeenCalledWith(exitCode);
     },
   );
 
@@ -372,25 +372,25 @@ describe("connectSandbox flow", () => {
   it.each([401, 403, 404])(
     "rejects HTTP %i from inference.local for an Ollama recovery path (#8502)",
     async (httpStatus) => {
-    const response = `OK ${String(httpStatus)}`;
-    const harness = createConnectHarness({
-      inferenceGetOutput: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
-      inferenceProbeResponses: [response, response],
-      registryEntry: { provider: "ollama-local", model: "qwen3-vl:4b" },
-    });
+      const response = `OK ${String(httpStatus)}`;
+      const harness = createConnectHarness({
+        inferenceGetOutput: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
+        inferenceProbeResponses: [response, response],
+        registryEntry: { provider: "ollama-local", model: "qwen3-vl:4b" },
+      });
 
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
 
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "inference.local/v1/models must return HTTP 2xx",
-    );
-    expect(harness.probeLocalProviderHealthSpy).toHaveBeenCalledWith("ollama-local", {
-      skipOllamaAuthProxySubprobe: true,
-    });
-    expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalledTimes(1);
-    expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+        "inference.local/v1/models must return HTTP 2xx",
+      );
+      expect(harness.probeLocalProviderHealthSpy).toHaveBeenCalledWith("ollama-local", {
+        skipOllamaAuthProxySubprobe: true,
+      });
+      expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(1);
     },
   );
 
@@ -1035,9 +1035,7 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
       "process.exit(1)",
     );
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "changed during verification",
-    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("changed during verification");
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
   });
 
@@ -1241,4 +1239,82 @@ describe("connectSandbox flow", () => {
       expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     },
   );
+  it("does not suggest a manual forward when gateway recovery fails before forward start", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureDetail:
+          "the replacement container identity changed during the final managed supervisor health check",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("NemoClaw could not recover the OpenClaw gateway in 'alpha'");
+    expect(errorOutput).toContain(
+      "the replacement container identity changed during the final managed supervisor health check",
+    );
+    expect(errorOutput).not.toContain("gateway is running");
+    expect(errorOutput).not.toContain("openshell forward start");
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("redacts untrusted gateway recovery details before reporting them", async () => {
+    const opaqueToken = "opaque-gateway-recovery-token";
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureDetail: `OpenShell failed\nAuthorization: Bearer ${opaqueToken}\u001b[31m`,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("Recovery detail:");
+    expect(errorOutput).not.toContain(opaqueToken);
+    expect(errorOutput).not.toContain("\u001b");
+    expect(errorOutput).toMatch(/Recovery detail: .*\.$/mu);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps a direct recovery failure detail separate from an earlier callback layer", () => {
+    const harness = createConnectHarness();
+    harness.checkAndRecoverSpy.mockImplementation(
+      (
+        _sandboxName: string,
+        options?: {
+          onRecoveryFailureLayer?: (layer: string, detail?: string) => void;
+        },
+      ) => {
+        options?.onRecoveryFailureLayer?.("supervisor not running", "SUPERVISOR_NOT_RUNNING");
+        return {
+          checked: true,
+          wasRunning: false,
+          recovered: false,
+          forwardRecovered: false,
+          recoveryFailureDetail:
+            "the managed supervisor health check for the recreated sandbox did not pass",
+        };
+      },
+    );
+
+    expect(harness.restoreSandboxStartupState("alpha")).toMatchObject({
+      recoveryFailureDetail:
+        "the managed supervisor health check for the recreated sandbox did not pass",
+      recoveryFailureLayer: null,
+    });
+  });
 });

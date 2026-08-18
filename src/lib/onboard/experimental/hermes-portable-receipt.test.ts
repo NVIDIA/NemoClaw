@@ -58,9 +58,9 @@ function directoryChain(directory: string): string[] {
 }
 
 function createExistingHermesReceiptDirectories(count: number): void {
-  for (let index = 0; index < count; index += 1) {
+  Array.from({ length: count }, (_value, index) => {
     fs.mkdirSync(hermesPortableReceiptDirectory(`existing-${index}`, stateDir), { mode: 0o700 });
-  }
+  });
 }
 
 function requireConfiguringReceipt(
@@ -78,9 +78,9 @@ function failShortWrite(): never {
 }
 
 function createUnaccountedReceiptLinks(target: string, count: number): void {
-  for (let index = 0; index < count; index += 1) {
+  Array.from({ length: count }, (_value, index) => {
     fs.linkSync(target, path.join(stateDir, `unaccounted-${index}.json`));
-  }
+  });
 }
 
 function installShortWrite(prefixLength: number): void {

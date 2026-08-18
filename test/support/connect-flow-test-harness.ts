@@ -12,6 +12,7 @@ import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 type ConnectSandbox = (typeof import("../../src/lib/actions/sandbox/connect"))["connectSandbox"];
+type RestoreSandboxStartupState = (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
 type GatewayRouteMutationLock =
   (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
@@ -52,6 +53,7 @@ export type ConnectHarness = {
   inspectPortableReceiptDispositionSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
+  restoreSandboxStartupState: RestoreSandboxStartupState;
   runAutoPairSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
@@ -81,6 +83,7 @@ export type ConnectHarnessOptions = {
     forwardRecovered?: boolean;
     forwardRecoveryFailed?: boolean;
     forwardRecoveryFailureDetail?: string;
+    recoveryFailureDetail?: string;
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: SecretBoundaryRefusalReason;
     mcpReconciliationRefused?: boolean;
@@ -450,6 +453,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     inspectPortableReceiptDispositionSpy,
     registryEntries,
     resolveAgentConfigSpy,
+    restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,
     runAutoPairSpy,
     settlePortablePairingSpy,
     runOpenshellSpy,
