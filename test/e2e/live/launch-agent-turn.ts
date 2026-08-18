@@ -27,6 +27,8 @@ const MAX_RESPONSE_BYTES = 1024;
 const MAX_STDERR_BYTES = 256;
 const parentPid = Number(parentPidText);
 const clients = new Set();
+let pendingClient;
+let ready = false;
 let retired = false;
 let socketDev;
 let socketIno;
@@ -117,6 +119,8 @@ function sameTty() {
 function retire() {
   if (retired) return;
   retired = true;
+  pendingClient?.destroy();
+  pendingClient = undefined;
   closeInput();
 }
 
@@ -134,7 +138,6 @@ function send(client, observation) {
 function observe(client) {
   clients.add(client);
   client.once("close", () => clients.delete(client));
-  client.on("error", () => {});
   client.setTimeout(3_000, () => client.destroy());
   client.resume();
   if (process.ppid !== parentPid || retired || !sameRoot() || !sameSocket()) {
@@ -168,6 +171,13 @@ function observe(client) {
   return send(client, response("unavailable", result, "PTY_TERMIOS_OUTPUT_INVALID"));
 }
 
+function accept(client) {
+  client.on("error", () => {});
+  if (ready) return observe(client);
+  if (pendingClient) return client.destroy();
+  pendingClient = client;
+}
+
 if (role !== "nemoclaw-pty-input-mode-monitor") process.exit(74);
 if (!Number.isSafeInteger(parentPid) || parentPid < 2) process.exit(74);
 if (!/^[0-9a-f]{32}$/.test(runId || "")) process.exit(74);
@@ -194,7 +204,7 @@ try {
   if (!error || error.code !== "ENOENT") process.exit(74);
 }
 
-const server = net.createServer({ pauseOnConnect: true }, observe);
+const server = net.createServer({ pauseOnConnect: true }, accept);
 server.on("error", retire);
 process.umask(0o177);
 server.listen(socketPath, () => {
@@ -211,6 +221,12 @@ server.listen(socketPath, () => {
     }
     socketDev = stats.dev;
     socketIno = stats.ino;
+    ready = true;
+    if (pendingClient) {
+      const client = pendingClient;
+      pendingClient = undefined;
+      observe(client);
+    }
   } catch {
     retire();
   }
@@ -218,6 +234,7 @@ server.listen(socketPath, () => {
 const parentWatcher = setInterval(() => {
   if (process.ppid === parentPid) return;
   clearInterval(parentWatcher);
+  pendingClient?.destroy();
   for (const client of clients) client.destroy();
   closeInput();
   if (!server.listening || !sameRoot() || !sameSocket()) process.exit(0);
@@ -1016,7 +1033,7 @@ remove_pty_monitor() {
 }
 
 wait_for_pty_monitor_exit() {
-  for _ in {1..20}; do
+  for _ in {1..100}; do
     [[ ! -S "$pty_monitor_root/pty-input-mode.sock" ]] && return
     sleep 0.05
   done
