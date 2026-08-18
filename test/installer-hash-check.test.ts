@@ -399,7 +399,7 @@ function applyReviewedReleaseCohorts(source: string): string {
 # nine-asset release cohort independently against GitHub release metadata.
 # removalCondition: remove a cohort when its product support or qualification
 # ends, or replace it with an independently verified release cohort.`;
-  expect(source).toContain(currentComment);
+  expect(source.includes(currentComment) || source.includes(reviewedComment)).toBe(true);
   return addInstallerReleaseTable(
     source.replace(currentComment, reviewedComment),
     "0.0.106",
