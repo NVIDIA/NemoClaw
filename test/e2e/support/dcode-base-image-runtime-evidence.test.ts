@@ -21,6 +21,7 @@ const AMD64_REFERENCE = `${DCODE_BASE_IMAGE}@${AMD64_DIGEST}`;
 const ARM64_REFERENCE = `${DCODE_BASE_IMAGE}@${ARM64_DIGEST}`;
 const CANDIDATE_REVISION = "d".repeat(40);
 const PUBLICATION_REVISION = "e".repeat(40);
+const BASE_CONTRACT_MISMATCH = /does not match the published linux\/amd64 base-image contract/;
 
 function publicationEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -111,6 +112,25 @@ describe("Deep Agents Code published base runtime evidence", () => {
       source: "override",
       sourceRevision: PUBLICATION_REVISION,
     });
+  });
+
+  it("reports only mismatched base-image resolution field names (#9386)", () => {
+    const contract = parseDcodeBaseImagePublicationEvidence(
+      publicationEvidence(),
+      publicationEnvironment(),
+    );
+
+    expect(() =>
+      verifyDcodeBaseImageRuntimeEvidence(
+        contract,
+        "nemoclaw-langchain-deepagents-code:e2e",
+        resolutionMetadata({
+          source: "source-sha",
+          digest: INDEX_DIGEST,
+          ref: INDEX_REFERENCE,
+        }),
+      ),
+    ).toThrow(/mismatched fields: source, digest, reference/);
   });
 
   it("rejects the publication index instead of the validated platform reference (#9386)", () => {
@@ -229,12 +249,12 @@ describe("Deep Agents Code published base runtime evidence", () => {
     [
       "the publication index instead of the selected platform",
       resolutionMetadata({ digest: INDEX_DIGEST, ref: INDEX_REFERENCE }),
-      /did not use the published linux\/amd64 base digest/,
+      BASE_CONTRACT_MISMATCH,
     ],
     [
       "the opposite platform digest for amd64",
       resolutionMetadata({ digest: ARM64_DIGEST, ref: ARM64_REFERENCE }),
-      /did not use the published linux\/amd64 base digest/,
+      BASE_CONTRACT_MISMATCH,
     ],
     [
       "self-consistent opposite-platform metadata",
@@ -248,17 +268,17 @@ describe("Deep Agents Code published base runtime evidence", () => {
     [
       "a different image repository",
       resolutionMetadata({ imageName: "ghcr.io/example/base" }),
-      /did not use the published linux\/amd64 base digest/,
+      BASE_CONTRACT_MISMATCH,
     ],
     [
       "a fallback resolution source",
       resolutionMetadata({ source: "latest" }),
-      /did not use the published linux\/amd64 base digest/,
+      BASE_CONTRACT_MISMATCH,
     ],
     [
       "a pinned fallback reference",
       resolutionMetadata({ pinnedRemoteRef: AMD64_REFERENCE }),
-      /did not use the published linux\/amd64 base digest/,
+      BASE_CONTRACT_MISMATCH,
     ],
     [
       "an unsupported platform",
