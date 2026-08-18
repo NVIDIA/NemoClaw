@@ -307,7 +307,7 @@ type RuntimeIdentityE2EContext = Pick<
 };
 
 const RUNTIME_IDENTITY_E2E_OPTIONS = {
-  timeout: 20 * 60_000,
+  timeout: 25 * 60_000,
   meta: {
     e2ePhases: [
       "confirm live runtime identity prerequisites",
@@ -394,7 +394,7 @@ async function runRuntimeIdentityE2EScenario(
     [inferenceKey],
     `${artifactPrefix}-onboard-real-openshell-sandbox`,
     progress,
-    15 * 60_000,
+    18 * 60_000,
   );
   expectOnboardSuccess(onboard, `${scenario.testId} real OpenShell prerequisite onboard`);
   cleanup.add(`strict runtime identity sandbox cleanup for ${sandboxName}`, () =>
@@ -671,6 +671,16 @@ async function runRuntimeIdentityE2EScenario(
     `Inference route 'compatible-endpoint / ${model}' is already active, reusing.`,
   );
   for (const secret of redactionValues) expect(applyText).not.toContain(secret);
+  const attachedProviders = await sandbox.openshell(
+    ["sandbox", "provider", "list", sandboxName],
+    {
+      artifactName: `${artifactPrefix}-attached-providers`,
+      env: openshellEnv,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(attachedProviders.exitCode, resultText(attachedProviders)).toBe(0);
+  expect(resultText(attachedProviders)).toContain(providerName);
   expect(oauth.tokenRequests()).toEqual([
     {
       method: "POST",
