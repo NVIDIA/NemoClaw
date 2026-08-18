@@ -3950,7 +3950,9 @@ export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
 $$nemoclaw tunnel start
 ```
 
-`$$nemoclaw start` remains as a deprecated alias that prints a warning and delegates to `tunnel start`.
+`$$nemoclaw start` remains as a deprecated compatibility command. It exits successfully after
+printing guidance for `$$nemoclaw <name> start` and `$$nemoclaw tunnel start`; it does not start
+either resource itself.
 
 ### `$$nemoclaw tunnel stop`
 
@@ -3985,10 +3987,12 @@ $$nemoclaw tunnel status
 ### `$$nemoclaw start`
 
 <Warning>
-Deprecated. Use `$$nemoclaw tunnel start` instead.
+Deprecated. Use `$$nemoclaw <name> start` for a stopped sandbox or `$$nemoclaw tunnel start` for
+the optional public-URL tunnel.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw tunnel start`.
+This compatibility command prints migration guidance and exits successfully without changing
+sandbox or tunnel state.
 
 ### `$$nemoclaw stop`
 

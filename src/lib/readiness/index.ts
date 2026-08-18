@@ -21,7 +21,6 @@ export {
   collectGatewayObservations,
   createGatewayReadinessProjection,
   projectGatewayReadiness,
-  refreshGatewayReadinessProjection,
 } from "./gateway.js";
 export type {
   CollectHostObservationsOptions,

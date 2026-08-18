@@ -388,3 +388,27 @@ export function resolveOnboardHermesApiPort(
   }
   return publish(port);
 }
+
+/**
+ * Resolve the API port deployment verification must probe for `agent`.
+ *
+ * Returns the agent's declared health-probe port, except for Hermes, whose
+ * per-sandbox allocation from the 8642-8652 range means the manifest default
+ * would name a sibling sandbox's port. Returns undefined when the agent
+ * declares no health-probe port, which leaves `buildChain` on its dashboard-port
+ * fallback so agents without a separate API surface keep their existing single
+ * host probe (#9290).
+ */
+export function resolveVerifyAgentApiPort(
+  sandboxName: string,
+  agent: { name?: string; healthProbe?: { port?: number } | null } | null | undefined,
+  options: {
+    getSandbox?: (name: string) => { hermesApiPort?: number | null } | null | undefined;
+  } = {},
+): number | undefined {
+  const declared = agent?.healthProbe?.port;
+  if (!Number.isInteger(declared)) return undefined;
+  if (agent?.name !== "hermes" || declared !== HERMES_OPENAI_API_PORT) return declared;
+  const getSandbox = options.getSandbox ?? registry.getSandbox;
+  return resolveSandboxHermesApiPort(getSandbox(sandboxName) ?? {});
+}

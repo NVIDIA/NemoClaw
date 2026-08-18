@@ -11,6 +11,7 @@ import {
   rebuildProviderFlowOptions,
   resolveAuthoritativeOnboardGatewayBinding,
 } from "./authoritative-rebuild-target";
+import type { InferenceRouteState } from "./inference-route";
 import {
   mintProviderRecoveryReceipt,
   type ProviderRecoveryReceiptTarget,
@@ -65,7 +66,7 @@ function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
     runFatalRuntimePreflight: vi.fn(),
     ensureOpenshell: vi.fn(),
     assertGatewayReadiness: vi.fn(),
-    inferenceRouteReady: vi.fn(() => true),
+    inferenceRouteState: vi.fn((): InferenceRouteState => "matched"),
     captureForwardList: vi.fn(() => "alpha 127.0.0.1 18789 42 active"),
     checkPort: vi.fn(async () => ({ ok: true })),
     ...overrides,
@@ -267,7 +268,7 @@ describe("authoritative rebuild target preflight", () => {
     expect(targetDeps.bindGatewayAuthority).not.toHaveBeenCalled();
     expect(targetDeps.ensureOpenshell).not.toHaveBeenCalled();
     expect(targetDeps.assertGatewayReadiness).not.toHaveBeenCalled();
-    expect(targetDeps.inferenceRouteReady).not.toHaveBeenCalled();
+    expect(targetDeps.inferenceRouteState).not.toHaveBeenCalled();
   });
 
   it("pins the requested gateway for route and forward checks, then restores it", async () => {
@@ -277,9 +278,9 @@ describe("authoritative rebuild target preflight", () => {
     await preflightAuthoritativeRebuildTarget(
       target,
       deps({
-        inferenceRouteReady: vi.fn(() => {
+        inferenceRouteState: vi.fn((): InferenceRouteState => {
           seen.push(`route:${process.env.OPENSHELL_GATEWAY}`);
-          return true;
+          return "matched";
         }),
         captureForwardList: vi.fn(() => {
           seen.push(`forward:${process.env.OPENSHELL_GATEWAY}`);
@@ -298,13 +299,25 @@ describe("authoritative rebuild target preflight", () => {
     await expect(
       preflightAuthoritativeRebuildTarget(
         target,
-        deps({ inferenceRouteReady: vi.fn(() => false) }),
+        deps({ inferenceRouteState: vi.fn((): InferenceRouteState => "mismatched") }),
       ),
     ).rejects.toThrow("inference route does not match");
   });
 
+  it("proceeds when the gateway cannot answer the route query (#9310)", async () => {
+    const targetDeps = deps({
+      inferenceRouteState: vi.fn((): InferenceRouteState => "unanswered"),
+    });
+
+    await expect(preflightAuthoritativeRebuildTarget(target, targetDeps)).resolves.toBeUndefined();
+
+    expect(targetDeps.inferenceRouteState).toHaveBeenCalledOnce();
+  });
+
   it("defers route validation for prepared recovery until authoritative onboard (#6114)", async () => {
-    const targetDeps = deps({ inferenceRouteReady: vi.fn(() => false) });
+    const targetDeps = deps({
+      inferenceRouteState: vi.fn((): InferenceRouteState => "mismatched"),
+    });
 
     await expect(
       preflightAuthoritativeRebuildTarget(
@@ -313,7 +326,7 @@ describe("authoritative rebuild target preflight", () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(targetDeps.inferenceRouteReady).not.toHaveBeenCalled();
+    expect(targetDeps.inferenceRouteState).not.toHaveBeenCalled();
     expect(targetDeps.runFatalRuntimePreflight).toHaveBeenCalledOnce();
     expect(targetDeps.ensureOpenshell).toHaveBeenCalledOnce();
   });
@@ -368,9 +381,9 @@ describe("authoritative rebuild target preflight", () => {
       }),
       ensureOpenshell: vi.fn(() => calls.push("openshell")),
       assertGatewayReadiness: vi.fn(() => calls.push("gateway")),
-      inferenceRouteReady: vi.fn(() => {
+      inferenceRouteState: vi.fn((): InferenceRouteState => {
         calls.push("route");
-        return true;
+        return "matched";
       }),
     });
 
@@ -395,6 +408,6 @@ describe("authoritative rebuild target preflight", () => {
     );
     expect(targetDeps.ensureOpenshell).not.toHaveBeenCalled();
     expect(targetDeps.assertGatewayReadiness).not.toHaveBeenCalled();
-    expect(targetDeps.inferenceRouteReady).not.toHaveBeenCalled();
+    expect(targetDeps.inferenceRouteState).not.toHaveBeenCalled();
   });
 });

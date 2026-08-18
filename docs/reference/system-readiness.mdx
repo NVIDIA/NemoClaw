@@ -289,8 +289,13 @@ Fresh onboarding and authoritative rebuilds use this order:
 8. Revalidate gateway authority immediately before gateway selection, recovery, reconciliation, or other lifecycle effects.
 
 The readiness gate runs before model-router cleanup, provider selection, credential registration, policy changes, image builds, or sandbox lifecycle effects.
-Host and gateway observations have a 30-second reuse window.
-If collection itself takes too long, onboarding rejects the stale composite instead of assigning a fresh timestamp to old facts.
+Host and gateway observations have a 30-second reuse window that starts when collection finishes.
+The readiness gate does not reject a collection for the time its own probes take.
+The `gateway.owner` evidence records the gateway collection duration as `collectionMs`.
+The readiness gate rejects an observation set that waits past the window for another collection.
+Onboarding then collects that set again instead of assigning a fresh timestamp to old facts.
+Bounded evidence for a rejected set appears under `host.probe.stale` or `gateway.probe.stale` with the applied `windowMs` and the measured `ageMs`.
+`ageMs` is `null` when the recorded time cannot be parsed or is later than the current time.
 
 The policy permits only these narrow exceptions:
 

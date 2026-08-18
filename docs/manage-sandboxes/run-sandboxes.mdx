@@ -158,7 +158,8 @@ $$nemoclaw tunnel start
 ```
 
 `$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
-The older `$$nemoclaw start` still works as a deprecated alias.
+The older `$$nemoclaw start` now prints migration guidance and exits successfully without starting
+a sandbox or tunnel. Use `$$nemoclaw <name> start` or `$$nemoclaw tunnel start` explicitly.
 </AgentOnly>
 <AgentOnly variant="hermes">
 
