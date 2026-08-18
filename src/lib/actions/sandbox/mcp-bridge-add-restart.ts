@@ -31,7 +31,7 @@ import {
 } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
-  assertNoAttachedProviderCredentialCollisions,
+  assertNoProviderCredentialCollisions,
   attachProvider,
   deleteProvider,
   detachMissingProviderReference,
@@ -300,9 +300,15 @@ async function addMcpBridgeUnlocked(
   // Bind the static credential-name deny-list to the OpenShell binary before
   // persisting ownership or mutating a provider, policy, or adapter.
   assertMcpCredentialBoundaryRuntimeVersion();
+  await ensureSandboxGatewaySelected(sandboxName);
+  if (!existingEntry) {
+    // A collision is external state, not an owned partial transaction. Reject
+    // it before recording the durable manifest for a fresh add.
+    assertNoProviderCredentialCollisions(sandboxName, [entry]);
+  }
   // This is the durable ownership manifest for every resource created below.
-  // It intentionally precedes gateway selection and all OpenShell mutations,
-  // so process death can never leave an unowned provider/policy/adapter entry.
+  // It intentionally precedes every OpenShell resource mutation, so process
+  // death can never leave an unowned provider, policy, or adapter entry.
   if (!existingEntry) writeBridgeEntry(sandboxName, entry);
 
   let providerCreated = false;
@@ -311,7 +317,6 @@ async function addMcpBridgeUnlocked(
   let adapterMutationAttempted = false;
   let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
   try {
-    await ensureSandboxGatewaySelected(sandboxName);
     let detachedMissingProviderReference = false;
     if (resumingPreflightedAdd) {
       const providerInspection = inspectMcpProvider(entry.providerName);
@@ -372,7 +377,7 @@ async function addMcpBridgeUnlocked(
     // Credential keys are sandbox-global. Prove this key is not already
     // supplied by a foreign attachment before opening its MCP route, then check
     // again after provider creation to close the intervening race.
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoProviderCredentialCollisions(sandboxName, [entry]);
     // Loading the real protocol:mcp policy with --wait is the authoritative
     // running-supervisor capability check. Do it before any host credential is
     // created or updated so unsupported runtimes fail without that side effect.
@@ -407,7 +412,7 @@ async function addMcpBridgeUnlocked(
       // adapter mutations. A process death before this write fails closed.
       writeBridgeEntry(sandboxName, entry);
     }
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoProviderCredentialCollisions(sandboxName, [entry]);
     if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
       throw new McpBridgeError(
         `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,

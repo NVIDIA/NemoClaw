@@ -17,11 +17,18 @@ import { help, version } from "./root-help";
 
 type GatewayRecovery = { recovered: boolean };
 
+export type ManagedMcpCredentialReservation = {
+  sandboxName: string;
+  server: string;
+  credentialKeys: readonly string[];
+};
+
 type GlobalCliActionRuntimeHooks = {
   recoverNamedGatewayRuntime?: () => Promise<GatewayRecovery>;
   upgradeSandboxes?: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
   recordExtraProvider?: (name: string) => boolean;
   forgetExtraProvider?: (name: string) => boolean;
+  listManagedMcpCredentialReservations?: () => readonly ManagedMcpCredentialReservation[];
 };
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
@@ -97,4 +104,31 @@ export function forgetExtraProvider(name: string): boolean {
     removeExtraProvider: (name: string) => boolean;
   };
   return removeExtraProvider(name);
+}
+
+export function listManagedMcpCredentialReservations(): readonly ManagedMcpCredentialReservation[] {
+  if (typeof runtimeHooks.listManagedMcpCredentialReservations === "function") {
+    return runtimeHooks.listManagedMcpCredentialReservations();
+  }
+  const { listSandboxes } = require("../state/registry") as {
+    listSandboxes: () => {
+      sandboxes: Array<{
+        name: string;
+        mcp?: { bridges: Record<string, { server: string; env: string[] }> };
+      }>;
+    };
+  };
+  return listSandboxes()
+    .sandboxes.flatMap((sandbox) =>
+      Object.values(sandbox.mcp?.bridges ?? {}).map((entry) => ({
+        sandboxName: sandbox.name,
+        server: entry.server,
+        credentialKeys: [...entry.env],
+      })),
+    )
+    .sort(
+      (left, right) =>
+        left.sandboxName.localeCompare(right.sandboxName) ||
+        left.server.localeCompare(right.server),
+    );
 }

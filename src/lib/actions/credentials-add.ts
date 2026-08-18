@@ -13,7 +13,7 @@ import {
 import { redact } from "../security/redact";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { ROOT } from "../state/paths";
-import { recordExtraProvider } from "./global";
+import { listManagedMcpCredentialReservations, recordExtraProvider } from "./global";
 
 export type CredentialsAddInput = {
   provider: string;
@@ -156,6 +156,20 @@ export async function runCredentialsAddAction(
           "  not --config; non-secret config values only.",
         ]);
       }
+    }
+  }
+
+  const managedMcpReservations = listManagedMcpCredentialReservations();
+  for (const credential of credentials) {
+    const collision = managedMcpReservations.find((reservation) =>
+      reservation.credentialKeys.includes(credential),
+    );
+    if (collision) {
+      return fail([
+        `  Credential key '${credential}' is reserved by managed MCP server '${collision.server}' on sandbox '${collision.sandboxName}'.`,
+        `  Refusing to register provider '${provider}' because registered providers attach during sandbox rebuild.`,
+        "  Use a different credential key, or remove the managed MCP server before retrying.",
+      ]);
     }
   }
 

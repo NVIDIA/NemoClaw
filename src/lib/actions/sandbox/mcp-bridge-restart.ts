@@ -10,7 +10,7 @@ import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation
 import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
-  assertNoAttachedProviderCredentialCollisions,
+  assertNoProviderCredentialCollisions,
   attachProvider,
   detachMissingProviderReference,
   type McpCredentialRevisionObservation,
@@ -120,7 +120,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   // Reject a collision on any target before the first policy/provider/adapter
   // mutation. The per-entry checks below still close races at each mutation
   // edge without allowing a later target to fail after an earlier update.
-  assertNoAttachedProviderCredentialCollisions(sandboxName, targetEntries);
+  assertNoProviderCredentialCollisions(sandboxName, targetEntries);
   for (const [name, storedEntry] of targets) {
     // Validated as a complete authenticated entry before gateway side effects.
     if (!storedEntry) continue;
@@ -129,7 +129,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     const adapterEnvValues = resolveCredentialEnv(envRefs);
     const target = resolvedTargetPins(resolvedByServer, entry);
     let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoProviderCredentialCollisions(sandboxName, [entry]);
     // Revalidate the actual running supervisor before rotating, recreating,
     // attaching, or re-registering an authenticated provider.
     applyGeneratedPolicy(sandboxName, entry, target);
@@ -156,7 +156,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       writeBridgeEntry(sandboxName, refreshedEntry);
       entry = refreshedEntry;
     }
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoProviderCredentialCollisions(sandboxName, [entry]);
     if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
       throw new McpBridgeError(
         `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,
@@ -221,9 +221,9 @@ export async function restoreExistingMcpBridgeRuntime(
   // Prove every restored entry is collision-free before the first mutation.
   // The singleton check in the mutation loop still closes the race for each
   // entry immediately before its policy and attachment are restored.
-  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
+  assertNoProviderCredentialCollisions(sandboxName, entries);
   for (const entry of entries) {
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoProviderCredentialCollisions(sandboxName, [entry]);
     applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
     attachProvider(sandboxName, entry);
     waitForAttachedMcpCredential(sandboxName, entry);

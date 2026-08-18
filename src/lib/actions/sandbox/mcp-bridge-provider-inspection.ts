@@ -7,6 +7,7 @@ import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-end
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
+import { listRegisteredExtraProviders } from "./mcp-bridge-state";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
@@ -176,18 +177,61 @@ export function assertNoAttachedProviderCredentialCollisions(
     );
   }
   for (const entry of entries) {
-    const credentialKey = entry.env[0];
-    const collision = inspection.attachments.find(
-      (attachment) =>
-        attachment.credentialKeys.includes(credentialKey) &&
-        !(attachment.name === entry.providerName && attachment.providerId === entry.providerId),
-    );
-    if (collision) {
-      throw new McpBridgeError(
-        `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to continue managed MCP while this sandbox receives that key from another provider.`,
+    for (const credentialKey of entry.env) {
+      const collision = inspection.attachments.find(
+        (attachment) =>
+          attachment.credentialKeys.includes(credentialKey) &&
+          !(attachment.name === entry.providerName && attachment.providerId === entry.providerId),
       );
+      if (collision) {
+        throw new McpBridgeError(
+          `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to continue managed MCP while this sandbox receives that key from another provider.`,
+        );
+      }
     }
   }
+}
+
+export function assertNoRegisteredProviderCredentialCollisions(
+  entries: readonly McpBridgeEntry[],
+  deps: {
+    listExtraProviders?: () => string[];
+    inspectProvider?: (providerName: string) => McpProviderInspection;
+  } = {},
+): void {
+  if (entries.length === 0) return;
+  const listExtraProviders = deps.listExtraProviders ?? listRegisteredExtraProviders;
+  const inspectProvider = deps.inspectProvider ?? inspectMcpProvider;
+  for (const providerName of listExtraProviders()) {
+    const provider = inspectProvider(providerName);
+    if (provider.exists === false) continue;
+    if (provider.exists !== true || !provider.id || !provider.credentialKeys) {
+      throw new McpBridgeError(
+        provider.error ??
+          `Could not inspect registered provider '${providerName}' before managed MCP reconciliation.`,
+      );
+    }
+    for (const entry of entries) {
+      for (const credentialKey of entry.env) {
+        if (
+          provider.credentialKeys.includes(credentialKey) &&
+          !(providerName === entry.providerName && provider.id === entry.providerId)
+        ) {
+          throw new McpBridgeError(
+            `Credential key '${credentialKey}' is already supplied by registered provider '${providerName}' with ID '${provider.id}'. Refusing to continue managed MCP because this provider will attach during sandbox rebuild.`,
+          );
+        }
+      }
+    }
+  }
+}
+
+export function assertNoProviderCredentialCollisions(
+  sandboxName: string,
+  entries: readonly McpBridgeEntry[],
+): void {
+  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
+  assertNoRegisteredProviderCredentialCollisions(entries);
 }
 
 export function providerMatchesCredential(
