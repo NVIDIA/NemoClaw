@@ -524,7 +524,7 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("rejects an undeclared extension directory added to the manifest state (#7924)", () => {
+  it("rejects a skills directory added outside the approved manifest state directory set (#7924)", () => {
     const sources = withManifest((manifest) => {
       manifest.state_dirs.push({ path: "skills", shields: "read-only" });
     });
@@ -542,12 +542,12 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("rejects an entrypoint that re-enables version checks and package updates (#7924)", () => {
+  it("rejects an entrypoint that enables startup version and package update checks (#7924)", () => {
     const sources = withStartScript((startScript) =>
       startScript.replace(/^export PI_OFFLINE=1$/mu, "export PI_OFFLINE=0"),
     );
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/start.sh: the entrypoint must declare export PI_OFFLINE=1 so the runtime runs no version check and no package update",
+      "agents/pi/start.sh: the entrypoint must declare export PI_OFFLINE=1 so the runtime runs no startup version check or package update check",
     );
   });
 

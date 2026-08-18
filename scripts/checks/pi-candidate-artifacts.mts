@@ -12,7 +12,7 @@
  * candidate contract artifact name stays outside the all-agent cohort download
  * pattern.
  *
- * It also binds the accepted Pi trust boundary:
+ * It also binds the Pi candidate trust boundary committed in this repository:
  *
  * - The baseline network policy permits only the managed inference route,
  *   enforced over REST across an exact set of /v1 routes that refuse an encoded
@@ -23,14 +23,15 @@
  * - Pi runs as the sandbox user and group.
  * - The exact headless command ignores project-local resources, MCP stays
  *   disabled, and device pairing stays off.
- * - Each skill, extension, and prompt directory keeps its trust classification,
- *   and executable resource state stays outside backup.
+ * - The bin, prompts, sessions, themes, and tools state directories keep their
+ *   exact Shields and backup settings.
  * - Neither the project-trust store nor the project-trust setting is declared
  *   in the manifest state that backup and restore carry, and settings.json
  *   keeps the exact key-allowlist restore contract that makes those rules
  *   apply.
- * - The entrypoint keeps state owner-only, runs no version check, update, or
- *   telemetry, and drops to the sandbox user before it starts Pi.
+ * - The entrypoint keeps state owner-only, disables startup version checks,
+ *   package update checks, and install telemetry, and drops to the sandbox user
+ *   before it starts Pi.
  */
 
 import { createHash } from "node:crypto";
@@ -123,7 +124,7 @@ const APPROVED_STATE_DIRS: Readonly<
 };
 
 const REQUIRED_START_DIRECTIVES: Readonly<Record<string, string>> = {
-  "export PI_OFFLINE=1": "the runtime runs no version check and no package update",
+  "export PI_OFFLINE=1": "the runtime runs no startup version check or package update check",
   "export PI_TELEMETRY=0": "the runtime sends no install telemetry",
   "umask 077": "Pi configuration and session files stay owner-only",
 };
