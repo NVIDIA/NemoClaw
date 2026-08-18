@@ -98,7 +98,7 @@ export function createSandboxRegistryMetadataHelpers(
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,
       dashboardPort,
-      agent: agentFields.agent,
+      agent: existingEntry?.agent !== undefined ? existingEntry.agent : agentFields.agent,
       agentVersion: existingEntry?.agentVersion ?? null,
       ...(sandboxGpuConfig ? getSandboxRuntimeRegistryFields(sandboxGpuConfig) : {}),
     });

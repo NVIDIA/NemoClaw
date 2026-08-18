@@ -172,6 +172,10 @@ jobs:
   generate-matrix:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
       e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
@@ -536,6 +540,16 @@ jobs:
             fi
           fi
 
+      - name: Resolve exact PR managed-image catalog
+        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"
+
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
@@ -651,6 +665,14 @@ jobs:
             .sourceRevision == $candidateSha
           ' dist/build-identity.json >/dev/null ||
             { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
+
+          managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+          rm -f -- dist/e2e-managed-image-catalog.json
+          if [[ -e "$managed_catalog" ]]; then
+            [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] ||
+              { echo "::error::trusted PR managed-image catalog is not a nonempty regular file"; exit 1; }
+            install -m 0600 "$managed_catalog" dist/e2e-managed-image-catalog.json
+          fi
 
           artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
           install -d -m 0700 "$artifact_dir"
