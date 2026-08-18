@@ -477,29 +477,8 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("routes only a bounded CLI device-token scope mismatch into canonical pairing", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-auth-upgrade-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    writeFixtureDist(dist);
-    try {
-      expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "message-handler-fixture.js"), "utf8");
-      const connect = runFixture<
-        (
-          params: Record<string, unknown>,
-          verify: () => Promise<Record<string, unknown>>,
-        ) => Promise<Record<string, unknown>>
-      >(source, "connect");
-      const scopeMismatch = async () => ({ ok: false, reason: "scope_mismatch" });
-
-      await expect(
-        connect(
-          { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
-          scopeMismatch,
-        ),
-      ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
-      for (const candidate of [
+  it.each(
+    [
         { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
         { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
         { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
@@ -508,19 +487,44 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           role: "operator",
           scopes: ["operator.write", "operator.write"],
         },
-      ]) {
+      ],
+  )(
+    "routes only a bounded CLI device-token scope mismatch into canonical pairing [case %#]",
+    async (candidate) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-auth-upgrade-"));
+      const dist = path.join(tmp, "dist");
+      fs.mkdirSync(dist);
+      writeFixtureDist(dist);
+      try {
+        expect(runPatch(dist).status).toBe(0);
+        const source = fs.readFileSync(path.join(dist, "message-handler-fixture.js"), "utf8");
+        const connect = runFixture<
+          (
+            params: Record<string, unknown>,
+            verify: () => Promise<Record<string, unknown>>,
+          ) => Promise<Record<string, unknown>>
+        >(source, "connect");
+        const scopeMismatch = async () => ({ ok: false, reason: "scope_mismatch" });
+        await expect(
+          connect(
+            { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+            scopeMismatch,
+          ),
+        ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
+
         await expect(connect(candidate, scopeMismatch)).resolves.toMatchObject({ authOk: false });
+
+        await expect(
+          connect(
+            { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+            async () => ({ ok: false, reason: "token-mismatch" }),
+          ),
+        ).resolves.toMatchObject({ authOk: false });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
-      await expect(
-        connect(
-          { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
-          async () => ({ ok: false, reason: "token-mismatch" }),
-        ),
-      ).resolves.toMatchObject({ authOk: false });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("uses only operator.pairing to reach the gateway for the exact complete CLI shape", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-scope-"));
@@ -602,10 +606,10 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
         runtime.approvePairingWithFallback({ json: true }, "request-1"),
       ).resolves.toEqual({ requestId: "request-1", approved: true });
       expect(runtime.gatewayCalls).toHaveLength(2);
-      for (const [method, call] of [
+      ([
         ["device.pair.list", runtime.gatewayCalls[0]],
         ["device.pair.approve", runtime.gatewayCalls[1]],
-      ] as const) {
+      ] as const).forEach(([method, call]) => {
         expect(call).toMatchObject({
           method,
           scopes: ["operator.pairing"],
@@ -613,7 +617,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           requiredStoredDeviceAuthScopes: ["operator.pairing"],
         });
         expect(call).not.toHaveProperty("nemoclawDisableStoredDeviceAuth");
-      }
+      });
 
       runtime.gatewayCalls.length = 0;
       const preconvergenceList = {
@@ -623,13 +627,13 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       runtime.setPairingLists(preconvergenceList);
       await runtime.approvePairingWithFallback({ json: true }, "request-1");
       expect(runtime.gatewayCalls).toHaveLength(2);
-      for (const call of runtime.gatewayCalls) {
+      runtime.gatewayCalls.forEach((call) => {
         expect(call).toMatchObject({
           scopes: ["operator.pairing"],
           useStoredDeviceAuth: true,
           requiredStoredDeviceAuthScopes: ["operator.pairing"],
         });
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -655,7 +659,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           "device.pair.list",
           "device.pair.approve",
         ]);
-        for (const call of runtime.gatewayCalls) {
+        runtime.gatewayCalls.forEach((call) => {
           expect(call).toMatchObject({
             scopes: ["operator.pairing"],
             credentialSource: "option",
@@ -670,7 +674,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           expect(call.cliArgPassword).toBeUndefined();
           expect(call).not.toHaveProperty("useStoredDeviceAuth");
           expect(call).not.toHaveProperty("requiredStoredDeviceAuthScopes");
-        }
+        });
         expect(runtime.pairingStats()).toEqual({
           localPairingReadCount: 0,
           localApprovalCount: 0,
@@ -1094,67 +1098,85 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("revalidates current identity, operator role, and bounded scopes inside the pairing lock", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-state-gate-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    writeFixtureDist(dist);
-    try {
-      expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "device-pairing-fixture.js"), "utf8");
-      const resolveScopes = runFixture<
-        (
-          pending: Record<string, unknown>,
-          callerScopes: unknown[],
-          identity: Record<string, unknown>,
-        ) => string[] | null
-      >(source, "resolveNemoClawSelfApprovalScopes");
-      const identity = {
-        deviceId: "device-1",
-        publicKey: "public-key-1",
-        role: "operator",
-        clientId: "cli",
-        clientMode: "cli",
-      };
+  it.each([
+    { scenario: "different device ID" },
+    { scenario: "different public key" },
+    { scenario: "webchat client ID" },
+    { scenario: "webchat client mode" },
+    { scenario: "node role" },
+    { scenario: "empty scopes" },
+    { scenario: "scalar scopes" },
+    { scenario: "duplicate scopes" },
+    { scenario: "admin scope" },
+    { scenario: "unknown scope" },
+    { scenario: "repair with read scope" },
+    { scenario: "missing repair marker" },
+  ])(
+    "revalidates current identity, operator role, and bounded scopes inside the pairing lock [$scenario]",
+    ({ scenario }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-state-gate-"));
+      const dist = path.join(tmp, "dist");
+      fs.mkdirSync(dist);
+      writeFixtureDist(dist);
+      try {
+        expect(runPatch(dist).status).toBe(0);
+        const source = fs.readFileSync(path.join(dist, "device-pairing-fixture.js"), "utf8");
+        const resolveScopes = runFixture<
+          (
+            pending: Record<string, unknown>,
+            callerScopes: unknown[],
+            identity: Record<string, unknown>,
+          ) => string[] | null
+        >(source, "resolveNemoClawSelfApprovalScopes");
+        const identity = {
+          deviceId: "device-1",
+          publicKey: "public-key-1",
+          role: "operator",
+          clientId: "cli",
+          clientMode: "cli",
+        };
 
-      expect(resolveScopes(validPending(), ["operator.pairing"], identity)).toEqual([
-        "operator.pairing",
-        "operator.read",
-        "operator.write",
-      ]);
-      expect(
-        resolveScopes(validPending({ isRepair: false }), ["operator.pairing"], identity),
-      ).toEqual(["operator.pairing", "operator.read", "operator.write"]);
-      for (const pending of [
-        validPending({ deviceId: "device-2" }),
-        validPending({ publicKey: "public-key-2" }),
-        validPending({ clientId: "webchat-ui" }),
-        validPending({ clientMode: "webchat" }),
-        validPending({ role: "node", roles: ["node"] }),
-        validPending({ scopes: [] }),
-        validPending({ scopes: "operator.write" }),
-        validPending({ scopes: ["operator.write", "operator.write"] }),
-        validPending({ scopes: ["operator.admin"] }),
-        validPending({ scopes: ["operator.unknown"] }),
-        validPending({ isRepair: false, scopes: ["operator.read"] }),
-        validPending({ isRepair: undefined }),
-      ]) {
+        expect(resolveScopes(validPending(), ["operator.pairing"], identity)).toEqual([
+          "operator.pairing",
+          "operator.read",
+          "operator.write",
+        ]);
+        expect(
+          resolveScopes(validPending({ isRepair: false }), ["operator.pairing"], identity),
+        ).toEqual(["operator.pairing", "operator.read", "operator.write"]);
+        const pending = (
+          {
+            "different device ID": validPending({ deviceId: "device-2" }),
+            "different public key": validPending({ publicKey: "public-key-2" }),
+            "webchat client ID": validPending({ clientId: "webchat-ui" }),
+            "webchat client mode": validPending({ clientMode: "webchat" }),
+            "node role": validPending({ role: "node", roles: ["node"] }),
+            "empty scopes": validPending({ scopes: [] }),
+            "scalar scopes": validPending({ scopes: "operator.write" }),
+            "duplicate scopes": validPending({ scopes: ["operator.write", "operator.write"] }),
+            "admin scope": validPending({ scopes: ["operator.admin"] }),
+            "unknown scope": validPending({ scopes: ["operator.unknown"] }),
+            "repair with read scope": validPending({ isRepair: false, scopes: ["operator.read"] }),
+            "missing repair marker": validPending({ isRepair: undefined }),
+          } as const
+        )[scenario]!;
         expect(resolveScopes(pending, ["operator.pairing"], identity)).toBeNull();
+
+        expect(
+          resolveScopes(validPending(), ["operator.pairing", "operator.admin"], identity),
+        ).toBeNull();
+        expect(
+          resolveScopes(validPending(), ["operator.pairing", "operator.unknown"], identity),
+        ).toBeNull();
+        expect(resolveScopes(validPending(), [], identity)).toBeNull();
+        expect(
+          resolveScopes(validPending(), ["operator.pairing"], { ...identity, role: "node" }),
+        ).toBeNull();
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
-      expect(
-        resolveScopes(validPending(), ["operator.pairing", "operator.admin"], identity),
-      ).toBeNull();
-      expect(
-        resolveScopes(validPending(), ["operator.pairing", "operator.unknown"], identity),
-      ).toBeNull();
-      expect(resolveScopes(validPending(), [], identity)).toBeNull();
-      expect(
-        resolveScopes(validPending(), ["operator.pairing"], { ...identity, role: "node" }),
-      ).toBeNull();
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it.each([
     ["prepared", "pending published first", "after", "before"],

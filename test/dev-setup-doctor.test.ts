@@ -40,6 +40,12 @@ ${body}
   );
 }
 
+function writeUnsupportedPythonTools(fakeBin: string): void {
+  for (const name of ["python3.14", "python3.13", "python3.12", "python3.11"]) {
+    writeTool(fakeBin, name, 'echo "Python 3.10.0"');
+  }
+}
+
 function writeNodeHeapOomTool(filePath: string): void {
   writeExecutable(
     filePath,
@@ -331,9 +337,7 @@ describe("contributor environment doctor", () => {
   it("requires Python 3.11 or newer", () => {
     const fixture = createFixture();
     writeTool(fixture.fakeBin, "python3", 'echo "Python 3.10.0"');
-    for (const name of ["python3.14", "python3.13", "python3.12", "python3.11"]) {
-      writeTool(fixture.fakeBin, name, 'echo "Python 3.10.0"');
-    }
+    writeUnsupportedPythonTools(fixture.fakeBin);
 
     const result = runDoctor(fixture);
 
@@ -716,9 +720,7 @@ describe("contributor repository setup", () => {
   it("stops before repository changes when a supported Python is missing", () => {
     const fixture = createFixture();
     writeTool(fixture.fakeBin, "python3", 'echo "Python 3.10.0"');
-    for (const name of ["python3.14", "python3.13", "python3.12", "python3.11"]) {
-      writeTool(fixture.fakeBin, name, 'echo "Python 3.10.0"');
-    }
+    writeUnsupportedPythonTools(fixture.fakeBin);
 
     const result = runSetup(fixture);
 

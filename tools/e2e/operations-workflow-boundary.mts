@@ -617,14 +617,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         name: "Download immutable Deep Agents Code base contract",
         if: PUBLICATION_REQUIRED_CONDITION,
-        uses: DOWNLOAD_ARTIFACT_ACTION,
-        with: {
-          "github-token": "${{ github.token }}",
-          name: "managed-base-${{ steps.publication.outputs.run_id }}-${{ steps.publication.outputs.run_attempt }}-langchain-deepagents-code",
-          path: "${{ runner.temp }}/dcode-base-contract",
-          repository: "NVIDIA/NemoClaw",
-          "run-id": "${{ steps.publication.outputs.run_id }}",
+        env: {
+          GITHUB_TOKEN: "${{ github.token }}",
+          PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
+          PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"',
       },
       {
         id: "validate_dcode_base",

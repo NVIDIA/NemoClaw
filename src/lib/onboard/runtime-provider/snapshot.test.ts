@@ -228,7 +228,9 @@ describe("runtime provider snapshot surface", () => {
   ])("rejects current-runtime changes $label", ({ observations, expectedRestoreCalls }) => {
     const restoreManagedProfile = vi.fn(() => "provider-restore-proof");
     const observe = vi.fn<() => RuntimeProviderSnapshotObservation>();
-    for (const value of observations) observe.mockReturnValueOnce(value);
+    observations.forEach((value) => {
+      observe.mockReturnValueOnce(value);
+    });
     const surface = requireSupportedSurface(
       createRuntimeProviderSnapshotSurface("mxc", surfaceDriver(observe, restoreManagedProfile)),
     );
@@ -501,7 +503,18 @@ describe("OpenShell snapshot observation", () => {
     ).toBe(expected);
   });
 
-  it("rejects mismatched provider, failed inspection, or missing generation", () => {
+  it.each(
+    [
+        { status: 1, output: "not found", stdout: "", stderr: "" },
+        {
+          status: 0,
+          signal: "SIGTERM",
+          output: "Id: sandbox-id\nState: Ready\nGeneration: generation-1\n",
+          stdout: "",
+          stderr: "",
+        },
+      ],
+  )("rejects mismatched provider, failed inspection, or missing generation [case %#]", (result) => {
     const capture = vi.fn();
     expect(() =>
       observeOpenShellRuntimeSnapshot(sandbox({ openshellDriver: "docker" }), "mxc", {
@@ -510,23 +523,13 @@ describe("OpenShell snapshot observation", () => {
     ).toThrow(/belongs to another runtime provider/u);
     expect(capture).not.toHaveBeenCalled();
 
-    for (const result of [
-      { status: 1, output: "not found", stdout: "", stderr: "" },
-      {
-        status: 0,
-        signal: "SIGTERM",
-        output: "Id: sandbox-id\nState: Ready\nGeneration: generation-1\n",
-        stdout: "",
-        stderr: "",
-      },
-    ]) {
-      expect(() =>
-        observeOpenShellRuntimeSnapshot(sandbox(), "mxc", {
-          capture: (() => result) as never,
-          observeAcceleration: () => ({ kind: "none" }),
-        }),
-      ).toThrow(/runtime identity could not be inspected/u);
-    }
+    expect(() =>
+      observeOpenShellRuntimeSnapshot(sandbox(), "mxc", {
+        capture: (() => result) as never,
+        observeAcceleration: () => ({ kind: "none" }),
+      }),
+    ).toThrow(/runtime identity could not be inspected/u);
+
     expect(() =>
       observeOpenShellRuntimeSnapshot(sandbox(), "mxc", {
         capture: (() => ({

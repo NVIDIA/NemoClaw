@@ -28,7 +28,7 @@ describe("installer git checkout", () => {
       expect(git(["-c", "commit.gpgsign=false", "commit", "-m", "fixture"]).status).toBe(0);
       const expectedHead = git(["rev-parse", "HEAD"]).stdout.trim();
 
-      for (const [index, installer] of [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].entries()) {
+      [...[INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].entries()].forEach(([index, installer]) => {
         const destination = path.join(tmp, `checkout-${index}`);
         const result = spawnSync(
           "bash",
@@ -51,7 +51,7 @@ describe("installer git checkout", () => {
         expect(result.status, result.stderr).toBe(0);
         expect(git(["-C", destination, "rev-parse", "HEAD"], tmp).stdout.trim()).toBe(expectedHead);
         expect(git(["-C", destination, "symbolic-ref", "-q", "HEAD"], tmp).status).not.toBe(0);
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -77,7 +77,7 @@ describe("installer git checkout", () => {
       expect(git(["-c", "commit.gpgsign=false", "commit", "-m", "post release"]).status).toBe(0);
       expect(git(["rev-parse", "HEAD"]).stdout.trim()).not.toBe(taggedHead);
 
-      for (const [index, installer] of [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].entries()) {
+      [...[INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].entries()].forEach(([index, installer]) => {
         const destination = path.join(tmp, `checkout-${index}`);
         const result = spawnSync(
           "bash",
@@ -97,7 +97,7 @@ describe("installer git checkout", () => {
         expect(result.status, result.stderr).toBe(0);
         expect(git(["-C", destination, "rev-parse", "HEAD"], tmp).stdout.trim()).toBe(taggedHead);
         expect(git(["-C", destination, "symbolic-ref", "-q", "HEAD"], tmp).status).not.toBe(0);
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -130,42 +130,46 @@ describe("installer version stamping", () => {
     },
   );
 
-  it("reports the stamped .version over a mismatched git describe (#7474)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-version-"));
-    const git = (args: string[]) => spawnSync("git", args, { cwd: tmp, encoding: "utf8" });
+  it.each([INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER])(
+    "reports the stamped .version over a mismatched git describe [case %#] (#7474)",
+    (installer) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-version-"));
+      const git = (args: string[]) => spawnSync("git", args, { cwd: tmp, encoding: "utf8" });
 
-    try {
-      fs.writeFileSync(path.join(tmp, "package.json"), `${JSON.stringify({ version: "0.0.1" })}\n`);
-      expect(git(["init", "--initial-branch=main"]).status).toBe(0);
-      expect(git(["config", "user.name", "NemoClaw Test"]).status).toBe(0);
-      expect(git(["config", "user.email", "nemoclaw-test@example.invalid"]).status).toBe(0);
-      fs.writeFileSync(path.join(tmp, "README.md"), "release\n");
-      expect(git(["add", "."]).status).toBe(0);
-      expect(git(["-c", "commit.gpgsign=false", "commit", "-m", "release"]).status).toBe(0);
-      expect(
-        git(["-c", "tag.gpgSign=false", "tag", "-a", "v0.0.38", "-m", "old release"]).status,
-      ).toBe(0);
-
-      const resolve = (installer: string) =>
-        spawnSync(
-          "bash",
-          [
-            "-c",
-            'source "$INSTALLER_UNDER_TEST"\nprintf START\nresolve_installer_version\nprintf STOP',
-          ],
-          {
-            encoding: "utf8",
-            env: {
-              ...process.env,
-              INSTALLER_UNDER_TEST: installer,
-              NEMOCLAW_REPO_ROOT: tmp,
-              NEMOCLAW_INSTALL_REF: "",
-              NEMOCLAW_INSTALL_TAG: "",
-            },
-          },
+      try {
+        fs.writeFileSync(
+          path.join(tmp, "package.json"),
+          `${JSON.stringify({ version: "0.0.1" })}\n`,
         );
+        expect(git(["init", "--initial-branch=main"]).status).toBe(0);
+        expect(git(["config", "user.name", "NemoClaw Test"]).status).toBe(0);
+        expect(git(["config", "user.email", "nemoclaw-test@example.invalid"]).status).toBe(0);
+        fs.writeFileSync(path.join(tmp, "README.md"), "release\n");
+        expect(git(["add", "."]).status).toBe(0);
+        expect(git(["-c", "commit.gpgsign=false", "commit", "-m", "release"]).status).toBe(0);
+        expect(
+          git(["-c", "tag.gpgSign=false", "tag", "-a", "v0.0.38", "-m", "old release"]).status,
+        ).toBe(0);
 
-      for (const installer of [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER]) {
+        const resolve = (installer: string) =>
+          spawnSync(
+            "bash",
+            [
+              "-c",
+              'source "$INSTALLER_UNDER_TEST"\nprintf START\nresolve_installer_version\nprintf STOP',
+            ],
+            {
+              encoding: "utf8",
+              env: {
+                ...process.env,
+                INSTALLER_UNDER_TEST: installer,
+                NEMOCLAW_REPO_ROOT: tmp,
+                NEMOCLAW_INSTALL_REF: "",
+                NEMOCLAW_INSTALL_TAG: "",
+              },
+            },
+          );
+
         fs.writeFileSync(path.join(tmp, ".version"), "0.0.93");
         const withStamp = resolve(installer);
         expect(withStamp.status, withStamp.stderr).toBe(0);
@@ -175,9 +179,9 @@ describe("installer version stamping", () => {
         const withoutStamp = resolve(installer);
         expect(withoutStamp.status, withoutStamp.stderr).toBe(0);
         expect(extract(withoutStamp.stdout)).toBe("0.0.38");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 });

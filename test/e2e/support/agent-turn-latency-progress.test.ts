@@ -383,7 +383,9 @@ describe("live test progress", () => {
       ["destroy OpenShell gateway passed"],
     ]);
     expect(activityFinishes).toHaveLength(6);
-    for (const finish of activityFinishes) expect(finish).toHaveBeenCalledOnce();
+    activityFinishes.forEach((finish) => {
+      expect(finish).toHaveBeenCalledOnce();
+    });
   });
 
   it("keeps cleanup exception payloads out of live console diagnostics", async () => {

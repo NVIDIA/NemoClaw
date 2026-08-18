@@ -390,13 +390,13 @@ describe("reconcileReusedSandboxMessaging", () => {
 
   it("omits a retired host-backed channel from a reused sandbox selection (#9283)", () => {
     const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
-    const clearPlanEnv = vi.fn();
+    const deps = { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() };
     vi.stubEnv("DISCORD_BOT_TOKEN", "");
 
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv },
+      deps,
       plan,
     );
 
@@ -407,7 +407,7 @@ describe("reconcileReusedSandboxMessaging", () => {
       selectedChannels: [],
       changed: true,
     });
-    expect(clearPlanEnv).not.toHaveBeenCalled();
+    expect(deps.clearPlanEnv).not.toHaveBeenCalled();
   });
 
   it("keeps a still-configured channel in a reused sandbox selection (#9283)", () => {
@@ -417,7 +417,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn() },
+      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
       plan,
     );
 
@@ -432,7 +432,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn() },
+      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
       plan,
     );
 
@@ -693,6 +693,9 @@ describe("reconcileSandboxMessaging plan authority", () => {
     // input; a channel the environment no longer configures must not re-enter
     // the selection, or its egress preset is re-applied.
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(deps.note).toHaveBeenCalledWith(expect.stringContaining("No host inputs configure discord"));
+    expect(deps.clearPlanEnv).toHaveBeenCalledOnce();
+    expect(deps.writePlanToEnv).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: null, selectedChannels: [] });
   });
 

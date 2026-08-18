@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ServingProfileProvenance } from "../inference/serving/types";
+import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 import { redactSensitiveText } from "../security/redact";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
@@ -27,6 +28,7 @@ import type { PortableInferenceActivation } from "./experimental/portable-infere
 import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
+import { ensureRequiredTierPolicyPresets } from "./policy-tier-suppression";
 import {
   assertLockedResumeIntentSnapshot as assertLockedResumeIntentSnapshotAtPath,
   isOnboardResumeIntentRaceError,
@@ -106,8 +108,6 @@ const PORTABLE_OWNED_ENV_KEYS = [
   ...PORTABLE_RUNTIME_ENV_KEYS,
   ...PORTABLE_DEFAULT_ENV_KEYS,
 ] as const;
-
-const PORTABLE_DEFAULT_POLICY_PRESETS = "weather,public-reference,github";
 
 interface PreviousEnvironmentValue {
   readonly present: boolean;
@@ -226,11 +226,19 @@ export function createPortableOnboardEnvironmentScope(
     env[TOOL_DISCLOSURE_ENV] = "direct";
     env.NEMOCLAW_PROVIDER = activation ? "custom" : "ollama";
     env.NEMOCLAW_MODEL = activation?.model ?? (requestedModel || "qwen3-vl:4b");
-    env.NEMOCLAW_POLICY_MODE = "custom";
-    env.NEMOCLAW_POLICY_PRESETS = requestedPolicyPresets?.trim()
-      ? requestedPolicyPresets
-      : PORTABLE_DEFAULT_POLICY_PRESETS;
-    env.NEMOCLAW_POLICY_TIER = "personal";
+    env.NEMOCLAW_POLICY_TIER = PERSONAL_POLICY_TIER_NAME;
+    if (requestedPolicyPresets?.trim()) {
+      env.NEMOCLAW_POLICY_MODE = "custom";
+      env.NEMOCLAW_POLICY_PRESETS = ensureRequiredTierPolicyPresets(
+        PERSONAL_POLICY_TIER_NAME,
+        requestedPolicyPresets
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean),
+      ).join(",");
+    } else {
+      env.NEMOCLAW_POLICY_MODE = "suggested";
+    }
   } else {
     const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value?.trim();
     if (requestedPolicyPresets) {

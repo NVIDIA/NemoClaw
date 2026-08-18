@@ -270,26 +270,30 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     });
   });
 
-  it("rejects oversized recovered provider, model, and endpoint values", () => {
-    const oversizedProvider = "p".repeat(129);
-    const oversizedModel = "m".repeat(513);
-    const oversizedEndpoint = `https://inference.example/${"x".repeat(2049)}`;
-    for (const override of [
-      { selectedProvider: oversizedProvider, recoveredProvider: oversizedProvider },
-      { selectedModel: oversizedModel, recoveredModel: oversizedModel },
-      {
-        endpointIdentity: {
-          ...completeRecovery.endpointIdentity,
-          selected: oversizedEndpoint,
-          recovered: oversizedEndpoint,
-        },
-      },
-    ]) {
+  it.each([{ scenario: "provider" }, { scenario: "model" }, { scenario: "endpoint" }])(
+    "rejects oversized recovered provider, model, and endpoint values [$scenario]",
+    ({ scenario }) => {
+      const oversizedProvider = "p".repeat(129);
+      const oversizedModel = "m".repeat(513);
+      const oversizedEndpoint = `https://inference.example/${"x".repeat(2049)}`;
+      const override = (
+        {
+          provider: { selectedProvider: oversizedProvider, recoveredProvider: oversizedProvider },
+          model: { selectedModel: oversizedModel, recoveredModel: oversizedModel },
+          endpoint: {
+            endpointIdentity: {
+              ...completeRecovery.endpointIdentity,
+              selected: oversizedEndpoint,
+              recovered: oversizedEndpoint,
+            },
+          },
+        } as const
+      )[scenario]!;
       expect(
         assessRecoveredProviderCredentialReuse({ ...completeRecovery, ...override }),
       ).toMatchObject({ kind: "reject" });
-    }
-  });
+    },
+  );
 
   it("rejects recovered credential reuse when the registry route is missing", () => {
     expect(

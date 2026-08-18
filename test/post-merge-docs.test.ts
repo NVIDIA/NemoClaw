@@ -11,7 +11,7 @@ import YAML from "yaml";
 
 import { validatePostMergeDocsWorkflowBoundary } from "../tools/post-merge-docs/contract.mts";
 import { publishDocumentation, type Request } from "../tools/post-merge-docs/publish.mts";
-import { executePostMergeDocs } from "../tools/post-merge-docs/run.mts";
+import { configurePostMergeDocs, executePostMergeDocs } from "../tools/post-merge-docs/run.mts";
 import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
 
 const directories: string[] = [];
@@ -182,6 +182,7 @@ function runnerFixture(phase: "author" | "review") {
       GITHUB_REPOSITORY: repository,
       GITHUB_SHA: mainSha,
       HOME: root,
+      OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:8080",
       PI_IMAGE: "image",
       POST_MERGE_DOCS_ARTIFACT_DIR: path.join(root, "artifact"),
       POST_MERGE_DOCS_CANDIDATE_DIR: candidate,
@@ -190,6 +191,7 @@ function runnerFixture(phase: "author" | "review") {
       POST_MERGE_DOCS_WORKDIR: path.join(root, "work"),
       RANGE_START_SHA: mainSha,
       RANGE_START_TAG: "v1.0.0",
+      RUNNER_TEMP: path.join(root, "runner-temp"),
       SANDBOX_NAME: `docs-${phase}`,
       TRUSTED_CHECKOUT: source,
     },
@@ -203,13 +205,19 @@ function runnerTools(
   const { env, root } = input;
   const sandbox = path.join(root, "sandbox");
   const output = path.join(root, "work/output");
-  const state = { deleted: false };
+  const state = {
+    agentArgs: [] as readonly string[],
+    createArgs: [] as readonly string[],
+    deleted: false,
+  };
   const handlers: Record<string, (args: readonly string[]) => unknown> = {
-    create: () => {
+    create: (args) => {
+      state.createArgs = args;
       fs.cpSync(path.join(root, "work/repo"), sandbox, { recursive: true });
       expect(git(sandbox, ["rev-parse", "HEAD"])).toBe(env.GITHUB_SHA);
     },
-    agent: () => {
+    agent: (args) => {
+      state.agentArgs = args;
       const agents = {
         author: () => fs.writeFileSync(path.join(sandbox, "docs/guide.mdx"), "authored\n"),
         review: () =>
@@ -329,6 +337,22 @@ describe("post-merge documentation publisher", () => {
 });
 
 describe("post-merge documentation runner", () => {
+  it("enables bind mounts before creating a reviewer sandbox", async () => {
+    const input = runnerFixture("review");
+    const responses = new Map([["which", "/trusted/bin/openshell-sandbox"]]);
+    const tools: OpenShellTools = {
+      run: vi.fn((command) => responses.get(command) ?? ""),
+      start: vi.fn(),
+      wait: async () => undefined,
+    };
+    await configurePostMergeDocs(input.env, tools);
+    const config = fs.readFileSync(
+      path.join(input.root, "runner-temp/openshell-gateway/gateway.toml"),
+      "utf8",
+    );
+    expect(config).toContain("enable_bind_mounts = true");
+  });
+
   it("authors from the triggering SHA without exposing host credentials", () => {
     const input = runnerFixture("author");
     const { state, tools } = runnerTools(input);
@@ -336,11 +360,48 @@ describe("post-merge documentation runner", () => {
     expect(fs.readFileSync(path.join(input.root, "artifact/docs.patch"), "utf8")).toContain(
       "+authored",
     );
+    expect(state.createArgs.filter((argument) => argument === "--upload")).toHaveLength(3);
+    expect(state.createArgs).not.toContain("--driver-config-json");
+    expect(state.agentArgs.join("\n")).not.toContain("GIT_DIR=");
     expect(state.deleted).toBe(true);
   });
   it("records the exact independent approval", () => {
     const input = runnerFixture("review");
-    executePostMergeDocs(input.env, runnerTools(input).tools);
+    const { state, tools } = runnerTools(input);
+    executePostMergeDocs(input.env, tools);
+    const driverConfigIndex = state.createArgs.indexOf("--driver-config-json");
+    expect(JSON.parse(state.createArgs[driverConfigIndex + 1] as string)).toEqual({
+      docker: {
+        mounts: [
+          {
+            read_only: true,
+            source: path.join(input.root, "work/repo"),
+            target: "/sandbox/repo",
+            type: "bind",
+          },
+          {
+            read_only: true,
+            source: path.join(input.root, "config"),
+            target: "/sandbox/config",
+            type: "bind",
+          },
+        ],
+      },
+    });
+    expect(state.createArgs).not.toContain("--upload");
+    expect(state.createArgs.slice(-6)).toEqual([
+      "--",
+      "/usr/bin/git",
+      "--git-dir=/sandbox/repo/.git",
+      "--work-tree=/sandbox/repo",
+      "status",
+      "--short",
+    ]);
+    expect(state.agentArgs).toEqual(
+      expect.arrayContaining(["GIT_DIR=/sandbox/repo/.git", "GIT_WORK_TREE=/sandbox/repo"]),
+    );
+    expect(fs.statSync(path.join(input.root, "config")).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(path.join(input.root, "config/task.txt")).mode & 0o777).toBe(0o444);
     expect(
       JSON.parse(fs.readFileSync(path.join(input.root, "artifact/review.json"), "utf8")),
     ).toEqual({

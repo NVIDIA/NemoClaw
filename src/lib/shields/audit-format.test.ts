@@ -94,9 +94,9 @@ describe("shields-audit format", () => {
     const lines = fs.readFileSync(auditPath, "utf-8").trim().split("\n");
     expect(lines).toHaveLength(5);
 
-    for (const line of lines) {
+    lines.forEach((line) => {
       expect(() => JSON.parse(line)).not.toThrow();
-    }
+    });
   });
 
   it("never includes credential-like values in entries", () => {

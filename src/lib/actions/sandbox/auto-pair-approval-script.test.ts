@@ -109,43 +109,38 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(module).not.toContain("recover_failed_scope_approval");
   });
 
-  it.each(
-    Array.from(
-      [
-        `${RECEIPT_MARKER}=approved-one\nlater output\n`,
-        `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
-        `${RECEIPT_MARKER}=raw-request-id\n`,
-      ],
-      (value) => [value],
-    ),
-  )("accepts exactly one terminal fixed receipt [case %#]", (output) => {
-    for (const receipt of [
-      "approved-one",
-      "list-failed",
-      "list-state-path-invalid",
-      "list-platform-unsupported",
-      "list-state-root-failed",
-      "list-devices-directory-failed",
-      "list-pending-unsafe",
-      "list-pending-unstable",
-      "list-pending-invalid-shape",
-      "list-pending-unavailable",
-      "list-timeout",
-      "list-exec-failed",
-      "list-scope-upgrade-pending",
-      "list-device-pairing-required",
-      "list-gateway-connect-failed",
-      "list-command-failed",
-      "list-empty-output",
-      "list-invalid-json",
-      "list-invalid-output",
-      "list-missing-pending",
-    ] as const) {
-      expect(
-        parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
-      ).toBe(receipt);
-    }
+  it.each([
+    "approved-one",
+    "list-failed",
+    "list-state-path-invalid",
+    "list-platform-unsupported",
+    "list-state-root-failed",
+    "list-devices-directory-failed",
+    "list-pending-unsafe",
+    "list-pending-unstable",
+    "list-pending-invalid-shape",
+    "list-pending-unavailable",
+    "list-timeout",
+    "list-exec-failed",
+    "list-scope-upgrade-pending",
+    "list-device-pairing-required",
+    "list-gateway-connect-failed",
+    "list-command-failed",
+    "list-empty-output",
+    "list-invalid-json",
+    "list-invalid-output",
+    "list-missing-pending",
+  ] as const)("accepts the terminal fixed receipt %s", (receipt) => {
+    expect(
+      parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
+    ).toBe(receipt);
+  });
 
+  it.each([
+    `${RECEIPT_MARKER}=approved-one\nlater output\n`,
+    `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
+    `${RECEIPT_MARKER}=raw-request-id\n`,
+  ])("rejects a non-terminal, duplicate, or unknown receipt [case %#]", (output) => {
     expect(parseAutoPairApprovalReceipt(output)).toBeNull();
   });
 });

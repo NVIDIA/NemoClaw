@@ -183,14 +183,18 @@ const nonInteractive = {
 
 function commonEgressTarget(options: {
   displayName: string;
+  environment?: Readonly<Record<string, string>>;
   hermes?: boolean;
+  owningPaths?: readonly string[];
+  profile?: E2eExecutionProfile;
+  runnerComparison?: boolean;
   selector: string;
   shard: string;
 }): E2eCatalogueTarget {
   return target(`common-egress-agent-${options.shard}`, {
     targetId: "common-egress-agent",
     displayName: options.displayName,
-    profile: "brave-nvidia-inference",
+    profile: options.profile ?? "brave-nvidia-inference",
     testFile: "test/e2e/live/common-egress-agent.test.ts",
     timeoutMinutes: 60,
     installMode: "credential-free",
@@ -199,15 +203,20 @@ function commonEgressTarget(options: {
     exposeCliBin: true,
     runnerKey: "common-egress-agent",
     hostPreparation: options.hermes ? "hermes-swap" : "none",
-    runnerComparison: true,
+    runnerComparison: options.runnerComparison ?? true,
     shard: options.shard,
     selector: options.selector,
-    owningPaths: ["test/e2e/live/common-egress-agent-helpers.ts"],
+    owningPaths: [
+      "test/e2e/live/common-egress-agent-helpers.ts",
+      ...(options.hermes ? [] : ["test/e2e/live/openclaw-agent-assertion.ts"]),
+      ...(options.owningPaths ?? []),
+    ],
     environment: {
       ...hostedInference,
       ...nonInteractive,
       NEMOCLAW_RECREATE_SANDBOX: "1",
       OPENSHELL_GATEWAY: "nemoclaw",
+      ...options.environment,
     },
   });
 }
@@ -534,6 +543,27 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     hermes: true,
     shard: "hermes-open-reference",
     selector: "^common-egress.+C3.+$",
+  }),
+  commonEgressTarget({
+    displayName: "Networking: Personal permits a keyless public stock fetch",
+    profile: "nvidia-inference",
+    runnerComparison: false,
+    owningPaths: [
+      "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
+      "nemoclaw-blueprint/policies/tiers.yaml",
+      "src/lib/onboard/policy-selection.ts",
+      "src/lib/onboard/policy-tier-suppression.ts",
+      "src/lib/policy/index.ts",
+      "test/e2e/live/personal-egress-live-proof.ts",
+    ],
+    shard: "openclaw-personal-stock-price",
+    selector: "^common-egress.+C4.+$",
+    environment: {
+      BRAVE_API_KEY: "",
+      NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+      TAVILY_API_KEY: "",
+    },
   }),
   target("concurrent-gateway-ports", {
     displayName: "Gateway: isolates ports for concurrent sandboxes",
@@ -1356,8 +1386,7 @@ export function validateE2eTargetCatalogue(
     }
     if (
       entry.runnerKey !== "" &&
-      (!ID_PATTERN.test(entry.runnerKey) ||
-        !E2E_CATALOGUE_RUNNER_KEY_SET.has(entry.runnerKey))
+      (!ID_PATTERN.test(entry.runnerKey) || !E2E_CATALOGUE_RUNNER_KEY_SET.has(entry.runnerKey))
     ) {
       throw new Error(`E2E target ${entry.id} has an invalid runner routing key`);
     }

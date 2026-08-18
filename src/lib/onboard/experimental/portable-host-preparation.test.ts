@@ -273,7 +273,7 @@ describe("preparePortableExperimentalHost", () => {
     ]);
     expect(systemctl.mock.calls[2]?.[2]).toBe(10_000);
     expect(podman).not.toHaveBeenCalled();
-    for (const [, commandEnv] of docker.mock.calls) {
+    docker.mock.calls.forEach(([, commandEnv]) => {
       expect(commandEnv).not.toHaveProperty("CONTAINER_CONNECTION");
       expect(commandEnv).not.toHaveProperty("CONTAINER_HOST");
       expect(commandEnv).not.toHaveProperty("CONTAINER_SSHKEY");
@@ -281,7 +281,7 @@ describe("preparePortableExperimentalHost", () => {
       expect(commandEnv).not.toHaveProperty("DOCKER_TLS_VERIFY");
       expect(commandEnv).not.toHaveProperty("DOCKER_CERT_PATH");
       expect(commandEnv.DOCKER_HOST).toBe("unix:///run/user/1001/custom/podman.sock");
-    }
+    });
     expect(env.CONTAINER_HOST).toBe("tcp://example.test:1234");
     expect(hardenSocketDirectory).toHaveBeenCalledWith("/run/user/1001/custom/podman.sock", 1001);
     expect(docker.mock.calls[0]?.[0]).toEqual(["--version"]);

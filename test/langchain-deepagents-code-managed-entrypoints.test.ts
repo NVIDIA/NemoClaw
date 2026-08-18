@@ -96,28 +96,31 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     },
   );
 
-  it("forces every LangChain and LangSmith tracing flag off across image boundaries", () => {
-    const dockerfile = readAgentFile("Dockerfile");
-    const start = readAgentFile("start.sh");
-    const wrapper = readAgentFile("dcode-wrapper.sh");
-    const patcher = readAgentFile("patch-managed-deepagents-code.py");
-    for (const name of TRACING_ENABLE_ENV_NAMES) {
+  it.each(TRACING_ENABLE_ENV_NAMES)(
+    "forces every LangChain and LangSmith tracing flag off across image boundaries [case %#]",
+    (name) => {
+      const dockerfile = readAgentFile("Dockerfile");
+      const start = readAgentFile("start.sh");
+      const wrapper = readAgentFile("dcode-wrapper.sh");
+      const patcher = readAgentFile("patch-managed-deepagents-code.py");
+
       expect(dockerfile).toContain(`${name}=false`);
       expect(start).toContain(`export ${name}=false`);
       expect(wrapper).toContain(`export ${name}=false`);
       expect(patcher).toContain(`os.environ["${name}"] = "false"`);
-    }
-    expect(dockerfile).toContain("dcode-inference-base-url");
-    expect(dockerfile).toContain("LANGGRAPH_NO_VERSION_CHECK=true");
-    expect(dockerfile).toContain("LANGGRAPH_CLI_NO_ANALYTICS=1");
-    expect(start).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
-    expect(start).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
-    expect(wrapper).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
-    expect(wrapper).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
-    expect(patcher).toContain('os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
-    expect(patcher).toContain('env["LANGGRAPH_NO_VERSION_CHECK"] = "true"');
-    expect(patcher).toContain('env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
-  });
+
+      expect(dockerfile).toContain("dcode-inference-base-url");
+      expect(dockerfile).toContain("LANGGRAPH_NO_VERSION_CHECK=true");
+      expect(dockerfile).toContain("LANGGRAPH_CLI_NO_ANALYTICS=1");
+      expect(start).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
+      expect(start).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
+      expect(wrapper).toContain("export LANGGRAPH_NO_VERSION_CHECK=true");
+      expect(wrapper).toContain("export LANGGRAPH_CLI_NO_ANALYTICS=1");
+      expect(patcher).toContain('os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
+      expect(patcher).toContain('env["LANGGRAPH_NO_VERSION_CHECK"] = "true"');
+      expect(patcher).toContain('env["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"');
+    },
+  );
 
   it("does not serialize provider or optional-service secrets into the shell env file", () => {
     const start = readAgentFile("start.sh");

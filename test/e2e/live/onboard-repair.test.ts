@@ -252,7 +252,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     forwardCleanupOptions,
   );
   const repairSandboxNames = [SANDBOX_NAME, OTHER_SANDBOX_NAME];
-  for (const name of [...repairSandboxNames].reverse()) {
+  [...repairSandboxNames].reverse().forEach((name) => {
     cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
       cleanupWhenInstalled(`cleanup-probe-openshell-sandbox-${name}`, () =>
         sandbox.cleanupSandbox(name, {
@@ -279,7 +279,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
       name,
       sandboxCleanupOptions,
     );
-  }
+  });
   progress.phase("clear prior onboard-repair state");
   await cleanup(host, sandbox);
 

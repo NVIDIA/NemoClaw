@@ -253,7 +253,7 @@ describe("Telegram runtime preload installation", () => {
     fs.copyFileSync(TELEGRAM_RUNTIME_PRELOAD, sourcePath);
 
     try {
-      for (const testCase of cases) {
+      cases.forEach((testCase) => {
         fs.rmSync(preloadPath, { force: true });
         fs.rmSync(connectPreloadsPath, { force: true });
         fs.writeFileSync(planPath, JSON.stringify({ nodePreloads: testCase.nodePreloads }));
@@ -289,7 +289,7 @@ describe("Telegram runtime preload installation", () => {
         expect(result.stdout).toContain("rc=1");
         expect(fs.existsSync(preloadPath)).toBe(testCase.expectPreload);
         expect(fs.existsSync(connectPreloadsPath)).toBe(false);
-      }
+      });
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
