@@ -7,6 +7,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { SHIPPED_MANAGED_IMAGE_AGENTS } from "./managed-image/contract";
+import { MANAGED_STARTUP_MERGED_CA_FILE } from "./managed-startup/image-runtime";
 import { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 
 type PolicyRule = {
@@ -69,6 +71,39 @@ describe("initial sandbox policy real preset merge", () => {
     { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
     { path: ["agents", "hermes", "policy-permissive.yaml"], agent: "hermes" },
   ] as const;
+
+  const managedStartupCaPolicyCases = [
+    ...shippingPolicyCases,
+    {
+      path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+      agent: "langchain-deepagents-code",
+    },
+  ] as const;
+
+  it("covers every shipped managed-image agent in the managed startup CA policy cases", () => {
+    expect(new Set(managedStartupCaPolicyCases.map(({ agent }) => agent))).toEqual(
+      new Set(SHIPPED_MANAGED_IMAGE_AGENTS),
+    );
+  });
+
+  it.each(managedStartupCaPolicyCases)(
+    "grants $agent policy $path exact read-only access to the managed startup CA bundle (#9360)",
+    (policyCase) => {
+      const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
+        agentName: policyCase.agent,
+      });
+      const policy = readPreparedPolicy(prepared);
+      const readOnly = policy.filesystem_policy?.read_only ?? [];
+      const readWrite = policy.filesystem_policy?.read_write ?? [];
+
+      expect(readOnly, policyCase.path.join("/")).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+      expect(readWrite, policyCase.path.join("/")).not.toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+      expect(readOnly, policyCase.path.join("/")).not.toContain("/run");
+      expect(readWrite, policyCase.path.join("/")).not.toContain("/run");
+      expect(readOnly, policyCase.path.join("/")).not.toContain("/run/nemoclaw");
+      expect(readWrite, policyCase.path.join("/")).not.toContain("/run/nemoclaw");
+    },
+  );
 
   it.each([
     {
