@@ -42,6 +42,7 @@ function successfulResult() {
 function managedImageInspect(
   entrypoint: string[] = ["/usr/local/bin/nemoclaw-start"],
   containerId = OLD_CONTAINER_ID,
+  command: string[] = ["/bin/bash"],
 ): string {
   return JSON.stringify([
     {
@@ -51,7 +52,7 @@ function managedImageInspect(
       Config: {
         Image: "nemoclaw-managed:test",
         Entrypoint: entrypoint,
-        Cmd: ["/bin/bash"],
+        Cmd: command,
         Env: ["OPENSHELL_SANDBOX_COMMAND=env /usr/local/bin/nemoclaw-start"],
       },
       HostConfig: {},
@@ -100,6 +101,15 @@ describe("gateway guard legacy keepalive fixture", () => {
     expect(() =>
       rewriteManagedInspectForLegacyKeepalive(
         managedImageInspect(["/unreviewed/supervisor"]),
+        OLD_CONTAINER_ID,
+      ),
+    ).toThrow("requires the reviewed managed-image process contract");
+  });
+
+  it("rejects an unreviewed managed-image command before legacy recreation (#9364)", () => {
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(
+        managedImageInspect(["/usr/local/bin/nemoclaw-start"], OLD_CONTAINER_ID, ["/bin/sh"]),
         OLD_CONTAINER_ID,
       ),
     ).toThrow("requires the reviewed managed-image process contract");
