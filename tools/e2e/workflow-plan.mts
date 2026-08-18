@@ -6,7 +6,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
-import { buildLiveTargetMatrix, type LiveTargetMatrixEntry } from "../../test/e2e/registry/run.ts";
+import {
+  buildLiveTargetInventory,
+  buildLiveTargetMatrix,
+  type LiveTargetMatrixEntry,
+} from "../../test/e2e/registry/run.ts";
 import { buildRiskPlan } from "../advisors/risk-plan.mts";
 import {
   type CredentialFreeTestMatrixRow,
@@ -842,7 +846,7 @@ export function renderE2eWorkflowPlanSummary(
   const explicitOnlyRows = inventory.coverageRows.filter((row) =>
     plan.explicitOnlyJobs.includes(row.id),
   );
-  const unsupportedDeclarations = plan.matrix.filter((row) => !row.supported);
+  const unsupportedDeclarations = buildLiveTargetInventory().filter((row) => !row.supported);
   const outcomeRows = new Map<string, E2eExecutionRow[]>();
   for (const row of plan.coverageMatrix) {
     const rows = outcomeRows.get(row.observableOutcome) ?? [];
