@@ -76,6 +76,40 @@ function addSandboxBuildPins(
   );
 }
 
+function sandboxBuildPins(
+  version: string,
+  digests: readonly [string, string],
+): string {
+  return `    ${digests[0]} | \\
+      ${digests[1]})
+      printf '%s\\n' "${version}"
+      ;;`;
+}
+
+function ensureSandboxBuildPins(
+  source: string,
+  version: string,
+  digests: readonly [string, string],
+): string {
+  return source.includes(sandboxBuildPins(version, digests))
+    ? source
+    : addSandboxBuildPins(source, version, digests);
+}
+
+function remapSandboxBuildPins(
+  source: string,
+  currentVersion: string,
+  remappedVersion: string,
+  digests: readonly [string, string],
+): string {
+  const currentPins = sandboxBuildPins(currentVersion, digests);
+  return source.includes(currentPins)
+    ? mutateSandboxBuildFunction(source, (functionSource) =>
+        functionSource.replace(currentPins, sandboxBuildPins(remappedVersion, digests)),
+      )
+    : addSandboxBuildPins(source, remappedVersion, digests);
+}
+
 function runParser(mutate: (source: string) => string = (source) => source) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-build-trust-"));
   const scriptsDir = path.join(root, "scripts");
@@ -129,7 +163,7 @@ describe("standalone sandbox build trust", () => {
   ] as const)(
     "accepts the base-trusted OpenShell %s sandbox identities before version selection (#8893)",
     (version, digests) => {
-      const result = runParser((source) => addSandboxBuildPins(source, version, digests));
+      const result = runParser((source) => ensureSandboxBuildPins(source, version, digests));
 
       expect(result.status, result.stderr).toBe(0);
     },
@@ -137,20 +171,12 @@ describe("standalone sandbox build trust", () => {
 
   it("rejects the OpenShell 0.0.106 sandbox identities when they are remapped", () => {
     const result = runParser((source) =>
-      addSandboxBuildPins(source, "0.0.105", V00106_SANDBOX_BUILD_DIGESTS),
+      remapSandboxBuildPins(source, "0.0.106", "0.0.105", V00106_SANDBOX_BUILD_DIGESTS),
     );
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("must use only base-trusted binary identities");
     expect(result.stderr).toContain(`unexpected=[0.0.105:${V00106_SANDBOX_BUILD_DIGESTS[0]}`);
-  });
-
-  it("accepts the exact OpenShell 0.0.106 sandbox identities before version selection", () => {
-    const result = runParser((source) =>
-      addSandboxBuildPins(source, "0.0.106", V00106_SANDBOX_BUILD_DIGESTS),
-    );
-
-    expect(result.status, result.stderr).toBe(0);
   });
 
   it("rejects an arbitrary structurally valid identity addition", () => {
