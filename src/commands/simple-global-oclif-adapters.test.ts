@@ -41,9 +41,11 @@ const mocks = vi.hoisted(() => {
     runDashboardUrlCommand: vi.fn(() => undefined),
     runGatewayTokenCommand: vi.fn(() => undefined),
     runStartCommand: vi.fn().mockResolvedValue(undefined),
+    runStatusCommand: vi.fn(),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
     showRootHelp: vi.fn(),
+    showStatus: vi.fn(),
     showVersion: vi.fn(),
     spawnSync: vi.fn(),
     startAll: vi.fn(),
@@ -76,9 +78,14 @@ vi.mock("../lib/adapters/openshell/client", () => ({
 }));
 vi.mock("../lib/state/registry", () => ({ listSandboxes: mocks.listSandboxes }));
 vi.mock("../lib/adapters/openshell/resolve", () => ({ resolveOpenshell: mocks.resolveOpenshell }));
-vi.mock("../lib/tunnel/services", () => ({ startAll: mocks.startAll, stopAll: mocks.stopAll }));
+vi.mock("../lib/tunnel/services", () => ({
+  showStatus: mocks.showStatus,
+  startAll: mocks.startAll,
+  stopAll: mocks.stopAll,
+}));
 vi.mock("../lib/tunnel/service-command", () => ({
   runStartCommand: mocks.runStartCommand,
+  runStatusCommand: mocks.runStatusCommand,
   runStopCommand: mocks.runStopCommand,
 }));
 vi.mock("../lib/uninstall-command", () => ({
@@ -101,6 +108,7 @@ import GatewayTokenCliCommand, {
 import DeprecatedStartCommand from "./start";
 import DeprecatedStopCommand from "./stop";
 import TunnelStartCommand from "./tunnel/start";
+import TunnelStatusCommand from "./tunnel/status";
 import TunnelStopCommand from "./tunnel/stop";
 import UninstallCliCommand from "./uninstall";
 
@@ -291,6 +299,7 @@ describe("simple global oclif adapters", () => {
     await TunnelStartCommand.run([], rootDir);
     expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await TunnelStopCommand.run([], rootDir);
+    await TunnelStatusCommand.run([], rootDir);
     await DeprecatedStartCommand.run([], rootDir);
     expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await DeprecatedStopCommand.run([], rootDir);
@@ -299,6 +308,16 @@ describe("simple global oclif adapters", () => {
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
     );
+    // `tunnel status` must resolve the default sandbox the same way `tunnel
+    // start` and `tunnel stop` do, or it reads a different PID directory and
+    // reports a running tunnel as stopped (#4756).
+    expect(mocks.runStatusCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        listSandboxes: expect.any(Function),
+        showStatus: mocks.showStatus,
+      }),
+    );
+    expect(mocks.showStatus).not.toHaveBeenCalled();
     expect(mocks.runStopCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), stopAll: mocks.stopAll }),
     );

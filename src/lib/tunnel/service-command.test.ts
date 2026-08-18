@@ -3,7 +3,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resolveDefaultSandboxName, runStartCommand, runStopCommand } from "./service-command";
+import {
+  resolveDefaultSandboxName,
+  runStartCommand,
+  runStatusCommand,
+  runStopCommand,
+} from "./service-command";
 
 describe("services command", () => {
   let savedEnv: Record<string, string | undefined>;
@@ -77,6 +82,25 @@ describe("services command", () => {
       stopAll,
     });
     expect(stopAll).toHaveBeenCalledWith({ sandboxName: undefined });
+  });
+
+  it("shows status for the same default sandbox that start and stop target (#4756)", () => {
+    process.env.NEMOCLAW_SANDBOX_NAME = "env-sandbox";
+    const showStatus = vi.fn();
+    runStatusCommand({
+      listSandboxes: () => ({ defaultSandbox: "registry-sandbox" }),
+      showStatus,
+    });
+    expect(showStatus).toHaveBeenCalledWith({ sandboxName: "env-sandbox" });
+  });
+
+  it("shows status without a sandbox override when the default sandbox is unsafe", () => {
+    const showStatus = vi.fn();
+    runStatusCommand({
+      listSandboxes: () => ({ defaultSandbox: "bad name" }),
+      showStatus,
+    });
+    expect(showStatus).toHaveBeenCalledWith({ sandboxName: undefined });
   });
 
   it("opts the legacy full-stop command into managed gateway release", () => {
