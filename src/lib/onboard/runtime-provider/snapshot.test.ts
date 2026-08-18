@@ -798,7 +798,7 @@ describe("Docker provider snapshot evidence", () => {
       const deniedPreflight = denied.preflight("restore", target);
       const deniedSource = snapshotSource(deniedPreflight, source.runtime);
       expect(() => denied.restore(target, deniedPreflight, deniedSource, authority)).toThrow(
-        /managed profile restoration could not be proven/u,
+        /managed profile restoration could not be proven \(status=1; output=profile mismatch\)/u,
       );
     },
   );

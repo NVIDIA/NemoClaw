@@ -36,6 +36,8 @@ const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._-]{1,512}$/u;
 const DOCKER_CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const MANAGED_STARTUP_RUNTIME_EXECUTABLE =
   "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
+// Dockerfile copies and validates this exact final-image path; the managed
+// startup hold and bootstrap trampoline invoke the same 0444 runtime through it.
 const MANAGED_STARTUP_NODE_EXECUTABLE = "/usr/local/bin/node";
 const LIFECYCLE_GENERATION_PATTERN = /^[A-Za-z0-9._:/=-]{1,512}$/u;
 const ANSI_PATTERN = /\u001b\[[0-9;]*m/gu;
@@ -125,6 +127,27 @@ function gatewayScopedManagedProfileVerifyArgs(
 
 function cleanOutput(value: string): string {
   return value.replace(ANSI_PATTERN, "");
+}
+
+function managedProfileVerificationFailureDetail(
+  result: ReturnType<typeof captureOpenshell>,
+): string {
+  // This command accepts only a validated agent and secret-free profile hash;
+  // bound its fixed-runtime diagnostic so restore failures remain actionable.
+  const output = cleanOutput(result.output || "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const error = cleanOutput(result.error?.message ?? "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return [
+    `status=${result.status ?? "unknown"}`,
+    ...(result.signal ? [`signal=${result.signal}`] : []),
+    ...(error ? [`error=${error}`] : []),
+    ...(output ? [`output=${output}`] : []),
+  ]
+    .join("; ")
+    .slice(0, 1024);
 }
 
 function parseSandboxId(output: string): string | null {
@@ -417,7 +440,7 @@ export function verifyOpenShellManagedProfileRestore(
   );
   if (result.status !== 0 || result.error || result.signal) {
     throw new RuntimeProviderSnapshotError(
-      `sandbox '${sandbox.name}' managed profile restoration could not be proven`,
+      `sandbox '${sandbox.name}' managed profile restoration could not be proven (${managedProfileVerificationFailureDetail(result)})`,
     );
   }
   return createHash("sha256")
