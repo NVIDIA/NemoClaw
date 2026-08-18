@@ -6,7 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
   encodeDockerJsonArg,
   isValidProxyHost,
@@ -34,7 +36,7 @@ function dockerfileWith(content: string): string {
 
 type TestMessagingPlan = Record<string, unknown>;
 
-function buildMessagingPlan(overrides: TestMessagingPlan = {}): TestMessagingPlan {
+function buildMessagingPlan(overrides: TestMessagingPlan = {}): SandboxMessagingPlan {
   return {
     schemaVersion: 1,
     sandboxName: "my-assistant",
@@ -49,10 +51,10 @@ function buildMessagingPlan(overrides: TestMessagingPlan = {}): TestMessagingPla
     stateUpdates: [],
     healthChecks: [],
     ...overrides,
-  };
+  } as SandboxMessagingPlan;
 }
 
-function setMessagingPlanEnv(overrides: TestMessagingPlan = {}): TestMessagingPlan {
+function setMessagingPlanEnv(overrides: TestMessagingPlan = {}): SandboxMessagingPlan {
   const plan = buildMessagingPlan(overrides);
   process.env.NEMOCLAW_MESSAGING_PLAN_B64 = Buffer.from(JSON.stringify(plan), "utf8").toString(
     "base64",
@@ -701,7 +703,7 @@ describe("dockerfile patch helpers", () => {
   });
 
   it("patches the staged Dockerfile with the manifest messaging plan", () => {
-    const messagingPlan = setMessagingPlanEnv({
+    const messagingPlan = buildMessagingPlan({
       channels: [
         { channelId: "discord", active: true },
         { channelId: "telegram", active: true },
@@ -710,6 +712,7 @@ describe("dockerfile patch helpers", () => {
         { channelId: "discord", target: "openclaw.json", path: ["channels", "discord"] },
       ],
     });
+    vi.spyOn(MessagingSetupApplier, "readPlanFromEnv").mockReturnValue(messagingPlan);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-plan-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
