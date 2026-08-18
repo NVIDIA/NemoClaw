@@ -113,7 +113,7 @@ function createPodman(
                   "openshell.ai/sandbox-workspace": sandboxWorkspaceLabel,
                 },
               },
-              State: { Running: running },
+              State: { Running: running, Status: running ? "running" : "exited" },
             },
           ]),
         };
