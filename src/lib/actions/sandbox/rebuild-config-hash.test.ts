@@ -71,7 +71,10 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
       });
 
-      expect(result.status).not.toBe(0);
+      expect(result.status).toBe(15);
+      expect(result.stderr).toBe(
+        "root-owned OpenClaw config hash does not match openclaw.json\n",
+      );
       expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${"0".repeat(64)}  openclaw.json\n`);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
