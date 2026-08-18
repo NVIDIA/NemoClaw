@@ -18,6 +18,11 @@ import {
   portableHostPreparationInternals,
   preparePortableExperimentalHost as preparePortableExperimentalHostUnchecked,
 } from "./portable-host-preparation";
+import {
+  PORTABLE_DOCKER_NETWORK_NAME,
+  PORTABLE_DOCKER_NETWORK_SUBNET,
+  PORTABLE_HOST_GATEWAY_IP,
+} from "./portable-profile";
 
 type SpawnResult = ReturnType<typeof spawnSync>;
 
@@ -71,11 +76,21 @@ function preparePortableExperimentalHost(
   env: NodeJS.ProcessEnv,
   deps: Parameters<typeof preparePortableExperimentalHostUnchecked>[1] = {},
   expectedAuthority?: CheckpointPortableRuntimeAuthority | null,
+  options: { simulateExistingPortableNetwork?: boolean } = {},
 ) {
+  const docker = deps.docker;
+  const simulateExistingPortableNetwork = options.simulateExistingPortableNetwork ?? true;
   return preparePortableExperimentalHostUnchecked(
     env,
     {
       ...deps,
+      docker:
+        docker && simulateExistingPortableNetwork
+          ? (args, childEnv) =>
+              args[0] === "network" && args[1] === "inspect"
+                ? result(0, `${PORTABLE_DOCKER_NETWORK_SUBNET}\n`)
+                : docker(args, childEnv)
+          : docker,
       // Tests run on hosts without the /sys/fs/cgroup hierarchy the portable
       // CPU-delegation preflight reads; default to a passing stub and inject
       // explicit results for the preflight wiring tests below.
@@ -212,7 +227,7 @@ describe("preparePortableExperimentalHost", () => {
     expect(prepared?.authority.uid).toBe(1001);
   });
 
-  it("prepares the rootless socket and managed loopback registry deterministically", () => {
+  it("prepares the rootless socket and managed portable registry deterministically", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
     const systemctl = vi.fn<
@@ -292,6 +307,10 @@ describe("preparePortableExperimentalHost", () => {
       "nemoclaw-portable-registry",
       "--label",
       "com.nvidia.nemoclaw.portable=1",
+      "--network",
+      PORTABLE_DOCKER_NETWORK_NAME,
+      "--ip",
+      PORTABLE_HOST_GATEWAY_IP,
       "-p",
       "127.0.0.1:5000:5000",
       "--restart=always",
@@ -309,6 +328,113 @@ describe("preparePortableExperimentalHost", () => {
     );
     expect(fs.readFileSync(containersConf, "utf-8")).toContain('env = ["NETAVARK_FW=iptables"]');
     expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
+  });
+
+  it("creates the portable network before publishing the registry gateway address (#9461)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result()) // --version probe
+      .mockReturnValueOnce(result(1)) // network inspect: absent
+      .mockReturnValueOnce(result()) // network create
+      .mockReturnValueOnce(result(1)) // registry inspect: absent
+      .mockReturnValueOnce(result()); // registry run
+
+    preparePortableExperimentalHost(
+      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      {
+        platform: "linux",
+        home,
+        uid: 1001,
+        systemctl: () => result(),
+        podman: () => result(0, "/run/user/1001/podman/podman.sock"),
+        docker,
+        hardenSocketDirectory: vi.fn(),
+        validateConfigAuthority: vi.fn(),
+      },
+      undefined,
+      { simulateExistingPortableNetwork: false },
+    );
+
+    expect(docker.mock.calls[1]?.[0]).toEqual([
+      "network",
+      "inspect",
+      "--format",
+      "{{range .IPAM.Config}}{{println .Subnet}}{{end}}",
+      PORTABLE_DOCKER_NETWORK_NAME,
+    ]);
+    expect(docker.mock.calls[2]?.[0]).toEqual([
+      "network",
+      "create",
+      "--subnet",
+      PORTABLE_DOCKER_NETWORK_SUBNET,
+      PORTABLE_DOCKER_NETWORK_NAME,
+    ]);
+    expect(docker.mock.calls[4]?.[0]).toEqual(
+      expect.arrayContaining([
+        "--network",
+        PORTABLE_DOCKER_NETWORK_NAME,
+        "--ip",
+        PORTABLE_HOST_GATEWAY_IP,
+      ]),
+    );
+  });
+
+  it("reuses only the expected portable network and registry address (#9461)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result(0, `${PORTABLE_DOCKER_NETWORK_SUBNET}\n`))
+      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_HOST_GATEWAY_IP}`));
+
+    preparePortableExperimentalHost(
+      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      {
+        platform: "linux",
+        home,
+        uid: 1001,
+        systemctl: () => result(),
+        podman: () => result(0, "/run/user/1001/podman/podman.sock"),
+        docker,
+        hardenSocketDirectory: vi.fn(),
+        validateConfigAuthority: vi.fn(),
+      },
+      undefined,
+      { simulateExistingPortableNetwork: false },
+    );
+
+    expect(docker).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses a conflicting portable network without touching the registry (#9461)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result(0, "10.88.0.0/16\n"));
+
+    expect(() =>
+      preparePortableExperimentalHost(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        {
+          platform: "linux",
+          home,
+          uid: 1001,
+          systemctl: () => result(),
+          podman: () => result(0, "/run/user/1001/podman/podman.sock"),
+          docker,
+          hardenSocketDirectory: vi.fn(),
+          validateConfigAuthority: vi.fn(),
+        },
+        undefined,
+        { simulateExistingPortableNetwork: false },
+      ),
+    ).toThrow(/unexpected subnet '10\.88\.0\.0\/16'/u);
+    expect(docker).toHaveBeenCalledTimes(2);
   });
 
   it("forwards readiness deadlines to injected host command adapters (#9070)", () => {
@@ -513,13 +639,14 @@ describe("preparePortableExperimentalHost", () => {
     ]);
   });
 
-  it("reuses a running managed registry (#9035)", () => {
+  it("connects a running managed registry created before portable network support (#9461)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, "1 true"));
+      .mockReturnValueOnce(result(0, "1 true"))
+      .mockReturnValueOnce(result());
 
     preparePortableExperimentalHost(
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
@@ -535,7 +662,19 @@ describe("preparePortableExperimentalHost", () => {
       },
     );
 
-    expect(docker.mock.calls.map(([args]) => args[0])).toEqual(["--version", "inspect"]);
+    expect(docker.mock.calls.map(([args]) => args[0])).toEqual([
+      "--version",
+      "inspect",
+      "network",
+    ]);
+    expect(docker.mock.calls[2]?.[0]).toEqual([
+      "network",
+      "connect",
+      "--ip",
+      PORTABLE_HOST_GATEWAY_IP,
+      PORTABLE_DOCKER_NETWORK_NAME,
+      "nemoclaw-portable-registry",
+    ]);
   });
 
   it("rejects a moved user home before config writes or socket activation", () => {
@@ -574,7 +713,7 @@ describe("preparePortableExperimentalHost", () => {
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, "1 true"));
+      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_HOST_GATEWAY_IP}`));
 
     try {
       const prepared = preparePortableExperimentalHost(scope.env, {
@@ -831,7 +970,7 @@ describe("preparePortableExperimentalHost", () => {
       const docker = vi
         .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
         .mockReturnValueOnce(result())
-        .mockReturnValueOnce(result(0, "1 true"));
+        .mockReturnValueOnce(result(0, `1 true ${PORTABLE_HOST_GATEWAY_IP}`));
 
       const prepared = preparePortableExperimentalHost(
         { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },

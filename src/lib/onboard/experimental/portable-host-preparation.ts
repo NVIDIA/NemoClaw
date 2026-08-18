@@ -16,7 +16,13 @@ import {
 } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
-import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "../docker-driver-platform";
+import {
+  isPortableExperimentalProfile,
+  PORTABLE_DOCKER_NETWORK_NAME,
+  PORTABLE_DOCKER_NETWORK_SUBNET,
+  PORTABLE_HOST_GATEWAY_IP,
+  PORTABLE_LOCAL_REGISTRY,
+} from "../docker-driver-platform";
 import {
   inspectPortablePodmanReadiness,
   portablePodmanCommandEnvironment,
@@ -292,11 +298,50 @@ function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
 ): void {
+  const networkInspection = docker(
+    [
+      "network",
+      "inspect",
+      "--format",
+      "{{range .IPAM.Config}}{{println .Subnet}}{{end}}",
+      PORTABLE_DOCKER_NETWORK_NAME,
+    ],
+    env,
+  );
+  if (networkInspection.error) {
+    requireCommand(networkInspection, "Inspecting the portable sandbox network");
+  }
+  if (networkInspection.status === 0) {
+    const subnets = String(networkInspection.stdout ?? "")
+      .trim()
+      .split(/\s+/u)
+      .filter(Boolean);
+    if (subnets.length !== 1 || subnets[0] !== PORTABLE_DOCKER_NETWORK_SUBNET) {
+      throw new Error(
+        `Refusing to reuse network '${PORTABLE_DOCKER_NETWORK_NAME}' with unexpected subnet '${subnets.join(", ") || "none"}'. Expected ${PORTABLE_DOCKER_NETWORK_SUBNET}.`,
+      );
+    }
+  } else {
+    requireCommand(
+      docker(
+        [
+          "network",
+          "create",
+          "--subnet",
+          PORTABLE_DOCKER_NETWORK_SUBNET,
+          PORTABLE_DOCKER_NETWORK_NAME,
+        ],
+        env,
+      ),
+      "Creating the portable sandbox network",
+    );
+  }
+
   const inspection = docker(
     [
       "inspect",
       "--format",
-      '{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}}',
+      `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks "${PORTABLE_DOCKER_NETWORK_NAME}"}}{{.IPAddress}}{{end}}`,
       REGISTRY_CONTAINER,
     ],
     env,
@@ -305,7 +350,7 @@ function ensureRegistryContainer(
     requireCommand(inspection, "Inspecting the managed portable registry");
   }
   const exists = inspection.status === 0;
-  const [owner, running] = String(inspection.stdout ?? "")
+  const [owner, running, networkIp] = String(inspection.stdout ?? "")
     .trim()
     .split(/\s+/u);
   if (exists && owner !== "1") {
@@ -313,7 +358,29 @@ function ensureRegistryContainer(
       `Refusing to replace existing unmanaged container '${REGISTRY_CONTAINER}'. Rename or remove it and retry.`,
     );
   }
-  if (exists && running === "true") return;
+  if (exists && networkIp && networkIp !== PORTABLE_HOST_GATEWAY_IP) {
+    throw new Error(
+      `Refusing to move managed container '${REGISTRY_CONTAINER}' from unexpected network address '${networkIp}'. Expected ${PORTABLE_HOST_GATEWAY_IP}.`,
+    );
+  }
+  if (exists && running === "true" && networkIp === PORTABLE_HOST_GATEWAY_IP) return;
+  if (exists && running === "true") {
+    requireCommand(
+      docker(
+        [
+          "network",
+          "connect",
+          "--ip",
+          PORTABLE_HOST_GATEWAY_IP,
+          PORTABLE_DOCKER_NETWORK_NAME,
+          REGISTRY_CONTAINER,
+        ],
+        env,
+      ),
+      "Connecting the managed portable registry to the sandbox network",
+    );
+    return;
+  }
   if (exists) {
     requireCommand(
       docker(["rm", "-f", REGISTRY_CONTAINER], env),
@@ -329,6 +396,10 @@ function ensureRegistryContainer(
         REGISTRY_CONTAINER,
         "--label",
         REGISTRY_LABEL,
+        "--network",
+        PORTABLE_DOCKER_NETWORK_NAME,
+        "--ip",
+        PORTABLE_HOST_GATEWAY_IP,
         "-p",
         "127.0.0.1:5000:5000",
         "--restart=always",

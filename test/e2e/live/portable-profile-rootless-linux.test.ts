@@ -183,15 +183,25 @@ async function main(progress: TestProgress): Promise<void> {
       run("podman", ["image", "inspect", "--format", "{{.Id}}", prebuild.imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
-    run("podman", ["network", "create", "--subnet", "169.254.1.0/24", "openshell-docker"]);
-    run("podman", [
-      "network",
-      "connect",
-      "--ip",
+    assert.equal(
+      run("podman", [
+        "network",
+        "inspect",
+        "--format",
+        "{{range .Subnets}}{{println .Subnet}}{{end}}",
+        "openshell-docker",
+      ]),
+      "169.254.1.0/24",
+    );
+    assert.equal(
+      run("podman", [
+        "inspect",
+        "--format",
+        '{{with index .NetworkSettings.Networks "openshell-docker"}}{{.IPAddress}}{{end}}',
+        "nemoclaw-portable-registry",
+      ]),
       "169.254.1.2",
-      "openshell-docker",
-      "nemoclaw-portable-registry",
-    ]);
+    );
 
     const gatewayBin = run("bash", ["-lc", "command -v openshell-gateway"]);
     const sandboxBin = run("bash", ["-lc", "command -v openshell-sandbox"]);
