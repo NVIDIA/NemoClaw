@@ -27,9 +27,16 @@ type Policy = {
 describe("managed startup CA policy", () => {
   it.each(POLICY_PATHS)("grants only exact read access in %s", (policyPath) => {
     const policy = YAML.parse(readFileSync(policyPath, "utf8")) as Policy;
+    const runtimePrefix = "/run/nemoclaw";
+    const readOnlyRuntimeGrants = (policy.filesystem_policy?.read_only ?? []).filter(
+      (entry) => entry === runtimePrefix || entry.startsWith(`${runtimePrefix}/`),
+    );
+    const readWriteRuntimeGrants = (policy.filesystem_policy?.read_write ?? []).filter(
+      (entry) => entry === runtimePrefix || entry.startsWith(`${runtimePrefix}/`),
+    );
 
     expect(policy.filesystem_policy?.read_only).toContain(CA_BUNDLE);
-    expect(policy.filesystem_policy?.read_write ?? []).not.toContain(CA_BUNDLE);
-    expect(policy.filesystem_policy?.read_write ?? []).not.toContain("/run/nemoclaw");
+    expect(readOnlyRuntimeGrants).toEqual([CA_BUNDLE]);
+    expect(readWriteRuntimeGrants).toEqual([]);
   });
 });
