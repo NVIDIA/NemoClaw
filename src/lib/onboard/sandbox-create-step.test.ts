@@ -169,6 +169,7 @@ describe("runSandboxCreateStep", () => {
   });
 
   it("gates restart-safe persistence on the step's own portable env, not process.env (#9462)", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "default");
     const launch = makeLaunch({
       sandboxStartupCommand: ["env", "nemoclaw-start"],
     });
