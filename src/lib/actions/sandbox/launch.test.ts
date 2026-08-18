@@ -461,6 +461,27 @@ describe("launchSandbox", () => {
     expect(mocks.publishLaunchReadiness).toHaveBeenCalledBefore(mocks.execSandbox);
   });
 
+  it("stops before readiness publication and agent execution when recovery rejects launch (#9364)", async () => {
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "fallback",
+      category: "expired",
+      fence: { epochId: "a".repeat(64) },
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      fenceFailed: false,
+      recoveryBlocked: false,
+    });
+    const recoveryFailure = new Error("process.exit(1)");
+    mocks.prepareInteractiveSession.mockRejectedValueOnce(recoveryFailure);
+
+    await expect(launchSandbox("alpha")).rejects.toBe(recoveryFailure);
+
+    expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+    expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
+    expect(mocks.execSandbox).not.toHaveBeenCalled();
+  });
+
   it("keeps ordinary launch available when evidence observation, hashing, or storage fails (#8942)", async () => {
     mocks.inspectLaunchReadiness.mockResolvedValue({
       kind: "fallback",

@@ -409,6 +409,22 @@ describe("startSandbox", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
+  it("does not claim preservation when startup recovery reports a failed rollback (#9364)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureDetail:
+        "The previous sandbox container could not be restored automatically; inspect Docker state before retrying. Recovery failure before rollback: the sandbox did not become ready in OpenShell",
+    });
+
+    const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
+
+    expect(failure).toContain("could not be restored automatically");
+    expect(failure).toContain("Inspect the current sandbox state before retrying");
+    expect(failure).not.toContain("The existing sandbox was preserved");
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
   it("reports the started container by name (#6026)", async () => {
     const h = harness();
 

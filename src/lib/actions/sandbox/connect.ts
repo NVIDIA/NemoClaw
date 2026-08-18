@@ -264,12 +264,13 @@ function exitOnGatewayRecoveryFailure(
   sandboxName: string,
   agentName: string,
   detail: string,
+  operation: "Connect" | "Probe" = "Probe",
 ): never {
   const safeDetail = sanitizeSandboxStartupRecoveryDetail(detail);
   const terminalPunctuation = /[.!?]$/u.test(safeDetail) ? "" : ".";
   console.error("");
   console.error(
-    `  Probe failed: NemoClaw could not recover the ${agentName} gateway in '${sandboxName}'.`,
+    `  ${operation} failed: NemoClaw could not recover the ${agentName} gateway in '${sandboxName}'.`,
   );
   console.error(`  Recovery detail: ${safeDetail}${terminalPunctuation}`);
   process.exit(1);
@@ -1295,6 +1296,15 @@ export async function prepareInteractiveSession(
   if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
     exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
+  }
+  if ("recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail) {
+    const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
+    exitOnGatewayRecoveryFailure(
+      sandboxName,
+      agentName,
+      String(processCheck.recoveryFailureDetail),
+      "Connect",
+    );
   }
   // Ensure Ollama auth proxy is running (recovers from host reboots)
   ensureOllamaAuthProxy();
