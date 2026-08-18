@@ -4,9 +4,10 @@
 /**
  * Ollama runtime context-window helpers.
  *
- * Keep this module focused on data coming from Ollama's `/api/ps` runtime
- * boundary. Onboarding should call the narrow wrappers in `local.ts` instead
- * of re-implementing parsing or process-env state handling.
+ * Keep this module focused on data coming from Ollama's `/api/ps` and
+ * `/api/show` runtime boundaries. Onboarding should call the narrow wrappers
+ * in `local.ts` instead of re-implementing parsing or process-env state
+ * handling.
  */
 
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
@@ -196,6 +197,87 @@ export function probeOllamaRuntimeModelStatus(
   }
 }
 
+export interface OllamaNativeContextStatus {
+  probed: boolean;
+  nativeContextLength?: number;
+}
+
+/**
+ * Parse a model's native context length from an `/api/show` payload.
+ *
+ * Ollama publishes the model card's `max_position_embeddings` under
+ * `model_info["<architecture>.context_length"]` (e.g.
+ * `qwen2.context_length`). Older daemons and custom registries may omit
+ * `model_info` entirely, so every missing or malformed shape returns `null`
+ * and callers fall back to the daemon-focused remediation.
+ */
+export function parseOllamaNativeContextLength(payload: unknown): number | null {
+  const modelInfo = (payload as { model_info?: unknown } | null)?.model_info;
+  if (!modelInfo || typeof modelInfo !== "object") return null;
+  const info = modelInfo as Record<string, unknown>;
+  const architecture = info["general.architecture"];
+  const archKey = typeof architecture === "string" ? `${architecture}.context_length` : null;
+  const candidates =
+    archKey && archKey in info
+      ? [info[archKey]]
+      : Object.entries(info)
+          .filter(([key]) => key.endsWith(".context_length"))
+          .map(([, value]) => value);
+  for (const candidate of candidates) {
+    const parsed = parsePositiveInteger(candidate);
+    if (parsed && parsed <= MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW) return parsed;
+  }
+  return null;
+}
+
+/**
+ * Probe `/api/show` for the loaded model's native (architectural) context
+ * length. Best-effort: any transport or shape failure reports an unprobed
+ * status, never an error, because this only refines remediation wording.
+ */
+export function probeOllamaModelNativeContextLength(
+  model: string,
+  getOllamaHost: () => string,
+  runCaptureImpl?: OllamaRuntimeRunCaptureFn,
+): OllamaNativeContextStatus {
+  const capture = runCaptureImpl ?? runCapture;
+  const host = getOllamaHost();
+  let output: string;
+  try {
+    output = capture(
+      [
+        "curl",
+        ...buildValidatedCurlCommandArgs([
+          "-sf",
+          "--connect-timeout",
+          "3",
+          "--max-time",
+          "5",
+          "-X",
+          "POST",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          JSON.stringify({ model }),
+          `http://${host}:${OLLAMA_PORT}/api/show`,
+        ]),
+      ],
+      { ignoreError: true },
+    );
+  } catch {
+    return { probed: false };
+  }
+  if (!output || !String(output).trim()) return { probed: false };
+  try {
+    const nativeContextLength = parseOllamaNativeContextLength(JSON.parse(String(output)));
+    return nativeContextLength
+      ? { probed: true, nativeContextLength }
+      : { probed: true };
+  } catch {
+    return { probed: false };
+  }
+}
+
 export function resolveOllamaRuntimeContextWindow(
   model: string,
   currentContextWindow: string | null | undefined,
@@ -295,12 +377,31 @@ export function applyOllamaRuntimeContextWindow(
     }
     if (runtimeStatus.contextLength < requiredContextWindow) {
       clearPreviousAuto();
+      // OLLAMA_CONTEXT_LENGTH can only cap a model's context down, never
+      // raise it past the model card's max_position_embeddings. When the
+      // native cap itself is below the requirement, telling the user to
+      // raise OLLAMA_CONTEXT_LENGTH sends them through a rerun that must
+      // fail — advise a larger-context model instead (#9458).
+      const nativeStatus = probeOllamaModelNativeContextLength(
+        selectedModel,
+        getOllamaHost,
+        options.runCaptureImpl,
+      );
+      const nativeContextLength = nativeStatus.nativeContextLength;
+      const modelLimited =
+        nativeContextLength !== undefined && nativeContextLength < requiredContextWindow;
+      const reported =
+        `Ollama reports context_length=${runtimeStatus.contextLength} for loaded model ` +
+        `'${selectedModel}', below the required ${requiredContextWindow}-token window. `;
       return {
         ok: false,
-        message:
-          `Ollama reports context_length=${runtimeStatus.contextLength} for loaded model ` +
-          `'${selectedModel}', below the required ${requiredContextWindow}-token window. ` +
-          remediation,
+        message: modelLimited
+          ? reported +
+            `The model's native context is ${nativeContextLength} tokens, and ` +
+            `OLLAMA_CONTEXT_LENGTH cannot raise a model past its native cap. Select a model ` +
+            `whose native context is at least ${requiredContextWindow} tokens, then rerun ` +
+            `onboarding.`
+          : reported + remediation,
       };
     }
     if (hasExplicitContextWindow(userContextWindow)) {
