@@ -116,30 +116,34 @@ describe("MCP lifecycle lock identity properties", () => {
     );
   });
 
-  it("keeps a matching live owner active across lock age and grace values", {
-    timeout: PROPERTY_TIMEOUT_MS,
-  }, () => {
-    fc.assert(
-      fc.property(
-        boundaryPidArbitrary,
-        processIdentityArbitrary,
-        durationArbitrary,
-        durationArbitrary,
-        (pid, identity, ageMs, graceMs) => {
-          expect(
-            classifyMcpLifecycleLock(
-              observation(owner(pid, identity), 0),
-              SANDBOX_NAME,
-              ageMs,
-              graceMs,
-              probes({ readProcessIdentity: () => identity }),
-            ),
-          ).toBe("active");
-        },
-      ),
-      SEEDED_PROPERTY_PARAMETERS,
-    );
-  });
+  it(
+    "keeps a matching live owner active across lock age and grace values",
+    {
+      timeout: PROPERTY_TIMEOUT_MS,
+    },
+    () => {
+      fc.assert(
+        fc.property(
+          boundaryPidArbitrary,
+          processIdentityArbitrary,
+          durationArbitrary,
+          durationArbitrary,
+          (pid, identity, ageMs, graceMs) => {
+            expect(
+              classifyMcpLifecycleLock(
+                observation(owner(pid, identity), 0),
+                SANDBOX_NAME,
+                ageMs,
+                graceMs,
+                probes({ readProcessIdentity: () => identity }),
+              ),
+            ).toBe("active");
+          },
+        ),
+        SEEDED_PROPERTY_PARAMETERS,
+      );
+    },
+  );
 
   it("reclaims a dead local owner independently of wall-clock skew", () => {
     fc.assert(
@@ -164,37 +168,41 @@ describe("MCP lifecycle lock identity properties", () => {
     );
   });
 
-  it("applies the same liveness contract to main and reaper owner records", {
-    timeout: PROPERTY_TIMEOUT_MS,
-  }, () => {
-    fc.assert(
-      fc.property(
-        boundaryPidArbitrary,
-        processIdentityArbitrary,
-        fc.constantFrom("main", "reaper"),
-        fc.boolean(),
-        (pid, identity, lockRole, isAlive) => {
-          // Reaper locks intentionally use the same owner schema as the main
-          // lock. The token prefix only identifies the role in this property.
-          const lockOwner = owner(pid, identity, { token: `${lockRole}-owner` });
+  it(
+    "applies the same liveness contract to main and reaper owner records",
+    {
+      timeout: PROPERTY_TIMEOUT_MS,
+    },
+    () => {
+      fc.assert(
+        fc.property(
+          boundaryPidArbitrary,
+          processIdentityArbitrary,
+          fc.constantFrom("main", "reaper"),
+          fc.boolean(),
+          (pid, identity, lockRole, isAlive) => {
+            // Reaper locks intentionally use the same owner schema as the main
+            // lock. The token prefix only identifies the role in this property.
+            const lockOwner = owner(pid, identity, { token: `${lockRole}-owner` });
 
-          expect(
-            classifyMcpLifecycleLock(
-              observation(lockOwner),
-              SANDBOX_NAME,
-              0,
-              30_000,
-              probes({
-                processIsAlive: () => isAlive,
-                readProcessIdentity: () => identity,
-              }),
-            ),
-          ).toBe(isAlive ? "active" : "stale");
-        },
-      ),
-      SEEDED_PROPERTY_PARAMETERS,
-    );
-  });
+            expect(
+              classifyMcpLifecycleLock(
+                observation(lockOwner),
+                SANDBOX_NAME,
+                0,
+                30_000,
+                probes({
+                  processIsAlive: () => isAlive,
+                  readProcessIdentity: () => identity,
+                }),
+              ),
+            ).toBe(isAlive ? "active" : "stale");
+          },
+        ),
+        SEEDED_PROPERTY_PARAMETERS,
+      );
+    },
+  );
 
   it("reclaims PID reuse only after a fresh start-tick mismatch", () => {
     fc.assert(
@@ -242,45 +250,49 @@ describe("MCP lifecycle lock identity properties", () => {
     );
   });
 
-  it("reaps a live PID only when a fresh identity read confirms the mismatch", {
-    timeout: PROPERTY_TIMEOUT_MS,
-  }, () => {
-    fc.assert(
-      fc.property(
-        boundaryPidArbitrary,
-        processIdentityArbitrary,
-        fc.constantFrom("match", "mismatch", "unavailable"),
-        (pid, identity, freshResult) => {
-          const reads: Array<{ pid: number; fresh: boolean }> = [];
-          const replacementIdentity = `${identity}:replacement`;
-          const freshIdentityByResult = {
-            match: identity,
-            mismatch: replacementIdentity,
-            unavailable: null,
-          } as const;
-          const readProcessIdentity = (readPid: number, fresh = false): string | null => {
-            reads.push({ pid: readPid, fresh });
-            return fresh ? freshIdentityByResult[freshResult] : replacementIdentity;
-          };
+  it(
+    "reaps a live PID only when a fresh identity read confirms the mismatch",
+    {
+      timeout: PROPERTY_TIMEOUT_MS,
+    },
+    () => {
+      fc.assert(
+        fc.property(
+          boundaryPidArbitrary,
+          processIdentityArbitrary,
+          fc.constantFrom("match", "mismatch", "unavailable"),
+          (pid, identity, freshResult) => {
+            const reads: Array<{ pid: number; fresh: boolean }> = [];
+            const replacementIdentity = `${identity}:replacement`;
+            const freshIdentityByResult = {
+              match: identity,
+              mismatch: replacementIdentity,
+              unavailable: null,
+            } as const;
+            const readProcessIdentity = (readPid: number, fresh = false): string | null => {
+              reads.push({ pid: readPid, fresh });
+              return fresh ? freshIdentityByResult[freshResult] : replacementIdentity;
+            };
 
-          expect(
-            classifyMcpLifecycleLock(
-              observation(owner(pid, identity)),
-              SANDBOX_NAME,
-              0,
-              30_000,
-              probes({ readProcessIdentity }),
-            ),
-          ).toBe(freshResult === "mismatch" ? "stale" : "active");
-          expect(reads).toEqual([
-            { pid, fresh: false },
-            { pid, fresh: true },
-          ]);
-        },
-      ),
-      SEEDED_PROPERTY_PARAMETERS,
-    );
-  });
+            expect(
+              classifyMcpLifecycleLock(
+                observation(owner(pid, identity)),
+                SANDBOX_NAME,
+                0,
+                30_000,
+                probes({ readProcessIdentity }),
+              ),
+            ).toBe(freshResult === "mismatch" ? "stale" : "active");
+            expect(reads).toEqual([
+              { pid, fresh: false },
+              { pid, fresh: true },
+            ]);
+          },
+        ),
+        SEEDED_PROPERTY_PARAMETERS,
+      );
+    },
+  );
 
   it("never probes or reaps an owner from a different host", () => {
     fc.assert(
@@ -376,47 +388,49 @@ describe("MCP lifecycle lock identity properties", () => {
     );
   });
 
-  it("makes corrupt or wrong-sandbox generations stale exactly at the grace boundary", {
-    timeout: PROPERTY_TIMEOUT_MS,
-  }, () => {
-    fc.assert(
-      fc.property(
-        durationArbitrary,
-        durationArbitrary,
-        fc.boolean(),
-        boundaryPidArbitrary,
-        processIdentityArbitrary,
-        (graceMs, ageMs, hasWrongSandboxOwner, pid, identity) => {
-          const lockOwner = hasWrongSandboxOwner
-            ? owner(pid, identity, { sandboxName: `${SANDBOX_NAME}-other` })
-            : null;
-          const localProbes = probes({
-            processIsAlive: () => {
-              throw new Error("corrupt ownership reached the local PID table");
-            },
-            readProcessIdentity: () => {
-              throw new Error("corrupt ownership reached process identity probing");
-            },
-          });
+  it(
+    "makes corrupt or wrong-sandbox generations stale exactly at the grace boundary",
+    {
+      timeout: PROPERTY_TIMEOUT_MS,
+    },
+    () => {
+      fc.assert(
+        fc.property(
+          durationArbitrary,
+          durationArbitrary,
+          fc.boolean(),
+          boundaryPidArbitrary,
+          processIdentityArbitrary,
+          (graceMs, ageMs, hasWrongSandboxOwner, pid, identity) => {
+            const lockOwner = hasWrongSandboxOwner
+              ? owner(pid, identity, { sandboxName: `${SANDBOX_NAME}-other` })
+              : null;
+            const localProbes = probes({
+              processIsAlive: () => {
+                throw new Error("corrupt ownership reached the local PID table");
+              },
+              readProcessIdentity: () => {
+                throw new Error("corrupt ownership reached process identity probing");
+              },
+            });
 
-          // fc draws ageMs and graceMs independently, so ageMs === graceMs is
-          // almost never sampled. This loop tests the >= comparison at the exact ages.
-          for (const boundaryAgeMs of [graceMs - 1, graceMs, graceMs + 1, ageMs]) {
-            expect(
-              classifyMcpLifecycleLock(
-                observation(lockOwner, 0),
-                SANDBOX_NAME,
-                boundaryAgeMs,
-                graceMs,
-                localProbes,
-              ),
-            ).toBe(boundaryAgeMs >= graceMs ? "stale" : "wait");
-          }
-        },
-      ),
-      SEEDED_PROPERTY_PARAMETERS,
-    );
-  });
+            // fc draws ageMs and graceMs independently, so ageMs === graceMs is
+            // almost never sampled. This loop tests the >= comparison at the exact ages.
+
+            expect([graceMs - 1, graceMs, graceMs + 1, ageMs].every((boundaryAgeMs) =>
+                  classifyMcpLifecycleLock(
+                    observation(lockOwner, 0),
+                    SANDBOX_NAME,
+                    boundaryAgeMs,
+                    graceMs,
+                    localProbes,
+                  ) === (boundaryAgeMs >= graceMs ? "stale" : "wait"))).toBe(true);
+          },
+        ),
+        SEEDED_PROPERTY_PARAMETERS,
+      );
+    },
+  );
 
   it("rejects every positive PID beyond the safe-integer wire boundary", () => {
     fc.assert(
@@ -445,69 +459,81 @@ describe("MCP lifecycle lock storage properties", () => {
     fs.rmSync(stateDir, { force: true, recursive: true });
   });
 
-  it("round-trips valid owner records without changing their wire shape", {
-    timeout: PROPERTY_TIMEOUT_MS,
-  }, async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        nonEmptyStringArbitrary,
-        boundaryPidArbitrary,
-        fc.option(processIdentityArbitrary, { nil: null }),
-        fc.option(nonEmptyStringArbitrary, { nil: null }),
-        fc.option(nonEmptyStringArbitrary, { nil: null }),
-        nonEmptyStringArbitrary,
-        async (sandboxName, pid, processIdentity, hostIdentity, pidNamespaceIdentity, token) => {
-          const lockOwner: McpLifecycleLockOwner = {
-            version: 1,
-            sandboxName,
-            pid,
-            processIdentity,
-            hostIdentity,
-            pidNamespaceIdentity,
-            token,
-            acquiredAt: "9999-12-31T23:59:59.999Z",
-          };
-          const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+  it(
+    "round-trips valid owner records without changing their wire shape",
+    {
+      timeout: PROPERTY_TIMEOUT_MS,
+    },
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          nonEmptyStringArbitrary,
+          boundaryPidArbitrary,
+          fc.option(processIdentityArbitrary, { nil: null }),
+          fc.option(nonEmptyStringArbitrary, { nil: null }),
+          fc.option(nonEmptyStringArbitrary, { nil: null }),
+          nonEmptyStringArbitrary,
+          async (sandboxName, pid, processIdentity, hostIdentity, pidNamespaceIdentity, token) => {
+            const lockOwner: McpLifecycleLockOwner = {
+              version: 1,
+              sandboxName,
+              pid,
+              processIdentity,
+              hostIdentity,
+              pidNamespaceIdentity,
+              token,
+              acquiredAt: "9999-12-31T23:59:59.999Z",
+            };
+            const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+            fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+            fs.writeFileSync(lockPath, `${JSON.stringify(lockOwner)}\n`);
+
+            const observed = await readMcpLifecycleLockObservation(lockPath);
+
+            expect(observed?.owner).toEqual(lockOwner);
+          },
+        ),
+        { numRuns: PROPERTY_RUNS },
+      );
+    },
+  );
+
+  it(
+    "classifies arbitrary non-JSON lock content as corrupt ownership",
+    {
+      timeout: PROPERTY_TIMEOUT_MS,
+    },
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(fc.string({ maxLength: 1_024 }), async (content) => {
+          const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
           fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-          fs.writeFileSync(lockPath, `${JSON.stringify(lockOwner)}\n`);
+          fs.writeFileSync(lockPath, `not-json:${content}`);
 
           const observed = await readMcpLifecycleLockObservation(lockPath);
 
-          expect(observed?.owner).toEqual(lockOwner);
-        },
-      ),
-      { numRuns: PROPERTY_RUNS },
-    );
-  });
+          expect(observed?.owner).toBeNull();
+          expect(observed?.ino).toBeGreaterThan(0);
+        }),
+        { numRuns: PROPERTY_RUNS },
+      );
+    },
+  );
 
-  it("classifies arbitrary non-JSON lock content as corrupt ownership", {
-    timeout: PROPERTY_TIMEOUT_MS,
-  }, async () => {
-    await fc.assert(
-      fc.asyncProperty(fc.string({ maxLength: 1_024 }), async (content) => {
-        const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
-        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-        fs.writeFileSync(lockPath, `not-json:${content}`);
+  it(
+    "returns no observation for arbitrary missing lock paths",
+    {
+      timeout: PROPERTY_TIMEOUT_MS,
+    },
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(fc.string({ maxLength: 1_024 }), async (sandboxName) => {
+          const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
 
-        const observed = await readMcpLifecycleLockObservation(lockPath);
-
-        expect(observed?.owner).toBeNull();
-        expect(observed?.ino).toBeGreaterThan(0);
-      }),
-      { numRuns: PROPERTY_RUNS },
-    );
-  });
-
-  it("returns no observation for arbitrary missing lock paths", {
-    timeout: PROPERTY_TIMEOUT_MS,
-  }, async () => {
-    await fc.assert(
-      fc.asyncProperty(fc.string({ maxLength: 1_024 }), async (sandboxName) => {
-        const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
-
-        await expect(readMcpLifecycleLockObservation(lockPath)).resolves.toBeNull();
-      }),
-      { numRuns: PROPERTY_RUNS },
-    );
-  });
+          await expect(readMcpLifecycleLockObservation(lockPath)).resolves.toBeNull();
+        }),
+        { numRuns: PROPERTY_RUNS },
+      );
+    },
+  );
 });

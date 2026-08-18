@@ -378,6 +378,19 @@ NemoClaw ignores ambient `XDG_CONFIG_HOME` during onboarding and restores its ex
 Resume rejects a checkpoint that records another configuration root.
 It also rejects stored authority or filesystem ownership drift without falling back to Docker.
 
+<AgentOnly variant="openclaw">
+
+Portable OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
+The paired device must have exactly the `operator.pairing` and `operator.write` scopes.
+Any pairing request considered during bounded repair must request exactly those scopes.
+The active token and client authorization must have exactly the `operator.pairing`, `operator.read`, and `operator.write` scopes.
+NemoClaw rejects every extra, missing, unknown, malformed, or ambiguous scope or identity shape.
+If the policy preset step is incomplete, NemoClaw performs no pairing request or approval writes and publishes no launch-readiness evidence.
+Selected Portable onboarding also stops when its lifecycle receipt is missing, invalid, legacy, or incompatible.
+A failed check leaves onboarding incomplete and tells you to resume or rerun onboarding.
+
+</AgentOnly>
+
 <Warning title="Checkpoint Resume Compatibility">
 An active onboarding session with checkpoint schema 1, 2, or 3 cannot resume because those schemas did not record the default or portable profile authority.
 NemoClaw preserves the older session and exits before portable configuration, socket activation, or resource changes.
@@ -639,9 +652,11 @@ Four tiers are available:
 | Restricted | No tier defaults. Web search or other integrations selected earlier can still add their required presets; deselect them during policy review for baseline-only access. |
 | Balanced (default) | Full dev tooling and a selected, supported web search provider. Package installs, model downloads, and inference. No messaging platform access by default. |
 | Open | Broad access across third-party services including supported messaging and productivity presets. Agent-specific unsupported presets are filtered out. |
-| Personal | Lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. Unspecified, loopback, and link-local ranges remain blocked. Also selects every maintained preset supported by the active agent. Intended only for trusted personal-use workloads. |
+| Personal | Requires one broad web authority that lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. It replaces overlapping exact web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. Intended only for trusted personal-use workloads. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
+When Personal is selected or carried forward, `personal-open-internet` is mandatory for every agent and every onboarding entry point, including Portable.
+The picker and policy modes control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
 For details on tiers and the presets each includes, refer to [Network Policies](network-policies#policy-tiers).
 When you finish the policy step, NemoClaw records the finalized built-in preset selection for that sandbox.
 When onboarding creates or recreates a sandbox with presets, NemoClaw prints the exact finalized create-time policy scope before registering providers or creating the sandbox.
@@ -660,16 +675,18 @@ Interactive onboarding ignores an invalid environment value and shows the normal
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
 The default is `suggested`, which is *additive*.
 Onboarding applies tier defaults and preserves any presets you previously added with [`$$nemoclaw <name> policy add`](#$$nemoclaw-name-policy-add) across re-onboards.
-Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative.
-Onboarding removes any preset that is not in the list.
-`skip` leaves the applied set untouched and does not apply tier defaults.
+Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative for optional presets.
+Onboarding removes any optional preset that is not in the list.
+`skip` does not add optional tier defaults and retains eligible optional presets already applied.
+For Personal, all modes still apply or retain the mandatory `personal-open-internet` preset.
 NemoClaw filters tier suggestions and resume selections by active agent support and the selected web search provider.
 During automatic suggestion and resume reconciliation, it removes stale web-search selections when they conflict with the active agent or selected provider.
-The Personal tier is the exception: it preserves every applicable maintained web-search preset even when onboarding did not configure that provider.
+The Personal tier instead uses `personal-open-internet` for web transport and does not select Brave Search or Tavily Search merely to enable ordinary web fetches.
+This makes keyless fetches available to any sandbox binary, but it does not add a provider-free `web_search` implementation.
 <AgentOnly variant="hermes">
 For Hermes, this includes replacing stale `nous-web` when Tavily is selected.
 </AgentOnly>
-An explicit `custom` preset list or interactive manual selection remains operator-controlled.
+An explicit `custom` preset list or interactive manual selection remains operator-controlled for additional presets.
 
 <AgentOnly variant="hermes">
 
@@ -681,8 +698,8 @@ When Tavily Search is selected, it replaces `nous-web` as the Hermes web search 
 | Value | Behaviour |
 |-------|-----------|
 | `suggested` (default) | Apply tier defaults and preserve any extra presets already applied. Aliases: `default`, `auto`. |
-| `custom` | Apply exactly `NEMOCLAW_POLICY_PRESETS`. Previously-applied presets not in the list are removed. Alias: `list`. |
-| `skip` | Skip the policy step entirely. Aliases: `none`, `no`. |
+| `custom` | Apply exactly the optional presets in `NEMOCLAW_POLICY_PRESETS`. Previously-applied optional presets not in the list are removed. Personal still requires `personal-open-internet`. Alias: `list`. |
+| `skip` | Do not add optional tier defaults; retain eligible optional presets already applied. Personal still applies or retains `personal-open-internet`. Aliases: `none`, `no`. |
 
 <AgentOnly variant="openclaw">
 
@@ -1273,17 +1290,30 @@ It validates a usable lease and exits without duplicate recovery.
 Otherwise, it fences prior evidence, waits for the sandbox, verifies or repairs its in-sandbox agent process and host-side forwards, and publishes evidence only after every probe succeeds.
 It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway.
 If an old runtime epoch might exist and cannot be durably rotated, the command exits nonzero before complete preflight or recovery and gives redacted repair guidance.
-A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence.
-A runtime failure and a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
+A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but on Linux `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence.
+A runtime failure and, on Linux, a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
 
 Infrastructure must run the command as the same final numeric user that later runs `launch`.
 Run it only after the final durable home and state volume is mounted and after policy and network provisioning is complete.
 On Linux, that user also needs a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`.
 Do not redirect this authority with caller environment variables.
 Do not use a graphical or login-session identifier as the deployment ordering boundary.
-On macOS, `connect --probe-only` runs the complete preflight, including recovery and probes, but exits nonzero because it cannot publish authoritative launch-readiness evidence.
-The publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
+On macOS, `connect --probe-only` runs the complete preflight, including recovery and probes.
+After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero.
+The next `launch` runs the complete preflight.
+On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
+
+<AgentOnly variant="openclaw">
+
+For a current Portable OpenClaw sandbox, `connect`, `connect --probe-only`, `recover`, and `launch` require the same strict local CLI operator pairing as onboarding.
+If NemoClaw finds only the paired device and no pending request, it runs the canonical OpenClaw request producer once.
+It then runs at most one canonical approval and observes the final pairing state.
+An ambiguous approval result receives one final observation and no approval retry.
+Pairing with missing, extra, unknown, malformed, or ambiguous scope or identity data exits nonzero with an incomplete-onboarding diagnostic instead of opening a session or publishing launch-readiness evidence.
+Follow the diagnostic to resume or rerun onboarding.
+
+</AgentOnly>
 
 Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want launch-readiness validation, an automatic fallback that runs the complete preflight, and then the agent instead of a sandbox shell.
 
@@ -1874,8 +1904,9 @@ An empty body, malformed JSON, provider-error envelope, or wrong response shape 
 The probe captures at most 64 KiB and does not include the response body in diagnostics.
 The route probe treats any final HTTP status from `200` through `499` as reachable, so a route with an invalidated provider credential answers HTTP `401` while the route is up.
 The request uses the live gateway route's provider and model, and falls back to the recorded values when the live route is unreadable.
-When the live provider and model match the recorded route, the request also uses the sandbox's recorded API family, including `openai-responses`.
-During route drift, NemoClaw does not carry the sandbox's recorded API family to the live provider and model.
+When the live provider matches the recorded provider, the request uses the sandbox's recorded API family, even when only the model differs.
+This includes `openai-responses`.
+When the live provider differs, NemoClaw does not carry the recorded API family to the live provider.
 An ordinary run sends one 16-token request through the stored provider credential, with a 30-second timeout, and consumes provider tokens on a hosted route.
 When the same `status` run recovers a managed gateway, it retries the route and inference request together up to three total attempts, with a two-second delay between failed attempts.
 Each attempt can consume another 16 tokens on a hosted route.
@@ -2508,6 +2539,8 @@ If the base policy read returns non-empty output that NemoClaw cannot parse, the
 Fix the gateway or policy read problem, then rerun the command.
 For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy list` or `status`.
 Recover or re-onboard the sandbox, then re-apply the custom preset.
+For built-in presets in that same case, the command applies the preset and returns success, because a built-in preset stays discoverable from the gateway.
+It warns that `policy list` will report the preset as active on gateway, missing from local state.
 
 With `--from-file` or `--from-dir`, pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit matching RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local endpoints.
 The option is invalid for built-in presets.
@@ -2588,7 +2621,7 @@ $$nemoclaw my-assistant policy list
 ### `$$nemoclaw <name> policy remove`
 
 Remove a previously applied policy preset from a sandbox.
-The command lists only the presets currently applied, prompts you to select one, shows the endpoints that would be removed, and asks for confirmation before narrowing egress.
+The command lists the presets the local registry records together with the presets the live gateway enforces, prompts you to select one, shows the endpoints that would be removed, and asks for confirmation before narrowing egress.
 
 ```bash
 $$nemoclaw my-assistant policy remove
@@ -2602,7 +2635,9 @@ $$nemoclaw my-assistant policy remove pypi --yes
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` as an alternative to `--yes`.
 Without a preset name, `policy remove` reports the same two picker errors as `policy add` and exits non-zero.
-If the preset is unknown or not currently applied, the command exits non-zero with a clear error.
+If the preset is unknown, or neither the local registry nor the live gateway holds it, the command exits non-zero with a clear error.
+A preset the gateway enforces without a local registry record is removable, which is the state `policy list` reports as active on gateway, missing from local state.
+When NemoClaw cannot query the gateway, the command checks the local registry alone; with a preset name it also reports that the gateway could not be queried.
 
 | Flag | Description |
 |------|-------------|
@@ -3943,7 +3978,9 @@ export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
 $$nemoclaw tunnel start
 ```
 
-`$$nemoclaw start` remains as a deprecated alias that prints a warning and delegates to `tunnel start`.
+`$$nemoclaw start` remains as a deprecated compatibility command. It exits successfully after
+printing guidance for `$$nemoclaw <name> start` and `$$nemoclaw tunnel start`; it does not start
+either resource itself.
 
 ### `$$nemoclaw tunnel stop`
 
@@ -3978,10 +4015,12 @@ $$nemoclaw tunnel status
 ### `$$nemoclaw start`
 
 <Warning>
-Deprecated. Use `$$nemoclaw tunnel start` instead.
+Deprecated. Use `$$nemoclaw <name> start` for a stopped sandbox or `$$nemoclaw tunnel start` for
+the optional public-URL tunnel.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw tunnel start`.
+This compatibility command prints migration guidance and exits successfully without changing
+sandbox or tunnel state.
 
 ### `$$nemoclaw stop`
 
@@ -4344,7 +4383,7 @@ Uninstall does not otherwise target the declared external directory.
 | `--yes` | Skip the confirmation prompt |
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process |
 | `--delete-models` | Outside portable cleanup, delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. Portable cleanup preserves both model stores and every Podman image. |
-| `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`). Portable cleanup still retains its recovery record until later completed onboarding durably supersedes it. |
+| `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`). Removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified. When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package. Portable cleanup still retains its recovery record until later completed onboarding durably supersedes it. |
 | `--all-gateway-ports` | Uninstall every gateway port on the host, not only the port `NEMOCLAW_GATEWAY_PORT` selects |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
 
@@ -4450,6 +4489,7 @@ The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw
 
 Outside portable cleanup, when uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving those shared host resources.
+With `--destroy-user-data`, that scoped path removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified (for example odd `~/.nemoclaw/gateways/` entries or an unreadable gateway list). When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package and the other shared host resources.
 If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
 When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 
@@ -4465,8 +4505,8 @@ Decision matrix:
 | Interactive TTY, preserved entries present, no env override | Prompts `Also remove them? [y/N]`. Default `N` keeps the entries. |
 | Interactive TTY, user answers `y` | Removes the preserved entries in the selected gateway's state root; outside portable cleanup, a single-gateway uninstall also removes the remaining shared state. Portable cleanup preserves shared OpenShell resources and its retirement record. |
 | Non-interactive (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or non-TTY shell) | Preserves the entries and prints a one-line notice. |
-| `--destroy-user-data` | Skips the secondary user-data prompt and removes the preserved entries in the selected gateway's state root. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
-| `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the secondary user-data prompt and removes the preserved entries. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
+| `--destroy-user-data` | Skips the secondary user-data prompt and removes the preserved entries in the selected gateway's state root. Removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified. When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
+| `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the secondary user-data prompt and removes the preserved entries. Removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified. When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 The preserved entries survive uninstall as inert files on disk.
 Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot restore` can use them.
@@ -4734,7 +4774,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the exact managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
-| `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. Onboarding rejects a URL that contains userinfo, query, or fragment components. |
+| `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. Onboarding rejects a URL that contains userinfo, query, or fragment components. It also rejects a URL that contains control characters, percent-encoded control characters, spaces within the URL, shell metacharacters, or other characters outside the URL-safe ASCII set, and a value that is not an absolute HTTP or HTTPS URL. NemoClaw trims ASCII spaces at the start and end of the URL before validation. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication for an HTTP OpenAI-compatible endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435` during non-interactive onboarding. |
 | `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 unique local destinations through supported inference, managed MCP, and custom-policy registration paths. Link-local metadata and other reserved ranges remain blocked; DNS resolution and exact address pinning remain active; wildcards are not supported. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | comma-separated exact hostnames or IP literals | Inference-only compatibility alias. Inference onboarding combines entries from this variable and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. |
@@ -5142,7 +5182,7 @@ The following flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_SHIELDS_SETTLE_MS` | milliseconds (default `750`, clamped to `0` to `10000`) | Settle window NemoClaw waits after re-applying a config lockdown (during shields auto-restore and `$$nemoclaw <name> shields up` drift remediation) before re-confirming the lock still holds. Detects when an in-sandbox reconciler changes config file permissions after lockdown and re-applies the lock; if NemoClaw cannot re-confirm the lock within the retry budget, shields stay down. This narrows the window in which a reconciler can revert permissions rather than eliminating it. The best-effort `chattr +i` immutable bit remains the only fully durable lock. Raise it on hosts where the gateway settles slowly. |
 | `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP` | Exactly `1` to opt in (`true`, `yes`, `0` are not accepted) | Applies to standalone `$$nemoclaw backup-all` runs. Skips running sandboxes whose in-sandbox SSH endpoint does not answer. It does not relax the installer's strict pre-upgrade backup, which still aborts if any registered sandbox is skipped or fails. Any uncommitted state since the last successful backup is not included in the skipped backup. |
 | `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS` | `1` to opt in | Makes `$$nemoclaw uninstall` remove every gateway port on the host instead of only the port `NEMOCLAW_GATEWAY_PORT` selects. Equivalent to passing the `--all-gateway-ports` flag; the whole-host `Proceed?` confirmation still applies unless `--yes` is also passed. Each port runs as its own uninstall, and the variable is dropped from those runs so the sweep cannot re-enter itself. |
-| `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `$$nemoclaw uninstall` and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) under `~/.nemoclaw/`. Equivalent to passing the `--destroy-user-data` flag; the global `Proceed?` confirmation still applies unless `--yes` is also passed. |
+| `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `$$nemoclaw uninstall` and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) under `~/.nemoclaw/`. Removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified. When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package. Equivalent to passing the `--destroy-user-data` flag; the global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 <AgentOnly variant="openclaw">
 ### Deprecated Brev Deployment

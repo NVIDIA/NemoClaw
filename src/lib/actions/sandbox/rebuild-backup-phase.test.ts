@@ -195,6 +195,19 @@ describe("rebuild web-search policy normalization", () => {
       ),
     ).toEqual(["npm", "future-agent-required"]);
   });
+
+  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
+    "repairs a Personal rebuild target missing its tier-defining preset: %s",
+    (agent) => {
+      expect(
+        normalizeRebuildTargetPolicyPresets(
+          ["npm"],
+          { name: "alpha", agent, policyTier: " Personal " },
+          null,
+        ),
+      ).toEqual(["personal-open-internet", "npm"]);
+    },
+  );
 });
 
 describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {

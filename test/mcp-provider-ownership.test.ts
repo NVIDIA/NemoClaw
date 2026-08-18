@@ -214,8 +214,9 @@ bridge.removeMcpBridge("alpha", "fake").then(
 }
 
 describe("MCP provider ownership", () => {
-  for (const boundary of ["detach", "delete"] as const) {
-    it(`rechecks stable identity immediately before provider ${boundary}`, () => {
+  it.each(["detach", "delete"] as const)(
+    "rechecks stable identity immediately before provider %s",
+    (boundary) => {
       const result = runRemoveIdentityRace(boundary);
 
       expect(result.status, `${result.stdout}\\n${result.stderr}`).toBe(0);
@@ -234,8 +235,8 @@ describe("MCP provider ownership", () => {
         ),
       ).toBe(boundary === "delete");
       expect(payload.bridgePresent).toBe(true);
-    });
-  }
+    },
+  );
 
   it("removes an exact legacy provider whose credential name is now reserved", () => {
     const result = runLegacyReservedCredentialCleanup();

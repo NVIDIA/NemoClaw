@@ -26,6 +26,12 @@ type OllamaLoopbackSystemdOverrideOptions = {
   enableService?: boolean;
   /** Minimum daemon context length to preserve or apply in the systemd override. */
   contextWindowFloor?: number;
+  /**
+   * Set when the caller has just replaced the Ollama binary. The service must
+   * then be restarted onto it, so an already-loopback-only listener is not
+   * evidence that this step can be skipped.
+   */
+  isUpgrade?: boolean;
   detectNvidiaPlatformImpl?: () => string;
   hasOllamaCudaV13LibraryImpl?: () => boolean;
   /**
@@ -205,6 +211,17 @@ export function ensureOllamaLoopbackSystemdOverride(
   const sudoPrefix = getSudoPrefix((options.isNonInteractive ?? isEnvNonInteractive)());
   const hasPasswordlessSudo = options.hasPasswordlessSudoImpl ?? defaultHasPasswordlessSudo;
   if (shouldSkipOllamaLoopbackForMissingSudo(sudoPrefix, hasPasswordlessSudo)) {
+    if (options.isUpgrade) {
+      console.error(
+        "  Passwordless sudo is not available, so the Ollama service cannot be restarted onto the " +
+          "newly installed binary.",
+      );
+      console.error(
+        `  The running daemon would keep serving the old version. Set ${NON_INTERACTIVE_SUDO_MODE_ENV}=prompt ` +
+          "with a terminal, configure passwordless sudo, or run 'sudo systemctl restart ollama' and rerun onboarding.",
+      );
+      process.exit(1);
+    }
     const loopbackOnly =
       options.isOllamaLoopbackOnlyImpl?.() ?? isActiveOllamaListenerLoopbackOnly();
     if (loopbackOnly) {

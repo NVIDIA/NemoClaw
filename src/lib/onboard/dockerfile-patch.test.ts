@@ -1218,7 +1218,7 @@ describe("dockerfile patch helpers", () => {
         "text, image",
         'text"\nRUN rm -rf /',
       ];
-      for (const [index, value] of rejectCases.entries()) {
+      [...rejectCases.entries()].forEach(([index, value]) => {
         fs.writeFileSync(dockerfilePath, baseDockerfile);
         if (value === undefined) {
           delete process.env.NEMOCLAW_INFERENCE_INPUTS;
@@ -1237,7 +1237,7 @@ describe("dockerfile patch helpers", () => {
           /^ARG NEMOCLAW_INFERENCE_INPUTS=text$/m,
           `value="${String(value)}" should not change the ARG default`,
         );
-      }
+      });
     } finally {
       if (prior === undefined) {
         delete process.env.NEMOCLAW_INFERENCE_INPUTS;
@@ -1360,7 +1360,7 @@ describe("dockerfile patch helpers", () => {
     const prior = process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY;
     try {
       // Valid duration values bake in.
-      for (const value of ["0m", "30m", "5m", "1h", "30s"]) {
+      ["0m", "30m", "5m", "1h", "30s"].forEach((value) => {
         fs.writeFileSync(dockerfilePath, baseDockerfile);
         process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY = value;
         patchStagedDockerfile(
@@ -1375,12 +1375,12 @@ describe("dockerfile patch helpers", () => {
           new RegExp(`^ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=${value}$`, "m"),
           `value="${value}" should bake into the ARG line`,
         );
-      }
+      });
 
       // Cases that must all leave the empty default untouched (regex rejects
       // these so the OpenClaw default cadence is preserved).
       const rejectCases = [undefined, "", "30 minutes", "5", "5x", "fast"];
-      for (const [index, value] of rejectCases.entries()) {
+      [...rejectCases.entries()].forEach(([index, value]) => {
         fs.writeFileSync(dockerfilePath, baseDockerfile);
         if (value === undefined) {
           delete process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY;
@@ -1399,7 +1399,7 @@ describe("dockerfile patch helpers", () => {
           /^ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=$/m,
           `value="${String(value)}" should not change the empty ARG default`,
         );
-      }
+      });
     } finally {
       if (prior === undefined) {
         delete process.env.NEMOCLAW_AGENT_HEARTBEAT_EVERY;

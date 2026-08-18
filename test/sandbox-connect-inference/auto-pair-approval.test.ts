@@ -19,7 +19,8 @@ import {
   setupFixture,
 } from "./helpers";
 
-const expectedProbeOnlyExitCode = process.platform === "darwin" ? 1 : 0;
+// Evidence unavailability on macOS is a note, not a failure (#9278).
+const expectedProbeOnlyExitCode = 0;
 
 function findApprovalExec(state: {
   sandboxExecCalls: string[][];

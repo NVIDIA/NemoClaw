@@ -164,6 +164,12 @@ It skips the complete pairing approval pass only when the qualification still ma
 Any missing, unreadable, malformed, ambiguous, or changed observation runs the complete pairing approval pass.
 A relevant allowlisted pending request also runs that complete path.
 
+For a current Portable OpenClaw lifecycle receipt, NemoClaw also requires a finalized onboarding policy step and strictly settled local CLI operator pairing.
+If only the paired device exists and no request is pending, recovery runs the canonical OpenClaw request producer once and makes at most one approval attempt.
+An ambiguous approval result receives one final observation and no approval retry.
+NemoClaw publishes no lease when the policy step is incomplete or the receipt, runtime identity, or pairing state is invalid or ambiguous.
+The command exits nonzero with an incomplete-onboarding diagnostic and tells you to resume or rerun onboarding.
+
 </AgentOnly>
 Hermes and LangChain Deep Agents Code retain their existing session setup on the lease-accepted path.
 When those checks pass, it can skip duplicate recovery, readiness polling, and inference-route repair.
@@ -173,7 +179,7 @@ For missing, unsafe, malformed, expired, mismatched, changed, or unhealthy evide
 Ordinary launch continues only when NemoClaw proves that no old authority or evidence can exist, or durably rotates the runtime epoch.
 If an old epoch might exist and cannot be durably rotated, `launch` and `connect --probe-only` stop before complete preflight or recovery.
 Their redacted guidance asks you to repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.
-If NemoClaw securely proves that both the authority and receipt are absent but cannot create new authority, ordinary `launch` can run the complete preflight without optimization; `connect --probe-only` exits nonzero because it could not publish evidence.
+If NemoClaw securely proves that both the authority and receipt are absent but cannot create new authority, ordinary `launch` can run the complete preflight without optimization; on Linux, `connect --probe-only` exits nonzero because it could not publish evidence.
 If that preflight succeeds before the lease expires, replacement evidence keeps the original start and expiry time.
 After expiry, a successful complete preflight starts a new 24-hour lease only when publication succeeds.
 
@@ -190,8 +196,9 @@ Lease acceptance and publication are currently Linux-only and require a secure, 
 It never uses caller-provided environment variables to select this authority.
 
 On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
-`connect --probe-only` also runs the complete preflight, including recovery and probes, but exits nonzero because it cannot publish authoritative launch-readiness evidence.
-The publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
+`connect --probe-only` also runs the complete preflight, including recovery and probes.
+After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero.
+On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 
 Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`.
 Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete.
@@ -261,7 +268,7 @@ $$nemoclaw <sandbox-name> rebuild
 
 ### Resolve Rebuild Preflight Stops
 
-Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, policy, MCP, agent, and operation-lock state.
+Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state.
 When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`.
 At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
 
@@ -273,6 +280,10 @@ Use the recovery guidance that matches the reported check:
 - Resolve an incomplete MCP destroy transaction before retrying.
 - Back up the sandbox state and recreate it with `$$nemoclaw onboard` when the record contains multiple agents. Transactional multi-agent rebuild is not supported.
 - Wait for another onboarding or rebuild operation to finish before retrying. If verified stale-lock cleanup is still in progress, wait briefly and rerun the command. Do not delete the lock manually.
+- Set the live OpenShell inference route to the sandbox's recorded provider and model when rebuild reports route drift.
+
+A gateway that reports no live inference route does not stop the rebuild.
+Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
 
 <AgentOnly variant="openclaw">
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.

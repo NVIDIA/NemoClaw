@@ -123,8 +123,9 @@ function withTempDir(run: (dir: string) => void): void {
 describe.skipIf(!canRun)(
   "agents/langchain-deepagents-code/dcode-wrapper.sh identity command",
   () => {
-    for (const sub of ["status", "whoami", "identity"]) {
-      it(`'${sub}' reports the sandbox identity and does not launch dcode`, () => {
+    it.each(["status", "whoami", "identity"])(
+      "'%s' reports the sandbox identity and does not launch dcode",
+      (sub) => {
         withTempDir((dir) => {
           const fixture = buildFixture(dir, SAMPLE_CONFIG);
           addAgentDir(fixture, "backend-dev");
@@ -143,8 +144,8 @@ describe.skipIf(!canRun)(
           expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
           expect(run.stdout).toContain("Runtime:  Deep Agents Code (terminal)");
         });
-      });
-    }
+      },
+    );
 
     it("uses a valid recent dcode agent when the configured default is stale", () => {
       withTempDir((dir) => {
@@ -196,9 +197,10 @@ describe.skipIf(!canRun)(
       });
     });
 
-    it("ignores agent preferences that dcode cannot activate", () => {
-      withTempDir((dir) => {
-        for (const invalidName of [".hidden", "   "]) {
+    it.each([".hidden", "   "])(
+      "ignores the %j agent preference that dcode cannot activate",
+      (invalidName) => {
+        withTempDir((dir) => {
           const config = SAMPLE_CONFIG.replace(
             'default = "backend-dev"',
             `default = "${invalidName}"`,
@@ -211,10 +213,9 @@ describe.skipIf(!canRun)(
           expect(run.status).toBe(0);
           expect(run.stdout).toContain("Agent:    frontend-dev");
           expect(run.stdout).not.toContain(`Agent:    ${invalidName}`);
-          fs.rmSync(path.join(fixture.configDir, "frontend-dev"), { recursive: true });
-        }
-      });
-    });
+        });
+      },
+    );
 
     it("does not write control characters from mutable identity metadata", () => {
       withTempDir((dir) => {
@@ -269,68 +270,67 @@ describe.skipIf(!canRun)(
       });
     });
 
-    it("does not write secret-shaped mutable identity metadata", () => {
+    it.each([
+      ["structured token", `tvly-${OPAQUE}`],
+      ["assignment", "API_KEY=opaquevalue12345"],
+      ["colon assignment", "TOKEN:opaquevalue12345"],
+      ["generic private key", fakePrivateKeyBlock()],
+      ["RSA private key", fakePrivateKeyBlock("RSA")],
+      ["credential-name context", "PASSWORD opaquevalue12345"],
+    ])("does not write %s mutable identity metadata", (_kind, secret) => {
       withTempDir((dir) => {
         const agentSecret = "PASSWORD opaquevalue12345";
         fs.mkdirSync(path.join(dir, agentSecret));
-        const secretValues = [
-          `tvly-${OPAQUE}`,
-          "API_KEY=opaquevalue12345",
-          "TOKEN:opaquevalue12345",
-          fakePrivateKeyBlock(),
-          fakePrivateKeyBlock("RSA"),
-          agentSecret,
-        ];
-        for (const secret of secretValues) {
-          const config = SAMPLE_CONFIG.replace("route: inference", `route: ${secret}`)
-            .replace("upstream provider: nvidia-prod", `upstream provider: ${secret}`)
-            .replace('default = "backend-dev"', `default = "${agentSecret}"`)
-            .replace('default = "openai:demo-model"', `default = "openai:${secret}"`);
-          const run = runBashWrapper(buildFixture(dir, config), ["status"], {});
+        const config = SAMPLE_CONFIG.replace("route: inference", `route: ${secret}`)
+          .replace("upstream provider: nvidia-prod", `upstream provider: ${secret}`)
+          .replace('default = "backend-dev"', `default = "${agentSecret}"`)
+          .replace('default = "openai:demo-model"', `default = "openai:${secret}"`);
+        const run = runBashWrapper(buildFixture(dir, config), ["status"], {});
 
-          expect(run.status).toBe(0);
-          expect(run.stdout).not.toContain(secret);
-          expect(run.stdout).not.toContain(agentSecret);
-          expect(run.stdout).toContain("Sandbox:  unknown");
-          expect(run.stdout).toContain("Agent:    agent (default)");
-          expect(run.stdout).not.toContain("Route:");
-          expect(run.stdout).not.toContain("Provider:");
-          expect(run.stdout).not.toContain("Model:");
-        }
+        expect(run.status).toBe(0);
+        expect(run.stdout).not.toContain(secret);
+        expect(run.stdout).not.toContain(agentSecret);
+        expect(run.stdout).toContain("Sandbox:  unknown");
+        expect(run.stdout).toContain("Agent:    agent (default)");
+        expect(run.stdout).not.toContain("Route:");
+        expect(run.stdout).not.toContain("Provider:");
+        expect(run.stdout).not.toContain("Model:");
       });
     });
 
-    it("keeps private-key block filtering aligned with the canonical secret contract", () => {
+    it("keeps the private-key block pattern aligned with the canonical secret contract", () => {
       expect(SECRET_BLOCK_PATTERNS.map((pattern) => `${pattern.source}::${pattern.flags}`)).toEqual(
         [
           "-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\\s\\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----::g",
         ],
       );
+    });
 
-      const samples = [fakePrivateKeyBlock("", "\n"), fakePrivateKeyBlock("RSA")];
-      for (const [index, sample] of samples.entries()) {
-        withTempDir((dir) => {
-          const fixture = buildFixture(dir, SAMPLE_CONFIG);
-          const varName = `NEMOCLAW_PARITY_BLOB_${index}`;
-          const run = runBashWrapper(fixture, ["status"], { [varName]: sample });
+    it.each([
+      [0, fakePrivateKeyBlock("", "\n")],
+      [1, fakePrivateKeyBlock("RSA")],
+    ])("filters private-key block sample %i from runtime and env-file inputs", (index, sample) => {
+      withTempDir((dir) => {
+        const fixture = buildFixture(dir, SAMPLE_CONFIG);
+        const varName = `NEMOCLAW_PARITY_BLOB_${index}`;
+        const run = runBashWrapper(fixture, ["status"], { [varName]: sample });
 
-          expect(run.status).not.toBe(0);
-          expect(run.launched).toBe(false);
-          expect(run.stderr).toContain(varName);
-          expect(run.stderr).not.toContain(sample);
-          expect(run.stderr).not.toContain("opaque-test-body");
+        expect(run.status).not.toBe(0);
+        expect(run.launched).toBe(false);
+        expect(run.stderr).toContain(varName);
+        expect(run.stderr).not.toContain(sample);
+        expect(run.stderr).not.toContain("opaque-test-body");
 
-          fs.writeFileSync(fixture.envFile, `${varName}="${sample}"\n`, "utf8");
-          const envFileRun = runBashWrapper(fixture, ["--version"], {});
+        fs.writeFileSync(fixture.envFile, `${varName}="${sample}"\n`, "utf8");
+        const envFileRun = runBashWrapper(fixture, ["--version"], {});
 
-          expect(envFileRun.status).toBe(2);
-          expect(envFileRun.launched).toBe(false);
-          expect(envFileRun.stderr).toContain(path.join(dir, ".env"));
-          expect(envFileRun.stderr).not.toContain(sample);
-          expect(envFileRun.stderr).not.toContain("PRIVATE KEY-----");
-          expect(envFileRun.stderr).not.toContain("opaque-test-body");
-        });
-      }
+        expect(envFileRun.status).toBe(2);
+        expect(envFileRun.launched).toBe(false);
+        expect(envFileRun.stderr).toContain(path.join(dir, ".env"));
+        expect(envFileRun.stderr).not.toContain(sample);
+        expect(envFileRun.stderr).not.toContain("PRIVATE KEY-----");
+        expect(envFileRun.stderr).not.toContain("opaque-test-body");
+      });
     });
 
     it("falls back safely for malformed or unsupported generated config scalars", () => {
@@ -388,7 +388,7 @@ describe.skipIf(!canRun)(
           },
         ];
 
-        for (const testCase of cases) {
+        cases.forEach((testCase) => {
           const fixture = buildFixture(dir, testCase.config);
           addAgentDir(fixture, testCase.agent);
           const run = runBashWrapper(fixture, ["status"], {});
@@ -396,11 +396,9 @@ describe.skipIf(!canRun)(
           expect(run.status).toBe(0);
           expect(run.launched).toBe(false);
           expect(run.stdout).toContain("Agent:    agent (default)");
-          for (const rejected of testCase.rejected) {
-            expect(run.stdout).not.toContain(rejected);
-          }
+          expect(testCase.rejected.every((rejected) => !run.stdout.includes(rejected))).toBe(true);
           expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
-        }
+        });
       });
     });
 
@@ -419,7 +417,7 @@ describe.skipIf(!canRun)(
           "https://example.test/v1%253Fapi_key%253Dopaque-secret",
           "https",
         ];
-        for (const endpoint of unsafeEndpoints) {
+        unsafeEndpoints.forEach((endpoint) => {
           for (const source of ["config", "runtime"] as const) {
             const config =
               source === "config"
@@ -433,7 +431,7 @@ describe.skipIf(!canRun)(
             expect(`${run.stdout}\n${run.stderr}`).not.toContain(endpoint);
             expect(run.stdout).not.toContain("Endpoint:");
           }
-        }
+        });
       });
     });
 
@@ -506,63 +504,63 @@ describe.skipIf(!canRun)(
       });
     });
 
-    it("refuses noncanonical OpenShell TLS key values without printing them", () => {
-      const pemValue = [
-        "-----BEGIN PRIVATE ",
-        "KEY-----\nraw-private-key\n-----END PRIVATE ",
-        "KEY-----",
-      ].join("");
-      for (const value of [
-        OPAQUE,
-        pemValue,
-        "relative/tls.key",
-        "/tmp/tls.key",
-        `${CANONICAL_TLS_KEY_PATH}.bak`,
-        `tvly-${OPAQUE}`,
-      ]) {
-        withTempDir((dir) => {
-          const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["--version"], {
-            OPENSHELL_TLS_KEY: value,
-          });
-
-          expect(run.status).toBe(2);
-          expect(run.launched).toBe(false);
-          expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
-          expect(run.stderr).not.toContain(value);
+    it.each([
+      ["opaque value", OPAQUE],
+      [
+        "private-key block",
+        ["-----BEGIN PRIVATE ", "KEY-----\nraw-private-key\n-----END PRIVATE ", "KEY-----"].join(
+          "",
+        ),
+      ],
+      ["relative path", "relative/tls.key"],
+      ["temporary path", "/tmp/tls.key"],
+      ["canonical-path suffix", `${CANONICAL_TLS_KEY_PATH}.bak`],
+      ["structured token", `tvly-${OPAQUE}`],
+    ])("refuses the noncanonical OpenShell TLS key %s without printing it", (_kind, value) => {
+      withTempDir((dir) => {
+        const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["--version"], {
+          OPENSHELL_TLS_KEY: value,
         });
-      }
+
+        expect(run.status).toBe(2);
+        expect(run.launched).toBe(false);
+        expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
+        expect(run.stderr).not.toContain(value);
+      });
     });
 
-    it("refuses OpenShell TLS key values in the mutable env file", () => {
-      for (const value of [CANONICAL_TLS_KEY_PATH, OPAQUE]) {
-        withTempDir((dir) => {
-          const fixture = buildFixture(dir, SAMPLE_CONFIG);
-          fs.writeFileSync(fixture.envFile, `OPENSHELL_TLS_KEY=${value}\n`, "utf8");
+    it.each([
+      ["canonical path", CANONICAL_TLS_KEY_PATH],
+      ["opaque value", OPAQUE],
+    ])("refuses the OpenShell TLS key %s in the mutable env file", (_kind, value) => {
+      withTempDir((dir) => {
+        const fixture = buildFixture(dir, SAMPLE_CONFIG);
+        fs.writeFileSync(fixture.envFile, `OPENSHELL_TLS_KEY=${value}\n`, "utf8");
 
-          const run = runBashWrapper(fixture, ["--version"], {});
+        const run = runBashWrapper(fixture, ["--version"], {});
 
-          expect(run.status).toBe(2);
-          expect(run.launched).toBe(false);
-          expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
-          expect(run.stderr).toContain(path.join(dir, ".env"));
-          expect(run.stderr).not.toContain(value);
-        });
-      }
+        expect(run.status).toBe(2);
+        expect(run.launched).toBe(false);
+        expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
+        expect(run.stderr).toContain(path.join(dir, ".env"));
+        expect(run.stderr).not.toContain(value);
+      });
     });
 
-    it("still refuses recognized provider tokens carried by OPENSHELL_TLS_KEY", () => {
-      for (const value of [`nvapi-${OPAQUE}`, `tvly-${OPAQUE}`]) {
-        withTempDir((dir) => {
-          const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["--version"], {
-            OPENSHELL_TLS_KEY: value,
-          });
-
-          expect(run.status).toBe(2);
-          expect(run.launched).toBe(false);
-          expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
-          expect(run.stderr).not.toContain(value);
+    it.each([
+      ["NVIDIA API", `nvapi-${OPAQUE}`],
+      ["Tavily", `tvly-${OPAQUE}`],
+    ])("still refuses the %s provider token carried by OPENSHELL_TLS_KEY", (_provider, value) => {
+      withTempDir((dir) => {
+        const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["--version"], {
+          OPENSHELL_TLS_KEY: value,
         });
-      }
+
+        expect(run.status).toBe(2);
+        expect(run.launched).toBe(false);
+        expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
+        expect(run.stderr).not.toContain(value);
+      });
     });
 
     it("still refuses an opaque credential-name-context variable outside the allowlist", () => {

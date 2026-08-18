@@ -496,14 +496,14 @@ test(
       expect(provider.exitCode, resultText(provider)).toBe(0);
     }
 
-    for (const envKey of [
+    [
       "TELEGRAM_BOT_TOKEN",
       "DISCORD_BOT_TOKEN",
       "SLACK_BOT_TOKEN",
       "SLACK_APP_TOKEN",
-    ]) {
+    ].forEach((envKey) => {
       expectCredentialHash(envKey);
-    }
+    });
     await assertSandboxRunning(host, "phase-1-sandbox-running-after-install");
 
     progress.phase("rotate only the Telegram provider");

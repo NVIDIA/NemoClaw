@@ -929,6 +929,7 @@ const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAM
 const {
   verifyInferenceRoute,
   isInferenceRouteReady,
+  readInferenceRouteState,
   checkGatewayRouteCompatibility,
   preflightGatewayRouteDiscovery,
 } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
@@ -944,8 +945,6 @@ const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawRea
 
 const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox, webSearchProviderForConfig } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
 
-// getSandboxInferenceConfig — moved to onboard-providers.ts
-// Inference probes — moved to inference/onboard-probes.ts
 const {
   hasResponsesToolCall,
   hasChatCompletionsToolCall,
@@ -2906,6 +2905,7 @@ const setupOpenclaw = createOpenclawSetup({
 
 const {
   buildChain,
+  buildAgentVerifyChain,
   buildControlUiUrls,
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
@@ -3012,11 +3012,7 @@ async function preflightAuthoritativeRebuildTarget(
         bindGatewayAuthority: () => bindGatewayOwner(getGatewayOwner()),
         runFatalRuntimePreflight: async () =>
           onboardPreflightGatewayAuthority.runRuntimePreflight(
-            {
-              sandboxGpu: opts.sandboxGpu,
-              sandboxGpuDevice: opts.sandboxGpuDevice,
-              noGpu: opts.noGpu,
-            },
+            authoritativeRebuildTarget.authoritativeRebuildRuntimePreflightOptions(opts),
             (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
           ),
         ensureOpenshell: () =>
@@ -3024,7 +3020,7 @@ async function preflightAuthoritativeRebuildTarget(
             fail(`OpenShell component preflight exited with code ${String(code)}`),
           ),
         assertGatewayReadiness: onboardPreflightGatewayAuthority.collectGatewayReadiness,
-        inferenceRouteReady: (p, m) => isInferenceRouteReady(authoritativeGateway.name, p, m),
+        inferenceRouteState: (p, m) => readInferenceRouteState(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
         checkPort: (port) => checkPortAvailable(port),
       },
@@ -3297,6 +3293,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       sandboxGpuDevice: opts.sandboxGpuDevice ?? null,
       gpuRequested: opts.gpu === true,
       noGpu: opts.noGpu === true,
+      allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm,
       env: process.env,
       recordedGpuPassthroughBeforePreflight,
       commitSelectedAgentTransition: selectedAgentTransition.commit,
@@ -3644,8 +3641,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
-        buildVerifyChain: (chatUiUrl) =>
-          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe?.port, gatewayHealthEndpoint: agent?.healthProbe?.url }),
+        buildVerifyChain: (chatUiUrl, name) => buildAgentVerifyChain(chatUiUrl, name, agent),
         verifyDeployment: async (name, chain) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =
             require("./verify-deployment");

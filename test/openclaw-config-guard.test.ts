@@ -341,6 +341,10 @@ function fileIdentity(filePath: string): [number, Buffer] {
   }
 }
 
+function forEachConfigFile(configPath: string, hashPath: string, verify: (path: string) => void) {
+  for (const filePath of [configPath, hashPath]) verify(filePath);
+}
+
 function setUserXattr(filePath: string, value: string): boolean {
   return (
     spawnSync(
@@ -418,7 +422,7 @@ describe("openclaw-config-guard", () => {
     expect(r.status, JSON.stringify(r.lines)).toBe(0);
     expect([mode(configDir), mode(configPath), mode(hashPath)]).toEqual([0o2770, 0o660, 0o660]);
     expect([configPath, hashPath].map(fileIdentity)).toEqual(fileIdentities);
-    for (const invalidPath of [configPath, hashPath]) {
+    forEachConfigFile(configPath, hashPath, (invalidPath) => {
       fs.chmodSync(invalidPath, 0o600);
       try {
         const invalid = runGuard("unlock", configDir);
@@ -431,7 +435,7 @@ describe("openclaw-config-guard", () => {
       } finally {
         fs.chmodSync(invalidPath, 0o660);
       }
-    }
+    });
     const drift = runGuard("unlock", configDir, "mutable-dir-drift");
     expect(drift.lines).toContainEqual(expect.objectContaining({ code: "config-not-mutable" }));
   });
@@ -465,9 +469,7 @@ describe("openclaw-config-guard", () => {
       expect(fs.statSync(hashPath).ino).not.toBe(initialHashStat.ino);
       expect(fs.statSync(configPath).mtimeMs).toBe(initialConfigStat.mtimeMs);
       expect(fs.statSync(hashPath).mtimeMs).toBe(initialHashStat.mtimeMs);
-      for (const expectedXattr of hasXattrs ? ["trusted-metadata"] : []) {
-        expect(getUserXattr(configPath)).toBe(expectedXattr);
-      }
+      expect(hasXattrs ? getUserXattr(configPath) : "trusted-metadata").toBe("trusted-metadata");
 
       fs.writeSync(staleConfigFd, Buffer.from("MUTATED"), 0, 7, 0);
       fs.writeSync(staleHashFd, Buffer.from("MUTATED"), 0, 7, 0);
@@ -488,43 +490,39 @@ describe("openclaw-config-guard", () => {
       expect(fs.statSync(hashPath).ino).not.toBe(lockedHashInode);
       expect(fs.readFileSync(configPath)).toEqual(initialConfig);
       expect(fs.readFileSync(hashPath)).toEqual(initialHash);
-      for (const expectedXattr of hasXattrs ? ["trusted-metadata"] : []) {
-        expect(getUserXattr(configPath)).toBe(expectedXattr);
-      }
+      expect(hasXattrs ? getUserXattr(configPath) : "trusted-metadata").toBe("trusted-metadata");
     } finally {
       fs.closeSync(staleConfigFd);
       fs.closeSync(staleHashFd);
     }
   });
-  it("rejects external symlink, hardlink, and special-file substitutions", () => {
-    for (const attack of ["symlink", "hardlink", "fifo"] as const) {
-      const { root, configDir, configPath, hashPath } = fixture();
-      const external = path.join(root, "external.json");
-      fs.writeFileSync(external, "outside\n");
-      fs.rmSync(configPath);
-      const arrangeAttack = {
-        symlink: () => fs.symlinkSync(external, configPath),
-        hardlink: () => fs.linkSync(external, configPath),
-        fifo: () => expect(spawnSync("mkfifo", [configPath]).status).toBe(0),
-      } satisfies Record<typeof attack, () => void>;
-      arrangeAttack[attack]();
+  it.each(["symlink", "hardlink", "fifo"] as const)("rejects external %s config", (attack) => {
+    const { root, configDir, configPath, hashPath } = fixture();
+    const external = path.join(root, "external.json");
+    fs.writeFileSync(external, "outside\n");
+    fs.rmSync(configPath);
+    const arrangeAttack = {
+      symlink: () => fs.symlinkSync(external, configPath),
+      hardlink: () => fs.linkSync(external, configPath),
+      fifo: () => expect(spawnSync("mkfifo", [configPath]).status).toBe(0),
+    } satisfies Record<typeof attack, () => void>;
+    arrangeAttack[attack]();
 
-      const beforeHash = fs.readFileSync(hashPath);
-      const result = runGuard("preflight", configDir);
+    const beforeHash = fs.readFileSync(hashPath);
+    const result = runGuard("preflight", configDir);
 
-      expect(result.status).toBe(1);
-      expect(result.lines).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            type: "issue",
-            code: attack === "hardlink" ? "hardlinked-config-file" : "unsafe-config-file",
-            path: configPath,
-          }),
-        ]),
-      );
-      expect(fs.readFileSync(external, "utf-8")).toBe("outside\n");
-      expect(fs.readFileSync(hashPath)).toEqual(beforeHash);
-    }
+    expect(result.status).toBe(1);
+    expect(result.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "issue",
+          code: attack === "hardlink" ? "hardlinked-config-file" : "unsafe-config-file",
+          path: configPath,
+        }),
+      ]),
+    );
+    expect(fs.readFileSync(external, "utf-8")).toBe("outside\n");
+    expect(fs.readFileSync(hashPath)).toEqual(beforeHash);
   });
   it("fail-closes a rename-swapped config namespace and leaves the external tree untouched", () => {
     const { root, configDir } = fixture();
@@ -828,7 +826,7 @@ describe("openclaw-config-guard", () => {
     // Simulate container recreation: /etc-style secondary state is gone while
     // the persistent /sandbox tree and its root-frozen discriminator survive.
     fs.rmSync(journalPath, { force: true });
-    for (const _ambiguousReplacement of failure === "kill-after-first-replace" ? [true] : []) {
+    (failure === "kill-after-first-replace" ? [true] : []).forEach((_ambiguousReplacement) => {
       const refused = runGuard("preflight", configDir);
       expect(refused.status).toBe(1);
       expect(refused.lines).toEqual(
@@ -836,7 +834,7 @@ describe("openclaw-config-guard", () => {
           expect.objectContaining({ type: "issue", code: "recovery-required" }),
         ]),
       );
-    }
+    });
 
     const recovered = runGuard("recover", configDir);
     expect(recovered.status).toBe(0);
@@ -1187,7 +1185,7 @@ describe("openclaw-config-guard", () => {
   });
 
   it("quarantines planted journal entry types and a last-moment swap without vetoing lock", () => {
-    for (const attack of ["symlink", "file", "directory"] as const) {
+    (["symlink", "file", "directory"] as const).forEach((attack) => {
       const current = fixture();
       const reserved = path.join(current.configDir, ".nemoclaw-config-transaction.json");
       const outside = path.join(current.root, `outside-${attack}`);
@@ -1211,7 +1209,7 @@ describe("openclaw-config-guard", () => {
         fs.renameSync(path.join(current.configDir, retained!), reserved);
         expect(runGuard("lock", current.configDir).status).toBe(0);
       }
-    }
+    });
 
     const swapped = fixture();
     fs.writeFileSync(path.join(swapped.root, "outside"), "outside\n");

@@ -177,25 +177,42 @@ function normalizeArchitecture(value: string): "amd64" | "arm64" | null {
   return null;
 }
 
-function hasSubordinateIdMapping(output: string): boolean {
-  return output
-    .trim()
-    .split(/\r?\n/u)
-    .some((line) => {
-      const values = line.trim().split(/\s+/u).map(Number);
-      return values.length === 3 && values.every(Number.isFinite) && (values[2] ?? 0) > 1;
-    });
-}
-
-function requireSubordinateIdMappings(engine: ContainerEngine): void {
-  for (const mapping of ["uid_map", "gid_map"] as const) {
-    const result = requireSuccessful(
-      `${mapping} inspection`,
-      engine.captureHost(["unshare", "cat", `/proc/self/${mapping}`], 10_000),
+function requireSubordinateIdMappings(host: unknown): void {
+  // Bind this check to the same rootless API service as the rest of the
+  // preflight. A local `podman unshare` can resolve different storage and user
+  // authority than an explicitly bound service endpoint.
+  const mappings = field(host, "idMappings", "IDMappings");
+  for (const mapping of ["uidmap", "gidmap"] as const) {
+    const entries = field(
+      mappings,
+      mapping,
+      mapping === "uidmap" ? "UIDMap" : "GIDMap",
     );
-    if (!hasSubordinateIdMapping(result.stdout)) {
+    if (!Array.isArray(entries) || entries.length === 0 || entries.length > 1_024) {
+      throw new PodmanHostPreflightError(`the Podman API returned malformed ${mapping}`);
+    }
+    let hasSubordinateRange = false;
+    for (const value of entries) {
+      const entry = record(value);
+      const containerId = field(entry, "container_id", "containerID", "ContainerID");
+      const hostId = field(entry, "host_id", "hostID", "HostID");
+      const size = field(entry, "size", "Size");
+      if (
+        !entry ||
+        !Number.isSafeInteger(containerId) ||
+        !Number.isSafeInteger(hostId) ||
+        !Number.isSafeInteger(size) ||
+        (containerId as number) < 0 ||
+        (hostId as number) < 0 ||
+        (size as number) <= 0
+      ) {
+        throw new PodmanHostPreflightError(`the Podman API returned malformed ${mapping}`);
+      }
+      if ((size as number) > 1) hasSubordinateRange = true;
+    }
+    if (!hasSubordinateRange) {
       throw new PodmanHostPreflightError(
-        `rootless Podman requires a subordinate ${mapping === "uid_map" ? "UID" : "GID"} range for the current user`,
+        `rootless Podman requires a subordinate ${mapping === "uidmap" ? "UID" : "GID"} range for the API service user`,
       );
     }
   }
@@ -437,7 +454,7 @@ export function qualifyPodmanHost(
       `the Podman service architecture '${normalizedArchitecture}' does not match host '${expectedArchitecture}'`,
     );
   }
-  requireSubordinateIdMappings(engine);
+  requireSubordinateIdMappings(host);
 
   return Object.freeze({
     providerId: "podman",

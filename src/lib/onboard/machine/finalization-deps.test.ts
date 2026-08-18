@@ -64,3 +64,35 @@ describe("finalizationHandlerDeps.isDeploymentHealthy", () => {
     expect(finalizationHandlerDeps.isDeploymentHealthy(unhealthy)).toBe(false);
   });
 });
+
+describe("finalizationHandlerDeps.readRegistryAgent", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ["OpenClaw", { name: "alpha", agent: "openclaw" }, "openclaw"],
+    ["Hermes", { name: "alpha", agent: "hermes" }, "hermes"],
+    ["missing agent", { name: "alpha" }, null],
+    ["missing row", null, null],
+  ])(
+    "reads exact %s registry identity without default inference (#9207)",
+    (_label, entry, expected) => {
+      const load = vi.fn(() => ({ sandboxes: entry ? { alpha: entry } : {} }));
+      vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
+        load,
+      } as never);
+
+      expect(finalizationHandlerDeps.readRegistryAgent("alpha")).toBe(expected);
+      expect(load).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("returns no agent when registry reading fails (#9207)", () => {
+    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+
+    expect(finalizationHandlerDeps.readRegistryAgent("alpha")).toBeNull();
+  });
+});

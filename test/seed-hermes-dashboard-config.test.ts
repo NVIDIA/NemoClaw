@@ -485,28 +485,33 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     expect(fs.existsSync(dst)).toBe(false);
   });
 
-  it("rejects raw credentials in every mirrored routing shape (#8008)", () => {
-    const cases: Array<[string, (gateway: typeof GATEWAY_CONFIG) => void]> = [
+  it.each(
+    Array.from(
       [
-        "model",
-        (gateway) => {
-          gateway.model.api_key = "sk-raw-model-credential";
-        },
-      ],
-      [
-        "provider",
-        (gateway) => {
-          gateway.providers["nvidia-router"].api_key = "sk-raw-provider-credential";
-        },
-      ],
-      [
-        "custom provider",
-        (gateway) => {
-          gateway.custom_providers[0].api_key = "sk-raw-custom-provider-credential";
-        },
-      ],
-    ];
-    for (const [location, injectRawCredential] of cases) {
+        [
+          "model",
+          (gateway) => {
+            gateway.model.api_key = "sk-raw-model-credential";
+          },
+        ],
+        [
+          "provider",
+          (gateway) => {
+            gateway.providers["nvidia-router"].api_key = "sk-raw-provider-credential";
+          },
+        ],
+        [
+          "custom provider",
+          (gateway) => {
+            gateway.custom_providers[0].api_key = "sk-raw-custom-provider-credential";
+          },
+        ],
+      ] as Array<[string, (gateway: typeof GATEWAY_CONFIG) => void]>,
+      (value) => [value],
+    ),
+  )(
+    "rejects raw credentials in every mirrored routing shape [case %#] (#8008)",
+    ([location, injectRawCredential]) => {
       const gateway = structuredClone(GATEWAY_CONFIG);
       injectRawCredential(gateway);
       const src = writeYaml(`gw-${location}.yaml`, gateway);
@@ -519,8 +524,8 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
       expect(result.stderr, location).toContain("[SECURITY]");
       expect(result.stderr, location).not.toContain("sk-raw-");
       expect(fs.readFileSync(dst, "utf8"), location).toBe(before);
-    }
-  });
+    },
+  );
 
   it("mirrors only dashboard-needed gateway .env keys for Hermes 0.16 chat setup", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
@@ -582,14 +587,18 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     expect(fs.readFileSync(envDst, "utf-8")).toBe("API_SERVER_HOST=127.0.0.1\n");
   });
 
-  it("ignores API_SERVER_KEY values instead of parsing or mirroring them", () => {
-    const weakLines = [
-      "API_SERVER_KEY=server-key",
-      "API_SERVER_KEY='server-key'",
-      'export API_SERVER_KEY="server-key"',
-    ];
-
-    for (const [index, weakLine] of weakLines.entries()) {
+  it.each(
+    Array.from(
+      [
+        "API_SERVER_KEY=server-key",
+        "API_SERVER_KEY='server-key'",
+        'export API_SERVER_KEY="server-key"',
+      ].entries(),
+      (value) => [value],
+    ),
+  )(
+    "ignores API_SERVER_KEY values instead of parsing or mirroring them [%s]",
+    ([index, weakLine]) => {
       const src = writeYaml(`gw-${index}.yaml`, GATEWAY_CONFIG);
       const dst = path.join(tmpDir, `dash-${index}.yaml`);
       const envSrc = path.join(tmpDir, `gw-${index}.env`);
@@ -601,8 +610,8 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
       expect(res.status, weakLine).toBe(0);
       expect(res.stderr, weakLine).not.toContain("server-key");
       expect(fs.readFileSync(envDst, "utf-8"), weakLine).toBe("API_SERVER_HOST=127.0.0.1\n");
-    }
-  });
+    },
+  );
 
   it("rejects a literal Tavily key instead of mirroring it into the dashboard .env", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
@@ -619,29 +628,33 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     expect(fs.existsSync(envDst)).toBe(false);
   });
 
-  it("applies requested dashboard seed owner and mode before the atomic rename", () => {
-    const uid = process.getuid?.() ?? Number.NaN;
-    const gid = process.getgid?.() ?? Number.NaN;
-    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
-    const dst = path.join(tmpDir, "dash.yaml");
-    const envSrc = path.join(tmpDir, "gw.env");
-    const envDst = path.join(tmpDir, "dash.env");
-    fs.writeFileSync(envSrc, `API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
+  it.each([{ scenario: "dashboard config" }, { scenario: "dashboard environment" }])(
+    "applies requested dashboard seed owner and mode before the atomic rename [$scenario]",
+    ({ scenario }) => {
+      const uid = process.getuid?.() ?? Number.NaN;
+      const gid = process.getgid?.() ?? Number.NaN;
+      const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+      const dst = path.join(tmpDir, "dash.yaml");
+      const envSrc = path.join(tmpDir, "gw.env");
+      const envDst = path.join(tmpDir, "dash.env");
+      fs.writeFileSync(envSrc, `API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
 
-    const res = runSeed(src, dst, envSrc, envDst, {
-      NEMOCLAW_DASHBOARD_SEED_OWNER: `${uid}:${gid}`,
-    });
+      const res = runSeed(src, dst, envSrc, envDst, {
+        NEMOCLAW_DASHBOARD_SEED_OWNER: `${uid}:${gid}`,
+      });
 
-    expect(res.status).toBe(0);
-    expect(Number.isInteger(uid)).toBe(true);
-    expect(Number.isInteger(gid)).toBe(true);
-    for (const seededPath of [dst, envDst]) {
+      expect(res.status).toBe(0);
+      expect(Number.isInteger(uid)).toBe(true);
+      expect(Number.isInteger(gid)).toBe(true);
+      const seededPath = ({ "dashboard config": dst, "dashboard environment": envDst } as const)[
+        scenario
+      ]!;
       const stat = fs.statSync(seededPath);
       expect(stat.uid).toBe(uid);
       expect(stat.gid).toBe(gid);
       expect(stat.mode & 0o777).toBe(0o600);
-    }
-  });
+    },
+  );
 
   it("keeps custom_providers dynamic via discover_models (no static model list)", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);

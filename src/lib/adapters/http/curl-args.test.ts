@@ -76,14 +76,17 @@ describe("validateCurlProbeArgs — credential-leak defence", () => {
     "webhook_url",
     "password",
     "credential",
-  ])("rejects a credential-shaped %s query parameter so secrets cannot reach argv (#5048)", (paramName) => {
-    expect(() =>
-      validateCurlProbeArgs([
-        "-sS",
-        `https://example.test/v1/models?${paramName}=should-not-appear`,
-      ]),
-    ).toThrow(new RegExp(`${paramName} query parameter`));
-  });
+  ])(
+    "rejects a credential-shaped %s query parameter so secrets cannot reach argv (#5048)",
+    (paramName) => {
+      expect(() =>
+        validateCurlProbeArgs([
+          "-sS",
+          `https://example.test/v1/models?${paramName}=should-not-appear`,
+        ]),
+      ).toThrow(new RegExp(`${paramName} query parameter`));
+    },
+  );
 
   it("rejects an inline proxy-authorization header so proxy credentials cannot reach argv", () => {
     expect(() =>
@@ -214,45 +217,48 @@ describe("validateCurlProbeArgs — credential-leak defence", () => {
     ).not.toThrow();
   });
 
-  it("requires the exact mixed public and private pin set at the curl boundary (#8176)", async () => {
-    const endpointUrl = "https://llm.corp.example/v1/models";
-    const preflight = await assertEndpointResolvesPublic(
-      endpointUrl,
-      async () => [
-        { address: "93.184.216.34", family: 4 },
-        { address: "10.0.0.8", family: 4 },
+  it.each(
+    [
+        "llm.corp.example:443:10.0.0.8",
+        "llm.corp.example:443:93.184.216.34",
+        "llm.corp.example:443:10.0.0.8,93.184.216.34,8.8.8.8",
       ],
-      { trustedPrivateHosts: ["llm.corp.example"] },
-    );
-    const options = {
-      pinnedAddresses: preflight.addresses,
-      trustedPrivateCapability: preflight.trustedPrivateCapability,
-    };
+  )(
+    "requires the exact mixed public and private pin set at the curl boundary [%s] (#8176)",
+    async (mapping) => {
+      const endpointUrl = "https://llm.corp.example/v1/models";
+      const preflight = await assertEndpointResolvesPublic(
+        endpointUrl,
+        async () => [
+          { address: "93.184.216.34", family: 4 },
+          { address: "10.0.0.8", family: 4 },
+        ],
+        { trustedPrivateHosts: ["llm.corp.example"] },
+      );
+      const options = {
+        pinnedAddresses: preflight.addresses,
+        trustedPrivateCapability: preflight.trustedPrivateCapability,
+      };
 
-    expect(() =>
-      validateCurlProbeArgs(
-        ["-sS", "--resolve", "llm.corp.example:443:10.0.0.8,93.184.216.34", endpointUrl],
-        options,
-      ),
-    ).not.toThrow();
+      expect(() =>
+        validateCurlProbeArgs(
+          ["-sS", "--resolve", "llm.corp.example:443:10.0.0.8,93.184.216.34", endpointUrl],
+          options,
+        ),
+      ).not.toThrow();
 
-    for (const mapping of [
-      "llm.corp.example:443:10.0.0.8",
-      "llm.corp.example:443:93.184.216.34",
-      "llm.corp.example:443:10.0.0.8,93.184.216.34,8.8.8.8",
-    ]) {
       expect(() =>
         validateCurlProbeArgs(["-sS", "--resolve", mapping, endpointUrl], options),
       ).toThrow(/exactly match pinnedAddresses/);
-    }
 
-    expect(() =>
-      validateCurlProbeArgs(
-        ["-sS", "--resolve", "llm.corp.example:443:10.0.0.8,93.184.216.34", endpointUrl],
-        { pinnedAddresses: preflight.addresses },
-      ),
-    ).toThrow(/unauthorized private address/);
-  });
+      expect(() =>
+        validateCurlProbeArgs(
+          ["-sS", "--resolve", "llm.corp.example:443:10.0.0.8,93.184.216.34", endpointUrl],
+          { pinnedAddresses: preflight.addresses },
+        ),
+      ).toThrow(/unauthorized private address/);
+    },
+  );
 
   it("rejects a forged private authorization even when the address is otherwise trustable (#6861)", () => {
     expect(() =>

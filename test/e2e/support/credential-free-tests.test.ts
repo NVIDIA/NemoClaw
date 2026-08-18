@@ -135,10 +135,10 @@ describe("credential-free test discovery", () => {
     const rows = discoverCredentialFreeTests();
     expect(rows.length).toBeGreaterThan(0);
     expect(rows).toEqual([...rows].sort((left, right) => left.id.localeCompare(right.id)));
-    for (const row of rows) {
+    rows.forEach((row) => {
       expect(Object.keys(row)).toEqual(["id", "file", "project"]);
       expect(row.file).toMatch(/^test\/.+\.test\.(?:js|ts)$/);
-    }
+    });
   });
 
   it("prints one compact JSON matrix line from the CLI", () => {

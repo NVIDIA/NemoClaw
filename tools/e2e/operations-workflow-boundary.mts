@@ -16,6 +16,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
 const META_JOBS = new Set([
+  "native-runtime-qualification-podman-toolchain",
   "native-runtime-qualification-producer-plan",
   "release-qualification",
   "relevant-e2e",
@@ -57,6 +58,7 @@ const GH_API_WRITE_METHOD =
   /\bgh\s+api\b[\s\S]{0,160}?(?:(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)\b|graphql\b[\s\S]{0,160}?\bmutation\b)/iu;
 const NATIVE_RUNTIME_QUALIFICATION_READ_JOBS = new Set([
   "native-runtime-qualification-producer-plan",
+  "native-runtime-qualification-producer-aggregate",
 ]);
 const GENERIC_ISSUE_REST_MUTATION =
   /github\.request\s*\(\s*["'`](?:POST|PATCH|PUT|DELETE)\s+\/repos\/[^/\s]+\/[^/\s]+\/issues(?:\/|\b)/u;
@@ -354,6 +356,23 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must retain ${fragment}`);
   }
 
+  const qualificationPlanName = "native-runtime-qualification-producer-plan";
+  const qualificationPlan = workflow.jobs[qualificationPlanName] ?? {};
+  const trustedMainPlanCondition =
+    "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}";
+  if (qualificationPlan.if !== trustedMainPlanCondition) {
+    errors.push("Native runtime qualification producer plan must execute only from trusted main");
+  }
+  for (const jobName of [
+    "native-runtime-qualification-podman-toolchain",
+    "native-runtime-qualification-producer",
+    "native-runtime-qualification-producer-aggregate",
+  ]) {
+    if (!needs(workflow.jobs[jobName] ?? {}).includes(qualificationPlanName)) {
+      errors.push(`${jobName} must depend on the trusted-main qualification producer plan`);
+    }
+  }
+
   const validation = validationIndex >= 0 ? steps[validationIndex] : {};
   if (
     validation.if !==
@@ -378,8 +397,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const credentialAuthorization =
     credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
   if (
-    matrixJob.outputs?.e2e_credentials_allowed !==
-      "${{ steps.e2e_credentials.outputs.allowed }}" ||
+    matrixJob.outputs?.e2e_credentials_allowed !== "${{ steps.e2e_credentials.outputs.allowed }}" ||
     credentialAuthorization.id !== "e2e_credentials" ||
     credentialAuthorization.if !==
       "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
@@ -396,12 +414,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     WORKFLOW_REPOSITORY: "${{ github.repository }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
-  if (
-    !isDeepStrictEqual(
-      credentialAuthorization.env,
-      expectedCredentialAuthorizationEnvironment,
-    )
-  ) {
+  if (!isDeepStrictEqual(credentialAuthorization.env, expectedCredentialAuthorizationEnvironment)) {
     errors.push(
       "Manual PR credential authorization must bind the workflow and checkout identities",
     );
@@ -479,17 +492,42 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
         step.with?.path === ".trusted-openshell-dev-artifact";
-      const trustedNativeRuntimeCheckout =
-        ((jobName === "native-runtime-qualification-producer-plan" &&
+      const nativeRuntimeQualificationCheckout =
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Podman source" &&
+          step.with?.repository === "podman-container-tools/podman" &&
+          step.with?.ref === "cade97a52ebdf9dbf9e81de8009015776837a074" &&
+          step.with?.path === ".podman-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Netavark source" &&
+          step.with?.repository === "containers/netavark" &&
+          step.with?.ref === "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" &&
+          step.with?.path === ".netavark-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Aardvark DNS source" &&
+          step.with?.repository === "containers/aardvark-dns" &&
+          step.with?.ref === "cd7417681229219059939bdd9f0b3bd9ac9abb08" &&
+          step.with?.path === ".aardvark-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-producer-plan" &&
           step.name === "Check out the trusted qualification producer" &&
           step.with?.ref === "${{ github.workflow_sha }}") ||
-          (jobName === "native-runtime-qualification-producer" &&
-            step.name === "Check out the trusted qualification harness" &&
-            step.with?.ref === "${{ matrix.source.workflowSha }}") ||
-          (jobName === "native-runtime-qualification-producer" &&
-            step.name === "Check out the candidate commit" &&
-            step.with?.repository === "${{ matrix.source.candidateRepository }}" &&
-            step.with?.ref === "${{ matrix.source.candidateSha }}"));
+        (jobName === "native-runtime-qualification-producer" &&
+          step.name === "Check out the trusted qualification harness" &&
+          step.with?.ref === "${{ matrix.source.workflowSha }}") ||
+        (jobName === "native-runtime-qualification-producer" &&
+          step.name === "Check out the candidate commit" &&
+          step.with?.repository === "${{ matrix.source.candidateRepository }}" &&
+          step.with?.ref === "${{ matrix.source.candidateSha }}") ||
+        (jobName === "native-runtime-qualification-producer-aggregate" &&
+          step.name === "Check out the qualification aggregator" &&
+          step.with?.repository === "${{ github.repository }}" &&
+          step.with?.ref === "${{ github.workflow_sha }}");
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
@@ -501,7 +539,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
         trustedJetsonControllerCheckout ||
-        trustedNativeRuntimeCheckout ||
+        nativeRuntimeQualificationCheckout ||
         trustedOpenShellDevToolingCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
@@ -579,14 +617,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         name: "Download immutable Deep Agents Code base contract",
         if: PUBLICATION_REQUIRED_CONDITION,
-        uses: DOWNLOAD_ARTIFACT_ACTION,
-        with: {
-          "github-token": "${{ github.token }}",
-          name: "managed-base-${{ steps.publication.outputs.run_id }}-${{ steps.publication.outputs.run_attempt }}-langchain-deepagents-code",
-          path: "${{ runner.temp }}/dcode-base-contract",
-          repository: "NVIDIA/NemoClaw",
-          "run-id": "${{ steps.publication.outputs.run_id }}",
+        env: {
+          GITHUB_TOKEN: "${{ github.token }}",
+          PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
+          PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"',
       },
       {
         id: "validate_dcode_base",
@@ -762,16 +799,11 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
   const steps = job.steps ?? [];
   const checkout = findStep(job, "Check out the qualification evaluator");
   const requireResults = findStep(job, "Require every release E2E result");
-  const recordWaiver = findStep(job, "Record release qualification waiver");
-  const uploadWaiver = findStep(job, "Upload release qualification waiver evidence");
   requirePinnedAction(errors, checkout, "release-qualification checkout");
-  requirePinnedAction(errors, uploadWaiver, "release-qualification waiver upload");
   if (
-    steps.length !== 4 ||
+    steps.length !== 2 ||
     steps[0] !== checkout ||
     steps[1] !== requireResults ||
-    steps[2] !== recordWaiver ||
-    steps[3] !== uploadWaiver ||
     checkout.with?.ref !== "${{ github.workflow_sha }}" ||
     checkout.with?.["persist-credentials"] !== false ||
     checkout.with?.["sparse-checkout"] !== "tools/e2e/release-qualification.mts" ||
@@ -781,42 +813,12 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
   }
   if (
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
-    requireResults.env?.RELEASE_QUALIFICATION_WAIVED_JOBS !==
-      "${{ needs.generate-matrix.outputs.release_qualification_waived_jobs }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
     requireResults.run !==
       "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("release-qualification must evaluate planner-selected jobs from needs");
-  }
-  if (
-    recordWaiver.if !== "${{ inputs.release_qualification_waived_jobs != '' }}" ||
-    recordWaiver.shell !== "bash" ||
-    !isDeepStrictEqual(recordWaiver.env, {
-      ACTOR: "${{ github.actor }}",
-      CANDIDATE_SHA: "${{ github.sha }}",
-      NEEDS_JSON: "${{ toJSON(needs) }}",
-      RUN_ATTEMPT: "${{ github.run_attempt }}",
-      RUN_ID: "${{ github.run_id }}",
-      TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
-      WAIVED_JOBS: "${{ needs.generate-matrix.outputs.release_qualification_waived_jobs }}",
-      WAIVER_REASON: "${{ inputs.release_qualification_waiver_reason }}",
-    }) ||
-    !String(recordWaiver.run ?? "").includes("nemoclaw-release-qualification-waiver-v1") ||
-    !String(recordWaiver.run ?? "").includes("$GITHUB_STEP_SUMMARY") ||
-    uploadWaiver.if !== "${{ inputs.release_qualification_waived_jobs != '' }}" ||
-    !String(uploadWaiver.uses ?? "").startsWith("actions/upload-artifact@") ||
-    !isDeepStrictEqual(uploadWaiver.with, {
-      name: "release-qualification-waiver-${{ github.run_id }}-${{ github.run_attempt }}",
-      path: "${{ runner.temp }}/release-qualification-waiver/waiver.json",
-      "if-no-files-found": "error",
-      "retention-days": 30,
-    })
-  ) {
-    errors.push(
-      "release-qualification must record and upload authorized waived job outcomes, identities, and reason",
-    );
   }
 }
 

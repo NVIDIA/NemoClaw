@@ -65,7 +65,9 @@ describe("runner-pressure catalogue boundary", () => {
         "NEMOCLAW_CLI_BIN",
         "NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST",
       ];
-      for (const name of environmentNames) vi.stubEnv(name, process.env[name] ?? "");
+      environmentNames.forEach((name) => {
+        vi.stubEnv(name, process.env[name] ?? "");
+      });
       vi.stubEnv("E2E_ARTIFACT_DIR", directory);
       mocks.spawnSync.mockReturnValue({ status: 0 });
       mocks.runLiveVitestCommand.mockResolvedValue(exitCode);

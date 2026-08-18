@@ -70,7 +70,8 @@ describe("CLI dispatch for terminal agents", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(process.platform === "darwin" ? 1 : 0);
+    // Evidence unavailability on macOS is a note, not a failure (#9278).
+    expect(r.code).toBe(0);
     expect(r.out.includes(PLATFORM_EVIDENCE_UNAVAILABLE)).toBe(process.platform === "darwin");
     expect(r.out).toContain("terminal smoke checks passed");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);

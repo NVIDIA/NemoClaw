@@ -16,6 +16,7 @@ import {
   fetchNvidiaEndpointModels,
   fetchOpenAiLikeModels,
   validateAnthropicModel,
+  validateGeminiModel,
   validateNvidiaEndpointModel,
   validateOpenAiLikeModel,
 } from "./provider-models";
@@ -703,6 +704,114 @@ describe("provider model helpers", () => {
     } finally {
       restoreMkdtemp();
     }
+  });
+
+  it("fails NVIDIA endpoint validation with the checked endpoint when the catalog fetch fails", () => {
+    const result = validateNvidiaEndpointModel("nemotron", "nvapi-x", {
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 503,
+        curlStatus: 7,
+        body: "",
+        stderr: "connection refused",
+        message: "connection refused",
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 503,
+      curlStatus: 7,
+      message: `Could not validate model against ${BUILD_ENDPOINT_URL}/models: connection refused`,
+    });
+  });
+
+  it("reports Gemini models missing from the native catalog", () => {
+    const result = validateGeminiModel("gemini-9.9-missing", "AIzaFakeKey123", {
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: JSON.stringify({
+          models: [
+            {
+              name: "models/gemini-2.5-pro",
+              supportedGenerationMethods: ["generateContent"],
+            },
+          ],
+        }),
+        stderr: "",
+        message: "",
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 200,
+      curlStatus: 0,
+      message: `Model 'gemini-9.9-missing' is not available from Google Gemini. Checked ${GEMINI_NATIVE_MODELS_ENDPOINT_URL}.`,
+    });
+  });
+
+  it("reports Anthropic models missing from the catalog", () => {
+    const result = validateAnthropicModel(
+      "https://api.anthropic.com",
+      "claude-missing",
+      "sk-ant-x",
+      {
+        runCurlProbeImpl: () => ({
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: JSON.stringify({ data: [{ id: "claude-opus" }] }),
+          stderr: "",
+          message: "",
+        }),
+      },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 200,
+      curlStatus: 0,
+      message:
+        "Model 'claude-missing' is not available from Anthropic. Checked https://api.anthropic.com/v1/models.",
+    });
+  });
+
+  it("fails Anthropic validation with the checked endpoint when the catalog fetch fails", () => {
+    const result = validateAnthropicModel("https://api.anthropic.com", "claude-opus", "sk-ant-x", {
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 500,
+        curlStatus: 0,
+        body: "",
+        stderr: "HTTP 500",
+        message: "HTTP 500",
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 500,
+      curlStatus: 0,
+      message: "Could not validate model against https://api.anthropic.com/v1/models: HTTP 500",
+    });
+  });
+
+  it("treats Anthropic 404 catalog responses as non-blocking validation gaps", () => {
+    const result = validateAnthropicModel("https://api.anthropic.com", "claude-opus", "sk-ant-x", {
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 404,
+        curlStatus: 0,
+        body: "",
+        stderr: "HTTP 404",
+        message: "HTTP 404",
+      }),
+    });
+
+    expect(result).toEqual({ ok: true, validated: false });
   });
 });
 

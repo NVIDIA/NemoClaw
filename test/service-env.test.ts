@@ -479,61 +479,75 @@ describe("service environment", () => {
   });
 
   describe("XDG and tool cache redirects (#804)", () => {
-    it("entrypoint pre-creates redirected dirs and restricts GNUPGHOME permissions", () => {
-      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-      const src = readFileSync(scriptPath, "utf-8");
-      const start = src.indexOf("# Pre-create redirected directories");
-      const end = src.indexOf("# ── Drop unnecessary Linux capabilities", start);
-      if (start === -1 || end === -1 || end <= start) {
-        throw new Error("Failed to extract redirected-directory setup block");
-      }
+    it.each([
+      { scenario: "npm cache" },
+      { scenario: "cache" },
+      { scenario: "config" },
+      { scenario: "local share" },
+      { scenario: "local state" },
+      { scenario: "runtime" },
+      { scenario: "Claude" },
+      { scenario: "npm global" },
+    ])(
+      "entrypoint pre-creates redirected dirs and restricts GNUPGHOME permissions [$scenario]",
+      ({ scenario }) => {
+        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+        const src = readFileSync(scriptPath, "utf-8");
+        const start = src.indexOf("# Pre-create redirected directories");
+        const end = src.indexOf("# ── Drop unnecessary Linux capabilities", start);
+        if (start === -1 || end === -1 || end <= start) {
+          throw new Error("Failed to extract redirected-directory setup block");
+        }
 
-      const fakeTmp = mkdtempSync(join(tmpdir(), "nemoclaw-tool-redirects-"));
-      const block = src.slice(start, end).replaceAll("/tmp/", `${fakeTmp}/`);
-      const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-${process.pid}.sh`);
-      try {
-        writeFileSync(
-          tmpFile,
-          [
-            "#!/usr/bin/env bash",
-            "set -euo pipefail",
-            'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
-            block,
-          ].join("\n"),
-          {
-            mode: 0o700,
-          },
-        );
-        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        const fakeTmp = mkdtempSync(join(tmpdir(), "nemoclaw-tool-redirects-"));
+        const block = src.slice(start, end).replaceAll("/tmp/", `${fakeTmp}/`);
+        const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-${process.pid}.sh`);
+        try {
+          writeFileSync(
+            tmpFile,
+            [
+              "#!/usr/bin/env bash",
+              "set -euo pipefail",
+              'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
+              block,
+            ].join("\n"),
+            {
+              mode: 0o700,
+            },
+          );
+          execFileSync("bash", [tmpFile], { encoding: "utf-8" });
 
-        for (const dir of [
-          ".npm-cache",
-          ".cache",
-          ".config",
-          join(".local", "share"),
-          join(".local", "state"),
-          ".runtime",
-          ".claude",
-          "npm-global",
-        ]) {
+          const dir = (
+            {
+              "npm cache": ".npm-cache",
+              cache: ".cache",
+              config: ".config",
+              "local share": join(".local", "share"),
+              "local state": join(".local", "state"),
+              runtime: ".runtime",
+              Claude: ".claude",
+              "npm global": "npm-global",
+            } as const
+          )[scenario]!;
           expect(lstatSync(join(fakeTmp, dir)).isDirectory()).toBe(true);
+
+          const gnupg = lstatSync(join(fakeTmp, ".gnupg"));
+          expect(gnupg.isDirectory()).toBe(true);
+          expect((gnupg.mode & 0o777).toString(8)).toBe("700");
+        } finally {
+          try {
+            unlinkSync(tmpFile);
+          } catch {
+            /* ignore */
+          }
+          try {
+            rmSync(fakeTmp, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
         }
-        const gnupg = lstatSync(join(fakeTmp, ".gnupg"));
-        expect(gnupg.isDirectory()).toBe(true);
-        expect((gnupg.mode & 0o777).toString(8)).toBe("700");
-      } finally {
-        try {
-          unlinkSync(tmpFile);
-        } catch {
-          /* ignore */
-        }
-        try {
-          rmSync(fakeTmp, { recursive: true, force: true });
-        } catch {
-          /* ignore */
-        }
-      }
-    });
+      },
+    );
   });
 
   describe("proxy environment variables (#626)", () => {
@@ -630,41 +644,43 @@ describe("service environment", () => {
       expect(noProxy).toContain("10.200.0.1");
     });
 
-    it("entrypoint writes proxy-env.sh to writable data dir", () => {
-      const fakeDataDir = join(tmpdir(), `nemoclaw-data-test-${process.pid}`);
-      mkdirSync(fakeDataDir, { recursive: true });
-      const tmpFile = join(tmpdir(), `nemoclaw-proxyenv-write-test-${process.pid}.sh`);
-      try {
-        const persistBlock = extractRuntimeShellEnvSnippet();
-        const toolRedirects = extractToolRedirectsSnippet();
-        const wrapper = [
-          "#!/usr/bin/env bash",
-          sandboxInitSource,
-          toolRedirects,
-          'PROXY_HOST="10.200.0.1"',
-          'PROXY_PORT="3128"',
-          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
-          'export OPENCLAW_GATEWAY_TOKEN="test-token-123"',
-          // Override the hardcoded path to use our temp dir
-          persistBlock
-            .trimEnd()
-            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
-        ].join("\n");
-        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+    it.each(["sh", "bash"])(
+      "entrypoint writes proxy-env.sh that can be sourced by %s",
+      (sourceShell) => {
+        const fakeDataDir = join(tmpdir(), `nemoclaw-data-test-${process.pid}`);
+        mkdirSync(fakeDataDir, { recursive: true });
+        const tmpFile = join(tmpdir(), `nemoclaw-proxyenv-write-test-${process.pid}.sh`);
+        try {
+          const persistBlock = extractRuntimeShellEnvSnippet();
+          const toolRedirects = extractToolRedirectsSnippet();
+          const wrapper = [
+            "#!/usr/bin/env bash",
+            sandboxInitSource,
+            toolRedirects,
+            'PROXY_HOST="10.200.0.1"',
+            'PROXY_PORT="3128"',
+            '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+            '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+            'export OPENCLAW_GATEWAY_TOKEN="test-token-123"',
+            // Override the hardcoded path to use our temp dir
+            persistBlock
+              .trimEnd()
+              .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+          ].join("\n");
+          writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+          execFileSync("bash", [tmpFile], { encoding: "utf-8" });
 
-        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        expect(envFile).toContain('export HTTP_PROXY="http://10.200.0.1:3128"');
-        expect(envFile).toContain('export HTTPS_PROXY="http://10.200.0.1:3128"');
-        expect(envFile).toContain("export NO_PROXY=");
-        expect(envFile).not.toContain("inference.local");
-        expect(envFile).toContain("10.200.0.1");
-        expect(envFile).toContain('export AWS_EC2_METADATA_DISABLED="true"');
-        expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN");
-        for (const shell of ["sh", "bash"]) {
+          const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+          expect(envFile).toContain('export HTTP_PROXY="http://10.200.0.1:3128"');
+          expect(envFile).toContain('export HTTPS_PROXY="http://10.200.0.1:3128"');
+          expect(envFile).toContain("export NO_PROXY=");
+          expect(envFile).not.toContain("inference.local");
+          expect(envFile).toContain("10.200.0.1");
+          expect(envFile).toContain('export AWS_EC2_METADATA_DISABLED="true"');
+          expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN");
+
           const sourced = execFileSync(
-            shell,
+            sourceShell,
             [
               "-c",
               `unset OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_URL _nemoclaw_gateway_token; . '${join(fakeDataDir, "proxy-env.sh")}'; printf 'TOKEN=[%s] TEMP=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}"`,
@@ -672,115 +688,117 @@ describe("service environment", () => {
             { encoding: "utf-8" },
           );
           expect(sourced).toContain("TOKEN=[test-token-123] TEMP=[<UNSET>]");
-        }
-        expect(envFile).toContain("nemoclaw-configure-guard begin");
-        expect(envFile).toContain('/usr/bin/env openclaw "$@"');
-        // Tool cache redirects should be present (#804)
-        expect(envFile).toContain("npm_config_cache");
-        expect(envFile).toContain("HISTFILE");
-        expect(envFile).toContain("GIT_CONFIG_GLOBAL");
-        // XDG redirects prevent tools from writing to read-only /sandbox (#804)
-        expect(envFile).toContain("XDG_CONFIG_HOME=/tmp/.config");
-        expect(envFile).toContain("XDG_DATA_HOME=/tmp/.local/share");
-        expect(envFile).toContain("XDG_STATE_HOME=/tmp/.local/state");
-        expect(envFile).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
-        expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
-        expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
-        expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
-        // Pin npm online for connect sessions and PID 1 so a leaked
-        // build-time NPM_CONFIG_OFFLINE=true cannot force `only-if-cached`
-        // mode on dashboard-driven MCP installs, skill installers, or
-        // ad-hoc `npx -y` invocations inside the sandbox.
-        expect(envFile).toContain("npm_config_offline=false");
-        expect(envFile).toContain("NPM_CONFIG_OFFLINE=false");
-        // Permission should be 444 (hardened via emit_sandbox_sourced_file).
-        const perms = (lstatSync(join(fakeDataDir, "proxy-env.sh")).mode & 0o777).toString(8);
-        expect(perms).toBe("444");
 
-        const connectedValues = execFileSync(
-          "bash",
-          [
-            "--noprofile",
-            "--norc",
-            "-c",
-            `export AWS_EC2_METADATA_DISABLED=false; source ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}; printf "%s|%s" "$AWS_EC2_METADATA_DISABLED" "$OPENCLAW_GATEWAY_TOKEN"`,
-          ],
-          { encoding: "utf-8" },
-        );
-        expect(connectedValues).toBe("true|test-token-123");
-      } finally {
+          expect(envFile).toContain("nemoclaw-configure-guard begin");
+          expect(envFile).toContain('/usr/bin/env openclaw "$@"');
+          // Tool cache redirects should be present (#804)
+          expect(envFile).toContain("npm_config_cache");
+          expect(envFile).toContain("HISTFILE");
+          expect(envFile).toContain("GIT_CONFIG_GLOBAL");
+          // XDG redirects prevent tools from writing to read-only /sandbox (#804)
+          expect(envFile).toContain("XDG_CONFIG_HOME=/tmp/.config");
+          expect(envFile).toContain("XDG_DATA_HOME=/tmp/.local/share");
+          expect(envFile).toContain("XDG_STATE_HOME=/tmp/.local/state");
+          expect(envFile).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
+          expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
+          expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
+          expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
+          // Pin npm online for connect sessions and PID 1 so a leaked
+          // build-time NPM_CONFIG_OFFLINE=true cannot force `only-if-cached`
+          // mode on dashboard-driven MCP installs, skill installers, or
+          // ad-hoc `npx -y` invocations inside the sandbox.
+          expect(envFile).toContain("npm_config_offline=false");
+          expect(envFile).toContain("NPM_CONFIG_OFFLINE=false");
+          // Permission should be 444 (hardened via emit_sandbox_sourced_file).
+          const perms = (lstatSync(join(fakeDataDir, "proxy-env.sh")).mode & 0o777).toString(8);
+          expect(perms).toBe("444");
+
+          const connectedValues = execFileSync(
+            "bash",
+            [
+              "--noprofile",
+              "--norc",
+              "-c",
+              `export AWS_EC2_METADATA_DISABLED=false; source ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}; printf "%s|%s" "$AWS_EC2_METADATA_DISABLED" "$OPENCLAW_GATEWAY_TOKEN"`,
+            ],
+            { encoding: "utf-8" },
+          );
+          expect(connectedValues).toBe("true|test-token-123");
+        } finally {
+          try {
+            unlinkSync(tmpFile);
+          } catch {
+            /* ignore */
+          }
+          try {
+            rmSync(fakeDataDir, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+    );
+
+    it.each([".bashrc", ".profile"])(
+      "removes legacy proxy-env.sh source shims from sandbox user rc files [%s]",
+      (rcName) => {
+        const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-test-"));
+        const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+        const tmpFile = join(fakeHome, "rc-shim-write-test.sh");
         try {
-          unlinkSync(tmpFile);
-        } catch {
-          /* ignore */
-        }
-        try {
-          rmSync(fakeDataDir, { recursive: true, force: true });
-        } catch {
-          /* ignore */
-        }
-      }
-    });
+          writeFileSync(
+            join(fakeHome, ".bashrc"),
+            [
+              "# old bashrc",
+              "# Source runtime proxy config",
+              `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+              "export PATH=/usr/local/bin:$PATH",
+              "",
+            ].join("\n"),
+            { mode: 0o644 },
+          );
+          writeFileSync(
+            join(fakeHome, ".profile"),
+            [
+              "# old profile",
+              "# Source runtime proxy config",
+              `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+              "umask 022",
+              "",
+            ].join("\n"),
+            { mode: 0o444 },
+          );
 
-    it("removes legacy proxy-env.sh source shims from sandbox user rc files", () => {
-      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-test-"));
-      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
-      const tmpFile = join(fakeHome, "rc-shim-write-test.sh");
-      try {
-        writeFileSync(
-          join(fakeHome, ".bashrc"),
-          [
-            "# old bashrc",
-            "# Source runtime proxy config",
-            `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
-            "export PATH=/usr/local/bin:$PATH",
-            "",
-          ].join("\n"),
-          { mode: 0o644 },
-        );
-        writeFileSync(
-          join(fakeHome, ".profile"),
-          [
-            "# old profile",
-            "# Source runtime proxy config",
-            `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
-            "umask 022",
-            "",
-          ].join("\n"),
-          { mode: 0o444 },
-        );
+          const wrapper = [
+            "#!/usr/bin/env bash",
+            `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+            `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+            '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+            rcShimWrapperHeader(),
+            extractRuntimeShellEnvShimSnippet(),
+            "ensure_runtime_shell_env_shim",
+          ].join("\n");
+          writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+          execFileSync("bash", [tmpFile], { encoding: "utf-8" });
 
-        const wrapper = [
-          "#!/usr/bin/env bash",
-          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
-          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
-          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
-          rcShimWrapperHeader(),
-          extractRuntimeShellEnvShimSnippet(),
-          "ensure_runtime_shell_env_shim",
-        ].join("\n");
-        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
-
-        for (const rcName of [".bashrc", ".profile"]) {
           const rcFile = readFileSync(join(fakeHome, rcName), "utf-8");
           expect(rcFile.toLowerCase()).not.toContain("proxy");
           expect(rcFile).not.toContain(proxyEnvPath);
           expect(rcFile).toContain(rcName === ".bashrc" ? "export PATH" : "umask 022");
+        } finally {
+          try {
+            unlinkSync(tmpFile);
+          } catch {
+            /* ignore */
+          }
+          try {
+            rmSync(fakeHome, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
         }
-      } finally {
-        try {
-          unlinkSync(tmpFile);
-        } catch {
-          /* ignore */
-        }
-        try {
-          rmSync(fakeHome, { recursive: true, force: true });
-        } catch {
-          /* ignore */
-        }
-      }
-    });
+      },
+    );
 
     it("does not follow pre-planted legacy rc cleanup temp symlinks", () => {
       const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-symlink-test-"));

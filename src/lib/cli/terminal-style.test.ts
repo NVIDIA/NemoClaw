@@ -6,10 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { B, D, failLine, G, R, RD, warnLine, YW } from "./terminal-style";
 
 describe("terminal-style", () => {
-  it("exports terminal style strings", () => {
-    for (const value of [B, D, G, R, RD, YW]) {
-      expect(typeof value).toBe("string");
-    }
+  it.each([B, D, G, R, RD, YW])("exports terminal style strings [case %#]", (value) => {
+    expect(typeof value).toBe("string");
   });
 });
 

@@ -59,6 +59,7 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
   /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
+const JSON_ARRAY_INDEX_SEGMENT_RE = /^\[(?:0|[1-9][0-9]*)\]$/u;
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /nvapi-[A-Za-z0-9_-]{10,}/u,
   /nvcf-[A-Za-z0-9_-]{10,}/u,
@@ -426,7 +427,7 @@ const PROFILE_CAPABILITIES = {
     inputModalities: [],
     webSearchProviders: [],
     toolGateways: [],
-    tuningFields: [],
+    tuningFields: ["contextWindow", "maxTokens", "reasoning"],
     supportsMessaging: false,
     supportsInferenceCompatibility: false,
     supportsUpstreamEndpoint: false,
@@ -587,6 +588,9 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_UPSTREAM_PROVIDER", "inference.upstreamProvider"),
     affordance("NEMOCLAW_INFERENCE_BASE_URL", "inference.routedBaseUrl"),
     affordance("NEMOCLAW_INFERENCE_API", "inference.api"),
+    affordance("NEMOCLAW_CONTEXT_WINDOW", "tuning.contextWindow"),
+    affordance("NEMOCLAW_MAX_TOKENS", "tuning.maxTokens"),
+    affordance("NEMOCLAW_REASONING", "tuning.reasoning"),
     affordance("NEMOCLAW_TOOL_DISCLOSURE", "tools.disclosure"),
     affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
     affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
@@ -916,7 +920,13 @@ const HERMES_DASHBOARD_KEYS = new Set([
 const DCODE_DASHBOARD_KEYS = new Set(["agent", "mode"]);
 const TOOLS_KEYS = new Set(["disclosure", "enabledGateways"]);
 const MESSAGING_KEYS = new Set(["plan"]);
-const TUNING_KEYS = new Set(["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]);
+const TUNING_FIELD_ORDER = [
+  "contextWindow",
+  "maxTokens",
+  "reasoning",
+  "reasoningEffort",
+] as const satisfies readonly (keyof ManagedStartupTuning)[];
+const TUNING_KEYS = new Set<string>(TUNING_FIELD_ORDER);
 const CORPORATE_CA_KEYS = new Set(["bundleSha256"]);
 const OPENCLAW_CONFIG_KEYS = new Set([
   "agent",
@@ -984,12 +994,71 @@ function valueLooksLikeSecret(value: string): boolean {
 }
 
 function isMessagingCredentialPlaceholder(path: readonly string[], value: unknown): boolean {
-  return (
-    path.length >= 2 &&
+  if (typeof value !== "string" || !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) {
+    return false;
+  }
+  const isCredentialBindingPlaceholder =
+    path.length === 5 &&
     path[0] === "messaging" &&
     path[1] === "plan" &&
-    typeof value === "string" &&
-    MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)
+    path[2] === "credentialBindings" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
+    path[4] === "placeholder";
+  const isAgentRenderValuePlaceholder =
+    path.length >= 5 &&
+    path[0] === "messaging" &&
+    path[1] === "plan" &&
+    path[2] === "agentRender" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
+    path[4] === "value";
+  return isCredentialBindingPlaceholder || isAgentRenderValuePlaceholder;
+}
+
+function messagingCredentialPlaceholderEnvKey(value: string): string | null {
+  if (!MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) return null;
+  const marker = value.startsWith("openshell:resolve:env:")
+    ? "openshell:resolve:env:"
+    : "-OPENSHELL-RESOLVE-ENV-";
+  const key = value.slice(value.indexOf(marker) + marker.length);
+  return key.replace(/^v[0-9]+_/u, "");
+}
+
+function containsMessagingCredentialPlaceholder(value: string): boolean {
+  return value.includes("openshell:resolve:env:") || value.includes("-OPENSHELL-RESOLVE-ENV-");
+}
+
+function isMessagingCredentialPlaceholderAssignment(
+  path: readonly string[],
+  value: string,
+): boolean {
+  if (
+    path.length !== 6 ||
+    path[0] !== "messaging" ||
+    path[1] !== "plan" ||
+    path[2] !== "agentRender" ||
+    !JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") ||
+    path[4] !== "lines" ||
+    !JSON_ARRAY_INDEX_SEGMENT_RE.test(path[5] ?? "")
+  ) {
+    return false;
+  }
+  const separator = value.indexOf("=");
+  if (separator <= 0 || value.indexOf("=", separator + 1) !== -1) return false;
+  const envKey = value.slice(0, separator);
+  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(value.slice(separator + 1));
+  return CREDENTIAL_ENV_NAME_PATTERN.test(envKey) && envKey === placeholderEnvKey;
+}
+
+function isMessagingPackagePin(path: readonly string[], value: unknown): boolean {
+  return (
+    path.length === 6 &&
+    path[0] === "messaging" &&
+    path[1] === "plan" &&
+    path[2] === "buildSteps" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
+    path[4] === "value" &&
+    path[5] === "pin" &&
+    typeof value === "boolean"
   );
 }
 
@@ -1358,7 +1427,9 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       observeText(current.value);
       if (
         !isMessagingCredentialPlaceholder(current.path, current.value) &&
-        valueLooksLikeSecret(current.value)
+        !isMessagingCredentialPlaceholderAssignment(current.path, current.value) &&
+        (valueLooksLikeSecret(current.value) ||
+          containsMessagingCredentialPlaceholder(current.value))
       ) {
         invalid(
           `payload field ${payloadPath(current.path)} contains credential-shaped string data`,
@@ -1441,7 +1512,11 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
           invalid("payload must contain only JSON data properties");
         }
         const child = descriptor.value;
-        if (isCredentialShapedName(key) && !isMessagingCredentialPlaceholder(current.path, child)) {
+        if (
+          isCredentialShapedName(key) &&
+          !isMessagingCredentialPlaceholder([...current.path, key], child) &&
+          !isMessagingPackagePin([...current.path, key], child)
+        ) {
           invalid(
             `payload field ${payloadPath([...current.path, key])} has a credential-shaped field name`,
           );
@@ -1748,10 +1823,14 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
           { allowEmpty: false },
         );
 
+  if (
+    upstreamEndpointUrl !== null &&
+    !MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].supportsUpstreamEndpoint
+  ) {
+    invalid(`inference.upstreamEndpointUrl must be null for ${agent}`);
+  }
+
   if (agent === "openclaw") {
-    if (upstreamEndpointUrl !== null) {
-      invalid("inference.upstreamEndpointUrl must be null for openclaw");
-    }
     if (primaryModelRef === null || inputModalities === null) {
       invalid("openclaw requires primaryModelRef and inputModalities");
     }
@@ -1761,9 +1840,6 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   } else {
     if (primaryModelRef !== null || compatibility !== null || inputModalities !== null) {
       invalid(`${agent} does not support primaryModelRef, compatibility, or inputModalities`);
-    }
-    if (agent === "hermes" && upstreamEndpointUrl !== null) {
-      invalid("inference.upstreamEndpointUrl must be null for hermes");
     }
     if (
       agent === "langchain-deepagents-code" &&
@@ -1850,30 +1926,27 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
             "tuning.reasoningEffort",
           ),
   };
+  const advertised = new Set<string>(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].tuningFields);
+  const unsupported = TUNING_FIELD_ORDER.filter(
+    (field) => result[field] !== null && !advertised.has(field),
+  );
+  if (unsupported.length > 0) {
+    invalid(`${agent} does not support startup tuning fields: ${unsupported.join(", ")}`);
+  }
   if (agent === "openclaw") {
-    if (
-      result.contextWindow === null ||
-      result.maxTokens === null ||
-      result.reasoning === null ||
-      result.reasoningEffort === null
-    ) {
-      invalid("openclaw requires contextWindow, maxTokens, reasoning, and reasoningEffort tuning");
-    }
-  } else if (agent === "hermes") {
-    if (result.contextWindow !== null && result.contextWindow < MIN_HERMES_CONTEXT_WINDOW) {
-      invalid(`hermes contextWindow must be at least ${String(MIN_HERMES_CONTEXT_WINDOW)} tokens`);
-    }
-    if (result.maxTokens !== null || result.reasoning !== null || result.reasoningEffort !== null) {
-      invalid("hermes supports only contextWindow tuning");
-    }
-  } else if (
-    result.contextWindow !== null ||
-    result.maxTokens !== null ||
-    result.reasoning !== null
-  ) {
-    invalid(
-      "langchain-deepagents-code does not support startup tuning fields beyond reasoningEffort",
+    const missing = TUNING_FIELD_ORDER.filter(
+      (field) => advertised.has(field) && result[field] === null,
     );
+    if (missing.length > 0) {
+      invalid(`openclaw requires ${missing.join(", ")} tuning`);
+    }
+  }
+  if (
+    agent === "hermes" &&
+    result.contextWindow !== null &&
+    result.contextWindow < MIN_HERMES_CONTEXT_WINDOW
+  ) {
+    invalid(`hermes contextWindow must be at least ${String(MIN_HERMES_CONTEXT_WINDOW)} tokens`);
   }
   return result;
 }
@@ -1901,8 +1974,8 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
   const messaging = requireRecord(profile.messaging, "messaging");
   rejectUnknownKeys(messaging, MESSAGING_KEYS, "messaging");
   const messagingPlan = requireJsonObjectOrNull(messaging.plan, "messaging.plan");
-  if (agent === "langchain-deepagents-code" && messagingPlan !== null) {
-    invalid("messaging.plan must be null for langchain-deepagents-code");
+  if (messagingPlan !== null && !MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].supportsMessaging) {
+    invalid(`messaging.plan must be null for ${agent}`);
   }
   if (
     messagingPlan !== null &&

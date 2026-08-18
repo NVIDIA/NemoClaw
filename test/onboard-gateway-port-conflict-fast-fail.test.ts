@@ -148,7 +148,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
         "",
       ].join("\n");
 
-      for (const component of ["openshell", "openshell-gateway", "openshell-sandbox"]) {
+      ["openshell", "openshell-gateway", "openshell-sandbox"].forEach((component) => {
         workspace.writeExecutable(
           component,
           [
@@ -162,7 +162,7 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
             "exit 1",
           ].join("\n"),
         );
-      }
+      });
 
       const containerName = getGatewayClusterContainerName(gatewayName);
       const portBindings = JSON.stringify({
@@ -209,13 +209,13 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
         gatewayPort: () => gatewayPort,
       });
       const owner = readiness.resolveOwner();
-      for (const result of [
+      [
         await readiness.observeManagedGateway(owner),
         await readiness.observeManagedGateway(owner),
-      ]) {
+      ].forEach((result) => {
         expect(result.reuseState).toBe("healthy");
         expect(result.portConflictState).toBe("none");
-      }
+      });
     },
   );
 });

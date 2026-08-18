@@ -110,19 +110,17 @@ describe("rebuild replacement target fingerprint", () => {
     );
   });
 
-  it("changes when a recorded replacement input changes", () => {
-    for (const drift of [
-      { dcodeAutoApprovalMode: "thread-opt-in" },
-      { endpointSource: "onboard" },
-      { policyTier: "balanced" },
-      { recreateProvider: "compatible-endpoint" },
-      { recreateModel: "model-b" },
-      { recreatePreferredInferenceApi: "anthropic" },
-    ] as const) {
-      expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
-        fingerprintRebuildRecreateTargetIntent(recreateOptions),
-      );
-    }
+  it.each([
+    { dcodeAutoApprovalMode: "thread-opt-in" },
+    { endpointSource: "onboard" },
+    { policyTier: "balanced" },
+    { recreateProvider: "compatible-endpoint" },
+    { recreateModel: "model-b" },
+    { recreatePreferredInferenceApi: "anthropic" },
+  ] as const)("changes when a recorded replacement input changes [case %#]", (drift) => {
+    expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, ...drift })).not.toBe(
+      fingerprintRebuildRecreateTargetIntent(recreateOptions),
+    );
   });
 
   it("changes when the replacement targets another gateway", () => {
