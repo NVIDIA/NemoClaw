@@ -14,5 +14,5 @@ export interface OpenClawTelegramState {
 }
 
 export function openClawHasConfiguredTelegram(state: OpenClawTelegramState): boolean {
-  return state.channelEnabled || state.pluginEnabled;
+  return state.channelEnabled && state.pluginEnabled;
 }

@@ -21,19 +21,29 @@ describe("channels-add-remove Telegram configuration predicate", () => {
     expect(openClawHasConfiguredTelegram(UNCONFIGURED)).toBe(false);
   });
 
-  it.each([
-    ["enabled channel", { channelEnabled: true }],
-    ["enabled plugin", { pluginEnabled: true }],
-  ])("detects an %s as configured (#9361)", (_case, overrides) => {
-    expect(openClawHasConfiguredTelegram({ ...UNCONFIGURED, ...overrides })).toBe(true);
+  it("detects an enabled channel and plugin as configured (#9361)", () => {
+    expect(
+      openClawHasConfiguredTelegram({
+        ...UNCONFIGURED,
+        channelEnabled: true,
+        pluginEnabled: true,
+      }),
+    ).toBe(true);
   });
 
-  it("treats removed channel and plugin entries as unconfigured (#9361)", () => {
+  it.each([
+    ["enabled channel without plugin activation", { channelEnabled: true }],
+    ["enabled plugin without channel activation", { pluginEnabled: true }],
+  ])("treats %s as unconfigured (#9361)", (_case, overrides) => {
+    expect(openClawHasConfiguredTelegram({ ...UNCONFIGURED, ...overrides })).toBe(false);
+  });
+
+  it("treats a removed channel with a bundled enabled plugin as unconfigured (#9361)", () => {
     expect(
       openClawHasConfiguredTelegram({
         ...UNCONFIGURED,
         channelPresent: false,
-        pluginPresent: false,
+        pluginEnabled: true,
       }),
     ).toBe(false);
   });

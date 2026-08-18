@@ -576,8 +576,8 @@ test(
     expect(openClawHasConfiguredTelegram(removedTelegram)).toBe(false);
     expect(removedTelegram).toMatchObject({
       accountEnabled: false,
+      channelEnabled: false,
       channelPresent: false,
-      pluginPresent: false,
     });
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");
