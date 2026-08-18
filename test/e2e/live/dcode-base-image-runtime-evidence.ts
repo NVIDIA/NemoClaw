@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/label-codec.ts";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
 import {
+  DCODE_BASE_IMAGE_ONBOARD_PLATFORM,
   type DcodeBaseImageContract,
   type DcodePlatform,
   parseDcodeBaseImageContract,
@@ -76,9 +77,12 @@ export function parseDcodeBaseImagePublicationEvidence(
     );
   }
   const contract = parseDcodeBaseImageContract(evidence.base);
-  if (requireDcodeBaseImageReference(environment) !== contract.reference) {
+  if (
+    requireDcodeBaseImageReference(environment) !==
+    contract.platformReferences[DCODE_BASE_IMAGE_ONBOARD_PLATFORM]
+  ) {
     throw new Error(
-      "Deep Agents Code onboarding reference does not match the published base contract",
+      `Deep Agents Code onboarding reference does not match the published ${DCODE_BASE_IMAGE_ONBOARD_PLATFORM} base contract`,
     );
   }
   return contract;
