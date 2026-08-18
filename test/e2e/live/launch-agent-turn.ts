@@ -11,12 +11,329 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 export const OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT =
   'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"';
 
+// OpenShell creates the PTY before it drops to the sandbox user. This bounded
+// child inherits fd 0, so it can observe terminal mode without reopening the
+// root-owned device path from a separate sandbox command.
+export const OPENCLAW_PTY_INPUT_MODE_MONITOR_SCRIPT = String.raw`
+const childProcess = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [
+  role,
+  parentPidText,
+  runId,
+  recordRoot,
+  observationId,
+  ttyPath,
+  dev,
+  ino,
+  rdev,
+  sttyCommand,
+] = process.argv.slice(1);
+const recordPath = path.join(recordRoot, "pty-record.json");
+const temporaryPath = path.join(recordRoot, "pty-record.json.tmp");
+const MAX_RECORD_BYTES = 1024;
+const MAX_STDERR_BYTES = 256;
+const OBSERVATION_DEADLINE_MS = 225_000;
+const POLL_INTERVAL_MS = 25;
+const parentPid = Number(parentPidText);
+
+function exactKeys(value, expected) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+}
+
+function exactMode(stats, mode) {
+  return (stats.mode & 0o777) === mode;
+}
+
+function baseRecord(termios) {
+  return {
+    schemaVersion: 2,
+    runId,
+    observationId,
+    ttyPath,
+    dev,
+    ino,
+    rdev,
+    termios,
+  };
+}
+
+function validTermios(termios) {
+  if (!exactKeys(termios, ["state", "requestId", "status", "signal", "errorCode", "stderr"])) {
+    return false;
+  }
+  if (!["idle", "requested", "canonical", "noncanonical", "unavailable"].includes(termios.state)) {
+    return false;
+  }
+  if (
+    termios.status !== null &&
+    (!Number.isInteger(termios.status) || termios.status < 0 || termios.status > 255)
+  ) {
+    return false;
+  }
+  if (termios.signal !== null && !/^SIG[A-Z0-9]{1,24}$/.test(termios.signal)) return false;
+  if (termios.errorCode !== null && !/^[A-Z0-9_]{1,64}$/.test(termios.errorCode)) return false;
+  if (
+    typeof termios.stderr !== "string" ||
+    Buffer.byteLength(termios.stderr) > MAX_STDERR_BYTES ||
+    !/^[\x20-\x7e]*$/.test(termios.stderr)
+  ) {
+    return false;
+  }
+  const requestIdIsValid = /^[0-9a-f]{32}$/.test(termios.requestId || "");
+  const diagnosticIsEmpty =
+    termios.status === null &&
+    termios.signal === null &&
+    termios.errorCode === null &&
+    termios.stderr === "";
+  if (termios.state === "idle") return termios.requestId === null && diagnosticIsEmpty;
+  if (!requestIdIsValid) return false;
+  if (termios.state === "unavailable") return !diagnosticIsEmpty;
+  return diagnosticIsEmpty;
+}
+
+function validRecord(record) {
+  return (
+    exactKeys(record, [
+      "schemaVersion",
+      "runId",
+      "observationId",
+      "ttyPath",
+      "dev",
+      "ino",
+      "rdev",
+      "termios",
+    ]) &&
+    record.schemaVersion === 2 &&
+    record.runId === runId &&
+    record.observationId === observationId &&
+    record.ttyPath === ttyPath &&
+    record.dev === dev &&
+    record.ino === ino &&
+    record.rdev === rdev &&
+    validTermios(record.termios)
+  );
+}
+
+function readRecord() {
+  let fd;
+  try {
+    const rootStats = fs.lstatSync(recordRoot);
+    if (
+      !rootStats.isDirectory() ||
+      rootStats.isSymbolicLink() ||
+      rootStats.uid !== process.getuid() ||
+      !exactMode(rootStats, 0o700)
+    ) {
+      return false;
+    }
+    fd = fs.openSync(recordPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stats = fs.fstatSync(fd);
+    if (
+      !stats.isFile() ||
+      stats.uid !== process.getuid() ||
+      !exactMode(stats, 0o600) ||
+      stats.nlink !== 1 ||
+      stats.size < 2 ||
+      stats.size > MAX_RECORD_BYTES
+    ) {
+      return null;
+    }
+    const record = JSON.parse(fs.readFileSync(fd, "utf8"));
+    return validRecord(record) ? record : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {}
+    }
+  }
+}
+
+function writeResponse(requestId, termios) {
+  const current = readRecord();
+  if (
+    !current ||
+    current.termios.state !== "requested" ||
+    current.termios.requestId !== requestId
+  ) {
+    return false;
+  }
+  const body = JSON.stringify(baseRecord(termios)) + "\n";
+  if (Buffer.byteLength(body) > MAX_RECORD_BYTES) return false;
+  let fd;
+  let created = false;
+  try {
+    fd = fs.openSync(
+      temporaryPath,
+      fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_WRONLY |
+        fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    created = true;
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, body, "utf8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(temporaryPath, recordPath);
+    const directoryFd = fs.openSync(recordRoot, fs.constants.O_RDONLY);
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  } catch {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {}
+    }
+    if (created) {
+      try {
+        fs.unlinkSync(temporaryPath);
+      } catch {}
+    }
+    return false;
+  }
+  return true;
+}
+
+function cleanText(value) {
+  return String(value || "")
+    .replace(/[^\x20-\x7e]/g, " ")
+    .trim()
+    .slice(0, MAX_STDERR_BYTES);
+}
+
+function unavailable(requestId, result, fallbackCode = null) {
+  const status = Number.isInteger(result && result.status) ? result.status : null;
+  const signal = typeof (result && result.signal) === "string" ? result.signal : null;
+  const resultCode = result && result.error && result.error.code;
+  const errorCode =
+    typeof resultCode === "string" && /^[A-Z0-9_]{1,64}$/.test(resultCode)
+      ? resultCode
+      : fallbackCode;
+  const written = writeResponse(requestId, {
+    state: "unavailable",
+    requestId,
+    status,
+    signal,
+    errorCode,
+    stderr: cleanText(result && result.stderr),
+  });
+  return written ? waitForParentExit() : scheduleObservation();
+}
+
+if (role !== "nemoclaw-pty-input-mode-monitor") process.exit(74);
+if (!Number.isSafeInteger(parentPid) || parentPid < 2) process.exit(74);
+if (!/^[0-9a-f]{32}$/.test(runId || "")) process.exit(74);
+if (recordRoot !== "/tmp/nemoclaw-launch-turn-" + runId) process.exit(74);
+if (!/^[0-9a-f]{32}$/.test(observationId || "")) process.exit(74);
+if (!/^\/dev\/pts\/\d+$/.test(ttyPath || "")) process.exit(74);
+if (![dev, ino, rdev].every((value) => /^(0|[1-9]\d{0,24})$/.test(value || ""))) {
+  process.exit(74);
+}
+if (!path.isAbsolute(sttyCommand || "")) process.exit(74);
+
+const deadline = Date.now() + OBSERVATION_DEADLINE_MS;
+
+function closeInput() {
+  try {
+    fs.closeSync(0);
+  } catch {}
+}
+
+function waitForParentExit() {
+  closeInput();
+  if (process.ppid !== parentPid) process.exit(0);
+  setTimeout(waitForParentExit, POLL_INTERVAL_MS);
+}
+
+function scheduleObservation() {
+  setTimeout(observeRequest, POLL_INTERVAL_MS);
+}
+
+function observeRequest() {
+  if (process.ppid !== parentPid) process.exit(0);
+  const record = readRecord();
+  if (!record) return waitForParentExit();
+  if (record.termios.state !== "requested") {
+    return Date.now() >= deadline ? waitForParentExit() : scheduleObservation();
+  }
+  const requestId = record.termios.requestId;
+  if (Date.now() >= deadline) return unavailable(requestId, null, "PTY_TERMIOS_DEADLINE");
+  let stats;
+  try {
+    stats = fs.fstatSync(0, { bigint: true });
+  } catch {
+    return unavailable(requestId, null, "PTY_STDIN_UNAVAILABLE");
+  }
+  if (
+    !stats.isCharacterDevice() ||
+    stats.dev.toString() !== dev ||
+    stats.ino.toString() !== ino ||
+    stats.rdev.toString() !== rdev
+  ) {
+    return unavailable(requestId, null, "PTY_IDENTITY_CHANGED");
+  }
+  const result = childProcess.spawnSync(sttyCommand, ["-a"], {
+    encoding: "utf8",
+    env: { LC_ALL: "C" },
+    stdio: [0, "pipe", "pipe"],
+    timeout: 1_000,
+    killSignal: "SIGKILL",
+    maxBuffer: 64 * 1024,
+  });
+  if (process.ppid !== parentPid) return process.exit(0);
+  if (result.error) return unavailable(requestId, result, "PTY_TERMIOS_QUERY_FAILED");
+  if (result.status !== 0) return unavailable(requestId, result);
+  if (/(^|[\s;])-icanon([\s;]|$)/.test(result.stdout)) {
+    const written = writeResponse(requestId, {
+      state: "noncanonical",
+      requestId,
+      status: null,
+      signal: null,
+      errorCode: null,
+      stderr: "",
+    });
+    return written ? waitForParentExit() : scheduleObservation();
+  }
+  if (/(^|[\s;])icanon([\s;]|$)/.test(result.stdout)) {
+    writeResponse(requestId, {
+      state: "canonical",
+      requestId,
+      status: null,
+      signal: null,
+      errorCode: null,
+      stderr: "",
+    });
+    return scheduleObservation();
+  }
+  return unavailable(requestId, result, "PTY_TERMIOS_OUTPUT_INVALID");
+}
+
+observeRequest();
+`;
+
 // This script runs inside the same PTY process that will become OpenClaw. It
 // publishes fd 0 identity before execve preserves that descriptor for the
 // unchanged production command.
 export const OPENCLAW_PTY_RECORD_WRITER_SCRIPT = String.raw`
+const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+
+const monitorScript = ${JSON.stringify(OPENCLAW_PTY_INPUT_MODE_MONITOR_SCRIPT)};
+const termiosCommand = "/usr/bin/stty";
 
 const [runId, recordRoot, ...originalArgv] = process.argv.slice(1);
 const recordPath = path.join(recordRoot, "pty-record.json");
@@ -114,14 +431,49 @@ try {
 if (!/^\/dev\/pts\/\d+$/.test(ttyPath)) fail("pty_stdin_not_pty");
 if (!ttyStats.isCharacterDevice()) fail("pty_stdin_not_character_device");
 
-writeRecord({
-  schemaVersion: 1,
+const record = {
+  schemaVersion: 2,
   runId,
+  observationId: crypto.randomBytes(16).toString("hex"),
   ttyPath,
   dev: ttyStats.dev.toString(),
   ino: ttyStats.ino.toString(),
   rdev: ttyStats.rdev.toString(),
-});
+  termios: {
+    state: "idle",
+    requestId: null,
+    status: null,
+    signal: null,
+    errorCode: null,
+    stderr: "",
+  },
+};
+writeRecord(record);
+
+const monitor = childProcess.spawn(
+  process.execPath,
+  [
+    "-e",
+    monitorScript,
+    "nemoclaw-pty-input-mode-monitor",
+    process.pid.toString(),
+    runId,
+    recordRoot,
+    record.observationId,
+    ttyPath,
+    record.dev,
+    record.ino,
+    record.rdev,
+    termiosCommand,
+  ],
+  {
+    detached: false,
+    env: { LC_ALL: "C" },
+    stdio: [0, "ignore", "ignore"],
+  },
+);
+if (!Number.isSafeInteger(monitor.pid) || monitor.pid < 2) fail("pty_monitor_spawn_failed");
+monitor.unref();
 
 process.execve("/usr/bin/env", ["/usr/bin/env", ...originalArgv], process.env);
 fail("pty_execve_failed");
@@ -247,7 +599,6 @@ runRealOpenShell(replacement);
 // baseline. Session content never moves to the host.
 export const OPENCLAW_SESSION_EVIDENCE_SCRIPT = String.raw`
 const crypto = require("node:crypto");
-const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -258,6 +609,8 @@ const ptyRecordPath = path.join(ptyRecordRoot, "pty-record.json");
 const ptyRecordTemporaryPath = path.join(ptyRecordRoot, "pty-record.json.tmp");
 const MAX_BASELINE_BYTES = 1024 * 1024;
 const MAX_PTY_RECORD_BYTES = 1024;
+const PTY_RESPONSE_TIMEOUT_MS = 3_000;
+const PTY_RESPONSE_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
 function finish(exitCode, reason, detail = {}) {
   if (reason) process.stderr.write(JSON.stringify({ reason, ...detail }) + "\n");
@@ -271,6 +624,61 @@ function exactKeys(value, expected) {
 
 function exactMode(stats, mode) {
   return (stats.mode & 0o777) === mode;
+}
+
+function validTermiosObservation(termios) {
+  if (!exactKeys(termios, ["state", "requestId", "status", "signal", "errorCode", "stderr"])) {
+    return false;
+  }
+  if (!["idle", "requested", "canonical", "noncanonical", "unavailable"].includes(termios.state)) {
+    return false;
+  }
+  if (
+    termios.status !== null &&
+    (!Number.isInteger(termios.status) || termios.status < 0 || termios.status > 255)
+  ) {
+    return false;
+  }
+  if (termios.signal !== null && !/^SIG[A-Z0-9]{1,24}$/.test(termios.signal)) return false;
+  if (termios.errorCode !== null && !/^[A-Z0-9_]{1,64}$/.test(termios.errorCode)) return false;
+  if (
+    typeof termios.stderr !== "string" ||
+    Buffer.byteLength(termios.stderr) > 256 ||
+    !/^[\x20-\x7e]*$/.test(termios.stderr)
+  ) {
+    return false;
+  }
+  const diagnosticIsEmpty =
+    termios.status === null &&
+    termios.signal === null &&
+    termios.errorCode === null &&
+    termios.stderr === "";
+  if (termios.state === "idle") return termios.requestId === null && diagnosticIsEmpty;
+  if (!/^[0-9a-f]{32}$/.test(termios.requestId || "")) return false;
+  return termios.state === "unavailable" ? !diagnosticIsEmpty : diagnosticIsEmpty;
+}
+
+function validPtyRecord(record) {
+  return (
+    exactKeys(record, [
+      "schemaVersion",
+      "runId",
+      "observationId",
+      "ttyPath",
+      "dev",
+      "ino",
+      "rdev",
+      "termios",
+    ]) &&
+    record.schemaVersion === 2 &&
+    record.runId === runId &&
+    /^[0-9a-f]{32}$/.test(record.observationId || "") &&
+    /^\/dev\/pts\/\d+$/.test(record.ttyPath || "") &&
+    [record.dev, record.ino, record.rdev].every(
+      (value) => typeof value === "string" && /^(0|[1-9]\d{0,24})$/.test(value),
+    ) &&
+    validTermiosObservation(record.termios)
+  );
 }
 
 function validateRunContext() {
@@ -381,6 +789,33 @@ function sessionFileNames() {
   }
 }
 
+function validatePtyIdentity(record) {
+  let ttyStats;
+  try {
+    ttyStats = fs.lstatSync(record.ttyPath, { bigint: true });
+  } catch {
+    finish(2, "pty_identity_changed");
+  }
+  if (!ttyStats.isCharacterDevice()) finish(2, "pty_not_character_device");
+  if (
+    ttyStats.dev.toString() !== record.dev ||
+    ttyStats.ino.toString() !== record.ino ||
+    ttyStats.rdev.toString() !== record.rdev
+  ) {
+    finish(2, "pty_identity_changed");
+  }
+}
+
+function samePtyObservation(left, right) {
+  return (
+    left.observationId === right.observationId &&
+    left.ttyPath === right.ttyPath &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.rdev === right.rdev
+  );
+}
+
 function qualifyTuiInputMode() {
   let rootStats;
   try {
@@ -404,45 +839,57 @@ function qualifyTuiInputMode() {
     "pty_record_invalid",
     "pty_record_missing",
   );
-  if (
-    !exactKeys(record, ["schemaVersion", "runId", "ttyPath", "dev", "ino", "rdev"]) ||
-    record.schemaVersion !== 1 ||
-    record.runId !== runId ||
-    !/^\/dev\/pts\/\d+$/.test(record.ttyPath || "") ||
-    ![record.dev, record.ino, record.rdev].every(
-      (value) => typeof value === "string" && /^(0|[1-9]\d{0,24})$/.test(value),
-    )
-  ) {
-    finish(2, "pty_record_invalid");
-  }
-  let ttyStats;
-  try {
-    ttyStats = fs.lstatSync(record.ttyPath, { bigint: true });
-  } catch {
-    finish(2, "pty_identity_changed");
-  }
-  if (!ttyStats.isCharacterDevice()) finish(2, "pty_not_character_device");
-  if (
-    ttyStats.dev.toString() !== record.dev ||
-    ttyStats.ino.toString() !== record.ino ||
-    ttyStats.rdev.toString() !== record.rdev
-  ) {
-    finish(2, "pty_identity_changed");
-  }
-  let state;
-  try {
-    state = childProcess.execFileSync("stty", ["-F", record.ttyPath, "-a"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 5_000,
-      killSignal: "SIGKILL",
-      maxBuffer: 64 * 1024,
+  if (!validPtyRecord(record)) finish(2, "pty_record_invalid");
+  validatePtyIdentity(record);
+  const requestId = crypto.randomBytes(16).toString("hex");
+  writePrivateJsonAtomic(
+    ptyRecordPath,
+    ptyRecordTemporaryPath,
+    {
+      ...record,
+      termios: {
+        state: "requested",
+        requestId,
+        status: null,
+        signal: null,
+        errorCode: null,
+        stderr: "",
+      },
+    },
+    MAX_PTY_RECORD_BYTES,
+    "pty_request_write_failed",
+  );
+  const responseDeadline = Date.now() + PTY_RESPONSE_TIMEOUT_MS;
+  while (Date.now() < responseDeadline) {
+    const response = readPrivateJson(
+      ptyRecordPath,
+      MAX_PTY_RECORD_BYTES,
+      "pty_record_unavailable",
+      "pty_record_invalid",
+    );
+    if (
+      !validPtyRecord(response) ||
+      !samePtyObservation(record, response) ||
+      response.termios.requestId !== requestId
+    ) {
+      finish(2, "pty_termios_response_invalid");
+    }
+    if (response.termios.state === "requested") {
+      Atomics.wait(PTY_RESPONSE_WAIT, 0, 0, 25);
+      continue;
+    }
+    validatePtyIdentity(response);
+    if (response.termios.state === "canonical") finish(1, "pty_input_canonical");
+    if (response.termios.state === "noncanonical") finish(0);
+    if (response.termios.state !== "unavailable") finish(2, "pty_termios_response_invalid");
+    finish(2, "pty_termios_unavailable", {
+      sttyStatus: response.termios.status,
+      sttySignal: response.termios.signal,
+      sttyErrorCode: response.termios.errorCode,
+      sttyStderr: response.termios.stderr,
     });
-  } catch {
-    finish(2, "pty_termios_unavailable");
   }
-  if (!/(^|[\s;])-icanon([\s;]|$)/.test(state)) finish(1, "pty_input_canonical");
-  finish(0);
+  finish(2, "pty_termios_response_timeout");
 }
 
 function readCompleteSession(fileName) {
@@ -602,12 +1049,7 @@ function removePtyRecordRoot() {
         "pty_record_cleanup_failed",
         "pty_record_cleanup_failed",
       );
-      if (!exactKeys(record, ["schemaVersion", "runId", "ttyPath", "dev", "ino", "rdev"])) {
-        finish(2, "pty_record_cleanup_failed");
-      }
-      if (record.schemaVersion !== 1 || record.runId !== runId) {
-        finish(2, "pty_record_cleanup_failed");
-      }
+      if (!validPtyRecord(record)) finish(2, "pty_record_cleanup_failed");
     }
     try {
       fs.unlinkSync(filePath);
