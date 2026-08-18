@@ -12,6 +12,7 @@ import {
   getHardwareResources,
   loadResourceProfiles,
   printHardwareResources,
+  resolveCpuModel,
   resolveProfile,
   resolveResourceValue,
 } from "./resources-cmd.js";
@@ -86,6 +87,76 @@ describe("resources-cmd", () => {
     expect(hw.cpu.model).toEqual(expect.any(String));
     expect(hw.memory.totalMB).toBeGreaterThan(0);
     expect(hw.profiles?.creator.cpu).toBe("50%");
+  });
+
+  it("keeps complete Node CPU models without running lscpu (#9403)", () => {
+    const readLscpu = vi.fn(() => null);
+
+    expect(
+      resolveCpuModel(
+        [{ model: "Cortex-X925" }, { model: "Cortex-X925" }, { model: "Cortex-A725" }],
+        { platform: "linux", readLscpu },
+      ),
+    ).toBe("Cortex-X925 / Cortex-A725");
+    expect(readLscpu).not.toHaveBeenCalled();
+  });
+
+  it("reports distinct lscpu models when Node reports unknown on Linux (#9403)", () => {
+    const readLscpu = vi.fn(() =>
+      JSON.stringify({
+        cpus: [
+          { cpu: 0, modelname: "Cortex-X925" },
+          { cpu: 1, modelname: "Cortex-X925" },
+          { cpu: 2, modelname: "Cortex-A725" },
+          { cpu: 3, modelname: "Cortex-A725" },
+        ],
+      }),
+    );
+
+    expect(
+      resolveCpuModel([{ model: "unknown" }, { model: "unknown" }], {
+        platform: "linux",
+        readLscpu,
+      }),
+    ).toBe("Cortex-X925 / Cortex-A725");
+    expect(readLscpu).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["unavailable", null],
+    ["malformed", "not JSON"],
+    ["missing rows", JSON.stringify({ cpus: "unknown" })],
+    [
+      "unsafe values",
+      JSON.stringify({
+        cpus: [{ modelname: "unknown" }, { modelname: "-" }, { modelname: "bad\nmodel" }],
+      }),
+    ],
+  ])("falls back safely when lscpu output is %s (#9403)", (_case, output) => {
+    expect(
+      resolveCpuModel([{ model: "unknown" }], {
+        platform: "linux",
+        readLscpu: () => output,
+      }),
+    ).toBe("unknown");
+  });
+
+  it("keeps known Node models when the Linux fallback cannot help (#9403)", () => {
+    expect(
+      resolveCpuModel([{ model: "Cortex-X925" }, { model: "unknown" }], {
+        platform: "linux",
+        readLscpu: () => null,
+      }),
+    ).toBe("Cortex-X925");
+  });
+
+  it("combines known Node models with additional Linux models (#9403)", () => {
+    expect(
+      resolveCpuModel([{ model: "Cortex-X925" }, { model: "unknown" }], {
+        platform: "linux",
+        readLscpu: () => JSON.stringify({ cpus: [{ modelname: "Cortex-A725" }] }),
+      }),
+    ).toBe("Cortex-X925 / Cortex-A725");
   });
 
   it("prints JSON and returns the hardware object in JSON mode", () => {

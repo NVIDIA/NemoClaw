@@ -523,18 +523,18 @@ describe("focused staging Brev Launchable lane", () => {
     expect(receiptResult.stderr).toContain("producer receipt does not match the candidate");
     expect(fs.readFileSync(receipt.calls, "utf8")).not.toMatch(/brev create|full-e2e\.test\.ts/u);
 
-    for (const malformed of [
+    [
       fixture({ omitReceiptField: "project" }),
       fixture({ omitReceiptField: "imageName" }),
       fixture({ imageRepositorySha: "not-a-sha" }),
-    ]) {
+    ].forEach((malformed) => {
       const malformedResult = run(malformed.env);
       expect(malformedResult.status).not.toBe(0);
       expect(malformedResult.stderr).toContain("producer receipt does not match the candidate");
       expect(fs.readFileSync(malformed.calls, "utf8")).not.toMatch(
         /brev create|full-e2e\.test\.ts/u,
       );
-    }
+    });
 
     const unready = fixture({ ready: false });
     const unreadyResult = run({ ...unready.env, BREV_READY_TIMEOUT_SECONDS: "1" });
@@ -551,7 +551,7 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.readFileSync(wrongImage.calls, "utf8")).not.toContain("full-e2e.test.ts");
     expect(fs.existsSync(wrongImage.state)).toBe(false);
 
-    for (const boot of [
+    [
       fixture({ repoSha: "b".repeat(40) }),
       fixture({ provisionSha: "b".repeat(40) }),
       fixture({ provisionImageRepositorySha: "c".repeat(40) }),
@@ -560,7 +560,7 @@ describe("focused staging Brev Launchable lane", () => {
       fixture({ schemaVersion: 2 }),
       fixture({ sourceRepository: "example/NemoClaw" }),
       fixture({ sourcePath: "/home/ubuntu/NemoClaw" }),
-    ]) {
+    ].forEach((boot) => {
       const bootResult = run(boot.env);
       expect(bootResult.status).not.toBe(0);
       expect(bootResult.stderr).toContain(
@@ -568,7 +568,7 @@ describe("focused staging Brev Launchable lane", () => {
       );
       expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
       expect(fs.existsSync(boot.state)).toBe(false);
-    }
+    });
   }, 90_000);
 
   it("reports E2E failure only after verified workspace cleanup", () => {
@@ -649,32 +649,30 @@ describe("focused staging Brev Launchable lane", () => {
       .split("\n")
       .filter((line) => line.includes("; error:"));
     expect(diagnosticErrorLines).not.toHaveLength(0);
-    for (const line of diagnosticErrorLines) {
+    diagnosticErrorLines.forEach((line) => {
       const error = line.split("; error: ", 2)[1]?.replace(/\)$/u, "") ?? "";
       expect(Buffer.byteLength(error)).toBeLessThanOrEqual(512);
-    }
-    for (const secretOrConfiguration of [
-      "brev-test-secret",
-      "container-secret",
-      "default-secret",
-      "host-token",
-      "ssh-secret",
-      "short-token",
-      "hunter2",
-      "hidden-user",
-      "github-test-token",
-      "nvapi-test-value",
-      "/hidden/private-key",
-      "host.hidden.internal",
-      "host-exec.hidden.internal",
-      "container.hidden.internal",
-      "refresh.hidden.internal",
-      "203.0.113.20",
-      "identityfile /hidden/private-key",
-      "user hidden-user",
-    ]) {
-      expect(output).not.toContain(secretOrConfiguration);
-    }
+    });
+    expect([
+          "brev-test-secret",
+          "container-secret",
+          "default-secret",
+          "host-token",
+          "ssh-secret",
+          "short-token",
+          "hunter2",
+          "hidden-user",
+          "github-test-token",
+          "nvapi-test-value",
+          "/hidden/private-key",
+          "host.hidden.internal",
+          "host-exec.hidden.internal",
+          "container.hidden.internal",
+          "refresh.hidden.internal",
+          "203.0.113.20",
+          "identityfile /hidden/private-key",
+          "user hidden-user",
+        ].every((secretOrConfiguration) => !output.includes(secretOrConfiguration))).toBe(true);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
@@ -769,45 +767,53 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.existsSync(calls)).toBe(false);
   });
 
-  it("caps blocking readiness and failure diagnostics by separate deadlines", () => {
-    const { calls, env, state, workDir } = fixture({
-      timeoutBlockCommand: "brev refresh",
-      timeoutBlockDiagnostics: true,
-    });
-    const startedAt = performance.now();
-    const result = run({
-      ...env,
-      BREV_HOST_SSH_TIMEOUT_SECONDS: "1",
-      BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS: "6",
-    });
-    const elapsedMs = performance.now() - startedAt;
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("host SSH readiness timed out");
-    expect(elapsedMs).toBeLessThan(12_000);
-    const commands = fs.readFileSync(calls, "utf8");
-    expect(commands).toContain("timeout 1s brev refresh");
-    expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1");
-    expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1-host");
-    expect(commands).toMatch(/timeout [12]s brev exec nclaw-e2e-test-1 true/u);
-    expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
-    const output = emittedOutput(result, workDir);
-    expect(output).toContain("Readiness diagnostics budget: up to 6 seconds");
-    expect(output).toContain("Readiness probe brev exec container: failure; status 124;");
-    for (const label of ["brev exec host", "direct SSH container", "direct SSH host"]) {
+  it.each(
+    ["brev exec host", "direct SSH container", "direct SSH host"],
+  )(
+    "caps blocking readiness and failure diagnostics by separate deadlines [%s]",
+    (label) => {
+      const { calls, env, state, workDir } = fixture({
+        timeoutBlockCommand: "brev refresh",
+        timeoutBlockDiagnostics: true,
+      });
+      const startedAt = performance.now();
+      const result = run({
+        ...env,
+        BREV_HOST_SSH_TIMEOUT_SECONDS: "1",
+        BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS: "6",
+      });
+      const elapsedMs = performance.now() - startedAt;
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("host SSH readiness timed out");
+      expect(elapsedMs).toBeLessThan(12_000);
+      const commands = fs.readFileSync(calls, "utf8");
+      expect(commands).toContain("timeout 1s brev refresh");
+      expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1");
+      expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1-host");
+      expect(commands).toMatch(/timeout [12]s brev exec nclaw-e2e-test-1 true/u);
+      expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
+      const output = emittedOutput(result, workDir);
+      expect(output).toContain("Readiness diagnostics budget: up to 6 seconds");
+      expect(output).toContain("Readiness probe brev exec container: failure; status 124;");
+
       expect(output).toContain(
         `Readiness probe ${label}: not run; status unavailable; error: diagnostic budget exhausted`,
       );
-    }
-    expect(output).toContain("diagnostic budget exhausted");
-    expect(output).toContain(
-      "Readiness classification: incomplete diagnostics; inspect available bounded probe results",
-    );
-    expect(output).not.toContain("Readiness classification: neither target reachable");
-    expect(fs.existsSync(state)).toBe(false);
-    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
-      status: "ABSENT",
-    });
-  }, 90_000);
+
+      expect(output).toContain("diagnostic budget exhausted");
+      expect(output).toContain(
+        "Readiness classification: incomplete diagnostics; inspect available bounded probe results",
+      );
+      expect(output).not.toContain("Readiness classification: neither target reachable");
+      expect(fs.existsSync(state)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject(
+        {
+          status: "ABSENT",
+        },
+      );
+    },
+    90_000,
+  );
 
   it("caps a blocking SSH probe by the host SSH deadline and deletes the workspace", () => {
     const { calls, env, state, workDir } = fixture({ timeoutBlockCommand: "ssh-host" });

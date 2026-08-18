@@ -211,12 +211,12 @@ describe("resolveAgentCreateInput", () => {
       persistStartupCommand: true,
       portableLifecycle: true,
     });
-    expect(
-      resolveAgentCreateInput({ name: "hermes" } as AgentDefinition, true, env),
-    ).toMatchObject({
-      persistStartupCommand: true,
-      portableLifecycle: false,
-    });
+    expect(resolveAgentCreateInput({ name: "hermes" } as AgentDefinition, true, env)).toMatchObject(
+      {
+        persistStartupCommand: true,
+        portableLifecycle: false,
+      },
+    );
     expect(resolvePortableLifecycleMode(null, env)).toBe(true);
     expect(resolvePortableLifecycleMode({ name: "hermes" } as AgentDefinition, env)).toBe(false);
   });
@@ -514,12 +514,22 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
     );
   });
 
-  it("retries structured nvidia-smi failure only when host config proves no GPU attachment (#6110)", async () => {
+  it("inspects the exact recreated native container before authorizing compatibility fallback", async () => {
     const deps = createDeps();
+    const replacementContainerId = "b".repeat(64);
     vi.mocked(deps.verifyDirectSandboxGpu)
       .mockReturnValueOnce(NVIDIA_SMI_FAILED_PROOF)
       .mockReturnValue(VERIFIED_PROOF);
-    mockRuntimeSnapshot();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce({
+      ...createPatch(),
+      replacementRuntimeId: vi.fn(() => replacementContainerId),
+    });
+    mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockImplementation(
+      (_sandboxName, _deps, options) =>
+        options?.expectedContainerId === replacementContainerId
+          ? { ...DEFAULT_RUNTIME_SNAPSHOT, containerId: replacementContainerId }
+          : { ok: false, error: "expected one labeled sandbox container, found 2" },
+    );
 
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
       route: "compatibility",
@@ -527,33 +537,38 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
     });
 
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledWith(
+      "alpha",
+      {},
+      { expectedContainerId: replacementContainerId },
+    );
     expect(deps.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ suppressOutput: true }),
     );
   });
 
-  it.each([
-    "present",
-    "unknown",
-  ] as const)("fails closed on sandbox nvidia-smi text when host GPU attachment is %s", async (nativeGpuAttachmentState) => {
-    const deps = createDeps();
-    vi.mocked(deps.verifyDirectSandboxGpu).mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
-    mockRuntimeSnapshot({ nativeGpuAttachmentState });
-    mockExit();
+  it.each(["present", "unknown"] as const)(
+    "fails closed on sandbox nvidia-smi text when host GPU attachment is %s",
+    async (nativeGpuAttachmentState) => {
+      const deps = createDeps();
+      vi.mocked(deps.verifyDirectSandboxGpu).mockReturnValue(NVIDIA_SMI_FAILED_PROOF);
+      mockRuntimeSnapshot({ nativeGpuAttachmentState });
+      mockExit();
 
-    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+      await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
 
-    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
-    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
-    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
-      "without corroborating host evidence cannot authorize",
-    );
-  });
+      expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+      expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).toHaveBeenCalledOnce();
+      expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+        "without corroborating host evidence cannot authorize",
+      );
+    },
+  );
 
   it("stops after one compatibility retry when its GPU proof also fails", async () => {
     const deps = createDeps();

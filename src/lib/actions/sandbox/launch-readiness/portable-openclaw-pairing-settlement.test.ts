@@ -210,6 +210,85 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
 
+  it("repairs an authority-matched legacy OpenClaw row only for onboarding finalization (#9207)", async () => {
+    let entry: SandboxEntry = { ...ENTRY, agent: null };
+    const updateSandbox = vi.fn((_name: string, updates: Partial<SandboxEntry>) => {
+      entry = { ...entry, ...updates };
+      return true;
+    });
+    const scope = settlementDeps({
+      getSandbox: vi.fn(() => entry),
+      updateSandbox,
+    });
+
+    await expect(
+      settlePortableOpenClawPairing("alpha", { portableRequired: true }, scope.deps),
+    ).resolves.toEqual({ kind: "settled" });
+    expect(updateSandbox).toHaveBeenCalledExactlyOnceWith("alpha", { agent: "openclaw" });
+    expect(scope.observePairing).toHaveBeenCalledOnce();
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, boolean]>([
+    ["registry update fails", false],
+    ["registry readback remains unchanged", true],
+  ])("fails closed when legacy OpenClaw repair %s (#9207)", async (_label, updateResult) => {
+    const updateSandbox = vi.fn(() => updateResult);
+    const scope = settlementDeps({
+      getSandbox: vi.fn(() => ({ ...ENTRY, agent: null })),
+      updateSandbox,
+    });
+
+    await expect(
+      settlePortableOpenClawPairing("alpha", { portableRequired: true }, scope.deps),
+    ).resolves.toEqual({
+      kind: "incomplete",
+      reason: "portable-runtime-identity-invalid",
+    });
+    expect(updateSandbox).toHaveBeenCalledExactlyOnceWith("alpha", { agent: "openclaw" });
+    expect(scope.calls).toEqual(["sandbox-lock"]);
+    expect(scope.observePairing).not.toHaveBeenCalled();
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("does not repair a legacy OpenClaw row without exact receipt and policy authority (#9207)", async () => {
+    const updateSandbox = vi.fn(() => true);
+    const scope = settlementDeps({
+      getSandbox: vi.fn(() => ({
+        ...ENTRY,
+        agent: null,
+        lifecycleGeneration: "generation-2",
+      })),
+      updateSandbox,
+    });
+
+    await expect(
+      settlePortableOpenClawPairing("alpha", { portableRequired: true }, scope.deps),
+    ).resolves.toEqual({
+      kind: "incomplete",
+      reason: "portable-runtime-identity-invalid",
+    });
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(scope.observePairing).not.toHaveBeenCalled();
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("never rewrites Portable Hermes when OpenClaw finalization is requested (#9207)", async () => {
+    const updateSandbox = vi.fn(() => true);
+    const scope = settlementDeps({
+      getSandbox: vi.fn(() => ({ ...ENTRY, agent: "hermes" })),
+      updateSandbox,
+    });
+
+    await expect(
+      settlePortableOpenClawPairing("alpha", { portableRequired: true }, scope.deps),
+    ).resolves.toEqual({ kind: "not-portable" });
+    expect(updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("rejects a receipt from another registry generation before observing or writing (#9207)", async () => {
     const scope = settlementDeps({
       getSandbox: vi.fn(() => ({ ...ENTRY, lifecycleGeneration: "generation-2" })),

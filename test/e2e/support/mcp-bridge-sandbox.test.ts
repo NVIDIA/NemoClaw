@@ -149,7 +149,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
       "deepagents-config": "/opt/venv/bin/python3 -c",
     } as const;
 
-    for (const [adapter, runtime] of Object.entries(runtimes)) {
+    Object.entries(runtimes).forEach(([adapter, runtime]) => {
       const script = buildMcpDnsRebindingProbeScript(
         adapter as keyof typeof runtimes,
         "https://mcp-rebind.example.test:31337/mcp",
@@ -165,7 +165,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
       expect(script, adapter).not.toContain("fake-rebind-mcp-secret-value");
       const syntax = spawnSync("/bin/bash", ["-n"], { input: script, encoding: "utf8" });
       expect(syntax.status, `${adapter}: ${syntax.stderr}`).toBe(0);
-    }
+    });
   });
 
   it("pins the resolve-validate-connect source contract to OpenShell v0.0.101", () => {
@@ -183,7 +183,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     const docsPath = "docs/deployment/set-up-mcp-bridge.mdx";
     const docs = fs.readFileSync(docsPath, "utf8");
     expect(docs, docsPath).toContain(commit);
-    for (const citation of citations) expect(docs, docsPath).toContain(citation);
+    expect(citations.every((citation) => docs.includes(citation))).toBe(true);
     expect(docs).toContain("proxy_connect_by_hostname");
     expect(docs).toContain("reopens proxy-side DNS resolution");
 

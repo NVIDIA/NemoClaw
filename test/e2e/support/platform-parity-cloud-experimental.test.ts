@@ -404,24 +404,29 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       observabilityDriftedAfter,
     ],
     [tavilyBlocked, "ok", "disabled", 1, observabilityDriftedBefore, /registry=disabled, marker=1/],
-  ])("restores the default Tavily denial without observability drift (%s/%s/%s)", (fixture, removeFixture, registryFixture, status, expected, observabilityExpected) => {
-    const result = spawnSync("bash", [dcodeTavilyCheck], {
-      encoding: "utf8",
-      env: {
-        NEMOCLAW_E2E_OBSERVABILITY_REGISTRY_FIXTURE: registryFixture,
-        NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
-        NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
-        NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
-        PATH: DEFAULT_TEST_PATH,
-        SANDBOX_NAME: "deepagents-sandbox",
-      },
-    });
+  ])(
+    "restores the default Tavily denial without observability drift (%s/%s/%s)",
+    (fixture, removeFixture, registryFixture, status, expected, observabilityExpected) => {
+      const result = spawnSync("bash", [dcodeTavilyCheck], {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_OBSERVABILITY_REGISTRY_FIXTURE: registryFixture,
+          NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE: fixture,
+          NEMOCLAW_E2E_TAVILY_REMOVE_FIXTURE: removeFixture,
+          NEMOCLAW_E2E_TAVILY_SELF_TEST: "restore-denial",
+          PATH: DEFAULT_TEST_PATH,
+          SANDBOX_NAME: "deepagents-sandbox",
+        },
+      });
 
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
-    expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
-    expect(`${result.stdout}\n${result.stderr}`).toMatch(observabilityExpected);
-    expect(fs.readFileSync(dcodeTavilyCheck, "utf8")).toContain("trap restore_tavily_denial EXIT");
-  });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+      expect(`${result.stdout}\n${result.stderr}`).toMatch(expected);
+      expect(`${result.stdout}\n${result.stderr}`).toMatch(observabilityExpected);
+      expect(fs.readFileSync(dcodeTavilyCheck, "utf8")).toContain(
+        "trap restore_tavily_denial EXIT",
+      );
+    },
+  );
 
   it("skips the DCode auto-approval check before optional host prerequisites", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-approval-skip-"));
@@ -449,223 +454,235 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   it.each([
     ["accepts a later passing status", "unhealthy-then-ready", 0, 2],
     ["fails after three unsuccessful status attempts", "unhealthy-always", 1, 3],
-  ] as const)("%s for a fresh DCode re-onboard", (_label, mode, expectedStatus, expectedAttempts) => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-status-readiness-"));
-    const mockCli = path.join(tempDir, "nemoclaw");
-    const counterFile = path.join(tempDir, "attempts");
-    try {
-      fs.writeFileSync(
-        mockCli,
-        [
-          "#!/bin/bash",
-          "set -euo pipefail",
-          "count=0",
-          'if [ -f "$MOCK_STATUS_COUNTER_FILE" ]; then',
-          '  read -r count <"$MOCK_STATUS_COUNTER_FILE"',
-          "fi",
-          "count=$((count + 1))",
-          `printf '%s\\n' "$count" >"$MOCK_STATUS_COUNTER_FILE"`,
-          'if [ "$MOCK_STATUS_MODE" = "unhealthy-always" ] || [ "$count" -eq 1 ]; then',
-          `  printf '%s\\n' '{"inferenceHealth":{"ok":false,"failureLabel":"unreachable"}}'`,
-          "  exit 1",
-          "fi",
-          `printf '%s\\n' '{"inferenceHealth":{"ok":true}}'`,
-          "",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-
-      const result = spawnSync(
-        "/bin/bash",
-        [
-          "-c",
-          'source "$1"; CLI="$2"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS=3; NEMOCLAW_E2E_DCODE_STATUS_DELAY_SECONDS=0; wait_for_status_after_reonboard',
-          "bash",
-          dcodeFreshReonboardCheck,
+  ] as const)(
+    "%s for a fresh DCode re-onboard",
+    (_label, mode, expectedStatus, expectedAttempts) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-status-readiness-"));
+      const mockCli = path.join(tempDir, "nemoclaw");
+      const counterFile = path.join(tempDir, "attempts");
+      try {
+        fs.writeFileSync(
           mockCli,
-        ],
-        {
+          [
+            "#!/bin/bash",
+            "set -euo pipefail",
+            "count=0",
+            'if [ -f "$MOCK_STATUS_COUNTER_FILE" ]; then',
+            '  read -r count <"$MOCK_STATUS_COUNTER_FILE"',
+            "fi",
+            "count=$((count + 1))",
+            `printf '%s\\n' "$count" >"$MOCK_STATUS_COUNTER_FILE"`,
+            'if [ "$MOCK_STATUS_MODE" = "unhealthy-always" ] || [ "$count" -eq 1 ]; then',
+            `  printf '%s\\n' '{"inferenceHealth":{"ok":false,"failureLabel":"unreachable"}}'`,
+            "  exit 1",
+            "fi",
+            `printf '%s\\n' '{"inferenceHealth":{"ok":true}}'`,
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        const result = spawnSync(
+          "/bin/bash",
+          [
+            "-c",
+            'source "$1"; CLI="$2"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS=3; NEMOCLAW_E2E_DCODE_STATUS_DELAY_SECONDS=0; wait_for_status_after_reonboard',
+            "bash",
+            dcodeFreshReonboardCheck,
+            mockCli,
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              MOCK_STATUS_COUNTER_FILE: counterFile,
+              MOCK_STATUS_MODE: mode,
+            },
+          },
+        );
+
+        expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+        expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+        expect(result.stdout).toContain(
+          mode === "unhealthy-always" ? '"failureLabel":"unreachable"' : '"ok":true',
+        );
+      } finally {
+        fs.rmSync(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each([
+    ["retries one fail-closed inference timeout", "timeout-then-success", 0, 2, 1],
+    ["fails after the bounded inference timeout retry", "timeout-always", 1, 2, 1],
+    ["does not retry a non-timeout inference failure", "http-401", 1, 1, 0],
+  ] as const)(
+    "%s during a named DCode rebuild",
+    (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rebuild-retry-"));
+      const mockCli = path.join(tempDir, "nemoclaw");
+      const testDriver = path.join(tempDir, "rebuild-named-sandbox");
+      const counterFile = path.join(tempDir, "attempts");
+      try {
+        fs.writeFileSync(
+          mockCli,
+          [
+            "#!/bin/bash",
+            "set -euo pipefail",
+            "count=0",
+            'if [ -f "$MOCK_REBUILD_COUNTER_FILE" ]; then',
+            '  read -r count <"$MOCK_REBUILD_COUNTER_FILE"',
+            "fi",
+            "count=$((count + 1))",
+            `printf '%s\\n' "$count" >"$MOCK_REBUILD_COUNTER_FILE"`,
+            'case "$MOCK_REBUILD_MODE" in',
+            "  timeout-then-success)",
+            '    if [ "$count" -eq 1 ]; then',
+            `      printf '%s\\n' 'existing sandbox inference probe exited with status 28' 'Sandbox is untouched — no data was lost.' >&2`,
+            "      exit 1",
+            "    fi",
+            "    ;;",
+            "  timeout-always)",
+            `    printf '%s\\n' 'existing sandbox inference probe exited with status 28' 'Sandbox is untouched — no data was lost.' >&2`,
+            "    exit 1",
+            "    ;;",
+            "  http-401)",
+            `    printf '%s\\n' 'existing sandbox inference probe returned HTTP 401' 'Sandbox is untouched — no data was lost.' >&2`,
+            "    exit 1",
+            "    ;;",
+            "  *)",
+            "    exit 2",
+            "    ;;",
+            "esac",
+            `printf '%s\\n' rebuilt`,
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        writeDcodeApprovalTestDriver(
+          testDriver,
+          `CLI="$1"
+SANDBOX_NAME="deepagents-sandbox"
+NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS=0
+rebuild_named_sandbox disabled
+`,
+        );
+        const result = spawnSync("/bin/bash", [testDriver, mockCli], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            MOCK_REBUILD_COUNTER_FILE: counterFile,
+            MOCK_REBUILD_MODE: mode,
+          },
+          killSignal: "SIGKILL",
+          timeout: 30_000,
+        });
+
+        expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+        expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+        expect(
+          result.stderr.match(
+            /Retrying named sandbox rebuild once after a fail-closed inference timeout/gu,
+          ) ?? [],
+        ).toHaveLength(expectedRetryMessages);
+      } finally {
+        fs.rmSync(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each([
+    ["retries a transient status health failure", "failure-then-success", 0, 2, 1],
+    ["fails after the bounded status health retries", "failure-always", 1, 3, 2],
+  ] as const)(
+    "%s before checking the DCode capability",
+    (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-status-retry-"));
+      const mockCli = path.join(tempDir, "nemoclaw");
+      const testDriver = path.join(tempDir, "assert-status-mode");
+      const counterFile = path.join(tempDir, "attempts");
+      try {
+        fs.writeFileSync(
+          mockCli,
+          [
+            "#!/bin/bash",
+            "set -euo pipefail",
+            "count=0",
+            'if [ -f "$MOCK_STATUS_COUNTER_FILE" ]; then',
+            '  read -r count <"$MOCK_STATUS_COUNTER_FILE"',
+            "fi",
+            "count=$((count + 1))",
+            `printf '%s\\n' "$count" >"$MOCK_STATUS_COUNTER_FILE"`,
+            `printf '{"name":"deepagents-sandbox","agent":"langchain-deepagents-code","dcodeAutoApprovalMode":"disabled","attempt":%s,"inferenceHealth":{"ok":false,"probed":false}}\\n' "$count"`,
+            'if [ "$MOCK_STATUS_MODE" = "failure-always" ] || { [ "$MOCK_STATUS_MODE" = "failure-then-success" ] && [ "$count" -eq 1 ]; }; then',
+            "  exit 1",
+            "fi",
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        writeDcodeApprovalTestDriver(
+          testDriver,
+          `CLI="$1"
+SANDBOX_NAME="deepagents-sandbox"
+NEMOCLAW_E2E_DCODE_STATUS_RETRY_DELAY_SECONDS=0
+assert_status_mode disabled
+`,
+        );
+        const result = spawnSync("/bin/bash", [testDriver, mockCli], {
           encoding: "utf8",
           env: {
             ...process.env,
             MOCK_STATUS_COUNTER_FILE: counterFile,
             MOCK_STATUS_MODE: mode,
           },
-        },
-      );
+          killSignal: "SIGKILL",
+          timeout: 30_000,
+        });
 
-      expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
-      expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
-      expect(result.stdout).toContain(
-        mode === "unhealthy-always" ? '"failureLabel":"unreachable"' : '"ok":true',
-      );
-    } finally {
-      fs.rmSync(tempDir, { force: true, recursive: true });
-    }
-  });
+        expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+        expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+        expect(
+          result.stderr.match(/Retrying NemoClaw status after a non-success health probe/gu) ?? [],
+        ).toHaveLength(expectedRetryMessages);
+        const expectFailureDiagnostics = expectedStatus !== 0;
+        expect(
+          result.stderr.includes(
+            "nemoclaw status failed while checking 'disabled' after 3 attempts",
+          ),
+        ).toBe(expectFailureDiagnostics);
+        expect(result.stderr.includes('"dcodeAutoApprovalMode":"disabled"')).toBe(
+          expectFailureDiagnostics,
+        );
+        expect(result.stderr.includes('"attempt":3')).toBe(expectFailureDiagnostics);
+      } finally {
+        fs.rmSync(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
 
-  it.each([
-    ["retries one fail-closed inference timeout", "timeout-then-success", 0, 2, 1],
-    ["fails after the bounded inference timeout retry", "timeout-always", 1, 2, 1],
-    ["does not retry a non-timeout inference failure", "http-401", 1, 1, 0],
-  ] as const)("%s during a named DCode rebuild", (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rebuild-retry-"));
-    const mockCli = path.join(tempDir, "nemoclaw");
-    const testDriver = path.join(tempDir, "rebuild-named-sandbox");
-    const counterFile = path.join(tempDir, "attempts");
-    try {
-      fs.writeFileSync(
-        mockCli,
-        [
-          "#!/bin/bash",
-          "set -euo pipefail",
-          "count=0",
-          'if [ -f "$MOCK_REBUILD_COUNTER_FILE" ]; then',
-          '  read -r count <"$MOCK_REBUILD_COUNTER_FILE"',
-          "fi",
-          "count=$((count + 1))",
-          `printf '%s\\n' "$count" >"$MOCK_REBUILD_COUNTER_FILE"`,
-          'case "$MOCK_REBUILD_MODE" in',
-          "  timeout-then-success)",
-          '    if [ "$count" -eq 1 ]; then',
-          `      printf '%s\\n' 'existing sandbox inference probe exited with status 28' 'Sandbox is untouched — no data was lost.' >&2`,
-          "      exit 1",
-          "    fi",
-          "    ;;",
-          "  timeout-always)",
-          `    printf '%s\\n' 'existing sandbox inference probe exited with status 28' 'Sandbox is untouched — no data was lost.' >&2`,
-          "    exit 1",
-          "    ;;",
-          "  http-401)",
-          `    printf '%s\\n' 'existing sandbox inference probe returned HTTP 401' 'Sandbox is untouched — no data was lost.' >&2`,
-          "    exit 1",
-          "    ;;",
-          "  *)",
-          "    exit 2",
-          "    ;;",
-          "esac",
-          `printf '%s\\n' rebuilt`,
-          "",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
+  it.each(Array.from(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS, (value) => [value]))(
+    "registers executable Deep Agents check %s in execution order",
+    (scriptPath) => {
+      expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
+        "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
+        "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+        "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+        "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+        "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
+        "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+        "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+        "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
+        "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
+      ]);
 
-      writeDcodeApprovalTestDriver(
-        testDriver,
-        `CLI="$1"
-SANDBOX_NAME="deepagents-sandbox"
-NEMOCLAW_E2E_DCODE_REBUILD_RETRY_DELAY_SECONDS=0
-rebuild_named_sandbox disabled
-`,
-      );
-      const result = spawnSync("/bin/bash", [testDriver, mockCli], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          MOCK_REBUILD_COUNTER_FILE: counterFile,
-          MOCK_REBUILD_MODE: mode,
-        },
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
-
-      expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
-      expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
-      expect(
-        result.stderr.match(
-          /Retrying named sandbox rebuild once after a fail-closed inference timeout/gu,
-        ) ?? [],
-      ).toHaveLength(expectedRetryMessages);
-    } finally {
-      fs.rmSync(tempDir, { force: true, recursive: true });
-    }
-  });
-
-  it.each([
-    ["retries a transient status health failure", "failure-then-success", 0, 2, 1],
-    ["fails after the bounded status health retries", "failure-always", 1, 3, 2],
-  ] as const)("%s before checking the DCode capability", (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-status-retry-"));
-    const mockCli = path.join(tempDir, "nemoclaw");
-    const testDriver = path.join(tempDir, "assert-status-mode");
-    const counterFile = path.join(tempDir, "attempts");
-    try {
-      fs.writeFileSync(
-        mockCli,
-        [
-          "#!/bin/bash",
-          "set -euo pipefail",
-          "count=0",
-          'if [ -f "$MOCK_STATUS_COUNTER_FILE" ]; then',
-          '  read -r count <"$MOCK_STATUS_COUNTER_FILE"',
-          "fi",
-          "count=$((count + 1))",
-          `printf '%s\\n' "$count" >"$MOCK_STATUS_COUNTER_FILE"`,
-          `printf '{"name":"deepagents-sandbox","agent":"langchain-deepagents-code","dcodeAutoApprovalMode":"disabled","attempt":%s,"inferenceHealth":{"ok":false,"probed":false}}\\n' "$count"`,
-          'if [ "$MOCK_STATUS_MODE" = "failure-always" ] || { [ "$MOCK_STATUS_MODE" = "failure-then-success" ] && [ "$count" -eq 1 ]; }; then',
-          "  exit 1",
-          "fi",
-          "",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-
-      writeDcodeApprovalTestDriver(
-        testDriver,
-        `CLI="$1"
-SANDBOX_NAME="deepagents-sandbox"
-NEMOCLAW_E2E_DCODE_STATUS_RETRY_DELAY_SECONDS=0
-assert_status_mode disabled
-`,
-      );
-      const result = spawnSync("/bin/bash", [testDriver, mockCli], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          MOCK_STATUS_COUNTER_FILE: counterFile,
-          MOCK_STATUS_MODE: mode,
-        },
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
-
-      expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
-      expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
-      expect(
-        result.stderr.match(/Retrying NemoClaw status after a non-success health probe/gu) ?? [],
-      ).toHaveLength(expectedRetryMessages);
-      const expectFailureDiagnostics = expectedStatus !== 0;
-      expect(
-        result.stderr.includes("nemoclaw status failed while checking 'disabled' after 3 attempts"),
-      ).toBe(expectFailureDiagnostics);
-      expect(result.stderr.includes('"dcodeAutoApprovalMode":"disabled"')).toBe(
-        expectFailureDiagnostics,
-      );
-      expect(result.stderr.includes('"attempt":3')).toBe(expectFailureDiagnostics);
-    } finally {
-      fs.rmSync(tempDir, { force: true, recursive: true });
-    }
-  });
-
-  it("registers executable Deep Agents cloud-experimental checks in execution order", () => {
-    expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
-      "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
-      "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
-      "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
-      "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
-      "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
-      "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
-      "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
-      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
-      "test/e2e/e2e-cloud-experimental/checks/11-deepagents-code-observability.sh",
-      "test/e2e/e2e-cloud-experimental/checks/12-deepagents-code-thread-auto-approval.sh",
-    ]);
-
-    for (const scriptPath of DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS) {
       const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;
       expect(mode & 0o111, `${scriptPath} must be executable`).not.toBe(0);
-    }
-  });
+    },
+  );
 
   it("gives the destructive fresh re-onboard check its onboarding budget", () => {
     expect(

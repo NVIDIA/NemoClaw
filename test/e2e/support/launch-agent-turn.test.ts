@@ -895,22 +895,21 @@ it("does not qualify structured turns recorded before the baseline (#9160)", () 
   expect(qualification.status).toBe(1);
 });
 
-it("rejects malformed, empty, duplicated, extra, out-of-order, or cross-session records (#9160)", () => {
-  const cases: SessionRecords[] = [
-    { "session-a": [message("assistant"), message("user")] },
-    { "session-a": [message("user"), message("user"), message("assistant")] },
-    { "session-a": [message("user"), message("assistant"), message("assistant")] },
-    { "session-a": [message("user"), "not-json", message("assistant")] },
-    { "session-a": [emptyMessage("user"), message("assistant")] },
-    { "session-a": [message("user"), message("assistant")], "session-b": [message("user")] },
-  ];
-
-  for (const after of cases) {
+it.each([
+  { "session-a": [message("assistant"), message("user")] },
+  { "session-a": [message("user"), message("user"), message("assistant")] },
+  { "session-a": [message("user"), message("assistant"), message("assistant")] },
+  { "session-a": [message("user"), "not-json", message("assistant")] },
+  { "session-a": [emptyMessage("user"), message("assistant")] },
+  { "session-a": [message("user"), message("assistant")], "session-b": [message("user")] },
+] as SessionRecords[])(
+  "rejects malformed, empty, duplicated, extra, out-of-order, or cross-session records [case %#] (#9160)",
+  (after) => {
     const { baseline, qualification } = runEvidenceFixture({ after, expectedTurns: 1 });
     expect(baseline.status).toBe(0);
     expect(qualification.status).toBe(2);
-  }
-});
+  },
+);
 
 it("rejects an unterminated appended session record (#9160)", () => {
   const { baseline, qualification } = runEvidenceFixture({
@@ -931,16 +930,18 @@ it("rejects an unterminated appended session record (#9160)", () => {
   expect(qualification.status).toBe(2);
 });
 
-it("rejects an invalid baseline or a removed, rewritten, or truncated session (#9160)", () => {
-  for (const mutation of ["invalid", "removed", "rewritten", "truncated"] as const) {
+it.each(["invalid", "removed", "rewritten", "truncated"] as const)(
+  "rejects an invalid baseline or a removed, rewritten, or truncated session [case %#] (#9160)",
+  (mutation) => {
     const { baseline, qualification } = runBaselineMutationFixture(mutation);
     expect(baseline.status).toBe(0);
     expect(qualification.status).toBe(2);
-  }
-});
+  },
+);
 
-it("intercepts one OpenClaw launch, preserves pass-through argv, and strips launch authority from filtered and inherited environments (#9160)", () => {
-  for (const gatewayArgs of [[], ["-g", "fixture-gateway"]]) {
+it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as const))(
+  "intercepts one OpenClaw launch, preserves pass-through argv, and strips launch authority from filtered and inherited environments [case %#] (#9160)",
+  (gatewayArgs) => {
     const fixture = runOpenShellShimFixture(gatewayArgs);
     const separator = fixture.exactArgv.indexOf("--");
     const expectedRemote = fixture.exactArgv.slice(separator + 1);
@@ -1395,19 +1396,20 @@ it.runIf(process.platform === "linux")(
   },
 );
 
-it("passes an absolute host temporary root for empty, relative, or absolute TMPDIR input (#9160)", async () => {
-  const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-  const roots: Array<string | undefined> = [];
-  const host = {
-    command: async (_command: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-      roots.push(options?.env?.NEMOCLAW_LAUNCH_HOST_TMP_ROOT);
-      return { exitCode: 0, signal: null, stdout: "", stderr: "" };
-    },
-    openshellCommandPath: "/usr/bin/openshell",
-  };
+it.each(["", "relative-tmp", "/tmp/absolute-tmp"])(
+  "passes an absolute host temporary root for empty, relative, or absolute TMPDIR input [%s] (#9160)",
+  async (root) => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const roots: Array<string | undefined> = [];
+    const host = {
+      command: async (_command: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        roots.push(options?.env?.NEMOCLAW_LAUNCH_HOST_TMP_ROOT);
+        return { exitCode: 0, signal: null, stdout: "", stderr: "" };
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
 
-  try {
-    for (const root of ["", "relative-tmp", "/tmp/absolute-tmp"]) {
+    try {
       await runOpenClawLaunchSession({
         artifactName: "host-temporary-root",
         cliCommand: "node",
@@ -1416,13 +1418,13 @@ it("passes an absolute host temporary root for empty, relative, or absolute TMPD
         redactionValues: [],
         sandboxName: "alpha",
       });
-    }
 
-    expect(roots).toEqual([resolve("/tmp"), resolve("relative-tmp"), "/tmp/absolute-tmp"]);
-  } finally {
-    platform.mockRestore();
-  }
-});
+      expect(roots).toEqual([root === "" ? resolve("/tmp") : resolve(root)]);
+    } finally {
+      platform.mockRestore();
+    }
+  },
+);
 
 it.runIf(process.platform === "linux")(
   "runs the producer then two PTY launch sessions under one lease (#8942, #9023, #9160)",
@@ -1470,7 +1472,7 @@ it.runIf(process.platform === "linux")(
       "/usr/bin/openshell",
       "/usr/bin/openshell",
     ]);
-    for (const call of calls.slice(1)) {
+    calls.slice(1).forEach((call) => {
       expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_EXPECTED_REPLY");
       expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT");
       expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_PROMPT");
@@ -1490,6 +1492,6 @@ it.runIf(process.platform === "linux")(
         OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
       );
       expect(call.env?.NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT).toBe(OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT);
-    }
+    });
   },
 );

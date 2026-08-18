@@ -8,6 +8,7 @@ import {
   createNvidiaFeaturedModelPromptOptionsLoader,
   type NvidiaFeaturedModelOptions,
 } from "../inference/nvidia-featured-models";
+import { BACK_TO_SELECTION } from "../navigation";
 
 export type NvidiaFeaturedModelSession = {
   select: (
@@ -56,4 +57,21 @@ export function createNvidiaFeaturedModelSession(
       });
     },
   };
+}
+
+/**
+ * Select a featured model only when the credential prompt did not ask to leave. `back` at the
+ * API key prompt must return to provider selection instead of loading the catalog (#9404).
+ */
+export async function selectFeaturedModelAfterCredentialPrompt(
+  session: NvidiaFeaturedModelSession,
+  credentialNavigation: unknown,
+  shouldReturnToProviderSelection: (result: unknown) => boolean,
+  requestedModel: string | null,
+  recoveredModel: string | null,
+  nonInteractive: boolean,
+  envModel?: string,
+): Promise<ModelPromptResult> {
+  if (shouldReturnToProviderSelection(credentialNavigation)) return BACK_TO_SELECTION;
+  return session.select(requestedModel, recoveredModel, nonInteractive, envModel);
 }

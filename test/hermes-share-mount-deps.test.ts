@@ -429,9 +429,9 @@ describe("Hermes share mount package parity (#2947)", () => {
       const { cachePaths, result } = runHermesInstallLayer(command, tmp);
 
       expect(result.status, result.stderr).toBe(0);
-      for (const cachePath of cachePaths) {
+      cachePaths.forEach((cachePath) => {
         expect(() => fs.lstatSync(cachePath)).toThrow();
-      }
+      });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -452,6 +452,7 @@ describe("Hermes share mount package parity (#2947)", () => {
       for (const file of [agentBrowser, python, tuiEntry, webIndex]) {
         fs.mkdirSync(path.dirname(file), { recursive: true });
       }
+
       fs.writeFileSync(fakeHermes, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
       fs.writeFileSync(agentBrowser, "#!/bin/sh\nprintf 'agent-browser test\\n'\n", {
         mode: 0o700,

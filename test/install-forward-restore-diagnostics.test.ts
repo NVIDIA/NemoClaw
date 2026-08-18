@@ -139,9 +139,7 @@ exit 0
       expect(result.status).toBe(1);
       expect(result.stdout).toContain(`Could not restore Hermes host forward on port ${PORT}.`);
       expect(result.stdout).toContain("OpenShell reported:");
-      for (const line of LISTENER_FAILURE) {
-        expect(result.stdout).toContain(line);
-      }
+      expect(LISTENER_FAILURE.every((line) => result.stdout.includes(line))).toBe(true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -278,43 +276,43 @@ exit 0
 });
 
 describe("Hermes host forward watcher", () => {
-  it.each([
-    "running",
-    "active",
-  ])("does not replace a forward that OpenShell lists as %s when the health check fails (#8884)", (status) => {
-    const { root, binDir, openshell, watcherScript } = watcherScriptForListing(
-      `nemohermes-watcher-${status}-`,
-      `  echo "${SANDBOX} 127.0.0.1 ${PORT} 123 ${status}"`,
-    );
-    try {
-      const calls = runWatcherTick(watcherScript, binDir, openshell);
+  it.each(["running", "active"])(
+    "does not replace a forward that OpenShell lists as %s when the health check fails (#8884)",
+    (status) => {
+      const { root, binDir, openshell, watcherScript } = watcherScriptForListing(
+        `nemohermes-watcher-${status}-`,
+        `  echo "${SANDBOX} 127.0.0.1 ${PORT} 123 ${status}"`,
+      );
+      try {
+        const calls = runWatcherTick(watcherScript, binDir, openshell);
 
-      expect(calls).toContain("forward list");
-      expect(calls).not.toContain(`forward stop ${PORT} ${SANDBOX}`);
-      expect(calls).not.toContain(`forward start --background ${PORT} ${SANDBOX}`);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        expect(calls).toContain("forward list");
+        expect(calls).not.toContain(`forward stop ${PORT} ${SANDBOX}`);
+        expect(calls).not.toContain(`forward start --background ${PORT} ${SANDBOX}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
-  it.each([
-    "running",
-    "active",
-  ])("does not replace a forward that OpenShell colorizes as %s (#8884)", (status) => {
-    const { root, binDir, openshell, watcherScript } = watcherScriptForListing(
-      `nemohermes-watcher-color-${status}-`,
-      `  printf '${SANDBOX} 127.0.0.1 ${PORT} 123 \\033[32m${status}\\033[0m\\n'`,
-    );
-    try {
-      const calls = runWatcherTick(watcherScript, binDir, openshell);
+  it.each(["running", "active"])(
+    "does not replace a forward that OpenShell colorizes as %s (#8884)",
+    (status) => {
+      const { root, binDir, openshell, watcherScript } = watcherScriptForListing(
+        `nemohermes-watcher-color-${status}-`,
+        `  printf '${SANDBOX} 127.0.0.1 ${PORT} 123 \\033[32m${status}\\033[0m\\n'`,
+      );
+      try {
+        const calls = runWatcherTick(watcherScript, binDir, openshell);
 
-      expect(calls).toContain("forward list");
-      expect(calls).not.toContain(`forward stop ${PORT} ${SANDBOX}`);
-      expect(calls).not.toContain(`forward start --background ${PORT} ${SANDBOX}`);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        expect(calls).toContain("forward list");
+        expect(calls).not.toContain(`forward stop ${PORT} ${SANDBOX}`);
+        expect(calls).not.toContain(`forward start --background ${PORT} ${SANDBOX}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("does not change a forward when OpenShell cannot list forwards (#8884)", () => {
     const { root, binDir, openshell, watcherScript } = watcherScriptForListing(

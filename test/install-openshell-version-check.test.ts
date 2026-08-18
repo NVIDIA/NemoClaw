@@ -38,6 +38,11 @@ const OPENSHELL_REWRITE_FEATURE_MARKERS =
 const OPENSHELL_MCP_FEATURE_MARKER = "allow_all_known_mcp_methods";
 const OPENSHELL_FEATURE_MARKERS = `${OPENSHELL_REWRITE_FEATURE_MARKERS} ${OPENSHELL_MCP_FEATURE_MARKER}`;
 type OpenShellFeaturePlacement = "openshell" | "gateway" | "split-mcp-gateway" | "none";
+const BREW_OUTCOMES = [
+  ["0", "0", "reinstall", 0],
+  ["1", "1", "install", 1],
+  ["0", "1", "reinstall", 1],
+] as const;
 
 function trustedFormulaBoundaryEvents(operation: string): string[] {
   return [
@@ -740,11 +745,7 @@ exit 1`,
       const stagedFormula = fs.readFileSync(path.join(tapRepo, "Formula", "openshell.rb"), "utf-8");
       expect(stagedFormula).toContain("entitlements.write <<~XML");
 
-      for (const [listStatus, actionStatus, action, expectedStatus] of [
-        ["0", "0", "reinstall", 0],
-        ["1", "1", "install", 1],
-        ["0", "1", "reinstall", 1],
-      ] as const) {
+      for (const [listStatus, actionStatus, action, expectedStatus] of BREW_OUTCOMES) {
         fs.writeFileSync(brewLog, "");
         fs.writeFileSync(untrustCount, "0");
         const attempt = runStable({

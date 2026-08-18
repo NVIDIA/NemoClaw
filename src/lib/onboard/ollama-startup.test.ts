@@ -135,11 +135,11 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
       ["", false],
       [undefined, false],
     ];
-    for (const [value, expected] of cases) {
+    cases.forEach(([value, expected]) => {
       if (value === undefined) delete process.env.NEMOCLAW_PROVIDER;
       else process.env.NEMOCLAW_PROVIDER = value;
       expect(isOllamaProviderPinned(), `pin=${JSON.stringify(value)}`).toBe(expected);
-    }
+    });
     restore();
   });
 

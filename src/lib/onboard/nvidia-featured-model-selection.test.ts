@@ -5,7 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { promptCloudModel } from "../inference/model-prompts";
 import { BACK_TO_SELECTION } from "../navigation";
-import { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+import { shouldReturnToProviderSelection } from "./credential-navigation";
+import {
+  createNvidiaFeaturedModelSession,
+  type NvidiaFeaturedModelSession,
+  selectFeaturedModelAfterCredentialPrompt,
+} from "./nvidia-featured-model-selection";
 
 vi.mock("../inference/model-prompts", () => ({
   promptCloudModel: vi.fn(),
@@ -98,5 +103,52 @@ describe("NVIDIA featured model selection", () => {
     await expect(session.select(null, null, true, " environment/model ")).resolves.toBe(
       "environment/model",
     );
+  });
+
+  it("skips the catalog when the NVIDIA API key prompt asks to go back (#9404)", async () => {
+    const select = vi.fn().mockResolvedValue("nvidia/selected-model");
+    const session = { select } as unknown as NvidiaFeaturedModelSession;
+    const exitOnboard = vi.fn(() => {
+      throw new Error("exit onboarding");
+    }) as unknown as () => never;
+    const shouldReturn = (result: unknown) => shouldReturnToProviderSelection(result, exitOnboard);
+
+    await expect(
+      selectFeaturedModelAfterCredentialPrompt(
+        session,
+        { kind: "back" },
+        shouldReturn,
+        null,
+        null,
+        false,
+      ),
+    ).resolves.toBe(BACK_TO_SELECTION);
+    expect(select).not.toHaveBeenCalled();
+    expect(exitOnboard).not.toHaveBeenCalled();
+
+    await expect(
+      selectFeaturedModelAfterCredentialPrompt(
+        session,
+        { kind: "credential", value: "nvapi-good" },
+        shouldReturn,
+        null,
+        null,
+        true,
+        "env/model",
+      ),
+    ).resolves.toBe("nvidia/selected-model");
+    expect(select).toHaveBeenCalledWith(null, null, true, "env/model");
+
+    await expect(
+      selectFeaturedModelAfterCredentialPrompt(
+        session,
+        { kind: "exit" },
+        shouldReturn,
+        null,
+        null,
+        false,
+      ),
+    ).rejects.toThrow("exit onboarding");
+    expect(select).toHaveBeenCalledTimes(1);
   });
 });

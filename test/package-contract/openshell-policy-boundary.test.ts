@@ -25,8 +25,9 @@ function packageFiles(packageRoot: string): string[] {
 }
 
 describe("OpenShell policy boundary package contract", () => {
-  it("pins the YAML parser used by both production package boundaries", () => {
-    for (const packageRoot of [repoRoot, path.join(repoRoot, "nemoclaw")]) {
+  it.each([repoRoot, path.join(repoRoot, "nemoclaw")])(
+    "pins the YAML parser used by both production package boundaries [case %#]",
+    (packageRoot) => {
       const dependencyVersion = JSON.parse(
         execFileSync("npm", ["pkg", "get", "dependencies.yaml"], {
           cwd: packageRoot,
@@ -35,8 +36,8 @@ describe("OpenShell policy boundary package contract", () => {
       ) as string;
 
       expect(dependencyVersion).toBe("2.8.3");
-    }
-  });
+    },
+  );
 
   it("routes the CommonJS CLI and ESM plugin through one canonical CJS boundary", async () => {
     const cliPolicy = require("../../dist/lib/policy/merge.js") as {
@@ -180,16 +181,17 @@ describe("OpenShell policy boundary package contract", () => {
     ).toBe(false);
   });
 
-  it("ships the Hermes host broker with its canonical sandbox-name boundary", () => {
+  it.each(
+    [
+        "managed-tool-gateway-matrix.json",
+        "runtime-refresh-credentials.ts",
+        "tool-gateway-broker.ts",
+        "tool-gateway-control-contract.ts",
+      ],
+  )("ships the Hermes host broker with its canonical sandbox-name boundary [%s]", (file) => {
     expect(packageFiles(repoRoot)).toContain("agents/hermes/host/");
-    for (const file of [
-      "managed-tool-gateway-matrix.json",
-      "runtime-refresh-credentials.ts",
-      "tool-gateway-broker.ts",
-      "tool-gateway-control-contract.ts",
-    ]) {
-      expect(fs.existsSync(path.join(repoRoot, "agents", "hermes", "host", file))).toBe(true);
-    }
+
+    expect(fs.existsSync(path.join(repoRoot, "agents", "hermes", "host", file))).toBe(true);
 
     const controlContractPath = path.join(
       repoRoot,

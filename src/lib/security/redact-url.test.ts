@@ -94,12 +94,15 @@ describe("URL redaction", () => {
       "https://fallback-user:fallback-pass@[not-an-ip/path",
       "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz%ZZ",
     ],
-  ])("redacts a standalone encoded fragment secret with malformed escapes in a %s URL", (_label, baseUrl, fragment) => {
-    const result = redact(`${baseUrl}#${fragment}`);
+  ])(
+    "redacts a standalone encoded fragment secret with malformed escapes in a %s URL",
+    (_label, baseUrl, fragment) => {
+      const result = redact(`${baseUrl}#${fragment}`);
 
-    expect(result).not.toContain("sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz");
-    expect(result).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
-  });
+      expect(result).not.toContain("sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz");
+      expect(result).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
+    },
+  );
 
   it.each([
     ["parsed", "https://endpoint.example/path"],
@@ -148,15 +151,15 @@ describe("URL redaction", () => {
     expect(persistedResult).not.toContain(encodedSecret);
   });
 
-  it.each([
-    "file:///tmp/provider.json",
-    "custom+agent://runtime.example/session",
-  ])("redacts query secrets for the non-network URI %s", (baseUrl) => {
-    const value = `${baseUrl}?model=nvapi-abcdefghijklmnopqrstuvwxyz&keep=yes`;
+  it.each(["file:///tmp/provider.json", "custom+agent://runtime.example/session"])(
+    "redacts query secrets for the non-network URI %s",
+    (baseUrl) => {
+      const value = `${baseUrl}?model=nvapi-abcdefghijklmnopqrstuvwxyz&keep=yes`;
 
-    expect(redact(value)).toContain("model=****&keep=yes");
-    expect(redactUrl(value)).toContain("model=%3CREDACTED%3E&keep=yes");
-  });
+      expect(redact(value)).toContain("model=****&keep=yes");
+      expect(redactUrl(value)).toContain("model=%3CREDACTED%3E&keep=yes");
+    },
+  );
 
   it("preserves a credentialed IPv6 host while redacting its userinfo", () => {
     const result = redact("proxy https://ipv6-user:ipv6-password@[::1]:8443/path failed");
@@ -210,23 +213,19 @@ describe("URL redaction", () => {
     expect(result).toBe("ftp://files.example/path?token=%3CREDACTED%3E");
   });
 
-  it.each([
-    "api_key",
-    "apiKey",
-    "password",
-    "secret",
-    "authorization",
-    "credential",
-  ])("redacts opaque query values under credential key %s", (key) => {
-    const value = `https://endpoint.example/api?${key}=opaque-value`;
-    const result = redactUrl(value);
-    const logResult = redact(`endpoint failed: ${value}`);
+  it.each(["api_key", "apiKey", "password", "secret", "authorization", "credential"])(
+    "redacts opaque query values under credential key %s",
+    (key) => {
+      const value = `https://endpoint.example/api?${key}=opaque-value`;
+      const result = redactUrl(value);
+      const logResult = redact(`endpoint failed: ${value}`);
 
-    expect(result).not.toBeNull();
-    expect(new URL(result as string).searchParams.get(key)).toBe("<REDACTED>");
-    expect(logResult).toContain(`${key}=****`);
-    expect(logResult).not.toContain("opaque-value");
-  });
+      expect(result).not.toBeNull();
+      expect(new URL(result as string).searchParams.get(key)).toBe("<REDACTED>");
+      expect(logResult).toContain(`${key}=****`);
+      expect(logResult).not.toContain("opaque-value");
+    },
+  );
 
   it("redacts encoded and repeated token-shaped query values under benign names", () => {
     const secrets = {
@@ -247,7 +246,8 @@ describe("URL redaction", () => {
     );
 
     expect(result).not.toBeNull();
-    const parsed = new URL(result as string);
+    const redactedResult = result as string;
+    const parsed = new URL(redactedResult);
     expect(parsed.username).toBe("");
     expect(parsed.password).toBe("");
     expect(parsed.hash).toBe("");
@@ -265,9 +265,7 @@ describe("URL redaction", () => {
     expect(logResult).toContain("model=****&keep=yes");
     expect(logResult).not.toContain(encodedOpenAi);
     expect(logResult).not.toContain(secrets.openai);
-    for (const secret of Object.values(secrets)) {
-      expect(result).not.toContain(secret);
-    }
+    expect(Object.values(secrets).every((secret) => !redactedResult.includes(secret))).toBe(true);
   });
 
   it.each([

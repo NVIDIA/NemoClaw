@@ -558,9 +558,9 @@ describe("portable resume command lock boundary", () => {
       expect(fs.existsSync(retirement.portableHostFencePath(tempHome))).toBe(false);
     } finally {
       mkdtemp.mockRestore();
-      for (const directory of createdDirectories.reverse()) {
+      createdDirectories.reverse().forEach((directory) => {
         fs.rmSync(directory, { recursive: true, force: true });
-      }
+      });
     }
   }, 30_000);
 });

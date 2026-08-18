@@ -575,21 +575,17 @@ describe("onboard Model Router setup", () => {
     });
   });
 
-  it("does not classify uncertain pool shapes as NVIDIA-only (#8962)", () => {
-    const uncertainPools = [
-      null,
-      "not: [valid",
-      "routing: {}\n",
-      "models: []\n",
-      'models:\n  - litellm_model: "openai/gpt-test"\n',
-      'models:\n  - api_base: ""\n',
-      'models:\n  - api_base: "not-a-url"\n',
-      'models:\n  - api_base: "http://integrate.api.nvidia.com/v1"\n',
-    ];
-
-    for (const pool of uncertainPools) {
-      assert.equal(poolTargetsOnlyNvidiaEndpoints(pool), false, String(pool));
-    }
+  it.each([
+    null,
+    "not: [valid",
+    "routing: {}\n",
+    "models: []\n",
+    'models:\n  - litellm_model: "openai/gpt-test"\n',
+    'models:\n  - api_base: ""\n',
+    'models:\n  - api_base: "not-a-url"\n',
+    'models:\n  - api_base: "http://integrate.api.nvidia.com/v1"\n',
+  ])("does not classify uncertain pool shapes as NVIDIA-only [%s] (#8962)", (pool) => {
+    assert.equal(poolTargetsOnlyNvidiaEndpoints(pool), false, String(pool));
   });
 
   it("classifies the shipped NVIDIA pool as NVIDIA-only (#8962)", () => {
@@ -811,21 +807,26 @@ describe("onboard Model Router setup", () => {
     );
   });
 
-  it("keeps an ambient OPENAI_API_KEY for non-NVIDIA and unproven pools (#8962)", async () => {
-    const pid = 12_345;
-    let spawnedEnv: Record<string, string> | null = null;
-    const pools = [
+  it.each(
+    Array.from(
       [
-        "models:",
-        "  - name: custom-openai",
-        '    litellm_model: "openai/gpt-test"',
-        '    api_base: "https://api.openai.com/v1"',
-        "",
-      ].join("\n"),
-      'models:\n  - litellm_model: "openai/gpt-test"\n',
-    ];
+        [
+          "models:",
+          "  - name: custom-openai",
+          '    litellm_model: "openai/gpt-test"',
+          '    api_base: "https://api.openai.com/v1"',
+          "",
+        ].join("\n"),
+        'models:\n  - litellm_model: "openai/gpt-test"\n',
+      ],
+      (value) => [value],
+    ),
+  )(
+    "keeps an ambient OPENAI_API_KEY for non-NVIDIA and unproven pools [case %#] (#8962)",
+    async (pool) => {
+      const pid = 12_345;
+      let spawnedEnv: Record<string, string> | null = null;
 
-    for (const pool of pools) {
       let healthProbe = 0;
       await startModelRouter(
         {
@@ -867,8 +868,8 @@ describe("onboard Model Router setup", () => {
         ROUTER_API_KEY: "router-secret",
         OPENAI_API_KEY: "operator-openai",
       });
-    }
-  });
+    },
+  );
 
   it("preserves routed credential fallback for an unproven pool (#8962)", async () => {
     const pid = 12_345;
@@ -897,8 +898,7 @@ describe("onboard Model Router setup", () => {
           };
         },
         readPoolConfig: () => 'models:\n  - litellm_model: "openai/gpt-test"\n',
-        resolveProviderCredential: (name) =>
-          name === "ROUTER_API_KEY" ? "router-secret" : null,
+        resolveProviderCredential: (name) => (name === "ROUTER_API_KEY" ? "router-secret" : null),
         buildSubprocessEnv: (extra) => ({ ...extra }),
         isRouterHealthy: async () => {
           healthProbe += 1;
@@ -1029,37 +1029,40 @@ describe("onboard Model Router setup", () => {
     ["gateways", [".nemoclaw", "gateways"]],
     ["selected port", [".nemoclaw", "gateways", "9123"]],
     ["state", [".nemoclaw", "gateways", "9123", "state"]],
-  ] as const)("rejects a symlinked %s path before generating router config", async (_label, parts) => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-symlink-"));
-    tempDirs.add(tmpDir);
-    const homeDir = path.join(tmpDir, "home");
-    const controlled = path.join(tmpDir, "controlled");
-    const symlinkPath = path.join(homeDir, ...parts);
-    fs.mkdirSync(path.dirname(symlinkPath), { recursive: true });
-    fs.mkdirSync(controlled);
-    fs.symlinkSync(controlled, symlinkPath, "dir");
-    vi.stubEnv("HOME", homeDir);
-    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
-    vi.resetModules();
-    const freshModelRouter = await import("../src/lib/onboard/model-router");
-    const runProxyConfig = vi.fn(() => ({ status: 0 }));
+  ] as const)(
+    "rejects a symlinked %s path before generating router config",
+    async (_label, parts) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-symlink-"));
+      tempDirs.add(tmpDir);
+      const homeDir = path.join(tmpDir, "home");
+      const controlled = path.join(tmpDir, "controlled");
+      const symlinkPath = path.join(homeDir, ...parts);
+      fs.mkdirSync(path.dirname(symlinkPath), { recursive: true });
+      fs.mkdirSync(controlled);
+      fs.symlinkSync(controlled, symlinkPath, "dir");
+      vi.stubEnv("HOME", homeDir);
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+      vi.resetModules();
+      const freshModelRouter = await import("../src/lib/onboard/model-router");
+      const runProxyConfig = vi.fn(() => ({ status: 0 }));
 
-    await assert.rejects(
-      freshModelRouter.startModelRouter(
-        { port: 45_680, pool_config_path: "router/test-pool.yaml" },
-        {
-          rootDir: path.join(tmpDir, "repo"),
-          homeDir,
-          ensureModelRouterCommand: () => "/test/model-router",
-          runProxyConfig,
-        },
-      ),
-      /symbolic link/i,
-    );
+      await assert.rejects(
+        freshModelRouter.startModelRouter(
+          { port: 45_680, pool_config_path: "router/test-pool.yaml" },
+          {
+            rootDir: path.join(tmpDir, "repo"),
+            homeDir,
+            ensureModelRouterCommand: () => "/test/model-router",
+            runProxyConfig,
+          },
+        ),
+        /symbolic link/i,
+      );
 
-    assert.equal(runProxyConfig.mock.calls.length, 0);
-    assert.deepEqual(fs.readdirSync(controlled), []);
-  });
+      assert.equal(runProxyConfig.mock.calls.length, 0);
+      assert.deepEqual(fs.readdirSync(controlled), []);
+    },
+  );
 
   it("revalidates the state directory after creation before generating router config", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-race-"));

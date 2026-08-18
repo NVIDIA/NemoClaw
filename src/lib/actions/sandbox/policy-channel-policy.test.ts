@@ -46,6 +46,7 @@ let exitSpy: MockInstance;
 let promptMock: MockInstance;
 let getSandboxMock: MockInstance;
 let getAppliedPresetsMock: MockInstance;
+let getGatewayPresetsMock: MockInstance;
 let selectFromListMock: MockInstance;
 let selectForRemovalMock: MockInstance;
 let loadPresetForSandboxMock: MockInstance;
@@ -108,6 +109,7 @@ beforeEach(() => {
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
   vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
   getAppliedPresetsMock = vi.spyOn(policies, "getAppliedPresets").mockReturnValue([]);
+  getGatewayPresetsMock = vi.spyOn(policies, "getGatewayPresets").mockReturnValue(null);
   selectFromListMock = vi.spyOn(policies, "selectFromList").mockResolvedValue("pypi");
   selectForRemovalMock = vi.spyOn(policies, "selectForRemoval").mockResolvedValue("pypi");
   vi.spyOn(policies, "loadPreset").mockImplementation((name: unknown) => {
@@ -419,5 +421,60 @@ describe("removeSandboxPolicy", () => {
 
     expect(printedText()).toContain("No input available on stdin");
     expect(removePresetMock).not.toHaveBeenCalled();
+  });
+
+  it("removes a preset the gateway enforces but the registry never recorded (#9295)", async () => {
+    getAppliedPresetsMock.mockReturnValue([]);
+    getGatewayPresetsMock.mockReturnValue(["npm"]);
+
+    await removeSandboxPolicy("test-sandbox", { preset: "npm", yes: true });
+
+    expect(removePresetMock).toHaveBeenCalledWith("test-sandbox", "npm");
+  });
+
+  it("refuses a preset neither the registry nor the gateway holds (#9295)", async () => {
+    getAppliedPresetsMock.mockReturnValue([]);
+    getGatewayPresetsMock.mockReturnValue(["pypi"]);
+
+    await expect(
+      captureExit(() => removeSandboxPolicy("test-sandbox", { preset: "npm", yes: true })),
+    ).resolves.toBe(1);
+
+    expect(printedText()).toContain("Preset 'npm' is not applied.");
+    expect(removePresetMock).not.toHaveBeenCalled();
+  });
+
+  it("names the unreachable gateway when it refuses on local state alone (#9295)", async () => {
+    getAppliedPresetsMock.mockReturnValue([]);
+    getGatewayPresetsMock.mockReturnValue(null);
+
+    await expect(
+      captureExit(() => removeSandboxPolicy("test-sandbox", { preset: "npm", yes: true })),
+    ).resolves.toBe(1);
+
+    expect(printedText()).toContain(
+      "Could not query the gateway, so only local state was checked.",
+    );
+    expect(removePresetMock).not.toHaveBeenCalled();
+  });
+
+  it("offers a gateway-only preset in the removal picker (#9295)", async () => {
+    getGatewayPresetsMock.mockReturnValue(["npm"]);
+
+    await removeSandboxPolicy("test-sandbox");
+
+    expect(selectForRemovalMock).toHaveBeenCalledWith(POLICY_PRESETS, {
+      applied: ["pypi", "npm"],
+    });
+  });
+
+  it("lists a preset both sources hold only once in the removal picker (#9295)", async () => {
+    getGatewayPresetsMock.mockReturnValue(["pypi", "npm"]);
+
+    await removeSandboxPolicy("test-sandbox");
+
+    expect(selectForRemovalMock).toHaveBeenCalledWith(POLICY_PRESETS, {
+      applied: ["pypi", "npm"],
+    });
   });
 });

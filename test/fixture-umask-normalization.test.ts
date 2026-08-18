@@ -175,15 +175,15 @@ it("derives npm test projects and keeps omitted live projects off the fixture um
       namedVitestProjects().map((test) => [test.name, test.setupFiles ?? []]),
     );
     const selectedProjectNames = new Set(selectedProjects);
-    for (const name of selectedProjects) {
+    selectedProjects.forEach((name) => {
       const setupFiles = setupFilesByName.get(name);
       expect(setupFiles, name).toContain(FIXTURE_UMASK_SETUP);
       expect(setupFiles?.indexOf(FIXTURE_UMASK_SETUP), name).toBe(0);
-    }
-    for (const test of namedVitestProjects().filter(
-      (project) => !selectedProjectNames.has(project.name),
+    });
+    for (const project of namedVitestProjects().filter(
+      ({ name }) => !selectedProjectNames.has(name),
     )) {
-      expect(test.setupFiles ?? [], test.name).not.toContain(FIXTURE_UMASK_SETUP);
+      expect(project.setupFiles ?? [], project.name).not.toContain(FIXTURE_UMASK_SETUP);
     }
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });

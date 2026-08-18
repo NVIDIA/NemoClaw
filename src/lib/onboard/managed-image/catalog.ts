@@ -572,11 +572,7 @@ export async function resolveManagedImageContractFromGhcr(options: {
 
 export async function resolveManagedImageCatalogFromGhcr(options: {
   readonly release: string;
-  /**
-   * Optional immutable source revision used by live qualification runs. The
-   * resolved OpenClaw image must carry this exact revision label; its cohort
-   * then remains authoritative for the other shipped agents.
-   */
+  /** Immutable source revision selected by a live qualification run. */
   readonly revision?: string;
   readonly platform?: ManagedImagePlatform;
   readonly nodeArchitecture?: string;

@@ -313,12 +313,12 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
   });
 
   let capturedFiles = 0;
-  for (const file of WORKSPACE_FILES) {
+  WORKSPACE_FILES.forEach((file) => {
     const expected = `${markerContent}_${file}`;
     if (hostFileContains(path.join(createdBackupDir!, file), expected)) {
       capturedFiles += 1;
     }
-  }
+  });
   expect(
     capturedFiles,
     `TC-STATE-01: BackupCaptureFiles — expected all 5 markdown files in host backup ${createdBackupDir}`,

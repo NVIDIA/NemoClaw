@@ -820,6 +820,7 @@ esac
           `${JSON.stringify(manifest)}\n`,
         );
       }
+
       fs.writeFileSync(path.join(root, "package-lock.json"), `${JSON.stringify(lock)}\n`);
 
       normalizeOpenClawSignatureAlias(root);

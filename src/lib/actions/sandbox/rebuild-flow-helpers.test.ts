@@ -313,7 +313,9 @@ describe("rebuild agent base image preflight", () => {
         trustedLocalOverride: { ref: rebuildRef, provenance },
       });
     } finally {
-      for (const mock of Object.values(mocks)) mock.mockRestore();
+      Object.values(mocks).forEach((mock) => {
+        mock.mockRestore();
+      });
     }
   });
 

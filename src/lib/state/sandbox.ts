@@ -50,7 +50,10 @@ import {
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
-import { sanitizeSnapshotDirectory } from "../security/snapshot-sanitizer.js";
+import {
+  SnapshotSanitizerPrerequisiteError,
+  sanitizeSnapshotDirectory,
+} from "../security/snapshot-sanitizer.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -752,21 +755,42 @@ export function sanitizeBackupDirectory(
   try {
     operations.sanitizeDirectory(dirPath);
   } catch (error) {
+    // sanitizeBackupDirectory replaces the message, so an unmet prerequisite
+    // would otherwise survive only as `cause` and never reach the operator. (#8202)
+    const prerequisite =
+      error instanceof SnapshotSanitizerPrerequisiteError ? `${error.message}. ` : "";
+    const validatedSnapshotPath =
+      error instanceof SnapshotSanitizerPrerequisiteError ? error.snapshotPath : null;
     try {
       operations.removeBackup(dirPath);
     } catch (cleanupError) {
-      throw new Error("Credential sanitization failed and backup cleanup failed", {
-        cause: cleanupError,
-      });
+      const retainedPath =
+        validatedSnapshotPath === null
+          ? ""
+          : `; the incomplete backup may remain at ${validatedSnapshotPath}`;
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and backup cleanup failed${retainedPath}`,
+        {
+          cause: new AggregateError(
+            [error, cleanupError],
+            "Snapshot sanitization and backup cleanup both failed",
+          ),
+        },
+      );
     }
     if (operations.backupExists(dirPath)) {
-      throw new Error("Credential sanitization failed and the incomplete backup remains", {
-        cause: error,
-      });
+      const retainedPath = validatedSnapshotPath === null ? "" : ` at ${validatedSnapshotPath}`;
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and the incomplete backup remains${retainedPath}`,
+        { cause: error },
+      );
     }
-    throw new Error("Credential sanitization failed; removed the incomplete backup", {
-      cause: error,
-    });
+    throw new Error(
+      `${prerequisite}Credential sanitization failed; removed the incomplete backup`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 
@@ -1483,9 +1507,20 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       if (existingDirs.length === 0) {
         _log("No state dirs found in sandbox (all empty)");
       } else {
-        // NC-2227-04: Pre-backup audit — reject symlinks, hardlinks, and special
-        // files inside state dirs. A compromised agent could plant a symlink like
+        // NC-2227-04: Pre-backup audit — reject symlinks and special files
+        // inside state dirs. A compromised agent could plant a symlink like
         // workspace/copy -> ../openclaw.json to exfiltrate config via backup.
+        //
+        // Multiply-linked regular files are collected for observability but do
+        // not reject the backup (#9314). The archive command below uses
+        // `--hard-dereference`, so every included path is stored and restored
+        // as a plain regular file. It offers no exfiltration path the audit
+        // could close, because an agent that can create a hard link inside a
+        // state dir can equally `cp` the same bytes there, and a copy is an
+        // ordinary regular file this audit never sees. Rejecting hard links
+        // only broke legitimate installs: package managers hard-link from
+        // their cache, so every Hermes sandbox that lazily installed a
+        // dependency failed its pre-upgrade backup.
         //
         // The printf format emits "<type>\t<absPath>\t<linkTarget>" — %l is
         // empty for non-symlinks but always present, so the field count is
@@ -1531,6 +1566,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         if (auditOutput.length > 0) {
           const allEntries = auditOutput.split("\n").filter((l) => l.length > 0);
           const whitelisted: string[] = [];
+          const hardLinked: string[] = [];
           const violations: string[] = [];
           const dirPrefix = `${dir}/`;
           for (const entry of allEntries) {
@@ -1545,6 +1581,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               : absPath;
             if (type === "l" && isAllowedStateSymlink(relPath, linkTarget)) {
               whitelisted.push(entry);
+            } else if (type === "f") {
+              // The audit's `find` only emits regular files through its
+              // `-links +1` branch, so a reported `f` row is a hard link.
+              // Recorded, not rejected — see the rationale above (#9314).
+              hardLinked.push(entry);
             } else {
               violations.push(entry);
             }
@@ -1554,8 +1595,13 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               `Pre-backup audit whitelisted ${whitelisted.length} entries (image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
             );
           }
+          if (hardLinked.length > 0) {
+            _log(
+              `Pre-backup audit accepted ${hardLinked.length} multiply-linked regular files (archived as plain files): ${hardLinked.slice(0, 5).join("; ")}`,
+            );
+          }
           if (violations.length > 0) {
-            // Non-whitelisted symlinks / hard links / special files — reject
+            // Non-whitelisted symlinks / special files — reject
             _log(
               `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
             );
@@ -1566,17 +1612,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
               failedDirs: [...existingDirs],
               backedUpFiles,
               failedFiles: stateFiles.map((f) => f.path),
-              error: `Pre-backup audit rejected: symlinks, hard links, or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
+              error: `Pre-backup audit rejected: symlinks or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
             };
           }
         }
-        _log("Pre-backup audit passed — no unsafe symlinks, hard links, or special files found");
+        _log("Pre-backup audit passed — no unsafe symlinks or special files found");
 
         // Download via SSH+tar
         // NC-2227-04: Removed -h flag (was following symlinks). State dirs are
         // now agent-writable and co-located with config — a compromised agent
         // could create symlinks to exfiltrate config contents via backup.
-        const tarCmd = `tar -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
+        //
+        // `--hard-dereference` archives each multiply-linked path as its own
+        // regular file. Without it `tar` emits a hard-link record for the second
+        // and later paths sharing an inode, and `safeTarExtract` rejects those
+        // records — so a state dir holding two links to one inode would pass the
+        // audit and then fail while unpacking (#9314). It also keeps the archive
+        // self-describing: every entry restores as a plain file, matching what
+        // the audit now accepts. Note this is about links *within* the archived
+        // tree; a link whose other end lives outside it (a package manager
+        // linking out of its cache) already archives as a plain file.
+        const tarCmd = `tar --hard-dereference -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
         _log(`Downloading via SSH+tar: ${tarCmd}`);
         let downloadedTarDir: string | undefined;
         let downloadedTarPath: string;

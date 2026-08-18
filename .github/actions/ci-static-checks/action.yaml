@@ -49,22 +49,17 @@ runs:
       shell: bash
       run: npm run typecheck:scorecard
 
-    # General TypeScript checks and version sync run in the build-typecheck job.
+    # General TypeScript checks run in the build-typecheck job.
     - name: Run static hook checks
       shell: bash
       run: |
         npx prek run --all-files --stage pre-commit \
           --skip source-shape-test-budget \
-          --skip test-file-size-budget \
           --skip test-skills-yaml
 
     - name: Run source-shape budget
       shell: bash
       run: npm run source-shape:check
-
-    - name: Run test file size budget
-      shell: bash
-      run: npm run test-size:check
 
     - name: Verify platform matrix is in sync
       shell: bash

@@ -141,7 +141,9 @@ describe("finalization handlers", () => {
     );
     expect(calls.cleanupHost).toHaveBeenCalledOnce();
     expect(calls.recoverProcesses).toHaveBeenCalledWith("my-assistant", { quiet: true });
-    expect(calls.buildChain).toHaveBeenCalledWith("http://127.0.0.1:18789");
+    // The sandbox name lets the chain resolve this sandbox's own agent API
+    // port rather than the agent manifest default (#9290).
+    expect(calls.buildChain).toHaveBeenCalledWith("http://127.0.0.1:18789", "my-assistant");
     expect(calls.verify).toHaveBeenCalledWith("my-assistant", { port: 18789 });
     expect(calls.log).toHaveBeenCalledWith("  ✓ verified");
     expect(calls.dashboard).toHaveBeenCalledWith(
@@ -171,6 +173,24 @@ describe("finalization handlers", () => {
     const options = {
       ...baseOptions(deps),
       agent: { name: "openclaw" },
+      portableProfileSelected: true,
+    };
+
+    const result = await runFinalizationHandlers(options);
+
+    expect(result.stateResult.type).toBe("complete");
+    expect(calls.warmupScopeUpgrade).not.toHaveBeenCalled();
+    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
+      portableRequired: true,
+    });
+  });
+
+  it("uses strict Portable settlement for the default-null OpenClaw resume state (#9200)", async () => {
+    const { deps, calls } = createDeps({ readRegistryAgent: vi.fn(() => null) });
+    const options = {
+      ...baseOptions(deps),
+      agent: null,
       portableProfileSelected: true,
     };
 

@@ -100,21 +100,22 @@ afterEach(() => {
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
-  it("keeps credential-bearing host commands out of the Pi SDK import graph", () => {
-    for (const relativePath of [
-      "tools/pr-review-advisor/openshell.mts",
-      "tools/pr-review-advisor/github-context.mts",
-      "tools/advisors/provider-constants.mts",
-      "tools/advisors/github.mts",
-      "tools/advisors/json.mts",
-      "tools/openshell-agent/runtime.mts",
-    ]) {
+  it.each([
+    "tools/pr-review-advisor/openshell.mts",
+    "tools/pr-review-advisor/github-context.mts",
+    "tools/advisors/provider-constants.mts",
+    "tools/advisors/github.mts",
+    "tools/advisors/json.mts",
+    "tools/openshell-agent/runtime.mts",
+  ])(
+    "keeps credential-bearing host commands out of the Pi SDK import graph [case %#]",
+    (relativePath) => {
       const source = fs.readFileSync(path.resolve(import.meta.dirname, "..", relativePath), "utf8");
       expect(source, relativePath).not.toMatch(
         /(?:@earendil-works\/pi-coding-agent|\btypebox\b|\/session\.mts|\/analyze\.mts)/u,
       );
-    }
-  });
+    },
+  );
 
   it("allows only the hosted service and OpenShell inference gateway", () => {
     expect(advisorInferenceBaseUrl({})).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
@@ -275,11 +276,11 @@ describe("PR review advisor OpenShell wrapper", () => {
       PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
     });
     expect(context?.openPrOverlaps).toHaveLength(5);
-    for (const overlap of context?.openPrOverlaps ?? []) {
+    (context?.openPrOverlaps ?? []).forEach((overlap) => {
       expect(overlap.sameFileCount).toBe(300);
       expect(overlap.sameFiles).toHaveLength(20);
       expect(overlap.sameFiles.every((file) => file.length <= 300)).toBe(true);
-    }
+    });
     expect(() => serializePreparedGitHubContext(context)).not.toThrow();
   });
 
@@ -519,11 +520,11 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]?.[2].env.OPENAI_API_KEY).toBe("model-host-secret");
-    for (const [command, args, options] of calls) {
+    calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
-    }
+    });
     expect(calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
     expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENAI_API_KEY).toBeUndefined();
     const gatewayConfig = fs.readFileSync(
@@ -534,35 +535,34 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(gatewayConfig).toContain("enable_bind_mounts = true");
   });
 
-  it("writes unavailable artifacts through a credential-free trusted host fallback", () => {
-    const env = advisorEnvironment();
-    env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "provider configuration failed";
-    const tools = advisorTools();
+  it.each(["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "PR_REVIEW_ADVISOR_API_KEY"])(
+    "writes unavailable artifacts through a credential-free trusted host fallback [case %#]",
+    (name) => {
+      const env = advisorEnvironment();
+      env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "provider configuration failed";
+      const tools = advisorTools();
 
-    writeUnavailableAdvisorArtifacts(env, tools);
+      writeUnavailableAdvisorArtifacts(env, tools);
 
-    expect(tools.run).toHaveBeenCalledTimes(1);
-    const [command, args, options] = vi.mocked(tools.run).mock.calls[0]!;
-    expect(command).toBe(process.execPath);
-    expect(args).toEqual([
-      "--experimental-strip-types",
-      "--no-warnings",
-      path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "run-analysis.mts"),
-    ]);
-    expect(options.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
-    expect(options.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBe("provider configuration failed");
-    expect(options.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBe(
-      path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
-    );
-    for (const name of [
-      "GH_TOKEN",
-      "GITHUB_TOKEN",
-      "OPENAI_API_KEY",
-      "PR_REVIEW_ADVISOR_API_KEY",
-    ]) {
+      expect(tools.run).toHaveBeenCalledTimes(1);
+      const [command, args, options] = vi.mocked(tools.run).mock.calls[0]!;
+      expect(command).toBe(process.execPath);
+      expect(args).toEqual([
+        "--experimental-strip-types",
+        "--no-warnings",
+        path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "run-analysis.mts"),
+      ]);
+      expect(options.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
+      expect(options.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBe(
+        "provider configuration failed",
+      );
+      expect(options.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBe(
+        path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
+      );
+
       expect(options.env[name]).toBeUndefined();
-    }
-  });
+    },
+  );
 
   it("creates, runs, downloads, and deletes the sandbox without host credentials", () => {
     const env = advisorEnvironment();
@@ -717,12 +717,12 @@ describe("PR review advisor OpenShell wrapper", () => {
           command === "openshell" && args.slice(0, 2).join(" ") === "sandbox delete",
       )?.[1],
     ).toEqual(["sandbox", "delete", "pr-advisor-test"]);
-    for (const [command, args, options] of calls) {
+    calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.OPENAI_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
-    }
+    });
   });
 
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {

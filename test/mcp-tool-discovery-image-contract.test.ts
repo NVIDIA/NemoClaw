@@ -160,7 +160,8 @@ describe("MCP tool discovery image contract", () => {
         .map((seedName) => fs.statSync(path.join(seedDirectory, seedName)).size)
         .every((size) => size <= 2_000_000),
     ).toBe(true);
-    for (const archive of manifest.archives) {
+    manifest.archives.forEach(
+      (archive: { archive: string; integrity: string; size: number }) => {
       const archiveParts = seedNames.filter(
         (seedName) =>
           seedName === archive.archive || seedName.startsWith(`${archive.archive}.part-`),
@@ -188,7 +189,8 @@ describe("MCP tool discovery image contract", () => {
       expect(seed).toHaveLength(archive.size);
       expect(integrity).toBe(archive.integrity);
       expect(matches.length).toBeGreaterThan(0);
-    }
+      },
+    );
   });
 
   it("does not commit MCP runtime registry archives", () => {
@@ -217,13 +219,13 @@ describe("MCP tool discovery image contract", () => {
         "defdba693829bfdfad16ce2edaad6b0a454388a32f15113854850e652a950012",
     } as const;
 
-    for (const [relativePath, expectedHash] of Object.entries(expectedHashes)) {
+    Object.entries(expectedHashes).forEach(([relativePath, expectedHash]) => {
       const actualHash = crypto
         .createHash("sha256")
         .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
         .digest("hex");
       expect(actualHash, relativePath).toBe(expectedHash);
-    }
+    });
 
     const executableFixture = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-reviewed-mcp-runtime-"),

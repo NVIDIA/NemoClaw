@@ -53,6 +53,7 @@ const MAX_RECEIPT_DIRECTORY_ENTRIES = 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const EXEC_READY_TIMEOUT_MS = 90_000;
+const STOP_SETTLEMENT_TIMEOUT_MS = 30_000;
 const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
 const OLLAMA_STARTUP_TIMEOUT_MS = 30_000;
@@ -113,6 +114,7 @@ interface PodmanContainerInspection {
   containerId: string;
   sandboxId: string;
   running: boolean;
+  status: string | null;
 }
 
 export interface PortableDemoPrivilegedExecTarget {
@@ -256,6 +258,10 @@ function commandDetail(result: CommandResult): string {
 function requireCommand(result: CommandResult, action: string): void {
   if (result.status === 0 && !result.error) return;
   throw new Error(`${action} failed: ${commandDetail(result)}`);
+}
+
+function isCommandTimeout(result: CommandResult): boolean {
+  return (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -530,7 +536,11 @@ function inspectPodmanContainer(
       `Portable demo lifecycle refused container '${containerId}' because its OpenShell identity does not match sandbox '${sandboxName}'`,
     );
   }
-  return { containerId, sandboxId, running: state.Running };
+  const status =
+    typeof state.Status === "string" && state.Status.trim().length > 0
+      ? state.Status.trim().toLowerCase()
+      : null;
+  return { containerId, sandboxId, running: state.Running, status };
 }
 
 function isMissingPodmanContainer(result: CommandResult): boolean {
@@ -1309,17 +1319,46 @@ export function stopPortableDemoSandboxLifecycle(
     initialInspection,
   );
   requireReceiptOwnedInspection(receipt, inspection);
-  if (!inspection.running) return { kind: "already-stopped" };
+  const timing = { now: deps.now ?? Date.now, sleep: deps.sleep ?? defaultSleep };
+  const inspectExitedState = (): boolean => {
+    const result = authority.podman(["inspect", receipt.containerId]);
+    if (isMissingPodmanContainer(result)) {
+      throw new Error(
+        `Portable sandbox '${sandboxName}' no longer has its recorded Podman container`,
+      );
+    }
+    const stopped = inspectPodmanContainer(
+      receipt.containerId,
+      sandboxName,
+      authority.podman,
+      result,
+    );
+    requireReceiptOwnedInspection(receipt, stopped);
+    return !stopped.running && stopped.status === "exited";
+  };
+
+  if (!inspection.running) {
+    if (inspection.status !== "stopping") return { kind: "already-stopped" };
+    if (waitFor(STOP_SETTLEMENT_TIMEOUT_MS, timing, inspectExitedState)) {
+      return { kind: "already-stopped" };
+    }
+    throw new Error(`Portable sandbox '${sandboxName}' did not settle into the exited state`);
+  }
 
   beforeStop();
-  requireCommand(
-    authority.podman(["stop", receipt.containerId]),
-    `Stopping portable sandbox '${sandboxName}'`,
-  );
-  const stopped = inspectPodmanContainer(receipt.containerId, sandboxName, authority.podman);
-  requireReceiptOwnedInspection(receipt, stopped);
-  if (stopped.running) {
-    throw new Error(`Portable sandbox '${sandboxName}' did not enter the stopped state`);
+  const stop = authority.podman(["stop", receipt.containerId]);
+  if (isCommandTimeout(stop)) {
+    // The rootless Podman service can continue an accepted stop after its CLI
+    // client times out. Reconcile only the exact receipt-owned container; do
+    // not retry the mutation or weaken socket and container identity checks.
+    if (waitFor(STOP_SETTLEMENT_TIMEOUT_MS, timing, inspectExitedState)) {
+      return { kind: "stopped" };
+    }
+    requireCommand(stop, `Stopping portable sandbox '${sandboxName}'`);
+  }
+  requireCommand(stop, `Stopping portable sandbox '${sandboxName}'`);
+  if (!waitFor(STOP_SETTLEMENT_TIMEOUT_MS, timing, inspectExitedState)) {
+    throw new Error(`Portable sandbox '${sandboxName}' did not settle into the exited state`);
   }
   return { kind: "stopped" };
 }

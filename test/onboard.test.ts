@@ -132,52 +132,49 @@ describe("onboard helpers", () => {
     expect(envArgs).toEqual(["CHAT_UI_URL=http://127.0.0.1:18789"]);
   });
 
-  it("trims surrounding whitespace from proxy env values before forwarding", () => {
+  it.each([
+    ["HTTP_PROXY", "  http://127.0.0.1:8888  "],
+    ["HTTPS_PROXY", "\thttp://127.0.0.1:8888\n"],
+  ])("trims surrounding whitespace from %s before forwarding", (name, value) => {
     // A `HTTP_PROXY="  http://x:8888  "` from a sloppy shell rc must not
     // flow through with surrounding whitespace — downstream consumers
     // that don't re-trim would treat the value as malformed.
     const envArgs: string[] = [];
 
-    appendHostProxyEnvArgs(envArgs, {
-      HTTP_PROXY: "  http://127.0.0.1:8888  ",
-      HTTPS_PROXY: "\thttp://127.0.0.1:8888\n",
-    });
+    appendHostProxyEnvArgs(envArgs, { [name]: value });
 
-    expect(envArgs).toContain("HTTP_PROXY=http://127.0.0.1:8888");
-    expect(envArgs).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
-    for (const entry of envArgs) {
-      expect(entry, "no forwarded entry should contain leading/trailing whitespace").toBe(
-        entry.trim(),
-      );
-    }
+    const forwarded = envArgs.find((entry) => entry.startsWith(`${name}=`));
+    expect(forwarded).toBe(`${name}=http://127.0.0.1:8888`);
+    expect(forwarded, "the forwarded entry must not contain surrounding whitespace").toBe(
+      forwarded?.trim(),
+    );
   });
 
-  it("synthesizes both NO_PROXY and no_proxy in the sandbox so case-sensitive consumers stay covered", () => {
-    // `withLocalNoProxy` augments both NO_PROXY and no_proxy regardless of
-    // which one the user originally set. A user who only sets HTTP_PROXY
-    // (with no NO_PROXY at all) still gets both cases synthesized in the
-    // sandbox so case-sensitive consumers (e.g. some Python libs read
-    // `no_proxy` lowercase, Node fetch checks `NO_PROXY`) all honor the
-    // localhost/Docker-host carve-outs. Pinning the dual-key behavior so a
-    // future refactor of `withLocalNoProxy` doesn't silently drop one case.
-    const envArgs: string[] = [];
+  it.each(["NO_PROXY", "no_proxy"])(
+    "synthesizes %s in the sandbox for case-sensitive consumers",
+    (name) => {
+      // `withLocalNoProxy` augments both NO_PROXY and no_proxy regardless of
+      // which one the user originally set. A user who only sets HTTP_PROXY
+      // (with no NO_PROXY at all) still gets both cases synthesized in the
+      // sandbox so case-sensitive consumers (e.g. some Python libs read
+      // `no_proxy` lowercase, Node fetch checks `NO_PROXY`) all honor the
+      // localhost/Docker-host carve-outs. Pinning the dual-key behavior so a
+      // future refactor of `withLocalNoProxy` doesn't silently drop one case.
+      const envArgs: string[] = [];
 
-    appendHostProxyEnvArgs(envArgs, {
-      HTTP_PROXY: "http://127.0.0.1:8888",
-    });
+      appendHostProxyEnvArgs(envArgs, {
+        HTTP_PROXY: "http://127.0.0.1:8888",
+      });
 
-    const upper = envArgs.find((e) => e.startsWith("NO_PROXY="));
-    const lower = envArgs.find((e) => e.startsWith("no_proxy="));
-    expect(upper, "NO_PROXY should be synthesized").toBeDefined();
-    expect(lower, "no_proxy (lowercase) should also be synthesized").toBeDefined();
-    for (const v of [upper, lower]) {
-      expect(v).toContain("localhost");
-      expect(v).toContain("127.0.0.1");
-      expect(v).toContain("host.docker.internal");
-    }
-  });
+      const value = envArgs.find((entry) => entry.startsWith(`${name}=`));
+      expect(value, `${name} should be synthesized`).toBeDefined();
+      expect(value).toContain("localhost");
+      expect(value).toContain("127.0.0.1");
+      expect(value).toContain("host.docker.internal");
+    },
+  );
 
-  it("seeds inference.local and host.containers.internal into the sandbox-create NO_PROXY/no_proxy", () => {
+  it.each(["NO_PROXY", "no_proxy"])("seeds managed hosts into sandbox-create %s", (name) => {
     // Boundary pin: appendHostProxyEnvArgs() forwards env into `openshell
     // sandbox create -- env ...`, and OpenShell consults the seeded
     // NO_PROXY at sandbox-create time when deciding whether to chain its
@@ -194,15 +191,11 @@ describe("onboard helpers", () => {
       HTTP_PROXY: "http://127.0.0.1:8118",
     });
 
-    const upper = envArgs.find((e) => e.startsWith("NO_PROXY="));
-    const lower = envArgs.find((e) => e.startsWith("no_proxy="));
-    expect(upper, "NO_PROXY should be synthesized").toBeDefined();
-    expect(lower, "no_proxy should be synthesized").toBeDefined();
-    for (const v of [upper, lower]) {
-      const parts = (v ?? "").split("=")[1]?.split(",") ?? [];
-      expect(parts).toContain("inference.local");
-      expect(parts).toContain("host.containers.internal");
-    }
+    const value = envArgs.find((entry) => entry.startsWith(`${name}=`));
+    expect(value, `${name} should be synthesized`).toBeDefined();
+    const parts = (value ?? "").split("=")[1]?.split(",") ?? [];
+    expect(parts).toContain("inference.local");
+    expect(parts).toContain("host.containers.internal");
   });
 
   it("propagates NEMOCLAW_MINIMAL_BOOTSTRAP=1 from host into sandbox env (#2598)", () => {
@@ -211,15 +204,16 @@ describe("onboard helpers", () => {
     expect(envArgs).toContain("NEMOCLAW_MINIMAL_BOOTSTRAP=1");
   });
 
-  it("omits NEMOCLAW_MINIMAL_BOOTSTRAP when unset or not the literal '1' (#2598)", () => {
-    for (const value of [undefined, "", "0", "true", "yes"]) {
+  it.each([[undefined], [""], ["0"], ["true"], ["yes"]])(
+    "omits NEMOCLAW_MINIMAL_BOOTSTRAP for %j (#2598)",
+    (value) => {
       const envArgs: string[] = [];
       const env: NodeJS.ProcessEnv =
         value === undefined ? {} : { NEMOCLAW_MINIMAL_BOOTSTRAP: value };
       appendHostProxyEnvArgs(envArgs, env);
       expect(envArgs.some((e) => e.startsWith("NEMOCLAW_MINIMAL_BOOTSTRAP="))).toBe(false);
-    }
-  });
+    },
+  );
 
   it(
     "prints owning-deployment guidance when NemoClaw does not launch the gateway (#9120)",

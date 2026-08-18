@@ -482,7 +482,7 @@ async function runScenario(scenario) {
     assert.notEqual(result.stdout.trim(), "");
     const payload = JSON.parse(result.stdout.trim());
 
-    for (const scenario of scenarios) {
+    scenarios.forEach((scenario) => {
       const scenarioResult = payload.results.find(
         (entry: { name: string }) => entry.name === scenario.name,
       );
@@ -509,7 +509,7 @@ async function runScenario(scenario) {
         assert.doesNotMatch(menuOutput, /Install vLLM \(/);
         assert.doesNotMatch(menuOutput, /Start vLLM \(/);
       }
-    }
+    });
   });
 
   it("surfaces a precise error when NEMOCLAW_PROVIDER=install-vllm but no vLLM profile is detected (#3765)", () => {
