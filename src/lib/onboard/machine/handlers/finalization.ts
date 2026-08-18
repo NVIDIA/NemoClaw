@@ -67,7 +67,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       sandboxName: string,
       options: {
         readonly portableRequired: true;
-        readonly onboardingExpectedAgent: "openclaw";
       },
     ): Promise<PortableOpenClawPairingSettlementResult>;
     portablePairingIncompleteMessage(
@@ -284,7 +283,6 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
       portableAgent === "strict-openclaw"
         ? await deps.settlePortablePairing(sandboxName, {
             portableRequired: true,
-            onboardingExpectedAgent: "openclaw",
           })
         : ({
             kind: "incomplete",

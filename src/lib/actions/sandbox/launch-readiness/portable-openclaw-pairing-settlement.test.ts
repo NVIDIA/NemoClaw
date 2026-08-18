@@ -222,14 +222,33 @@ describe("Portable OpenClaw pairing settlement", () => {
     });
 
     await expect(
-      settlePortableOpenClawPairing(
-        "alpha",
-        { portableRequired: true, onboardingExpectedAgent: "openclaw" },
-        scope.deps,
-      ),
+      settlePortableOpenClawPairing("alpha", { portableRequired: true }, scope.deps),
     ).resolves.toEqual({ kind: "settled" });
     expect(updateSandbox).toHaveBeenCalledExactlyOnceWith("alpha", { agent: "openclaw" });
     expect(scope.observePairing).toHaveBeenCalledOnce();
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, boolean]>([
+    ["registry update fails", false],
+    ["registry readback remains unchanged", true],
+  ])("fails closed when legacy OpenClaw repair %s (#9207)", async (_label, updateResult) => {
+    const updateSandbox = vi.fn(() => updateResult);
+    const scope = settlementDeps({
+      getSandbox: vi.fn(() => ({ ...ENTRY, agent: null })),
+      updateSandbox,
+    });
+
+    await expect(
+      settlePortableOpenClawPairing("alpha", { portableRequired: true }, scope.deps),
+    ).resolves.toEqual({
+      kind: "incomplete",
+      reason: "portable-runtime-identity-invalid",
+    });
+    expect(updateSandbox).toHaveBeenCalledExactlyOnceWith("alpha", { agent: "openclaw" });
+    expect(scope.calls).toEqual(["sandbox-lock"]);
+    expect(scope.observePairing).not.toHaveBeenCalled();
     expect(scope.runProducer).not.toHaveBeenCalled();
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
@@ -246,11 +265,7 @@ describe("Portable OpenClaw pairing settlement", () => {
     });
 
     await expect(
-      settlePortableOpenClawPairing(
-        "alpha",
-        { portableRequired: true, onboardingExpectedAgent: "openclaw" },
-        scope.deps,
-      ),
+      settlePortableOpenClawPairing("alpha", { portableRequired: true }, scope.deps),
     ).resolves.toEqual({
       kind: "incomplete",
       reason: "portable-runtime-identity-invalid",
@@ -269,11 +284,7 @@ describe("Portable OpenClaw pairing settlement", () => {
     });
 
     await expect(
-      settlePortableOpenClawPairing(
-        "alpha",
-        { portableRequired: true, onboardingExpectedAgent: "openclaw" },
-        scope.deps,
-      ),
+      settlePortableOpenClawPairing("alpha", { portableRequired: true }, scope.deps),
     ).resolves.toEqual({ kind: "not-portable" });
     expect(updateSandbox).not.toHaveBeenCalled();
   });

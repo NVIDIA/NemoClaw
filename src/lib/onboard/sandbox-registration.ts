@@ -40,9 +40,9 @@ import {
 } from "./runtime-provider/access";
 import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
 import {
-  requirePortableOpenClawRegistryIdentity,
-  type PortableLifecycleReceiptClassifier,
-} from "./experimental/portable-openclaw-registry-identity";
+  classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
+} from "./experimental/portable-runtime-receipt-readiness";
 
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
@@ -99,7 +99,7 @@ export interface CreatedSandboxRegistryEntryInput {
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
   portableLifecycle?: boolean;
   environment?: NodeJS.ProcessEnv;
-  classifyPortableLifecycleReceipt?: PortableLifecycleReceiptClassifier;
+  classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
   registerSandbox?(entry: SandboxEntry): void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
 }
@@ -335,12 +335,16 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
         "Portable lifecycle registration requires the OpenClaw agent.",
       );
     }
-    entry.agent = requirePortableOpenClawRegistryIdentity(
+    const receipt = (input.classifyPortableLifecycleReceipt ?? classifyPortableLifecycleReceipt)(
       input.sandboxName,
-      input.lifecycleGeneration,
-      input.environment ?? process.env,
-      input.classifyPortableLifecycleReceipt,
+      { env: input.environment ?? process.env },
     );
+    if (!portableLifecycleReceiptMatchesGeneration(receipt, input.lifecycleGeneration)) {
+      throw new RuntimeProviderSelectionError(
+        "Portable OpenClaw registration requires a current lifecycle receipt that matches the registry generation.",
+      );
+    }
+    entry.agent = "openclaw";
   }
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,

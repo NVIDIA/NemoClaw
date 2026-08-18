@@ -56,7 +56,6 @@ export const finalizationHandlerDeps = {
     name: string,
     options: {
       readonly portableRequired: true;
-      readonly onboardingExpectedAgent: "openclaw";
     },
   ): ReturnType<
     (typeof import("../../actions/sandbox/launch-readiness"))["settlePortableOpenClawPairing"]

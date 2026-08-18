@@ -14,6 +14,7 @@ import { parseServingProfileProvenance } from "../../inference/serving/profile-p
 import { resolveGatewayName } from "../../onboard/gateway-binding";
 import {
   classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
   type PortableLifecycleReceiptClassification,
 } from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import {
@@ -934,7 +935,6 @@ export async function settlePortableOpenClawPairing(
   sandboxName: string,
   options: {
     readonly portableRequired?: boolean;
-    readonly onboardingExpectedAgent?: "openclaw";
   } = {},
   deps: LaunchReadinessDeps = {},
 ): Promise<PortableOpenClawPairingSettlementResult> {
@@ -962,10 +962,8 @@ export async function settlePortableOpenClawPairing(
     if (
       firstEntry?.agent === null &&
       options.portableRequired === true &&
-      options.onboardingExpectedAgent === "openclaw" &&
-      firstReceipt.kind === "current" &&
       firstEntry.policyPresetsFinalized === true &&
-      firstEntry.lifecycleGeneration === firstReceipt.registryGeneration
+      portableLifecycleReceiptMatchesGeneration(firstReceipt, firstEntry.lifecycleGeneration)
     ) {
       if (!updateSandbox(sandboxName, { agent: "openclaw" })) {
         return incompletePortablePairing("portable-runtime-identity-invalid");
