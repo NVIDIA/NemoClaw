@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS } from "../../../nemoclaw/src/security/secret-scanner.ts";
 import { buildSandboxCredentialScanCommand } from "../live/cloud-inference-credential-boundary.ts";
 
 const roots: string[] = [];
@@ -65,6 +66,36 @@ describe("cloud inference sandbox credential scan", () => {
 
     expect(output.trim()).toBe(leakedFile);
     expect(output).not.toContain(canary);
+  });
+
+  it.each(
+    HIGH_CONFIDENCE_PREFIXED_TOKEN_SPECS.flatMap(({ prefixes, minimumPayloadLength }) =>
+      prefixes.map((prefix) => [prefix, minimumPayloadLength] as const),
+    ),
+  )("enforces the shared minimum payload for %s", (prefix, minimumPayloadLength) => {
+    const root = createScanRoot();
+    writeFixture(root, "short.txt", `${prefix}${"a".repeat(minimumPayloadLength - 1)}\n`);
+
+    expect(scan(root)).toBe("");
+
+    const detectedFile = writeFixture(
+      root,
+      "minimum.txt",
+      `${prefix}${"a".repeat(minimumPayloadLength)}\n`,
+    );
+    expect(scan(root).trim()).toBe(detectedFile);
+  });
+
+  it.each([
+    ["prefixed GitHub token", `prefixghp_${"a".repeat(36)}`],
+    ["suffixed GitHub token", `ghp_${"a".repeat(36)}_suffix`],
+    ["prefixed npm token", `prefixnpm_${"b".repeat(36)}`],
+    ["suffixed npm token", `npm_${"b".repeat(36)}_suffix`],
+  ])("does not report a token embedded in a larger identifier: %s", (_label, value) => {
+    const root = createScanRoot();
+    writeFixture(root, "embedded.txt", `${value}\n`);
+
+    expect(scan(root)).toBe("");
   });
 
   it("reports a credential canary in a NUL-containing file", () => {

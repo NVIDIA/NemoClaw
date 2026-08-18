@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
-
-export const SANDBOX_CREDENTIAL_VALUE_PATTERN =
-  "nvapi-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|npm_[A-Za-z0-9]{36}";
+import { HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE } from "../../../nemoclaw/src/security/secret-scanner.ts";
 
 const DEFAULT_SANDBOX_STATE_DIRECTORIES = ["/sandbox/.openclaw", "/sandbox/.nemoclaw"];
 
@@ -16,7 +14,7 @@ export function buildSandboxCredentialScanCommand(
   return [
     `for dir in ${roots}; do`,
     '  [ -d "$dir" ] || continue',
-    `  matches=$(grep -rlE '${SANDBOX_CREDENTIAL_VALUE_PATTERN}' "$dir")`,
+    `  matches=$(grep -rlE '${HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE}' "$dir")`,
     "  scan_status=$?",
     '  case "$scan_status" in',
     `    0) printf '%s\\n' "$matches" | grep -Ev '/policies/|/plugin-runtime-deps/|/extensions/[^/]+/(dist|node_modules)/'`,
