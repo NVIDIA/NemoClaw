@@ -15,7 +15,10 @@ import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selecti
 import { exitOnboardFromPrompt, getNavigationChoice } from "./prompt-helpers";
 import type { ReasoningEffort } from "./reasoning-mode";
 
-export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+export {
+  createNvidiaFeaturedModelSession,
+  selectFeaturedModelAfterCredentialPrompt,
+} from "./nvidia-featured-model-selection";
 
 export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
 

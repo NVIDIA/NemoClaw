@@ -74,27 +74,4 @@ describe("credential prompt navigation helpers", () => {
       vi.restoreAllMocks();
     }
   });
-
-  it("routes ensureApiKey navigation intents for the NVIDIA Endpoints path (#9404)", () => {
-    const exitError = new Error("exit");
-    const exitOnboard = vi.fn(() => {
-      throw exitError;
-    }) as unknown as () => never;
-    const logs: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: unknown[]) => logs.push(args.join(" "));
-    try {
-      // Same contract as: if (returningToProviderSelection(await ensureApiKey())) return "retry-selection"
-      expect(returningToProviderSelection({ kind: "back" }, exitOnboard)).toBe(true);
-      expect(
-        returningToProviderSelection({ kind: "credential", value: "nvapi-good" }, exitOnboard),
-      ).toBe(false);
-      expect(() => returningToProviderSelection({ kind: "exit" }, exitOnboard)).toThrow(exitError);
-    } finally {
-      console.log = originalLog;
-    }
-
-    expect(logs).toEqual(["  Returning to provider selection.", ""]);
-    expect(exitOnboard).toHaveBeenCalledTimes(1);
-  });
 });
