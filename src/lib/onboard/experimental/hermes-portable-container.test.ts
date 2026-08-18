@@ -50,16 +50,25 @@ describe("Hermes portable Podman environment", () => {
     });
   });
 
-  it("rejects namespace drift and ambient connection selection", () => {
+  it("rejects namespace drift", () => {
     const authority = receipt().runtimeAuthority;
 
     expect(() =>
       buildHermesPortablePodmanEnvironment(authority, { HOME: "/home/replacement" }),
     ).toThrow("current-user namespace disagrees");
+  });
+
+  it.each([
+    ["CONTAINER_HOST", "ssh://remote.test/run/podman.sock"],
+    ["DOCKER_CONTEXT", "remote-context"],
+    ["DOCKER_HOST", "unix:///run/user/1000/other/podman.sock"],
+  ])("rejects ambient %s selection", (name, value) => {
+    const authority = receipt().runtimeAuthority;
+
     expect(() =>
       buildHermesPortablePodmanEnvironment(authority, {
         HOME: authority.homeDir,
-        CONTAINER_HOST: "ssh://remote.test/run/podman.sock",
+        [name]: value,
       }),
     ).toThrow("connection selector is not allowed");
   });
