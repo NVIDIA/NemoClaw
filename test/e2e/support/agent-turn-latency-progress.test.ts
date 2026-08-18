@@ -89,14 +89,20 @@ describe("live test progress", () => {
     vi.useRealTimers();
   });
 
-  it.each(["0", "-1", "abc", "01", "11"])(
-    "rejects invalid configured install attempt counts [%s]",
-    (value) => {
-      expect(turnLatencyInstallAttemptCount(undefined)).toBe(2);
-      for (let expected = 1; expected <= 10; expected += 1) {
-        expect(turnLatencyInstallAttemptCount(String(expected))).toBe(expected);
-      }
+  it("uses two install attempts when no count is configured", () => {
+    expect(turnLatencyInstallAttemptCount(undefined)).toBe(2);
+  });
 
+  it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
+    "accepts configured install attempt count %i",
+    (expected) => {
+      expect(turnLatencyInstallAttemptCount(String(expected))).toBe(expected);
+    },
+  );
+
+  it.each(["0", "-1", "abc", "01", "11"])(
+    "rejects invalid configured install attempt count %s",
+    (value) => {
       expect(() => turnLatencyInstallAttemptCount(value)).toThrow(
         /NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS must be an integer between 1 and 10/u,
       );

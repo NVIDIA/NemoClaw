@@ -69,6 +69,7 @@ export interface OnboardingCleanup {
 }
 
 export interface OnboardingOptions {
+  dcodeBaseImageReference?: string;
   sandboxName?: string;
   timeoutMs?: number;
 }
@@ -255,7 +256,11 @@ export class OnboardingPhaseFixture {
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const baseImageReference = requireDcodeBaseImageReference();
+    const baseImageReference = requireDcodeBaseImageReference(
+      options.dcodeBaseImageReference === undefined
+        ? process.env
+        : { [DCODE_BASE_IMAGE_ENV]: options.dcodeBaseImageReference },
+    );
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw([...ONBOARD_ARGS, "--observability"], {

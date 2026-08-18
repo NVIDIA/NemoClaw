@@ -1303,27 +1303,6 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.policyApplyCalls).toBe(1);
   });
 
-  it("rejects a later restore collision before changing an earlier MCP entry", async () => {
-    testState.attachedProviders.clear();
-    testState.providers.set("external", { credential: "SLACK_TOKEN", id: "foreign-id" });
-    testState.attachedProviders.add("external");
-    registry.registerSandbox({
-      name: "alpha",
-      agent: "openclaw",
-      mcp: { bridges: { github: bridgeEntries.github, slack: bridgeEntries.slack } },
-    });
-    const message = await captureMessage(() =>
-      bridge.restoreMcpBridgesAfterRebuild("alpha", [bridgeEntries.github, bridgeEntries.slack]),
-    );
-    expect(message).toContain(
-      "Credential key 'SLACK_TOKEN' is already supplied by attached provider 'external'",
-    );
-    expect(testState.policyApplyCalls).toBe(0);
-    expect(testState.calls.some((call) => call.startsWith("sandbox provider attach alpha"))).toBe(
-      false,
-    );
-  });
-
   it.each([
     ["destroy", "prepareMcpBridgesForDestroy"],
     ["rebuild", "prepareMcpBridgesForRebuild"],

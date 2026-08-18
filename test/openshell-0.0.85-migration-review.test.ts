@@ -140,11 +140,15 @@ describe("OpenShell 0.0.85 migration review", () => {
     expect(review).toContain("stable release was audited anew");
   });
 
-  it("tracks every material migration concern and refuses false-green evidence", () => {
-    for (let number = 1; number <= 17; number += 1) {
+  it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])(
+    "tracks material migration concern OS85-%i",
+    (number) => {
       const id = `OS85-${String(number).padStart(2, "0")}`;
       expect(review.split(`| \`${id}\` |`), `${id} concern row`).toHaveLength(2);
-    }
+    },
+  );
+
+  it("refuses false-green migration evidence", () => {
     expect(review).toContain("An unresolved critical or high concern blocks");
     expect(review).toContain("full managed MCP lifecycle");
     expect(review).toContain("without a conditional skip or expected failure");
