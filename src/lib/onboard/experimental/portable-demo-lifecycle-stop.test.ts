@@ -282,7 +282,7 @@ describe("portable demo sandbox stop reconciliation", () => {
     ).toBe(false);
   });
 
-  it("rejects a non-running container without an exited status (#9200)", () => {
+  it("rejects a non-running container with no Podman status (#9200)", () => {
     const harness = createStopHarness();
     harness.runtime.setState(false, null);
     const beforeStop = vi.fn();
