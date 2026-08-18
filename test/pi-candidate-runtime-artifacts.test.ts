@@ -217,6 +217,7 @@ describe("Pi runtime boundaries", () => {
         port: 443,
         protocol: "rest",
         enforcement: "enforce",
+        allow_encoded_slash: false,
         rules: [{ allow: { method: "POST", path: "/v1/chat/completions" } }],
       });
     });
@@ -264,6 +265,24 @@ describe("Pi runtime boundaries", () => {
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
       "agents/pi/policy-additions.yaml: inference.local must stay enforced, not observed",
+    );
+  });
+
+  it("rejects a managed inference endpoint that permits encoded slashes (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].allow_encoded_slash = true;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must set allow_encoded_slash to false",
+    );
+  });
+
+  it("rejects a managed inference endpoint without the encoded-slash restriction (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      delete policy.network_policies.managed_inference.endpoints[0].allow_encoded_slash;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must set allow_encoded_slash to false",
     );
   });
 
@@ -363,6 +382,24 @@ describe("Pi runtime boundaries", () => {
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
       "agents/pi/manifest.yaml: trust.json must stay undeclared so a restore cannot carry a project-trust decision",
+    );
+  });
+
+  it("rejects settings.json without its restore contract (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      delete manifest.state_files[0].restore;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: settings.json must retain the exact key-allowlist restore contract",
+    );
+  });
+
+  it("rejects a changed settings.json restore contract (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_files[0].restore.merge = "openclaw-config";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: settings.json must retain the exact key-allowlist restore contract",
     );
   });
 

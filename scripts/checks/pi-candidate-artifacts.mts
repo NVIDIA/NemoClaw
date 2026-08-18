@@ -30,6 +30,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -44,6 +45,7 @@ const MANAGED_INFERENCE_POLICY = "managed_inference";
 const MANAGED_INFERENCE_HOST = "inference.local";
 const MANAGED_INFERENCE_PORT = 443;
 const MANAGED_INFERENCE_PROTOCOL = "rest";
+const REQUIRED_ALLOW_ENCODED_SLASH = false;
 const APPROVED_NETWORK_BINARIES = [
   "/usr/local/bin/node",
   "/usr/local/bin/pi",
@@ -55,6 +57,23 @@ const REQUIRED_SANDBOX_IDENTITY = "sandbox";
 const NON_INTERACTIVE_APPROVAL_FLAG = "--no-approve";
 const PROJECT_TRUST_STORE = "trust.json";
 const PROJECT_TRUST_SETTING = "defaultProjectTrust";
+const SETTINGS_FILE = "settings.json";
+const APPROVED_SETTINGS_RESTORE = {
+  merge: "key-allowlist",
+  user_keys: [
+    { key: "theme", type: "string", max_length: 128 },
+    { key: "hideThinkingBlock", type: "boolean" },
+    { key: "showCacheMissNotices", type: "boolean" },
+    { key: "quietStartup", type: "boolean" },
+    { key: "steeringMode", type: "enum", values: ["all", "one-at-a-time"] },
+    { key: "followUpMode", type: "enum", values: ["all", "one-at-a-time"] },
+    {
+      key: "defaultThinkingLevel",
+      type: "enum",
+      values: ["off", "minimal", "low", "medium", "high", "xhigh"],
+    },
+  ],
+} as const;
 
 const REQUIRED_ARTIFACTS = [
   "agents/pi/Dockerfile",
@@ -308,6 +327,11 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
         `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must enforce protocol ${MANAGED_INFERENCE_PROTOCOL}, not ${typeof endpoint.protocol === "string" ? endpoint.protocol : "an unset protocol"}`,
       );
     }
+    if (endpoint.allow_encoded_slash !== REQUIRED_ALLOW_ENCODED_SLASH) {
+      failures.push(
+        `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must set allow_encoded_slash to false`,
+      );
+    }
     if (endpoint.enforcement !== "enforce") {
       failures.push(
         `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must stay enforced, not observed`,
@@ -392,6 +416,15 @@ function verifyProjectTrustBoundary(manifest: LooseRecord): string[] {
   if (declared.includes(PROJECT_TRUST_STORE)) {
     failures.push(
       `${PI_MANIFEST_PATH}: ${PROJECT_TRUST_STORE} must stay undeclared so a restore cannot carry a project-trust decision`,
+    );
+  }
+  const settingsFiles = stateFiles.filter((entry) => asRecord(entry).path === SETTINGS_FILE);
+  if (
+    settingsFiles.length !== 1 ||
+    !isDeepStrictEqual(asRecord(settingsFiles[0]).restore, APPROVED_SETTINGS_RESTORE)
+  ) {
+    failures.push(
+      `${PI_MANIFEST_PATH}: ${SETTINGS_FILE} must retain the exact key-allowlist restore contract`,
     );
   }
   for (const entry of stateFiles) {
