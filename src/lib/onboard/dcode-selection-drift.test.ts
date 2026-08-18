@@ -116,12 +116,13 @@ describe("live DCode selection drift", () => {
     );
   });
 
-  it("reports provider drift for upstream, route, or endpoint changes (#6311)", () => {
-    for (const output of [
-      identity({ Provider: "openai-api" }),
-      identity({ Route: "openai" }),
-      identity({ Endpoint: "https://old.example/v1" }),
-    ]) {
+  it.each([
+    identity({ Provider: "openai-api" }),
+    identity({ Route: "openai" }),
+    identity({ Endpoint: "https://old.example/v1" }),
+  ])(
+    "reports provider drift for upstream, route, or endpoint changes [case %#] (#6311)",
+    (output) => {
       expect(
         getDcodeSelectionDrift(
           "alpha",
@@ -136,8 +137,8 @@ describe("live DCode selection drift", () => {
         modelChanged: false,
         unknown: false,
       });
-    }
-  });
+    },
+  );
 
   it("reports model drift from the live DCode config (#6311)", () => {
     expect(

@@ -188,10 +188,10 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     const stateLocks = helperCalls(result.calls, STATE_DIR_GUARD, "lock");
     expect(configLocks).toHaveLength(1);
     expect(stateLocks).toHaveLength(1);
-    for (const command of [...configLocks, ...stateLocks]) {
+    [...configLocks, ...stateLocks].forEach((command) => {
       expect(command).toEqual(expect.arrayContaining(["python3", "-I"]));
       expect(command).toEqual(expect.arrayContaining(["--config-dir", "/sandbox/.openclaw"]));
-    }
+    });
   });
 
   it("freezes the canonical config before recursive state containment", () => {

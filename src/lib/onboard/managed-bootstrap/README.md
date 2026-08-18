@@ -215,9 +215,7 @@ This is executable, bounded groundwork rather than an untested placeholder.
 failure rollback for OpenClaw, Hermes, and LangChain Deep Agents Code through an
 MXC-named fake driver. `runtime-provider-contract.test.ts` verifies the
 production Docker registration and an MXC-style bootstrap surface through the
-same provider bundle contract. `runtime-provider-source-shape.test.ts`
-inventories the protocol, provider, and image-packaging surfaces and proves that
-ordinary onboarding does not select managed bootstrap.
+same provider bundle contract.
 
 The native entrypoint and composed managed-bootstrap image runtime are compiled
 and packaged in every managed agent image. Internal Docker qualification and

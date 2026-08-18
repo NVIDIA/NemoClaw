@@ -134,10 +134,10 @@ describe("credential hydration from legacy storage, layer 1 (#2273)", () => {
     },
   ];
 
-  for (const { name, credentialEnv, value } of providers) {
-    it(`hydrates ${credentialEnv} (${name}) from legacy credentials.json when not in process.env`, {
-      timeout: TEST_TIMEOUT_MS,
-    }, () => {
+  it.each(providers)(
+    "hydrates $credentialEnv ($name) from legacy credentials.json when not in process.env",
+    { timeout: TEST_TIMEOUT_MS },
+    ({ credentialEnv, value }) => {
       const { result } = verifyCredentialHydration(credentialEnv, value);
 
       if (result.status !== 0) {
@@ -149,6 +149,6 @@ describe("credential hydration from legacy storage, layer 1 (#2273)", () => {
       const payload = JSON.parse(result.stdout);
       expect(payload.hydrated).toBe(value);
       expect(payload.envValue).toBe(value);
-    });
-  }
+    },
+  );
 });

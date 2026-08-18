@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isCandidateAgent, readCandidateQualificationReceipt } from "../../agent/candidate";
 import type { AgentDefinition } from "../../agent/defs";
 import { getVersion } from "../../core/version";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
@@ -49,6 +50,7 @@ import {
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import {
+  liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
 } from "../workload/preparation";
@@ -154,6 +156,7 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
+    const catalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
     preparedWorkloadPromise ??= input.managedWorkloadRebuild
       ? Promise.resolve(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
@@ -169,6 +172,10 @@ export function createManagedWorkloadOnboardRuntime(
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
           catalogPath: input.tempManagedRuntimeCatalog,
+          ...(catalogRevision ? { catalogRevision } : {}),
+          acceptedCandidateContract: isCandidateAgent(input.agentName)
+            ? readCandidateQualificationReceipt(input.agentName)
+            : null,
         });
     const prepared = await preparedWorkloadPromise;
     if (prepared.fallbackDiagnostic && !fallbackReported) {
@@ -241,7 +248,10 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     readonly createAgentSandbox: (
       agent: AgentDefinition,
     ) => ReturnType<typeof import("../../agent/onboard").createAgentSandbox>;
-    readonly patchInput: Omit<ResolveBuildPatchInput, "selectedGpuRoute" | "stagedDockerfile">;
+    readonly resolvePatchInput: () => Omit<
+      ResolveBuildPatchInput,
+      "selectedGpuRoute" | "stagedDockerfile"
+    >;
   };
   readonly plan: {
     readonly intent: SandboxCreateIntent;
@@ -265,6 +275,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   readonly dependencies: {
     readonly materializeSandboxCreatePlan: typeof import("../sandbox-create-plan-materialization").materializeSandboxCreatePlan;
     readonly prepareSandboxBuildPatchConfig: typeof import("../sandbox-build-patch-config").prepareSandboxBuildPatchConfig;
+    readonly resolveSandboxBuildPatch?: typeof import("../prepared-dcode-rebuild").resolveSandboxBuildPatch;
   };
   readonly log?: (message: string) => void;
   readonly onExit?: (cleanup: () => void) => void;
@@ -373,8 +384,13 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
     input.dependencies.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
-    const patch = await resolveSandboxBuildPatch({
-      ...input.legacy.patchInput,
+    const patch = await (
+      input.dependencies.resolveSandboxBuildPatch ?? resolveSandboxBuildPatch
+    )({
+      // Build-context staging resolves managed-agent base-image provenance.
+      // Read the patch input only after that boundary so the final image gets
+      // the exact metadata produced by the same staging operation.
+      ...input.legacy.resolvePatchInput(),
       selectedGpuRoute: initialGpuRoute,
       stagedDockerfile: buildContext.stagedDockerfile,
     });

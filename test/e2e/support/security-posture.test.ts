@@ -857,11 +857,11 @@ describe("security posture fixture", () => {
       name: "without NoNewPrivs",
     },
   ])("rejects every nemoclaw-start process $name", ({ error, mutate }) => {
-    for (const report of reportsWithEachNemoclawStartProcessFirst()) {
+    reportsWithEachNemoclawStartProcessFirst().forEach((report) => {
       mutate(report);
 
       expect(() => validateSplitProcessSecurityReport(report)).toThrow(error);
-    }
+    });
   });
 
   it.each([
@@ -871,13 +871,13 @@ describe("security posture fixture", () => {
     "capBnd",
     "capAmb",
   ] as const)("rejects every nemoclaw-start process with a nonzero %s set", (field) => {
-    for (const report of reportsWithEachNemoclawStartProcessFirst()) {
+    reportsWithEachNemoclawStartProcessFirst().forEach((report) => {
       report.childSupervisors[0]!.status[field] = "0000000000000001";
 
       expect(() => validateSplitProcessSecurityReport(report)).toThrow(
         new RegExp(`nemoclaw-start process\\.${field} expected 0`, "u"),
       );
-    }
+    });
   });
 
   it("rejects malformed and overflowing split-process reports", () => {
@@ -1099,14 +1099,14 @@ describe("security posture fixture", () => {
       true,
       CONTAINER_ID,
     );
-    for (const callIndex of [1, 2]) {
+    [1, 2].forEach((callIndex) => {
       const dockerEnv = command.mock.calls[callIndex]?.[2]?.env;
       expect(dockerEnv).toMatchObject({ DOCKER_HOST: "unix:///run/trusted-docker.sock" });
       expect(dockerEnv).not.toHaveProperty("DOCKER_CONTEXT");
       expect(dockerEnv).not.toHaveProperty("DOCKER_CONFIG");
       expect(dockerEnv).not.toHaveProperty("DOCKER_TLS_VERIFY");
       expect(dockerEnv).not.toHaveProperty("DOCKER_CERT_PATH");
-    }
+    });
     expect(execShell).toHaveBeenCalledTimes(4);
   });
 

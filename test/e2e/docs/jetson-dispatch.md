@@ -115,7 +115,8 @@ fragment. Do not put a token or other credential in that variable.
 
 The operator-owned service must remain available and compatible with contract
 version `1.0.0` for trusted `main` pushes. Keep the manual flag disabled for
-ordinary manual runs and required pre-tag dispatches.
+ordinary and full manual `main` runs. Use a separate focused manual run when the
+maintainer requests the Jetson target.
 
 ## Evidence
 

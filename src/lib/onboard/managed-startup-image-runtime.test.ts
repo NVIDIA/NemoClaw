@@ -74,6 +74,8 @@ function dashboard(agent: ManagedStartupAgent): ManagedStartupDashboard {
       };
     case "langchain-deepagents-code":
       return { agent, mode: "disabled" };
+    case "pi":
+      return { agent, mode: "disabled" };
   }
 }
 
@@ -82,7 +84,7 @@ function actionInput(
   mode: "apply" | "clear" = "apply",
 ): ManagedStartupImageActionPlanInput {
   const messagingActions =
-    agent === "langchain-deepagents-code"
+    agent === "langchain-deepagents-code" || agent === "pi"
       ? []
       : [
           {
@@ -158,6 +160,7 @@ describe("buildManagedStartupImageActionPlan", () => {
     ["openclaw", "/scripts/generate-openclaw-config.mts"],
     ["hermes", "/opt/nemoclaw-hermes-config/generate-config.ts"],
     ["langchain-deepagents-code", "/opt/nemoclaw-deepagents-code/generate-config.ts"],
+    ["pi", "/opt/nemoclaw-pi/generate-config.ts"],
   ] as const)("selects the reviewed %s generator asset", (agent, generator) => {
     const command = buildManagedStartupImageActionPlan(actionInput(agent)).find(
       ({ action }) => action === "generate-agent-config",

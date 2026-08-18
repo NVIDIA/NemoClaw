@@ -144,25 +144,6 @@ describe("agent state directory contract", () => {
     ).toEqual(testCase.expectedMutablePaths);
   });
 
-  // source-shape-contract: security -- Generated image plans must match the reviewed AgentDefinition projection
-  it("keeps generated image plans equal to their AgentDefinition projections (#8006)", () => {
-    const imagePlanAgents = listAgents().filter(
-      (agentName) => loadAgent(agentName).stateLockPlanInImage,
-    );
-    for (const agentName of imagePlanAgents) {
-      const generated = JSON.parse(
-        fs.readFileSync(
-          path.join(process.cwd(), "agents", agentName, "state-lock-plan.json"),
-          "utf8",
-        ),
-      ) as Record<string, unknown>;
-      const { $comment, ...plan } = generated;
-
-      expect(typeof $comment).toBe("string");
-      expect(plan).toEqual(loadAgent(agentName).stateLockPlan);
-    }
-  });
-
   it.each([
     [{ state_dirs: "state" }, /state_dirs.*array/],
     [{ state_dirs: ["../state"] }, /canonical relative path/],

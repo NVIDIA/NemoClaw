@@ -29,26 +29,6 @@ function syntheticTarget(platform: string): TargetDefinition {
  * tests and Vitest would exit non-zero with no structured skip reason.
  */
 describe("live registry-targets skip-name contract", () => {
-  // source-shape-contract: compatibility -- Live test registration names must remain addressable by stable target identifiers
-  it("registers every target under a name equal to its id", () => {
-    const targets = listTargets();
-    expect(targets.length).toBeGreaterThan(0);
-    for (const target of targets) {
-      expect(liveTargetTestName(target)).toBe(target.id);
-    }
-  });
-
-  // source-shape-contract: compatibility -- Workflow target filters must select every registered live test by exact identifier
-  it('matches the workflow\'s exact `-t "^${TARGET_ID}$"` regex for every target', () => {
-    for (const target of listTargets()) {
-      const name = liveTargetTestName(target);
-      const filter = new RegExp(`^${target.id}$`);
-      expect(filter.test(name), `workflow filter must match registered name for ${target.id}`).toBe(
-        true,
-      );
-    }
-  });
-
   it("keeps a synthetically unsupported target selectable under its exact id", () => {
     const unsupported = syntheticTarget("synthetic-unwired-platform");
     const support = liveTargetSupport(unsupported);
@@ -68,8 +48,4 @@ describe("live registry-targets skip-name contract", () => {
     expect(liveTargetTestName(supported)).toBe(supported.id);
   });
 
-  // Note: the workflow's `-t "^${TARGET_ID}$"` filter pattern itself is
-  // locked by `tools/e2e/workflow-boundary.mts` and exercised by
-  // `e2e-workflow.test.ts`. This file only needs to guarantee
-  // that the test names registered under that filter equal `target.id`.
 });

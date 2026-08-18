@@ -68,11 +68,11 @@ describe("agent base image provisioning", () => {
     () => {
       const runtime = createCuaRuntimeTestFixture();
       try {
-        for (const [name, value] of Object.entries(runtime.env).filter(
+        Object.entries(runtime.env).filter(
           (entry): entry is [string, string] => entry[1] !== undefined,
-        )) {
+        ).forEach(([name, value]) => {
           vi.stubEnv(name, value);
-        }
+        });
         const agent = loadAgent("nemocua");
         const dockerfile = agent.dockerfileBasePath!;
         fs.chmodSync(dockerfile, 0o644);
@@ -114,11 +114,11 @@ describe("agent base image provisioning", () => {
   it("uses the exact manifest-bound NemoCUA sandbox image without a nested base build (#7755)", () => {
     const runtime = createCuaRuntimeTestFixture();
     try {
-      for (const [name, value] of Object.entries(runtime.env).filter(
+      Object.entries(runtime.env).filter(
         (entry): entry is [string, string] => entry[1] !== undefined,
-      )) {
+      ).forEach(([name, value]) => {
         vi.stubEnv(name, value);
-      }
+      });
       const agent = loadAgent("nemocua");
 
       withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
@@ -138,11 +138,11 @@ describe("agent base image provisioning", () => {
     const runtime = createCuaRuntimeTestFixture();
     let buildContext: string | undefined;
     try {
-      for (const [name, value] of Object.entries(runtime.env).filter(
+      Object.entries(runtime.env).filter(
         (entry): entry is [string, string] => entry[1] !== undefined,
-      )) {
+      ).forEach(([name, value]) => {
         vi.stubEnv(name, value);
-      }
+      });
       const agent = loadAgent("nemocua");
 
       withMockedDocker(({ createAgentSandbox }) => {

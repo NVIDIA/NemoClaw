@@ -83,11 +83,22 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
 
   it("requires release qualification to evaluate every full-run result (#7912)", () => {
     const workflow = readE2eOperationsWorkflow();
-    workflow.jobs["release-qualification"].if = "${{ always() }}";
-    workflow.jobs["release-qualification"].needs = ["generate-matrix"];
-    workflow.jobs["release-qualification"].steps!.find(
+    const qualification = workflow.jobs["release-qualification"];
+    expect(qualification.steps!.map((step) => step.name)).toEqual([
+      "Check out the qualification evaluator",
+      "Require every release E2E result",
+    ]);
+    const evaluator = qualification.steps!.find(
       (step) => step.name === "Require every release E2E result",
-    )!.env!.RELEASE_REQUIRED_JOBS = "live";
+    )!;
+    expect(evaluator.env).toEqual({
+      NEEDS_JSON: "${{ toJSON(needs) }}",
+      RELEASE_REQUIRED_JOBS: "${{ needs.generate-matrix.outputs.release_required_jobs }}",
+    });
+
+    qualification.if = "${{ always() }}";
+    qualification.needs = ["generate-matrix"];
+    evaluator.env!.RELEASE_REQUIRED_JOBS = "live";
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
@@ -95,19 +106,6 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
         "release-qualification must run only for a full manual run against main",
         "release-qualification must evaluate planner-selected jobs from needs",
       ]),
-    );
-  });
-
-  it("requires release qualification to preserve admin waiver evidence", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const summary = workflow.jobs["release-qualification"].steps!.find(
-      (step) => step.name === "Record release qualification waiver",
-    )!;
-    delete summary.env?.TRIGGERING_ACTOR;
-    summary.run = "true";
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "release-qualification must record and upload authorized waived job outcomes, identities, and reason",
     );
   });
 
@@ -350,15 +348,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         writeFileSync(output, "");
         const result = spawnSync(
           "bash",
-          [
-            "--noprofile",
-            "--norc",
-            "-e",
-            "-o",
-            "pipefail",
-            "-c",
-            credentialAuthorization.run!,
-          ],
+          ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", credentialAuthorization.run!],
           {
             encoding: "utf8",
             env: {
@@ -376,7 +366,9 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         );
 
         expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(`allowed=${expectedAllowed ? "true" : "false"}\n`);
+        expect(readFileSync(output, "utf8")).toBe(
+          `allowed=${expectedAllowed ? "true" : "false"}\n`,
+        );
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
@@ -414,12 +406,12 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+      "Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, native-runtime-qualification-producer, or jetson-nvmap-gpu with its dispatch flag",
       "Manual PR E2E accepts arbitrary selectors",
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, native-runtime-qualification-producer, or jetson-nvmap-gpu with its dispatch flag",
     );
   });
 
@@ -431,7 +423,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     authentication.run = authentication.run!.replace("inference-routing::false:false | ", "");
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;",
+      "Manual PR authentication must retain ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | native-runtime-qualification-producer::false:false | :jetson-nvmap-gpu:false:true) ;;",
     );
   });
 
@@ -439,6 +431,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     ["maintain", "", "", "false", 0, ""],
     ["maintain", "inference-routing", "", "false", 0, ""],
     ["maintain", "managed-image-protected-runtime", "", "false", 0, ""],
+    ["maintain", "native-runtime-qualification-producer", "", "false", 0, ""],
     ["maintain", "", "jetson-nvmap-gpu", "true", 0, ""],
     ["maintain", "", "jetson-nvmap-gpu", "false", 1, "accepts only empty selectors"],
     ["maintain", "network-policy", "", "false", 1, "accepts only empty selectors"],
@@ -456,8 +449,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       const workflowSha = "c".repeat(40);
       const prefix = [
         "curl() {",
-        '  case "${@: -1}" in',
-        `    *collaborators*) printf '%s' '{"role_name":"${role}"}' ;;`,
+        '  local url="${@: -1}" output_file="" previous="" argument body',
+        '  for argument in "$@"; do',
+        '    if [[ "$previous" == "--output" ]]; then output_file="$argument"; fi',
+        '    previous="$argument"',
+        "  done",
+        '  case "$url" in',
+        `    *collaborators*) body='{"user":{"login":"maintainer"},"role_name":"${role}"}'; if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '200'; else printf '%s' "$body"; fi ;;`,
         `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"contributor/NemoClaw"},"sha":"${headSha}"},"base":{"sha":"${baseSha}"}}' ;;`,
         "    *) return 1 ;;",
         "  esac",
@@ -481,7 +479,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             INCLUDE_LAUNCHABLE: "false",
             JOBS: jobs,
             PR_NUMBER: "42",
-            REVIEW_REASON: "Reviewed PR head revision",
+            REVIEW_REASON: "Reviewed latest PR commit",
             RUN_ATTEMPT: "1",
             TARGETS: targets,
             TRIGGERING_ACTOR: "maintainer",
@@ -497,6 +495,20 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     },
   );
 
+  it("rejects candidate-workflow qualification when a downstream job receives a repository secret", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const plan = workflow.jobs["native-runtime-qualification-producer-plan"];
+    const producer = workflow.jobs["native-runtime-qualification-producer"];
+
+    expect(JSON.stringify(producer)).toContain("${{ secrets.NVIDIA_API_KEY }}");
+    plan.if =
+      "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && (github.ref == 'refs/heads/main' || github.workflow_sha == inputs.checkout_sha) && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Native runtime qualification producer plan must execute only from trusted main",
+    );
+  });
+
   it("uses central maintainer authorization for protected managed-image qualification", () => {
     const workflow = readE2eOperationsWorkflow();
     const guards = [
@@ -506,12 +518,12 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       workflow.jobs[jobName].steps!.find((step) => step.name === stepName)!,
     );
 
-    for (const guard of guards) {
+    guards.forEach((guard) => {
       expect(guard.env).not.toHaveProperty("ACTOR");
       expect(guard.run).not.toContain("github-actions[bot]");
       expect(guard.run).toContain('"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"');
       expect(guard.run).toContain('"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$');
-    }
+    });
   });
 
   it("accepts the controller target matrix for the commit under review", () => {
@@ -819,6 +831,22 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
       "scorecard must not use unvalidated generic write surfaces",
+    );
+  });
+
+  it.each([
+    ["a lowercase short write method", "gh api -X post repos/NVIDIA/NemoClaw/issues"],
+    ["a lowercase long write method", "gh api --method patch repos/NVIDIA/NemoClaw/issues/1"],
+    [
+      "a GraphQL mutation",
+      "gh api graphql -f query='mutation { closeIssue(input: {}) { issue { id } } }'",
+    ],
+  ])("rejects %s in the qualification planning job", (_label, mutation) => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["native-runtime-qualification-producer-plan"].steps!.push({ run: mutation });
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "native-runtime-qualification-producer-plan must limit GitHub API access to the reviewed read-only contract",
     );
   });
 

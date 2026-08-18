@@ -5,96 +5,70 @@ import { describe, expect, it, vi } from "vitest";
 
 import { selectAuthorizedChatModel } from "../lib/select-authorized-chat-model.mts";
 
-const json = (body: unknown, status = 200) => Response.json(body, { status });
+const endpoint = "https://inference.example.test/v1";
+const currentModel = "nvidia/nvidia/nemotron-3-ultra";
 
 describe("authorized alternate chat model selection", () => {
-  it("tries preferred chat models in order until the credential can invoke one", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        json({
-          data: [
-            { id: "nvidia/nvidia/nemotron-3-ultra" },
-            { id: "nvidia/nemotron-3-super-120b-a12b" },
-            { id: "nvidia/nemotron-3-ultra-550b-a55b" },
-            { id: "nvidia/nv-embedqa-e5-v5" },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(json({ error: "forbidden" }, 403))
-      .mockResolvedValueOnce(json({ choices: [] }));
+  it("tries preferred catalog models through the shared Chat Completions probe", async () => {
+    const fetchModels = vi.fn(() => ({
+      ok: true as const,
+      ids: [
+        currentModel,
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "nvidia/nv-embedqa-e5-v5",
+      ],
+    }));
+    const probeModel = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValueOnce({ ok: true });
 
     await expect(
       selectAuthorizedChatModel({
         apiKey: "test-key",
-        currentModel: "nvidia/nvidia/nemotron-3-ultra",
-        endpoint: "https://inference.example.test/v1",
-        fetchImpl,
+        currentModel,
+        endpoint,
+        fetchModels,
+        probeModel,
       }),
     ).resolves.toBe("nvidia/nemotron-3-super-120b-a12b");
 
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
-    expect(fetchImpl.mock.calls[0]?.[0].toString()).toBe(
-      "https://inference.example.test/v1/models",
-    );
-    expect(fetchImpl.mock.calls[1]?.[0].toString()).toBe(
-      "https://inference.example.test/v1/chat/completions",
-    );
-    const firstProbe = JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body));
-    const secondProbe = JSON.parse(String(fetchImpl.mock.calls[2]?.[1]?.body));
-    expect(firstProbe).toEqual({
-      max_tokens: 16,
-      messages: [{ content: "Reply with exactly: OK", role: "user" }],
-      model: "nvidia/nemotron-3-ultra-550b-a55b",
-    });
-    expect(secondProbe).toEqual({
-      max_tokens: 16,
-      messages: [{ content: "Reply with exactly: OK", role: "user" }],
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(fetchModels).toHaveBeenCalledWith(endpoint, "test-key");
+    expect(probeModel.mock.calls).toEqual([
+      [endpoint, "nvidia/nemotron-3-ultra-550b-a55b", "test-key", { skipResponsesProbe: true }],
+      [endpoint, "nvidia/nemotron-3-super-120b-a12b", "test-key", { skipResponsesProbe: true }],
+    ]);
   });
 
-  it("fails without probing when discovery has no alternate chat model", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
-      json({
-        data: [{ id: "nvidia/nvidia/nemotron-3-ultra" }, { id: "nvidia/nv-embedqa-e5-v5" }],
-      }),
-    );
+  it("does not probe when the catalog has no alternate chat model", async () => {
+    const probeModel = vi.fn();
 
     await expect(
       selectAuthorizedChatModel({
         apiKey: "test-key",
-        currentModel: "nvidia/nvidia/nemotron-3-ultra",
-        endpoint: "https://inference.example.test/v1/",
-        fetchImpl,
+        currentModel,
+        endpoint,
+        fetchModels: () => ({ ok: true, ids: [currentModel, "nvidia/embed-v1"] }),
+        probeModel,
       }),
     ).rejects.toThrow("the endpoint listed no alternate chat model");
-    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(probeModel).not.toHaveBeenCalled();
   });
 
-  it("retries a transient response without spending a request on another model", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        json({
-          data: [
-            { id: "nvidia/nvidia/nemotron-3-ultra" },
-            { id: "nvidia/nemotron-3-ultra-550b-a55b" },
-            { id: "nvidia/nemotron-3-super-120b-a12b" },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(json({ error: "rate limited" }, 429))
-      .mockResolvedValueOnce(json({ choices: [] }));
+  it("does not probe more candidates than the configured bound", async () => {
+    const probeModel = vi.fn().mockResolvedValue({ ok: false });
 
     await expect(
       selectAuthorizedChatModel({
         apiKey: "test-key",
-        currentModel: "nvidia/nvidia/nemotron-3-ultra",
-        endpoint: "https://inference.example.test/v1",
-        fetchImpl,
+        currentModel,
+        endpoint,
+        fetchModels: () => ({ ok: true, ids: ["gpt-a", "gpt-b"] }),
+        maxCandidates: 1,
+        probeModel,
       }),
-    ).resolves.toBe("nvidia/nemotron-3-ultra-550b-a55b");
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    ).rejects.toThrow("none of the first 1 listed chat models passed validation");
+    expect(probeModel).toHaveBeenCalledOnce();
   });
 });

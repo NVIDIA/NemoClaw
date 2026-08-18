@@ -161,6 +161,7 @@ describe("uninstall run plan", () => {
             command !== "docker" && command !== "lsof" && command !== "pgrep",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => existing.has(target),
+          hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: (line) => logs.push(line),
           rmSync: vi.fn((target: fs.PathLike) => {
@@ -206,6 +207,7 @@ describe("uninstall run plan", () => {
             command !== "docker" && command !== "lsof" && command !== "pgrep",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => target === hermesShim || target === deepagentsShim,
+          hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: () => {},
           rmSync: vi.fn((target: fs.PathLike) => {
@@ -251,6 +253,7 @@ describe("uninstall run plan", () => {
             command !== "docker" && command !== "lsof" && command !== "pgrep",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => target === hermesShim || target === deepagentsShim,
+          hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: () => {},
           rmSync: vi.fn((target: fs.PathLike) => {
@@ -1453,6 +1456,7 @@ describe("uninstall run plan", () => {
         commandExists: () => true,
         env: { HOME: "/tmp/nemoclaw-uninstall-test-3516" } as NodeJS.ProcessEnv,
         existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
         isTty: false,
         kill: (pid) => {
           killed.push(pid);

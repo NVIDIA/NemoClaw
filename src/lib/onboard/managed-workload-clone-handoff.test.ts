@@ -90,13 +90,13 @@ function source(
     compatibleEndpointReasoningEffort: null,
     toolDisclosure: profile.tools.disclosure,
     webSearchEnabled:
-      profile.agentConfig.agent === "langchain-deepagents-code"
-        ? false
-        : profile.agentConfig.webSearch.enabled,
+      profile.agentConfig.agent === "openclaw" || profile.agentConfig.agent === "hermes"
+        ? profile.agentConfig.webSearch.enabled
+        : false,
     webSearchProvider:
-      profile.agentConfig.agent === "langchain-deepagents-code"
-        ? null
-        : profile.agentConfig.webSearch.provider,
+      profile.agentConfig.agent === "openclaw" || profile.agentConfig.agent === "hermes"
+        ? profile.agentConfig.webSearch.provider
+        : null,
     ...(profile.messaging.plan === null
       ? {}
       : {
@@ -310,10 +310,10 @@ describe("prepareManagedWorkloadCloneHandoff", () => {
         ...base.workload,
         acceptsReceipt: (candidate) => {
           const managedCandidates = candidate?.kind === "managed-image" ? [candidate] : [];
-          for (const managedCandidate of managedCandidates) {
+          managedCandidates.forEach((managedCandidate) => {
             observedReceipts.push(managedCandidate);
             mutationResults.push(Reflect.set(managedCandidate, "reference", "mutated-by-provider"));
-          }
+          });
           return true;
         },
       },

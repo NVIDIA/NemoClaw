@@ -104,6 +104,10 @@ export function createMxcRuntimeProviderBundle({
       directLifecycle: false,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: false,
+      readOnlyHostMounts: {
+        supported: false,
+        reason: "OpenShell MXC does not expose a qualified host-directory sharing contract.",
+      },
     },
     preflightDoctor: {
       providerId: MXC_PROVIDER_ID,

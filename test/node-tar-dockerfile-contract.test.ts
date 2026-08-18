@@ -29,6 +29,8 @@ const dockerfiles = [
     installsPatchDownloader: false,
     installsWithNpm: false,
   },
+  { file: "agents/pi/Dockerfile.base", installsPatchDownloader: true, installsWithNpm: false },
+  { file: "agents/pi/Dockerfile", installsPatchDownloader: false, installsWithNpm: false },
 ] as const;
 const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
@@ -72,11 +74,11 @@ function namedStage(source: string, name: string): string {
 describe("node-tar image remediation contract", () => {
   it("binds the remediation lifecycle to the affected upstream Node image pins", () => {
     const observedBases = new Set<string>();
-    for (const file of pinnedBaseDockerfiles) {
+    pinnedBaseDockerfiles.forEach((file) => {
       const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
       assertReviewedNodeBases(file, source);
       for (const base of nodeBaseReferences(source)) observedBases.add(base);
-    }
+    });
     expect([...observedBases].sort()).toEqual(
       [...NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH].sort(),
     );
@@ -130,6 +132,7 @@ describe("node-tar image remediation contract", () => {
       patchPayloadStage === undefined ? source : namedStage(dockerfile, patchPayloadStage);
     const flattenedPatchInputStage = patchInputStage.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
+    const helperCopy = patchInputStage.indexOf("scripts/lib/bundled-npm-package.mts");
     const patchCopy = patchInputStage.indexOf(
       "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
     );
@@ -143,14 +146,15 @@ describe("node-tar image remediation contract", () => {
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
     expect(
       flattenedPatchInputStage.includes(
-        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
       ) ||
         patchInputStage.includes(
           "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
         ),
       file,
     ).toBe(true);
-    expect(patchCopy, file).toBeGreaterThan(reviewedCopy);
+    expect(helperCopy, file).toBeGreaterThan(reviewedCopy);
+    expect(patchCopy, file).toBeGreaterThan(helperCopy);
     expect(patchRun, file).toBeGreaterThan(patchInputReady);
     const aptInstall = source.indexOf(
       "RUN apt-get update && apt-get install -y --no-install-recommends",

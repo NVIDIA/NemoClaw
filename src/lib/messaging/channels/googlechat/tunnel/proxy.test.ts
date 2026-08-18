@@ -48,62 +48,66 @@ async function listen(server: Server): Promise<number> {
 }
 
 describe("Google Chat webhook route proxy", () => {
-  it("forwards only POST /googlechat and denies dashboard or control routes", async () => {
-    const received: Array<{ method?: string; url?: string; body: string }> = [];
-    const upstream = createServer((request, response) => {
-      const chunks: Buffer[] = [];
-      request.on("data", (chunk: Buffer) => chunks.push(chunk));
-      request.on("end", () => {
-        received.push({
-          method: request.method,
-          url: request.url,
-          body: Buffer.concat(chunks).toString("utf8"),
+  it.each(
+    [
+        ["/", "POST"],
+        ["/health", "POST"],
+        ["/ws", "POST"],
+        ["/googlechat", "GET"],
+    ] as const,
+  )(
+    "forwards only POST /googlechat and denies dashboard or control routes [case %#]",
+    async (path, method) => {
+      const received: Array<{ method?: string; url?: string; body: string }> = [];
+      const upstream = createServer((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+          received.push({
+            method: request.method,
+            url: request.url,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+          response.writeHead(202, { "content-type": "application/json" });
+          response.end('{"accepted":true}');
         });
-        response.writeHead(202, { "content-type": "application/json" });
-        response.end('{"accepted":true}');
       });
-    });
-    cleanupServers.add(upstream);
-    const upstreamPort = await listen(upstream);
-    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-googlechat-proxy-"));
-    cleanupDirs.add(pidDir);
+      cleanupServers.add(upstream);
+      const upstreamPort = await listen(upstream);
+      const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-googlechat-proxy-"));
+      cleanupDirs.add(pidDir);
 
-    const proxyPort = await startGooglechatWebhookProxy(pidDir, upstreamPort);
-    const webhook = await fetch(`http://127.0.0.1:${String(proxyPort)}/googlechat?key=value`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: '{"type":"MESSAGE"}',
-    });
-    expect(webhook.status).toBe(202);
-    expect(await webhook.json()).toEqual({ accepted: true });
-    expect(received).toEqual([
-      {
+      const proxyPort = await startGooglechatWebhookProxy(pidDir, upstreamPort);
+      const webhook = await fetch(`http://127.0.0.1:${String(proxyPort)}/googlechat?key=value`, {
         method: "POST",
-        url: "/googlechat?key=value",
+        headers: { "content-type": "application/json" },
         body: '{"type":"MESSAGE"}',
-      },
-    ]);
+      });
+      expect(webhook.status).toBe(202);
+      expect(await webhook.json()).toEqual({ accepted: true });
+      expect(received).toEqual([
+        {
+          method: "POST",
+          url: "/googlechat?key=value",
+          body: '{"type":"MESSAGE"}',
+        },
+      ]);
 
-    for (const [path, method] of [
-      ["/", "POST"],
-      ["/health", "POST"],
-      ["/ws", "POST"],
-      ["/googlechat", "GET"],
-    ] as const) {
       const response = await fetch(`http://127.0.0.1:${String(proxyPort)}${path}`, { method });
       expect(response.status, `${method} ${path}`).toBe(404);
-    }
-    expect(received).toHaveLength(1);
 
-    const state = readGooglechatWebhookProxyState(pidDir);
-    expect(state).toEqual({ running: true, port: proxyPort, upstreamPort });
-    expect(statSync(join(pidDir, "nemoclaw-googlechat-webhook-proxy.pid")).mode & 0o777).toBe(
-      0o600,
-    );
-    expect(statSync(join(pidDir, "nemoclaw-googlechat-webhook-proxy.json")).mode & 0o777).toBe(
-      0o600,
-    );
-  });
+      expect(received).toHaveLength(1);
+
+      const state = readGooglechatWebhookProxyState(pidDir);
+      expect(state).toEqual({ running: true, port: proxyPort, upstreamPort });
+      expect(statSync(join(pidDir, "nemoclaw-googlechat-webhook-proxy.pid")).mode & 0o777).toBe(
+        0o600,
+      );
+      expect(statSync(join(pidDir, "nemoclaw-googlechat-webhook-proxy.json")).mode & 0o777).toBe(
+        0o600,
+      );
+    },
+  );
 
   it("rejects a pre-planted symlink at the state directory instead of chmod-ing its target", async () => {
     const base = mkdtempSync(join(tmpdir(), "nemoclaw-googlechat-proxy-"));

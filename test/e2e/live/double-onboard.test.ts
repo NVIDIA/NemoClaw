@@ -508,7 +508,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     timeoutMs: 30_000,
   });
   const cleanupSandboxNames = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
-  for (const name of [...cleanupSandboxNames].reverse()) {
+  [...cleanupSandboxNames].reverse().forEach((name) => {
     cleanup.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
       sandbox.cleanupSandbox(name, {
         artifactName: `cleanup-openshell-sandbox-delete-${name}`,
@@ -521,7 +521,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
       env: commandEnv(),
       timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
     });
-  }
+  });
 
   await artifacts.target.declare({
     id: "double-onboard",
