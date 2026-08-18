@@ -540,7 +540,7 @@ function finalizeRelaunchedRecovery(
   } catch {
     if (!quiet) {
       console.error(
-        "  The final replacement container handoff could not be confirmed; the dashboard/API host forward was not started.",
+        "  NemoClaw could not confirm the final replacement container handoff. It did not start the primary dashboard/API host forward.",
       );
     }
     return finalRelaunchRecoveryFailure(
