@@ -29,6 +29,7 @@ export {
 } from "./docker-gpu-patch-clone";
 
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch-diagnostics";
+import { formatDockerContainerState } from "./managed-bootstrap/docker-container-failure-evidence";
 import {
   getDockerGpuPatchFailureContext,
   recreateOpenShellDockerSandboxContainer,
@@ -467,21 +468,6 @@ const SANDBOX_STARTUP_COMMAND_NOT_FOUND_HINTS: readonly string[] = [
   "Rebuild the sandbox image from the complete Dockerfile and source context for the selected agent and NemoClaw release.",
 ];
 
-function describePatchedContainerState(state: DockerContainerState | null): string[] {
-  if (!state) return [];
-  const lines: string[] = [];
-  if (state.Status) lines.push(`patched_container_status=${state.Status}`);
-  if (typeof state.ExitCode === "number")
-    lines.push(`patched_container_exit_code=${state.ExitCode}`);
-  if (state.OOMKilled) lines.push("patched_container_oom_killed=true");
-  if (state.Error) lines.push(`patched_container_error=${state.Error}`);
-  if (state.Health?.Status) lines.push(`patched_container_health=${state.Health.Status}`);
-  if (state.FinishedAt && state.FinishedAt !== "0001-01-01T00:00:00Z") {
-    lines.push(`patched_container_finished_at=${state.FinishedAt}`);
-  }
-  return lines;
-}
-
 function patchedContainerLooksFailed(state: DockerContainerState | null): boolean {
   if (!state) return false;
   if (state.Dead === true) return true;
@@ -514,7 +500,7 @@ export function classifyDockerGpuPatchFailure(
   const lines: string[] = [];
   if (snapshot.sandboxPhase) lines.push(`sandbox_phase=${snapshot.sandboxPhase}`);
   if (snapshot.sandboxListLine) lines.push(`sandbox_list_row=${snapshot.sandboxListLine}`);
-  lines.push(...describePatchedContainerState(snapshot.patchedContainerState));
+  lines.push(...formatDockerContainerState(snapshot.patchedContainerState, "patched_container_"));
   if (selectedMode) lines.push(`patched_create_option=${selectedMode.label}`);
 
   const containerFailed = patchedContainerLooksFailed(snapshot.patchedContainerState);
