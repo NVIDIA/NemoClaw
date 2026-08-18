@@ -173,15 +173,25 @@ export async function prepareManagedWorkloadRebuildHandoff(
       );
     }
   } else {
+    const qualificationRevision = liveE2eManagedImageRevision(process.env);
+    if (
+      qualificationRevision !== null &&
+      qualificationRevision !== authority.receipt.sourceRevision
+    ) {
+      throw new ManagedWorkloadRebuildError(
+        "the live qualification revision does not match the durable workload receipt",
+      );
+    }
     try {
-      const catalogRevision = liveE2eManagedImageRevision(process.env);
       replacement = await managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource({
         agentName: authority.agent,
         legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
         runtime: options.runtime,
         version: options.version ?? getVersion(),
         policy: "require-managed",
-        ...(catalogRevision ? { catalogRevision } : {}),
+        ...(qualificationRevision
+          ? { catalogRevision: authority.receipt.sourceRevision }
+          : {}),
       });
     } catch (error) {
       throw new ManagedWorkloadRebuildError(

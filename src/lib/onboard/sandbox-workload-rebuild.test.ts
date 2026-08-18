@@ -313,7 +313,7 @@ describe("managed workload rebuild preflight", () => {
     const prepare = vi.fn(async () => replacement("langchain-deepagents-code"));
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
     vi.stubEnv("GITHUB_ACTIONS", "true");
-    vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "c".repeat(40));
+    vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "a".repeat(40));
 
     await prepareManagedWorkloadRebuildHandoff(entry("langchain-deepagents-code"), {
       runtime: runtime(),
@@ -327,8 +327,24 @@ describe("managed workload rebuild preflight", () => {
       runtime: runtime(),
       version: "0.0.100",
       policy: "require-managed",
-      catalogRevision: "c".repeat(40),
+      catalogRevision: "a".repeat(40),
     });
+  });
+
+  it("rejects a qualification revision that conflicts with durable authority (#9385)", async () => {
+    const prepare = vi.fn(async () => replacement("langchain-deepagents-code"));
+    managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = prepare;
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("E2E_MANAGED_IMAGE_REVISION", "c".repeat(40));
+
+    await expect(
+      prepareManagedWorkloadRebuildHandoff(entry("langchain-deepagents-code"), {
+        runtime: runtime(),
+        provider: provider(),
+        version: "0.0.100",
+      }),
+    ).rejects.toThrow("live qualification revision does not match the durable workload receipt");
+    expect(prepare).not.toHaveBeenCalled();
   });
 
   it("keeps release-catalog rebuild behavior outside GitHub Actions (#9385)", async () => {
