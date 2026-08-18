@@ -319,7 +319,7 @@ describe("executeGatewaySupervisorAction", () => {
     });
   });
 
-  it("marks an exact pinned container identity refusal for recovery classification (#9364)", () => {
+  it("emits the managed-control identity marker for a pinned container refusal (#9364)", () => {
     const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(() => {
       throw new Error(
@@ -328,10 +328,11 @@ describe("executeGatewaySupervisorAction", () => {
     });
     vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(false);
 
-    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toMatchObject({
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
       status: 1,
-      managedControlIdentityChanged: true,
-      stderr: expect.stringContaining("OpenShell container identity changed"),
+      stdout: "",
+      stderr:
+        "MANAGED_CONTROL_IDENTITY_CHANGED\nOpenShell container identity changed for sandbox 'new-clone'; refusing privileged execution against a different container.",
     });
   });
 

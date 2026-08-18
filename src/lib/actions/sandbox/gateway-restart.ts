@@ -15,6 +15,8 @@ export type GatewayRestartCommandResult = {
   stderr: string;
 };
 
+export const MANAGED_CONTROL_IDENTITY_CHANGED_MARKER = "MANAGED_CONTROL_IDENTITY_CHANGED";
+
 export type ManagedGatewayControlCompletion = {
   disposition: "ok" | "already-running";
   oldPid: number;
@@ -49,6 +51,7 @@ export type GatewayRestartFailureLayer =
   | "privileged control unavailable"
   | "supervisor not running"
   | "supervisor unavailable"
+  | "container identity changed"
   | "secret-boundary refusal"
   | "unsafe config path"
   | "config hash mismatch"
@@ -196,6 +199,15 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     return {
       layer: "supervisor unavailable",
       detail: detail || "the managed gateway supervisor became unavailable",
+    };
+  }
+  if (output.includes(MANAGED_CONTROL_IDENTITY_CHANGED_MARKER)) {
+    return {
+      layer: "container identity changed",
+      detail:
+        sanitizeGatewayRestartFailureDetail(
+          output.replace(MANAGED_CONTROL_IDENTITY_CHANGED_MARKER, "").trim(),
+        ) || "the selected container identity changed",
     };
   }
   if (

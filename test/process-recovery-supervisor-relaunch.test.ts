@@ -27,8 +27,7 @@ function pinnedIdentityRefusal(sandboxName: string) {
   return {
     status: 1,
     stdout: "",
-    stderr: `PRIVILEGED_CONTROL_UNAVAILABLE: OpenShell container identity changed for sandbox '${sandboxName}'; refusing privileged execution against a different container.`,
-    managedControlIdentityChanged: true,
+    stderr: `MANAGED_CONTROL_IDENTITY_CHANGED\nOpenShell container identity changed for sandbox '${sandboxName}'; refusing privileged execution against a different container.`,
   } as const;
 }
 

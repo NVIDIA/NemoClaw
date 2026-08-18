@@ -16,6 +16,7 @@ const supervisorFailureMarkers: Array<
   [string, ReturnType<typeof classifyGatewayRestartFailure>["layer"]]
 > = [
   ["PRIVILEGED_CONTROL_UNAVAILABLE", "privileged control unavailable"],
+  ["MANAGED_CONTROL_IDENTITY_CHANGED", "container identity changed"],
   ["SUPERVISOR_UNAVAILABLE", "privileged control unavailable"],
   ["SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement", "supervisor unavailable"],
   ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
