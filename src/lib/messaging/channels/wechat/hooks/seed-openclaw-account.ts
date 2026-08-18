@@ -4,13 +4,16 @@
 import type {
   MessagingHookHandler,
   MessagingHookInputMap,
-  MessagingManagedStartupPlaceholderAuthorization,
   MessagingHookOutputMap,
   MessagingHookRegistration,
 } from "../../../hooks/types";
 import {
+  assertSafeWechatAccountId,
+  authorizeWechatAccountFilePlaceholders,
   WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID,
   WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
+  WECHAT_TOKEN_PLACEHOLDER,
+  wechatAccountFilePath,
 } from "../contract.ts";
 import { normalizeWechatIlinkBaseUrl } from "../ilink-base-url.ts";
 
@@ -20,7 +23,7 @@ export {
   WECHAT_SEED_OPENCLAW_ACCOUNT_PLAN_HOOK_ID,
 } from "../contract.ts";
 
-export const WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN";
+export { WECHAT_TOKEN_PLACEHOLDER } from "../contract.ts";
 export const WECHAT_PLUGIN_ID = "openclaw-weixin";
 export const WECHAT_PLUGIN_INSTALL_PATH = "/sandbox/.openclaw/extensions/openclaw-weixin";
 
@@ -120,55 +123,6 @@ export function buildWechatSeedOpenClawAccountOutputs(
       },
     },
   };
-}
-
-function authorizeWechatAccountFilePlaceholders(
-  value: unknown,
-): readonly MessagingManagedStartupPlaceholderAuthorization[] {
-  if (!isPlainDataObject(value) || !isWechatAccountFilePath(ownDataPropertyValue(value, "path"))) {
-    return [];
-  }
-  return [{ path: ["content", "token"], value: WECHAT_TOKEN_PLACEHOLDER }];
-}
-
-function wechatAccountFilePath(accountId: string): string {
-  return `openclaw-weixin/accounts/${accountId}.json`;
-}
-
-function isWechatAccountFilePath(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const prefix = "openclaw-weixin/accounts/";
-  const suffix = ".json";
-  if (!value.startsWith(prefix) || !value.endsWith(suffix)) return false;
-  const accountId = value.slice(prefix.length, -suffix.length);
-  return accountId === accountId.trim() && isSafeWechatAccountId(accountId);
-}
-
-function assertSafeWechatAccountId(accountId: string): void {
-  if (!isSafeWechatAccountId(accountId)) {
-    throw new Error("WeChat account id contains unsafe filename characters.");
-  }
-}
-
-function isSafeWechatAccountId(accountId: string): boolean {
-  return (
-    accountId.length > 0 &&
-    accountId !== "." &&
-    accountId !== ".." &&
-    !/[\\/\0-\x1F\x7F]/.test(accountId) &&
-    !accountId.includes("..")
-  );
-}
-
-function isPlainDataObject(value: unknown): value is Record<string, unknown> {
-  return (
-    value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype
-  );
-}
-
-function ownDataPropertyValue(value: Record<string, unknown>, key: string): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
-  return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
 function requiredInputString(inputs: MessagingHookInputMap | undefined, key: string): string {
