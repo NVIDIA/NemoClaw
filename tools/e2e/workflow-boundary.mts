@@ -1777,9 +1777,9 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
   }
   if (
     concurrency["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"
+    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && inputs.jobs != 'staging-brev-launchable' && !inputs.include_staging_brev_launchable }}"
   ) {
-    errors.push("workflow concurrency must not cancel an active Jetson dispatch");
+    errors.push("workflow concurrency must not cancel an active Jetson or Launchable dispatch");
   }
 }
 
