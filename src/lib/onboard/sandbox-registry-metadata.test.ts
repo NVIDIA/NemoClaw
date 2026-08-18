@@ -206,6 +206,41 @@ describe("sandbox registry metadata", () => {
     expect(entry && authority.readManagedWorkloadAuthority(entry)?.agent).toBe("openclaw");
   });
 
+  it("records the derived agent when a reused legacy entry omits agent (#9356)", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-reuse-missing-agent-"));
+    process.env.HOME = tmpDir;
+    vi.resetModules();
+
+    const configDir = join(tmpDir, ".nemoclaw");
+    const registryFile = join(configDir, "sandboxes.json");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      registryFile,
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "old-model",
+            provider: "old-provider",
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+    );
+
+    const helpers = await makeHelpers("docker");
+    helpers.updateReusedSandboxMetadata(
+      "alpha",
+      { name: "hermes", expectedVersion: "1.0.0" } as AgentDefinition,
+      "new-model",
+      "nvidia-prod",
+      18789,
+    );
+
+    const persisted = JSON.parse(readFileSync(registryFile, "utf8"));
+    expect(persisted.sandboxes.alpha.agent).toBe("hermes");
+  });
+
   it("persists a reused terminal sandbox without a dashboard port for host allocation (#7020)", async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-reuse-terminal-metadata-"));
     process.env.HOME = tmpDir;
