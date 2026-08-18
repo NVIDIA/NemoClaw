@@ -61,9 +61,9 @@ const ROUTER_HEALTH_INTERVAL_MS = 2000;
 const ROUTER_STARTUP_TIMEOUT_MS = 10 * 60_000;
 // LiteLLM's /health live-probes every upstream endpoint per request, so it
 // can need far longer than the 3-second liveness budget to answer (#8962).
-// The startup poll keeps the 3-second budget: the status-only liveness
-// probe must not accept a fast 200 that names zero healthy endpoints, so
-// recovery for a slow-but-healthy router runs through the body-checked
+// The startup poll keeps the 3-second budget and reads the body, so it
+// never accepts a fast 200 that names zero healthy endpoints; recovery for
+// a router whose /health outruns that budget runs through the body-checked
 // final snapshot after the poll exhausts its retries.
 const ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS = 30_000;
 const ROUTER_LOG_TAIL_LINES = 20;
@@ -468,7 +468,8 @@ export async function startModelRouter(
       Math.min(ROUTER_HEALTH_REQUEST_TIMEOUT_MS, Math.ceil(remainingMs)),
     );
     healthAttempts += 1;
-    const healthy = await deps.isRouterHealthy(port, healthTimeoutMs);
+    const pollSnapshot = await deps.getRouterHealthSnapshot(port, healthTimeoutMs);
+    const healthy = pollSnapshot.healthy && hasHealthyEndpoint(pollSnapshot.body);
     const processAlive = deps.isProcessAlive(pid);
     if (healthy && processAlive) return pid;
     if (!processAlive) {
