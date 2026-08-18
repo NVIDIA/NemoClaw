@@ -642,16 +642,18 @@ describe("Hermes portable receipt authority", () => {
     const receipt = pending();
     const staged = leaveInterruptedReceiptPrefix(receipt);
     const prior = fs.readFileSync(staged);
+    const displaced = `${staged}.displaced`;
 
     expect(() =>
       publish(receipt, {
         beforeInterruptedStageRetirement: () => {
-          fs.unlinkSync(staged);
+          fs.renameSync(staged, displaced);
           fs.writeFileSync(staged, prior, { mode: 0o600 });
         },
       }),
     ).toThrow("changed before exact retirement");
     expect(fs.readFileSync(staged)).toEqual(prior);
+    expect(fs.readFileSync(displaced)).toEqual(prior);
     expect(fs.existsSync(path.join(path.dirname(staged), "pending.json"))).toBe(false);
   });
 

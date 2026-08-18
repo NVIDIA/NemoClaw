@@ -262,10 +262,10 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
     );
     const enableAudit = vi.fn(() => {});
     let exitCode = Number.NaN;
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    const exit = ((code?: number) => {
       exitCode = code ?? 0;
       throw new Error("__exec_exit__");
-    }) as never);
+    }) as (code: number) => never;
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await execSandbox(
       "wire-sbx",
@@ -273,11 +273,13 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       {},
       {
         resolveBinary: () => "openshell",
+        selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
         run: async () => {
           options.onRun?.();
           return { status, ...(options.error ? { error: options.error } : {}) };
         },
         cleanupDeps: options.cleanupDeps ?? cleanupSkipped,
+        exit,
         policyHint: {
           now: options.now ?? (() => START_MS),
           env: {},
@@ -289,7 +291,6 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
         },
       },
     ).catch(() => {});
-    exitSpy.mockRestore();
     errSpy.mockRestore();
     return { enableAudit, exitCode, probeLogs, stderr };
   };

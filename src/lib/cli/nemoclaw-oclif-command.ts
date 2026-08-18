@@ -66,6 +66,12 @@ export const withSandboxCommandLifecycleLock = withMcpLifecycleLock;
 export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =
   "The --fix option is not supported for an experimental Hermes portable sandbox.";
 
+function hasHostHelpFlag(argv: readonly string[]): boolean {
+  const separator = argv.indexOf("--");
+  const hostArgs = separator === -1 ? argv : argv.slice(0, separator);
+  return hostArgs.includes("--help") || hostArgs.includes("-h");
+}
+
 function assertHermesPortableCommandSupported(
   commandId: string,
   sandboxName: string,
@@ -130,8 +136,7 @@ export abstract class NemoClawCommand extends Command {
       typeof commandId === "string" &&
       sandboxName &&
       (commandId === "launch" || commandId.startsWith("sandbox:")) &&
-      !this.argv.includes("--help") &&
-      !this.argv.includes("-h")
+      !hasHostHelpFlag(this.argv)
     ) {
       assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
     }
@@ -142,16 +147,14 @@ export abstract class NemoClawCommand extends Command {
     if (
       typeof commandId === "string" &&
       HERMES_PORTABLE_HOST_FENCED_READS.has(commandId) &&
-      !this.argv.includes("--help") &&
-      !this.argv.includes("-h")
+      !hasHostHelpFlag(this.argv)
     ) {
       return await withCurrentPortableHostFence(() => super._run<T>());
     }
     if (
       typeof commandId === "string" &&
       HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS.has(commandId) &&
-      !this.argv.includes("--help") &&
-      !this.argv.includes("-h")
+      !hasHostHelpFlag(this.argv)
     ) {
       return await withCurrentPortableHostFence(() => {
         assertNoHermesPortableHostAuthority(defaultPortableDemoStateDir(process.env), commandId);
@@ -179,9 +182,7 @@ export abstract class NemoClawCommand extends Command {
     }
     if (RAW_SANDBOX_NAME_COMMANDS.has(commandId)) {
       const sandboxName = this.argv[0];
-      return sandboxName && sandboxName !== "--help" && sandboxName !== "-h"
-        ? sandboxName
-        : null;
+      return sandboxName && sandboxName !== "--help" && sandboxName !== "-h" ? sandboxName : null;
     }
     try {
       const parsed = await super.parse();

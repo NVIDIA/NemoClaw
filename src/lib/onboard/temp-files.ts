@@ -58,11 +58,7 @@ function readExactTempFileAuthority(filePath: string): ExactTempFileAuthority {
   const tempRoot = path.resolve(os.tmpdir());
   const parentDir = path.resolve(path.dirname(filePath));
   const relativeParent = path.relative(tempRoot, parentDir);
-  if (
-    relativeParent === "" ||
-    relativeParent.startsWith("..") ||
-    path.isAbsolute(relativeParent)
-  ) {
+  if (relativeParent === "" || relativeParent.startsWith("..") || path.isAbsolute(relativeParent)) {
     throw new Error("Exact temporary file authority is outside its task-owned directory");
   }
   const uid = process.getuid?.();
@@ -80,7 +76,10 @@ function readExactTempFileAuthority(filePath: string): ExactTempFileAuthority {
     );
   }
   const named = fs.lstatSync(filePath, { bigint: true });
-  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
   try {
     const before = fs.fstatSync(descriptor, { bigint: true });
     if (
@@ -179,7 +178,8 @@ export function createExactTempFileCleanup(
         return false;
       }
       const finalNamed = fs.lstatSync(detachedFile, { bigint: true });
-      if (finalNamed.dev !== authority.fileDev || finalNamed.ino !== authority.fileIno) return false;
+      if (finalNamed.dev !== authority.fileDev || finalNamed.ino !== authority.fileIno)
+        return false;
       fs.unlinkSync(detachedFile);
       fs.rmdirSync(detachedParent);
       fs.rmdirSync(quarantine);

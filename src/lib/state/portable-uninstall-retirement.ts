@@ -100,19 +100,27 @@ const tails = new Map<string, Promise<void>>();
 export const portableHostFencePath = (homeDir: string): string =>
   path.join(homeDir, ".nemoclaw-portable-host.lock");
 
+/** Resolve the portable state root while admitting only the isolated Vitest override. */
+export function defaultPortableStateDir(env: NodeJS.ProcessEnv): string {
+  if (
+    env.VITEST === "true" &&
+    (env.HOME ?? "") === env.NEMOCLAW_TEST_BASE_HOME &&
+    env.NEMOCLAW_TEST_STATE_DIR &&
+    path.isAbsolute(env.NEMOCLAW_TEST_STATE_DIR)
+  ) {
+    return env.NEMOCLAW_TEST_STATE_DIR;
+  }
+  return path.join(env.HOME || os.homedir(), ".nemoclaw");
+}
+
 /** Count bounded schema-5 authority leaves while the caller holds the host fence. */
 export function getHermesPortableHostAuthorityEntryCount(stateDir: string): number {
-  return readPortableAuthorityDirectory(
-    path.join(stateDir, "hermes-portable-lifecycle"),
-    false,
-  ).entries.length;
+  return readPortableAuthorityDirectory(path.join(stateDir, "hermes-portable-lifecycle"), false)
+    .entries.length;
 }
 
 /** Reject host-wide legacy work while schema-5 receipt authority exists. */
-export function assertNoHermesPortableHostAuthority(
-  stateDir: string,
-  commandId: string,
-): void {
+export function assertNoHermesPortableHostAuthority(stateDir: string, commandId: string): void {
   if (getHermesPortableHostAuthorityEntryCount(stateDir) > 0) {
     throw new Error(
       `Command '${commandId}' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.`,

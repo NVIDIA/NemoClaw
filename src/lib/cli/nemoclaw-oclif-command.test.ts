@@ -131,6 +131,18 @@ class GlobalUnsupportedMutationCommand extends NemoClawCommand {
   }
 }
 
+class GlobalUseMutationCommand extends NemoClawCommand {
+  static id = "use";
+  static args = { sandboxName: Args.string({ required: true }) };
+  static flags = {};
+  static ran = false;
+
+  public async run(): Promise<void> {
+    await this.parse(GlobalUseMutationCommand);
+    GlobalUseMutationCommand.ran = true;
+  }
+}
+
 function useHermesPortableAuthority(): void {
   vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
     kind: "hermes",
@@ -161,6 +173,7 @@ describe("NemoClawCommand", () => {
     ParsedUnsupportedSandboxCommand.ran = false;
     ParsedSupportedSandboxCommand.operation = async () => undefined;
     GlobalUnsupportedMutationCommand.ran = false;
+    GlobalUseMutationCommand.ran = false;
   });
 
   it("records status-like command results without throwing", () => {
@@ -373,9 +386,7 @@ describe("NemoClawCommand", () => {
   it("rejects schema-5 doctor --fix with option-specific guidance (#9203)", async () => {
     useHermesPortableAuthority();
 
-    await expect(
-      RawSandboxDoctorCommand.run(["alpha", "--fix"], process.cwd()),
-    ).rejects.toThrow(
+    await expect(RawSandboxDoctorCommand.run(["alpha", "--fix"], process.cwd())).rejects.toThrow(
       "The --fix option is not supported for an experimental Hermes portable sandbox",
     );
     expect(RawSandboxDoctorCommand.ran).toBe(false);
@@ -406,11 +417,30 @@ describe("NemoClawCommand", () => {
   it("preserves side-effect-free help for host mutation commands (#9203)", async () => {
     const fence = vi.spyOn(portableHostAuthority, "withCurrentPortableHostFence");
 
-    await expect(
-      GlobalUnsupportedMutationCommand.run(["--help"], process.cwd()),
-    ).rejects.toThrow("Parsing --help");
+    await expect(GlobalUnsupportedMutationCommand.run(["--help"], process.cwd())).rejects.toThrow(
+      "Parsing --help",
+    );
 
     expect(fence).not.toHaveBeenCalled();
     expect(GlobalUnsupportedMutationCommand.ran).toBe(false);
+  });
+
+  it("does not treat a positional --help value after -- as host help (#9203)", async () => {
+    const fence = vi
+      .spyOn(portableHostAuthority, "withCurrentPortableHostFence")
+      .mockImplementation(async (operation) => await operation());
+    const classify = vi
+      .spyOn(portableHostAuthority, "assertNoHermesPortableHostAuthority")
+      .mockImplementation(() => {
+        throw new Error("schema-5 host authority exists");
+      });
+
+    await expect(GlobalUseMutationCommand.run(["--", "--help"], process.cwd())).rejects.toThrow(
+      "schema-5 host authority exists",
+    );
+
+    expect(fence).toHaveBeenCalledOnce();
+    expect(classify).toHaveBeenCalledWith(expect.any(String), "use");
+    expect(GlobalUseMutationCommand.ran).toBe(false);
   });
 });

@@ -3,6 +3,7 @@
 
 import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../../cli/branding";
+import { deferSandboxLifecycleExit, isSandboxLifecycleDeferredExit } from "../../core/process-exit";
 import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
 import { parseSandboxPhase } from "../../state/gateway";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
@@ -172,16 +173,23 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
 }
 
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
-  await withMcpLifecycleLock(sandboxName, async () => {
-    const hermesPortable = inspectHermesPortableStatus(sandboxName);
-    if (hermesPortable) {
-      console.log(`  Sandbox: ${sandboxName}`);
-      console.log("  Agent: Hermes");
-      console.log(`  Portable lifecycle phase: ${hermesPortable.phase}`);
-      return;
-    }
-    await showLegacySandboxStatus(sandboxName);
-  });
+  let deferredExitCode: number | null = null;
+  try {
+    await withMcpLifecycleLock(sandboxName, async () => {
+      const hermesPortable = inspectHermesPortableStatus(sandboxName);
+      if (hermesPortable) {
+        console.log(`  Sandbox: ${sandboxName}`);
+        console.log("  Agent: Hermes");
+        console.log(`  Portable lifecycle phase: ${hermesPortable.phase}`);
+        return;
+      }
+      await showLegacySandboxStatus(sandboxName);
+    });
+  } catch (error) {
+    if (!isSandboxLifecycleDeferredExit(error)) throw error;
+    deferredExitCode = error.exitCode;
+  }
+  if (deferredExitCode !== null) process.exit(deferredExitCode);
 }
 
 async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
@@ -224,7 +232,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
       action: `checking inference status for sandbox '${sandboxName}'`,
       command: `${CLI_NAME} ${sandboxName} status`,
     });
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
   const textContext: SandboxStatusTextContext = {
     sandboxName,

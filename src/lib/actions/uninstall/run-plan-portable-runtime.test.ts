@@ -379,7 +379,12 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       { assumeYes: true, deleteModels: true, destroyUserData: true, keepOpenShell: false },
       {
         ...admissionFailureDeps(scope),
-        env: { HOME: scope.homeDir, NEMOCLAW_TEST_STATE_DIR: scope.stateDir },
+        env: {
+          HOME: scope.homeDir,
+          VITEST: "true",
+          NEMOCLAW_TEST_BASE_HOME: scope.homeDir,
+          NEMOCLAW_TEST_STATE_DIR: scope.stateDir,
+        },
       },
     );
 

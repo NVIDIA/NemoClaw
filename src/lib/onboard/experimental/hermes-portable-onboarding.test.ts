@@ -671,6 +671,7 @@ describe("Hermes portable onboarding transaction", () => {
     ).toBe(false);
     expect(fixture.podman).not.toHaveBeenCalledWith(
       expect.arrayContaining(["container", "update"]),
+      expect.any(Number),
     );
   });
 
@@ -691,6 +692,7 @@ describe("Hermes portable onboarding transaction", () => {
     );
     expect(resumed.podman).not.toHaveBeenCalledWith(
       expect.arrayContaining(["container", "update"]),
+      expect.any(Number),
     );
   });
 
@@ -921,13 +923,22 @@ describe("Hermes portable onboarding transaction", () => {
   });
 
   it.each([
-    ["duplicate pair", ["--policy", policyPath, "--policy", policyPath]],
-    ["equals form", [`--policy=${policyPath}`]],
-    ["wrong path", ["--policy", "/tmp/other.yaml"]],
-  ])("rejects %s before policy argv rewriting (#9203)", (_label, argv) => {
-    expect(() =>
-      rewriteHermesPortableCreatePolicyArgv(argv, policyPath, "/durable.yaml"),
-    ).toThrow();
+    [
+      "duplicate pair",
+      (sourcePath: string) => ["--policy", sourcePath, "--policy", sourcePath],
+      /exactly one canonical policy option/,
+    ],
+    [
+      "equals form",
+      (sourcePath: string) => [`--policy=${sourcePath}`],
+      /one canonical '--policy <path>' option/,
+    ],
+    ["wrong path", () => ["--policy", "/tmp/other.yaml"], /does not name the captured source/],
+  ])("rejects %s before policy argv rewriting (#9203)", (_label, buildArgv, error) => {
+    const argv = buildArgv(policyPath);
+    expect(() => rewriteHermesPortableCreatePolicyArgv(argv, policyPath, "/durable.yaml")).toThrow(
+      error,
+    );
   });
 
   it("rejects a noncanonical policy option before durable policy or create effects (#9203)", async () => {

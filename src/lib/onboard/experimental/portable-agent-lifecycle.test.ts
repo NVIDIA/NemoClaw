@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -8,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   inspect: vi.fn(),
   buildOpenShellCommandAuthority: vi.fn(),
   buildOpenShellEnv: vi.fn(),
+  assertHermesAuthority: vi.fn(),
   recoverHermes: vi.fn(),
   recoverOpenClaw: vi.fn(),
   stopHermes: vi.fn(),
@@ -22,6 +25,7 @@ vi.mock("./hermes-portable-receipt", () => ({
   inspectPortableAgentReceiptAuthority: mocks.inspect,
 }));
 vi.mock("./hermes-portable-lifecycle", () => ({
+  assertHermesPortableSandboxLifecycleAuthority: mocks.assertHermesAuthority,
   buildHermesPortableOpenShellCommandAuthority: mocks.buildOpenShellCommandAuthority,
   buildHermesPortableOpenShellEnv: mocks.buildOpenShellEnv,
   recoverHermesPortableSandboxLifecycle: mocks.recoverHermes,
@@ -36,6 +40,7 @@ import {
   buildHermesPortableCommandAuthority,
   buildHermesPortableCommandEnvironment,
   buildHermesPortableOnboardingCommandAuthority,
+  assertHermesPortableAgentLifecycleAuthority,
   inspectPortableAgentReceiptDisposition,
   recoverPortableAgentSandboxLifecycle,
   stopPortableAgentSandboxLifecycle,
@@ -216,6 +221,40 @@ describe("portable agent lifecycle dispatch", () => {
     expect(mocks.recoverOpenClaw).not.toHaveBeenCalled();
   });
 
+  it("delegates active Hermes authority to the exact lifecycle qualifier (#9203)", () => {
+    mocks.inspect.mockReturnValue(hermes("active"));
+
+    expect(() =>
+      assertHermesPortableAgentLifecycleAuthority("alpha", context, {
+        stateDir: "/state",
+      }),
+    ).not.toThrow();
+
+    expect(mocks.assertHermesAuthority).toHaveBeenCalledWith(
+      "alpha",
+      context,
+      expect.objectContaining({ stateDir: "/state" }),
+    );
+  });
+
+  it.each([
+    [{ kind: "none" }, context, "missing or incomplete"],
+    [hermes("configuring"), context, "missing or incomplete"],
+    [hermes("active"), { ...context, agent: "openclaw" }, "does not match registry agent"],
+  ] as const)(
+    "rejects invalid Hermes command authority %# (#9203)",
+    (authority, authorityContext, message) => {
+      mocks.inspect.mockReturnValue(authority);
+
+      expect(() =>
+        assertHermesPortableAgentLifecycleAuthority("alpha", authorityContext, {
+          stateDir: "/state",
+        }),
+      ).toThrow(message);
+      expect(mocks.assertHermesAuthority).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["pending", "configuring"] as const)(
     "rejects incomplete Hermes phase %s before recovery (#9203)",
     (phase) => {
@@ -258,4 +297,3 @@ describe("portable agent lifecycle dispatch", () => {
     expect(mocks.stopHermes).not.toHaveBeenCalled();
   });
 });
-import { createHash } from "node:crypto";

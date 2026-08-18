@@ -26,9 +26,10 @@ let stateDir: string;
 
 function emulatePrivateSourceAncestor(): void {
   const original = fs.lstatSync;
+  const sharedTemporaryRoots = new Set([path.resolve("/tmp"), fs.realpathSync("/tmp")]);
   vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
     const stat = original(target, options as never);
-    return path.resolve(String(target)) === "/private/tmp"
+    return sharedTemporaryRoots.has(path.resolve(String(target)))
       ? new Proxy(stat, {
           get(value, property) {
             const mode = BigInt(Reflect.get(value, "mode", value));

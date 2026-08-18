@@ -132,11 +132,11 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("Portable onboarding for 'alpha' is incomplete");
     expect(output).toContain("Resume or rerun onboarding");
     expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
-    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
-      expect.anything(),
-    );
+    expect(
+      harness.spawnSyncSpy.mock.calls.some(
+        ([, args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "connect",
+      ),
+    ).toBe(false);
   });
 
   it("restores the terminal and prints reconnect guidance when SSH disconnects", async () => {
@@ -1188,11 +1188,11 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha")).rejects.toThrow(
       "lifecycle authority disappeared before interactive connect",
     );
-    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "-g", "nemoclaw", "alpha"],
-      expect.any(Object),
-    );
+    expect(
+      harness.spawnSyncSpy.mock.calls.some(
+        ([, args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "connect",
+      ),
+    ).toBe(false);
   });
 
   it("fails before Docker when Hermes receipt authority disappears during probe (#9203)", async () => {

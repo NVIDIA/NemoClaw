@@ -70,24 +70,42 @@ vi.mock("./launch-readiness", () => ({
     epochId: decision.fence?.epochId ?? null,
   }),
 }));
-vi.mock("./gateway-state", () => ({
-  buildHermesPortableCommandAuthority: () => ({
-    env: {
+vi.mock("./gateway-state", async () => {
+  const lifecycle = await vi.importActual<
+    typeof import("../../onboard/experimental/hermes-portable-lifecycle")
+  >("../../onboard/experimental/hermes-portable-lifecycle");
+  return {
+    buildHermesPortableCommandAuthority: () => ({
+      env: lifecycle.hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
+        {
+          ...process.env,
+          HOME: "/home/test",
+          XDG_CONFIG_HOME: "/home/test/.config",
+          XDG_RUNTIME_DIR: "/run/user/1000",
+        },
+        {
+          schemaVersion: 1,
+          kind: "podman",
+          ownership: "current-user",
+          uid: process.getuid!(),
+          homeDir: "/home/test",
+          configHome: "/home/test/.config",
+          runtimeDir: "/run/user/1000",
+          socketPath: "/run/user/1000/podman/podman.sock",
+        },
+      ),
+      executablePath: "/usr/bin/openshell",
+    }),
+    buildHermesPortableCommandEnvironment: () => ({
       HOME: "/home/test",
       XDG_CONFIG_HOME: "/home/test/.config",
       XDG_RUNTIME_DIR: "/run/user/1000",
-    },
-    executablePath: "/usr/bin/openshell",
-  }),
-  buildHermesPortableCommandEnvironment: () => ({
-    HOME: "/home/test",
-    XDG_CONFIG_HOME: "/home/test/.config",
-    XDG_RUNTIME_DIR: "/run/user/1000",
-  }),
-  inspectPortableAgentReceiptDisposition: mocks.inspectPortableReceiptDisposition,
-  recoverPortableDemoSandboxLifecycleForConnect: mocks.recoverPortableLifecycle,
-  withSandboxLifecycleLock: async (_sandboxName: string, operation: () => unknown) => operation(),
-}));
+    }),
+    inspectPortableAgentReceiptDisposition: mocks.inspectPortableReceiptDisposition,
+    recoverPortableDemoSandboxLifecycleForConnect: mocks.recoverPortableLifecycle,
+    withSandboxLifecycleLock: async (_sandboxName: string, operation: () => unknown) => operation(),
+  };
+});
 
 import { launchSandbox } from "./launch";
 

@@ -16,6 +16,13 @@ vi.mock("../exec", () => ({
   execSandbox: vi.fn(async () => undefined),
 }));
 
+const withLifecycleLockMock = vi.hoisted(() =>
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
+);
+vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
+  withMcpLifecycleLock: withLifecycleLockMock,
+}));
+
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { deleteSandboxSession } from "./delete";
@@ -181,8 +188,8 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     hermesAgentMock.mockReturnValue(true);
     // execSandbox streams the native output and exits the process with its
     // code; model that terminal behavior so the routing never returns a value.
-    execSandboxMock.mockImplementation(async () => {
-      process.exit(0);
+    execSandboxMock.mockImplementation(async (_name, _command, _options, deps) => {
+      deps.exit(0);
     });
   });
 
@@ -192,14 +199,16 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     );
 
     expect(gatewayMock).not.toHaveBeenCalled();
-    expect(ensureMock).toHaveBeenCalledWith("sb-h", { allowNonReadyPhase: true });
-    expect(execSandboxMock).toHaveBeenCalledWith("sb-h", [
-      "hermes",
-      "sessions",
-      "delete",
-      "20260727_130357_cb2b61",
-      "--yes",
-    ]);
+    expect(ensureMock).toHaveBeenCalledWith("sb-h", {
+      allowNonReadyPhase: true,
+      exit: expect.any(Function),
+    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "sb-h",
+      ["hermes", "sessions", "delete", "20260727_130357_cb2b61", "--yes"],
+      {},
+      expect.objectContaining({ exit: expect.any(Function) }),
+    );
   });
 
   it("passes the native hermes session id through without OpenClaw canonicalization (#7642)", async () => {
@@ -268,5 +277,25 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
 
     expect(execSandboxMock).not.toHaveBeenCalled();
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(/session id/i);
+  });
+
+  it("releases the lifecycle lock before the native delete exit terminates the process", async () => {
+    let lockHeld = false;
+    withLifecycleLockMock.mockImplementationOnce(async (_sandboxName, operation) => {
+      lockHeld = true;
+      try {
+        return await operation();
+      } finally {
+        lockHeld = false;
+      }
+    });
+    processExitSpy.mockImplementation(((code?: number) => {
+      expect(lockHeld).toBe(false);
+      throw new Error(`process.exit:${String(code)}`);
+    }) as never);
+
+    await expect(deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61" })).rejects.toThrow(
+      "process.exit:0",
+    );
   });
 });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
@@ -85,8 +86,9 @@ describe("onboard temp file helpers", () => {
   it("preserves a replacement file generation and fails closed (#9203)", () => {
     const filePath = secureTempFile("nemoclaw-cleanup", ".txt");
     const parent = path.dirname(filePath);
-    const original = path.join(parent, "original.txt");
-    createdParents.push(parent);
+    const displacedParent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-displaced-"));
+    const original = path.join(displacedParent, path.basename(filePath));
+    createdParents.push(parent, displacedParent);
     fs.writeFileSync(filePath, "captured", { mode: 0o600 });
     const cleanup = createExactTempFileCleanup(filePath, "nemoclaw-cleanup");
     fs.renameSync(filePath, original);
@@ -126,6 +128,31 @@ describe("onboard temp file helpers", () => {
       "Current-user temporary file authority is unavailable",
     );
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a FIFO replacement without blocking on open (#9203)",
+    () => {
+      const filePath = secureTempFile("nemoclaw-cleanup", ".txt");
+      const parent = path.dirname(filePath);
+      createdParents.push(parent);
+      fs.writeFileSync(filePath, "captured", { mode: 0o600 });
+      const originalLstat = fs.lstatSync;
+      vi.spyOn(fs, "lstatSync")
+        .mockImplementationOnce(originalLstat)
+        .mockImplementationOnce(((target, options) => {
+          const stat = originalLstat(target, options as never);
+          expect(path.resolve(String(target))).toBe(path.resolve(filePath));
+          fs.unlinkSync(filePath);
+          execFileSync("mkfifo", [filePath]);
+          return stat;
+        }) as typeof fs.lstatSync);
+
+      expect(() => createExactTempFileCleanup(filePath, "nemoclaw-cleanup")).toThrow(
+        "Exact temporary file must be a regular single-link file",
+      );
+      expect(fs.lstatSync(filePath).isFIFO()).toBe(true);
+    },
+  );
 
   it("does not remove unrelated temp directories", () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "other-prefix-"));

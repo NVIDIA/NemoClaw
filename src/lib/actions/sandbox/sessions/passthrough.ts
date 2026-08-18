@@ -3,6 +3,10 @@
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
+import {
+  deferSandboxLifecycleExit,
+  isSandboxLifecycleDeferredExit,
+} from "../../../core/process-exit";
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../../state/registry";
@@ -215,17 +219,27 @@ export async function runSessionsPassthrough(
   sandboxName: string,
   { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
 ): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () => {
-    assertHermesPortableCommandUnavailable(sandboxName, `sandbox:sessions:${verb ?? "list"}`);
-    return runSessionsPassthroughUnlocked(sandboxName, { verb, extraArgs });
-  });
+  let deferredExitCode: number | null = null;
+  try {
+    await withMcpLifecycleLock(sandboxName, () => {
+      assertHermesPortableCommandUnavailable(sandboxName, `sandbox:sessions:${verb ?? "list"}`);
+      return runSessionsPassthroughUnlocked(sandboxName, { verb, extraArgs });
+    });
+  } catch (error) {
+    if (!isSandboxLifecycleDeferredExit(error)) throw error;
+    deferredExitCode = error.exitCode;
+  }
+  if (deferredExitCode !== null) process.exit(deferredExitCode);
 }
 
 async function runSessionsPassthroughUnlocked(
   sandboxName: string,
   { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
 ): Promise<void> {
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  await ensureLiveSandboxOrExit(sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
   // Hermes sandboxes ship the `hermes` binary in place of OpenClaw's
   // `openclaw` binary, and `openclaw` does not exist inside them (#6247).
   // Route the passthrough at the in-sandbox agent's own binary name and
@@ -258,7 +272,7 @@ async function runSessionsPassthroughUnlocked(
       } else if (errorMessage) {
         console.error(`  Failed to invoke openshell: ${errorMessage}`);
       }
-      process.exit(code);
+      deferSandboxLifecycleExit(code);
     }
 
     if (isJsonOutput(extraArgs)) {
@@ -268,7 +282,7 @@ async function runSessionsPassthroughUnlocked(
         // an internal warm-up session.
         if (capturedOutput.includes(WARMUP_SESSION_ID_PREFIX)) {
           printJsonParseFailure();
-          process.exit(1);
+          deferSandboxLifecycleExit(1);
         }
         writeWithTrailingNewline(process.stdout, capturedOutput);
         writeWithTrailingNewline(process.stderr, capturedError);
@@ -284,5 +298,5 @@ async function runSessionsPassthroughUnlocked(
     writeWithTrailingNewline(process.stderr, capturedError);
     return;
   }
-  await execSandbox(sandboxName, command);
+  await execSandbox(sandboxName, command, {}, { exit: deferSandboxLifecycleExit });
 }

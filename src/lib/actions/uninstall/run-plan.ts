@@ -3155,9 +3155,7 @@ export async function runUninstallPlanProduction(
   const home = env.HOME || os.homedir();
   try {
     return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () => {
-      assertHermesPortableUninstallAvailable(
-        env.NEMOCLAW_TEST_STATE_DIR || path.join(home, ".nemoclaw"),
-      );
+      assertHermesPortableUninstallAvailable(env);
       return runUninstallPlan(options, { ...deps, env });
     });
   } catch (error) {

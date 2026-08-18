@@ -223,19 +223,19 @@ describe("showSandboxStatus flow", () => {
   ] as const)(
     "reports the effective compatible-endpoint reasoning effort (%s) (#7659)",
     async (stored, expected) => {
-    const harness = createStatusFlowHarness({
-      currentProvider: "compatible-endpoint",
-      sandboxEntry: {
-        provider: "compatible-endpoint",
-        preferredInferenceApi: "openai-completions",
-        compatibleEndpointReasoningEffort: stored,
-      },
-    });
+      const harness = createStatusFlowHarness({
+        currentProvider: "compatible-endpoint",
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoningEffort: stored,
+        },
+      });
 
-    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+      await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
-    const output = harness.logSpy.mock.calls.flat().join("\n");
-    expect(output).toContain(`Reasoning effort: ${expected}`);
+      const output = harness.logSpy.mock.calls.flat().join("\n");
+      expect(output).toContain(`Reasoning effort: ${expected}`);
     },
   );
 
@@ -950,5 +950,27 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Could not verify sandbox 'alpha'");
     expect(output).toContain("gateway identity drift after restart");
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("releases the lifecycle lock before a failing status report exits (#9203)", async () => {
+    const events: string[] = [];
+    const harness = createStatusFlowHarness({
+      lookupState: "missing",
+      withMcpLifecycleLock: async (_sandboxName, operation) => {
+        events.push("lock-enter");
+        try {
+          return await operation();
+        } finally {
+          events.push("lock-exit");
+        }
+      },
+    });
+    exitSpy.mockImplementationOnce(((code?: number) => {
+      events.push(`exit-${String(code)}`);
+      throw new Error(`process.exit(${String(code)})`);
+    }) as never);
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow("process.exit(1)");
+    expect(events).toEqual(["lock-enter", "lock-exit", "exit-1"]);
   });
 });

@@ -664,25 +664,25 @@ export async function runSandboxDoctor(
   const intent = parseDoctorIntent(sandboxName, args);
   if (!intent) return undefined;
 
-  return withSandboxDoctorLifecycleLock(sandboxName, async () => {
+  const outcome = await withSandboxDoctorLifecycleLock(sandboxName, async () => {
     const portable = inspectSandboxDoctorPortableDisposition(sandboxName);
     if (portable.kind === "hermes") {
       assertHermesPortableDoctorRegistry(sandboxName, portable);
       const report = hermesPortableDoctorReport(sandboxName, portable.phase);
-      if (intent.asJson && options.quietJson) return report;
+      if (intent.asJson && options.quietJson) return { report };
       const exitCode = renderDoctorReport(report, intent.asJson);
-      if (exitCode !== 0) process.exit(exitCode);
-      return undefined;
+      return { exitCode };
     }
 
     const sb = registry.getSandbox(sandboxName);
     const gatewayName = resolveDoctorGatewayName(sb);
     const checks = await collectDoctorChecks(sandboxName, sb, gatewayName, intent);
     const report = buildDoctorReport(sandboxName, checks);
-    if (intent.asJson && options.quietJson) return report;
+    if (intent.asJson && options.quietJson) return { report };
 
     const exitCode = renderDoctorReport(report, intent.asJson);
-    if (exitCode !== 0) process.exit(exitCode);
-    return undefined;
+    return { exitCode };
   });
+  if (outcome.exitCode && outcome.exitCode !== 0) process.exit(outcome.exitCode);
+  return outcome.report;
 }

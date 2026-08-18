@@ -91,16 +91,16 @@ function createDoctorHarness(
   const doctorSystemChecks = requireDist("./doctor-system-checks.js");
 
   vi.spyOn(doctorSystemChecks, "inspectSandboxDoctorPortableDisposition").mockImplementation(() => {
-      const disposition =
-        typeof options.portableDisposition === "function"
-          ? options.portableDisposition()
-          : options.portableDisposition;
-      switch (disposition instanceof Error) {
-        case true:
-          throw disposition;
-        default:
-          return disposition ?? { kind: "absent" };
-      }
+    const disposition =
+      typeof options.portableDisposition === "function"
+        ? options.portableDisposition()
+        : options.portableDisposition;
+    switch (disposition instanceof Error) {
+      case true:
+        throw disposition;
+      default:
+        return disposition ?? { kind: "absent" };
+    }
   });
   const withMcpLifecycleLockSpy = vi
     .spyOn(doctorSystemChecks, "withSandboxDoctorLifecycleLock")
@@ -348,6 +348,27 @@ describe("runSandboxDoctor flow", () => {
     expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
+  it("releases the lifecycle lock before a failing doctor report exits (#9203)", async () => {
+    const events: string[] = [];
+    const harness = createDoctorHarness("ollama-local", {
+      withMcpLifecycleLock: async (_sandboxName, operation) => {
+        events.push("lock-enter");
+        try {
+          return await operation();
+        } finally {
+          events.push("lock-exit");
+        }
+      },
+    });
+    exitSpy.mockImplementationOnce(((code?: number) => {
+      events.push(`exit-${String(code)}`);
+      throw new Error(`process.exit(${String(code)})`);
+    }) as never);
+
+    await expect(harness.runSandboxDoctor("alpha")).rejects.toThrow("process.exit(1)");
+    expect(events).toEqual(["lock-enter", "lock-exit", "exit-1"]);
+  });
+
   it("rejects malformed portable receipt authority before doctor probes (#9203)", async () => {
     const harness = createDoctorHarness("ollama-local", {
       portableDisposition: new Error("invalid portable lifecycle receipt"),
@@ -504,32 +525,32 @@ describe("runSandboxDoctor flow", () => {
   ] as const)(
     "reports effective reasoning effort in doctor JSON (%s) (#7659)",
     async (stored, expected) => {
-    const harness = createDoctorHarness("compatible-endpoint");
-    harness.getSandboxSpy.mockReturnValue({
-      name: "alpha",
-      agent: "openclaw",
-      model: "registry-model",
-      provider: "compatible-endpoint",
-      preferredInferenceApi: "openai-completions",
-      compatibleEndpointReasoningEffort: stored,
-      openshellDriver: "docker",
-      openshellVersion: "0.0.72",
-      nemoclawVersion: "0.0.83",
-      fromDockerfile: null,
-      dashboardPort: 18789,
-      imageTag: "nemoclaw-openclaw:test",
-      gatewayName: "nemoclaw-19080",
-      gatewayPort: 19080,
-    });
+      const harness = createDoctorHarness("compatible-endpoint");
+      harness.getSandboxSpy.mockReturnValue({
+        name: "alpha",
+        agent: "openclaw",
+        model: "registry-model",
+        provider: "compatible-endpoint",
+        preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoningEffort: stored,
+        openshellDriver: "docker",
+        openshellVersion: "0.0.72",
+        nemoclawVersion: "0.0.83",
+        fromDockerfile: null,
+        dashboardPort: 18789,
+        imageTag: "nemoclaw-openclaw:test",
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+      });
 
-    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
-    expect(report?.checks).toContainEqual({
-      group: "Inference",
-      label: "Reasoning effort",
-      status: "info",
-      detail: expected,
-    });
+      expect(report?.checks).toContainEqual({
+        group: "Inference",
+        label: "Reasoning effort",
+        status: "info",
+        detail: expected,
+      });
     },
   );
 
@@ -682,42 +703,42 @@ describe("runSandboxDoctor flow", () => {
   it.each(["openclaw", "hermes"] as const)(
     "keeps serving-process health explicitly unchecked for the %s gateway (#7003)",
     async (agent) => {
-    const harness = createDoctorHarness();
-    harness.loadAgentSpy.mockReturnValue({
-      name: agent,
-      runtime: { kind: "gateway" },
-      configPaths: {
-        dir: "/sandbox/.agent",
-        configFile: "config.json",
-        format: "json",
-      },
-    });
-    harness.getSandboxSpy.mockReturnValue({
-      name: "alpha",
-      agent,
-      model: "registry-model",
-      provider: "ollama-local",
-      openshellDriver: "docker",
-      openshellVersion: "0.0.72",
-      nemoclawVersion: "0.0.83",
-      fromDockerfile: null,
-      dashboardPort: 18789,
-      imageTag: "nemoclaw-openclaw:test",
-      gatewayName: "nemoclaw-19080",
-      gatewayPort: 19080,
-    });
+      const harness = createDoctorHarness();
+      harness.loadAgentSpy.mockReturnValue({
+        name: agent,
+        runtime: { kind: "gateway" },
+        configPaths: {
+          dir: "/sandbox/.agent",
+          configFile: "config.json",
+          format: "json",
+        },
+      });
+      harness.getSandboxSpy.mockReturnValue({
+        name: "alpha",
+        agent,
+        model: "registry-model",
+        provider: "ollama-local",
+        openshellDriver: "docker",
+        openshellVersion: "0.0.72",
+        nemoclawVersion: "0.0.83",
+        fromDockerfile: null,
+        dashboardPort: 18789,
+        imageTag: "nemoclaw-openclaw:test",
+        gatewayName: "nemoclaw-19080",
+        gatewayPort: 19080,
+      });
 
-    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
-    expect(harness.loadAgentSpy).toHaveBeenCalledWith(agent);
-    expect(report?.checks).toContainEqual(
-      expect.objectContaining({
-        group: "Inference",
-        label: "Serving process",
-        status: "info",
-        detail: "not checked — serving-process probing is not implemented",
-      }),
-    );
+      expect(harness.loadAgentSpy).toHaveBeenCalledWith(agent);
+      expect(report?.checks).toContainEqual(
+        expect.objectContaining({
+          group: "Inference",
+          label: "Serving process",
+          status: "info",
+          detail: "not checked — serving-process probing is not implemented",
+        }),
+      );
     },
   );
 

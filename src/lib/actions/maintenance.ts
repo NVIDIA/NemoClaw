@@ -28,6 +28,7 @@ import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import {
   assertNoHermesPortableHostAuthority,
+  defaultPortableStateDir,
   withPortableHostFence,
 } from "../state/portable-uninstall-retirement";
 import {
@@ -67,7 +68,7 @@ async function withHermesPortableMaintenanceAdmission<T>(
 ): Promise<T> {
   const home = resolveHome();
   return withPortableHostFence(home, async () => {
-    assertNoHermesPortableHostAuthority(path.join(home, ".nemoclaw"), commandId);
+    assertNoHermesPortableHostAuthority(defaultPortableStateDir(process.env), commandId);
     return operation();
   });
 }

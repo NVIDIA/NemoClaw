@@ -3,6 +3,42 @@
 
 import os from "node:os";
 
+const SANDBOX_LIFECYCLE_DEFERRED_EXIT = Symbol.for("nemoclaw.sandbox-lifecycle.deferred-exit");
+
+export class SandboxLifecycleDeferredExit extends Error {
+  readonly [SANDBOX_LIFECYCLE_DEFERRED_EXIT] = true;
+  readonly exitCode: number;
+
+  constructor(exitCode: number) {
+    super(`Sandbox lifecycle operation requested exit ${String(exitCode)}.`);
+    this.name = "SandboxLifecycleDeferredExit";
+    this.exitCode = exitCode;
+  }
+}
+
+/** Carry a terminal CLI result through the lifecycle lock's async cleanup. */
+export function deferSandboxLifecycleExit(exitCode: number): never {
+  throw new SandboxLifecycleDeferredExit(exitCode);
+}
+
+export function isSandboxLifecycleDeferredExit(
+  error: unknown,
+): error is SandboxLifecycleDeferredExit {
+  const candidate = error as
+    | (Error & {
+        exitCode?: unknown;
+        [SANDBOX_LIFECYCLE_DEFERRED_EXIT]?: unknown;
+      })
+    | null;
+  return (
+    candidate instanceof Error &&
+    candidate[SANDBOX_LIFECYCLE_DEFERRED_EXIT] === true &&
+    candidate.name === "SandboxLifecycleDeferredExit" &&
+    typeof candidate.exitCode === "number" &&
+    Number.isInteger(candidate.exitCode)
+  );
+}
+
 export function spawnExitCode(result: {
   status: number | null;
   signal?: NodeJS.Signals | null;
