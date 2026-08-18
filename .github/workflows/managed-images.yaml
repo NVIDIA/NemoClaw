@@ -863,6 +863,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          npm ci --ignore-scripts
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
@@ -873,9 +874,7 @@ jobs:
             "${contracts[@]}"
 
       - name: Build exact candidate CLI
-        run: |
-          npm ci --ignore-scripts
-          npm run build:cli
+        run: npm run build:cli
 
       - name: Install OpenShell CLI
         shell: bash
@@ -964,6 +963,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          npm ci --ignore-scripts
           mapfile -d '' contracts < <(
             find "$RUNNER_TEMP/managed-pr-contracts" -type f -name contract.json -print0
           )
@@ -974,9 +974,7 @@ jobs:
             "${contracts[@]}"
 
       - name: Build exact candidate CLI
-        run: |
-          npm ci --ignore-scripts
-          npm run build:cli
+        run: npm run build:cli
 
       - name: Install and verify cloudflared prerequisite
         env:
