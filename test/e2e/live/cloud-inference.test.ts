@@ -32,6 +32,7 @@ import {
   parseCloudChatResponse,
   type PreContractExternalProviderFailure,
 } from "./cloud-inference-provider-skip.ts";
+import { SANDBOX_SECRET_TOKEN_PATTERN } from "./cloud-inference-secret-pattern.ts";
 
 const REPO_SKILL_VALIDATOR = path.join(
   REPO_ROOT,
@@ -305,7 +306,7 @@ async function expectSandboxCredentialBoundary(
   const secretScanCommand = [
     "for dir in /sandbox/.openclaw /sandbox/.nemoclaw; do",
     '  [ -d "$dir" ] || continue',
-    `  matches=$(grep -rIlE 'nvapi-|ghp_|npm_' "$dir")`,
+    `  matches=$(grep -rIlE '${SANDBOX_SECRET_TOKEN_PATTERN}' "$dir")`,
     "  scan_status=$?",
     '  case "$scan_status" in',
     `    0) filtered=$(printf '%s\\n' "$matches" | grep -Ev '/policies/|/plugin-runtime-deps/|/extensions/[^/]+/(dist|node_modules)/')`,
@@ -319,7 +320,7 @@ async function expectSandboxCredentialBoundary(
     "            write_status=$?",
     '            case "$write_status" in 0) ;; *) exit "$write_status" ;; esac',
     "            while IFS= read -r file; do",
-    `              matching_lines=$(grep -IE 'nvapi-|ghp_|npm_' "$file")`,
+    `              matching_lines=$(grep -IE '${SANDBOX_SECRET_TOKEN_PATTERN}' "$file")`,
     "              match_status=$?",
     '              case "$match_status" in',
     `                0) printf '%s' "$matching_lines" | grep -qv 'STRIPPED'`,
