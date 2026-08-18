@@ -99,7 +99,11 @@ describe("doctor inference checks", () => {
       probeProviderHealthImpl: () => null,
     });
 
-    expect(checks[0]).toMatchObject({ label: "Route", status: "warn", hint: expect.any(String) });
+    expect(checks.find((check) => check.label === "Route")).toMatchObject({
+      label: "Route",
+      status: "warn",
+      hint: "run `nemoclaw alpha status` after the gateway is healthy",
+    });
   });
 
   it("makes a broken inference.local route authoritative over a healthy upstream (#6192)", async () => {
