@@ -682,6 +682,158 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events).not.toContain("shared:rollback");
   });
 
+  it("removes only the exact replacement after Hermes metadata restoration fails (#9486)", async () => {
+    const metadataFailure =
+      "Managed startup shared-state transaction failed: managed directory metadata was not restored exactly: /sandbox/.hermes";
+    const fake = fixture({
+      sharedState: "pending",
+      sharedStateCommitResult: { status: 1, stderr: "injected commit failure" },
+      sharedStateRollbackResult: { status: 1, stderr: metadataFailure },
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority("hermes");
+    const prepared = await adapter.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await adapter.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+    const commitReceipt = await adapter.awaitBootstrap({
+      handle,
+      snapshot,
+      replacement,
+      timeoutSecs: 1,
+    });
+
+    const failure = (await adapter
+      .finalizeBootstrap({
+        outcome: "commit",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+        replacement,
+        completion: commitReceipt,
+      })
+      .catch((error: unknown) => error)) as Error & {
+      managedBootstrapRollbackError?: unknown;
+    };
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toContain(metadataFailure);
+    expect(failure.managedBootstrapRollbackError).toBeInstanceOf(
+      ManagedBootstrapOwnerCleanupRequiredError,
+    );
+    expect(failure.managedBootstrapRollbackError).toMatchObject({ runtimeId: OLD_ID });
+    expect(vi.mocked(fake.deps.dockerRm!)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fake.deps.dockerRm!)).toHaveBeenCalledWith(NEW_ID, expect.any(Object));
+    expect(fake.replacement).toBeNull();
+    expect(fake.original).toMatchObject({
+      Id: OLD_ID,
+      Name: "/openshell-alpha",
+      State: { Running: false },
+    });
+    expect(fake.events).not.toContain(`rm:${OLD_ID}`);
+    expect(fake.events).not.toContain(`start:${OLD_ID}`);
+    expectEventBefore(fake.events, "journal:rollback-authorized", `rm:${NEW_ID}`);
+    expectEventBefore(fake.events, `rm:${NEW_ID}`, `rename:${OLD_ID}:openshell-alpha`);
+    expectEventBefore(
+      fake.events,
+      `rename:${OLD_ID}:openshell-alpha`,
+      "journal:owner-cleanup-required",
+    );
+    expect(fake.journal).toMatchObject({
+      phase: "owner-cleanup-required",
+      originalRuntimeId: OLD_ID,
+      replacementRuntimeId: NEW_ID,
+    });
+    expect(fake.finalization).toBeNull();
+  });
+
+  it.each([
+    {
+      driftedRuntime: "original",
+      drift: (fake: ReturnType<typeof fixture>) => {
+        fake.original!.Config!.Env = [...(fake.original!.Config!.Env ?? []), "DRIFTED=1"];
+      },
+    },
+    {
+      driftedRuntime: "replacement",
+      drift: (fake: ReturnType<typeof fixture>) => {
+        fake.replacement!.Name = "/unowned-replacement";
+      },
+    },
+  ])(
+    "fails closed when the exact $driftedRuntime identity changes before restoration-failure cleanup (#9486)",
+    async ({ drift }) => {
+      const fake = fixture({
+        sharedState: "pending",
+        sharedStateCommitResult: { status: 1, stderr: "injected commit failure" },
+        sharedStateRollbackResult: {
+          status: 1,
+          stderr: "managed directory metadata was not restored exactly: /sandbox/.hermes",
+        },
+      });
+      const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+      const { handle, request, snapshot } = authority("hermes");
+      const prepared = await adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot,
+        request,
+        replacementOptions: { values: {} },
+      });
+      const durable = durablePreparation(handle, snapshot, prepared);
+      const replacement = await adapter.activateBootstrapReplacement({
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+      });
+      const commitReceipt = await adapter.awaitBootstrap({
+        handle,
+        snapshot,
+        replacement,
+        timeoutSecs: 1,
+      });
+      drift(fake);
+
+      const failure = (await adapter
+        .finalizeBootstrap({
+          outcome: "commit",
+          handle,
+          snapshot,
+          prepared,
+          durablePreparation: durable,
+          replacement,
+          completion: commitReceipt,
+        })
+        .catch((error: unknown) => error)) as Error & {
+        managedBootstrapRollbackError?: Error;
+      };
+
+      expect(failure.message).toContain(
+        "managed directory metadata was not restored exactly: /sandbox/.hermes",
+      );
+      expect(failure.managedBootstrapRollbackError?.message).toMatch(
+        /exact original launch spec changed|replacement container has an unexpected transaction name/u,
+      );
+      expect(fake.journal?.phase).toBe("rollback-authorized");
+      expect(fake.original).not.toBeNull();
+      expect(fake.replacement).not.toBeNull();
+      expect(fake.events).not.toContain(`rm:${OLD_ID}`);
+      expect(fake.events).not.toContain(`rm:${NEW_ID}`);
+      expect(fake.events).not.toContain(`rename:${OLD_ID}:openshell-alpha`);
+      expect(fake.events).not.toContain(`start:${OLD_ID}`);
+    },
+  );
+
   it("publishes durable rollback authority before deleting the replacement after restart", async () => {
     const fake = fixture();
     const secret = "post-start-provider-secret";
