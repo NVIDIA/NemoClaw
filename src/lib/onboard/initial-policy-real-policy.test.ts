@@ -75,54 +75,42 @@ function readPreparedPolicy(prepared: {
 }
 
 describe("initial sandbox policy real preset merge", () => {
-  const shippingPolicyCases = [
-    { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },
-    {
-      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
-      agent: "openclaw",
-    },
-    { path: ["agents", "openclaw", "policy-permissive.yaml"], agent: "openclaw" },
-    { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
-    { path: ["agents", "hermes", "policy-permissive.yaml"], agent: "hermes" },
-  ] as const;
+  const managedImagePolicyPathsByAgent = {
+    openclaw: [
+      ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
+      ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
+      ["agents", "openclaw", "policy-permissive.yaml"],
+    ],
+    hermes: [
+      ["agents", "hermes", "policy-additions.yaml"],
+      ["agents", "hermes", "policy-permissive.yaml"],
+    ],
+    "langchain-deepagents-code": [
+      ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+    ],
+  } as const satisfies Record<
+    (typeof SHIPPED_MANAGED_IMAGE_AGENTS)[number],
+    readonly (readonly string[])[]
+  >;
 
-  const managedStartupCaPolicyCases = [
-    ...shippingPolicyCases,
-    {
-      path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
-      agent: "langchain-deepagents-code",
-    },
-  ] as const;
+  const managedImagePolicyCases = SHIPPED_MANAGED_IMAGE_AGENTS.flatMap((agent) =>
+    managedImagePolicyPathsByAgent[agent].map((policyPath) => ({ path: policyPath, agent })),
+  );
+  const shippingPolicyCases = managedImagePolicyCases.filter(
+    ({ agent }) => agent !== "langchain-deepagents-code",
+  );
 
   it("covers the complete shipped managed startup CA policy matrix", () => {
-    expect(
-      managedStartupCaPolicyCases.map(({ path: policyPath, agent }) => ({
-        policyPath: policyPath.join("/"),
-        agent,
-      })),
-    ).toEqual([
-      {
-        policyPath: "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
-        agent: "openclaw",
-      },
-      {
-        policyPath: "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
-        agent: "openclaw",
-      },
-      { policyPath: "agents/openclaw/policy-permissive.yaml", agent: "openclaw" },
-      { policyPath: "agents/hermes/policy-additions.yaml", agent: "hermes" },
-      { policyPath: "agents/hermes/policy-permissive.yaml", agent: "hermes" },
-      {
-        policyPath: "agents/langchain-deepagents-code/policy-additions.yaml",
-        agent: "langchain-deepagents-code",
-      },
-    ]);
-    expect(new Set(managedStartupCaPolicyCases.map(({ agent }) => agent))).toEqual(
-      new Set(SHIPPED_MANAGED_IMAGE_AGENTS),
+    const policyIdentities = managedImagePolicyCases.map(
+      ({ path: policyPath, agent }) => `${agent}:${policyPath.join("/")}`,
     );
+
+    expect(Object.keys(managedImagePolicyPathsByAgent)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
+    expect(policyIdentities).toHaveLength(6);
+    expect(new Set(policyIdentities).size).toBe(policyIdentities.length);
   });
 
-  it.each(managedStartupCaPolicyCases)(
+  it.each(managedImagePolicyCases)(
     "grants $agent policy $path exact read-only access to the managed startup CA bundle (#9360)",
     (policyCase) => {
       const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
@@ -258,16 +246,8 @@ describe("initial sandbox policy real preset merge", () => {
     },
   );
 
-  const packageDatabasePolicyCases = [
-    ...shippingPolicyCases,
-    {
-      path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
-      agent: "langchain-deepagents-code",
-    },
-  ] as const;
-
   it.each(
-    packageDatabasePolicyCases.flatMap((policyCase) =>
+    managedImagePolicyCases.flatMap((policyCase) =>
       ["/", "/var", "/var/lib", "/var/lib/dpkg"].map((writableAncestor) => ({
         policyCase,
         writableAncestor,
