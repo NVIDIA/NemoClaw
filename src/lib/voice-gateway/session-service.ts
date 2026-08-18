@@ -67,13 +67,17 @@ function grantMatches(value: string, expectedHash: Buffer): boolean {
 }
 
 function deriveAgentSessionKey(
-  options: Pick<VoiceSessionServiceOptions, "agent" | "runtimeIdentity" | "runtimeProfile">,
+  options: Pick<
+    VoiceSessionServiceOptions,
+    "agent" | "runtimeIdentity" | "runtimeProfile" | "sandbox"
+  >,
   runtimeConversationId: string,
 ): string {
   const binding = JSON.stringify([
     options.agent,
     options.runtimeProfile,
     options.runtimeIdentity,
+    options.sandbox,
     runtimeConversationId,
   ]);
   const bindingHash = createHash("sha256").update(binding).digest("base64url");

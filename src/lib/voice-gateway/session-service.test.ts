@@ -50,6 +50,7 @@ function serviceFixture(
     maxResponseBytes?: number;
     runtimeIdentity?: string;
     runtimeProfile?: string;
+    sandbox?: string;
     agent?: string;
   } = {},
 ) {
@@ -59,7 +60,7 @@ function serviceFixture(
   const service = new VoiceSessionService({
     runtimeIdentity: overrides.runtimeIdentity ?? "voiceclaw-local",
     runtimeProfile: overrides.runtimeProfile ?? "voiceclaw-pinned",
-    sandbox: "demo-sandbox",
+    sandbox: overrides.sandbox ?? "demo-sandbox",
     agent: overrides.agent ?? "main",
     createClient: () => client,
     diagnostic: (entry) => diagnostics.push(entry),
@@ -166,11 +167,13 @@ describe("voice session and committed turn boundary", () => {
       runtimeConversationId?: string;
       runtimeIdentity?: string;
       runtimeProfile?: string;
+      sandbox?: string;
       agent?: string;
     }): Promise<string> {
       const { service, client } = serviceFixture({
         ...(options.runtimeIdentity ? { runtimeIdentity: options.runtimeIdentity } : {}),
         ...(options.runtimeProfile ? { runtimeProfile: options.runtimeProfile } : {}),
+        ...(options.sandbox ? { sandbox: options.sandbox } : {}),
         ...(options.agent ? { agent: options.agent } : {}),
       });
       const created = service.createSession(
@@ -193,6 +196,7 @@ describe("voice session and committed turn boundary", () => {
       sessionKeyFor({ runtimeConversationId: "other-conversation" }),
       sessionKeyFor({ runtimeIdentity: "voiceclaw-other" }),
       sessionKeyFor({ runtimeProfile: "voiceclaw-other" }),
+      sessionKeyFor({ sandbox: "other-sandbox" }),
       sessionKeyFor({ agent: "secondary" }),
     ]);
 
