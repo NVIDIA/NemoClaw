@@ -372,9 +372,9 @@ function parseNvidiaVisibleDevices(result: {
 
 /**
  * Inspect a native container before deletion. Default callers must resolve one
- * labeled container. Managed-bootstrap callers may instead provide the full
- * transaction-owned container ID, which must be present among the labeled
- * replacement and retained rollback backup.
+ * labeled container. A caller that owns a recreation transaction may instead
+ * provide the full replacement container ID. That ID must be present among
+ * the labeled replacement and retained rollback backup.
  *
  * Docker owns the fields returned here: `.Image` is the immutable retry
  * identity, `.Config.Image` is bookkeeping-only, and HostConfig supplies the

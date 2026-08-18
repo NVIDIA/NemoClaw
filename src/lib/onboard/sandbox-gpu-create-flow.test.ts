@@ -514,7 +514,7 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
     );
   });
 
-  it("inspects the recreated native container before authorizing compatibility fallback", async () => {
+  it("inspects the exact recreated native container before authorizing compatibility fallback", async () => {
     const deps = createDeps();
     const replacementContainerId = "b".repeat(64);
     vi.mocked(deps.verifyDirectSandboxGpu)
@@ -522,7 +522,7 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       .mockReturnValue(VERIFIED_PROOF);
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce({
       ...createPatch(),
-      replacementContainerId: vi.fn(() => replacementContainerId),
+      replacementRuntimeId: vi.fn(() => replacementContainerId),
     });
     mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockImplementation(
       (_sandboxName, _deps, options) =>
