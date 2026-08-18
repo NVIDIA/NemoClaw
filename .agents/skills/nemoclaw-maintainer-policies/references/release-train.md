@@ -128,7 +128,8 @@ message and is the release evidence record. Do not create a separate exception f
 
 The `Workspace cleanup` line must record verified absence, state that no Launchable check ran, or
 record completed workspace removal and rotation or revocation of all three exposed credentials.
-Unconfirmed or deferred cleanup is not ready for tag confirmation.
+The cutter rereads the candidate's newest Launchable check and requires the record to match its run
+and job. Unconfirmed, deferred, or mismatched cleanup is not ready for tag confirmation.
 
 Require the full confirmation phrase from the plan. After the script reads the remote tag back and
 confirms that it peels to the candidate, report the tag as cut and return.

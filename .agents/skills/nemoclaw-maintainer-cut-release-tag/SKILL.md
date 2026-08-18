@@ -37,6 +37,9 @@ Treat these as separate states:
 - Record every displayed or requested E2E result and the decision in the release brief, the signed
   Markdown release record. Record a plain-language exception reason when the status is exceptional
   or a requested run remains unresolved.
+- At tag creation, reread the candidate's Launchable checks from GitHub and require the cleanup
+  record to match the newest check's run and job. This binds cleanup safety to the candidate without
+  making the E2E result a success gate.
 - Pass the exact final release brief to `release:cut` with `--message-file`. The file becomes the
   signed tag annotation; do not maintain another exception record.
 - Ask the maintainer to paste the plan's full confirmation phrase before cutting.
@@ -170,12 +173,13 @@ Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 
 Resolve the brief's `Workspace cleanup` field with exactly one of these records:
 
-- `confirmed absent: receipt=<artifact>; verified_at=<ISO 8601 UTC time>` after successful cleanup
-  verification;
+- `confirmed absent: receipt=<artifact>; verified_at=<ISO 8601 UTC time>; run_id=<run>;
+  job_id=<job>` after successful cleanup verification;
 - `not applicable: no Launchable check ran` when the candidate has no Launchable check; or
 - `remediated: workspace_removed=true;
   credentials_rotated_or_revoked=BREV_API_KEY,NEMOCLAW_IMAGE_DISPATCH_TOKEN,NVIDIA_INFERENCE_API_KEY;
-  workspace_name=<name>; workspace_id=<id>` after completed failure remediation.
+  workspace_name=<name>; workspace_id=<id>; run_id=<run>; job_id=<job>` after completed failure
+  remediation.
 
 Do not request confirmation while that field records unconfirmed or deferred cleanup.
 
@@ -201,7 +205,8 @@ a failed read or pending state, consume that confirmation, and request a new one
 restored. Otherwise, run the cutter immediately; do not insert another wait between the reads and
 the push.
 
-Then run:
+Then run the cutter. It rereads the candidate's newest Launchable check and rejects a cleanup record
+that does not match that run and job:
 
 ```bash
 npm run release:cut -- \

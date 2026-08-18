@@ -58,8 +58,10 @@ PLAN_PATH="$plan_directory/$(basename -- "$PLAN_PATH")"
 message_directory="$(cd -- "$(dirname -- "$MESSAGE_FILE")" && pwd -P)"
 MESSAGE_FILE="$message_directory/$(basename -- "$MESSAGE_FILE")"
 brief_snapshot="$(mktemp)"
+launchable_checks_snapshot="$(mktemp)"
 chmod 600 "$brief_snapshot"
-trap 'rm -f -- "$brief_snapshot"' EXIT
+chmod 600 "$launchable_checks_snapshot"
+trap 'rm -f -- "$brief_snapshot" "$launchable_checks_snapshot"' EXIT
 cp -- "$MESSAGE_FILE" "$brief_snapshot" || fail "Could not snapshot the release brief"
 [[ -s "$brief_snapshot" ]] || fail "Release brief snapshot is empty"
 
@@ -144,20 +146,6 @@ workspace_cleanup_count="$(awk '/^- Workspace cleanup: / { count++ } END { print
   || fail "Release brief must contain exactly one Launchable workspace cleanup record"
 workspace_cleanup="$(awk '/^- Workspace cleanup: / { sub(/^- Workspace cleanup: /, ""); print }' "$brief_snapshot")" \
   || fail "Could not read the Launchable workspace cleanup record"
-confirmed_cleanup_pattern='^confirmed absent: receipt=[A-Za-z0-9._/-]+; verified_at=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
-remediated_cleanup_pattern='^remediated: workspace_removed=true; credentials_rotated_or_revoked=BREV_API_KEY,NEMOCLAW_IMAGE_DISPATCH_TOKEN,NVIDIA_INFERENCE_API_KEY; workspace_name=[A-Za-z0-9._-]+; workspace_id=[A-Za-z0-9._-]+$'
-case "$workspace_cleanup" in
-  confirmed\ absent:*)
-    [[ "$workspace_cleanup" =~ $confirmed_cleanup_pattern ]] \
-      || fail "Confirmed Launchable cleanup must record a receipt and UTC verification time"
-    ;;
-  "not applicable: no Launchable check ran") ;;
-  remediated:*)
-    [[ "$workspace_cleanup" =~ $remediated_cleanup_pattern ]] \
-      || fail "Launchable remediation must use the affirmative workspace and credential record"
-    ;;
-  *) fail "Release brief has unresolved Launchable workspace cleanup" ;;
-esac
 if grep -Eq -- "TODO_RELEASE_BRIEF|Complete before confirmation" "$brief_snapshot"; then
   fail "Release brief still contains unresolved prompts"
 fi
@@ -216,6 +204,7 @@ if [[ "$canonical_release_origin" == true ]]; then
   [[ "$SCRIPT_DIR" == "$repo_root/scripts" ]] \
     || fail "Release cutter must run from the canonical repository scripts directory"
   git diff --quiet origin/main -- scripts/release-cut-tag.sh scripts/release/remote.mts \
+    scripts/release/launchable-cleanup.mts \
     || fail "Release cutter files differ from refreshed origin/main"
 fi
 
@@ -301,6 +290,23 @@ git merge-base --is-ancestor "$previous_commit" "$target" \
 if git show-ref --verify --quiet "refs/tags/$tag"; then
   fail "Local tag $tag already exists. Inspect the exact remote ref and do not rerun the cutter"
 fi
+
+if [[ "$canonical_release_origin" == true ]]; then
+  if ! gh api --paginate --slurp -H "Accept: application/vnd.github+json" \
+    "repos/NVIDIA/NemoClaw/commits/${target}/check-runs?filter=all&per_page=100" \
+    >"$launchable_checks_snapshot"; then
+    fail "Could not read candidate Launchable check runs"
+  fi
+else
+  test_check_runs_file="${NEMOCLAW_RELEASE_TEST_CHECK_RUNS_FILE:-}"
+  [[ -f "$test_check_runs_file" ]] \
+    || fail "Local release fixture must provide candidate Launchable check runs"
+  cp -- "$test_check_runs_file" "$launchable_checks_snapshot" \
+    || fail "Could not snapshot fixture Launchable check runs"
+fi
+node "$SCRIPT_DIR/release/launchable-cleanup.mts" \
+  "$launchable_checks_snapshot" "$target" "$workspace_cleanup" \
+  || fail "Could not validate candidate Launchable cleanup"
 
 # Git signs the tag on the maintainer workstation. The private signing key does not enter CI.
 git tag -s -F "$brief_snapshot" --cleanup=verbatim "$tag" "$target"

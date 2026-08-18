@@ -424,6 +424,11 @@ For a successful result, also record these values:
 For any other result, record the status, conclusion, URLs, and available failure artifacts. Do not
 claim that the image, runtime, inference, or workspace cleanup passed.
 
+Include `LAUNCHABLE_RUN_ID` and `LAUNCHABLE_JOB_ID` in every confirmed or remediated `Workspace
+cleanup` record. The cutter rereads the candidate's newest Launchable check immediately before tag
+creation and requires those identities to match. `not applicable: no Launchable check ran` is valid
+only when that read finds no candidate Launchable check.
+
 If the Launchable result is missing or non-successful, offer Launchable mode or let the maintainer
 proceed with the displayed status. A new dispatch always tests current `origin/main`; it cannot
 create evidence for an older planned candidate. If the base-image aggregate is missing or failed,
