@@ -1129,6 +1129,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
   registerSandbox: HermesPortableOnboardingDeps<T>["registerSandbox"],
   sourceRoot: string,
   buildContextSettings: HermesPortableBuildContextSettings,
+  podmanSourceEnv: NodeJS.ProcessEnv,
   cleanupTemporaryPolicy?: () => boolean,
   createPolicySourceBytes?: Buffer,
 ): Promise<HermesPortableOnboardingResult<T>> {
@@ -1173,13 +1174,17 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
     {
       withLifecycleLock,
       capturePodmanExecutableAuthority: (socketAuthority) =>
-        captureHermesPortablePodmanExecutableAuthority(socketAuthority, runtimeAuthority, childEnv),
+        captureHermesPortablePodmanExecutableAuthority(
+          socketAuthority,
+          runtimeAuthority,
+          podmanSourceEnv,
+        ),
       container: (socketAuthority, podmanAuthority) =>
         createHermesPortableContainerDeps(
           socketAuthority,
           runtimeAuthority,
           podmanAuthority,
-          childEnv,
+          podmanSourceEnv,
         ),
       assertOpenShellExecutableAuthority: () => assertOpenShellExecutableAuthority(),
       capturePolicy: captureOpenShell,

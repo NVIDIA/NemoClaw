@@ -3310,6 +3310,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   dashboardPortReservationScope,
                   hermesApiPortReservationScope,
                   ...createArgs,
+                  lockedRuntime.environmentScope,
                 ),
               ),
             ),

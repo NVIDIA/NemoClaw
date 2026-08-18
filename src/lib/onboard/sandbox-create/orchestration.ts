@@ -10,6 +10,7 @@ import type { HermesAuthMethod } from "../hermes-auth";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
+import type { PortableOnboardEnvironmentScope } from "../session-bootstrap";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 
 type SandboxRecreateReasonInput = {
@@ -101,6 +102,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     hermesAuthMethod: HermesAuthMethod | null = null,
     createIntent: import("../types").SandboxCreateIntent | null = null,
     preparedBuildContext: PreparedSandboxBuildContext | null = null,
+    portableEnvironmentScope: PortableOnboardEnvironmentScope | null = null,
   ) {
     const {
       DASHBOARD_PORT,
@@ -1067,6 +1069,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     });
 
     if (hermesPortableAuthority) {
+      if (!portableEnvironmentScope) {
+        throw new Error("Hermes portable onboarding is missing runtime environment authority.");
+      }
       if (managedBootstrap || !["none", "native-only"].includes(gpuRoutePlan)) {
         throw new Error(
           "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
@@ -1096,6 +1101,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           completeCreatedSandboxRegistration(created, receipt, liveIdentityFingerprint, revalidate),
         ROOT,
         { model, provider, preferredInferenceApi, toolDisclosure: effectiveToolDisclosure },
+        portableEnvironmentScope.createHermesPortablePodmanSourceEnvironment(
+          hermesPortableAuthority.runtimeAuthority,
+        ),
         cleanupInitialCreateSource,
         initialSandboxPolicy.sourceBytes,
       );

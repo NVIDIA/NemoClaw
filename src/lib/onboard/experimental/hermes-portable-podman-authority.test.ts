@@ -10,6 +10,7 @@ import type {
 } from "../../adapters/podman";
 import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
+import { createPortableOnboardEnvironmentScope } from "../session-bootstrap";
 import {
   captureHermesPortablePodmanExecutableAuthority,
   createHermesPortablePodmanCommandAuthority,
@@ -150,6 +151,54 @@ function successfulCapture(
 }
 
 describe("Hermes portable Podman executable and endpoint authority", () => {
+  it("omits exact scope-owned selectors before the Podman child", () => {
+    const runtime = runtimeAuthority();
+    const containersConf = "/home/test/.config/nemoclaw/portable/containers.conf";
+    const env: NodeJS.ProcessEnv = { HOME: runtime.homeDir, PATH: "/usr/bin" };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+    scope.installRuntime({ containersConf, socketPath: runtime.socketPath });
+    const capture = successfulCapture();
+
+    expect(() =>
+      captureHermesPortablePodmanExecutableAuthority(
+        socketAuthority(),
+        runtime,
+        scope.createHermesPortablePodmanSourceEnvironment(runtime),
+        authorityDeps(capture, executableDeps({ executableInode: 10n, parentInode: 20n })),
+      ),
+    ).not.toThrow();
+    expect(env).toMatchObject({
+      DOCKER_HOST: `unix://${runtime.socketPath}`,
+      CONTAINERS_CONF: containersConf,
+    });
+    expect(capture).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["DOCKER_HOST", "unix:///run/user/1000/replaced/podman.sock"],
+    ["CONTAINERS_CONF", "/home/test/.config/replaced/containers.conf"],
+  ] as const)("rejects a replaced scope-owned %s before a Podman child", (name, value) => {
+    const runtime = runtimeAuthority();
+    const env: NodeJS.ProcessEnv = { HOME: runtime.homeDir, PATH: "/usr/bin" };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+    scope.installRuntime({
+      containersConf: "/home/test/.config/nemoclaw/portable/containers.conf",
+      socketPath: runtime.socketPath,
+    });
+    env[name] = value;
+    const capture = successfulCapture();
+
+    expect(() =>
+      captureHermesPortablePodmanExecutableAuthority(
+        socketAuthority(),
+        runtime,
+        scope.createHermesPortablePodmanSourceEnvironment(runtime),
+        authorityDeps(capture, executableDeps({ executableInode: 10n, parentInode: 20n })),
+      ),
+    ).toThrow("connection selector is not allowed");
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it("captures and reuses only the exact 5.7.0 rootless amd64 netavark authority", () => {
     const generation = { executableInode: 10n, parentInode: 20n };
     const capture = successfulCapture();
