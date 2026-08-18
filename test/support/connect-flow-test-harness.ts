@@ -12,7 +12,8 @@ import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 type ConnectSandbox = (typeof import("../../src/lib/actions/sandbox/connect"))["connectSandbox"];
-type RestoreSandboxStartupState = (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
+type RestoreSandboxStartupState =
+  (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
 type GatewayRouteMutationLock =
   (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
@@ -56,6 +57,8 @@ export type ConnectHarness = {
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
+  startConnectShieldsRelockWatcherSpy: MockInstance;
+  stopConnectShieldsRelockWatcherSpy: MockInstance;
   withGatewayRouteMutationLockSpy: MockInstance;
   writeSandboxConfigSpy: MockInstance;
 };
@@ -167,6 +170,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
   const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
+  const shieldsRelockNotice = requireDist(
+    "../../src/lib/actions/sandbox/agent/connect-shields-relock-notice.js",
+  );
+  const stopConnectShieldsRelockWatcherSpy = vi.fn();
+  const startConnectShieldsRelockWatcherSpy = vi
+    .spyOn(shieldsRelockNotice, "startConnectShieldsRelockWatcher")
+    .mockReturnValue({ stop: stopConnectShieldsRelockWatcherSpy });
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -383,6 +393,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     runOpenshellSpy,
     runSetupDnsProxySpy,
     spawnSyncSpy,
+    startConnectShieldsRelockWatcherSpy,
+    stopConnectShieldsRelockWatcherSpy,
     withGatewayRouteMutationLockSpy,
     writeSandboxConfigSpy,
   };

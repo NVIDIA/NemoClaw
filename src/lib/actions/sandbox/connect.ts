@@ -3,9 +3,12 @@
 
 import { spawnSync } from "node:child_process";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import {
-
+  captureOpenshell,
+  getOpenshellBinary,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
+import {
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -58,6 +61,7 @@ import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
   printGatewayIntegrityRepairGuidance,
+  startConnectShieldsRelockWatcher,
 } from "./connect-boundary-refusal";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
@@ -128,7 +132,6 @@ type SandboxListProbe = {
   status: number | null;
   output: string;
 };
-
 
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
@@ -440,7 +443,6 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
   }
 }
 
-
 function sleepSync(milliseconds: number): void {
   if (milliseconds <= 0) return;
   if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
@@ -481,7 +483,6 @@ export function probeSandboxInferenceRoute(
     },
   );
 }
-
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`
@@ -992,9 +993,7 @@ export function restoreSandboxStartupState(sandboxName: string): SandboxStartupR
   const directRecoveryFailureDetail =
     "recoveryFailureDetail" in processCheck ? processCheck.recoveryFailureDetail : null;
   const recoveryFailureDetail = directRecoveryFailureDetail ?? reportedRecoveryFailureDetail;
-  const recoveryFailureLayer = directRecoveryFailureDetail
-    ? null
-    : reportedRecoveryFailureLayer;
+  const recoveryFailureLayer = directRecoveryFailureDetail ? null : reportedRecoveryFailureLayer;
   return Object.assign(processCheck, { recoveryFailureDetail, recoveryFailureLayer });
 }
 
@@ -1435,10 +1434,19 @@ export async function connectSandbox(
     console.log("");
   }
   prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
-  const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
-    stdio: "inherit",
-    cwd: ROOT,
-    env: { ...process.env },
-  });
+  const shieldsRelockWatcher =
+    agent?.name === "openclaw" || sb?.agent === "openclaw"
+      ? startConnectShieldsRelockWatcher(sandboxName)
+      : null;
+  let result: ReturnType<typeof spawnSync>;
+  try {
+    result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
+      stdio: "inherit",
+      cwd: ROOT,
+      env: { ...process.env },
+    });
+  } finally {
+    shieldsRelockWatcher?.stop();
+  }
   exitWithConnectSpawnResult(sandboxName, result);
 }

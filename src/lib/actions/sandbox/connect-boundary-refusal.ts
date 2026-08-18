@@ -12,6 +12,8 @@ import {
   sanitizeHermesMcpReconciliationDetail,
 } from "./mcp-bridge-hermes-reconciliation";
 
+export { startConnectShieldsRelockWatcher } from "./agent/connect-shields-relock-notice";
+
 type ConnectBoundaryContext = "Probe" | "Connect";
 
 /**
