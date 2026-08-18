@@ -665,7 +665,7 @@ jobs:
             CHANGED_FILES="$(git diff --name-only --diff-filter=ACMRD "${BEFORE_SHA}" "${CANDIDATE_SHA}")"
             export CHANGED_FILES
           fi
-          npx tsx tools/e2e/workflow-plan.mts --ci-output
+          npx --no-install tsx tools/e2e/workflow-plan.mts --ci-output
           if [ -n "${CHECKOUT_SHA}" ] && [ "${NVIDIA_OWNED}" != "true" ]; then
             matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
             expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"

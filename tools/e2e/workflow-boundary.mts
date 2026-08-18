@@ -2583,7 +2583,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("matrix generation step must bind the authenticated PR repository owner");
   }
   validateInferenceModeGeneration(errors, generate, generateEnv);
-  requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
+  requireRunContains(errors, generate, "npx --no-install tsx tools/e2e/workflow-plan.mts");
   requireRunContains(errors, generate, "--ci-output");
   requireRunContains(errors, generate, "git diff --name-only --diff-filter=ACMRD");
   requireRunContains(
