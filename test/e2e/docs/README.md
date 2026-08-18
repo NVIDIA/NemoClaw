@@ -71,10 +71,11 @@ dispatch shell validation suites.
 
 ## Selecting One Target
 
-`.github/workflows/e2e.yaml` runs one matrix target by passing its id through
-`TARGET_ID` and selecting the matching test with `-t "^${TARGET_ID}$"`. The
-selector performs the restriction; `TARGET_ID` alone does not limit which
-targets run.
+`.github/workflows/e2e.yaml` runs one matrix target by passing its ID through
+`TARGET_ID`. The workflow selects the test title with the stable
+`-t "^${TARGET_ID}:"` prefix. The title suffix contains the observable outcome,
+agent runtime, and environment or inference endpoint. The selector performs the
+restriction; `TARGET_ID` alone does not limit which targets run.
 
 The `generate-matrix` job resolves dispatch input through `requireTargets`, so
 an unknown id fails there before any target job starts.
