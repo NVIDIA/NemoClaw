@@ -234,6 +234,29 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const inspectPortableReceiptDispositionSpy = vi
     .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
     .mockReturnValue(portableDisposition);
+  let registryEntries: SandboxEntry[] = [];
+  const qualifyPortableAgentLifecycleAuthority =
+    portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
+  const requireHermesPortableActiveLifecycleAuthority =
+    portableAgentLifecycle.requireHermesPortableActiveLifecycleAuthority;
+  const portableAuthorityDeps = () => ({
+    inspectReceiptDisposition: (sandboxName: string) =>
+      portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+    readRegistry: (sandboxName: string) =>
+      registryEntries.find((candidate) => candidate.name === sandboxName) ?? null,
+  });
+  vi.spyOn(gatewayState, "qualifyPortableAgentLifecycleAuthority").mockImplementation(((
+    sandboxName: string,
+  ) => qualifyPortableAgentLifecycleAuthority(sandboxName, portableAuthorityDeps())) as never);
+  vi.spyOn(gatewayState, "requireHermesPortableActiveLifecycleAuthority").mockImplementation(((
+    sandboxName: string,
+    expected: unknown,
+  ) =>
+    requireHermesPortableActiveLifecycleAuthority(
+      sandboxName,
+      expected,
+      portableAuthorityDeps(),
+    )) as never);
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -369,6 +392,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     agent: options.agentName ?? "openclaw",
     provider: options.agentName === "hermes" ? "ollama-local" : null,
     model: options.agentName === "hermes" ? "qwen3-vl:4b" : null,
+    lifecycleLiveIdentityFingerprint:
+      portableDisposition.kind === "hermes"
+        ? portableDisposition.liveIdentityFingerprint
+        : undefined,
     gpuEnabled: false,
     policies: [],
     ...(portableDisposition.kind === "hermes"
@@ -381,7 +408,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       : {}),
     ...options.registryEntry,
   };
-  const registryEntries: SandboxEntry[] = options.registryEntries
+  registryEntries = options.registryEntries
     ? options.registryEntries.map((candidate) =>
         candidate.name === primaryRegistryEntry.name
           ? { ...primaryRegistryEntry, ...candidate }

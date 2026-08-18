@@ -10,9 +10,8 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
 import {
-  type HermesPortableRegistryAuthority,
-  inspectPortableAgentReceiptDisposition,
-  validateHermesPortableRegistryAuthority,
+  qualifyPortableAgentLifecycleAuthority,
+  type HermesPortableAgentLifecycleAuthority,
 } from "./gateway-state";
 import { printSandboxGatewayLookupStatus } from "./status-lookup-rendering";
 import {
@@ -59,20 +58,18 @@ export {
   type ServingProcessHealth,
 } from "./status-snapshot";
 
-type HermesPortableStatusAuthority = HermesPortableRegistryAuthority<registry.SandboxEntry>;
-
-function inspectHermesPortableStatus(sandboxName: string): HermesPortableStatusAuthority | null {
-  const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
-  return validateHermesPortableRegistryAuthority(
-    sandboxName,
-    disposition,
-    disposition.kind === "hermes" ? registry.getSandbox(sandboxName) : null,
-  );
+function inspectHermesPortableStatus(
+  sandboxName: string,
+): HermesPortableAgentLifecycleAuthority | null {
+  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, {
+    readRegistry: registry.getSandbox,
+  });
+  return authority.kind === "hermes" ? authority : null;
 }
 
 function hermesPortableStatusReport(
   sandboxName: string,
-  authority: HermesPortableStatusAuthority,
+  authority: HermesPortableAgentLifecycleAuthority,
 ): SandboxStatusReport {
   const { entry, phase } = authority;
   const model = entry?.model ?? "unknown";

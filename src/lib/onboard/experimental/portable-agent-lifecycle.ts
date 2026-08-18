@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
+import type { SandboxEntry } from "../../state/registry/types";
 import {
   assertHermesPortableSandboxLifecycleAuthority,
   buildHermesPortableOpenShellCommandAuthority,
@@ -130,29 +131,31 @@ export type PortableAgentReceiptDisposition =
       readonly liveIdentityFingerprint: string | null;
     };
 
-export type HermesPortableRegistryEntry = {
-  readonly agent?: string | null;
-  readonly gatewayName?: string | null;
-  readonly lifecycleGeneration?: string | null;
-  readonly lifecycleLiveIdentityFingerprint?: string | null;
-  readonly name: string;
-  readonly openshellDriver?: string | null;
+export type HermesPortableAgentLifecycleAuthority = Extract<
+  PortableAgentReceiptDisposition,
+  { readonly kind: "hermes" }
+> & {
+  readonly entry: SandboxEntry | null;
 };
 
-export type HermesPortableRegistryAuthority<
-  Entry extends HermesPortableRegistryEntry = HermesPortableRegistryEntry,
-> = Extract<PortableAgentReceiptDisposition, { readonly kind: "hermes" }> & {
-  readonly entry: Entry | null;
-};
+export type PortableAgentLifecycleAuthority =
+  | Exclude<PortableAgentReceiptDisposition, { readonly kind: "hermes" }>
+  | HermesPortableAgentLifecycleAuthority;
 
-export type HermesPortableActiveRegistryAuthority<
-  Entry extends HermesPortableRegistryEntry = HermesPortableRegistryEntry,
-> = HermesPortableRegistryAuthority<Entry> & {
-  readonly entry: Entry;
-  readonly liveIdentityFingerprint: string;
+export type HermesPortableActiveLifecycleAuthority = Omit<
+  HermesPortableAgentLifecycleAuthority,
+  "entry" | "phase"
+> & {
   readonly phase: "active";
+  readonly entry: SandboxEntry;
 };
 
+export interface PortableAgentLifecycleAuthorityDeps {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly stateDir?: string;
+  readonly inspectReceiptDisposition?: (sandboxName: string) => PortableAgentReceiptDisposition;
+  readonly readRegistry?: (sandboxName: string) => SandboxEntry | null;
+}
 /** Strictly distinguish absent, schema-4 OpenClaw, and schema-5 Hermes authority. */
 export function inspectPortableAgentReceiptDisposition(
   sandboxName: string,
@@ -175,13 +178,20 @@ export function inspectPortableAgentReceiptDisposition(
   };
 }
 
-/** Bind one Hermes portable receipt to its exact host registry authority. */
-export function validateHermesPortableRegistryAuthority<Entry extends HermesPortableRegistryEntry>(
+/** Classify receipt authority and enforce the shared schema-5 registry invariant. */
+export function qualifyPortableAgentLifecycleAuthority(
   sandboxName: string,
-  disposition: PortableAgentReceiptDisposition,
-  entry: Entry | null,
-): HermesPortableRegistryAuthority<Entry> | null {
-  if (disposition.kind !== "hermes") return null;
+  deps: PortableAgentLifecycleAuthorityDeps = {},
+): PortableAgentLifecycleAuthority {
+  const disposition = deps.inspectReceiptDisposition
+    ? deps.inspectReceiptDisposition(sandboxName)
+    : inspectPortableAgentReceiptDisposition(sandboxName, deps.env ?? process.env, deps.stateDir);
+  if (disposition.kind !== "hermes") return disposition;
+
+  if (!deps.readRegistry) {
+    throw new Error("Hermes portable registry authority reader is required.");
+  }
+  const entry = deps.readRegistry(sandboxName);
   if (!entry) {
     if (disposition.phase !== "active") return { ...disposition, entry: null };
     throw new Error("Hermes portable active receipt is missing its registry authority.");
@@ -203,44 +213,25 @@ export function validateHermesPortableRegistryAuthority<Entry extends HermesPort
   return { ...disposition, entry };
 }
 
-/** Require the exact active Hermes receipt and registry authority. */
-export function requireHermesPortableActiveRegistryAuthority<
-  Entry extends HermesPortableRegistryEntry,
->(
+/** Require an active schema-5 receipt and its exact registry authority. */
+export function requireHermesPortableActiveLifecycleAuthority(
   sandboxName: string,
-  disposition: PortableAgentReceiptDisposition,
-  entry: Entry | null,
-): HermesPortableActiveRegistryAuthority<Entry> {
-  const authority = validateHermesPortableRegistryAuthority(sandboxName, disposition, entry);
-  if (
-    !authority ||
-    authority.phase !== "active" ||
-    !authority.entry ||
-    !authority.liveIdentityFingerprint
-  ) {
-    throw new Error("Hermes portable lifecycle authority is missing or incomplete");
+  expected?: HermesPortableActiveLifecycleAuthority,
+  deps: PortableAgentLifecycleAuthorityDeps = {},
+): HermesPortableActiveLifecycleAuthority {
+  const current = qualifyPortableAgentLifecycleAuthority(sandboxName, deps);
+  if (current.kind !== "hermes" || current.phase !== "active" || !current.entry) {
+    throw new Error("Hermes portable lifecycle authority is missing or incomplete.");
   }
-  return authority as HermesPortableActiveRegistryAuthority<Entry>;
-}
-
-/** Requalify active Hermes authority against an earlier locked snapshot. */
-export function revalidateHermesPortableActiveRegistryAuthority<
-  Entry extends HermesPortableRegistryEntry,
->(
-  sandboxName: string,
-  previous: HermesPortableActiveRegistryAuthority<Entry>,
-  disposition: PortableAgentReceiptDisposition,
-  entry: Entry | null,
-): HermesPortableActiveRegistryAuthority<Entry> {
-  const current = requireHermesPortableActiveRegistryAuthority(sandboxName, disposition, entry);
   if (
-    current.gatewayName !== previous.gatewayName ||
-    current.lifecycleGeneration !== previous.lifecycleGeneration ||
-    current.liveIdentityFingerprint !== previous.liveIdentityFingerprint
+    expected &&
+    (current.gatewayName !== expected.gatewayName ||
+      current.lifecycleGeneration !== expected.lifecycleGeneration ||
+      current.liveIdentityFingerprint !== expected.liveIdentityFingerprint)
   ) {
-    throw new Error("Hermes portable receipt and registry authority changed");
+    throw new Error("Hermes portable lifecycle authority changed during verification.");
   }
-  return current;
+  return current as HermesPortableActiveLifecycleAuthority;
 }
 
 /** Build a child environment from the exact active schema-5 runtime authority. */

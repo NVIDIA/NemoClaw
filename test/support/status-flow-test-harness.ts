@@ -39,7 +39,7 @@ export type StatusFlowHarness = {
   getActiveSandboxSessionsSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
   getSandboxStatusReport: GetSandboxStatusReport;
-  inspectPortableAgentReceiptDispositionSpy: MockInstance;
+  qualifyPortableAgentLifecycleAuthoritySpy: MockInstance;
   isSandboxGatewayRunningForStatusSpy: MockInstance;
   logSpy: MockInstance;
   removeSandboxSpy: MockInstance;
@@ -166,16 +166,21 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
 
   const sandboxEntry =
     options.sandboxEntry === null ? null : { ...baseSandboxEntry, ...options.sandboxEntry };
-  const inspectPortableAgentReceiptDispositionSpy = vi
-    .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
-    .mockImplementation(() => {
+  const qualifyPortableAgentLifecycleAuthority =
+    portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
+  const qualifyPortableAgentLifecycleAuthoritySpy = vi
+    .spyOn(portableAgentLifecycle, "qualifyPortableAgentLifecycleAuthority")
+    .mockImplementation(((sandboxName: string) => {
       const disposition =
         typeof options.portableDisposition === "function"
           ? options.portableDisposition()
           : options.portableDisposition;
       if (disposition instanceof Error) throw disposition;
-      return disposition ?? { kind: "absent" };
-    });
+      return qualifyPortableAgentLifecycleAuthority(sandboxName, {
+        inspectReceiptDisposition: () => disposition ?? { kind: "absent" },
+        readRegistry: () => (options.registryEntry === "missing" ? null : sandboxEntry),
+      });
+    }) as never);
 
   const withMcpLifecycleLockSpy = vi
     .spyOn(lifecycleLock, "withMcpLifecycleLock")
@@ -304,7 +309,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
     getActiveSandboxSessionsSpy,
     getSandboxDockerRuntimeSpy,
     getSandboxStatusReport: statusModule.getSandboxStatusReport,
-    inspectPortableAgentReceiptDispositionSpy,
+    qualifyPortableAgentLifecycleAuthoritySpy,
     isSandboxGatewayRunningForStatusSpy,
     logSpy,
     removeSandboxSpy,

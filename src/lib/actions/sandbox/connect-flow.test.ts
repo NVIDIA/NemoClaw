@@ -1273,14 +1273,20 @@ describe("connectSandbox flow", () => {
       portableRecoveryResult: { kind: "already-running" },
     });
     harness.inspectPortableReceiptDispositionSpy
-      .mockReturnValueOnce({ kind: "hermes", phase: "active" })
+      .mockReturnValueOnce({
+        kind: "hermes",
+        phase: "active",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+        liveIdentityFingerprint: "f".repeat(64),
+      })
       .mockReturnValue({ kind: "absent" });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
       "process.exit(1)",
     );
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "receipt and registry authority disagree",
+      "Hermes portable lifecycle authority is missing or incomplete",
     );
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();

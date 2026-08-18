@@ -66,7 +66,7 @@ import {
   dockerInspectGateway,
   findSandboxListLine,
   inferSandboxReadyFromLine,
-  inspectSandboxDoctorPortableDisposition,
+  inspectSandboxDoctorPortableAuthority,
   ollamaDoctorCheck,
   oneLine,
   shouldInspectLegacyGatewayContainer,
@@ -634,10 +634,8 @@ export async function runSandboxDoctor(
   if (!intent) return undefined;
 
   const outcome = await withSandboxDoctorLifecycleLock(sandboxName, async () => {
-    const portable = inspectSandboxDoctorPortableDisposition(sandboxName, () =>
-      registry.getSandbox(sandboxName),
-    );
-    if (portable) {
+    const portable = inspectSandboxDoctorPortableAuthority(sandboxName, registry.getSandbox);
+    if (portable.kind === "hermes") {
       const report = hermesPortableDoctorReport(sandboxName, portable.phase);
       if (intent.asJson && options.quietJson) return { report };
       const exitCode = renderDoctorReport(report, intent.asJson);
