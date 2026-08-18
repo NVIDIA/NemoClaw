@@ -96,10 +96,38 @@ function expectSnapshotFailure(
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
+});
+
+describe("migration-state snapshot directory reservation", () => {
+  it("gives a same-second snapshot its own retention-visible directory", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-18T06:43:16.500Z"));
+    const { home, configPath, logger } = makeMinimalHostSnapshot();
+    const hostState = makeHostState(home, configPath);
+
+    const first = createSnapshotBundle(hostState, logger, { persist: true });
+    expectSnapshotBundle(first);
+    writeFileSync(path.join(first.snapshotDir, "reservation-marker"), "first");
+
+    const second = createSnapshotBundle(hostState, logger, { persist: true });
+    expectSnapshotBundle(second);
+
+    // The clock has not moved, so an unreserved leaf would be the first snapshot's directory.
+    expect(second.snapshotDir).not.toBe(first.snapshotDir);
+    // Both names stay inside the grammar the retention reader accepts, and each manifest names
+    // the directory it describes.
+    expect(path.basename(first.snapshotDir)).toBe(first.manifest.timestamp);
+    expect(path.basename(second.snapshotDir)).toBe(second.manifest.timestamp);
+    expect(path.basename(second.snapshotDir)).toMatch(/^\d{8}T\d{6}Z$/);
+    // The second operation left the first snapshot's contents untouched.
+    expect(existsSync(path.join(first.snapshotDir, "reservation-marker"))).toBe(true);
+    expect(readdirSync(path.join(home, ".nemoclaw", "snapshots")).length).toBe(2);
+  });
 });
 
 describe("migration-state prepared config security", () => {
