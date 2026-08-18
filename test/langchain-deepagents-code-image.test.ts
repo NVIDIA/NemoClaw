@@ -127,7 +127,10 @@ describe("targeted dependency advisory review", () => {
     const normalizedDistribution = distribution.replaceAll("-", "[-_]");
     const normalizedVersion = version.replaceAll(".", "\\.");
     expect(readAgentFile("dependency-review.md")).toMatch(
-      new RegExp(`${normalizedDistribution}\\s+${normalizedVersion}`, "i"),
+      new RegExp(
+        `(?:^|[^A-Za-z0-9_-])${normalizedDistribution}\\s+${normalizedVersion}(?=[^0-9.]|$)`,
+        "im",
+      ),
     );
   });
 });
