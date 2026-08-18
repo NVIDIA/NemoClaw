@@ -308,10 +308,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
   });
 
-  it("rolls back when recreation starts but managed control never accepts it", () => {
+  it("reports an unconfirmed rollback when recreated gateway health never resolves", () => {
     mockOpenClawSandbox("rejected-box");
     setImmediateRecoveryPolling();
-    const finalize = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const finalize = vi.fn(() => ({ backupRemoved: false, rolledBack: false }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
       containerId: "replacement-container-id",
       finalize,
@@ -329,7 +329,18 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       relaunchManagedSupervisorSessionImpl,
     });
 
-    expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: false });
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      recoveryFailureDetail: expect.stringContaining(
+        "NemoClaw could not confirm rollback to the previous sandbox container",
+      ),
+    });
+    expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").toContain(
+      "the recovered gateway did not become responsive before the recovery timeout",
+    );
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledWith(
       "rejected-box",
       "probe",

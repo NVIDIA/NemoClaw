@@ -1602,19 +1602,18 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       throw error;
     }
     if (!gatewayReady) {
-      let rolledBack = true;
-      if (relaunch) {
-        try {
-          rolledBack = relaunch.finalize(false).rolledBack;
-        } catch {
-          rolledBack = false;
-        }
-      }
+      const gatewayWaitFailureDetail = relaunchedManagedHealth.failure
+        ? `the managed supervisor health check for the recreated sandbox did not pass while NemoClaw waited for its gateway. Managed supervisor health check result: ${relaunchedManagedHealth.failure.layer}: ${relaunchedManagedHealth.failure.detail}`
+        : "the recovered gateway did not become responsive before the recovery timeout";
+      const recoveryFailureDetail = relaunch
+        ? recoveryDetailAfterRelaunchRollback(relaunch, gatewayWaitFailureDetail)
+        : gatewayWaitFailureDetail;
+      const rollbackUnconfirmed = recoveryFailureDetail !== gatewayWaitFailureDetail;
       if (!quiet) {
         console.error("  Gateway process started but is not responding.");
         printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
-        if (!rolledBack) {
+        if (rollbackUnconfirmed) {
           console.error(
             "  Automatic rollback of the previous sandbox container failed; inspect Docker state before retrying.",
           );
@@ -1629,16 +1628,13 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         managedRecoveryFailureLayer,
         managedRecoveryFailureDetail ?? undefined,
       );
-      if (relaunchedManagedHealth.failure) {
-        return {
-          checked: true,
-          wasRunning: false,
-          recovered: false,
-          forwardRecovered: false,
-          recoveryFailureDetail: `the managed supervisor health check for the recreated sandbox did not pass while NemoClaw waited for its gateway. Managed supervisor health check result: ${relaunchedManagedHealth.failure.layer}: ${relaunchedManagedHealth.failure.detail}`,
-        };
-      }
-      return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
+      return {
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        recoveryFailureDetail,
+      };
     }
     // Host-forward recovery requires an OpenShell-ready sandbox. Managed
     // recovery has already passed its authenticated control and health gates;

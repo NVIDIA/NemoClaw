@@ -956,6 +956,12 @@ describe("connectSandbox flow", () => {
       recoveryFailureDetail:
         "the replacement container did not become ready in OpenShell\nAuthorization: Bearer opaque-connect-recovery-token\u001b[31m",
     },
+    {
+      condition: "an unconfirmed rollback after a gateway wait failure",
+      expectedDetail: "NemoClaw could not confirm rollback to the previous sandbox container",
+      recoveryFailureDetail:
+        "NemoClaw could not confirm rollback to the previous sandbox container. Inspect Docker state before retrying. Recovery failure before rollback: the recovered gateway did not become responsive before the recovery timeout",
+    },
   ])(
     "stops non-probe connect before route repair, pairing, or SSH after $condition (#9364)",
     async ({ expectedDetail, recoveryFailureDetail }) => {
