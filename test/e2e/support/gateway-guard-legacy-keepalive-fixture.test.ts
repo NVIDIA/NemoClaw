@@ -60,6 +60,25 @@ function managedImageInspect(
   ]);
 }
 
+function managedRuntimeInspect(): string {
+  return JSON.stringify([
+    {
+      Id: OLD_CONTAINER_ID,
+      Image: `sha256:${"c".repeat(64)}`,
+      Name: "/openshell-e2e-2701",
+      Config: {
+        Image: "nemoclaw-managed:test",
+        Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+        Cmd: ["--workdir", "/sandbox"],
+        Env: [
+          "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:18789 NEMOCLAW_DASHBOARD_PORT=18789 NEMOCLAW_SANDBOX_NAME=e2e-2701 /usr/local/bin/nemoclaw-start",
+        ],
+      },
+      HostConfig: {},
+    },
+  ]);
+}
+
 describe("gateway guard legacy keepalive fixture", () => {
   it("recreates only the pinned sandbox container with the reviewed legacy supervisor contract (#9364)", () => {
     const dockerCapture = vi.fn(() => managedImageInspect());
@@ -95,6 +114,17 @@ describe("gateway guard legacy keepalive fixture", () => {
       },
       { dockerCapture: expect.any(Function) },
     );
+  });
+
+  it("accepts the inspected OpenShell-managed runtime process contract before legacy recreation (#9364)", () => {
+    const rewritten = JSON.parse(
+      rewriteManagedInspectForLegacyKeepalive(managedRuntimeInspect(), OLD_CONTAINER_ID),
+    );
+
+    expect(rewritten[0].Config).toMatchObject({
+      Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
+      Cmd: [],
+    });
   });
 
   it("rejects an unreviewed managed-image entrypoint before legacy recreation (#9364)", () => {
