@@ -947,91 +947,91 @@ fi
     }
   });
 
-  it("uses only deterministic rail candidates without trust enrollment or network discovery", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-command-boundary-"));
-    const bin = path.join(root, "bin");
-    const stateDirectory = path.join(root, "state");
-    const helper = path.join(root, "prepare-dgx-station-host.sh");
-    const state = path.join(stateDirectory, "resume.json");
-    const forbiddenLog = path.join(root, "forbidden.log");
-    fs.mkdirSync(bin, { mode: 0o700 });
-    fs.mkdirSync(stateDirectory, { mode: 0o700 });
-    fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
-    fs.writeFileSync(
-      path.join(bin, "python3"),
-      `#!/usr/bin/env bash\ncat <<'JSON'\n${JSON.stringify(stationHost("local"))}\nJSON\n`,
-      { mode: 0o700 },
-    );
-    fs.writeFileSync(path.join(bin, "ssh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o700 });
-    for (const command of [
-      "ssh-keyscan",
-      "arp-scan",
-      "avahi-browse",
-      "dns-sd",
-      "lldpctl",
-      "nmap",
-      "mdns-scan",
-    ]) {
+  it.each(
+    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
+  )(
+    "uses only deterministic rail candidates without trust enrollment or network discovery [%s]",
+    (command) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-command-boundary-"));
+      const bin = path.join(root, "bin");
+      const stateDirectory = path.join(root, "state");
+      const helper = path.join(root, "prepare-dgx-station-host.sh");
+      const state = path.join(stateDirectory, "resume.json");
+      const forbiddenLog = path.join(root, "forbidden.log");
+      fs.mkdirSync(bin, { mode: 0o700 });
+      fs.mkdirSync(stateDirectory, { mode: 0o700 });
+      fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(
+        path.join(bin, "python3"),
+        `#!/usr/bin/env bash\ncat <<'JSON'\n${JSON.stringify(stationHost("local"))}\nJSON\n`,
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(path.join(bin, "ssh"), "#!/usr/bin/env bash\nexit 1\n", { mode: 0o700 });
+
       fs.writeFileSync(
         path.join(bin, command),
         `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
         { mode: 0o700 },
       );
-    }
 
-    try {
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--no-warnings",
-          "--experimental-strip-types",
-          COORDINATOR,
-          "--helper",
-          helper,
-          "--state",
-          state,
-          "--revision",
-          REVISION,
-        ],
-        {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: root,
-            PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--no-warnings",
+            "--experimental-strip-types",
+            COORDINATOR,
+            "--helper",
+            helper,
+            "--state",
+            state,
+            "--revision",
+            REVISION,
+          ],
+          {
+            cwd: REPO_ROOT,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              HOME: root,
+              PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+            },
+            timeout: 20_000,
+            killSignal: "SIGKILL",
           },
-          timeout: 20_000,
-          killSignal: "SIGKILL",
-        },
-      );
+        );
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ kind: "single-station" });
-      expect(fs.existsSync(forbiddenLog)).toBe(false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({ kind: "single-station" });
+        expect(fs.existsSync(forbiddenLog)).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
-  it("keeps forbidden discovery and trust enrollment unreachable through pair qualification", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-ready-boundary-"));
-    const bin = path.join(root, "bin");
-    const stateDirectory = path.join(root, "state");
-    const helper = path.join(root, "prepare-dgx-station-host.sh");
-    const state = path.join(stateDirectory, "resume.json");
-    const knownHosts = path.join(root, "known_hosts");
-    const forbiddenLog = path.join(root, "forbidden.log");
-    fs.mkdirSync(bin, { mode: 0o700 });
-    fs.mkdirSync(stateDirectory, { mode: 0o700 });
-    fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
-    fs.writeFileSync(knownHosts, "fixture\n", { mode: 0o600 });
-    fs.writeFileSync(path.join(bin, "docker"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o700,
-    });
-    fs.writeFileSync(
-      path.join(bin, "python3"),
-      `#!/usr/bin/env bash
+  it.each(
+    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
+  )(
+    "keeps forbidden discovery and trust enrollment unreachable through pair qualification [%s]",
+    (command) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-ready-boundary-"));
+      const bin = path.join(root, "bin");
+      const stateDirectory = path.join(root, "state");
+      const helper = path.join(root, "prepare-dgx-station-host.sh");
+      const state = path.join(stateDirectory, "resume.json");
+      const knownHosts = path.join(root, "known_hosts");
+      const forbiddenLog = path.join(root, "forbidden.log");
+      fs.mkdirSync(bin, { mode: 0o700 });
+      fs.mkdirSync(stateDirectory, { mode: 0o700 });
+      fs.writeFileSync(helper, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(knownHosts, "fixture\n", { mode: 0o600 });
+      fs.writeFileSync(path.join(bin, "docker"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o700,
+      });
+      fs.writeFileSync(
+        path.join(bin, "python3"),
+        `#!/usr/bin/env bash
 set -Eeuo pipefail
 cat >/dev/null
 if (($# == 1)); then
@@ -1044,11 +1044,11 @@ ${stationConnectivity("local")}
 JSON
 fi
 `,
-      { mode: 0o700 },
-    );
-    fs.writeFileSync(
-      path.join(bin, "ssh-keygen"),
-      `#!/usr/bin/env bash
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        path.join(bin, "ssh-keygen"),
+        `#!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ " $* " == *" -F 10.10.0.2 "* ]]; then
   printf '%s\n' '10.10.0.2 ssh-ed25519 ${HOST_KEY_DATA}'
@@ -1059,11 +1059,11 @@ if [[ " $* " == *" -F "* ]]; then
 fi
 printf '%s\n' '256 ${HOST_KEY_FINGERPRINT} fixture (ED25519)'
 `,
-      { mode: 0o700 },
-    );
-    fs.writeFileSync(
-      path.join(bin, "ssh"),
-      `#!/usr/bin/env bash
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        path.join(bin, "ssh"),
+        `#!/usr/bin/env bash
 set -Eeuo pipefail
 if [[ " $* " == *" -G "* ]]; then
   target=''
@@ -1117,58 +1117,50 @@ if [[ " $* " == *'prepare-dgx-station-host.sh'* ]]; then
 fi
 exit 96
 `,
-      { mode: 0o700 },
-    );
-    for (const command of [
-      "ssh-keyscan",
-      "arp-scan",
-      "avahi-browse",
-      "dns-sd",
-      "lldpctl",
-      "nmap",
-      "mdns-scan",
-    ]) {
+        { mode: 0o700 },
+      );
+
       fs.writeFileSync(
         path.join(bin, command),
         `#!/usr/bin/env bash\nprintf '%s\\n' ${JSON.stringify(command)} >>${JSON.stringify(forbiddenLog)}\nexit 97\n`,
         { mode: 0o700 },
       );
-    }
 
-    try {
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--no-warnings",
-          "--experimental-strip-types",
-          COORDINATOR,
-          "--helper",
-          helper,
-          "--state",
-          state,
-          "--revision",
-          REVISION,
-        ],
-        {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: root,
-            PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--no-warnings",
+            "--experimental-strip-types",
+            COORDINATOR,
+            "--helper",
+            helper,
+            "--state",
+            state,
+            "--revision",
+            REVISION,
+          ],
+          {
+            cwd: REPO_ROOT,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              HOME: root,
+              PATH: `${bin}:${TEST_SYSTEM_PATH}`,
+            },
+            timeout: 20_000,
+            killSignal: "SIGKILL",
           },
-          timeout: 20_000,
-          killSignal: "SIGKILL",
-        },
-      );
+        );
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ kind: "ready", peerTarget: "10.10.0.2" });
-      expect(fs.existsSync(forbiddenLog)).toBe(false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({ kind: "ready", peerTarget: "10.10.0.2" });
+        expect(fs.existsSync(forbiddenLog)).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("dual-DGX Station installer handoff", () => {

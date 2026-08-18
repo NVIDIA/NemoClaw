@@ -29,6 +29,24 @@ const RUN_ID = 12345;
 const WORKFLOW_ID = 77;
 const ARTIFACT_ID = 88;
 const tempRoots: string[] = [];
+const OPEN_SHELL_VERSION_SURFACES = [
+  "scripts/install-openshell.sh",
+  "scripts/brev-launchable-ci-cpu.sh",
+  "nemoclaw-blueprint/blueprint.yaml",
+] as const;
+
+function writeOpenShellVersionFixture(
+  root: string,
+  replacements: ReadonlyMap<string, readonly [string, string]>,
+): void {
+  for (const relativePath of OPEN_SHELL_VERSION_SURFACES) {
+    const target = path.join(root, relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
+    const replacement = replacements.get(relativePath);
+    fs.writeFileSync(target, replacement ? source.replace(...replacement) : source);
+  }
+}
 
 afterEach(() => {
   for (const root of tempRoots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
@@ -258,28 +276,32 @@ function apiWithWorkflowRuns(runs: ReturnType<typeof workflowRun>[]): GitHubRead
 }
 
 describe("OpenShell qualification-sensitive path detection", () => {
-  it("covers selectors, trust inputs, runtime artifacts, manifests, proofs, and gate surfaces", () => {
-    for (const candidatePath of [
-      "nemoclaw-blueprint/blueprint.yaml",
-      "scripts/install-openshell.sh",
-      "scripts/checks/extract-installer-pins.mts",
-      "agents/hermes/manifest.yaml",
-      "agents/langchain-deepagents-code/managed-dcode-runtime.py",
-      "src/lib/onboard/docker-driver-gateway-runtime.ts",
-      "src/lib/actions/sandbox/supervisor-relaunch.ts",
-      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
-      "nemoclaw/src/blueprint/runner.ts",
-      "src/lib/sandbox/version.ts",
-      "src/lib/onboard/openshell-version.ts",
-      "src/lib/adapters/sandbox/command-transport.ts",
-      ".github/workflows/podman-cpu-proof.yaml",
-      ".github/actions/ci-installer-hash-check/action.yaml",
-      "scripts/checks/verify-openshell-e2e-qualification.mts",
-    ]) {
+  it.each(
+    [
+        "nemoclaw-blueprint/blueprint.yaml",
+        "scripts/install-openshell.sh",
+        "scripts/checks/extract-installer-pins.mts",
+        "agents/hermes/manifest.yaml",
+        "agents/langchain-deepagents-code/managed-dcode-runtime.py",
+        "src/lib/onboard/docker-driver-gateway-runtime.ts",
+        "src/lib/actions/sandbox/supervisor-relaunch.ts",
+        "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
+        "nemoclaw/src/blueprint/runner.ts",
+        "src/lib/sandbox/version.ts",
+        "src/lib/onboard/openshell-version.ts",
+        "src/lib/adapters/sandbox/command-transport.ts",
+        ".github/workflows/podman-cpu-proof.yaml",
+        ".github/actions/ci-installer-hash-check/action.yaml",
+        "scripts/checks/verify-openshell-e2e-qualification.mts",
+      ],
+  )(
+    "covers selectors, trust inputs, runtime artifacts, manifests, proofs, and gate surfaces [%s]",
+    (candidatePath) => {
       expect(isOpenShellQualificationSensitivePath(candidatePath), candidatePath).toBe(true);
-    }
-    expect(isOpenShellQualificationSensitivePath("docs/index.mdx")).toBe(false);
-  });
+
+      expect(isOpenShellQualificationSensitivePath("docs/index.mdx")).toBe(false);
+    },
+  );
 
   it("uses both sides of a rename and aligns separate proof requirements with workflow filters", () => {
     const renamed = validatePullRequestFile({
@@ -519,24 +541,27 @@ describe("qualification orchestration", () => {
     ["failed", "completed", "failure"],
     ["cancelled", "completed", "cancelled"],
     ["incomplete", "in_progress", null],
-  ])("does not let an older success bypass the newest %s full dispatch", async (_label, status, conclusion) => {
-    const baseRoot = createBaseRoot();
-    const newestRunId = RUN_ID + 1;
-    await expect(
-      verifyOpenShellE2EQualification(qualificationInput(baseRoot), {
-        api: apiWithWorkflowRuns([
-          workflowRun(RUN_ID),
-          workflowRun(newestRunId, status, conclusion),
-        ]),
-        async loadReceipt(artifact) {
-          return validReceipt({ workflowRunId: String(artifact.runId) });
-        },
-        readVersion() {
-          return "0.0.99";
-        },
-      }),
-    ).rejects.toThrow(`newest current-head full E2E run ${newestRunId} is not successful`);
-  });
+  ])(
+    "does not let an older success bypass the newest %s full dispatch",
+    async (_label, status, conclusion) => {
+      const baseRoot = createBaseRoot();
+      const newestRunId = RUN_ID + 1;
+      await expect(
+        verifyOpenShellE2EQualification(qualificationInput(baseRoot), {
+          api: apiWithWorkflowRuns([
+            workflowRun(RUN_ID),
+            workflowRun(newestRunId, status, conclusion),
+          ]),
+          async loadReceipt(artifact) {
+            return validReceipt({ workflowRunId: String(artifact.runId) });
+          },
+          readVersion() {
+            return "0.0.99";
+          },
+        }),
+      ).rejects.toThrow(`newest current-head full E2E run ${newestRunId} is not successful`);
+    },
+  );
 
   it("does not require E2E or proof APIs for an unrelated change", async () => {
     const evidence = await verifyOpenShellE2EQualification(
@@ -571,17 +596,8 @@ describe("qualification orchestration", () => {
         ['max_openshell_version: "0.0.101"', 'max_openshell_version: "0.0.100"'],
       ],
     ]);
-    for (const relativePath of [
-      "scripts/install-openshell.sh",
-      "scripts/brev-launchable-ci-cpu.sh",
-      "nemoclaw-blueprint/blueprint.yaml",
-    ]) {
-      const target = path.join(root, relativePath);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
-      const replacement = replacements.get(relativePath);
-      fs.writeFileSync(target, replacement ? source.replace(...replacement) : source);
-    }
+
+    writeOpenShellVersionFixture(root, replacements);
 
     expect(() => extractOpenShellVersion(root)).toThrow("OpenShell version surfaces disagree");
   });

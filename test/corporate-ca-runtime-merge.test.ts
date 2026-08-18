@@ -10,7 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runCorporateCaHelperGuard, runShellLines, sliceBlock } from "./helpers/corporate-ca-support";
+import {
+  runCorporateCaHelperGuard,
+  runShellLines,
+  sliceBlock,
+} from "./helpers/corporate-ca-support";
 
 const OPENCLAW_START = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
 const HERMES_START = join(import.meta.dirname, "../agents/hermes/start.sh");
@@ -103,75 +107,79 @@ describe("corporate proxy CA trust-anchor rejection (#8650)", () => {
   it.each([
     { agent: "OpenClaw", script: OPENCLAW_START, end: OPENCLAW_END },
     { agent: "Hermes", script: HERMES_START, end: HERMES_END },
-  ])("rejects a corporate CA swapped to a symlink after the path check for $agent (#8650)", ({
-    script,
-    end,
-  }) => {
-    const dir = tmpDir("nemoclaw-corp-swap-");
-    const openshell = join(dir, "openshell-ca.pem");
-    const corp = join(dir, "corporate-ca.pem");
-    const merged = join(dir, "merged-ca.pem");
-    const planted = join(dir, "not-a-certificate");
-    writeFileSync(openshell, OPENSHELL_PEM);
-    writeFileSync(planted, "PLANTED-NOT-A-CERTIFICATE\n");
-    writeFileSync(corp, CORPORATE_PEM);
+  ])(
+    "rejects a corporate CA swapped to a symlink after the path check for $agent (#8650)",
+    ({ script, end }) => {
+      const dir = tmpDir("nemoclaw-corp-swap-");
+      const openshell = join(dir, "openshell-ca.pem");
+      const corp = join(dir, "corporate-ca.pem");
+      const merged = join(dir, "merged-ca.pem");
+      const planted = join(dir, "not-a-certificate");
+      writeFileSync(openshell, OPENSHELL_PEM);
+      writeFileSync(planted, "PLANTED-NOT-A-CERTIFICATE\n");
+      writeFileSync(corp, CORPORATE_PEM);
 
-    // Stand in for a process that replaces the path between the `-L` check and
-    // the read. Swapping the file for a symlink right after the check means
-    // only the O_NOFOLLOW read can still reject it.
-    const swap = [
-      `rm -f ${JSON.stringify(corp)}`,
-      `ln -s ${JSON.stringify(planted)} ${JSON.stringify(corp)}`,
-    ].join("\n");
-    const raced = mergeBlock(script, end, corp, merged).replace(
-      `[ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0`,
-      `[ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0\n${swap}`,
-    );
+      // Stand in for a process that replaces the path between the `-L` check and
+      // the read. Swapping the file for a symlink right after the check means
+      // only the O_NOFOLLOW read can still reject it.
+      const swap = [
+        `rm -f ${JSON.stringify(corp)}`,
+        `ln -s ${JSON.stringify(planted)} ${JSON.stringify(corp)}`,
+      ].join("\n");
+      const raced = mergeBlock(script, end, corp, merged).replace(
+        `[ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0`,
+        `[ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0\n${swap}`,
+      );
 
-    const diagnostic = mergeDiagnostic(dir, raced, [
-      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
-    ]);
+      const diagnostic = mergeDiagnostic(dir, raced, [
+        `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+      ]);
 
-    expect(diagnostic).toContain("corporate CA");
-    expect(diagnostic).not.toContain("PLANTED-NOT-A-CERTIFICATE");
-    expect(existsSync(merged)).toBe(false);
-  });
+      expect(diagnostic).toContain("corporate CA");
+      expect(diagnostic).not.toContain("PLANTED-NOT-A-CERTIFICATE");
+      expect(existsSync(merged)).toBe(false);
+    },
+  );
 });
 
 describe("corporate proxy CA runtime merge (#6210)", () => {
-  it("appends the corporate CA to the OpenShell bundle for OpenClaw and repoints all CA env (#6210)", () => {
-    const dir = tmpDir("nemoclaw-corp-merge-openclaw-");
-    const openshell = join(dir, "openshell-ca.pem");
-    const corp = join(dir, "corporate-ca.pem");
-    const merged = join(dir, "merged-ca.pem");
-    writeFileSync(openshell, OPENSHELL_PEM);
-    writeFileSync(corp, CORPORATE_PEM);
+  it.each(
+    [
+        "SSL_CERT_FILE",
+        "CURL_CA_BUNDLE",
+        "REQUESTS_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "NODE_EXTRA_CA_CERTS",
+      ],
+  )(
+    "appends the corporate CA to the OpenShell bundle for OpenClaw and repoints all CA env [%s] (#6210)",
+    (name) => {
+      const dir = tmpDir("nemoclaw-corp-merge-openclaw-");
+      const openshell = join(dir, "openshell-ca.pem");
+      const corp = join(dir, "corporate-ca.pem");
+      const merged = join(dir, "merged-ca.pem");
+      writeFileSync(openshell, OPENSHELL_PEM);
+      writeFileSync(corp, CORPORATE_PEM);
 
-    const out = runShellLines(dir, [
-      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
-      mergeBlock(OPENCLAW_START, "# Git TLS CA bundle fix (NemoClaw#2270).", corp, merged),
-      'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
-      'printf "CURL_CA_BUNDLE=%s\\n" "${CURL_CA_BUNDLE:-}"',
-      'printf "REQUESTS_CA_BUNDLE=%s\\n" "${REQUESTS_CA_BUNDLE:-}"',
-      'printf "GIT_SSL_CAINFO=%s\\n" "${GIT_SSL_CAINFO:-}"',
-      'printf "NODE_EXTRA_CA_CERTS=%s\\n" "${NODE_EXTRA_CA_CERTS:-}"',
-      'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
-    ]);
+      const out = runShellLines(dir, [
+        `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+        mergeBlock(OPENCLAW_START, "# Git TLS CA bundle fix (NemoClaw#2270).", corp, merged),
+        'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
+        'printf "CURL_CA_BUNDLE=%s\\n" "${CURL_CA_BUNDLE:-}"',
+        'printf "REQUESTS_CA_BUNDLE=%s\\n" "${REQUESTS_CA_BUNDLE:-}"',
+        'printf "GIT_SSL_CAINFO=%s\\n" "${GIT_SSL_CAINFO:-}"',
+        'printf "NODE_EXTRA_CA_CERTS=%s\\n" "${NODE_EXTRA_CA_CERTS:-}"',
+        'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
+      ]);
 
-    for (const name of [
-      "SSL_CERT_FILE",
-      "CURL_CA_BUNDLE",
-      "REQUESTS_CA_BUNDLE",
-      "GIT_SSL_CAINFO",
-      "NODE_EXTRA_CA_CERTS",
-    ]) {
       expect(out).toContain(`${name}=${merged}`);
-    }
-    expect(out).toContain("MERGED=1");
-    const mergedContent = readFileSync(merged, "utf-8");
-    expect(mergedContent).toContain("OPENSHELL-ROOT");
-    expect(mergedContent).toContain("CORPORATE-ROOT");
-  });
+
+      expect(out).toContain("MERGED=1");
+      const mergedContent = readFileSync(merged, "utf-8");
+      expect(mergedContent).toContain("OPENSHELL-ROOT");
+      expect(mergedContent).toContain("CORPORATE-ROOT");
+    },
+  );
 
   it("is a no-op for OpenClaw when no corporate CA was baked into the image (#6210)", () => {
     const dir = tmpDir("nemoclaw-corp-merge-noop-");
@@ -192,7 +200,15 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     expect(existsSync(merged)).toBe(false);
   });
 
-  it("appends the corporate CA and repoints all CA env for Hermes (#6210)", () => {
+  it.each(
+    [
+        "SSL_CERT_FILE",
+        "CURL_CA_BUNDLE",
+        "REQUESTS_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "NODE_EXTRA_CA_CERTS",
+      ],
+  )("appends the corporate CA and repoints all CA env for Hermes [%s] (#6210)", (name) => {
     const dir = tmpDir("nemoclaw-corp-merge-hermes-");
     const openshell = join(dir, "openshell-ca.pem");
     const corp = join(dir, "corporate-ca.pem");
@@ -225,15 +241,8 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
       'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
     ]);
 
-    for (const name of [
-      "SSL_CERT_FILE",
-      "CURL_CA_BUNDLE",
-      "REQUESTS_CA_BUNDLE",
-      "GIT_SSL_CAINFO",
-      "NODE_EXTRA_CA_CERTS",
-    ]) {
-      expect(out).toContain(`${name}=${merged}`);
-    }
+    expect(out).toContain(`${name}=${merged}`);
+
     expect(out).toContain("MERGED=1");
     const mergedContent = readFileSync(merged, "utf-8");
     expect(mergedContent).toContain("OPENSHELL-ROOT");

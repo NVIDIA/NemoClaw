@@ -118,24 +118,22 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
     for (const [providerId, bundle] of Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES)) {
       expect(bundle.identity.id).toBe(providerId);
-      for (const surface of [
-        "plan",
-        "capabilities",
-        "preflightDoctor",
-        "gateway",
-        "workload",
-        "hostLocalInference",
-        "lifecycle",
-        "mutationAuthority",
-        "stateMutation",
-        "bootstrap",
-        "snapshot",
-        "recovery",
-        "cleanup",
-        "containerEngine",
-      ] as const) {
-        expect(bundle[surface].providerId, `${providerId}.${surface}`).toBe(providerId);
-      }
+      expect(([
+            "plan",
+            "capabilities",
+            "preflightDoctor",
+            "gateway",
+            "workload",
+            "hostLocalInference",
+            "lifecycle",
+            "mutationAuthority",
+            "stateMutation",
+            "bootstrap",
+            "snapshot",
+            "recovery",
+            "cleanup",
+            "containerEngine",
+          ] as const).every((surface) => Object.is(bundle[surface].providerId, providerId))).toBe(true);
       expect(bundle.bootstrap).toMatchObject({ supported: providerId === "docker" });
       expect(bundle.stateMutation).toMatchObject({
         supported: providerId === "docker",

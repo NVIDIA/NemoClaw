@@ -628,63 +628,64 @@ describe("mutable agent config permissions", () => {
     ).toBe(false);
   });
 
-  it("shields-down restores Hermes sticky group-writable config root without group-writable config files", () => {
-    const commands: string[][] = [];
-    withMockedDockerExecFileSync(
-      commands,
-      () => {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
-          unlockAgentConfig: (
-            sandboxName: string,
-            target: {
-              agentName?: string;
-              configPath: string;
-              configDir: string;
-              sensitiveFiles?: string[];
-              stateLockPlan?: AgentStateLockPlan;
-              stateLockPlanInImage: boolean;
-            },
-          ) => void;
-        };
+  it.each(
+    ["run-state-dir-transition", "apply-shields-transition", "finish-shields-transition"],
+  )(
+    "shields-down restores Hermes sticky group-writable config root without group-writable config files [%s]",
+    (action) => {
+      const commands: string[][] = [];
+      withMockedDockerExecFileSync(
+        commands,
+        () => {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
+            unlockAgentConfig: (
+              sandboxName: string,
+              target: {
+                agentName?: string;
+                configPath: string;
+                configDir: string;
+                sensitiveFiles?: string[];
+                stateLockPlan?: AgentStateLockPlan;
+                stateLockPlanInImage: boolean;
+              },
+            ) => void;
+          };
 
-        unlockAgentConfig("sandbox-pod", {
-          agentName: "hermes",
-          configPath: "/sandbox/.hermes/config.yaml",
-          configDir: "/sandbox/.hermes",
-          sensitiveFiles: ["/sandbox/.hermes/.env"],
-          stateLockPlan: HERMES_STATE_LOCK_PLAN,
-          stateLockPlanInImage: true,
-        });
-      },
-      { installedStateLockPlan: HERMES_STATE_LOCK_PLAN, registryAgent: "hermes" },
-    );
+          unlockAgentConfig("sandbox-pod", {
+            agentName: "hermes",
+            configPath: "/sandbox/.hermes/config.yaml",
+            configDir: "/sandbox/.hermes",
+            sensitiveFiles: ["/sandbox/.hermes/.env"],
+            stateLockPlan: HERMES_STATE_LOCK_PLAN,
+            stateLockPlanInImage: true,
+          });
+        },
+        { installedStateLockPlan: HERMES_STATE_LOCK_PLAN, registryAgent: "hermes" },
+      );
 
-    const hermesActions = commands
-      .filter((command) => command.includes(HERMES_RUNTIME_CONFIG_GUARD))
-      .map((command) => command[command.indexOf(HERMES_RUNTIME_CONFIG_GUARD) + 1]);
-    expect(hermesActions).toEqual([
-      "--help",
-      "begin-shields-transition",
-      "run-state-dir-transition",
-      "apply-shields-transition",
-      "finish-shields-transition",
-    ]);
-    const begin = commands.find((command) => command.includes("begin-shields-transition"));
-    expect(begin).toEqual(
-      expect.arrayContaining(["--shields-mode", "mutable", "--rollback-shields-mode", "mutable"]),
-    );
-    for (const action of [
-      "run-state-dir-transition",
-      "apply-shields-transition",
-      "finish-shields-transition",
-    ]) {
+      const hermesActions = commands
+        .filter((command) => command.includes(HERMES_RUNTIME_CONFIG_GUARD))
+        .map((command) => command[command.indexOf(HERMES_RUNTIME_CONFIG_GUARD) + 1]);
+      expect(hermesActions).toEqual([
+        "--help",
+        "begin-shields-transition",
+        "run-state-dir-transition",
+        "apply-shields-transition",
+        "finish-shields-transition",
+      ]);
+      const begin = commands.find((command) => command.includes("begin-shields-transition"));
+      expect(begin).toEqual(
+        expect.arrayContaining(["--shields-mode", "mutable", "--rollback-shields-mode", "mutable"]),
+      );
+
       const command = commands.find((candidate) => candidate.includes(action));
       expect(command).toEqual(expect.arrayContaining(["--lock-token", HERMES_LOCK_TOKEN]));
-    }
-    expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.hermes/config.yaml"]);
-    expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.hermes/.env"]);
-  });
+
+      expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.hermes/config.yaml"]);
+      expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.hermes/.env"]);
+    },
+  );
 
   it("verifies the frozen Hermes tree before publishing and checking the locked parent", () => {
     const commands: string[][] = [];

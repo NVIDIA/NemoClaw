@@ -228,16 +228,11 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     const lines = result.stdout.trimEnd().split("\n");
     const managedProxy = "http://managed-proxy.internal:65535";
     const managedNoProxy = "localhost,127.0.0.1,::1,managed-proxy.internal";
-    for (const name of PROXY_URL_ENV_NAMES) {
-      expect(lines).toContain(`LAUNCHER_${name}=${managedProxy}`);
-    }
+    expect(PROXY_URL_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=${managedProxy}`))).toBe(true);
     expect(lines).toContain(`LAUNCHER_${TRUSTED_FETCH_PROXY_ENV_NAME}=${managedProxy}`);
-    for (const name of NO_PROXY_ENV_NAMES) {
-      expect(lines).toContain(`LAUNCHER_${name}=${managedNoProxy}`);
-    }
-    for (const name of CLEARED_PROXY_ENV_NAMES) {
-      expect(lines).toContain(`LAUNCHER_${name}=__unset__`);
-    }
+    expect(NO_PROXY_ENV_NAMES.every((name) =>
+        lines.includes(`LAUNCHER_${name}=${managedNoProxy}`))).toBe(true);
+    expect(CLEARED_PROXY_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=__unset__`))).toBe(true);
     const output = `${result.stdout}\n${result.stderr}`;
     expect(output).not.toContain("inference.local");
     expect(output).not.toContain("corp-proxy.example");
@@ -630,20 +625,21 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     },
   );
 
-  it("documents the proxy-only source boundary and removal condition (#6191)", () => {
+  it.each(
+    [
+        "# Invalid state:",
+        "# Source boundary:",
+        "# Source-fix constraint:",
+        "# Regression:",
+        "# Removal condition:",
+      ],
+  )("documents the proxy-only source boundary and removal condition [%s] (#6191)", (marker) => {
     const start = readAgentFile("start.sh");
     const launcher = readAgentFile("dcode-launcher.sh");
     const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
 
-    for (const marker of [
-      "# Invalid state:",
-      "# Source boundary:",
-      "# Source-fix constraint:",
-      "# Regression:",
-      "# Removal condition:",
-    ]) {
-      expect(start).toContain(marker);
-    }
+    expect(start).toContain(marker);
+
     expect(start).toContain("Direct DNS/hosts resolution is not required");
     expect(launcher).toContain("Remove it only when OpenShell normalizes every sandbox exec/login");
     expect(headlessCheck).toContain("getent hosts inference.local >/dev/null 2>&1");
@@ -673,9 +669,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       expect(result.status).not.toBe(0);
       expect(startResult.status).not.toBe(0);
       expect(result.stdout).not.toContain("LAUNCHER_");
-      for (const value of Object.values(managedProxy)) {
-        expect(`${result.stdout}\n${result.stderr}\n${startResult.stderr}`).not.toContain(value);
-      }
+      expect(Object.values(managedProxy).every((value) => !`${result.stdout}\n${result.stderr}\n${startResult.stderr}`.includes(value))).toBe(true);
     },
   );
 });

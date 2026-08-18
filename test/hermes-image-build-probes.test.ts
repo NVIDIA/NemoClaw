@@ -30,19 +30,20 @@ const commands = [
 ] as const;
 
 describe("Hermes image build probes", () => {
-  it("uses a checked-in probe runner instead of builder-dependent heredocs (#7981)", () => {
-    expect(dockerfile).not.toMatch(/<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/u);
-    expect(dockerfile).toContain(`COPY agents/hermes/image-build-probes.py ${imageProbePath}`);
-    const normalizedDockerfile = dockerfile.replace(/\\\n/gu, "").replace(/\s+/gu, " ");
+  it.each(commands)(
+    "uses a checked-in probe runner instead of builder-dependent heredocs [case %#] (#7981)",
+    (command) => {
+      expect(dockerfile).not.toMatch(/<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/u);
+      expect(dockerfile).toContain(`COPY agents/hermes/image-build-probes.py ${imageProbePath}`);
+      const normalizedDockerfile = dockerfile.replace(/\\\n/gu, "").replace(/\s+/gu, " ");
 
-    for (const command of commands) {
       expect(normalizedDockerfile).toContain(`${imageProbePath} ${command}`);
-    }
 
-    const removal = dockerfile.indexOf(`rm -f ${imageProbePath}`);
-    expect(removal).toBeGreaterThan(dockerfile.indexOf(`${imageProbePath} discord-reopen`));
-    expect(dockerfile.indexOf(`check_absent ${imageProbePath}`)).toBeGreaterThan(removal);
-  });
+      const removal = dockerfile.indexOf(`rm -f ${imageProbePath}`);
+      expect(removal).toBeGreaterThan(dockerfile.indexOf(`${imageProbePath} discord-reopen`));
+      expect(dockerfile.indexOf(`check_absent ${imageProbePath}`)).toBeGreaterThan(removal);
+    },
+  );
 
   it.each(Array.from(commands, (value) => [value]))(
     "lists Dockerfile probe command %s in the runner usage",

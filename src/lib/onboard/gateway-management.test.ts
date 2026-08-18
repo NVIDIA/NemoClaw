@@ -186,18 +186,24 @@ describe("gateway management declaration", () => {
     expect(result.ok === false && result.reason).toMatch(/unsupported capability/);
   });
 
-  it("does not echo malformed declaration values in errors (#6576)", () => {
+  it.each([
+    { scenario: "version" },
+    { scenario: "mode" },
+    { scenario: "endpoint" },
+    { scenario: "required capabilities" },
+  ])("does not echo malformed declaration values in errors [$scenario] (#6576)", ({ scenario }) => {
     const secret = "sk-live-not-a-real-token";
-    for (const declaration of [
-      externalDeclaration({ version: secret }),
-      externalDeclaration({ mode: secret }),
-      externalDeclaration({ endpoint: secret }),
-      externalDeclaration({ requiredCapabilities: [secret] }),
-    ]) {
-      const result = parseGatewayManagementDeclaration(declaration);
-      expect(result).toMatchObject({ ok: false });
-      expect(result.ok === false && result.reason).not.toContain(secret);
-    }
+    const declaration = (
+      {
+        version: externalDeclaration({ version: secret }),
+        mode: externalDeclaration({ mode: secret }),
+        endpoint: externalDeclaration({ endpoint: secret }),
+        "required capabilities": externalDeclaration({ requiredCapabilities: [secret] }),
+      } as const
+    )[scenario]!;
+    const result = parseGatewayManagementDeclaration(declaration);
+    expect(result).toMatchObject({ ok: false });
+    expect(result.ok === false && result.reason).not.toContain(secret);
   });
 
   it("rejects a relative state directory (#6576)", () => {

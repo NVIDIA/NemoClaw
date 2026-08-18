@@ -1121,19 +1121,20 @@ it.runIf(process.platform === "linux")(
   },
 );
 
-it("passes an absolute host temporary root for empty, relative, or absolute TMPDIR input (#9160)", async () => {
-  const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-  const roots: Array<string | undefined> = [];
-  const host = {
-    command: async (_command: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-      roots.push(options?.env?.NEMOCLAW_LAUNCH_HOST_TMP_ROOT);
-      return { exitCode: 0, signal: null, stdout: "", stderr: "" };
-    },
-    openshellCommandPath: "/usr/bin/openshell",
-  };
+it.each(["", "relative-tmp", "/tmp/absolute-tmp"])(
+  "passes an absolute host temporary root for empty, relative, or absolute TMPDIR input [%s] (#9160)",
+  async (root) => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const roots: Array<string | undefined> = [];
+    const host = {
+      command: async (_command: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        roots.push(options?.env?.NEMOCLAW_LAUNCH_HOST_TMP_ROOT);
+        return { exitCode: 0, signal: null, stdout: "", stderr: "" };
+      },
+      openshellCommandPath: "/usr/bin/openshell",
+    };
 
-  try {
-    for (const root of ["", "relative-tmp", "/tmp/absolute-tmp"]) {
+    try {
       await runOpenClawLaunchSession({
         artifactName: "host-temporary-root",
         cliCommand: "node",
@@ -1142,13 +1143,13 @@ it("passes an absolute host temporary root for empty, relative, or absolute TMPD
         redactionValues: [],
         sandboxName: "alpha",
       });
-    }
 
-    expect(roots).toEqual([resolve("/tmp"), resolve("relative-tmp"), "/tmp/absolute-tmp"]);
-  } finally {
-    platform.mockRestore();
-  }
-});
+      expect(roots).toEqual([root === "" ? resolve("/tmp") : resolve(root)]);
+    } finally {
+      platform.mockRestore();
+    }
+  },
+);
 
 it.runIf(process.platform === "linux")(
   "runs the producer then two PTY launch sessions under one lease (#8942, #9023, #9160)",

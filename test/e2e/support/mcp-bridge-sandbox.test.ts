@@ -183,7 +183,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     const docsPath = "docs/deployment/set-up-mcp-bridge.mdx";
     const docs = fs.readFileSync(docsPath, "utf8");
     expect(docs, docsPath).toContain(commit);
-    for (const citation of citations) expect(docs, docsPath).toContain(citation);
+    expect(citations.every((citation) => docs.includes(citation))).toBe(true);
     expect(docs).toContain("proxy_connect_by_hostname");
     expect(docs).toContain("reopens proxy-side DNS resolution");
 

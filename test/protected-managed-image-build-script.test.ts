@@ -86,11 +86,15 @@ esac
   );
 }
 
-function completeImportedCache(cacheRoot: string): void {
+function completeImportedAgentCaches(cacheRoot: string): void {
   for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
     mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), { recursive: true });
     writeFileSync(path.join(cacheRoot, agent, "index.json"), "{}\n", "utf8");
   }
+}
+
+function completeImportedCache(cacheRoot: string): void {
+  completeImportedAgentCaches(cacheRoot);
   mkdirSync(path.join(cacheRoot, "npm-cache-seed"));
   writeFileSync(path.join(cacheRoot, "npm-cache-seed", "manifest.json"), "{}\n", "utf8");
   mkdirSync(path.join(cacheRoot, "mcp-runtime-npm-cache-seed"));
@@ -278,11 +282,12 @@ describe("protected managed-image build-cache boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(cacheRoot)).toBe(true);
     expect(recordedBuildInvocations()).toHaveLength(3);
-    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
-      expect(recordedBuildInvocation(agent)).toContain(
-        `--cache-to type=local,dest=${realpathSync(cacheRoot)}/${agent},mode=max`,
-      );
-    }
+
+    expect(["openclaw", "hermes", "langchain-deepagents-code"].every((agent) =>
+        recordedBuildInvocation(agent).includes(
+          `--cache-to type=local,dest=${realpathSync(cacheRoot)}/${agent},mode=max`,
+        ))).toBe(true);
+
     expect(readFileSync(seedLog, "utf8")).toContain(
       `materialize-locked-npm-cache-seed.mts export --lockfile ${REPO_ROOT}/nemoclaw/package-lock.json --output ${realpathSync(cacheRoot)}/npm-cache-seed`,
     );
@@ -345,10 +350,7 @@ describe("protected managed-image build-cache boundary", () => {
 
   it("rejects imported agent caches that omit the complete locked npm seed", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
-    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
-      mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), { recursive: true });
-      writeFileSync(path.join(cacheRoot, agent, "index.json"), "{}\n", "utf8");
-    }
+    completeImportedAgentCaches(cacheRoot);
 
     const result = runBuild(REPO_ROOT, ["--cache-from", cacheRoot]);
 
@@ -402,15 +404,13 @@ describe("protected managed-image build-cache boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
-    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
-      expect(recordedBuildInvocation(agent)).toContain("--network none");
-    }
+    expect(["openclaw", "hermes", "langchain-deepagents-code"].every((agent) =>
+        recordedBuildInvocation(agent).includes("--network none"))).toBe(true);
     expect(recordedBuildInvocation("openclaw")).not.toContain("--cache-from");
-    for (const agent of ["hermes", "langchain-deepagents-code"]) {
-      expect(recordedBuildInvocation(agent)).toContain(
-        `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent}`,
-      );
-    }
+    expect(["hermes", "langchain-deepagents-code"].every((agent) =>
+        recordedBuildInvocation(agent).includes(
+          `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent}`,
+        ))).toBe(true);
     expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
     expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");
     expect(recordedBuildInvocation("langchain-deepagents-code").split(" ")).not.toContain(
@@ -432,12 +432,8 @@ describe("protected managed-image build-cache boundary", () => {
 
   it("rejects a nested symlink in a complete imported cache before invoking Docker", () => {
     const cacheRoot = path.join(testRoot, "imported-cache");
-    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
-      mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), {
-        recursive: true,
-      });
-      writeFileSync(path.join(cacheRoot, agent, "index.json"), "{}\n", "utf8");
-    }
+    completeImportedAgentCaches(cacheRoot);
+
     symlinkSync(
       path.join(cacheRoot, "hermes", "index.json"),
       path.join(cacheRoot, "openclaw", "blobs", "sha256", "nested-link"),

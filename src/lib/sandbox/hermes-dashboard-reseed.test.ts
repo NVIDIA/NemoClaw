@@ -91,7 +91,7 @@ describe("seedHermesDashboardConfig", () => {
         "--",
       ]);
       expect(sandboxCommand(args)[0]).not.toMatch(/^(?:ba)?sh$/);
-      for (const arg of args) expect(arg).not.toMatch(/[\r\n]/u);
+      expect(args.every((arg) => !/[\r\n]/u.test(arg))).toBe(true);
       expect(options).toEqual({
         ignoreError: true,
         includeStreams: true,
