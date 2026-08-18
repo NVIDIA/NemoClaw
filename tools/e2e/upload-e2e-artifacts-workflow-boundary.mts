@@ -52,6 +52,17 @@ const RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT: WorkflowStep = {
     "retention-days": 30,
   },
 };
+const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
+  name: "Upload aggregate evidence",
+  uses: UPLOAD_ARTIFACT_ACTION,
+  with: {
+    name: "native-runtime-qualification-${{ inputs.checkout_sha }}",
+    path: "${{ runner.temp }}/native-runtime-aggregate/",
+    "if-no-files-found": "error",
+    "retention-days": 30,
+    "compression-level": 9,
+  },
+};
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
@@ -108,6 +119,13 @@ function isExactReleaseQualificationWaiverUpload(jobName: string, step: Workflow
   );
 }
 
+function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep): boolean {
+  return (
+    jobName === "native-runtime-qualification-producer-aggregate" &&
+    isDeepStrictEqual(step, NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT)
+  );
+}
+
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "generate-matrix",
@@ -136,7 +154,9 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
       path: [
         "${{ steps.workspace.outputs.work_dir }}/lane.log",
-        "${{ steps.workspace.outputs.work_dir }}/launchable-image.json",
+        "${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json",
+        "${{ steps.workspace.outputs.work_dir }}/full-e2e.log",
+        "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
         "",
       ].join("\n"),
     },
@@ -178,10 +198,17 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "native-runtime-qualification-podman-toolchain",
+    {
+      name: "native-runtime-podman-toolchain-${{ matrix.architecture }}",
+      path: "${{ runner.temp }}/native-runtime-podman-toolchain/",
+    },
+  ],
+  [
     "native-runtime-qualification-producer",
     {
       name: "${{ matrix.artifactName }}",
-      path: "${{ runner.temp }}/native-runtime-evidence/evidence.json",
+      path: "${{ runner.temp }}/native-runtime-evidence/",
     },
   ],
   [
@@ -237,6 +264,8 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
 
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["generate-matrix", "${{ github.event_name == 'workflow_dispatch' }}"],
+  ["native-runtime-qualification-podman-toolchain", "success()"],
+  ["native-runtime-qualification-producer", "success()"],
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
@@ -371,6 +400,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "generate-matrix" ||
           jobName === "jetson-nvmap-gpu" ||
           jobName === "live" ||
+          jobName === "native-runtime-qualification-podman-toolchain" ||
           jobName === "openshell-dev-artifact" ||
           jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||
@@ -436,7 +466,8 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
         !isExactCommitCliArtifactUpload &&
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
-        !isExactReleaseQualificationWaiverUpload(jobName, step)
+        !isExactReleaseQualificationWaiverUpload(jobName, step) &&
+        !isExactNativeRuntimeAggregateUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }

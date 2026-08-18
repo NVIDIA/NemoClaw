@@ -333,12 +333,12 @@ repos:
         files: ^(.+\.(test|spec)\.(js|ts|mjs|mts|cjs|cts)|scripts/find-source-shape-tests\.mts|ci/source-shape-test-budget\.json)$
         priority: 20
 
-      - id: test-file-size-budget
-        name: Test file size budget
-        entry: npm run test-size:check
+      - id: codebase-growth-guardrails
+        name: Codebase growth guardrails
+        entry: npx vitest run --project integration test/growth-guardrails.test.ts
         language: system
+        always_run: true
         pass_filenames: false
-        files: ^(test/|src/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$|nemoclaw/src/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$|scripts/check-test-file-size-budget\.mts$|ci/test-file-size-budget\.json$)
         priority: 20
 
       - id: test-skills-yaml

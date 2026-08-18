@@ -477,29 +477,8 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("routes only a bounded CLI device-token scope mismatch into canonical pairing", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-auth-upgrade-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    writeFixtureDist(dist);
-    try {
-      expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "message-handler-fixture.js"), "utf8");
-      const connect = runFixture<
-        (
-          params: Record<string, unknown>,
-          verify: () => Promise<Record<string, unknown>>,
-        ) => Promise<Record<string, unknown>>
-      >(source, "connect");
-      const scopeMismatch = async () => ({ ok: false, reason: "scope_mismatch" });
-
-      await expect(
-        connect(
-          { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
-          scopeMismatch,
-        ),
-      ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
-      for (const candidate of [
+  it.each(
+    [
         { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
         { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
         { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
@@ -508,19 +487,44 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           role: "operator",
           scopes: ["operator.write", "operator.write"],
         },
-      ]) {
+      ],
+  )(
+    "routes only a bounded CLI device-token scope mismatch into canonical pairing [case %#]",
+    async (candidate) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-auth-upgrade-"));
+      const dist = path.join(tmp, "dist");
+      fs.mkdirSync(dist);
+      writeFixtureDist(dist);
+      try {
+        expect(runPatch(dist).status).toBe(0);
+        const source = fs.readFileSync(path.join(dist, "message-handler-fixture.js"), "utf8");
+        const connect = runFixture<
+          (
+            params: Record<string, unknown>,
+            verify: () => Promise<Record<string, unknown>>,
+          ) => Promise<Record<string, unknown>>
+        >(source, "connect");
+        const scopeMismatch = async () => ({ ok: false, reason: "scope_mismatch" });
+        await expect(
+          connect(
+            { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+            scopeMismatch,
+          ),
+        ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
+
         await expect(connect(candidate, scopeMismatch)).resolves.toMatchObject({ authOk: false });
+
+        await expect(
+          connect(
+            { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+            async () => ({ ok: false, reason: "token-mismatch" }),
+          ),
+        ).resolves.toMatchObject({ authOk: false });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
-      await expect(
-        connect(
-          { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
-          async () => ({ ok: false, reason: "token-mismatch" }),
-        ),
-      ).resolves.toMatchObject({ authOk: false });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("uses only operator.pairing to reach the gateway for the exact complete CLI shape", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-scope-"));
@@ -635,55 +639,55 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it.each([
-    true,
-    false,
-  ])("uses the exact clone paired token for one matching bounded scope upgrade (repair=%s)", async (isRepair) => {
-    const { runtime, tmp } = openPatchedCliFixture();
-    try {
-      const token = "clone-paired-token";
-      const pending = validPending({ isRepair });
-      runtime.setPairingLists(
-        { pending: [pending], paired: [clonePairedTokenRecord(token)] },
-        { pending: [pending], paired: [validPaired({ approvedScopes: undefined })] },
-      );
-      runtime.setPairedTokenEnvironment();
+  it.each([true, false])(
+    "uses the exact clone paired token for one matching bounded scope upgrade (repair=%s)",
+    async (isRepair) => {
+      const { runtime, tmp } = openPatchedCliFixture();
+      try {
+        const token = "clone-paired-token";
+        const pending = validPending({ isRepair });
+        runtime.setPairingLists(
+          { pending: [pending], paired: [clonePairedTokenRecord(token)] },
+          { pending: [pending], paired: [validPaired({ approvedScopes: undefined })] },
+        );
+        runtime.setPairedTokenEnvironment();
 
-      await expect(
-        runtime.approvePairingWithFallback({ json: true }, "request-1"),
-      ).resolves.toEqual({ requestId: "request-1", approved: true });
-      expect(runtime.gatewayCalls.map((call) => call.method)).toEqual([
-        "device.pair.list",
-        "device.pair.approve",
-      ]);
-      for (const call of runtime.gatewayCalls) {
-        expect(call).toMatchObject({
-          scopes: ["operator.pairing"],
-          credentialSource: "option",
-          nemoclawDisableStoredDeviceAuth: true,
-          signedIdentityForced: true,
-          token,
-          url: "ws://127.0.0.1:18789",
+        await expect(
+          runtime.approvePairingWithFallback({ json: true }, "request-1"),
+        ).resolves.toEqual({ requestId: "request-1", approved: true });
+        expect(runtime.gatewayCalls.map((call) => call.method)).toEqual([
+          "device.pair.list",
+          "device.pair.approve",
+        ]);
+        for (const call of runtime.gatewayCalls) {
+          expect(call).toMatchObject({
+            scopes: ["operator.pairing"],
+            credentialSource: "option",
+            nemoclawDisableStoredDeviceAuth: true,
+            signedIdentityForced: true,
+            token,
+            url: "ws://127.0.0.1:18789",
+          });
+          expect(call.password).toBeUndefined();
+          expect(call.cliArgUrl).toBeUndefined();
+          expect(call.cliArgToken).toBeUndefined();
+          expect(call.cliArgPassword).toBeUndefined();
+          expect(call).not.toHaveProperty("useStoredDeviceAuth");
+          expect(call).not.toHaveProperty("requiredStoredDeviceAuthScopes");
+        }
+        expect(runtime.pairingStats()).toEqual({
+          localPairingReadCount: 0,
+          localApprovalCount: 0,
         });
-        expect(call.password).toBeUndefined();
-        expect(call.cliArgUrl).toBeUndefined();
-        expect(call.cliArgToken).toBeUndefined();
-        expect(call.cliArgPassword).toBeUndefined();
-        expect(call).not.toHaveProperty("useStoredDeviceAuth");
-        expect(call).not.toHaveProperty("requiredStoredDeviceAuthScopes");
+        expect(runtime.pairingDescriptorReads()).toEqual([
+          { fd: 41, position: 0 },
+          { fd: 42, position: 0 },
+        ]);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
-      expect(runtime.pairingStats()).toEqual({
-        localPairingReadCount: 0,
-        localApprovalCount: 0,
-      });
-      expect(runtime.pairingDescriptorReads()).toEqual([
-        { fd: 41, position: 0 },
-        { fd: 42, position: 0 },
-      ]);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it.each([
     ["a missing pending descriptor", { pendingFd: undefined }, {}, {}],
@@ -730,27 +734,30 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       },
       {},
     ],
-  ] as const)("rejects a paired-token request with %s before reaching the gateway", async (_label, environment, pairedOverrides, approvalOverrides) => {
-    const { runtime, tmp } = openPatchedCliFixture();
-    try {
-      runtime.setPairingLists({
-        pending: [validPending({ isRepair: false })],
-        paired: [clonePairedTokenRecord("clone-paired-token", pairedOverrides)],
-      });
-      runtime.setPairedTokenEnvironment(environment);
+  ] as const)(
+    "rejects a paired-token request with %s before reaching the gateway",
+    async (_label, environment, pairedOverrides, approvalOverrides) => {
+      const { runtime, tmp } = openPatchedCliFixture();
+      try {
+        runtime.setPairingLists({
+          pending: [validPending({ isRepair: false })],
+          paired: [clonePairedTokenRecord("clone-paired-token", pairedOverrides)],
+        });
+        runtime.setPairedTokenEnvironment(environment);
 
-      await expect(
-        runtime.approvePairingWithFallback({ json: true, ...approvalOverrides }, "request-1"),
-      ).rejects.toThrow(/forced pairing pinned/u);
-      expect(runtime.gatewayCalls).toEqual([]);
-      expect(runtime.pairingStats()).toEqual({
-        localPairingReadCount: 0,
-        localApprovalCount: 0,
-      });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+        await expect(
+          runtime.approvePairingWithFallback({ json: true, ...approvalOverrides }, "request-1"),
+        ).rejects.toThrow(/forced pairing pinned/u);
+        expect(runtime.gatewayCalls).toEqual([]);
+        expect(runtime.pairingStats()).toEqual({
+          localPairingReadCount: 0,
+          localApprovalCount: 0,
+        });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects live pairing drift after one direct bounded list and before approval", async () => {
     const { runtime, tmp } = openPatchedCliFixture();
@@ -1091,105 +1098,128 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("revalidates current identity, operator role, and bounded scopes inside the pairing lock", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-state-gate-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist);
-    writeFixtureDist(dist);
-    try {
-      expect(runPatch(dist).status).toBe(0);
-      const source = fs.readFileSync(path.join(dist, "device-pairing-fixture.js"), "utf8");
-      const resolveScopes = runFixture<
-        (
-          pending: Record<string, unknown>,
-          callerScopes: unknown[],
-          identity: Record<string, unknown>,
-        ) => string[] | null
-      >(source, "resolveNemoClawSelfApprovalScopes");
-      const identity = {
-        deviceId: "device-1",
-        publicKey: "public-key-1",
-        role: "operator",
-        clientId: "cli",
-        clientMode: "cli",
-      };
+  it.each([
+    { scenario: "different device ID" },
+    { scenario: "different public key" },
+    { scenario: "webchat client ID" },
+    { scenario: "webchat client mode" },
+    { scenario: "node role" },
+    { scenario: "empty scopes" },
+    { scenario: "scalar scopes" },
+    { scenario: "duplicate scopes" },
+    { scenario: "admin scope" },
+    { scenario: "unknown scope" },
+    { scenario: "repair with read scope" },
+    { scenario: "missing repair marker" },
+  ])(
+    "revalidates current identity, operator role, and bounded scopes inside the pairing lock [$scenario]",
+    ({ scenario }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-state-gate-"));
+      const dist = path.join(tmp, "dist");
+      fs.mkdirSync(dist);
+      writeFixtureDist(dist);
+      try {
+        expect(runPatch(dist).status).toBe(0);
+        const source = fs.readFileSync(path.join(dist, "device-pairing-fixture.js"), "utf8");
+        const resolveScopes = runFixture<
+          (
+            pending: Record<string, unknown>,
+            callerScopes: unknown[],
+            identity: Record<string, unknown>,
+          ) => string[] | null
+        >(source, "resolveNemoClawSelfApprovalScopes");
+        const identity = {
+          deviceId: "device-1",
+          publicKey: "public-key-1",
+          role: "operator",
+          clientId: "cli",
+          clientMode: "cli",
+        };
 
-      expect(resolveScopes(validPending(), ["operator.pairing"], identity)).toEqual([
-        "operator.pairing",
-        "operator.read",
-        "operator.write",
-      ]);
-      expect(
-        resolveScopes(validPending({ isRepair: false }), ["operator.pairing"], identity),
-      ).toEqual(["operator.pairing", "operator.read", "operator.write"]);
-      for (const pending of [
-        validPending({ deviceId: "device-2" }),
-        validPending({ publicKey: "public-key-2" }),
-        validPending({ clientId: "webchat-ui" }),
-        validPending({ clientMode: "webchat" }),
-        validPending({ role: "node", roles: ["node"] }),
-        validPending({ scopes: [] }),
-        validPending({ scopes: "operator.write" }),
-        validPending({ scopes: ["operator.write", "operator.write"] }),
-        validPending({ scopes: ["operator.admin"] }),
-        validPending({ scopes: ["operator.unknown"] }),
-        validPending({ isRepair: false, scopes: ["operator.read"] }),
-        validPending({ isRepair: undefined }),
-      ]) {
+        expect(resolveScopes(validPending(), ["operator.pairing"], identity)).toEqual([
+          "operator.pairing",
+          "operator.read",
+          "operator.write",
+        ]);
+        expect(
+          resolveScopes(validPending({ isRepair: false }), ["operator.pairing"], identity),
+        ).toEqual(["operator.pairing", "operator.read", "operator.write"]);
+        const pending = (
+          {
+            "different device ID": validPending({ deviceId: "device-2" }),
+            "different public key": validPending({ publicKey: "public-key-2" }),
+            "webchat client ID": validPending({ clientId: "webchat-ui" }),
+            "webchat client mode": validPending({ clientMode: "webchat" }),
+            "node role": validPending({ role: "node", roles: ["node"] }),
+            "empty scopes": validPending({ scopes: [] }),
+            "scalar scopes": validPending({ scopes: "operator.write" }),
+            "duplicate scopes": validPending({ scopes: ["operator.write", "operator.write"] }),
+            "admin scope": validPending({ scopes: ["operator.admin"] }),
+            "unknown scope": validPending({ scopes: ["operator.unknown"] }),
+            "repair with read scope": validPending({ isRepair: false, scopes: ["operator.read"] }),
+            "missing repair marker": validPending({ isRepair: undefined }),
+          } as const
+        )[scenario]!;
         expect(resolveScopes(pending, ["operator.pairing"], identity)).toBeNull();
+
+        expect(
+          resolveScopes(validPending(), ["operator.pairing", "operator.admin"], identity),
+        ).toBeNull();
+        expect(
+          resolveScopes(validPending(), ["operator.pairing", "operator.unknown"], identity),
+        ).toBeNull();
+        expect(resolveScopes(validPending(), [], identity)).toBeNull();
+        expect(
+          resolveScopes(validPending(), ["operator.pairing"], { ...identity, role: "node" }),
+        ).toBeNull();
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
-      expect(
-        resolveScopes(validPending(), ["operator.pairing", "operator.admin"], identity),
-      ).toBeNull();
-      expect(
-        resolveScopes(validPending(), ["operator.pairing", "operator.unknown"], identity),
-      ).toBeNull();
-      expect(resolveScopes(validPending(), [], identity)).toBeNull();
-      expect(
-        resolveScopes(validPending(), ["operator.pairing"], { ...identity, role: "node" }),
-      ).toBeNull();
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it.each([
     ["prepared", "pending published first", "after", "before"],
     ["prepared", "paired published first", "before", "after"],
     ["committed", "pending published first", "after", "before"],
     ["committed", "paired published first", "before", "after"],
-  ] as const)("recovers a %s journal when %s", async (phase, _direction, pendingSide, pairedSide) => {
-    const { runtime, tmp } = openPatchedPairingFixture();
-    try {
-      const snapshots = transactionSnapshots();
-      const currentPending = snapshots[pendingSide].pendingById;
-      const currentPaired = snapshots[pairedSide].pairedByDeviceId;
-      const { journalPath } = runtime.getPairingPaths();
-      runtime.setPairingState(currentPending, currentPaired);
-      runtime.setFile(journalPath, transactionJournal(phase, snapshots));
+  ] as const)(
+    "recovers a %s journal when %s",
+    async (phase, _direction, pendingSide, pairedSide) => {
+      const { runtime, tmp } = openPatchedPairingFixture();
+      try {
+        const snapshots = transactionSnapshots();
+        const currentPending = snapshots[pendingSide].pendingById;
+        const currentPaired = snapshots[pairedSide].pairedByDeviceId;
+        const { journalPath } = runtime.getPairingPaths();
+        runtime.setPairingState(currentPending, currentPaired);
+        runtime.setFile(journalPath, transactionJournal(phase, snapshots));
 
-      const listed = await runtime.listDevicePairing();
-      const expected = phase === "prepared" ? snapshots.before : snapshots.after;
-      expect(runtime.getFile(runtime.getPairingPaths().pendingPath)).toEqual(expected.pendingById);
-      expect(runtime.getFile(runtime.getPairingPaths().pairedPath)).toEqual(
-        expected.pairedByDeviceId,
-      );
-      expect(runtime.getFile(journalPath)).toEqual({
-        version: 1,
-        kind: "nemoclaw-self-approval",
-        phase: "idle",
-      });
-      expect(listed.pending).toHaveLength(phase === "prepared" ? 1 : 0);
-      expect(listed.paired).toHaveLength(1);
+        const listed = await runtime.listDevicePairing();
+        const expected = phase === "prepared" ? snapshots.before : snapshots.after;
+        expect(runtime.getFile(runtime.getPairingPaths().pendingPath)).toEqual(
+          expected.pendingById,
+        );
+        expect(runtime.getFile(runtime.getPairingPaths().pairedPath)).toEqual(
+          expected.pairedByDeviceId,
+        );
+        expect(runtime.getFile(journalPath)).toEqual({
+          version: 1,
+          kind: "nemoclaw-self-approval",
+          phase: "idle",
+        });
+        expect(listed.pending).toHaveLength(phase === "prepared" ? 1 : 0);
+        expect(listed.paired).toHaveLength(1);
 
-      // Recovery is idempotent through another independently locked reader.
-      expect(await runtime.getPairedDevice("device-1")).toEqual(
-        expected.pairedByDeviceId["device-1"],
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+        // Recovery is idempotent through another independently locked reader.
+        expect(await runtime.getPairedDevice("device-1")).toEqual(
+          expected.pairedByDeviceId["device-1"],
+        );
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("fails closed and preserves a malformed or state-mismatched journal", async () => {
     const { runtime, tmp } = openPatchedPairingFixture();
@@ -1390,36 +1420,34 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("fails closed on missing, duplicate, and drifted compiled targets", () => {
-    for (const mutate of [
-      (dist: string) => fs.rmSync(path.join(dist, "devices-fixture.js")),
-      (dist: string) =>
-        fs.copyFileSync(path.join(dist, "devices-fixture.js"), path.join(dist, "devices-copy.js")),
-      (dist: string) => {
-        const file = path.join(dist, "device-pairing-fixture.js");
-        fs.writeFileSync(
-          file,
-          fs
-            .readFileSync(file, "utf8")
-            .replace(
-              "allowedScopes: options.callerScopes",
-              "allowedScopes: [...options.callerScopes]",
-            ),
-        );
-      },
-    ]) {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-patch-drift-"));
-      const dist = path.join(tmp, "dist");
-      fs.mkdirSync(dist);
-      writeFixtureDist(dist);
-      try {
-        mutate(dist);
-        const audit = runPatch(dist, true);
-        expect(audit.status).toBe(3);
-        expect(audit.stdout).toContain("[MISS]");
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
+  it.each([
+    (dist: string) => fs.rmSync(path.join(dist, "devices-fixture.js")),
+    (dist: string) =>
+      fs.copyFileSync(path.join(dist, "devices-fixture.js"), path.join(dist, "devices-copy.js")),
+    (dist: string) => {
+      const file = path.join(dist, "device-pairing-fixture.js");
+      fs.writeFileSync(
+        file,
+        fs
+          .readFileSync(file, "utf8")
+          .replace(
+            "allowedScopes: options.callerScopes",
+            "allowedScopes: [...options.callerScopes]",
+          ),
+      );
+    },
+  ])("fails closed on missing, duplicate, and drifted compiled targets [case %#]", (mutate) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-patch-drift-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      mutate(dist);
+      const audit = runPatch(dist, true);
+      expect(audit.status).toBe(3);
+      expect(audit.stdout).toContain("[MISS]");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 

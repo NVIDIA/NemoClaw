@@ -62,11 +62,12 @@ describe("isDangerousHost", () => {
     expect(isDangerousHost("\t0.0.0.0/0\n")).toBe(true);
   });
 
-  it("covers the full DANGEROUS_HOSTS set", () => {
-    for (const host of DANGEROUS_HOSTS) {
+  it.each(Array.from(DANGEROUS_HOSTS, (value) => [value]))(
+    "covers the dangerous host %s",
+    (host) => {
       expect(isDangerousHost(host)).toBe(true);
-    }
-  });
+    },
+  );
 });
 
 describe("findDangerousRouterApiBases", () => {

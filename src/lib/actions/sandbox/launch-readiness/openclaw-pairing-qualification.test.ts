@@ -18,13 +18,16 @@ import {
 import {
   buildOpenClawPairingObservationScript,
   observeOpenClawPairingQualification,
+  observeOpenClawPairingSettlement,
   OPENCLAW_PAIRING_REQUEST_SCOPES,
   OPENCLAW_PAIRING_REQUIRED_SCOPES,
   parseOpenClawPairingObservation,
+  parseOpenClawPairingSettlementObservation,
 } from "./openclaw-pairing-qualification";
 
 const TOKEN = "credential-value-must-not-leave-the-sandbox";
 const PRIVATE_KEY = "private-key-material-must-not-leave-the-sandbox";
+const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const PYTHON3_AVAILABLE =
   spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0;
 type PairedFixture = Record<
@@ -56,6 +59,10 @@ def approval_request_decision(device):
 function writeJson(filePath: string, value: unknown): void {
   fs.writeFileSync(filePath, `${JSON.stringify(value)}\n`, { mode: 0o660 });
   fs.chmodSync(filePath, 0o660);
+}
+
+function publicKeyPem(prefix: Buffer, key: Buffer): string {
+  return `-----BEGIN PUBLIC KEY-----\n${Buffer.concat([prefix, key]).toString("base64")}\n-----END PUBLIC KEY-----\n`;
 }
 
 function localScriptSpawn(
@@ -149,6 +156,27 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     );
   }
 
+  function observeSettlement(approvalPolicy = POLICY) {
+    return observeOpenClawPairingSettlement("alpha", "nemoclaw-8080", "2026.7.1", stateDirectory, {
+      getOpenshellBinary: () => "openshell",
+      readApprovalPolicy: () => approvalPolicy,
+      spawnSync: localScriptSpawn as typeof spawnSync,
+    });
+  }
+
+  function writePairingOnlyState(): void {
+    const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+    const authPath = path.join(stateDirectory, "identity", "device-auth.json");
+    const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+    paired[deviceId]!.scopes = ["operator.pairing"];
+    paired[deviceId]!.approvedScopes = ["operator.pairing"];
+    paired[deviceId]!.tokens.operator.scopes = ["operator.pairing"];
+    writeJson(pairedPath, paired);
+    const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+    auth.tokens.operator.scopes = ["operator.pairing"];
+    writeJson(authPath, auth);
+  }
+
   describe.skipIf(!PYTHON3_AVAILABLE)("state observation", () => {
     it("emits credential-free qualification from canonical settled OpenClaw state (#9023)", () => {
       const qualification = observe();
@@ -171,6 +199,63 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       expect(performance.getEntriesByName("nemoclaw.openclaw-pairing.qualification")).toHaveLength(
         1,
       );
+    });
+
+    it("strictly distinguishes settled and pairing-only state without exposing identity (#9207)", () => {
+      const settled = observeSettlement();
+      writePairingOnlyState();
+      const pairingOnly = observeSettlement();
+
+      expect(settled).toEqual({
+        state: "settled",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(pairingOnly).toEqual({
+        state: "pairing-only",
+        deviceIdentitySha256: settled.deviceIdentitySha256,
+      });
+      expect(JSON.stringify([settled, pairingOnly])).not.toContain(TOKEN);
+      expect(JSON.stringify([settled, pairingOnly])).not.toContain(deviceId);
+      expect(JSON.stringify([settled, pairingOnly])).not.toContain(publicKey);
+    });
+
+    it("accepts the exact canonical Ed25519 public-key PEM representation (#9207)", () => {
+      const identityPath = path.join(stateDirectory, "identity", "device.json");
+      writeJson(identityPath, {
+        deviceId,
+        publicKeyPem: publicKeyPem(ED25519_SPKI_PREFIX, Buffer.alloc(32, 7)),
+        privateKeyPem: PRIVATE_KEY,
+      });
+
+      expect(observeSettlement()).toEqual({
+        state: "settled",
+        deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+    });
+
+    it("rejects pending or non-exact scope state from Portable settlement (#9207)", () => {
+      writePairingOnlyState();
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {
+        "request-1": {
+          requestId: "request-1",
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: [...OPENCLAW_PAIRING_REQUEST_SCOPES],
+          isRepair: true,
+        },
+      });
+      expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
+
+      writeJson(path.join(stateDirectory, "devices", "pending.json"), {});
+      const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+      const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+      paired[deviceId]!.scopes = ["operator.pairing", "operator.read"];
+      writeJson(pairedPath, paired);
+      expect(() => observeSettlement()).toThrow("OpenClaw pairing qualification is unavailable");
     });
 
     it("qualifies the persisted result of the complete canonical approval transition (#9023)", () => {
@@ -418,6 +503,137 @@ process.stdout.write("{}\\n");
         },
       ],
       [
+        "duplicate operator identity roles",
+        () => {
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          paired[deviceId]!.roles = ["operator", "operator"];
+          writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "missing canonical operator role",
+        () => {
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          delete (paired[deviceId]! as unknown as Record<string, unknown>).role;
+          writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "missing canonical operator roles",
+        () => {
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          delete (paired[deviceId]! as unknown as Record<string, unknown>).roles;
+          writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "conflicting device public-key representations",
+        () => {
+          const identityPath = path.join(stateDirectory, "identity", "device.json");
+          const identity = JSON.parse(fs.readFileSync(identityPath, "utf8")) as Record<
+            string,
+            unknown
+          >;
+          identity.publicKeyPem = publicKeyPem(ED25519_SPKI_PREFIX, Buffer.alloc(32, 8));
+          writeJson(identityPath, identity);
+        },
+      ],
+      [
+        "malformed public-key PEM with a matching suffix",
+        () => {
+          const identityPath = path.join(stateDirectory, "identity", "device.json");
+          const identity = JSON.parse(fs.readFileSync(identityPath, "utf8")) as Record<
+            string,
+            unknown
+          >;
+          identity.publicKeyPem = publicKeyPem(Buffer.alloc(12), Buffer.alloc(32, 7));
+          writeJson(identityPath, identity);
+        },
+      ],
+      [
+        "noncanonical padded raw public key",
+        () => {
+          const identityPath = path.join(stateDirectory, "identity", "device.json");
+          const identity = JSON.parse(fs.readFileSync(identityPath, "utf8")) as Record<
+            string,
+            unknown
+          >;
+          identity.publicKey = `${publicKey}=`;
+          writeJson(identityPath, identity);
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          paired[deviceId]!.publicKey = `${publicKey}=`;
+          writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "whitespace-padded operator token",
+        () => {
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          paired[deviceId]!.tokens.operator.token = ` ${TOKEN} `;
+          writeJson(pairedPath, paired);
+          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
+          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          auth.tokens.operator.token = ` ${TOKEN} `;
+          writeJson(authPath, auth);
+        },
+      ],
+      [
+        "boolean client-auth schema version",
+        () => {
+          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
+          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture & {
+            version?: unknown;
+          };
+          auth.version = true;
+          writeJson(authPath, auth);
+        },
+      ],
+      [
+        "alternate scopes on the paired device",
+        () => {
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          paired[deviceId]!.requestedScopes = ["operator.admin"];
+          writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "alternate public key on the paired device",
+        () => {
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          paired[deviceId]!.publicKeyPem = publicKeyPem(ED25519_SPKI_PREFIX, Buffer.alloc(32, 8));
+          writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "alternate roles on the paired operator token",
+        () => {
+          const pairedPath = path.join(stateDirectory, "devices", "paired.json");
+          const paired = JSON.parse(fs.readFileSync(pairedPath, "utf8")) as PairedFixture;
+          (paired[deviceId]!.tokens.operator as unknown as Record<string, unknown>).roles = [
+            "admin",
+          ];
+          writeJson(pairedPath, paired);
+        },
+      ],
+      [
+        "alternate scopes on the client authorization",
+        () => {
+          const authPath = path.join(stateDirectory, "identity", "device-auth.json");
+          const auth = JSON.parse(fs.readFileSync(authPath, "utf8")) as AuthFixture;
+          (auth.tokens.operator as unknown as Record<string, unknown>).approvedScopes = [
+            "operator.admin",
+          ];
+          writeJson(authPath, auth);
+        },
+      ],
+      [
         "ambiguous local device state",
         () => {
           const pairedPath = path.join(stateDirectory, "devices", "paired.json");
@@ -496,5 +712,23 @@ process.stdout.write("{}\\n");
     })}\n`;
 
     expect(parseOpenClawPairingObservation(output)).toBeNull();
+  });
+
+  it("rejects non-terminal or expanded Portable settlement output (#9207)", () => {
+    const digest = "a".repeat(64);
+    const output = `__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=${JSON.stringify({
+      state: "settled",
+      deviceIdentitySha256: digest,
+      requestId: "secret-request",
+    })}\n`;
+    expect(parseOpenClawPairingSettlementObservation(output)).toBeNull();
+    expect(
+      parseOpenClawPairingSettlementObservation(
+        `__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=${JSON.stringify({
+          state: "settled",
+          deviceIdentitySha256: digest,
+        })}\ntrailing\n`,
+      ),
+    ).toBeNull();
   });
 });

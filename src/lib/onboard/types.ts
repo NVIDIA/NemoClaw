@@ -117,6 +117,8 @@ export type OnboardOptions = {
   rebuildProviderReconfigure?: import("./rebuild-route-handoff").RebuildProviderReconfigureHandoff;
   /** Internal one-shot authority to recover the recorded provider during a locked rebuild resume. */
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
+  /** Internal rebuild handoff for a recorded managed-vLLM N1x preview selection. */
+  allowDeferredN1xManagedVllm?: true;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
   /** Internal immutable managed-image/profile handoff validated before rebuild deletion. */

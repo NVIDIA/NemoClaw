@@ -202,40 +202,41 @@ describe("provider inference recovery gating", () => {
   it.each([
     { label: "orphaned", reservationSessionId: undefined },
     { label: "owned by another session", reservationSessionId: "session-other" },
-  ])("rejects an $label pending reservation despite a completed session (#6630)", async ({
-    reservationSessionId,
-  }) => {
-    const session = createSession();
-    session.sandboxName = "dc-after";
-    session.steps.sandbox.status = "complete";
-    const entry: SandboxEntry = {
-      name: "dc-after",
-      pendingRouteReservation: true,
-      ...(reservationSessionId ? { reservationSessionId } : {}),
-    };
-    const getAuthority = vi.fn((_name: string, sessionId: string | null | undefined) =>
-      classifySandboxRecoveryAuthority(entry, sessionId),
-    );
-    const { deps, calls } = createDeps({ getSandboxRecoveryAuthority: getAuthority });
+  ])(
+    "rejects an $label pending reservation despite a completed session (#6630)",
+    async ({ reservationSessionId }) => {
+      const session = createSession();
+      session.sandboxName = "dc-after";
+      session.steps.sandbox.status = "complete";
+      const entry: SandboxEntry = {
+        name: "dc-after",
+        pendingRouteReservation: true,
+        ...(reservationSessionId ? { reservationSessionId } : {}),
+      };
+      const getAuthority = vi.fn((_name: string, sessionId: string | null | undefined) =>
+        classifySandboxRecoveryAuthority(entry, sessionId),
+      );
+      const { deps, calls } = createDeps({ getSandboxRecoveryAuthority: getAuthority });
 
-    await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "dc-after",
-    });
+      await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "dc-after",
+      });
 
-    expect(calls.setupNim).toHaveBeenCalledWith(
-      { type: "nvidia" },
-      "dc-after",
-      null,
-      false,
-      "nemoclaw",
-      expect.any(Function),
-      expect.any(Function),
-      session.sessionId,
-    );
-    expect(getAuthority).toHaveBeenCalledWith("dc-after", session.sessionId);
-  });
+      expect(calls.setupNim).toHaveBeenCalledWith(
+        { type: "nvidia" },
+        "dc-after",
+        null,
+        false,
+        "nemoclaw",
+        expect.any(Function),
+        expect.any(Function),
+        session.sessionId,
+      );
+      expect(getAuthority).toHaveBeenCalledWith("dc-after", session.sessionId);
+    },
+  );
 
   it("allows recovery for the current session's pending reservation (#6630)", async () => {
     const session = createSession();
@@ -332,40 +333,48 @@ describe("provider inference recovery gating", () => {
     expect(setupInferenceCalls).toBe(1);
   });
 
-  it("composes persisted route reservation ownership with resume recovery (#6626, #6630)", async () => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recovery-reservation-"));
-    vi.stubEnv("HOME", home);
-    vi.resetModules();
-    try {
-      const registry = await import("../../../state/registry");
-      const recovery = await import("../../provider-recovery");
-      const sessionId = "session-current";
-      const route = {
-        provider: "compatible-endpoint",
-        model: "model-a",
-        endpointUrl: "https://api.example.test/v1",
-        credentialEnv: "CUSTOM_API_KEY",
-        preferredInferenceApi: "openai-responses",
-        gatewayName: "nemoclaw",
-      };
+  it.each([
+    { scenario: "owned reservation" },
+    { scenario: "foreign reservation" },
+    { scenario: "ownerless reservation" },
+  ])(
+    "composes persisted route reservation ownership with resume recovery [$scenario] (#6626, #6630)",
+    async ({ scenario }) => {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recovery-reservation-"));
+      vi.stubEnv("HOME", home);
+      vi.resetModules();
+      try {
+        const registry = await import("../../../state/registry");
+        const recovery = await import("../../provider-recovery");
+        const sessionId = "session-current";
+        const route = {
+          provider: "compatible-endpoint",
+          model: "model-a",
+          endpointUrl: "https://api.example.test/v1",
+          credentialEnv: "CUSTOM_API_KEY",
+          preferredInferenceApi: "openai-responses",
+          gatewayName: "nemoclaw",
+        };
 
-      for (const { sandboxName, reservationSessionId, expectedRecovery } of [
-        {
-          sandboxName: "owned-reservation",
-          reservationSessionId: sessionId,
-          expectedRecovery: true,
-        },
-        {
-          sandboxName: "foreign-reservation",
-          reservationSessionId: "session-other",
-          expectedRecovery: false,
-        },
-        {
-          sandboxName: "ownerless-reservation",
-          reservationSessionId: undefined,
-          expectedRecovery: false,
-        },
-      ]) {
+        const { sandboxName, reservationSessionId, expectedRecovery } = (
+          {
+            "owned reservation": {
+              sandboxName: "owned-reservation",
+              reservationSessionId: sessionId,
+              expectedRecovery: true,
+            },
+            "foreign reservation": {
+              sandboxName: "foreign-reservation",
+              reservationSessionId: "session-other",
+              expectedRecovery: false,
+            },
+            "ownerless reservation": {
+              sandboxName: "ownerless-reservation",
+              reservationSessionId: undefined,
+              expectedRecovery: false,
+            },
+          } as const
+        )[scenario]!;
         registry.reserveSandboxInferenceRoute(sandboxName, {
           ...route,
           reservationSessionId,
@@ -398,13 +407,13 @@ describe("provider inference recovery gating", () => {
           expect.any(Function),
           sessionId,
         );
+      } finally {
+        vi.unstubAllEnvs();
+        vi.resetModules();
+        await fs.rm(home, { recursive: true, force: true });
       }
-    } finally {
-      vi.unstubAllEnvs();
-      vi.resetModules();
-      await fs.rm(home, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("allows recovery for a matching completed session sandbox", async () => {
     const session = createSession();

@@ -21,9 +21,8 @@ before those targets run; local runners must provide it themselves.
 - `.github/workflows/e2e-main-retry.yaml` evaluates eligible `E2E main` push
   attempts and uploads attempt evidence. It never authorizes a broad failed-job
   rerun; retry decisions belong to bounded operation-level policies.
-- The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` publishes
-  the exact candidate image to the staging family and records the concrete image URI.
-  It does not deploy or validate a Brev environment while issue #8924 blocks the automated path.
+- The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
+  the baked candidate without installing or copying NemoClaw source.
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence` for Ubuntu 26.04, macOS, and WSL.
   On shard 1, its macOS and WSL live E2E run only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
@@ -170,13 +169,12 @@ GitHub invalidates `GITHUB_TOKEN` after the job.
 
 ## Retired Brev source-install coverage
 
-Issue #7490 retired the generic Brev source-install lane. Current validation uses
-the unified workflow, staging image-publication job, and advisory manual
-Launchable validation:
+Issue #7490 retired the generic Brev source-install lane. The unified workflow
+and exact-staging Launchable job own its product coverage:
 
 | Legacy suite | Disposition | Current owner |
 |---|---|---|
-| `full` | Manual Launchable validation | `staging-brev-launchable` publishes the exact candidate image. Use `nemoclaw-maintainer-validate-launchable` to validate a deployed instance while issue #8924 blocks automation. |
+| `full` | Launchable E2E | `staging-brev-launchable` runs `full-e2e` in preinstalled mode against the exact baked candidate. |
 | `credential-sanitization` | Unified E2E | `credential-sanitization` |
 | `telegram-injection` | Unified E2E | `telegram-injection` |
 | `messaging-providers` | Unified E2E | `messaging-providers` |
@@ -265,6 +263,13 @@ The execution profile owns the credentials available to its target step:
 - `github-read` displays `GitHub read token` and receives the job-scoped `GITHUB_TOKEN` only for the target step when `trusted_main` is `true`.
   The reusable workflow enforces this boundary; PR revision callers set `trusted_main` to `false`, so their target steps receive no `GITHUB_TOKEN`.
 - `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs.
+
+`common-egress-agent` runs 4 isolated scenario shards.
+The Personal stock-price shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
+It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives no Brave Search or Tavily Search API key.
+The Personal stock assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain the complete source URL.
+Raw OpenClaw session and trajectory JSONL stay inside the sandbox; uploaded evidence contains only the price and source date, the source hostname and protocol, and bounded reduced evidence such as tool names, public target hosts, provider labels, final statuses, and quote-match booleans.
+The live assertions require `web_fetch`, reject `web_search` and search-provider use, permit public access from curl and Python, and deny loopback and link-local targets.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
@@ -715,11 +720,11 @@ rm -rf -- "$evidence_dir"
 test ! -e "$evidence_dir"
 ```
 
-A manual run with `jobs=staging-brev-launchable` runs only `Publish staging Brev Launchable image`.
+A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev Launchable`.
 Push runs do not select this job.
 
 A manual run with `include_staging_brev_launchable=true` and empty `jobs` and
-`targets` selectors runs the default workflow E2E selection plus the Launchable image-publication job.
+`targets` selectors runs the default workflow E2E selection plus the Launchable E2E job.
 This selection is the full manual `main` run for pre-tag release evidence.
 Each full dispatch uses
 `github.run_id` in its workflow concurrency identity, so another full dispatch
@@ -728,11 +733,11 @@ verifies that the dispatching and rerunning actors have repository `maintain` or
 `admin` permission before the Launchable path's source checkout. That automatic
 role check authorizes `staging-brev-launchable`; the job does not use GitHub
 environment approval. The job uses the non-cancelling
-`staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable image
+`staging-brev-launchable-cpu` group with `queue: max`, so pending Launchable E2E
 runs remain queued instead of replacing one another.
 
 For a full manual run dispatched against `main`, `Release qualification` waits for every E2E job that does not require a separate opt-in.
-The check requires each of those jobs to pass, including `Publish staging Brev Launchable image`.
+The check requires each of those jobs to pass, including `Exact staging Brev Launchable`.
 A passing check at the candidate commit SHA is the pre-tag release E2E evidence.
 Ensure that each candidate commit SHA has a qualifying full manual `main` run.
 Dispatch another full run only when no qualifying run exists.
@@ -744,16 +749,11 @@ Local fixture remotes skip the canonical repository gate only when tests set the
 Canonical-equivalent `NVIDIA/NemoClaw` remotes always run the gate, even when that override is set.
 A local fixture cannot authorize a production release.
 Maintainers do not build a local evidence ledger or infer GitHub job status from an artifact.
-The Launchable image job retains `launchable-image.json` with the candidate SHA, producer run, concrete image URI, staging family, and explicit not-run validation fields.
-Manual web, runtime, and inference validation is advisory while issue #8924 remains open.
-It does not block the release tag and must not be reported as an automated E2E pass.
-
-This is a temporary NemoClaw maintainer policy owned while #8924 remains open.
-Each release candidate still requires the successful exact image-publication job and `launchable-image.json` through `Release qualification`; GitHub keeps its logs and artifact under the repository's normal Actions retention policy.
-The accepted temporary risk is that a tag can proceed without automated or manual proof of the Launchable web deployment, environment access, exact booted image, baked runtime, inference, or workspace cleanup.
-A missing, partial, or failed manual validation needs no per-release waiver, but an image-publication failure remains release-blocking unless an administrator uses the existing job-waiver mechanism.
-Restore automated validation only after NemoClaw checksum-pins a published Brev CLI release containing both required fixes and a trusted `main` run passes deployment, access, exact image and runtime identity, hosted and sandbox inference, and verified workspace cleanup.
-Closing #8924 records the end of the temporary policy.
+After preparation succeeds, the Launchable upload retains `lane.log` and each
+phase artifact created before exit. A preparation failure can produce no
+artifact. A later early failure can retain only `lane.log`. A successful job
+contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
+`cleanup.json` exists only after the job confirms workspace absence.
 
 Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
 jobs unless their independent opt-in flags are `true`.
@@ -817,8 +817,9 @@ concrete job executions.
 - `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
-The two extra executions come from `common-egress-agent`, which runs three
-scenario shards.
+The two extra instrumented executions come from the 3 `common-egress-agent`
+scenario shards that enable runner comparison.
+The Personal stock-price shard runs without runner-comparison telemetry.
 The OpenClaw matrix entries for `mcp-bridge`,
 `channels-stop-start`, and `security-posture` are not instrumented.
 The #7145 standard-versus-larger-runner cohort compares the same lane and
@@ -1083,18 +1084,32 @@ A main push can queue repository-owned GPU runners or create external resources 
 The main-run observer records attempt evidence but does not request broad failed-job reruns.
 Each E2E test owns any bounded operation-level retry policy.
 
-`Publish staging Brev Launchable image` runs only for a trusted manual dispatch against `main`.
-The job reads this credential from repository Actions secrets:
+`Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
+The job reads these credentials from repository Actions secrets:
 
+- `BREV_API_KEY` authenticates the trusted host-side Brev CLI for workspace
+  operations in the organization identified by `BREV_ORG_ID`. Candidate code
+  does not receive this API key.
 - `NEMOCLAW_IMAGE_DISPATCH_TOKEN` is exposed as `GH_TOKEN` only to the trusted
   host script. It grants Actions read/write access to `brevdev/nemoclaw-image`,
   which the script uses to dispatch the image workflow, inspect its run, and
   download its handoff artifact.
+- `NVIDIA_INFERENCE_API_KEY` is exported into the Brev guest for the full E2E
+  process. Code in the baked candidate checkout can read and use it.
 
-The credential remains valid until it expires or an administrator revokes it in GitHub.
-Rotate or revoke it to remove later access.
-The job does not receive `BREV_API_KEY`, `BREV_ORG_ID`, or `NVIDIA_INFERENCE_API_KEY`.
-It does not install or authenticate the Brev CLI, create a workspace, or run inference.
+`brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to
+`$HOME/.brev/credentials.json` on the GitHub-hosted runner. Later trusted steps
+and processes in the same job can read that file. The workflow does not delete
+it explicitly; it remains on the ephemeral runner filesystem until runner
+teardown discards that filesystem.
+These credentials remain valid until they expire or an administrator revokes
+them in their issuing services. If cleanup fails, remove the recorded Brev
+workspace. Rotate or revoke each credential to remove later access.
+
+The `NEMOCLAW_STAGING_LAUNCHABLE_ID` repository Actions variable selects the
+standing Launchable. Keep its value equal to the Launchable ID in the default
+URL owned by
+[`nemoclaw-maintainer-validate-launchable`](../../.agents/skills/nemoclaw-maintainer-validate-launchable/SKILL.md).
 
 When an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and the available source-attempt evidence.
 It does not request a broad failed-job or workflow rerun.
@@ -1107,7 +1122,7 @@ The observer ignores manual PR runs and a run superseded by a newer `main` push.
 
 For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
 
-- every default-selected free-standing workflow E2E except `Publish staging Brev Launchable image`;
+- every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
 - every catalogue target in the `standard` profile;
 - every shared credential-free test; and
 - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
@@ -1116,7 +1131,7 @@ The PR selection does not forward an NVIDIA API key, `BRAVE_API_KEY`, or `GITHUB
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
 unless their runner-queue flag is `true`.
-The trusted workflow definition remains on `main` and binds the candidate head to the current PR base SHA.
+The trusted workflow definition remains on `main` and binds the latest PR commit to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
 OpenShell PR qualification uses that receipt to bind the candidate repository, candidate commit SHA, base SHA, workflow SHA, run, and selectors.
@@ -1148,12 +1163,56 @@ After a failure, inspect the workflow artifacts and remove resources that target
 
 For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary, cohort-owned NIM container. Candidate managed sandboxes receive generated local route tokens instead of this key. Before starting NIM or vLLM, the live fixture rejects a pre-existing cohort container name. It records the full container ID, requested image, immutable image ID, cohort owner, and provider label, then removes only that exact container after revalidating every field. Missing, ambiguous, name-reused, drifted, or indeterminate cleanup evidence fails the test, as does any retained exact ID or name. A fail-closed refusal can leave the secret-bearing NIM container alive until runner teardown; inspect the redacted artifacts and remove only the verified container. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Revoke it, or rotate it and disable the old value, in the issuing NVIDIA service. Verify that the exposed key is no longer valid.
 
-For `native-runtime-qualification-producer`, use a same-repository open PR and the first workflow attempt. The trusted workflow binds the candidate commit, base commit, workflow commit, repository, PR, and plan from `main`. It passes no GitHub, model-provider, API, or messaging credentials to candidate code. Candidate execution uses `env -i` under a temporary unprivileged account on a reviewed ephemeral runner. Configure `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL=enabled` before dispatch. The ARM64 GPU case also requires `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL`; the workflow provides no fallback runner. The candidate must contain `test/e2e/live/native-runtime-qualification-case.test.ts`. Until that executor and the required runner capacity exist, the producer fails closed instead of claiming qualification.
+Before you dispatch `native-runtime-qualification-producer`, review the `NVIDIA_API_KEY` boundary below.
+The host-side preparation step receives the long-lived repository secret and uses it to create runner-local registry authentication and pull pinned GPU images.
+The step deletes the registry authentication file and unsets the variable before candidate execution.
+The workflow does not revoke the API key.
+The key remains valid in the issuing NVIDIA service until it expires or that service revokes it.
+If exposure occurs or cleanup cannot be confirmed, revoke the key in the issuing NVIDIA service.
+Alternatively, rotate the key and invalidate the old value.
+Verify that the old value is invalid.
 
-Before candidate execution, the producer stops Docker, masks its service and socket, removes Docker sockets, and rejects a usable `docker` command. It uploads one evidence artifact for each planned case. Cleanup terminates processes owned by the candidate account and removes that account. If cleanup fails or the runner becomes unavailable, inspect the host and remove the ephemeral runner from service. Recover or replace the runner before dispatching a new run. Do not rerun the same workflow attempt; the producer rejects attempts after the first. Dispatch a new run after recovery.
+After you accept this credential boundary, dispatch `native-runtime-qualification-producer` from trusted `main` for a same-repository open PR.
+Use the first workflow attempt.
+The executing workflow commit and `workflow_sha` input must equal the exact PR-recorded base commit.
+The actor must have repository `maintain` or `admin` permission.
+If `github.triggering_actor` differs from the actor, it must also have one of those permissions.
 
-For a manual PR run, provide the current PR number, lowercase 40-character candidate commit SHA, PR source repository, lowercase 40-character base commit SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
-Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
+The trusted workflow binds the candidate commit, base commit, workflow commit, repository, PR, run, attempt, and 24-case plan.
+The unprivileged installer and live-test processes run with `env -i` under a temporary account.
+They receive no GitHub, inference provider, API, or messaging credential.
+Docker is unavailable to these processes.
+Before any self-hosted qualification job runs, set the GitHub Actions repository variable `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL` to `enabled`.
+Set the repository variable `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL` to the reviewed ARM64 GPU runner label.
+The workflow provides no ARM64 GPU fallback runner.
+The candidate must contain `test/e2e/live/native-runtime-qualification-case.test.ts`.
+Each successful case uploads the validated installer, runtime, operation, and optional NVIDIA CDI receipts.
+The workflow does not upload the candidate `execution.json` or `case-evidence.json` staging files.
+A failed case uploads no case-evidence artifact.
+The aggregate job runs only after all 24 cases succeed.
+It rejects an incomplete or mixed cohort before it emits the 24-case evidence artifact.
+If the executor or required runner capacity is absent, the producer fails closed instead of claiming qualification.
+This qualification does not register or select Podman in production and does not establish public Podman support.
+
+Before candidate execution, the producer stops Docker, masks its service and socket, removes Docker sockets, and rejects a usable `docker` command.
+Cleanup terminates processes owned by the candidate account and removes that account.
+If cleanup fails or the runner becomes unavailable, inspect the host and remove the ephemeral runner from service.
+Recover or replace the runner before dispatching a new run.
+Do not rerun the same workflow attempt; the producer rejects attempts after the first.
+Dispatch a new run after recovery.
+If a case fails, use the GitHub Actions job log.
+Inspect a case artifact only when its upload step completed.
+
+For a manual PR run, provide these inputs:
+
+- The current PR number.
+- The lowercase 40-character SHA of the latest PR commit.
+- The PR source repository.
+- The lowercase 40-character PR base SHA.
+- The exact SHA of the trusted workflow commit on `main`.
+- A review reason containing 10 to 500 printable characters.
+
+For the default PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
 An authorized environment reviewer must approve it before qualification starts.
@@ -1161,14 +1220,15 @@ To select the protected managed-image runtime qualification, set `jobs=managed-i
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
-To select native-runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
+To select native runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
+For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
-The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the exact open PR and selected mode before candidate code runs.
+A trusted `main` workflow pre-checkout step requires current `maintain` or `admin` permission. The workflow validates the exact open PR and selected mode before candidate code runs.
 A second validation after checkout rejects a changed candidate commit, base commit, or PR source repository before preparation.
 
 The Actions run is advisory for the pull request and is not a required merge context.
-Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, PR source repository, candidate commit SHA, base commit SHA, and trusted workflow SHA.
+Treat it as passing evidence only when the `E2E` workflow concludes with `success` for the recorded PR number, PR source repository, candidate commit SHA, base commit SHA, and executing workflow SHA.
 A changed PR source repository, candidate commit SHA, or base commit SHA invalidates the evidence and requires a new manual run.
 
 The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.

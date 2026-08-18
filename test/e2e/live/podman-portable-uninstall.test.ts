@@ -175,9 +175,11 @@ test(
       );
 
       progress.phase("create receipt-owned and unrelated resources");
-      for (const image of imageWasPresent.keys()) {
-        expect(engine.capture(["pull", image]).status).toBe(0);
-      }
+      expect(
+        [...imageWasPresent.keys()].every((image) =>
+          Object.is(engine.capture(["pull", image]).status, 0),
+        ),
+      ).toBe(true);
       await runCommand(shellProbe, openshellBin, sandboxCreateArgs(), {
         artifactName: "podman-uninstall-create-sandbox",
         env: cliEnv,
@@ -209,9 +211,8 @@ test(
       const registryContainerId = registryCreate.stdout.trim();
       expect(registryContainerId).toMatch(/^[a-f0-9]{64}$/u);
       createdContainerIds.push(registryContainerId);
-      for (const containerId of createdContainerIds) {
-        expect(engine.capture(["start", containerId]).status).toBe(0);
-      }
+      expect(createdContainerIds.every((containerId) =>
+          Object.is(engine.capture(["start", containerId]).status, 0))).toBe(true);
 
       const runtimeAuthority = {
         schemaVersion: 1,
@@ -334,8 +335,8 @@ test(
         .filter((entry) => entry.isFile() || entry.isSymbolicLink())
         .map((entry) => path.join(entry.parentPath, entry.name));
       expect(residualFiles).toEqual([retirementRecord]);
-      expect(fs.readdirSync(path.dirname(expectedContainersConf))).toEqual([]);
-      expect(fs.statSync(path.dirname(expectedContainersConf)).mode & 0o777).toBe(0o700);
+      expect(fs.existsSync(path.dirname(expectedContainersConf))).toBe(false);
+      expect(fs.existsSync(path.dirname(path.dirname(expectedContainersConf)))).toBe(false);
       const managerEnvironment = await runCommand(
         shellProbe,
         "systemctl",

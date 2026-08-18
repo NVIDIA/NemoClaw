@@ -89,8 +89,9 @@ describe("MCP credential-resolution probe classification", () => {
     expect(probe).toEqual({ ok: true, httpStatus: 200, controlHttpStatus: 401 });
   });
 
-  it("classifies identical placeholder and control rejections as inconclusive with both hypotheses (#6379)", () => {
-    for (const httpStatus of [400, 401, 403]) {
+  it.each([400, 401, 403])(
+    "classifies identical placeholder and control rejections as inconclusive with both hypotheses [case %#] (#6379)",
+    (httpStatus) => {
       const probe = classifyCredentialResolutionProbe(
         {
           status: 0,
@@ -109,8 +110,8 @@ describe("MCP credential-resolution probe classification", () => {
       expect(probe.controlHttpStatus).toBe(httpStatus);
       expect(probe.detail).toContain("rejected identically");
       expect(probe.detail).toContain("expired or revoked credential");
-    }
-  });
+    },
+  );
 
   it("classifies identical 5xx responses as indeterminate endpoint failure (#6379)", () => {
     const probe = classifyCredentialResolutionProbe(

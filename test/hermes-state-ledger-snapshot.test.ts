@@ -288,9 +288,8 @@ for (const name of ["SOUL.md", ".hermes_history"]) {
       const restore = sandboxState.restoreSandboxState("hermes", backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredFiles).toEqual(backup.backedUpFiles);
-      for (const [relativePath, content] of ledgers) {
-        expect(readText(path.join(hermesHome, relativePath))).toBe(content);
-      }
+      expect(ledgers.every(([relativePath, content]) =>
+          Object.is(readText(path.join(hermesHome, relativePath)), content))).toBe(true);
       expect(readText(envPath)).toBe(replacementEnv);
       const loggedCommands = readText(sshLog);
       expect(loggedCommands).toContain("src_conn.backup(dst_conn)");

@@ -4,8 +4,8 @@
 title: "Engineer Documentation for AI Agents"
 sidebar-title: "Engineer Agentic Docs"
 description: "A practical architecture and operating model for making technical documentation reliable for both people and AI agents."
-description-agent: "Explains how to engineer agent-ready documentation with one canonical source, Markdown and MCP delivery, thin routing skills, workflow automation, review receipts, accuracy assurance, adoption metrics, variants, governance, and deterministic quality gates. Use when designing agentic documentation, docs engineering systems, AI documentation workflows, documentation accuracy tests, or docs-as-code automation."
-keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "documentation accuracy tests", "documentation source of truth", "documentation review receipt", "docs as code", "llms.txt", "docs MCP server"]
+description-agent: "Explains how to engineer agent-ready documentation with one canonical source, Markdown and MCP delivery, thin routing skills, post-merge workflow automation, accuracy assurance, variants, governance, and deterministic quality gates. Use when designing agentic documentation, docs engineering systems, AI documentation workflows, documentation accuracy tests, or docs-as-code automation."
+keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "documentation accuracy tests", "documentation source of truth", "docs as code", "llms.txt", "docs MCP server"]
 content:
   type: "how_to"
 ---
@@ -34,115 +34,22 @@ A reliable agentic documentation system supports the following contract.
 | Apply | The guidance includes decisions, prerequisites, steps, and boundaries. | The agent produces instructions scoped to the user's environment. |
 | Act | The agent knows which operations are safe, which need approval, and which are out of scope. | Workflow instructions stop before credentials, destructive changes, or unsupported surfaces. |
 | Verify | Every procedure ends with an observable success check. | The agent runs or recommends the documented validation step. |
-| Maintain | Product changes can be traced to documentation owners and release evidence. | Pull-request gates detect stale, missing, or unpublished guidance. |
+| Maintain | Product changes can be traced to documentation owners and release evidence. | A post-merge workflow maps merged changes to reviewed documentation updates. |
 
 Treat failures in any row as documentation defects.
 A polished site with weak retrieval or verification is not agent-ready.
 
 ## Move Documentation Into the Engineering Loop
 
-Many documentation workflows begin after engineering work is complete.
-The writer identifies which features are shipping, finds the responsible engineers, interviews them to reconstruct the behavior, and then creates a separate documentation change.
-This manual intake phase consumes time and can lose important context between implementation and publication.
+Each push to `main` starts `Docs / Post-Merge Catch-Up` for the merged implementation, tests, and documentation from the latest reachable semver tag through the pushed commit.
 
-NemoClaw moves routine documentation work into the developer's engineering pull request.
-The agent working on the developer's machine can inspect the code, tests, issue, and pull-request context while the change is still fresh.
-Repository instructions tell that agent when documentation is required, where the content belongs, how to write it, and which checks prove the result.
+1. It authors documentation changes in a credential-free OpenShell sandbox.
+2. A separate offline sandbox reviews the exact documentation candidate with a read-only repository checkout.
+3. For an approved nonempty patch, a publisher with no model credential creates a GitHub-verified commit and one SHA-specific draft PR.
 
-| Stage | Separate documentation handoff | Repository-embedded workflow |
-|---|---|---|
-| Discover changes | A writer collects release scope from meetings, messages, and issue lists. | The developer's agent inspects the current diff, issue, and changed behavior. |
-| Transfer knowledge | A writer interviews engineers and reconstructs implementation details. | The agent reads the implementation and tests, then asks only when a decision or supported contract is unclear. |
-| Draft documentation | A writer creates a later documentation task or pull request. | The agent updates the canonical page in the engineering pull request. |
-| Review accuracy | Documentation and implementation may be reviewed at different times. | Reviewers see the behavior, tests, and documentation together. |
-| Prepare a release | A writer performs a broad catch-up pass before publication. | Continuous updates reduce catch-up work, while the release workflow verifies completeness and creates the canonical changelog entry. |
-
-The repository provides a control stack for this workflow:
-
-- The root `AGENTS.md` defines repository-wide success criteria, product scope, documentation impact, and independent review.
-- `docs/AGENTS.md` defines the documentation-agent role, DORI routing, skill selection, and task workflow.
-- `docs/CONTRIBUTING.md` defines public documentation rules, navigation, release procedures, and validation.
-- The `nemoclaw-contributor-update-docs` skill maps product changes to canonical pages and produces an evidence-backed documentation update.
-- Build scripts, tests, hooks, previews, and publication workflows enforce the contracts after the agent edits the files.
-
-The expected pull-request loop is direct:
-
-1. The developer's agent reads the repository and documentation instructions.
-2. It inspects the implemented behavior and its tests.
-3. It decides whether the change has user-facing documentation impact.
-4. It updates the canonical page in the same pull request when documentation is required.
-5. It runs the relevant documentation and product-parity checks.
-6. It reports the pages changed, behavior represented, and verification evidence.
-
-This model removes the need for a writer to manually reconstruct every incremental product change.
-It does not remove documentation ownership.
-It shifts the writer's role toward designing the system, maintaining the instructions, monitoring outcomes, and handling work that requires editorial judgment.
-When the instructions are working, the writer can review by exception.
-Routine pull-request updates that already meet the documentation contract do not need line editing, so the writer can focus on unclear product scope, structural pressure, and recurring failure patterns.
-
-## Make Documentation Review Observable
-
-A repository instruction can require a documentation writer subagent, but the instruction alone does not show whether an engineering agent followed it.
-Add a structured pull-request receipt so each code or documentation change produces observable documentation-review evidence.
-
-NemoClaw records the following fields in the Documentation Writer Review section of the pull-request description:
-
-- A completed-review checkbox.
-- One result: `docs-updated`, `no-docs-needed`, or `blocked`.
-- Evidence that names the changed documentation or explains the result.
-- The agent product and surface that ran the review.
-- Hidden metadata for the reviewed head SHA and the `AGENTS.md` blob SHA.
-
-Keep one instance of each field.
-GitHub supplies the pull-request identity to the workflow and report.
-The head SHA binds the review to one pull-request revision.
-The `AGENTS.md` blob SHA records which repository instruction version the review covered.
-
-Use the following sequence for a pull request that changes code or documentation:
-
-1. Run the documentation writer subagent after the changes and applicable validation are complete.
-2. For code changes, update the canonical documentation or record why no documentation change is required.
-3. For documentation changes, verify the writing rules and documentation style.
-4. Commit all changes from the review.
-5. Complete the visible receipt and hidden metadata for the committed head.
-6. Rerun the documentation review after any later commit.
-
-The `CI / Documentation Writer Review` workflow runs when a pull request opens or reopens, when its description is edited, or when it receives a new commit.
-It compares the receipt with the current head and current `AGENTS.md` blob.
-A new commit makes the previous receipt stale until the documentation writer subagent runs again and refreshes the metadata.
-The checker evaluates code-changing and documentation-only pull requests.
-For documentation-only changes, the receipt records the agent's review of writing rules and documentation style.
-NemoClaw keeps this check advisory during the data-collection pilot.
-
-<Note>
-A valid receipt does not prove that an agent loaded or understood `AGENTS.md`.
-It records observable workflow compliance that can be compared with documentation outcomes.
-</Note>
-
-### Measure Workflow Adoption
-
-Export receipt data from pull-request descriptions with the authenticated GitHub CLI session.
-The report returns JSON by default and also supports CSV and summary output.
-
-```bash
-npm run docs-review:report -- --since 2026-07-01 --format summary
-```
-
-Use a consistent reporting window and track the following measures:
-
-| Measure | What it shows |
-|---|---|
-| Eligible pull requests | The total in `eligiblePrs`, plus the code and documentation-only counts in `eligibleCodePrs` and `eligibleDocsOnlyPrs`. |
-| Receipt coverage | The share of eligible code-changing and documentation-only pull requests that contain a receipt. |
-| Valid receipt rate | The share of eligible pull requests whose receipt has one complete and consistent set of fields. |
-| Fresh receipt rate | The share of recorded receipts tied to the pull request's current head. |
-| Result distribution | The number of receipts that report `docs-updated`, `no-docs-needed`, or `blocked`. |
-| Agent surface | The agent products and surfaces recorded by valid receipts. |
-| Unclassified pull requests | Pull requests whose Type of Change selection does not establish whether code or documentation changed. |
-
-Receipt trends show whether the repository workflow is being followed.
-They do not establish that the instructions caused a documentation improvement.
-Pair the report with accuracy sampling, editorial-intervention rates, and recurring review findings before changing the instruction or making the check required.
+Each nonempty documentation PR merge triggers another cumulative exact-SHA run until a later run approves an empty patch, which creates no PR.
+Code merges continue while their documentation changes remain pending.
+Required PR checks run `npm run docs` after any required approval.
 
 ## Use a Layered Architecture
 
@@ -269,10 +176,10 @@ Turn repeatable documentation engineering practices into bounded skills or repos
 
 | Workflow | Trigger | Required inputs | Completion evidence |
 |---|---|---|---|
-| Update docs | Product behavior changes or docs fall behind code. | Commit range, changed files, product scope, current pages. | Each user-visible change maps to an updated page or a documented no-impact decision. |
+| Update docs | Product behavior reaches `main` or docs fall behind code. | Commit range, changed files, product scope, current pages. | Each user-visible change maps to a reviewed patch or a no-impact decision. |
 | Refactor information architecture | A section is oversized, duplicated, or hard to navigate. | Heading inventory, ownership map, inbound routes, supported variants. | One owner per topic, migrated routes, readable pages, and no content loss. |
-| Review docs | A pull request changes a public procedure or reference. | Product implementation, tests, rendered preview, style policy. | Accuracy, links, route publication, and task verification pass. |
-| Prepare a release | A release candidate is ready for documentation. | Merged change set, release scope, target version and date. | Canonical changelog entry lands before the release tag. |
+| Review docs | A post-merge candidate changes a public procedure or reference. | Product implementation, tests, candidate patch, and style policy. | Independent review approves the exact candidate. |
+| Prepare a release | A release candidate needs its dated entry. | Release scope, target version, and planned date. | The dated release entry and documentation PR land before the release tag. |
 | Publish | A docs change merges or a release tag is created. | Validated source, approved environment, immutable revision. | Staging or public output points to the expected revision. |
 
 NemoClaw applies this model through layered repository instructions and specialized contributor and maintainer skills.
@@ -284,12 +191,12 @@ The agent should report the files changed, source behavior represented, checks r
 
 ## Let the Corpus Grow and Tend It
 
-Do not require every engineering pull request to redesign the documentation structure.
-Let agents make small, accurate updates to the current canonical page while the product evolves.
+Do not require each post-merge documentation update to redesign the documentation structure.
+Let the authoring agent make focused updates to the current canonical page while the product evolves.
 Restructure the corpus after repeated changes reveal its real shape.
 
 This is continuous growth with periodic curation.
-The daily engineering loop keeps behavior and documentation aligned, while a daily or weekly maintenance pass improves sections that have outgrown their original purpose.
+The post-merge loop keeps behavior and documentation aligned, while a periodic maintenance pass improves sections that have outgrown their original purpose.
 
 Use observable signals to start a restructuring pass:
 
@@ -518,10 +425,9 @@ NemoClaw generates platform support tables from `ci/platform-matrix.json` and te
 Targeted documentation regression tests preserve credential-rotation commands, authenticated endpoint verification, and variant-specific procedures.
 Pair these assertions with product behavior tests because the presence of a command in a page does not establish that the command succeeds.
 
-NemoClaw also performs the judgment-based layer before final handoff, not as a separate post-publication audit.
-On hosts that support subagents, the repository-wide `AGENTS.md` tells the implementation agent to run an independent documentation writer subagent after completing development changes.
-The subagent reviews the completed change for documentation impact and checks changed explanatory text for accuracy, grounding, completeness, usability, and style.
-The pull request then records the review against the current commit and instruction version.
+NemoClaw performs the judgment-based layer after changes reach `main`.
+The authoring agent determines documentation impact, and a separate documentation writer reviews the exact candidate.
+The publisher accepts only a reviewed patch bound to the `main` commit and repository.
 
 <Note>
 No single automated gate establishes corpus-wide semantic accuracy.
@@ -606,7 +512,7 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Concern | NemoClaw implementation |
 |---|---|
 | Canonical content | `docs/**/*.mdx`. |
-| Repository-wide documentation contract and development-time review | `AGENTS.md`. |
+| Repository-wide post-merge documentation contract | `AGENTS.md`. |
 | Agent documentation workflow | `AGENTS.md` and `docs/AGENTS.md`. |
 | Public documentation authoring, review policy, and validation | `docs/CONTRIBUTING.md`. |
 | Navigation and published guide variants | `docs/index.yml`. |
@@ -620,8 +526,7 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Guide variant generation | `scripts/sync-agent-variant-docs.mts`. |
 | Route validation | `scripts/check-docs-published-routes.mts`. |
 | Documentation accuracy tests | Compiled CLI and installer parity, environment-variable coverage, generated platform documentation, and targeted procedure and guide variant regression tests under `test/`. |
-| Update workflow | `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
-| Documentation review receipt | `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/docs-review-receipt.yaml`, and `scripts/docs-review-receipt.mts`. |
+| Post-merge update workflow | `.github/workflows/post-merge-docs.yaml`, `tools/post-merge-docs/`, and `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
 | Information-architecture workflow | `.agents/skills/nemoclaw-maintainer-refactor-docs/SKILL.md`. |
 | Pull-request assurance | Docs link, product parity, and preview workflows under `.github/workflows/`. |
 | Release history | Dated entries under `docs/changelog/` that land before the release tag. |
@@ -641,9 +546,6 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Reusable structured facts have a parity-checked reference owner that task pages and agent workflows consult instead of copying.
 - Guide variant generation is deterministic, partial scope declarations match published routes, and guide variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
-- Every completed development change receives an independent documentation writer review before handoff.
-- Code-changing and documentation-only pull requests record a documentation-review result tied to the current head and instruction version.
-- New commits invalidate the recorded review until the documentation writer subagent runs again.
 - Pull requests validate generated output, routes, links, product parity, and rendered previews.
 - Documentation accuracy claims identify their source-derived parity test, executable journey test, or evidence-based review coverage.
 - Release publication uses an approved immutable revision.

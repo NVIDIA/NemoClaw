@@ -183,3 +183,95 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.routeDrift).toMatchObject({ canConnect: false });
   });
 });
+
+describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * The probe stub rejects a request that does not contain every expected route field.
+   */
+  async function collectInferenceHealth(
+    entry: Partial<SandboxEntry>,
+    expectedRoute: Record<string, unknown>,
+  ) {
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      policies: [],
+      gatewayName: "nemoclaw",
+      ...entry,
+    } as SandboxEntry;
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        probeProviderHealthImpl: () => null,
+        probeSandboxInferenceGatewayHealthImpl: async () => ({
+          ok: true,
+          endpoint: "https://inference.local/v1/models",
+          detail: "reachable",
+          httpStatus: 200,
+        }),
+        probeSandboxInferenceInvocationImpl: (input: Record<string, unknown>) => {
+          const accepted = Object.entries(expectedRoute).every(
+            ([key, value]) => input[key] === value,
+          );
+          return accepted ? { ok: true } : { ok: false, reason: "unexpected invocation route" };
+        },
+      },
+    } as never);
+    return snapshot.inferenceHealth;
+  }
+
+  const recorded = {
+    provider: "compatible-endpoint",
+    model: "recorded/model",
+    endpointUrl: "https://target.example/v1",
+    credentialEnv: "TARGET_KEY",
+    preferredInferenceApi: "openai-responses",
+  } satisfies Partial<SandboxEntry>;
+
+  it("keeps the recorded API family when only the model drifted", async () => {
+    // The recorded API family describes the provider, which has not changed, so
+    // dropping it would probe /v1/chat/completions against a responses-only
+    // endpoint and report a healthy route as unhealthy.
+    liveGatewayInference("compatible-endpoint", "live/model");
+
+    expect(
+      await collectInferenceHealth(recorded, {
+        provider: "compatible-endpoint",
+        model: "live/model",
+        preferredInferenceApi: "openai-responses",
+      }),
+    ).toMatchObject({ ok: true, probed: true });
+  });
+
+  it("keeps the recorded API family when the route is aligned", async () => {
+    liveGatewayInference("compatible-endpoint", "recorded/model");
+
+    expect(
+      await collectInferenceHealth(recorded, {
+        provider: "compatible-endpoint",
+        model: "recorded/model",
+        preferredInferenceApi: "openai-responses",
+      }),
+    ).toMatchObject({ ok: true, probed: true });
+  });
+
+  it("drops the recorded API family when the provider itself drifted", async () => {
+    // A provider change must remove the recorded API family because the live
+    // provider might not implement it.
+    liveGatewayInference("nvidia-prod", "nvidia/nemotron");
+
+    expect(
+      await collectInferenceHealth(recorded, {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron",
+        preferredInferenceApi: null,
+      }),
+    ).toMatchObject({ ok: true, probed: true });
+  });
+});

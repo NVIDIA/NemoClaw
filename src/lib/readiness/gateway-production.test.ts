@@ -205,20 +205,23 @@ describe("managed gateway port readiness (#7411)", () => {
       "/opt/openshell/bin/openshell-gateway",
       "darwin",
     ],
-  ] as const)("rejects the owned gateway tag with %s (#8755)", (_case, identity, executable, platform) => {
-    const trusted = "/opt/openshell/bin/openshell-gateway";
+  ] as const)(
+    "rejects the owned gateway tag with %s (#8755)",
+    (_case, identity, executable, platform) => {
+      const trusted = "/opt/openshell/bin/openshell-gateway";
 
-    expect(
-      gatewayProcessIdentityMatchesTrustedBinary(
-        identity,
-        trusted,
-        "nemoclaw",
-        8080,
-        executable,
-        platform,
-      ),
-    ).toBe(false);
-  });
+      expect(
+        gatewayProcessIdentityMatchesTrustedBinary(
+          identity,
+          trusted,
+          "nemoclaw",
+          8080,
+          executable,
+          platform,
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("rejects trusted-looking argv on macOS without package-service identity", () => {
     const trusted = "/opt/homebrew/opt/openshell/bin/openshell-gateway";
@@ -290,9 +293,14 @@ describe("managed gateway port readiness (#7411)", () => {
     [false, { pids: [41, 42], unverifiedPids: [], complete: true }, "healthy", "multiple-owners"],
     [false, { pids: [], unverifiedPids: [41], complete: true }, "stale", "owner-mismatch"],
     [false, { pids: [], unverifiedPids: [], complete: false }, "healthy", "unknown"],
-  ] as const)("maps portAvailable=%s, listeners=%o, reuse=%s to %s", (portAvailable, listeners, reuseState, expected) => {
-    expect(classifyManagedGatewayPortConflict(portAvailable, listeners, reuseState)).toBe(expected);
-  });
+  ] as const)(
+    "maps portAvailable=%s, listeners=%o, reuse=%s to %s",
+    (portAvailable, listeners, reuseState, expected) => {
+      expect(classifyManagedGatewayPortConflict(portAvailable, listeners, reuseState)).toBe(
+        expected,
+      );
+    },
+  );
 
   it.each([
     ["Gateway endpoint: https://127.0.0.1:8080", 8080, "match"],
@@ -305,9 +313,12 @@ describe("managed gateway port readiness (#7411)", () => {
     ["Gateway endpoint:", 8080, "mismatch"],
     ["Server: https://127.0.0.1:8080 trailing-data", 8080, "mismatch"],
     ["DNS Server: https://127.0.0.1:8080", 8080, "unknown"],
-  ] as const)("classifies managed endpoint output %s for port %s as %s", (output, port, expected) => {
-    expect(classifyManagedGatewayEndpointBinding([output], port)).toBe(expected);
-  });
+  ] as const)(
+    "classifies managed endpoint output %s for port %s as %s",
+    (output, port, expected) => {
+      expect(classifyManagedGatewayEndpointBinding([output], port)).toBe(expected);
+    },
+  );
 
   it("rejects conflicting managed endpoint output across OpenShell probes", () => {
     expect(
@@ -378,11 +389,14 @@ describe("managed gateway port readiness (#7411)", () => {
     [false, "missing", "drift", "detected"],
     [false, "missing", null, "unknown"],
     [false, "foreign-active", null, "not-detected"],
-  ] as const)("maps portAvailable=%s, reuse=%s, version=%s to %s", (portAvailable, reuseState, compatibility, expected) => {
-    expect(classifyManagedGatewayVersionDrift(portAvailable, reuseState, compatibility)).toBe(
-      expected,
-    );
-  });
+  ] as const)(
+    "maps portAvailable=%s, reuse=%s, version=%s to %s",
+    (portAvailable, reuseState, compatibility, expected) => {
+      expect(classifyManagedGatewayVersionDrift(portAvailable, reuseState, compatibility)).toBe(
+        expected,
+      );
+    },
+  );
 
   it("preserves scoped stale gateway state from OpenShell connection errors", async () => {
     const statusConnectionRefused = [
@@ -464,13 +478,18 @@ describe("managed gateway port readiness (#7411)", () => {
 
     expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "lsof")).toBe(true);
     expect(subprocess.spawnSync.mock.calls.some(([command]) => command === "sudo")).toBe(false);
-    for (const [, , options] of subprocess.spawnSync.mock.calls) {
-      const env = options?.env as NodeJS.ProcessEnv | undefined;
-      expect(env).toBeDefined();
-      expect(env?.GITHUB_TOKEN).toBeUndefined();
-      expect(env?.OPENSHELL_GATEWAY_AUTH_TOKEN).toBeUndefined();
-      expect(env?.OPENSHELL_GATEWAY).toBe("nemoclaw-readiness-test");
-    }
+
+    expect(
+      subprocess.spawnSync.mock.calls.every(([, , options]) => {
+        const env = options?.env as NodeJS.ProcessEnv | undefined;
+        return (
+          env !== undefined &&
+          env.GITHUB_TOKEN === undefined &&
+          env.OPENSHELL_GATEWAY_AUTH_TOKEN === undefined &&
+          env.OPENSHELL_GATEWAY === "nemoclaw-readiness-test"
+        );
+      }),
+    ).toBe(true);
   });
 
   it("does not write an onboard trace for a public external attachment probe (#7411)", async () => {

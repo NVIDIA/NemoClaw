@@ -257,7 +257,7 @@ describe("E2E scorecard", () => {
     expect(failedJobSections.length).toBeGreaterThan(1);
     expect(failedJobSections.every((block) => block.text.text.length <= 3_000)).toBe(true);
     const rendered = failedJobSections.map((block) => block.text.text).join("\n");
-    for (const job of failedJobs) expect(rendered).toContain(`<${job.url}|${job.name}>`);
+    expect(failedJobs.every((job) => rendered.includes(`<${job.url}|${job.name}>`))).toBe(true);
   });
 
   it("bounds one oversized failed-job label without dropping its job link", () => {

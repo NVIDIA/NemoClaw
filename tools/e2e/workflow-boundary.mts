@@ -1786,8 +1786,8 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  if (job.name !== "Publish staging Brev Launchable image") {
-    errors.push("staging-brev-launchable must identify image publication without claiming E2E");
+  if (job.name !== "Exact staging Brev Launchable") {
+    errors.push("staging-brev-launchable must identify the exact Launchable E2E contract");
   }
   if (Object.hasOwn(job, "environment")) {
     errors.push("staging-brev-launchable must not use a GitHub environment");
@@ -1810,15 +1810,15 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     errors,
     "generate-matrix",
     generateSteps,
-    "Authorize Launchable image publication",
+    "Authorize Launchable E2E maintainer dispatch",
   );
   const expectedAuthorizationSelector =
     "${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
   if (authorization?.if !== expectedAuthorizationSelector) {
-    errors.push("Launchable image publication authorization must cover exact and full dispatches");
+    errors.push("Launchable E2E maintainer authorization must cover exact and full dispatches");
   }
   if (authorization?.shell !== "bash") {
-    errors.push("Launchable image publication authorization must use bash");
+    errors.push("Launchable E2E maintainer authorization must use bash");
   }
   const authorizationEnv = asRecord(authorization?.env);
   for (const [key, expected] of [
@@ -1827,7 +1827,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     ["TRIGGERING_ACTOR", "${{ github.triggering_actor }}"],
   ] as const) {
     if (authorizationEnv[key] !== expected) {
-      errors.push(`Launchable image publication authorization must bind ${key}`);
+      errors.push(`Launchable E2E maintainer authorization must bind ${key}`);
     }
   }
   for (const required of [
@@ -1849,9 +1849,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     generateCheckout &&
     generateSteps.indexOf(authorization) >= generateSteps.indexOf(generateCheckout)
   ) {
-    errors.push(
-      "Launchable image publication authorization must run before generate-matrix checkout",
-    );
+    errors.push("Launchable E2E maintainer authorization must run before generate-matrix checkout");
   }
   const concurrency = asRecord(job.concurrency);
   if (
@@ -1860,52 +1858,69 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     concurrency["cancel-in-progress"] !== false
   ) {
     errors.push(
-      "staging-brev-launchable concurrency must queue all pending image publications without cancellation",
+      "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
     );
   }
   const steps = asSteps(job.steps);
+  const checkout = requireStep(errors, steps, "Checkout trusted Launchable lane");
+  const checkoutWith = asRecord(checkout?.with);
+  if (
+    checkoutWith.ref !== "${{ github.workflow_sha }}" ||
+    checkoutWith["persist-credentials"] !== false
+  ) {
+    errors.push("staging-brev-launchable must check out trusted workflow source without credentials");
+  }
   const prepare = requireStep(errors, steps, "Prepare the trusted lane");
   const prepareEnv = asRecord(prepare?.env);
-  const run = requireStep(errors, steps, "Build and verify the staging Launchable image");
+  const run = requireStep(errors, steps, "Build, deploy, verify, test, and clean up");
   if (prepare && run && steps.indexOf(prepare) >= steps.indexOf(run)) {
-    errors.push("staging-brev-launchable must prepare the workspace before image publication");
+    errors.push("staging-brev-launchable must prepare the workspace before the Launchable E2E run");
   }
   const runEnv = asRecord(run?.env);
-  const expectedImageToken = `\${{ ${trustedRun} && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}`;
-  if (runEnv.GH_TOKEN !== expectedImageToken) {
-    errors.push("staging-brev-launchable GH_TOKEN must use the trusted-run secret guard");
+  for (const [env, key, secret] of [
+    [prepareEnv, "BREV_API_KEY", "BREV_API_KEY"],
+    [prepareEnv, "BREV_ORG_ID", "BREV_ORG_ID"],
+    [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
+    [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
+  ] as const) {
+    const expected = `\${{ ${trustedRun} && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
+    if (env[key] !== expected) {
+      errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
+    }
   }
-  if (runEnv.NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY !== "1") {
-    errors.push("staging-brev-launchable must stop after verified image publication");
+  if (runEnv.BREV_LAUNCHABLE_ID !== "${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}") {
+    errors.push("staging-brev-launchable must read the repository Launchable ID variable");
   }
   if (runEnv.WORK_DIR !== "${{ steps.workspace.outputs.work_dir }}") {
     errors.push("staging-brev-launchable must pass its private evidence directory to the lane");
   }
-  for (const [env, scope] of [
-    [asRecord(job.env), "job"],
-    [prepareEnv, "preparation step"],
-    [runEnv, "image publication step"],
+  if (Object.hasOwn(runEnv, "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY")) {
+    errors.push("staging-brev-launchable must not stop after image publication");
+  }
+  const jobEnv = asRecord(job.env);
+  for (const [env, scope, forbidden] of [
+    [jobEnv, "job", ["BREV_API_KEY", "BREV_ORG_ID", "GH_TOKEN", "NVIDIA_INFERENCE_API_KEY"]],
+    [prepareEnv, "preparation step", ["GH_TOKEN", "NVIDIA_INFERENCE_API_KEY"]],
+    [runEnv, "execution step", ["BREV_API_KEY", "BREV_ORG_ID"]],
   ] as const) {
-    for (const key of [
-      "BREV_API_KEY",
-      "BREV_ORG_ID",
-      "BREV_LAUNCHABLE_ID",
-      "NVIDIA_INFERENCE_API_KEY",
-    ]) {
+    for (const key of forbidden) {
       if (Object.hasOwn(env, key)) {
         errors.push(`staging-brev-launchable ${scope} must not receive ${key}`);
       }
     }
   }
+  if (
+    !/^0\.\d+\.\d+$/u.test(stringValue(prepareEnv.BREV_CLI_VERSION)) ||
+    !/^[0-9a-f]{64}$/u.test(stringValue(prepareEnv.BREV_CLI_SHA256))
+  ) {
+    errors.push("staging-brev-launchable must pin the Brev CLI version and SHA-256 checksum");
+  }
   const prepareRun = stringValue(prepare?.run);
   if (
-    prepareRun.includes("brev login") ||
-    prepareRun.includes("BREV_CLI_VERSION") ||
-    prepareRun.includes("BREV_CLI_SHA256")
+    !prepareRun.includes("sha256sum -c -") ||
+    !prepareRun.includes("brev login --api-key \"$BREV_API_KEY\" --org-id \"$BREV_ORG_ID\"")
   ) {
-    errors.push(
-      "staging-brev-launchable preparation must not install or authenticate the Brev CLI",
-    );
+    errors.push("staging-brev-launchable must verify and authenticate the pinned Brev CLI");
   }
 }
 
@@ -1921,12 +1936,12 @@ function validateStagingBrevLaunchableInput(
   }
   const description = stringValue(input.description);
   if (
-    !description.includes("staging Brev Launchable image publication") ||
+    !description.includes("Exact staging Brev Launchable") ||
     !description.includes("jobs and targets are empty") ||
     !description.includes("full E2E run")
   ) {
     errors.push(
-      "workflow_dispatch include_staging_brev_launchable input must document full-run Launchable image publication scope",
+      "workflow_dispatch include_staging_brev_launchable input must document full-run Launchable E2E scope",
     );
   }
 }
@@ -2253,7 +2268,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("include_staging_brev_launchable")) {
     errors.push(
-      "workflow_dispatch jobs input description must identify how to include staging Brev Launchable image publication",
+      "workflow_dispatch jobs input description must identify how to include Exact staging Brev Launchable",
     );
   }
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
