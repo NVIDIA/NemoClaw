@@ -17,12 +17,14 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
+/** Create and track an isolated sandbox-state fixture root. */
 function createScanRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloud-credential-scan-"));
   roots.push(root);
   return root;
 }
 
+/** Write one text or binary sandbox-state fixture and return its path. */
 function writeFixture(root: string, relativePath: string, body: string | Uint8Array): string {
   const file = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -30,6 +32,7 @@ function writeFixture(root: string, relativePath: string, body: string | Uint8Ar
   return file;
 }
 
+/** Run the exact live credential scan command against a fixture root. */
 function scan(root: string): string {
   return execFileSync("sh", ["-lc", buildSandboxCredentialScanCommand([root])], {
     encoding: "utf8",
