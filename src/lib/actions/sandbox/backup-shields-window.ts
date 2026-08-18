@@ -95,16 +95,15 @@ export function relockBackupShieldsWindow(
 
   console.log("");
   console.log("  Re-applying shields lockdown...");
+  const policySnapshotRecovery = window.policySnapshotRecovery;
+  window.policySnapshotRecovery = undefined;
   try {
     shields.shieldsUp(sandboxName, {
       throwOnError: true,
       ...(options.allowLegacyHermesProtocol ? { allowLegacyHermesProtocol: true } : {}),
-      ...(window.policySnapshotRecovery
-        ? { policySnapshotRecovery: window.policySnapshotRecovery }
-        : {}),
+      ...(policySnapshotRecovery ? { policySnapshotRecovery } : {}),
     });
     console.log(`  ${G}✓${R} Shields restored to UP`);
-    window.policySnapshotRecovery = undefined;
     window.relocked = true;
     return true;
   } catch (err) {

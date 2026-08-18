@@ -128,6 +128,7 @@ describe("rebuild Shields window", () => {
 
     expect(relockBackupShieldsWindow("locked-sandbox", window!, true, options)).toBe(false);
     expect(shieldsMock.shieldsUp).toHaveBeenCalledOnce();
+    expect(window!.policySnapshotRecovery).toBeUndefined();
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain("Do not retry Shields up from the mutable live policy");
     expect(output).not.toContain("then run `nemoclaw locked-sandbox shields up`");

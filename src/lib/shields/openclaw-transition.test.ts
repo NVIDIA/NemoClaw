@@ -831,6 +831,31 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     ).toThrow(/Backup Shields policy recovery failed.*authority is invalid/u);
   });
 
+  it("consumes a held backup receipt after auto-restore already relocks Shields (#9452)", () => {
+    const harness = createHarness({ confirmOpenClawInodeFlags: true });
+    const recovery = harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "backup-all",
+      throwOnError: true,
+      issuePolicySnapshotRecovery: true,
+    });
+    expect(recovery).toBeDefined();
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).not.toThrow();
+
+    expect(() =>
+      harness.shieldsUp("openclaw", {
+        policySnapshotRecovery: recovery!,
+        throwOnError: true,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      harness.shieldsUp("openclaw", {
+        policySnapshotRecovery: recovery!,
+        throwOnError: true,
+      }),
+    ).toThrow(/Backup Shields policy recovery failed.*authority is invalid/u);
+  });
+
   it("rejects backup recovery after its Shields transition authority drifts (#9452)", () => {
     const harness = createHarness();
     const recovery = harness.shieldsDown("openclaw", {

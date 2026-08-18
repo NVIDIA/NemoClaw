@@ -1701,42 +1701,47 @@ function restoreShieldsPolicySnapshotRecoveryWithoutHostLock(
   sandboxName: string,
   recovery: ShieldsPolicySnapshotRecovery,
 ): boolean {
+  const preserved = consumeShieldsPolicySnapshotRecovery(sandboxName, recovery);
+  const state = loadShieldsState(sandboxName);
+  if (
+    state._isCorrupt ||
+    state.shieldsDown !== true ||
+    state.shieldsPolicySnapshotPath !== preserved.snapshotPolicy.path
+  ) {
+    throw new Error("Shields state no longer authorizes the preserved restrictive policy");
+  }
+  const transition = readShieldsDownTransition(sandboxName, recovery.processToken);
+  if (
+    !transition ||
+    !sameShieldsDownTransitionAuthority(transition, preserved.transition, "active")
+  ) {
+    throw new Error("Shields transition no longer authorizes backup policy recovery");
+  }
+  if (!fs.existsSync(preserved.snapshotPolicy.path)) {
+    writeShieldsFileAtomicDurable(preserved.snapshotPolicy.path, preserved.content, 0o600, false);
+  }
+  requireBoundShieldsPolicyArtifact(
+    preserved.snapshotPolicy,
+    preserved.transition.snapshotPath,
+    "Restrictive policy snapshot",
+  );
+  return true;
+}
+
+function consumeShieldsPolicySnapshotRecovery(
+  sandboxName: string,
+  recovery: ShieldsPolicySnapshotRecovery,
+): ShieldsPolicySnapshotRecoveryData {
   const preserved = backupPolicySnapshotRecoveries.get(recovery);
   if (!preserved) throw new Error("Backup Shields policy recovery authority is invalid");
-  try {
-    if (
-      recovery.sandboxName !== sandboxName ||
-      recovery.processToken !== preserved.transition.processToken
-    ) {
-      throw new Error("Backup Shields policy recovery authority is invalid");
-    }
-    const state = loadShieldsState(sandboxName);
-    if (
-      state._isCorrupt ||
-      state.shieldsDown !== true ||
-      state.shieldsPolicySnapshotPath !== preserved.snapshotPolicy.path
-    ) {
-      throw new Error("Shields state no longer authorizes the preserved restrictive policy");
-    }
-    const transition = readShieldsDownTransition(sandboxName, recovery.processToken);
-    if (
-      !transition ||
-      !sameShieldsDownTransitionAuthority(transition, preserved.transition, "active")
-    ) {
-      throw new Error("Shields transition no longer authorizes backup policy recovery");
-    }
-    if (!fs.existsSync(preserved.snapshotPolicy.path)) {
-      writeShieldsFileAtomicDurable(preserved.snapshotPolicy.path, preserved.content, 0o600, false);
-    }
-    requireBoundShieldsPolicyArtifact(
-      preserved.snapshotPolicy,
-      preserved.transition.snapshotPath,
-      "Restrictive policy snapshot",
-    );
-    return true;
-  } finally {
-    backupPolicySnapshotRecoveries.delete(recovery);
+  backupPolicySnapshotRecoveries.delete(recovery);
+  if (
+    recovery.sandboxName !== sandboxName ||
+    recovery.processToken !== preserved.transition.processToken
+  ) {
+    throw new Error("Backup Shields policy recovery authority is invalid");
   }
+  return preserved;
 }
 
 function getShieldsPostureWithoutHostLock(
@@ -5455,7 +5460,14 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
   }
   if (opts.policySnapshotRecovery) {
     try {
-      restoreShieldsPolicySnapshotRecoveryWithoutHostLock(sandboxName, opts.policySnapshotRecovery);
+      if (state.shieldsDown === false) {
+        consumeShieldsPolicySnapshotRecovery(sandboxName, opts.policySnapshotRecovery);
+      } else {
+        restoreShieldsPolicySnapshotRecoveryWithoutHostLock(
+          sandboxName,
+          opts.policySnapshotRecovery,
+        );
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`  Cannot recover the restrictive policy snapshot: ${message}`);
