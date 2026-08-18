@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
@@ -19,13 +20,89 @@ import {
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import {
   catalogueTarget,
+  E2E_TARGET_CATALOGUE,
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
 import { COMMON_EGRESS_TEST_TIMEOUT_MS } from "../live/common-egress-agent-helpers.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import { requireFixture } from "./require-fixture";
+
+function runReleaseWaiverAuthorization(
+  overrides: Record<string, string> = {},
+): ReturnType<typeof spawnSync> & { permissionChecks: string[] } {
+  const workflow = readWorkflow() as {
+    jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+  };
+  const script = workflow.jobs["generate-matrix"]!.steps!.find(
+    (step) => step.name === "Authorize release qualification waiver",
+  )!.run!;
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-waiver-auth-"));
+  const curlLog = path.join(fixture, "curl.log");
+  const curlPath = path.join(fixture, "curl");
+  fs.writeFileSync(
+    curlPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+url="\${!#}"
+administrator="\${url%/permission}"
+administrator="\${administrator##*/}"
+output_file=""
+previous=""
+for argument in "$@"; do
+  if [[ "$previous" == "--output" ]]; then output_file="$argument"; fi
+  previous="$argument"
+done
+printf '%s\n' "$administrator" >>"$CURL_LOG"
+case "$administrator" in
+  maintainer) role=maintain ;;
+  mismatch) login=different-user; role=admin ;;
+  *) role=admin ;;
+esac
+login="\${login:-$administrator}"
+printf -v body '{"user":{"login":"%s"},"role_name":"%s"}' "$login" "$role"
+if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '200'; else printf '%s' "$body"; fi
+`,
+  );
+  fs.chmodSync(curlPath, 0o755);
+  const result = spawnSync("bash", ["-c", script], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${fixture}:${process.env.PATH ?? ""}`,
+      ACTOR: "dispatch-admin",
+      ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
+      ALLOW_JETSON_DISPATCH: "false",
+      CHECKOUT_SHA: "",
+      CURL_LOG: curlLog,
+      GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+      GITHUB_TOKEN: "test-token",
+      INCLUDE_LAUNCHABLE: "true",
+      JOBS: "",
+      TARGETS: "",
+      TRIGGERING_ACTOR: "rerun-admin",
+      WAIVED_JOBS: "staging-brev-launchable",
+      WAIVER_REASON: "Brev's credential expired",
+      WORKFLOW_REF: "refs/heads/main",
+      ...overrides,
+    },
+  });
+  const permissionChecks = fs.existsSync(curlLog)
+    ? fs.readFileSync(curlLog, "utf8").trim().split("\n")
+    : [];
+  fs.rmSync(fixture, { force: true, recursive: true });
+  return Object.assign(result, { permissionChecks });
+}
+
+function expectCatalogueOwningPathsToExist(): void {
+  for (const target of E2E_TARGET_CATALOGUE) {
+    for (const owner of target.owningPaths) {
+      expect(fs.existsSync(path.join(REPO_ROOT, owner)), `${target.id}: ${owner}`).toBe(true);
+    }
+  }
+}
 
 describe("e2e workflow boundary", () => {
   it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
@@ -100,6 +177,88 @@ describe("e2e workflow boundary", () => {
         "staging-brev-launchable must pin the Brev CLI version and SHA-256 checksum",
       ]),
     );
+  });
+
+  it("rejects release qualification waiver authorization and planner drift", () => {
+    const workflow = readWorkflow() as {
+      on: {
+        workflow_dispatch: {
+          inputs: Record<string, { default?: string; description?: string; type?: string }>;
+        };
+      };
+      jobs: Record<
+        string,
+        {
+          outputs?: Record<string, string>;
+          steps?: Array<{
+            env?: Record<string, string>;
+            name?: string;
+            run?: string;
+          }>;
+        }
+      >;
+    };
+    workflow.on.workflow_dispatch.inputs.release_qualification_waived_jobs.default =
+      "staging-brev-launchable";
+    const steps = workflow.jobs["generate-matrix"]!.steps!;
+    const authorization = steps.find(
+      (step) => step.name === "Authorize release qualification waiver",
+    )!;
+    delete authorization.env!.TRIGGERING_ACTOR;
+    authorization.run = authorization.run!.replace('== "admin"', '== "maintain"');
+    const matrix = steps.find((step) => step.name === "Generate E2E target matrix")!;
+    delete matrix.env!.RELEASE_QUALIFICATION_WAIVED_JOBS;
+    delete workflow.jobs["generate-matrix"]!.outputs!.release_qualification_waived_jobs;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "workflow_dispatch release_qualification_waived_jobs input must be a string and default to empty",
+        "release qualification waiver authorization must bind only trusted identity and release-run inputs",
+        "step 'Authorize release qualification waiver' run script must include == \"admin\"",
+        "matrix generation step must pass release qualification waived jobs through env",
+        "generate-matrix job must expose release_qualification_waived_jobs output",
+      ]),
+    );
+  });
+
+  it("authorizes both administrator identities and accepts an apostrophe in the reason", () => {
+    const result = runReleaseWaiverAuthorization();
+
+    expect(result.status).toBe(0);
+    expect(result.permissionChecks).toEqual(["dispatch-admin", "rerun-admin"]);
+  });
+
+  it.each([
+    ["dispatch actor", { ACTOR: "maintainer" }, "requires a repository administrator"],
+    ["rerun actor", { TRIGGERING_ACTOR: "maintainer" }, "requires a repository administrator"],
+    ["permission identity", { ACTOR: "mismatch" }, "did not match the actor"],
+  ])("rejects an invalid %s", (_case, overrides, error) => {
+    const result = runReleaseWaiverAuthorization(overrides);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(error);
+  });
+
+  it.each([
+    ["candidate checkout", { CHECKOUT_SHA: "a".repeat(40) }],
+    ["non-main workflow ref", { WORKFLOW_REF: "refs/heads/release" }],
+    ["job selector", { JOBS: "live" }],
+    ["target selector", { TARGETS: "cloud-onboard" }],
+    ["missing Launchable", { INCLUDE_LAUNCHABLE: "false" }],
+    ["Jetson override", { ALLOW_JETSON_DISPATCH: "true" }],
+    ["DGX override", { ALLOW_DGX_SPARK_RUNNER_QUEUE: "true" }],
+  ])("rejects a release waiver with %s", (_case, overrides) => {
+    expect(runReleaseWaiverAuthorization(overrides).status).not.toBe(0);
+  });
+
+  it.each([
+    ["reason only", { WAIVED_JOBS: "" }],
+    ["jobs only", { WAIVER_REASON: "" }],
+    ["short reason", { WAIVER_REASON: "too short" }],
+    ["long reason", { WAIVER_REASON: `A${"x".repeat(500)}` }],
+    ["unsupported reason character", { WAIVER_REASON: "Brev key expired & rotated" }],
+  ])("rejects invalid paired waiver input: %s", (_case, overrides) => {
+    expect(runReleaseWaiverAuthorization(overrides).status).not.toBe(0);
   });
 
   it("rejects an inverted selected-jobs condition", () => {
@@ -250,6 +409,34 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflow(workflow)).toContain(
       "catalogue-brave-nvidia-inference must cap matrix concurrency at 2",
     );
+
+    const personal = catalogueTarget("common-egress-agent-openclaw-personal-stock-price");
+    expect(personal).toMatchObject({
+      profile: "nvidia-inference",
+      runnerComparison: false,
+      selector: "^common-egress.+C4.+$",
+      shard: "openclaw-personal-stock-price",
+      environment: {
+        BRAVE_API_KEY: "",
+        NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+        TAVILY_API_KEY: "",
+      },
+      owningPaths: expect.arrayContaining([
+        "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
+        "nemoclaw-blueprint/policies/tiers.yaml",
+        "src/lib/onboard/policy-selection.ts",
+        "src/lib/onboard/policy-tier-suppression.ts",
+        "src/lib/policy/index.ts",
+        "test/e2e/live/openclaw-agent-assertion.ts",
+        "test/e2e/live/personal-egress-live-proof.ts",
+      ]),
+    });
+    expect(
+      buildE2eWorkflowPlan({ targets: personal.id }).catalogueMatrices["nvidia-inference"].map(
+        ({ id }) => id,
+      ),
+    ).toEqual([personal.id]);
   });
 
   it("binds typed-target evidence identity and upload to the live matrix entry", () => {
@@ -423,6 +610,10 @@ describe("e2e workflow boundary", () => {
       );
     },
   );
+
+  it("keeps every catalogue owning path bound to a repository file or directory", () => {
+    expectCatalogueOwningPathsToExist();
+  });
 
   it.each(
     Array.from([["hermes-dashboard", "hermes-e2e"]] as const, ([legacy, canonical]) => ({

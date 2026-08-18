@@ -652,9 +652,11 @@ Four tiers are available:
 | Restricted | No tier defaults. Web search or other integrations selected earlier can still add their required presets; deselect them during policy review for baseline-only access. |
 | Balanced (default) | Full dev tooling and a selected, supported web search provider. Package installs, model downloads, and inference. No messaging platform access by default. |
 | Open | Broad access across third-party services including supported messaging and productivity presets. Agent-specific unsupported presets are filtered out. |
-| Personal | Lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. Unspecified, loopback, and link-local ranges remain blocked. Also selects every maintained preset supported by the active agent. Intended only for trusted personal-use workloads. |
+| Personal | Requires one broad web authority that lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. It replaces overlapping exact web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. Intended only for trusted personal-use workloads. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
+When Personal is selected or carried forward, `personal-open-internet` is mandatory for every agent and every onboarding entry point, including Portable.
+The picker and policy modes control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
 For details on tiers and the presets each includes, refer to [Network Policies](network-policies#policy-tiers).
 When you finish the policy step, NemoClaw records the finalized built-in preset selection for that sandbox.
 When onboarding creates or recreates a sandbox with presets, NemoClaw prints the exact finalized create-time policy scope before registering providers or creating the sandbox.
@@ -673,16 +675,18 @@ Interactive onboarding ignores an invalid environment value and shows the normal
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
 The default is `suggested`, which is *additive*.
 Onboarding applies tier defaults and preserves any presets you previously added with [`$$nemoclaw <name> policy add`](#$$nemoclaw-name-policy-add) across re-onboards.
-Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative.
-Onboarding removes any preset that is not in the list.
-`skip` leaves the applied set untouched and does not apply tier defaults.
+Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative for optional presets.
+Onboarding removes any optional preset that is not in the list.
+`skip` does not add optional tier defaults and retains eligible optional presets already applied.
+For Personal, all modes still apply or retain the mandatory `personal-open-internet` preset.
 NemoClaw filters tier suggestions and resume selections by active agent support and the selected web search provider.
 During automatic suggestion and resume reconciliation, it removes stale web-search selections when they conflict with the active agent or selected provider.
-The Personal tier is the exception: it preserves every applicable maintained web-search preset even when onboarding did not configure that provider.
+The Personal tier instead uses `personal-open-internet` for web transport and does not select Brave Search or Tavily Search merely to enable ordinary web fetches.
+This makes keyless fetches available to any sandbox binary, but it does not add a provider-free `web_search` implementation.
 <AgentOnly variant="hermes">
 For Hermes, this includes replacing stale `nous-web` when Tavily is selected.
 </AgentOnly>
-An explicit `custom` preset list or interactive manual selection remains operator-controlled.
+An explicit `custom` preset list or interactive manual selection remains operator-controlled for additional presets.
 
 <AgentOnly variant="hermes">
 
@@ -694,8 +698,8 @@ When Tavily Search is selected, it replaces `nous-web` as the Hermes web search 
 | Value | Behaviour |
 |-------|-----------|
 | `suggested` (default) | Apply tier defaults and preserve any extra presets already applied. Aliases: `default`, `auto`. |
-| `custom` | Apply exactly `NEMOCLAW_POLICY_PRESETS`. Previously-applied presets not in the list are removed. Alias: `list`. |
-| `skip` | Skip the policy step entirely. Aliases: `none`, `no`. |
+| `custom` | Apply exactly the optional presets in `NEMOCLAW_POLICY_PRESETS`. Previously-applied optional presets not in the list are removed. Personal still requires `personal-open-internet`. Alias: `list`. |
+| `skip` | Do not add optional tier defaults; retain eligible optional presets already applied. Personal still applies or retains `personal-open-internet`. Aliases: `none`, `no`. |
 
 <AgentOnly variant="openclaw">
 

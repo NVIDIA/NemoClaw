@@ -173,6 +173,29 @@ describe("onboarding phase fixture", () => {
     expect(runner.calls[0]?.options?.env?.[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
   });
 
+  it("runs the Personal cloud OpenClaw target without search-provider credentials", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    await onboard.from(ready({ policyTier: "personal" }), {
+      sandboxName: "e2e-personal-oc",
+    });
+
+    expect(runner.calls[0]?.options?.env).toEqual(
+      expect.objectContaining({
+        BRAVE_API_KEY: "",
+        NEMOCLAW_POLICY_MODE: "suggested",
+        NEMOCLAW_POLICY_PRESETS: "",
+        NEMOCLAW_POLICY_TIER: "personal",
+        NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+        TAVILY_API_KEY: "",
+      }),
+    );
+  });
+
   it("passes the immutable base reference only to Deep Agents Code onboarding", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));
