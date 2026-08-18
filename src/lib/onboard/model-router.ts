@@ -596,7 +596,7 @@ const MODEL_ROUTER_SERVICE_LABEL = "Model Router";
 /**
  * Verify the host Model Router is reachable from the OpenShell Docker network.
  *
- * `isRouterHealthy()` only proves the router answers on the host loopback. On
+ * A healthy /health answer only proves the router responds on the host loopback. On
  * Linux Docker-driver hosts with UFW default-deny, a sandbox container can
  * still fail to reach `host.openshell.internal:<routerPort>` even though the
  * host curl succeeds (#4564). This mirrors the Ollama auth-proxy probe: on a
@@ -637,19 +637,29 @@ export async function reconcileModelRouter(): Promise<void> {
   const recordedPid = session?.routerPid ?? null;
   const recordedCredentialHash = session?.routerCredentialHash ?? null;
 
-  if (await isRouterHealthy(routerPort)) {
+  // One snapshot answers both questions: `healthy` is the occupied-port check,
+  // and `isRouterSnapshotReady` is the single authority for declaring the
+  // router usable, exactly as it is for the startup poll. Budget the body read,
+  // because /health probes every upstream endpoint and can answer well after
+  // the 3-second liveness budget.
+  const snapshot = await getRouterHealthSnapshot(
+    routerPort,
+    ROUTER_FINAL_HEALTH_SNAPSHOT_TIMEOUT_MS,
+  );
+  if (snapshot.healthy) {
     const recordedProcessOwnsRouter = doesModelRouterProcessOwnPort(recordedPid, routerPort);
     if (
       routerCredentialHash &&
       recordedCredentialHash === routerCredentialHash &&
-      recordedProcessOwnsRouter
+      recordedProcessOwnsRouter &&
+      isRouterSnapshotReady(snapshot)
     ) {
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
       await verifyModelRouterSandboxReachability(routerPort);
       return;
     }
     if (recordedProcessOwnsRouter) {
-      console.log("  Restarting model router with updated credentials...");
+      console.log("  Restarting model router...");
       await stopModelRouterProcess(
         requireValue(recordedPid, "Expected recorded router PID"),
         routerPort,
