@@ -75,6 +75,7 @@ export interface HostOpenClawState {
 
 export interface SnapshotManifest {
   version: number;
+  timestamp?: string;
   createdAt: string;
   homeDir: string;
   stateDir: string;
@@ -577,6 +578,7 @@ function isSnapshotManifest(value: unknown): value is SnapshotManifest {
   return (
     isObjectRecord(value) &&
     typeof value.version === "number" &&
+    (value.timestamp === undefined || typeof value.timestamp === "string") &&
     typeof value.createdAt === "string" &&
     typeof value.homeDir === "string" &&
     typeof value.stateDir === "string" &&
@@ -762,7 +764,8 @@ export function createSnapshotBundle(
     return null;
   }
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  // Same directory grammar the retention reader accepts (snapshot-management.ts).
+  const timestamp = new Date().toISOString().replace(/[-:]|\.\d+(?=Z)/g, "");
   const parentDir = path.join(
     hostState.homeDir,
     ".nemoclaw",
@@ -808,6 +811,7 @@ export function createSnapshotBundle(
 
     const manifest: SnapshotManifest = {
       version: SNAPSHOT_VERSION,
+      timestamp,
       createdAt: new Date().toISOString(),
       homeDir: hostState.homeDir,
       stateDir: hostState.stateDir,
