@@ -78,6 +78,15 @@ function sandbox(
   };
 }
 
+function expectOpenClawStateFilesRejected(
+  requests: readonly StateFileCaptureRequest[],
+): void {
+  for (const request of requests) {
+    expect(captureOpenClawStateFile("alpha", request)).toBeNull();
+  }
+}
+
+
 function runtime(handle = "session-1") {
   return {
     schemaVersion: 1,
@@ -335,9 +344,7 @@ describe("managed snapshot backup authority", () => {
       },
     ];
 
-    for (const request of requests) {
-      expect(captureOpenClawStateFile("alpha", request)).toBeNull();
-    }
+    expectOpenClawStateFilesRejected(requests);
     expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).not.toHaveBeenCalled();
     expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
   });
