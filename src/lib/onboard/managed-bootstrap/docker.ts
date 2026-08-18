@@ -3663,7 +3663,17 @@ export function createDockerManagedBootstrapAdapter(
       }
       assertCompletedCutoverRuntimeState(journal, deps);
       const before = inspectExact(replacement.replacementRuntimeId, deps);
-      assertStableRunning(before, "replacement");
+      try {
+        assertStableRunning(before, "replacement");
+      } catch {
+        throw new Error(
+          replacementFailureDetail(
+            "Managed bootstrap Docker replacement is not stably running.",
+            replacement.replacementRuntimeId,
+            deps,
+          ),
+        );
+      }
       const beforeImageContentId = assertImage(before, replacement.image, deps);
       if (beforeImageContentId !== replacement.runtimeImageContentId) {
         throw new Error("Managed bootstrap Docker replacement image content changed.");
