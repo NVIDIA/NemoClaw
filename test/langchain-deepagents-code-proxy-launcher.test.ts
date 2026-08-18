@@ -613,11 +613,11 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
         "",
       ];
 
-      for (const value of hostSamples) {
+      hostSamples.forEach((value) => {
         const expected = isValidProxyHost(value);
         expect(shellValidatorAccepts(start, "is_valid_proxy_host", value), value).toBe(expected);
         expect(shellValidatorAccepts(launcher, "is_valid_proxy_host", value), value).toBe(expected);
-      }
+      });
 
       const expected = isValidProxyPort(value);
       expect(shellValidatorAccepts(start, "is_valid_proxy_port", value), value).toBe(expected);

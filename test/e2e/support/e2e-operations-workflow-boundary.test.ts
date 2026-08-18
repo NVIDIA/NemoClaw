@@ -520,12 +520,12 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       workflow.jobs[jobName].steps!.find((step) => step.name === stepName)!,
     );
 
-    for (const guard of guards) {
+    guards.forEach((guard) => {
       expect(guard.env).not.toHaveProperty("ACTOR");
       expect(guard.run).not.toContain("github-actions[bot]");
       expect(guard.run).toContain('"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"');
       expect(guard.run).toContain('"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$');
-    }
+    });
   });
 
   it("accepts the controller target matrix for the commit under review", () => {

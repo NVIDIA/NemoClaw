@@ -276,11 +276,11 @@ describe("PR review advisor OpenShell wrapper", () => {
       PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
     });
     expect(context?.openPrOverlaps).toHaveLength(5);
-    for (const overlap of context?.openPrOverlaps ?? []) {
+    (context?.openPrOverlaps ?? []).forEach((overlap) => {
       expect(overlap.sameFileCount).toBe(300);
       expect(overlap.sameFiles).toHaveLength(20);
       expect(overlap.sameFiles.every((file) => file.length <= 300)).toBe(true);
-    }
+    });
     expect(() => serializePreparedGitHubContext(context)).not.toThrow();
   });
 
@@ -525,11 +525,11 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]?.[2].env.OPENAI_API_KEY).toBe("model-host-secret");
-    for (const [command, args, options] of calls) {
+    calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
-    }
+    });
     expect(calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
     expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENAI_API_KEY).toBeUndefined();
     const gatewayConfig = fs.readFileSync(
@@ -722,12 +722,12 @@ describe("PR review advisor OpenShell wrapper", () => {
           command === "openshell" && args.slice(0, 2).join(" ") === "sandbox delete",
       )?.[1],
     ).toEqual(["sandbox", "delete", "pr-advisor-test"]);
-    for (const [command, args, options] of calls) {
+    calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.OPENAI_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY, `${command} ${args.join(" ")}`).toBeUndefined();
-    }
+    });
   });
 
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {

@@ -437,7 +437,7 @@ describe("deterministic dual-DGX Station peer discovery", () => {
       },
     ];
 
-    for (const scenario of scenarios) {
+    scenarios.forEach((scenario) => {
       const harness = new PreparationHarness();
       const binding = sshBinding();
       scenario.mutate(binding);
@@ -454,7 +454,7 @@ describe("deterministic dual-DGX Station peer discovery", () => {
         harness.calls.some((call) => call.startsWith("remote:")),
         scenario.name,
       ).toBe(false);
-    }
+    });
   });
 
   it("rejects an explicit target whose resolved SSH user changed before peer contact", () => {

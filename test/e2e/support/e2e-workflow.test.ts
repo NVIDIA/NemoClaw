@@ -640,14 +640,14 @@ describe("e2e workflow boundary", () => {
       expect(mixedPlan.catalogueMatrices["brave-nvidia-inference"]).toHaveLength(1);
       expect(mixedPlan.matrix.map(({ id }) => id)).toEqual(["ubuntu-repo-cloud-openclaw"]);
 
-      for (const selectors of [{ jobs: legacy }, { targets: legacy }]) {
+      [{ jobs: legacy }, { targets: legacy }].forEach((selectors) => {
         expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
           valid: true,
           liveTargetsRun: false,
           selectedFreeStandingJobs: [canonical],
           registryTargets: [],
         });
-      }
+      });
     },
   );
 
@@ -785,22 +785,22 @@ jobs:
         matrix: [],
       });
 
-      for (const job of inventory.allowedJobs) {
+      inventory.allowedJobs.forEach((job) => {
         expect(evaluateE2eWorkflowDispatchSelectors({ jobs: job })).toMatchObject({
           valid: true,
           liveTargetsRun: false,
           selectedFreeStandingJobs: [job],
           registryTargets: [],
         });
-      }
-      for (const target of inventory.targetToJob.keys()) {
+      });
+      [...inventory.targetToJob.keys()].forEach((target) => {
         expect(evaluateE2eWorkflowDispatchSelectors({ targets: target })).toMatchObject({
           valid: true,
           liveTargetsRun: false,
           selectedFreeStandingJobs: [target],
           registryTargets: [],
         });
-      }
+      });
     },
   );
 

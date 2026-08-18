@@ -323,10 +323,10 @@ describe("OpenShell 0.0.85 migration review", () => {
       ],
     ] as const;
 
-    for (const [relativePath, forbidden] of migratedConsumers) {
+    migratedConsumers.forEach(([relativePath, forbidden]) => {
       const source = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
       expect(forbidden.every((obsoleteTransport) => !source.includes(obsoleteTransport))).toBe(true);
-    }
+    });
 
     const phase6 = fs.readFileSync(
       path.join(repoRoot, "test/e2e/live/phase6-messaging-helpers.ts"),

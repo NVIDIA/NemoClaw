@@ -442,10 +442,10 @@ describe("uninstall local model profile cleanup", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    for (const [command, , options] of run.mock.calls.filter(([command]) => command === "ollama")) {
+    run.mock.calls.filter(([command]) => command === "ollama").forEach(([command, , options]) => {
       expect(command).toBe("ollama");
       expect(options?.env?.OLLAMA_HOST).toBe("127.0.0.1:11434");
-    }
+    });
   });
 
   it("fails without deleting any Ollama model when inventory is malformed", () => {

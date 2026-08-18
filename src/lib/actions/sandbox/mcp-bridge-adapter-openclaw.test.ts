@@ -268,7 +268,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         "absent",
       );
 
-      for (const jsoncState of [configJsoncState, homeConfigJsoncState, legacyConfigJsoncState]) {
+      [configJsoncState, homeConfigJsoncState, legacyConfigJsoncState].forEach((jsoncState) => {
         fs.mkdirSync(path.dirname(jsoncState), { recursive: true });
         fs.writeFileSync(
           jsoncState,
@@ -279,7 +279,7 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
             headers: normalizedHeaders,
           }),
         );
-      }
+      });
       const layeredJsoncRemove = run(buildOpenClawMcporterRemoveCommand(baseEntry));
       expect(layeredJsoncRemove.status).toBe(0);
       expectFileAbsent(configJsoncState);
@@ -377,10 +377,10 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
         (args) => args.includes("config") && args.includes("get"),
       );
       expect(configGets).not.toHaveLength(0);
-      for (const args of configGets) {
+      configGets.forEach((args) => {
         expect(args.slice(0, 3)).toEqual(["--root", OPENCLAW_MCPORTER_ROOT, "config"]);
         expect(args.at(-1)).toBe("--json");
-      }
+      });
       expect(configGets).toContainEqual([
         "--root",
         OPENCLAW_MCPORTER_ROOT,
@@ -449,10 +449,10 @@ describe("OpenClaw mcporter MCP adapter", testTimeoutOptions(20_000), () => {
     ];
 
     expect(root).toBe("/sandbox/.custom-openclaw/workspace");
-    for (const command of commands) {
+    commands.forEach((command) => {
       expect(command).toContain(root);
       expect(command).not.toContain(OPENCLAW_MCPORTER_ROOT);
-    }
+    });
   });
 
   it("uses the loaded OpenClaw workspace throughout adapter lifecycle calls", () => {
@@ -487,10 +487,10 @@ process.stdout.write(JSON.stringify(commands));
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const commands = JSON.parse(result.stdout) as string[];
     expect(commands).toHaveLength(4);
-    for (const command of commands.slice(1)) {
+    commands.slice(1).forEach((command) => {
       expect(command).toContain("/sandbox/.custom-openclaw/workspace");
       expect(command).not.toContain(OPENCLAW_MCPORTER_ROOT);
-    }
+    });
   });
 
   it("keeps the mcporter runtime pin visible for image tests", () => {

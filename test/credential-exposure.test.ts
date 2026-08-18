@@ -58,20 +58,20 @@ describe("credential exposure in process arguments", () => {
     );
     try {
       Object.assign(process.env, tlsEnv);
-      for (const buildSubprocessEnv of [buildCliSubprocessEnv, buildPluginSubprocessEnv]) {
+      [buildCliSubprocessEnv, buildPluginSubprocessEnv].forEach((buildSubprocessEnv) => {
         const env = buildSubprocessEnv();
         expect(Object.fromEntries(Object.keys(tlsEnv).map((key) => [key, env[key]]))).toEqual(
           tlsEnv,
         );
-      }
+      });
     } finally {
-      for (const [key, value] of Object.entries(previous)) {
+      Object.entries(previous).forEach(([key, value]) => {
         if (value === undefined) {
           delete process.env[key];
         } else {
           process.env[key] = value;
         }
-      }
+      });
     }
   });
 
@@ -94,13 +94,13 @@ describe("credential exposure in process arguments", () => {
         Object.fromEntries(tlsKeys.map((key) => [key, pluginEnv[key]])),
       );
     } finally {
-      for (const [key, value] of Object.entries(previous)) {
+      Object.entries(previous).forEach(([key, value]) => {
         if (value === undefined) {
           delete process.env[key];
         } else {
           process.env[key] = value;
         }
-      }
+      });
     }
   });
 

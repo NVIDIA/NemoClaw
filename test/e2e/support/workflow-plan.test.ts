@@ -304,11 +304,11 @@ describe("E2E workflow plan", () => {
     ],
   ])("excludes %s from catalogue planning with a reason (#9022)", (id, reason) => {
     expect(E2E_TARGET_CATALOGUE.map((target) => target.id)).not.toContain(id);
-    for (const selector of ["jobs", "targets"] as const) {
+    (["jobs", "targets"] as const).forEach((selector) => {
       expect(() => buildE2eWorkflowPlan({ [selector]: id })).toThrow(
         `E2E catalogue target ${id} is not scheduled: ${reason}`,
       );
-    }
+    });
   });
 
   it("rejects unreviewed catalogue execution metadata", () => {
@@ -916,11 +916,11 @@ describe("E2E workflow plan", () => {
       { ...validPlan, hermesSelected: "false" },
     ];
 
-    for (const plan of malformedPlans) {
+    malformedPlans.forEach((plan) => {
       expect(() => validateE2eWorkflowPlan(plan)).toThrow(
         "E2E planner returned an invalid output schema",
       );
-    }
+    });
   });
 
   it("writes byte-compatible GitHub outputs and the execution-plan summary", () => {

@@ -516,12 +516,12 @@ describe("managed startup profile", () => {
       const supportedAgents =
         STOCK_RUNTIME_INPUT_AGENTS[obligation.input as keyof typeof STOCK_RUNTIME_INPUT_AGENTS];
       expect(obligation.owner).toBe("application-environment");
-      for (const agent of obligation.emittedFor) {
+      obligation.emittedFor.forEach((agent) => {
         expect(supportedAgents).not.toContain(agent);
         expect(
           MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
         ).not.toContain(obligation.input);
-      }
+      });
       expect(obligation.supportedFor.every((agent) =>
           supportedAgents.some((supportedAgent) => supportedAgent === agent))).toBe(true);
     },
@@ -557,15 +557,15 @@ describe("managed startup profile", () => {
   it.each(VALID_PROFILES)(
     "maps every $agent inventory entry to an explicit profile field",
     (profile) => {
-      for (const { profilePath } of MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent]) {
+      MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent].forEach(({ profilePath }) => {
         let current: unknown = profile;
-        for (const segment of profilePath.split(".")) {
-          expect(current).not.toBeNull();
-          expect(typeof current).toBe("object");
-          expect(Object.hasOwn(current as object, segment)).toBe(true);
-          current = (current as Record<string, unknown>)[segment];
-        }
-      }
+      profilePath.split(".").forEach((segment) => {
+        expect(current).not.toBeNull();
+        expect(typeof current).toBe("object");
+        expect(Object.hasOwn(current as object, segment)).toBe(true);
+        current = (current as Record<string, unknown>)[segment];
+      });
+      });
     },
   );
 

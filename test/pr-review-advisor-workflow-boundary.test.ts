@@ -1129,7 +1129,7 @@ process.exitCode = valid ? 0 : 1;`,
         validated: false,
       },
     ];
-    for (const { name, options, validated } of cases) {
+    cases.forEach(({ name, options, validated }) => {
       const result = runArtifactValidation(validPrimaryResult(), options);
       try {
         expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(0);
@@ -1137,7 +1137,7 @@ process.exitCode = valid ? 0 : 1;`,
       } finally {
         result.cleanup();
       }
-    }
+    });
   });
 
   it("rejects malformed, wrong-head, stale, and symlinked primary artifacts", () => {
@@ -1189,14 +1189,14 @@ process.exitCode = valid ? 0 : 1;`,
       ({ options }) =>
         CAN_CREATE_SYMLINKS || (!options?.symlinkAnalysisResult && !options?.symlinkResult),
     );
-    for (const { name, artifact, options } of runnableCases) {
+    runnableCases.forEach(({ name, artifact, options }) => {
       const result = runArtifactValidation(artifact, options);
       try {
         expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(1);
       } finally {
         result.cleanup();
       }
-    }
+    });
   });
 
   it("withholds every invalid secondary artifact without suppressing the primary", () => {
@@ -1247,7 +1247,7 @@ process.exitCode = valid ? 0 : 1;`,
     const runnableCases = cases.filter(
       ({ options }) => CAN_CREATE_SYMLINKS || !options.symlinkSecondaryResult,
     );
-    for (const { name, options } of runnableCases) {
+    runnableCases.forEach(({ name, options }) => {
       const result = runArtifactValidation(validPrimaryResult(), options);
       try {
         expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(0);
@@ -1256,7 +1256,7 @@ process.exitCode = valid ? 0 : 1;`,
       } finally {
         result.cleanup();
       }
-    }
+    });
   });
 
   it("rejects an unrecognized trusted secondary download outcome", () => {

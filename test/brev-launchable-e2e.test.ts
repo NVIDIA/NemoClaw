@@ -523,18 +523,18 @@ describe("focused staging Brev Launchable lane", () => {
     expect(receiptResult.stderr).toContain("producer receipt does not match the candidate");
     expect(fs.readFileSync(receipt.calls, "utf8")).not.toMatch(/brev create|full-e2e\.test\.ts/u);
 
-    for (const malformed of [
+    [
       fixture({ omitReceiptField: "project" }),
       fixture({ omitReceiptField: "imageName" }),
       fixture({ imageRepositorySha: "not-a-sha" }),
-    ]) {
+    ].forEach((malformed) => {
       const malformedResult = run(malformed.env);
       expect(malformedResult.status).not.toBe(0);
       expect(malformedResult.stderr).toContain("producer receipt does not match the candidate");
       expect(fs.readFileSync(malformed.calls, "utf8")).not.toMatch(
         /brev create|full-e2e\.test\.ts/u,
       );
-    }
+    });
 
     const unready = fixture({ ready: false });
     const unreadyResult = run({ ...unready.env, BREV_READY_TIMEOUT_SECONDS: "1" });
@@ -551,7 +551,7 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.readFileSync(wrongImage.calls, "utf8")).not.toContain("full-e2e.test.ts");
     expect(fs.existsSync(wrongImage.state)).toBe(false);
 
-    for (const boot of [
+    [
       fixture({ repoSha: "b".repeat(40) }),
       fixture({ provisionSha: "b".repeat(40) }),
       fixture({ provisionImageRepositorySha: "c".repeat(40) }),
@@ -560,7 +560,7 @@ describe("focused staging Brev Launchable lane", () => {
       fixture({ schemaVersion: 2 }),
       fixture({ sourceRepository: "example/NemoClaw" }),
       fixture({ sourcePath: "/home/ubuntu/NemoClaw" }),
-    ]) {
+    ].forEach((boot) => {
       const bootResult = run(boot.env);
       expect(bootResult.status).not.toBe(0);
       expect(bootResult.stderr).toContain(
@@ -568,7 +568,7 @@ describe("focused staging Brev Launchable lane", () => {
       );
       expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
       expect(fs.existsSync(boot.state)).toBe(false);
-    }
+    });
   }, 90_000);
 
   it("reports E2E failure only after verified workspace cleanup", () => {
@@ -649,10 +649,10 @@ describe("focused staging Brev Launchable lane", () => {
       .split("\n")
       .filter((line) => line.includes("; error:"));
     expect(diagnosticErrorLines).not.toHaveLength(0);
-    for (const line of diagnosticErrorLines) {
+    diagnosticErrorLines.forEach((line) => {
       const error = line.split("; error: ", 2)[1]?.replace(/\)$/u, "") ?? "";
       expect(Buffer.byteLength(error)).toBeLessThanOrEqual(512);
-    }
+    });
     expect([
           "brev-test-secret",
           "container-secret",
