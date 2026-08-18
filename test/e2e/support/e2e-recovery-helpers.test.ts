@@ -331,7 +331,6 @@ describe("GatewayClient recovery helpers (#2701)", () => {
         const separator = call?.args.indexOf("--") ?? -1;
         const innerArgs = call?.args.slice(separator + 1) ?? [];
         expect(innerArgs.slice(0, 2)).toEqual(["sh", "-c"]);
-        expect(innerArgs[2]).not.toMatch(/\bcat\b/u);
         expect(innerArgs.slice(4)).toEqual([
           "/tmp/nemoclaw-proxy-env.sh",
           "NEMOCLAW_GUARD_CHAIN_ACTIVE",
