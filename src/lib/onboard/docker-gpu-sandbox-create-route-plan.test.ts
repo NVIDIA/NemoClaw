@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type DockerGpuRoutePlan,
-  resolveAgentPlan,
   resolveDockerGpuSandboxCreatePlan,
+  resolveProfileGpuCreatePlan,
 } from "./docker-gpu-sandbox-create";
 
 describe("resolveDockerGpuSandboxCreatePlan", () => {
@@ -173,44 +173,23 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     expect(result.gpuRoutePlan).toBe("compatibility-only");
   });
 
-  it("keeps every portable agent on native GPU lifecycle operations (#9462)", () => {
-    const env = {
-      NEMOCLAW_DOCKER_GPU_PATCH: "1",
-      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
-    };
-
-    expect(resolveAgentPlan({ sandboxGpuEnabled: true }, null, true, env, "linux").gpuRoutePlan).toBe(
-      "native-only",
-    );
+  it("keeps the portable profile on native GPU routing at the resolver boundary (#9462)", () => {
     expect(
-      resolveAgentPlan(
+      resolveProfileGpuCreatePlan(
         { sandboxGpuEnabled: true },
-        { name: "hermes" },
         true,
-        env,
-        "linux",
-      ).gpuRoutePlan,
-    ).toBe("native-only");
-    expect(
-      resolveAgentPlan(
-        { sandboxGpuEnabled: true },
-        { name: "langchain-deepagents-code" },
-        true,
-        env,
+        { NEMOCLAW_DOCKER_GPU_PATCH: "1", NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         "linux",
       ).gpuRoutePlan,
     ).toBe("native-only");
   });
 
   it("keeps portable Jetson hosts off the compatibility-only default (#9462)", () => {
-    const env = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
-
     expect(
-      resolveAgentPlan(
+      resolveProfileGpuCreatePlan(
         { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
-        { name: "hermes" },
         true,
-        env,
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         "linux",
       ).gpuRoutePlan,
     ).toBe("native-only");

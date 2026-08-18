@@ -32,9 +32,8 @@ export function resetIsDockerDesktopWslRuntimeCache(): void {
   cachedDockerDesktopWslRuntime = null;
 }
 
-export function resolveAgentPlan(
+export function resolveProfileGpuCreatePlan(
   config: DockerGpuSandboxConfig,
-  _agent: { name?: string | null } | null,
   dockerDriverGateway: boolean,
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
