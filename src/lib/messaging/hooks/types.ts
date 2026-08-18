@@ -47,24 +47,10 @@ export type MessagingHookHandler = (
   context: MessagingHookContext,
 ) => MessagingHookResult | Promise<MessagingHookResult>;
 
-/** One credential placeholder path authorized inside a declared hook output value. */
-export interface MessagingManagedStartupPlaceholderAuthorization {
-  readonly path: readonly string[];
-  readonly value: string;
-}
-
-/** Channel-owned validation for credential placeholders inside one hook output. */
-export type MessagingManagedStartupPlaceholderAuthorizer = (
-  value: unknown,
-) => readonly MessagingManagedStartupPlaceholderAuthorization[];
-
 /** Constructor entry used to seed a hook registry in tests or later bootstraps. */
 export interface MessagingHookRegistration {
   readonly id: MessagingHookHandlerId;
   readonly handler: MessagingHookHandler;
-  readonly managedStartupPlaceholderAuthorizers?: Readonly<
-    Record<string, MessagingManagedStartupPlaceholderAuthorizer>
-  >;
 }
 
 /** Serializable runner result for a completed hook. */
