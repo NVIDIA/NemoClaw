@@ -243,6 +243,11 @@ describe("codebase growth guardrail test support", () => {
       "function collect(rows) { for (const row of rows) consume(row); } it('works', () => collect(rows)); it('also works', () => collect(moreRows));",
       0,
     ],
+    [
+      "same-named helpers in different lexical scopes",
+      "function collect(rows) { for (const row of rows) consume(row); } it('outer', () => collect(rows)); it('nested', () => { function collect(value) { consume(value); } collect(value); });",
+      1,
+    ],
     ["support helper loop", "function collect(rows) { for (const row of rows) consume(row); }", 0],
   ])("counts test loops in %s", (_name, source, expected) => {
     expect(checkTestOnly.countTestLoops("test/example.test.ts", source)).toBe(expected);

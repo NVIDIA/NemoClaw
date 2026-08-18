@@ -183,32 +183,65 @@ function countTestLoops(file: string, source: string | null): number {
     true,
     scriptKind(file),
   );
-  const localFunctions = new Map<string, ts.FunctionLikeDeclaration>();
-  const callCounts = new Map<string, number>();
-  function collectFunctionsAndCalls(node: ts.Node): void {
+  type LexicalScope = ts.SourceFile | ts.Block;
+  const localFunctions = new Map<LexicalScope, Map<string, ts.FunctionLikeDeclaration>>();
+  function enclosingScope(node: ts.Node): LexicalScope | null {
+    let current: ts.Node | undefined = node.parent;
+    while (current && !ts.isSourceFile(current) && !ts.isBlock(current)) {
+      current = current.parent;
+    }
+    return current ?? null;
+  }
+  function collectFunctions(node: ts.Node): void {
     if (isFunctionLike(node)) {
       const name = functionName(node);
-      if (name) localFunctions.set(name, node);
+      const scope = enclosingScope(node);
+      if (name && scope) {
+        const functions = localFunctions.get(scope) ?? new Map();
+        functions.set(name, node);
+        localFunctions.set(scope, functions);
+      }
     }
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-      callCounts.set(node.expression.text, (callCounts.get(node.expression.text) ?? 0) + 1);
-    }
-    ts.forEachChild(node, collectFunctionsAndCalls);
+    ts.forEachChild(node, collectFunctions);
   }
-  collectFunctionsAndCalls(sourceFile);
+  collectFunctions(sourceFile);
+
+  function resolveLocalFunction(name: string, node: ts.Node): ts.FunctionLikeDeclaration | null {
+    let current: ts.Node | undefined = node;
+    while (current) {
+      if (ts.isSourceFile(current) || ts.isBlock(current)) {
+        const helper = localFunctions.get(current)?.get(name);
+        if (helper) return helper;
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
+  const callCounts = new Map<ts.FunctionLikeDeclaration, number>();
+  function collectCalls(node: ts.Node): void {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const helper = resolveLocalFunction(node.expression.text, node);
+      if (helper) callCounts.set(helper, (callCounts.get(helper) ?? 0) + 1);
+    }
+    ts.forEachChild(node, collectCalls);
+  }
+  collectCalls(sourceFile);
 
   const countedLoops = new Set<LoopStatement>();
-  function visitTestContext(node: ts.Node, activeFunctions = new Set<string>()): void {
+  function visitTestContext(
+    node: ts.Node,
+    activeFunctions = new Set<ts.FunctionLikeDeclaration>(),
+  ): void {
     if (isLoop(node)) countedLoops.add(node);
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-      const name = node.expression.text;
-      const helper = localFunctions.get(name);
+      const helper = resolveLocalFunction(node.expression.text, node);
       if (
         helper &&
-        !activeFunctions.has(name) &&
-        ((callCounts.get(name) ?? 0) === 1 || thinCallbackForwardingLoop(helper) !== null)
+        !activeFunctions.has(helper) &&
+        ((callCounts.get(helper) ?? 0) === 1 || thinCallbackForwardingLoop(helper) !== null)
       ) {
-        visitTestContext(helper, new Set([...activeFunctions, name]));
+        visitTestContext(helper, new Set([...activeFunctions, helper]));
       }
     }
     ts.forEachChild(node, (child) => visitTestContext(child, activeFunctions));
@@ -220,8 +253,8 @@ function countTestLoops(file: string, source: string | null): number {
       for (const argument of node.arguments) {
         if (isFunctionLike(argument)) visitTestContext(argument);
         if (ts.isIdentifier(argument)) {
-          const callback = localFunctions.get(argument.text);
-          if (callback) visitTestContext(callback, new Set([argument.text]));
+          const callback = resolveLocalFunction(argument.text, argument);
+          if (callback) visitTestContext(callback, new Set([callback]));
         }
       }
     }
