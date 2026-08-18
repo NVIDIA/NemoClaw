@@ -6,7 +6,11 @@ import { pathToFileURL } from "node:url";
 
 import * as dockerRunNamespace from "../../../src/lib/adapters/docker/run.ts";
 import * as managedBootstrapAdapterNamespace from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
-import type { DockerGpuPatchDeps } from "../../../src/lib/onboard/docker-gpu-patch-types.ts";
+import * as dockerGpuPatchCloneNamespace from "../../../src/lib/onboard/docker-gpu-patch-clone.ts";
+import type {
+  DockerContainerInspect,
+  DockerGpuPatchDeps,
+} from "../../../src/lib/onboard/docker-gpu-patch-types.ts";
 import * as startupCommandEnvNamespace from "../../../src/lib/onboard/docker-startup-command-env.ts";
 import * as startupCommandPatchNamespace from "../../../src/lib/onboard/docker-startup-command-patch.ts";
 import { redactString } from "../fixtures/redaction.ts";
@@ -17,6 +21,7 @@ const MANAGED_IMAGE_COMMAND = ["/bin/bash"] as const;
 const OPENSHELL_SANDBOX_ENTRYPOINT = ["/opt/openshell/bin/openshell-sandbox"] as const;
 const OPENSHELL_WORKDIR_COMMAND = ["--workdir", "/sandbox"] as const;
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
+const OPENSHELL_OCI_IMAGE_USER_ENV = "OPENSHELL_OCI_IMAGE_USER";
 const MANAGED_STARTUP_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const DEFAULT_RECREATE_TIMEOUT_SECS = 180;
 const DOCKER_CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/i;
@@ -26,6 +31,12 @@ const managedBootstrapAdapter = (
     : managedBootstrapAdapterNamespace
 ) as typeof import("../../../src/lib/onboard/managed-bootstrap/adapter.ts");
 const { assertManagedBootstrapSafeProcessEnvironmentKey } = managedBootstrapAdapter;
+const dockerGpuPatchClone = (
+  "default" in dockerGpuPatchCloneNamespace
+    ? dockerGpuPatchCloneNamespace.default
+    : dockerGpuPatchCloneNamespace
+) as typeof import("../../../src/lib/onboard/docker-gpu-patch-clone.ts");
+const { shouldOmitOpenShellOciImageUser } = dockerGpuPatchClone;
 const startupCommandEnv = (
   "default" in startupCommandEnvNamespace
     ? startupCommandEnvNamespace.default
@@ -78,36 +89,36 @@ function isReviewedEmptyCommand(value: unknown): boolean {
   return value === null || value === undefined || hasExactTokens(value, []);
 }
 
-function hasReviewedManagedRuntimeWorkload(environment: unknown): boolean {
+function reviewedManagedRuntimeWorkload(environment: unknown): string[] | null {
   if (!Array.isArray(environment) || !environment.every((entry) => typeof entry === "string")) {
-    return false;
+    return null;
   }
   const prefix = `${OPENSHELL_SANDBOX_COMMAND_ENV}=`;
   const commandEntries = environment.filter(
     (entry) => entry === OPENSHELL_SANDBOX_COMMAND_ENV || entry.startsWith(prefix),
   );
-  if (commandEntries.length !== 1 || !commandEntries[0].startsWith(prefix)) return false;
+  if (commandEntries.length !== 1 || !commandEntries[0].startsWith(prefix)) return null;
 
   const command = commandEntries[0].slice(prefix.length);
   const tokens = command.split(" ");
   if (tokens.length < 2 || tokens[0] !== "env" || tokens.at(-1) !== MANAGED_IMAGE_ENTRYPOINT[0]) {
-    return false;
+    return null;
   }
   try {
     const assignmentKeys = new Set<string>();
     for (const assignment of tokens.slice(1, -1)) {
       const separator = assignment.indexOf("=");
-      if (separator <= 0) return false;
+      if (separator <= 0) return null;
       const key = assignment.slice(0, separator);
       if (!MANAGED_STARTUP_ENV_KEY.test(key) || assignmentKeys.has(key)) {
-        return false;
+        return null;
       }
       assertManagedBootstrapSafeProcessEnvironmentKey(key);
       assignmentKeys.add(key);
     }
-    return openshellSandboxCommandEnvValue(tokens) === command;
+    return openshellSandboxCommandEnvValue(tokens) === command ? tokens : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -115,7 +126,7 @@ function hasReviewedManagedRuntimeProcess(config: Record<string, unknown>): bool
   return (
     hasExactTokens(config.Entrypoint, OPENSHELL_SANDBOX_ENTRYPOINT) &&
     (isReviewedEmptyCommand(config.Cmd) || hasExactTokens(config.Cmd, OPENSHELL_WORKDIR_COMMAND)) &&
-    hasReviewedManagedRuntimeWorkload(config.Env)
+    reviewedManagedRuntimeWorkload(config.Env) !== null
   );
 }
 
@@ -149,17 +160,43 @@ export function rewriteManagedInspectForLegacyKeepalive(
     "legacy keepalive fixture requires Docker configuration",
   );
   const configRecord = config as Record<string, unknown>;
+  const managedWorkload = reviewedManagedRuntimeWorkload(configRecord.Env);
   requireFixtureInput(
     (hasExactTokens(configRecord.Entrypoint, MANAGED_IMAGE_ENTRYPOINT) &&
       hasExactTokens(configRecord.Cmd, MANAGED_IMAGE_COMMAND)) ||
       hasReviewedManagedRuntimeProcess(configRecord),
     "legacy keepalive fixture requires the reviewed managed-image or OpenShell-managed runtime process contract",
   );
+  requireFixtureInput(
+    managedWorkload !== null,
+    "legacy keepalive fixture requires the reviewed managed startup workload",
+  );
 
   // The replacement container runs the exact pre-0.0.99 OpenShell supervisor
-  // contract. The production recreation helper still rejects other shapes.
+  // contract. OpenShell 0.0.99's OCI-user marker would prepare the shared
+  // /sandbox workspace before running this synthetic keepalive and mutate the
+  // ownership that the later managed-startup recovery is meant to inherit.
+  // That marker did not exist in the legacy runtime represented here. Keep
+  // this test-only rewrite separate from the production recreation allowlist.
   configRecord.Entrypoint = [...OPENSHELL_SANDBOX_ENTRYPOINT];
   configRecord.Cmd = [];
+  const environment = configRecord.Env as string[];
+  const hasOciImageUser = environment.some(
+    (entry) =>
+      entry === OPENSHELL_OCI_IMAGE_USER_ENV ||
+      entry.startsWith(`${OPENSHELL_OCI_IMAGE_USER_ENV}=`),
+  );
+  if (hasOciImageUser) {
+    requireFixtureInput(
+      shouldOmitOpenShellOciImageUser(record as DockerContainerInspect, managedWorkload),
+      "legacy keepalive fixture requires the reviewed OpenShell OCI workspace identity contract",
+    );
+  }
+  configRecord.Env = environment.filter(
+    (entry) =>
+      entry !== OPENSHELL_OCI_IMAGE_USER_ENV &&
+      !entry.startsWith(`${OPENSHELL_OCI_IMAGE_USER_ENV}=`),
+  );
   return JSON.stringify(parsed);
 }
 

@@ -21,6 +21,11 @@ const NEW_CONTAINER_ID = "b".repeat(64);
 const MANAGED_RUNTIME_STARTUP_COMMAND =
   "env CHAT_UI_URL=http://127.0.0.1:18789 NEMOCLAW_DASHBOARD_PORT=18789 NEMOCLAW_SANDBOX_NAME=e2e-2701 /usr/local/bin/nemoclaw-start";
 const MANAGED_RUNTIME_COMMAND_ENV = `OPENSHELL_SANDBOX_COMMAND=${MANAGED_RUNTIME_STARTUP_COMMAND}`;
+const OPEN_SHELL_IDENTITY_ENV = [
+  "OPENSHELL_OCI_IMAGE_USER=sandbox",
+  "OPENSHELL_SANDBOX_UID=",
+  "OPENSHELL_SANDBOX_GID=",
+] as const;
 const FIXTURE_PATH = fileURLToPath(
   new URL("../live/gateway-guard-legacy-keepalive-fixture.ts", import.meta.url),
 );
@@ -66,7 +71,7 @@ function managedImageInspect(
 function managedRuntimeInspect({
   entrypoint = ["/opt/openshell/bin/openshell-sandbox"],
   command = ["--workdir", "/sandbox"],
-  environment = [MANAGED_RUNTIME_COMMAND_ENV],
+  environment = [MANAGED_RUNTIME_COMMAND_ENV, ...OPEN_SHELL_IDENTITY_ENV],
 }: {
   entrypoint?: string[];
   command?: string[] | null;
@@ -79,9 +84,12 @@ function managedRuntimeInspect({
       Name: "/openshell-e2e-2701",
       Config: {
         Image: "nemoclaw-managed:test",
+        User: "0",
+        WorkingDir: "/",
         Entrypoint: entrypoint,
         Cmd: command,
         Env: environment,
+        Labels: { "openshell.ai/managed-by": "openshell" },
       },
       HostConfig: {},
     },
@@ -100,6 +108,7 @@ describe("gateway guard legacy keepalive fixture", () => {
       expect(rewritten[0].Config).toMatchObject({
         Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
         Cmd: [],
+        Env: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_UID=", "OPENSHELL_SANDBOX_GID="],
       });
       return successfulResult();
     });
@@ -133,7 +142,36 @@ describe("gateway guard legacy keepalive fixture", () => {
     expect(rewritten[0].Config).toMatchObject({
       Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
       Cmd: [],
+      Env: [MANAGED_RUNTIME_COMMAND_ENV, "OPENSHELL_SANDBOX_UID=", "OPENSHELL_SANDBOX_GID="],
     });
+  });
+
+  it("removes only the post-legacy OCI workspace marker before keepalive recreation (#9364)", () => {
+    const inspect = JSON.parse(managedRuntimeInspect());
+    inspect[0].Config.Env.push("OPENSHELL_OCI_IMAGE_USER_NOTE=preserved");
+
+    const rewritten = JSON.parse(
+      rewriteManagedInspectForLegacyKeepalive(JSON.stringify(inspect), OLD_CONTAINER_ID),
+    );
+
+    expect(rewritten[0].Config.Env).not.toContain("OPENSHELL_OCI_IMAGE_USER=sandbox");
+    expect(rewritten[0].Config.Env).toEqual(
+      expect.arrayContaining([
+        MANAGED_RUNTIME_COMMAND_ENV,
+        "OPENSHELL_SANDBOX_UID=",
+        "OPENSHELL_SANDBOX_GID=",
+        "OPENSHELL_OCI_IMAGE_USER_NOTE=preserved",
+      ]),
+    );
+  });
+
+  it("rejects the OCI marker outside the reviewed root-supervisor workspace boundary (#9364)", () => {
+    const inspect = JSON.parse(managedRuntimeInspect());
+    inspect[0].Config.WorkingDir = "/sandbox";
+
+    expect(() =>
+      rewriteManagedInspectForLegacyKeepalive(JSON.stringify(inspect), OLD_CONTAINER_ID),
+    ).toThrow("requires the reviewed OpenShell OCI workspace identity contract");
   });
 
   it("accepts the reviewed empty OpenShell supervisor command before legacy recreation (#9364)", () => {
@@ -287,6 +325,7 @@ describe("gateway guard legacy keepalive fixture", () => {
         "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
       ]),
     );
+    expect(args).not.toContain("OPENSHELL_OCI_IMAGE_USER=sandbox");
     expect(args.slice(args.indexOf(immutableImage))).toEqual([immutableImage]);
   });
 
