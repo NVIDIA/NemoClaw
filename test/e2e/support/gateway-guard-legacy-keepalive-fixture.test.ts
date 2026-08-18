@@ -126,7 +126,7 @@ function managedRuntimeInspectWithoutOciImageUser(
 }
 
 describe("gateway guard legacy keepalive fixture", () => {
-  it("recreates only the pinned sandbox container with the reviewed legacy supervisor contract (#9364)", () => {
+  it("recreates only the pinned sandbox container with the reviewed supervisor and legacy workload (#9364)", () => {
     const dockerCapture = vi.fn(() => managedRuntimeInspect());
     const recreate = vi.fn((_, deps: Parameters<LegacyKeepaliveFixtureDeps["recreate"]>[1]) => {
       const rewritten = JSON.parse(
