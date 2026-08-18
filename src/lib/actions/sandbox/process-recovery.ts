@@ -394,6 +394,16 @@ function isExactlyPendingManagedGatewayHealth(result: SandboxCommandResult | nul
   return lines.length === 1 && lines[0] === "GATEWAY_HEALTH_TIMEOUT";
 }
 
+function isExactlyManagedGatewayStartupTransition(
+  result: ManagedGatewaySupervisorActionResult | null,
+): boolean {
+  return (
+    isExactlyMissingManagedSupervisor(result) ||
+    isExactlyPendingManagedSupervisorControl(result) ||
+    isExactlyPendingManagedGatewayHealth(result)
+  );
+}
+
 function isExactlyRetryableManagedControlTransition(
   result: ManagedGatewaySupervisorActionResult | null,
 ): boolean {
@@ -428,10 +438,8 @@ export function waitForManagedGatewaySupervisor(
     const result = requestGatewaySupervisorAction(sandboxName, "probe", OPENSHELL_PROBE_TIMEOUT_MS);
     if (hasGatewayRecoveryMarker(result)) return true;
     if (
-      !isExactlyMissingManagedSupervisor(result) &&
+      !isExactlyManagedGatewayStartupTransition(result) &&
       !isExactlyRetryableManagedRecoveryFailure(result) &&
-      !isExactlyPendingManagedSupervisorControl(result) &&
-      !isExactlyPendingManagedGatewayHealth(result) &&
       !isExactlyRetryableManagedControlTransition(result)
     ) {
       return false;
@@ -683,14 +691,20 @@ function recoverSandboxProcesses(
       if (managedControlCompletion) return { kind: "managed", managedControlCompletion };
       if (hasGatewayRecoveryMarker(execResult)) return { kind: "managed" };
 
-      // PID 1 may replace the gateway between the host's stopped observation
-      // and the controller's process-tree capture. Retry only exact controller
+      // The restarted sandbox can report Ready before its managed controller
+      // and gateway finish starting. Retry only exact startup, controller
       // contention, status 137 with no output, and ID-bound Docker transition
-      // results. Integrity, configuration, and launch refusals are terminal.
+      // results. Identity, integrity, configuration, and launch refusals are
+      // diagnostic-bearing and remain terminal.
       if (isExactlyRetryableManagedRecoveryFailure(execResult)) {
         busyAttempts += 1;
         if (busyAttempts >= maxBusyAttempts) break;
-      } else if (!isExactlyRetryableManagedControlTransition(execResult)) break;
+      } else if (
+        !isExactlyManagedGatewayStartupTransition(execResult) &&
+        !isExactlyRetryableManagedControlTransition(execResult)
+      ) {
+        break;
+      }
       if (attempt === maxAttempts) break;
       sleepSeconds(retryIntervalSeconds);
     }

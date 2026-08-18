@@ -236,7 +236,7 @@ describe("uninstall OpenShell gateway user service", () => {
               ? ok(`${String(process.getuid?.() ?? -1)}\n`)
               : command === "ps" && args.includes("args=")
                 ? ok("/usr/local/bin/openshell-gateway --name nemoclaw --port 8080\n")
-              : ok(),
+                : ok(),
       },
       [{ name: "nemoclaw" }, { name: "sibling" }],
     );
@@ -335,7 +335,9 @@ describe("uninstall OpenShell gateway user service", () => {
             (command === "systemctl" &&
               args.includes("--property=MainPID") &&
               ok(`${String(pid)}\n`)) ||
-            (command === "ps" && args.includes("uid=") && ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
+            (command === "ps" &&
+              args.includes("uid=") &&
+              ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
             (command === "ps" &&
               args.includes("args=") &&
               ok("/usr/local/bin/openshell-gateway --name nemoclaw --port 8080\n")) ||
@@ -445,82 +447,82 @@ describe("uninstall OpenShell gateway user service", () => {
     { externallySupervised: false, keepOpenShell: false, mode: "managed cleanup" },
     { externallySupervised: false, keepOpenShell: true, mode: "--keep-openshell" },
     { externallySupervised: true, keepOpenShell: false, mode: "external supervision" },
-  ])("does not mutate scoped resources with an unproven sandbox namespace under $mode (#8663)", ({
-    externallySupervised,
-    keepOpenShell,
-  }) => {
-    const test = fixture(true);
-    const servicePath = writeManagedService(test);
-    const configPath = writeGatewayState(test);
-    const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
-    const registryBefore = fs.readFileSync(registryPath, "utf-8");
-    fs.writeFileSync(configPath, '[openshell.drivers.docker]\nsandbox_namespace = "default"\n');
-    const calls: string[][] = [];
-    const errors: string[] = [];
+  ])(
+    "does not mutate scoped resources with an unproven sandbox namespace under $mode (#8663)",
+    ({ externallySupervised, keepOpenShell }) => {
+      const test = fixture(true);
+      const servicePath = writeManagedService(test);
+      const configPath = writeGatewayState(test);
+      const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
+      const registryBefore = fs.readFileSync(registryPath, "utf-8");
+      fs.writeFileSync(configPath, '[openshell.drivers.docker]\nsandbox_namespace = "default"\n');
+      const calls: string[][] = [];
+      const errors: string[] = [];
 
-    const externalAuthority = externallySupervised
-      ? {
-          resolveGatewayTeardownAuthority: ({
-            gatewayName,
-            gatewayPort,
-          }: {
-            gatewayName: string;
-            gatewayPort: number;
-          }) => ({
-            gatewayName,
-            gatewayPort,
-            mode: "externally-supervised" as const,
-            source: "declared" as const,
-            endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
-            stateDir: path.dirname(configPath),
-            supervisor: {
-              kind: "systemd-user" as const,
-              serviceName: "external-openshell.service",
-              execPath: "/usr/local/bin/openshell-gateway",
-            },
-            requiredCapabilities: [],
-          }),
-        }
-      : {};
-    const deps: Partial<UninstallRunDeps> = {
-      commandExists: (command) => command === "systemctl",
-      run: (command, args) => {
-        calls.push([command, ...args]);
-        return ok();
-      },
-      error: (message) => errors.push(message),
-      ...externalAuthority,
-    };
+      const externalAuthority = externallySupervised
+        ? {
+            resolveGatewayTeardownAuthority: ({
+              gatewayName,
+              gatewayPort,
+            }: {
+              gatewayName: string;
+              gatewayPort: number;
+            }) => ({
+              gatewayName,
+              gatewayPort,
+              mode: "externally-supervised" as const,
+              source: "declared" as const,
+              endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+              stateDir: path.dirname(configPath),
+              supervisor: {
+                kind: "systemd-user" as const,
+                serviceName: "external-openshell.service",
+                execPath: "/usr/local/bin/openshell-gateway",
+              },
+              requiredCapabilities: [],
+            }),
+          }
+        : {};
+      const deps: Partial<UninstallRunDeps> = {
+        commandExists: (command) => command === "systemctl",
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          return ok();
+        },
+        error: (message) => errors.push(message),
+        ...externalAuthority,
+      };
 
-    const result = uninstall(test, keepOpenShell, deps, [
-      { name: "nemoclaw" },
-      { name: "nemoclaw-8081" },
-    ]);
+      const result = uninstall(test, keepOpenShell, deps, [
+        { name: "nemoclaw" },
+        { name: "nemoclaw-8081" },
+      ]);
 
-    expect(result.exitCode).toBe(1);
-    expect(fs.existsSync(servicePath)).toBe(true);
-    expect(fs.existsSync(configPath)).toBe(true);
-    expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryBefore);
-    expect(
-      calls.some(([command, resource]) => command === "openshell" && resource === "sandbox"),
-    ).toBe(false);
-    expect(
-      calls.some(
-        ([command, resource, action]) =>
-          command === "openshell" && resource === "gateway" && action === "remove",
-      ),
-    ).toBe(false);
-    expect(
-      calls.some(
-        ([command, ...args]) => command === "systemctl" && !args.includes("--property=MainPID"),
-      ),
-    ).toBe(false);
-    expect(errors).toContain(
-      externallySupervised
-        ? "Refusing scoped gateway cleanup because the externally supervised process's loaded sandbox namespace cannot be proven."
-        : "Refusing scoped gateway cleanup because its sandbox namespace cannot be proven.",
-    );
-  });
+      expect(result.exitCode).toBe(1);
+      expect(fs.existsSync(servicePath)).toBe(true);
+      expect(fs.existsSync(configPath)).toBe(true);
+      expect(fs.readFileSync(registryPath, "utf-8")).toBe(registryBefore);
+      expect(
+        calls.some(([command, resource]) => command === "openshell" && resource === "sandbox"),
+      ).toBe(false);
+      expect(
+        calls.some(
+          ([command, resource, action]) =>
+            command === "openshell" && resource === "gateway" && action === "remove",
+        ),
+      ).toBe(false);
+      expect(
+        calls.some(
+          ([command, ...args]) => command === "systemctl" && !args.includes("--property=MainPID"),
+        ),
+      ).toBe(false);
+      expect(errors).toContain(
+        externallySupervised
+          ? "Refusing scoped gateway cleanup because the externally supervised process's loaded sandbox namespace cannot be proven."
+          : "Refusing scoped gateway cleanup because its sandbox namespace cannot be proven.",
+      );
+    },
+  );
 
   it("preserves the marked Linux unit when scoped sandbox deletion fails (#8220)", () => {
     const test = fixture(true);
@@ -698,18 +700,31 @@ describe("uninstall OpenShell gateway user service", () => {
     const test = fixture();
     const servicePath = writeManagedService(test);
     const errors: string[] = [];
+    const run = vi.fn((command: string, args: string[]) =>
+      command === "systemctl" && args.includes("disable")
+        ? { status: 1, stdout: "", stderr: "failed" }
+        : ok(),
+    );
 
     const result = uninstall(test, false, {
-      commandExists: (command) => command === "systemctl",
+      commandExists: (command) => ["systemctl", "npm"].includes(command),
       error: (line) => errors.push(line),
-      run: (command, args) =>
-        command === "systemctl" && args.includes("disable")
-          ? { status: 1, stdout: "", stderr: "failed" }
-          : ok(),
+      run,
     });
 
     expect(result.exitCode).toBe(1);
     expect(fs.existsSync(servicePath)).toBe(true);
+    const failedDisableIndex = run.mock.calls.findIndex(
+      ([command, args]) => command === "systemctl" && args.includes("disable"),
+    );
+    const npmCleanupIndex = run.mock.calls.findIndex(
+      ([command, args], index) =>
+        index > failedDisableIndex &&
+        command === "npm" &&
+        args.join(" ") === "uninstall -g --loglevel=error nemoclaw",
+    );
+    expect(failedDisableIndex).toBeGreaterThanOrEqual(0);
+    expect(npmCleanupIndex).toBeGreaterThan(failedDisableIndex);
     expect(errors).toContain(
       "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
     );
