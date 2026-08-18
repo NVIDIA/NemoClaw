@@ -27,6 +27,7 @@ import {
 } from "./container-runtime-resources";
 import { assessNvidiaCdiHost } from "./docker-cdi";
 import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
+import { isSshSession } from "./ssh-forward-hint";
 import { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 export {
@@ -136,6 +137,10 @@ export interface HostAssessment {
   requiresHostCgroupnsFix: boolean;
   isUnsupportedRuntime: boolean;
   isHeadlessLikely: boolean;
+  /** True when the CLI runs inside an SSH session (#9457). */
+  isSshSession?: boolean;
+  /** `credsStore` credential-helper name from the Docker client config (#9457). */
+  dockerCredsStore?: string;
   hasNvidiaGpu: boolean;
   dockerCdiSpecDirs: string[];
   cdiNvidiaGpuSpecMissing: boolean;
@@ -451,6 +456,28 @@ function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
   return !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERM_PROGRAM;
 }
 
+/**
+ * Read the `credsStore` credential-helper name from the Docker client config
+ * (`$DOCKER_CONFIG/config.json`, default `~/.docker/config.json`). A missing,
+ * unreadable, or malformed config declares no credential store (#9457).
+ */
+function readDockerCredsStore(
+  env: NodeJS.ProcessEnv,
+  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
+): string | undefined {
+  const configDir = env.DOCKER_CONFIG || path.join(os.homedir(), ".docker");
+  try {
+    const parsed: { credsStore?: unknown } = JSON.parse(
+      readFileImpl(path.join(configDir, "config.json"), "utf-8"),
+    );
+    return typeof parsed.credsStore === "string" && parsed.credsStore !== ""
+      ? parsed.credsStore
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // lspci line shape: "<slot> <class label>: <vendor> <device> ...".
 // The slot token contains colons (e.g. "01:00.0"), so anchor on the class
 // label that follows it and ends at the first ": ".
@@ -684,6 +711,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     requiresHostCgroupnsFix: false,
     isUnsupportedRuntime: runtime === "podman",
     isHeadlessLikely: isHeadlessLikely(env),
+    isSshSession: isSshSession(env),
+    dockerCredsStore: readDockerCredsStore(env, readFileImpl),
     hasNvidiaGpu,
     ...cdiAssessment,
     nvidiaContainerToolkitInstalled,

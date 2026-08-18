@@ -12,9 +12,11 @@
  * matches the stream the line lands on.
  */
 
+import { dockerDesktopCredentialStoreHeadless } from "../advisories/checks/host/docker";
 import { failLine, warnLine } from "../cli/terminal-style";
 import { formatNvidiaGpuPreflightLines, type GpuDetection } from "../inference/nim";
 import { cliDisplayName } from "./branding";
+import type { HostAssessment } from "./preflight";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 /** Docker cannot be reached, so onboarding cannot continue. */
@@ -68,6 +70,25 @@ export function printUnderProvisionedRuntimeWarning(
     warn("    Suggested: Docker Desktop → Settings → Resources, raise CPU/memory.");
   }
   warn("    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.");
+}
+
+/**
+ * Docker Desktop's credential helper needs a GUI session, so a headless or SSH
+ * session can fail every image pull while it is configured (#9457). Warn and
+ * proceed before the first pull; the same advisory joins the remediation list
+ * when readiness blocks onboarding.
+ */
+export function warnIfHeadlessDockerDesktopCredentialStore(
+  host: HostAssessment,
+  warn: (message: string) => void = console.warn,
+): boolean {
+  const advisory = dockerDesktopCredentialStoreHeadless.check(host);
+  if (!advisory) return false;
+  warn(warnLine(advisory.reason));
+  for (const command of advisory.commands ?? []) {
+    warn(`    ${command}`);
+  }
+  return true;
 }
 
 /** Total system memory is below the sandbox-build comfort threshold. */

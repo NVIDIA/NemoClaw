@@ -158,10 +158,40 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
   },
 };
 
+// Only Docker Desktop writes these credential-helper names, and its helper
+// needs an interactive GUI session to serve credentials.
+const DOCKER_DESKTOP_CREDENTIAL_STORES = new Set(["desktop", "desktop.exe"]);
+
+export const dockerDesktopCredentialStoreHeadless: AdvisoryCheck<HostAssessment> = {
+  id: "docker_desktop_credential_store_headless",
+  phase: "preflight.host",
+  severity: "warning",
+  resumeSafe: false,
+  check(host) {
+    const credsStore = host.dockerCredsStore ?? "";
+    if (!DOCKER_DESKTOP_CREDENTIAL_STORES.has(credsStore)) return null;
+    if (!host.isSshSession && !host.isHeadlessLikely) return null;
+    return hostAdvisory(dockerDesktopCredentialStoreHeadless, {
+      title: "Avoid Docker Desktop credential store pull failures",
+      kind: "manual",
+      reason:
+        `The Docker client config (~/.docker/config.json) sets credsStore "${credsStore}", ` +
+        "which needs the Docker Desktop GUI session. " +
+        "This session looks headless, so the credential helper can fail " +
+        "and block every image pull, even for public images.",
+      commands: [
+        "DOCKER_CONFIG=$(mktemp -d) docker pull <image>   # pull a failing image with an isolated Docker config",
+        '# or temporarily remove the "credsStore" entry from ~/.docker/config.json, then rerun `nemoclaw onboard`.',
+      ],
+    });
+  },
+};
+
 export const DOCKER_HOST_ADVISORY_CHECKS = Object.freeze([
   enableDockerDesktopWslIntegration,
   installDocker,
   invalidDockerHost,
   addUserToDockerGroup,
   startDocker,
+  dockerDesktopCredentialStoreHeadless,
 ]);

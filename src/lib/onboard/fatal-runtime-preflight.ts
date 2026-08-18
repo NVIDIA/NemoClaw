@@ -35,6 +35,7 @@ import {
   printCdiSpecUnavailableError,
   printDockerNotReachableError,
   printUnsupportedRuntimeError,
+  warnIfHeadlessDockerDesktopCredentialStore,
 } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
@@ -438,6 +439,10 @@ export function runOnboardRuntimeEffectfulPreflightChecks(
   exitOnSandboxGpuConfigErrors(result.sandboxGpuConfig, exitProcess);
   console.log("  ✓ Docker is running");
   (context.warnIfHostProxyMissesLoopback ?? warnIfHostProxyMissesLoopback)();
+  // Warn before the first image pull (the bridge probe below may pull) so a
+  // headless Docker Desktop credential store surfaces during preflight instead
+  // of at a later pull failure (#9457).
+  warnIfHeadlessDockerDesktopCredentialStore(result.host);
   (context.validateSandboxGpuPreflight ?? validateSandboxGpuPreflight)(
     result.sandboxGpuConfig,
     {},
