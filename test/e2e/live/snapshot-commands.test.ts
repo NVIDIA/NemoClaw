@@ -663,6 +663,17 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     );
 
     progress.phase("restore the first snapshot into a clone");
+    const selectedSnapshot = JSON.parse(
+      fs.readFileSync(path.join(BACKUP_DIR, timestamp, "rebuild-manifest.json"), "utf8"),
+    ) as { workload?: { kind?: unknown } };
+    const expectedCloneRestoreResult =
+      selectedSnapshot.workload?.kind === "managed-image"
+        ? "managed-clone-rebind-required"
+        : "restored";
+    await artifacts.writeJson("phase-4-clone-restore-expectation.json", {
+      classification: expectedCloneRestoreResult,
+      workloadKind: selectedSnapshot.workload?.kind ?? null,
+    });
     const cloneRestore = await host.command(
       "nemoclaw",
       [SANDBOX_NAME, "snapshot", "restore", timestamp, "--to", CLONE_SANDBOX_NAME, "--yes"],
@@ -673,8 +684,9 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
       },
     );
     const cloneRestoreResult = classifySnapshotRestoreResult(cloneRestore);
+    expect(cloneRestoreResult).toBe(expectedCloneRestoreResult);
     progress.phase("verify the restored clone state and gateway pairing");
-    switch (cloneRestoreResult) {
+    switch (expectedCloneRestoreResult) {
       case "managed-clone-rebind-required": {
         expect(resultText(cloneRestore)).toContain(
           `restoring '${SANDBOX_NAME}' as '${CLONE_SANDBOX_NAME}' requires managed-profile clone rebind`,
