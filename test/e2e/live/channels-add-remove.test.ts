@@ -290,7 +290,7 @@ async function openClawTelegramMatches(
 ): Promise<boolean> {
   const predicate =
     probe === "active"
-      ? "channel.get('enabled') is True and plugin.get('enabled') is True"
+      ? "channel.get('enabled') is True and plugin.get('enabled') is True and isinstance(accounts, dict) and any(isinstance(account, dict) and account.get('enabled') is True for account in accounts.values())"
       : "'telegram' in channels or 'telegram' in plugins";
   const result = await sandbox.exec(
     SANDBOX_NAME,
@@ -304,6 +304,7 @@ async function openClawTelegramMatches(
         "plugins=data.get('plugins', {}).get('entries', {})",
         "channel=channels.get('telegram', {})",
         "plugin=plugins.get('telegram', {})",
+        "accounts=channel.get('accounts', {})",
         `print('yes' if ${predicate} else 'no')`,
       ].join("; "),
     ],
