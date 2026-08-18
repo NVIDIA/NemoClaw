@@ -73,6 +73,9 @@ function validateNameEntry(entry: unknown, index: number, source: string): NameE
   if (typeof name !== "string" || name.length === 0) {
     throw new Error(`${where}: missing or empty 'name'`);
   }
+  if (name !== name.trim() || name.replace(/\.$/, "").length === 0) {
+    throw new Error(`${where}: 'name' must be canonical and contain no surrounding whitespace`);
+  }
   if (typeof purpose !== "string" || purpose.trim().length === 0) {
     throw new Error(
       `${where}: 'purpose' must be a non-empty string so reviewers can judge the block`,
