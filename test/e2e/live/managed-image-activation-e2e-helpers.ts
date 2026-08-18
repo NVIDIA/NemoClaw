@@ -414,6 +414,7 @@ async function collectOnboardFailureDockerDiagnostics(
           artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-logs`,
           captureLimitBytes: 2 * 1024 * 1024,
           env,
+          persistArtifacts: false,
           redactionValues: [API_KEY],
           timeoutMs: 30_000,
         });
