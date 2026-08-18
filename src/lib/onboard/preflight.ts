@@ -18,7 +18,11 @@ import path from "node:path";
 import { ADVISORY_CHECKS } from "../advisories/registry";
 import { runAdvisories } from "../advisories/runner";
 import { DASHBOARD_PORT } from "../core/ports";
-import { isDockerDaemonReachable, isSupportedGatewayDockerHost } from "../domain/docker-host";
+import {
+  DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES,
+  isDockerDaemonReachable,
+  isSupportedGatewayDockerHost,
+} from "../domain/docker-host";
 import { classifyDockerVersionIdentity } from "../platform";
 import { resolveOpenshell } from "../readiness/openshell-resolver";
 import {
@@ -485,18 +489,17 @@ function readDockerCredsStore(
   }
 }
 
-// Only Docker Desktop writes these credential-helper names. Keep in sync with
-// DOCKER_DESKTOP_CREDENTIAL_STORES in advisories/checks/host/docker.ts; the
-// two stay separate because a value import in either direction would create a
-// require cycle through the advisory registry.
-const DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES = new Set(["desktop", "desktop.exe"]);
+// Windows interop can stall; bound the probe so a hung helper cannot hang
+// preflight or a readiness collection.
+const DOCKER_CREDENTIAL_HELPER_PROBE_TIMEOUT_MS = 10_000;
 
 /**
  * True when the configured Docker Desktop credential helper answers a
- * read-only `list` call from this session. In WSL the helper runs on the
- * Windows side through interop, so session markers (DISPLAY, SSH variables)
- * cannot see whether a usable Windows logon session exists — probe the helper
- * instead (#9457). Probed only for the two exact Docker Desktop helper names.
+ * read-only `list` call with parseable JSON from this session. In WSL the
+ * helper runs on the Windows side through interop, so session markers
+ * (DISPLAY, SSH variables) cannot see whether a usable Windows logon session
+ * exists — probe the helper instead (#9457). Probed only for the exact Docker
+ * Desktop helper names, so no configurable string selects the executable.
  */
 function dockerCredentialHelperResponds(
   credsStore: string,
@@ -505,10 +508,10 @@ function dockerCredentialHelperResponds(
   try {
     const output = runCaptureImpl([`docker-credential-${credsStore}`, "list"], {
       ignoreError: true,
+      timeout: DOCKER_CREDENTIAL_HELPER_PROBE_TIMEOUT_MS,
     });
-    return String(output || "")
-      .trim()
-      .startsWith("{");
+    JSON.parse(String(output || ""));
+    return true;
   } catch {
     return false;
   }
@@ -587,8 +590,11 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const env = opts.env ?? process.env;
   const runCaptureImpl =
     opts.runCaptureImpl ??
-    ((command: readonly string[], options?: { ignoreError?: boolean }) =>
-      runCapture(command, { ignoreError: options?.ignoreError ?? false }));
+    ((command: readonly string[], options?: { ignoreError?: boolean; timeout?: number }) =>
+      runCapture(command, {
+        ignoreError: options?.ignoreError ?? false,
+        timeout: options?.timeout,
+      }));
   const readFileImpl = opts.readFileImpl ?? fs.readFileSync;
   const readdirImpl = opts.readdirImpl ?? ((dir: string) => fs.readdirSync(dir));
   const dockerInstalled =

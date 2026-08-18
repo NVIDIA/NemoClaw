@@ -113,6 +113,7 @@ describe("assessHost Docker credential store detection (#9457)", () => {
 
   it.each([
     ["an unresponsive helper", "", true],
+    ["a helper with malformed output", "not json", true],
     ["a responding helper", '{"https://index.docker.io/v1/":"user"}', false],
   ] as const)(
     "probes the Docker Desktop credential helper on WSL with %s (#9457)",
@@ -197,9 +198,14 @@ describe("onboard preflight credential-store warning (#9457)", () => {
   });
 
   it("warns about the headless Docker Desktop credential store before the first image pull and proceeds", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const events: string[] = [];
+    vi.spyOn(console, "warn").mockImplementation((message?: unknown) => {
+      events.push(String(message));
+    });
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const bridge = vi.fn();
+    const bridge = vi.fn(() => {
+      events.push("bridge-probe");
+    });
     const context = {
       nonInteractive: true,
       deferEffectfulChecks: true,
@@ -213,11 +219,15 @@ describe("onboard preflight credential-store warning (#9457)", () => {
 
     runOnboardRuntimeEffectfulPreflightChecks(result, context);
 
-    const output = warn.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    const output = events.join("\n");
     expect(output).toContain('credsStore "desktop.exe"');
     expect(output).toContain("(docker_desktop_credential_store_headless)");
     expect(output).toContain("DOCKER_CONFIG=$(mktemp -d) docker pull");
-    expect(bridge).toHaveBeenCalledOnce();
+    const warningIndex = events.findIndex((event) =>
+      event.includes("docker_desktop_credential_store_headless"),
+    );
+    expect(warningIndex).toBeGreaterThanOrEqual(0);
+    expect(warningIndex).toBeLessThan(events.indexOf("bridge-probe"));
   });
 
   it("prints nothing for a host without headless or SSH markers", () => {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../../../domain/docker-host";
 import type { HostAssessment, PackageManager } from "../../../onboard/preflight";
 import type { AdvisoryCheck } from "../../types";
 import { hostAdvisory } from "./common";
@@ -158,10 +159,6 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
   },
 };
 
-// Only Docker Desktop writes these credential-helper names, and its helper
-// needs an interactive GUI session to serve credentials.
-const DOCKER_DESKTOP_CREDENTIAL_STORES = new Set(["desktop", "desktop.exe"]);
-
 export const dockerDesktopCredentialStoreHeadless: AdvisoryCheck<HostAssessment> = {
   id: "docker_desktop_credential_store_headless",
   phase: "preflight.host",
@@ -169,7 +166,7 @@ export const dockerDesktopCredentialStoreHeadless: AdvisoryCheck<HostAssessment>
   resumeSafe: false,
   check(host) {
     const credsStore = host.dockerCredsStore ?? "";
-    if (!DOCKER_DESKTOP_CREDENTIAL_STORES.has(credsStore)) return null;
+    if (!DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES.has(credsStore)) return null;
     // In WSL the helper runs on the Windows side: WSLg can inject DISPLAY into
     // every shell and SSH variables do not cross wsl.exe, so session markers
     // are wrong in both directions there — trust the helper probe instead.

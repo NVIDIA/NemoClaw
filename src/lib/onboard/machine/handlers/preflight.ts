@@ -187,6 +187,16 @@ export async function handlePreflightState<
       allowDeferredN1xManagedVllm,
       resuming: true,
     });
+    // Session state (SSH markers, DISPLAY, Docker client config) is a
+    // per-invocation fact a cached preflight cannot carry, so re-evaluate the
+    // credential-store warning before any pull-capable effect: the GPU proof
+    // in deps.detectGpu() below can pull, and so can the bridge backstop
+    // (#9457). The default reads only optional advisory fields and no-ops
+    // when the host assessment does not carry them.
+    (
+      deps.warnIfHeadlessDockerDesktopCredentialStore ??
+      (warnIfHeadlessDockerDesktopCredentialStore as unknown as (host: Host) => boolean)
+    )(resumeHost);
     // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
     // behind both live readiness gates, and skip it entirely for CPU-only
     // intent. Replace gateway and host facts after that effect before any
@@ -212,15 +222,6 @@ export async function handlePreflightState<
       });
     }
     deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
-    // Session state (SSH markers, DISPLAY, Docker client config) is a
-    // per-invocation fact a cached preflight cannot carry, so re-evaluate the
-    // credential-store warning before the pull-capable probe below (#9457).
-    // The default reads only optional advisory fields and no-ops when the
-    // host assessment does not carry them.
-    (
-      deps.warnIfHeadlessDockerDesktopCredentialStore ??
-      (warnIfHeadlessDockerDesktopCredentialStore as unknown as (host: Host) => boolean)
-    )(resumeHost);
     // Resume backstop for #3508/#3630. Cached preflight does not capture
     // host Docker/DNS state, and a session written by an older NemoClaw
     // may have skipped the new bridge/DNS fatal checks.
