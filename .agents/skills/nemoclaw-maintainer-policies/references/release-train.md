@@ -56,7 +56,7 @@ At cutoff:
 4. Complete [Release-Prep Docs](#release-prep-docs) for the intended release range.
 5. Generate the immutable release plan with the exact `--version vX.Y.Z` to capture the candidate
    commit.
-6. Verify the candidate's required documentation, image, and exact staging Launchable evidence. If
+6. Verify the candidate's required documentation and image evidence. If
    documentation is missing, complete [Release-Prep Docs](#release-prep-docs), merge that PR,
    generate a new plan, and repeat the evidence checks for the new candidate.
 7. Show the newest full E2E context and record the maintainer's focused, full, or proceed decision.
@@ -67,40 +67,16 @@ Merges may continue after planning. Keep the planned candidate when it remains a
 `origin/main`, the previous release has not changed, and its own required evidence remains valid.
 Regenerate the plan only when the intended range, version, or candidate changes.
 
-## Required Image and Launchable Evidence
+## Required Image Evidence
 
-Before confirmation, require both exact-candidate results:
+Before confirmation, require a successful exact-candidate E2E `base-image-publication` job. Its
+checked-in verifier selects the newest applicable image-changing commit in first-parent history,
+requires every managed publisher, and validates the immutable Deep Agents Code base contract.
+Record the E2E workflow and aggregate-job URLs and the run attempt; do not repeat its publisher
+queries in the tag skill.
 
-1. A successful exact-candidate E2E `base-image-publication` job. Its checked-in verifier selects
-   the newest applicable image-changing commit in first-parent history, requires every managed
-   publisher, and validates the immutable Deep Agents Code base contract. Record the E2E workflow
-   and aggregate-job URLs and the run attempt; do not repeat its publisher queries in the tag skill.
-2. A successful `Exact staging Brev Launchable` job for the exact candidate SHA. The trusted job
-   builds the candidate image, deploys the configured standing Launchable, verifies environment
-   access and the exact booted image, verifies the baked runtime, runs hosted and sandbox inference
-   through the preinstalled full E2E suite, deletes its Brev workspace, and confirms absence.
-
-Record:
-
-- the Launchable workflow and job URLs;
-- the attempt and producer run;
-- the concrete boot image;
-- the image-repository SHA;
-- the baked-runtime identity;
-- the full E2E result; and
-- the workspace-cleanup result.
-
-A successful job retains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`. The cleanup record
-exists only after the job confirms workspace absence. A preparation failure can produce no artifact;
-a later failure can retain only `lane.log` and the phase artifacts created before exit.
-
-Neither result can be waived by the general E2E decision. A successful `Release qualification`
-aggregate does not replace either exact-candidate result. The Launchable job may come from a
-Launchable-only or full manual run against trusted `main`.
-
-Before dispatch, apply the Launchable credential and resource boundary in
-[`test/e2e/README.md`](../../../../test/e2e/README.md#push-and-manual-pr-e2e). The trusted workflow
-requires repository `maintain` or `admin` permission before the Launchable source checkout.
+The general E2E decision cannot waive required image evidence. A successful `Release
+qualification` aggregate does not replace the exact-candidate result.
 
 ## General E2E Decision
 
@@ -125,8 +101,8 @@ and no requested run remains unresolved. Otherwise, record one plain-language re
 different, missing, non-successful, or unresolved status and explains why the maintainer is
 proceeding.
 
-This decision applies only to general E2E. It cannot cover missing documentation, required image
-evidence, or `Exact staging Brev Launchable`. Do not maintain a separate exception schema or ledger.
+This decision applies only to E2E. It cannot cover missing documentation or required image
+evidence. Do not maintain a separate exception schema or ledger.
 
 ## Signed Release Brief
 
@@ -136,8 +112,7 @@ Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the exact plan range. 
   helper;
 - the complete canonical release entry and its path;
 - Pi documentation workflow and job URLs, artifact name, and normalized approved-empty review;
-- the base-image aggregate and exact staging Launchable URLs, identities, full E2E result, and
-  cleanup result;
+- the base-image aggregate URL and identity;
 - the newest full E2E result and every requested run;
 - the maintainer's E2E decision; and
 - `Exceptions: None` or the plain-language exception reason.

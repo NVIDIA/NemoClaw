@@ -58,8 +58,11 @@ When NemoClaw starts Local Ollama on macOS or Linux, it requests at least `64000
 Fresh onboarding then verifies the loaded model's actual `context_length` through `/api/ps`.
 Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this verification before reusing its route.
 When `NEMOCLAW_CONTEXT_WINDOW` is larger than `64000`, the Ollama runtime must provide at least that larger value.
-Onboarding stops before building the sandbox when Ollama reports a smaller, missing, or malformed value and shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
-Setting `NEMOCLAW_CONTEXT_WINDOW` does not raise the Ollama daemon's runtime context or bypass this check.
+When Ollama reports a smaller runtime value, NemoClaw queries `/api/show` for the selected model's native context window.
+If the model's native context window is below the requirement, onboarding stops and tells you to select a model that meets the reported requirement.
+If the model can meet the requirement, or NemoClaw cannot read its native context window, onboarding instead shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
+A missing or malformed runtime value also produces the daemon restart guidance.
+Setting `NEMOCLAW_CONTEXT_WINDOW` does not raise the model's native context window or the Ollama daemon's runtime context, and it does not bypass this check.
 
 </AgentOnly>
 

@@ -657,7 +657,7 @@ function matchingPortableSandboxContainerIds(
   sandboxName: string,
   podman: PortablePodmanLifecycleTransport["podman"],
 ): string[] {
-  const result = podman([
+  const args = [
     "ps",
     "-a",
     "--no-trunc",
@@ -669,7 +669,11 @@ function matchingPortableSandboxContainerIds(
     `label=${PODMAN_SANDBOX_WORKSPACE_LABEL}=${PODMAN_SANDBOX_WORKSPACE}`,
     "--format",
     "{{.ID}}",
-  ]);
+  ] as const;
+  let result = podman(args);
+  if (result.status === 125) {
+    result = podman(args);
+  }
   requireCommand(result, `Finding portable sandbox '${sandboxName}'`);
   const ids = String(result.stdout ?? "")
     .split(/\r?\n/u)

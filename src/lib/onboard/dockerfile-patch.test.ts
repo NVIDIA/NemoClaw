@@ -6,8 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   encodeDockerJsonArg,
   isValidProxyHost,
@@ -15,7 +14,6 @@ import {
   patchStagedDockerfile,
 } from "./dockerfile-patch";
 import {
-  buildMessagingPlan,
   messagingChannel,
   setMessagingPlanEnv,
 } from "./__test-helpers__/dockerfile-patch-fixtures";
@@ -690,7 +688,7 @@ describe("dockerfile patch helpers", () => {
   });
 
   it("patches the staged Dockerfile with the manifest messaging plan", () => {
-    const messagingPlan = buildMessagingPlan({
+    const messagingPlan = setMessagingPlanEnv({
       channels: [messagingChannel("discord"), messagingChannel("telegram")],
       agentRender: [
         {
@@ -704,7 +702,6 @@ describe("dockerfile patch helpers", () => {
         },
       ],
     });
-    vi.spyOn(MessagingSetupApplier, "readPlanFromEnv").mockReturnValue(messagingPlan);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-plan-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
