@@ -118,10 +118,9 @@ export const googlechatManifest = {
       },
     },
     // ── Hermes-only Pub/Sub pull config ──
-    // OpenClaw uses an inbound webhook and ignores these. Hermes supports a
-    // webhook too, but NemoClaw pulls instead — no public inbound URL needed —
-    // so it needs the project and subscription. Hermes-gated prompt, rendered
-    // only into ~/.hermes/.env.
+    // Hermes supports a webhook too, but NemoClaw pulls instead, so it needs the
+    // project and subscription. OpenClaw ignores both. Rendered only into
+    // ~/.hermes/.env.
     {
       id: "projectId",
       kind: "config",
@@ -168,9 +167,8 @@ export const googlechatManifest = {
     {
       name: "googlechat",
       policyKeys: ["googlechat"],
-      // Hermes reaches Google Chat over Pub/Sub REST pull + Chat REST reply — a
-      // different egress shape from OpenClaw's inbound webhook — so it resolves a
-      // distinct concrete policy key backed by policy/hermes.yaml.
+      // Pub/Sub REST pull + Chat REST reply is a different egress shape from
+      // OpenClaw's inbound webhook, so it resolves its own policy key.
       agentPolicyKeys: {
         hermes: ["googlechat_hermes"],
       },
@@ -248,9 +246,8 @@ export const googlechatManifest = {
       },
     },
     // ── Hermes render ──
-    // Neither the SA JSON nor a token reaches the sandbox: the bridge provider
-    // mints one gateway-side and the runtime asset sends only the placeholder,
-    // which the L7 proxy swaps. Non-secret pull config and the allowlist only.
+    // Non-secret pull config and the allowlist only: no SA JSON or token reaches
+    // the sandbox, which sends the placeholder the L7 proxy swaps.
     {
       id: "googlechat-hermes-env",
       kind: "env-lines",
@@ -348,9 +345,8 @@ export const googlechatManifest = {
       },
       required: true,
     },
-    // The base image ships aiohttp but not the google-* SDKs, which the
-    // inherited connect() and reply path both need. The Hermes-side delta lives
-    // in runtime/hermes-adapter.py.
+    // The base image ships aiohttp but not the google-* SDKs, which the inherited
+    // connect() and reply path both need.
     {
       id: "hermesGooglePubsubPackage",
       agent: "hermes",
@@ -375,10 +371,9 @@ export const googlechatManifest = {
   ],
   hooks: [
     {
-      // OpenClaw-only: this gates the inbound webhook audience. NemoClaw runs
-      // Hermes in Pub/Sub pull mode, which serves no inbound webhook, so this
-      // skip-channel gate must not run for Hermes (it would otherwise skip the
-      // channel and drop its policy preset).
+      // OpenClaw-only: gates the inbound webhook audience. Hermes pull mode
+      // serves no webhook, and running this gate would skip the channel and drop
+      // its policy preset.
       id: "googlechat-tunnel-audience-gate",
       phase: "enroll",
       handler: "googlechat.tunnelAudienceGate",

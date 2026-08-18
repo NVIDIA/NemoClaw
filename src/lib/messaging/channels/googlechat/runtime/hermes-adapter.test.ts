@@ -39,16 +39,14 @@ class ClientTimeout:
 
 
 class _Response:
-    def __init__(self, status, payload=None, text=""):
-        self.status = status
-        self._payload = payload if payload is not None else {}
-        self._text = text
+    def __init__(self, status, payload):
+        self.status, self._payload = status, payload or {}
 
     async def json(self):
         return self._payload
 
     async def text(self):
-        return self._text
+        return ""
 
     async def __aenter__(self):
         return self
@@ -69,20 +67,12 @@ class ClientSession:
 
     def post(self, url, json=None, headers=None, timeout=None):
         REQUESTS.append(
-            {
-                "url": url,
-                "method": "POST",
-                "authorization": (headers or {}).get("Authorization"),
-                "body": json,
-            }
+            {"url": url, "method": "POST", "authorization": (headers or {}).get("Authorization"), "body": json}
         )
-        if not SCRIPT:
-            raise AssertionError("aiohttp double ran out of scripted responses: " + url)
+        assert SCRIPT, "aiohttp double ran out of scripted responses: " + url
         status, payload, on_send = SCRIPT.pop(0)
-        if on_send is not None:
-            on_send()
-        if status == "transport-error":
-            raise OSError("proxy refused the acknowledge")
+        on_send and on_send()
+        assert status != "transport-error", "proxy refused the acknowledge"
         return _Response(status, payload)
 `;
 
@@ -113,14 +103,8 @@ handled = []
 
 
 def _received(ack_id, text):
-    return {
-        "receivedMessages": [
-            {
-                "ackId": ack_id,
-                "message": {"data": base64.b64encode(text.encode()).decode(), "attributes": {}},
-            }
-        ]
-    }
+    message = {"data": base64.b64encode(text.encode()).decode(), "attributes": {}}
+    return {"receivedMessages": [{"ackId": ack_id, "message": message}]}
 
 
 def _stop():
@@ -129,45 +113,29 @@ def _stop():
 
 def _handler(message):
     handled.append(message.data.decode())
-    if SCENARIO == "nack":
-        message.nack()
-    else:
-        message.ack()
+    message.nack() if SCENARIO == "nack" else message.ack()
 
 
 adapter._on_pubsub_message = _handler
+delivery, redelivery = _received("ack-1", "hello"), _received("ack-1", "hello")
 
-if SCENARIO == "acknowledged":
-    aiohttp.SCRIPT.extend(
-        [
-            (200, _received("ack-1", "hello"), None),
-            (200, {}, _stop),
-        ]
-    )
-elif SCENARIO == "acknowledge-fails":
-    # The ack is rejected, so Pub/Sub redelivers the same ackId on the next pull.
-    aiohttp.SCRIPT.extend(
-        [
-            (200, _received("ack-1", "hello"), None),
-            (500, {}, None),
-            (200, _received("ack-1", "hello"), None),
-            (200, {}, _stop),
-        ]
-    )
-elif SCENARIO == "acknowledge-raises":
-    # The acknowledge never reaches Pub/Sub, so the same ackId comes back.
-    aiohttp.SCRIPT.extend(
-        [
-            (200, _received("ack-1", "hello"), None),
+# Each entry is (pull or acknowledge response status, payload, side effect).
+# A rejected acknowledge means Pub/Sub redelivers the same ackId on the next pull.
+aiohttp.SCRIPT.extend(
+    {
+        "acknowledged": [(200, delivery, None), (200, {}, _stop)],
+        "acknowledge-fails": [
+            (200, delivery, None), (500, {}, None), (200, redelivery, None), (200, {}, _stop),
+        ],
+        "acknowledge-raises": [
+            (200, delivery, None),
             ("transport-error", None, None),
-            (200, _received("ack-1", "hello"), None),
+            (200, redelivery, None),
             (200, {}, _stop),
-        ]
-    )
-elif SCENARIO == "nack":
-    aiohttp.SCRIPT.extend([(200, _received("ack-1", "hello"), _stop)])
-else:
-    raise SystemExit("unknown scenario " + SCENARIO)
+        ],
+        "nack": [(200, delivery, _stop)],
+    }[SCENARIO]
+)
 
 asyncio.run(adapter._rest_pull())
 
@@ -209,27 +177,22 @@ describe("Hermes Google Chat keyless REST pull", () => {
     fs.rmSync(workspace, { recursive: true, force: true });
   });
 
-  it("sends the credential placeholder and nothing else on every request", () => {
-    const { requests } = runScenario("acknowledged");
-
-    expect(requests.length).toBeGreaterThan(0);
-    expect(new Set(requests.map((request) => request.authorization))).toEqual(
-      new Set([`Bearer ${PLACEHOLDER}`]),
-    );
-  });
-
-  it("reaches no Pub/Sub operation beyond pull and acknowledge", () => {
+  it("sends only the credential placeholder, and only to pull and acknowledge", () => {
     const { requests, handled } = runScenario("acknowledged");
 
     expect(handled).toEqual(["hello"]);
+    expect(new Set(requests.map((request) => request.authorization))).toEqual(
+      new Set([`Bearer ${PLACEHOLDER}`]),
+    );
     expect(new Set(requests.map((request) => `${request.method} ${request.url}`))).toEqual(
       new Set([
         `POST https://pubsub.googleapis.com/v1/${SUBSCRIPTION}:pull`,
         `POST https://pubsub.googleapis.com/v1/${SUBSCRIPTION}:acknowledge`,
       ]),
     );
-    const acknowledge = requests.filter((request) => request.url.endsWith(":acknowledge"));
-    expect(acknowledge.map((request) => request.body)).toEqual([{ ackIds: ["ack-1"] }]);
+    expect(
+      requests.filter((request) => request.url.endsWith(":acknowledge")).map((r) => r.body),
+    ).toEqual([{ ackIds: ["ack-1"] }]);
   });
 
   it("keeps a message eligible for redelivery when acknowledgement fails", () => {

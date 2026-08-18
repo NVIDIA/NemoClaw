@@ -1433,45 +1433,28 @@ _GOOGLE_CHAT_SUBSCRIPTION_ENV = "GOOGLE_CHAT_SUBSCRIPTION_NAME"
 _GOOGLE_CHAT_MODULE = "googlechat_adapter.py"
 
 
-def _load_googlechat_adapter():
-    """Load the sibling override module by path.
-
-    Hermes loads this plugin as a directory module under a synthetic name, so
-    there is no package context for a relative import.
-    """
-    path = os.path.join(os.path.dirname(__file__), _GOOGLE_CHAT_MODULE)
-    spec = importlib.util.spec_from_file_location(
-        "nemoclaw_hermes_googlechat_adapter",
-        path,
-    )
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def _install_googlechat_adapter(ctx):
     """Install the Google Chat override when that channel is configured.
 
-    Returns whether the module was loaded and invoked; it reports its own
-    registration failures.
+    The module is loaded by path: Hermes imports this plugin as a directory
+    module under a synthetic name, so a relative import has no package context.
+    Load failure must not abort plugin registration, but it has to be visible —
+    without the override the bundled gRPC adapter hangs under the REST-only
+    egress policy and the channel goes quiet with no other clue.
     """
     if not _get_env_value(_GOOGLE_CHAT_SUBSCRIPTION_ENV):
         return False
+    path = os.path.join(os.path.dirname(__file__), _GOOGLE_CHAT_MODULE)
     try:
-        module = _load_googlechat_adapter()
+        spec = importlib.util.spec_from_file_location("nemoclaw_hermes_googlechat", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.install(ctx)
     except Exception:
-        # Load failure must not abort plugin registration, but it has to be
-        # visible: without the override the bundled gRPC adapter hangs under the
-        # REST-only egress policy and the channel goes quiet with no other clue.
         logging.getLogger("gateway.platforms.google_chat").exception(
             "[GoogleChat][NemoClaw] loading %s failed", _GOOGLE_CHAT_MODULE,
         )
         return False
-    if module is None:
-        return False
-    module.install(ctx)
     return True
 
 

@@ -1,12 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Google Chat bridge for Hermes: keyless reply + Pub/Sub pull.
-#
-# * The gateway mints one chat.bot + pubsub token and injects it on both hosts.
-# * The private key stays gateway-side; the sandbox holds only the placeholder.
-# * messaging-bridge-provider.ts supplies the material at onboard, the key via
-#   `--secret-material-env` so it never reaches argv.
+# Google Chat bridge for Hermes: keyless reply + Pub/Sub pull. The gateway mints
+# one chat.bot + pubsub token and injects it on both hosts; the private key stays
+# gateway-side, delivered by messaging-bridge-provider.ts through
+# `--secret-material-env` so it never reaches argv or the sandbox.
 id: google-chat-hermes-bridge
 display_name: Google Chat Bridge (Hermes)
 description: Gateway-minted Google Chat bot token (chat.bot + pubsub) for Hermes Pub/Sub pull + Chat reply
@@ -46,11 +44,9 @@ endpoints:
     protocol: rest
     access: read-write
     enforcement: enforce
-# OpenShell resolves the process to its real interpreter via /proc/pid/exe and
-# matches binaries EXACTLY — a `/usr/bin/python3*` glob does not cover
-# `python3.13`, and an unmatched binary is 403'd at CONNECT. Hermes' venv python
-# resolves to /usr/bin/python3.13, so list the concrete path. Revisit when the
-# base image bumps Python.
+# OpenShell resolves the process via /proc/pid/exe and matches binaries EXACTLY:
+# a `/usr/bin/python3*` glob misses `python3.13` and is 403'd at CONNECT, so list
+# the concrete path Hermes' venv resolves to. Revisit on a base-image Python bump.
 binaries:
   - /opt/hermes/.venv/bin/python
   - /usr/bin/python3
