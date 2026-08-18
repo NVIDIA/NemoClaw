@@ -18,6 +18,7 @@ import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
   captureDcodeBaseImageRuntimeEvidence,
+  configureDcodeBaseImageOnboardReference,
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
@@ -101,6 +102,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
         target.id,
         artifacts.pathFor("dcode-base-image.json"),
       );
+      configureDcodeBaseImageOnboardReference(dcodeBaseContract);
       requireRegistryTargetSecrets(target.id, target.requiredSecrets ?? [], secrets);
 
       expect(

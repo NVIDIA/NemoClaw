@@ -6,17 +6,20 @@ import fs from "node:fs";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/label-codec.ts";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
 import {
-  DCODE_BASE_IMAGE_ONBOARD_PLATFORM,
   type DcodeBaseImageContract,
   type DcodePlatform,
   parseDcodeBaseImageContract,
 } from "../../../tools/e2e/dcode-base-image-contract.mts";
-import { requireDcodeBaseImageReference } from "../fixtures/dcode-base-image.ts";
+import {
+  DCODE_BASE_IMAGE_ENV,
+  requireDcodeBaseImageReference,
+} from "../fixtures/dcode-base-image.ts";
 import { readRegistrySandboxEntry } from "../fixtures/phases/index.ts";
 
 export const DCODE_BASE_IMAGE_TARGET_ID = "ubuntu-repo-cloud-langchain-deepagents-code";
 
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
+const DCODE_BASE_IMAGE_ONBOARD_PLATFORM: DcodePlatform = "linux/amd64";
 
 export interface DcodeBaseImageRuntimeEvidence {
   contractReference: string;
@@ -77,15 +80,21 @@ export function parseDcodeBaseImagePublicationEvidence(
     );
   }
   const contract = parseDcodeBaseImageContract(evidence.base);
-  if (
-    requireDcodeBaseImageReference(environment) !==
-    contract.platformReferences[DCODE_BASE_IMAGE_ONBOARD_PLATFORM]
-  ) {
+  if (requireDcodeBaseImageReference(environment) !== contract.reference) {
     throw new Error(
-      `Deep Agents Code onboarding reference does not match the published ${DCODE_BASE_IMAGE_ONBOARD_PLATFORM} base contract`,
+      "Deep Agents Code onboarding reference does not match the published base contract",
     );
   }
   return contract;
+}
+
+export function configureDcodeBaseImageOnboardReference(
+  contract: DcodeBaseImageContract | undefined,
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  if (!contract) return;
+  environment[DCODE_BASE_IMAGE_ENV] =
+    contract.platformReferences[DCODE_BASE_IMAGE_ONBOARD_PLATFORM];
 }
 
 export function loadDcodeBaseImagePublicationEvidence(
