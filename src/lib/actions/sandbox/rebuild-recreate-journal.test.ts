@@ -36,6 +36,8 @@ const HOST_MOUNT = {
   readOnly: true,
   sourceIdentity: { device: "66306", inode: "12345" },
 } as const;
+const PRE_HOST_MOUNT_FINGERPRINT =
+  "99603c8bf987561b783e2f38a1dcf260703537e5a680cae2198605ab13e181fe";
 
 const NON_DEFAULT_TARGET = {
   sandboxName: "alpha",
@@ -138,6 +140,18 @@ describe("rebuild replacement target fingerprint", () => {
         targetGatewayPort: 8080,
       }),
     ).not.toBe(fingerprintRebuildRecreateTargetIntent(recreateOptions));
+  });
+
+  it("preserves the previous fingerprint for a replacement without host mounts (#9451)", () => {
+    expect(fingerprintRebuildRecreateTargetIntent({ ...recreateOptions, hostMounts: [] })).toBe(
+      PRE_HOST_MOUNT_FINGERPRINT,
+    );
+  });
+
+  it("separates a mounted replacement from the pre-binding fingerprint (#9451)", () => {
+    expect(fingerprintRebuildRecreateTargetIntent(recreateOptions)).not.toBe(
+      PRE_HOST_MOUNT_FINGERPRINT,
+    );
   });
 
   it("changes when the replacement host mount identity changes (#9451)", () => {
