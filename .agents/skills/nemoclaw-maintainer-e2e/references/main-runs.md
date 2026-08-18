@@ -17,24 +17,45 @@ Use this procedure only when the maintainer requests a new trusted `main` dispat
 | “run pre-tag full E2E” | `full` | empty | empty | yes |
 | “run release-candidate E2E” | `full` | empty | empty | yes |
 
-A generic E2E request must not authorize the Brev Launchable path. Do not infer full mode from “all” or “complete.” Ask only when the request contains conflicting mode phrases.
+A generic E2E request must not authorize the Brev Launchable path. Do not infer full mode from “all”
+or “complete.” Ask only when the request contains conflicting mode phrases.
 
-Ordinary mode selects the default E2E suite without `Exact staging Brev Launchable`. Focused mode selects named jobs or typed targets; set only one selector input. Launchable mode runs only that exact job. Full mode adds it to the default suite.
+Ordinary mode selects the default E2E suite without `Exact staging Brev Launchable`. Focused mode
+selects named jobs or typed targets; set only one selector input. Launchable mode runs only that
+exact job. Full mode adds it to the default suite.
 
-The full `Release qualification` job is strict: every release-required job must succeed. It does not waive failed jobs. Its result reports the run; it does not decide whether a release can proceed.
+The full `Release qualification` job is strict: every release-required job must succeed. It does not
+waive failed jobs. Its result reports the run; it does not decide whether a release can proceed.
 
 ## Credential and Resource Boundary
 
 Before dispatch, read [Push and Manual PR E2E](../../../../test/e2e/README.md#push-and-manual-pr-e2e)
 for the selected jobs' credential locations, access, lifetimes, and removal or cleanup boundaries.
 
-Ordinary, focused, and full runs can expose repository inference, Brave Search, messaging, and scoped GitHub credentials to selected candidate jobs. Review the trusted `main` revision before dispatch. Inspect failed-run artifacts and remove external resources that target cleanup did not remove. Rotate or revoke any credential that candidate code could have copied.
+Ordinary, focused, and full runs can expose credentials to selected candidate jobs. These credentials
+can provide inference, Brave Search, messaging, or scoped GitHub access.
 
-`Exact staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` in trusted host preparation, exposes `NEMOCLAW_IMAGE_DISPATCH_TOKEN` only to the trusted host script as `GH_TOKEN`, and exports `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E. Candidate code in that guest can read the inference key. The workflow requires repository `maintain` or `admin` permission before source checkout. If cleanup fails, remove the recorded workspace and rotate or revoke credentials that may remain accessible.
+Before dispatch:
 
-Protected managed-image qualification supplies `NVIDIA_API_KEY` only to trusted qualification code. If its verified cleanup refuses removal, inspect the temporary NIM container and rotate the key.
+- review the trusted `main` revision;
+- inspect failed-run artifacts;
+- remove external resources that target cleanup did not remove; and
+- rotate or revoke any credential that candidate code could have copied.
 
-Jetson and DGX Spark remain disabled in the standard commands below. Enable them only with the operator and runner approvals documented by the workflow. See [Jetson Dispatch Controller](../../../../test/e2e/docs/jetson-dispatch.md). GitHub can require an authorized environment reviewer before DGX Spark qualification starts.
+`Exact staging Brev Launchable` uses `BREV_API_KEY` and `BREV_ORG_ID` during trusted host
+preparation. It exposes `NEMOCLAW_IMAGE_DISPATCH_TOKEN` only to the trusted host script as
+`GH_TOKEN`. It exports `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E. Candidate code in
+that guest can read the inference key. The workflow requires repository `maintain` or `admin`
+permission before source checkout. If cleanup fails, remove the recorded workspace. Rotate or revoke
+credentials that may remain accessible.
+
+Protected managed-image qualification supplies `NVIDIA_API_KEY` only to trusted qualification code.
+If its verified cleanup refuses removal, inspect the temporary NIM container and rotate the key.
+
+Jetson and DGX Spark remain disabled in the standard commands below. Enable them only with the
+operator and runner approvals documented by the workflow. See
+[Jetson Dispatch Controller](../../../../test/e2e/docs/jetson-dispatch.md). GitHub can require an
+authorized environment reviewer before DGX Spark qualification starts.
 
 ## Resolve the Commit to Test
 
@@ -44,7 +65,8 @@ git fetch --prune origin main
 CANDIDATE_SHA="$(git rev-parse origin/main)"
 ```
 
-A new dispatch tests the `origin/main` commit resolved here. If the caller supplied another candidate SHA, report the difference. Do not reject it or decide the release outcome.
+A new dispatch tests the `origin/main` commit resolved here. If the caller supplied another candidate
+SHA, report the difference. Do not reject it or decide the release outcome.
 
 ## Dispatch Once
 
@@ -111,7 +133,9 @@ RUN_SHA="$(jq -r '.[0].headSha' <<<"$MATCHES")"
 test "$RUN_SHA" = "$CANDIDATE_SHA"
 ```
 
-The exact-SHA comparison proves which commit the selected run tested. It is not a tag-authorization rule. If the run does not appear after the bounded search, inspect Actions for the correlation ID and do not dispatch again.
+The exact-SHA comparison proves which commit the selected run tested. It is not a tag-authorization
+rule. If the run does not appear after the bounded search, inspect GitHub Actions for the correlation
+ID. Do not dispatch again.
 
 Wait for completion:
 
@@ -134,10 +158,20 @@ gh api "repos/NVIDIA/NemoClaw/actions/runs/$RUN_ID/jobs?filter=latest&per_page=1
   >"$EVIDENCE_DIR/jobs.json"
 ```
 
-Require the selected run to report `head_sha` equal to `CANDIDATE_SHA` and `status` equal to `completed`. A successful ordinary, focused, Launchable, or full run has workflow conclusion `success`. Otherwise, return each failed, cancelled, skipped, or running job and URL.
+Require the selected run to report `head_sha` equal to `CANDIDATE_SHA` and `status` equal to
+`completed`. A successful ordinary, focused, Launchable, or full run has workflow conclusion
+`success`. Otherwise, return each failed, cancelled, skipped, or running job and URL.
 
-For Launchable mode, also require one completed, successful `Exact staging Brev Launchable` job. Preserve links to `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` for diagnosis.
+For Launchable mode, also require one completed, successful `Exact staging Brev Launchable` job.
+Preserve links to `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json` for diagnosis.
 
 For full mode, also require one completed, successful `Release qualification` job. A skipped, cancelled, queued, or failed aggregate is not a passing full run.
 
-Return the mode, selectors, tested SHA, workflow status, conclusion, attempt, URL, and relevant job URLs. Do not decide whether a release can proceed.
+Return:
+
+- the mode and selectors;
+- the tested SHA;
+- the workflow status, conclusion, attempt, and URL; and
+- relevant job URLs.
+
+Do not decide whether a release can proceed.

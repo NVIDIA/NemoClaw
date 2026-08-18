@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Cuts one signed NemoClaw semver tag after checking required documentation, image, and exact staging Launchable evidence, recording the maintainer's general E2E decision in a Markdown release brief, and confirming the exact candidate. Use when cutting or preparing a vX.Y.Z release tag.
+description: Cuts one signed NemoClaw semver tag after required candidate checks and the maintainer's E2E decision. Use when preparing or publishing a vX.Y.Z release tag.
 user_invocable: true
 ---
 
@@ -15,10 +15,10 @@ push, version-bump, or other release-state GitHub writes.
 
 Treat these as separate states:
 
-- **Tag ready:** required documentation, image, and exact staging Launchable evidence is complete.
-  The maintainer has made the general E2E decision, and the release brief is final.
+- **Tag can be cut:** all required documentation, image, and exact staging Launchable checks pass.
+  The release brief records the maintainer's general E2E decision and contains no unresolved prompts.
 - **Tag cut:** the remote signed tag exists and peels to the planned candidate.
-- **Post-tag work:** `latest`, release labels, public docs, release images, `lkg`, and the Announcement
+- **Post-tag work:** `latest`, release labels, public documentation, release images, `lkg`, and the Announcement
   continue outside this skill. Do not wait for them here; some share a downstream workflow.
 
 ## Hard Rules
@@ -31,7 +31,7 @@ Treat these as separate states:
 - Require a successful exact-candidate `Exact staging Brev Launchable` job. It must verify the
   deployed image, baked runtime, hosted and sandbox inference, preinstalled full E2E suite, and
   workspace cleanup. The general E2E decision cannot waive these requirements.
-- Treat general E2E as maintainer context, not a tag gate. Show the latest full result and let the
+- Treat general E2E as maintainer context, not a tag gate. Show the newest full E2E result and let the
   maintainer run focused tests, run the full suite, or proceed with the displayed status.
 - Record every displayed or requested E2E result and the decision in the release brief. Record a
   plain-language exception reason when the status is exceptional or a requested run remains
@@ -113,7 +113,7 @@ the helper after evidence has been added.
 ### 2. Verify Required Candidate Evidence
 
 Read and follow [Candidate Evidence](references/candidate-evidence.md). It owns the executable reads
-for the release entry, approved-empty Pi result, candidate-specific managed-docs state, applicable
+for the release entry, approved-empty Pi result, candidate-specific managed documentation state, applicable
 base-image verifier, and exact staging Launchable result.
 
 Do not offer the general E2E proceed option until every candidate-evidence check passes. Record the
@@ -126,7 +126,7 @@ retain only `lane.log` and the phase artifacts created before exit.
 
 ### 3. Present General E2E and Ask for a Decision
 
-Use `nemoclaw-maintainer-e2e` to find the newest completed or active full run. Show these details
+Use `nemoclaw-maintainer-e2e` to find the newest completed or active full E2E run. Show these details
 instead of reducing the run to one passing/failing label:
 
 - candidate SHA and full-run SHA;
@@ -162,7 +162,7 @@ Replace every `TODO_RELEASE_BRIEF` prompt in that Markdown file with:
 - exact-candidate E2E workflow, attempt, and successful `base-image-publication` job URL;
 - exact staging Brev workflow and job URLs, candidate SHA, producer run, concrete boot image,
   baked-runtime identity, full E2E result, and workspace-cleanup result;
-- the latest full E2E result and every focused or full rerun result, including SHA, time, age, status,
+- the newest full E2E result and every focused or full rerun result, including SHA, time, age, status,
   conclusion, and URLs;
 - the maintainer's E2E choice; and
 - a final `Exceptions: None` line or `Exceptions: <plain-language reason>` line.
@@ -201,7 +201,7 @@ npm run release:cut -- \
 Require the script's remote readback to show that the signed annotated tag exists and peels to the
 planned candidate. Return immediately with the tag, candidate, plan path, brief path, and readback.
 
-Report any already-known `latest`, release-label, public-docs, release-image, `lkg`, and Announcement
+Report any already-known `latest`, release-label, public-documentation, release-image, `lkg`, and Announcement
 state, and mark the rest pending or unknown. Do not poll. These states are separate from tag
 completion, but `latest` and label carry-forward share the release workflow. The tag-triggered image
 workflow performs a release rebuild and publication; it can fail after the tag is cut and can be
@@ -211,7 +211,7 @@ retried without moving the semver tag. Do not call it promotion-only.
 
 - Missing release entry or approved-empty Pi result: finish the candidate's documentation work and
   obtain a successful exact-candidate run. Do not bypass it.
-- Candidate-specific docs PR or branch exists: when the patch is required, merge it and generate a
+- Candidate-specific documentation PR or branch exists: when the patch is required, merge it and generate a
   new plan for the resulting commit. When maintainers reject the patch, close the PR, remove its
   branch with the required repository authorization, and rerun exact-candidate documentation before
   requesting a new confirmation.
@@ -228,5 +228,5 @@ retried without moving the semver tag. Do not call it promotion-only.
   available: stop and generate a new plan.
 - Signing or access fails: report the exact error and follow the shared hard-stop guidance. Do not
   improvise tag commands.
-- A post-tag workflow fails: report that state and its retry path separately. Do not move the
+- A post-tag workflow fails: report that state and its rerun path separately. Do not move the
   already-published semver tag.

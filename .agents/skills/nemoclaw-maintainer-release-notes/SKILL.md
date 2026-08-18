@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-release-notes
-description: Drafts the post-tag NemoClaw Announcement from the semver tag, compare data, and canonical release entry. Produces three lead paragraphs, categorized shipped changes, why-it-matters bullets, and external-only contributor thanks. Use after cutting a release tag or when asked to draft an announcement or summarize vX.Y.Z.
+description: Drafts the post-tag NemoClaw Announcement from tag, compare, and release-entry data. Use after tagging or when asked to summarize vX.Y.Z.
 user_invocable: true
 ---
 

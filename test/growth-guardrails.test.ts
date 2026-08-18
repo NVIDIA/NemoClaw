@@ -230,7 +230,7 @@ describe("codebase growth guardrail test support", () => {
     ]);
   });
 
-  it("compares a main merge worktree with its merge head", () => {
+  it("compares a main merge worktree with its MERGE_HEAD commit", () => {
     expect(diffTestOnly.selectLocalComparisonBase("branch-base", "main-head", true)).toBe(
       "main-head",
     );

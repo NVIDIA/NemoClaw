@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and reports trusted GitHub Actions E2E for NemoClaw maintainers, including focused, full, exact staging Launchable, and manual PR runs. Use for requests such as run E2E for PR #123, rerun named E2E jobs or targets, run the E2E suite, run the Launchable E2E, run the full E2E suite, run pre-tag E2E, or inspect E2E status for a release decision.
+description: Dispatches and reports trusted GitHub Actions E2E runs. Use for focused, full, exact staging Launchable, manual PR, and release-decision requests.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -31,7 +31,7 @@ The job builds the exact candidate image, deploys the standing Launchable, and v
 results before it succeeds:
 
 - environment access and the exact booted image;
-- the candidate SHA, image-repository SHA, clean baked checkout, and absence of runtime overrides;
+- the candidate SHA, image-repository SHA, baked checkout with no uncommitted changes, and absence of runtime overrides;
 - hosted and sandbox inference through the preinstalled full E2E suite; and
 - Brev workspace deletion and confirmed absence.
 
@@ -69,7 +69,7 @@ The job uses the `staging-brev-launchable-cpu` concurrency group without cancell
 GitHub keeps at most one pending job in that group, so a newer job can replace an older pending job.
 A queued, waiting, or accepted dispatch is not a successful result.
 
-## Inspect the Latest Full Main Run
+## Inspect the Newest Full Main Run
 
 This mode is read-only. It does not dispatch a run.
 
@@ -123,8 +123,15 @@ reject a different commit, impose a staleness threshold, or decide whether taggi
 
 ## Handoff
 
-Return the mode, selectors, tested commit, result, workflow URL, and relevant job URLs. A focused run
-supplements the reported full-run status; it does not become a full run.
+Return:
+
+- the mode and selectors;
+- the tested commit;
+- the result;
+- the workflow URL; and
+- relevant job URLs.
+
+A focused run supplements the reported full-run status; it does not become a full run.
 
 Do not ask for release confirmation or decide whether a release can proceed. The release-tag skill
 owns the general E2E decision and records any reason for proceeding with an exceptional general E2E

@@ -48,6 +48,4 @@ describe("live registry-targets skip-name contract", () => {
     expect(liveTargetTestName(supported)).toBe(supported.id);
   });
 
-  // The workflow boundary validator checks the `-t "^${TARGET_ID}$"` filter.
-  // This test checks that each name under that filter equals `target.id`.
 });

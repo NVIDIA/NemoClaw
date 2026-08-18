@@ -1282,36 +1282,52 @@ describe("release-latest-tag.sh", () => {
   });
 
   it.each([
-    ["unfinished prompts", "TODO_RELEASE_BRIEF", "still contains unresolved prompts"],
-    ["another version", "# NemoClaw v0.0.3 release brief", "heading does not match planned tag"],
-    ["another candidate", `- Candidate: \`${"f".repeat(40)}\``, "candidate does not match"],
-    ["no exception record", "Exceptions removed", "exactly one resolved Exceptions line"],
-    ["an empty exception record", "Exceptions: ", "exactly one resolved Exceptions line"],
+    [
+      "unfinished prompts",
+      (brief: string) => brief.replace("Exceptions: None", "Exceptions: TODO_RELEASE_BRIEF"),
+      "still contains unresolved prompts",
+    ],
+    [
+      "another version",
+      (brief: string) =>
+        brief.replace(/^# NemoClaw.*$/mu, "# NemoClaw v0.0.3 release brief"),
+      "heading does not match planned tag",
+    ],
+    [
+      "another candidate",
+      (brief: string) =>
+        brief.replace(/^- Candidate:.*$/mu, `- Candidate: \`${"f".repeat(40)}\``),
+      "candidate does not match",
+    ],
+    [
+      "no exception record",
+      (brief: string) => brief.replace("Exceptions: None", "Exceptions removed"),
+      "exactly one resolved Exceptions line",
+    ],
+    [
+      "an empty exception record",
+      (brief: string) => brief.replace("Exceptions: None", "Exceptions: "),
+      "exactly one resolved Exceptions line",
+    ],
     [
       "duplicate exception records",
-      "Exceptions: None\nExceptions: Duplicate",
+      (brief: string) =>
+        brief.replace("Exceptions: None", "Exceptions: None\nExceptions: Duplicate"),
       "exactly one resolved Exceptions line",
     ],
     [
       "content after the exception record",
-      "Exceptions: None\n\nTrailing content",
+      (brief: string) =>
+        brief.replace("Exceptions: None", "Exceptions: None\n\nTrailing content"),
       "exactly one resolved Exceptions line",
     ],
-  ])("rejects a release brief with %s", (_case, replacement, expectedError) => {
+  ])("rejects a release brief with %s", (_case, mutate, expectedError) => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
-    const original = completeBrief(plan);
-    const invalid =
-      replacement === "TODO_RELEASE_BRIEF"
-        ? original.replace("Exceptions: None", "Exceptions: TODO_RELEASE_BRIEF")
-        : replacement.startsWith("# NemoClaw")
-          ? original.replace(/^# NemoClaw.*$/mu, replacement)
-          : replacement.startsWith("- Candidate:")
-            ? original.replace(/^- Candidate:.*$/mu, replacement)
-            : original.replace("Exceptions: None", replacement);
+    const invalid = mutate(completeBrief(plan));
     const messageFile = writeBrief(fixture, invalid);
 
     const result = cutFromPlan(fixture, planPath, confirmationFor(plan), messageFile);

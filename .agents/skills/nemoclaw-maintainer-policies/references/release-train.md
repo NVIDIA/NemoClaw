@@ -59,7 +59,7 @@ At cutoff:
 6. Verify the candidate's required documentation, image, and exact staging Launchable evidence. If
    documentation is missing, complete [Release-Prep Docs](#release-prep-docs), merge that PR,
    generate a new plan, and repeat the evidence checks for the new candidate.
-7. Show the latest full E2E context and record the maintainer's focused, full, or proceed decision.
+7. Show the newest full E2E context and record the maintainer's focused, full, or proceed decision.
 8. Build the Markdown release brief from the exact range and evidence.
 9. Cut the release tag only with the plan's explicit maintainer confirmation.
 
@@ -80,9 +80,17 @@ Before confirmation, require both exact-candidate results:
    access and the exact booted image, verifies the baked runtime, runs hosted and sandbox inference
    through the preinstalled full E2E suite, deletes its Brev workspace, and confirms absence.
 
-Record the Launchable workflow and job URLs, attempt, producer run, concrete boot image,
-image-repository SHA, baked-runtime identity, full E2E result, and workspace-cleanup result. A
-successful job retains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`. The cleanup record
+Record:
+
+- the Launchable workflow and job URLs;
+- the attempt and producer run;
+- the concrete boot image;
+- the image-repository SHA;
+- the baked-runtime identity;
+- the full E2E result; and
+- the workspace-cleanup result.
+
+A successful job retains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`. The cleanup record
 exists only after the job confirms workspace absence. A preparation failure can produce no artifact;
 a later failure can retain only `lane.log` and the phase artifacts created before exit.
 
@@ -129,7 +137,7 @@ Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the exact plan range. 
 - Pi documentation workflow and job URLs, artifact name, and normalized approved-empty review;
 - the base-image aggregate and exact staging Launchable URLs, identities, full E2E result, and
   cleanup result;
-- the latest full E2E result and every requested run;
+- the newest full E2E result and every requested run;
 - the maintainer's E2E decision; and
 - `Exceptions: None` or the plain-language exception reason.
 
@@ -141,13 +149,13 @@ confirms that it peels to the candidate, report the tag as cut and return.
 
 ## Post-Tag States
 
-Moving `latest`, carrying labels forward, publishing public docs, rebuilding and publishing release
+Moving `latest`, carrying labels forward, publishing public documentation, rebuilding and publishing release
 images, promoting `lkg`, and publishing the Announcement do not extend tag cutting. Some share a
 workflow or depend on another post-tag state. Report only already-known results and mark the rest
 pending or unknown; do not poll before returning the tag result.
 
 Tag-triggered image publication performs a release rebuild and can fail after the tag exists. Repair
-and retry that workflow independently. Do not describe it as promotion-only and do not move the
+and rerun that workflow independently. Do not describe it as promotion-only and do not move the
 semver tag.
 
 ## Carry Forward

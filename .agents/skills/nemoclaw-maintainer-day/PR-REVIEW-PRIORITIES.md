@@ -55,7 +55,7 @@ The team follows a daily ship cycle. All maintainer skills operate within this r
 
 1. **Morning** (`/nemoclaw-maintainer-morning`) — triage the backlog, pick items for the day, label them with the target version (e.g., `v0.0.8`).
 2. **During the day** (`/nemoclaw-maintainer-day`) — land PRs using the maintainer loop. Version labels make progress visible on dashboards.
-3. **Evening** (`/nemoclaw-maintainer-evening`) — Check shipped work and the cumulative
+3. **Evening** (`/nemoclaw-maintainer-evening`) — check shipped work and the cumulative
    documentation PR. Confirm that it covers every merged change selected for the release and
    contains `docs/changelog/YYYY-MM-DD.mdx` for the release.
    Identify open items and prepare the Markdown release brief. Show the newest full E2E result and

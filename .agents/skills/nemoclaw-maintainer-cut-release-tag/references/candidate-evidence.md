@@ -81,29 +81,29 @@ run_or_stop "release-entry detail validation" awk '
 ' "$ENTRY_FILE"
 ```
 
-Read the newest exact-candidate docs run and require its one publish job to pass:
+Read the newest exact-candidate `Docs / Post-Merge Catch-Up` run. Require its one publish job to pass:
 
 ```bash
 DOCS_RUNS_FILE="$EVIDENCE_DIR/docs-runs.json"
-run_or_stop "docs run list" gh run list --repo NVIDIA/NemoClaw \
+run_or_stop "documentation run list" gh run list --repo NVIDIA/NemoClaw \
   --workflow post-merge-docs.yaml --event push --branch main --commit "$CANDIDATE_SHA" \
   --limit 100 --json databaseId,headSha,status,conclusion,url,createdAt >"$DOCS_RUNS_FILE"
 DOCS_RUN_ID_FILE="$EVIDENCE_DIR/docs-run-id"
-run_or_stop "docs run selection" jq -er --arg sha "$CANDIDATE_SHA" \
+run_or_stop "documentation run selection" jq -er --arg sha "$CANDIDATE_SHA" \
   '[.[] | select(.headSha == $sha)] | sort_by(.createdAt) | last | .databaseId' \
   "$DOCS_RUNS_FILE" >"$DOCS_RUN_ID_FILE"
 IFS= read -r DOCS_RUN_ID <"$DOCS_RUN_ID_FILE"
 DOCS_RUN_FILE="$EVIDENCE_DIR/docs-run.json"
-run_or_stop "docs run read" gh run view "$DOCS_RUN_ID" --repo NVIDIA/NemoClaw \
+run_or_stop "documentation run read" gh run view "$DOCS_RUN_ID" --repo NVIDIA/NemoClaw \
   --json attempt,headSha,status,conclusion,url,jobs >"$DOCS_RUN_FILE"
-run_or_stop "docs run validation" jq -e --arg sha "$CANDIDATE_SHA" '
+run_or_stop "documentation run validation" jq -e --arg sha "$CANDIDATE_SHA" '
   .headSha == $sha and .status == "completed" and .conclusion == "success" and
   ([.jobs[] | select(.name == "Publish documentation catch-up")] | length == 1) and
   ([.jobs[] | select(.name == "Publish documentation catch-up")][0] |
     .status == "completed" and .conclusion == "success")
 ' "$DOCS_RUN_FILE" >/dev/null
 DOCS_RUN_FIELDS_FILE="$EVIDENCE_DIR/docs-run-fields.txt"
-run_or_stop "docs run field read" jq -er '
+run_or_stop "documentation run field read" jq -er '
   [.attempt, .url, ([.jobs[] | select(.name == "Publish documentation catch-up")][0].url)] |
   .[]
 ' "$DOCS_RUN_FILE" >"$DOCS_RUN_FIELDS_FILE"
@@ -121,14 +121,14 @@ review covers this candidate and the approved patch is empty.
 DOCS_ARTIFACT='post-merge-docs-approved'
 DOCS_ARTIFACT_DIR="$EVIDENCE_DIR/docs-approved"
 mkdir "$DOCS_ARTIFACT_DIR"
-run_or_stop "docs artifact download" gh run download "$DOCS_RUN_ID" \
+run_or_stop "documentation artifact download" gh run download "$DOCS_RUN_ID" \
   --repo NVIDIA/NemoClaw --name "$DOCS_ARTIFACT" --dir "$DOCS_ARTIFACT_DIR"
 DOCS_PATCH="$DOCS_ARTIFACT_DIR/docs.patch"
 DOCS_REVIEW="$DOCS_ARTIFACT_DIR/review.json"
-[[ -f "$DOCS_PATCH" && -f "$DOCS_REVIEW" ]] || stop "The docs artifact is incomplete"
-[[ ! -s "$DOCS_PATCH" ]] || stop "The approved docs patch is not empty"
+[[ -f "$DOCS_PATCH" && -f "$DOCS_REVIEW" ]] || stop "The documentation artifact is incomplete"
+[[ ! -s "$DOCS_PATCH" ]] || stop "The approved documentation patch is not empty"
 EMPTY_PATCH_SHA256='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
-run_or_stop "docs review validation" jq -e --arg sha "$CANDIDATE_SHA" \
+run_or_stop "documentation review validation" jq -e --arg sha "$CANDIDATE_SHA" \
   --arg digest "$EMPTY_PATCH_SHA256" '
   type == "object" and
   (keys | sort) == ["mainSha", "outcome", "patchSha256", "repository", "version"] and
@@ -136,13 +136,21 @@ run_or_stop "docs review validation" jq -e --arg sha "$CANDIDATE_SHA" \
   .patchSha256 == $digest and .outcome == "approved"
 ' "$DOCS_REVIEW" >/dev/null
 DOCS_REVIEW_NORMALIZED="$EVIDENCE_DIR/docs-review-normalized.json"
-run_or_stop "docs review normalization" jq -cS . "$DOCS_REVIEW" >"$DOCS_REVIEW_NORMALIZED"
+run_or_stop "documentation review normalization" jq -cS . "$DOCS_REVIEW" >"$DOCS_REVIEW_NORMALIZED"
 IFS= read -r DOCS_REVIEW_JSON <"$DOCS_REVIEW_NORMALIZED"
 ```
 
-Record `DOCS_RUN_ID`, `DOCS_RUN_ATTEMPT`, `DOCS_RUN_URL`, `DOCS_PUBLISH_JOB_URL`, the artifact name,
-and `DOCS_REVIEW_JSON` in the release brief. The signed tag annotation then retains the exact
-candidate and approved-empty patch digest after the workflow artifact expires.
+Record these values in the release brief:
+
+- `DOCS_RUN_ID`;
+- `DOCS_RUN_ATTEMPT`;
+- `DOCS_RUN_URL`;
+- `DOCS_PUBLISH_JOB_URL`;
+- the artifact name; and
+- `DOCS_REVIEW_JSON`.
+
+The signed tag annotation then retains the exact candidate and approved-empty patch digest after the
+workflow artifact expires.
 
 Require no managed PR or branch for this candidate. A PR or branch for a later candidate does not
 invalidate this one.
@@ -150,12 +158,12 @@ invalidate this one.
 ```bash
 DOCS_PRS_FILE="$EVIDENCE_DIR/docs-prs.json"
 DOCS_BRANCH_FILE="$EVIDENCE_DIR/docs-branch.txt"
-run_or_stop "candidate docs PR read" gh pr list --repo NVIDIA/NemoClaw --state open \
+run_or_stop "candidate documentation PR read" gh pr list --repo NVIDIA/NemoClaw --state open \
   --head "$DOCS_BRANCH" --limit 100 --json number >"$DOCS_PRS_FILE"
-run_or_stop "candidate docs PR validation" jq -e 'length == 0' "$DOCS_PRS_FILE" >/dev/null
-run_or_stop "candidate docs branch read" git ls-remote --heads origin \
+run_or_stop "candidate documentation PR validation" jq -e 'length == 0' "$DOCS_PRS_FILE" >/dev/null
+run_or_stop "candidate documentation branch read" git ls-remote --heads origin \
   "refs/heads/$DOCS_BRANCH" >"$DOCS_BRANCH_FILE"
-[[ ! -s "$DOCS_BRANCH_FILE" ]] || stop "The candidate docs branch still exists"
+[[ ! -s "$DOCS_BRANCH_FILE" ]] || stop "The candidate documentation branch still exists"
 ```
 
 This is the initial pending-state check. Do not repeat it before showing the release brief. Run the
@@ -281,8 +289,16 @@ run_or_stop "Launchable run field read" jq -er '.html_url' \
 IFS= read -r LAUNCHABLE_RUN_URL <"$IMAGE_RUN_FIELDS_FILE"
 ```
 
-Record `BASE_IMAGE_RUN_ID`, `BASE_IMAGE_ATTEMPT`, `BASE_IMAGE_RUN_URL`, `BASE_IMAGE_JOB_URL`,
-`LAUNCHABLE_RUN_ID`, `LAUNCHABLE_ATTEMPT`, `LAUNCHABLE_RUN_URL`, and `LAUNCHABLE_JOB_URL`.
+Record these values:
+
+- `BASE_IMAGE_RUN_ID`;
+- `BASE_IMAGE_ATTEMPT`;
+- `BASE_IMAGE_RUN_URL`;
+- `BASE_IMAGE_JOB_URL`;
+- `LAUNCHABLE_RUN_ID`;
+- `LAUNCHABLE_ATTEMPT`;
+- `LAUNCHABLE_RUN_URL`; and
+- `LAUNCHABLE_JOB_URL`.
 
 Download only that run's private receipts and bind them to the candidate:
 
@@ -345,10 +361,19 @@ IFS= read -r LAUNCHABLE_CLEANUP_TIME <"$CLEANUP_TIME_FILE"
 PRODUCER_URL="https://github.com/brevdev/nemoclaw-image/actions/runs/${PRODUCER_RUN_ID}"
 ```
 
-Record `ARTIFACT`, the workflow and job URLs, producer run URL, concrete boot image,
-image-repository SHA, workspace name and ID, full-E2E result, and verified cleanup time. This exact
-job is the nonwaivable Launchable requirement; the rest of the general E2E suite remains maintainer
-context.
+Record these values:
+
+- `ARTIFACT`;
+- the workflow and job URLs;
+- the producer run URL;
+- the concrete boot image;
+- the image-repository SHA;
+- the workspace name and ID;
+- the full E2E result; and
+- the verified cleanup time.
+
+This exact job is the nonwaivable Launchable requirement. The rest of the general E2E suite remains
+maintainer context.
 
 If Launchable evidence is missing or failed and the planned candidate still equals `origin/main`,
 load `nemoclaw-maintainer-e2e` and request Launchable mode. A new dispatch always tests current
@@ -405,14 +430,14 @@ DOCS_BRANCH="automation/post-merge-docs-${CANDIDATE_SHA:0:12}"
 
 FINAL_DOCS_PRS_FILE="$FINAL_DOCS_DIR/docs-prs.json"
 FINAL_DOCS_BRANCH_FILE="$FINAL_DOCS_DIR/docs-branch.txt"
-run_or_stop "final candidate docs PR read" gh pr list --repo NVIDIA/NemoClaw --state open \
+run_or_stop "final candidate documentation PR read" gh pr list --repo NVIDIA/NemoClaw --state open \
   --head "$DOCS_BRANCH" --limit 100 --json number >"$FINAL_DOCS_PRS_FILE"
-run_or_stop "final candidate docs PR validation" jq -e 'length == 0' \
+run_or_stop "final candidate documentation PR validation" jq -e 'length == 0' \
   "$FINAL_DOCS_PRS_FILE" >/dev/null
-run_or_stop "final candidate docs branch read" git ls-remote --heads origin \
+run_or_stop "final candidate documentation branch read" git ls-remote --heads origin \
   "refs/heads/$DOCS_BRANCH" >"$FINAL_DOCS_BRANCH_FILE"
-[[ ! -s "$FINAL_DOCS_BRANCH_FILE" ]] || stop "The candidate docs branch still exists"
+[[ ! -s "$FINAL_DOCS_BRANCH_FILE" ]] || stop "The candidate documentation branch still exists"
 ```
 
-Treat the confirmation as consumed if a read fails or pending state appears. Restore readiness and
+Treat the confirmation as consumed if a read fails or pending state appears. Resolve that state and
 request a new confirmation.

@@ -61,8 +61,8 @@ Component-specific guidance lives with the package it describes, not in a skill.
 | `nemoclaw-maintainer-policies` | Answer maintainer workflow questions from the read-only policy references. |
 | `nemoclaw-maintainer-cross-issue-sweep` | Find open issues that a PR can also fix or conflict with. Report file and line evidence. |
 | `nemoclaw-maintainer-day` | Run one daytime maintainer pass for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow. Designed for `/loop`. |
-| `nemoclaw-maintainer-evening` | End-of-day handoff: complete the cumulative docs PR and release entry, show release and QA context, and optionally start exact-version tag cutting. |
-| `nemoclaw-maintainer-cut-release-tag` | Verify required candidate docs, images, and exact staging Launchable evidence; record the maintainer's advisory E2E decision in a Markdown release brief; and cut one signed semver tag without waiting for post-tag work. |
+| `nemoclaw-maintainer-evening` | Complete the cumulative documentation PR and release entry, show release context, and optionally start tag cutting. |
+| `nemoclaw-maintainer-cut-release-tag` | Verify candidate evidence, record the maintainer's E2E decision, and cut one signed semver tag. |
 | `nemoclaw-maintainer-e2e` | Describe default E2E triggered by pushes to `main`, dispatch exact-revision manual PR E2E, and verify applicable workflow evidence. |
 | `nemoclaw-maintainer-fix-e2e-failures` | Continuously fix automatic `main` E2E failures by root cause, coordinate peer approvals, merge eligible PRs, and monitor new results. |
 | `nemoclaw-maintainer-validate-launchable` | Run advisory validation of the staging Brev Launchable deployment, exact image and runtime identity, preinstalled user journey, inference, and cleanup. |

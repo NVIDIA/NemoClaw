@@ -3,16 +3,27 @@
 
 # Manual PR E2E
 
-Use this mode when a maintainer requests E2E for a pull request. The trusted workflow stays on `main` and checks out the latest PR commit. The result is advisory and does not create a required PR check.
+Use this mode when a maintainer requests E2E for a pull request. The trusted workflow stays on
+`main` and checks out the latest PR commit. The result is advisory and does not create a required PR
+check.
 
 ## Credential Boundary
 
 Before dispatch, read [Push and Manual PR E2E](../../../../test/e2e/README.md#push-and-manual-pr-e2e)
 for the selected jobs' credential locations, access, lifetimes, and removal or cleanup boundaries.
 
-Depending on its selection, a manual PR run can expose long-lived inference, Brave Search, and messaging credentials to candidate-controlled jobs. Some jobs also expose a read-only job-scoped `GITHUB_TOKEN`, messaging identifiers, or external resources. Review the complete candidate diff before dispatch. Inspect artifacts after a failure, remove resources that cleanup left behind, and rotate or revoke exposed credentials when necessary.
+Depending on its selection, a manual PR run can expose long-lived inference, Brave Search, and
+messaging credentials to candidate-controlled jobs. Some jobs also expose a read-only job-scoped
+`GITHUB_TOKEN`, messaging identifiers, or external resources.
 
-The Exact staging Brev Launchable path is not available to manual PR runs. Protected managed-image and native-runtime qualification have narrower trusted-host boundaries described by their checked-in workflow jobs.
+Before dispatch, review the complete candidate diff. After a failure:
+
+- inspect artifacts;
+- remove resources that cleanup left behind; and
+- rotate or revoke exposed credentials when necessary.
+
+`Exact staging Brev Launchable` is not available to manual PR runs. The checked-in workflow jobs
+define narrower trusted-host boundaries for protected managed-image and native-runtime qualification.
 
 ## Resolve and Authorize the Revision
 
@@ -31,7 +42,7 @@ HEAD_REPOSITORY="$(jq -r .head.repo.full_name <<<"$PR_JSON")"
 [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
 ```
 
-Require a review reason containing 10 to 500 printable characters. Choose one supported selection:
+Require a review reason containing 10 to 500 printable characters. Choose one allowed selection:
 
 - Empty jobs and targets: the trusted default PR selection.
 - `jobs=inference-routing`.
@@ -75,7 +86,20 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
-The trusted pre-checkout step requires current repository `maintain` or `admin` permission. It validates the actor, open PR, source repository, latest PR commit SHA, base SHA, workflow SHA, review reason, and selector combination. It then records and uploads the immutable `nemoclaw-e2e-dispatch-v2` receipt before candidate execution. A second validation after checkout rejects changed PR identity.
+The trusted pre-checkout step requires the actor to have repository `maintain` or `admin` permission
+at dispatch time. It validates:
+
+- the actor;
+- the open PR;
+- the source repository;
+- the latest PR commit SHA;
+- the base SHA;
+- the workflow SHA;
+- the review reason; and
+- the selector combination.
+
+It then records and uploads the immutable `nemoclaw-e2e-dispatch-v2` receipt before candidate
+execution. A second validation after checkout rejects changed PR identity.
 
 ## Find and Verify the Run
 
@@ -108,6 +132,19 @@ test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
 test "$(jq -r .head.repo.full_name <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
 ```
 
-If the run is not visible after bounded polling, do not dispatch again. Inspect Actions for the correlation ID and clean up resources from any matching run.
+If the run is not visible after bounded polling, do not dispatch again. Inspect GitHub Actions for
+the correlation ID. Clean up resources from any matching run.
 
-Return the PR number, source repository, latest PR commit SHA, base SHA, workflow SHA, correlation ID, selectors, workflow URL, and result. A changed source repository, latest PR commit SHA, or base SHA invalidates the run claim.
+Return:
+
+- the PR number;
+- the source repository;
+- the latest PR commit SHA;
+- the base SHA;
+- the workflow SHA;
+- the correlation ID;
+- the selectors;
+- the workflow URL; and
+- the result.
+
+A changed source repository, latest PR commit SHA, or base SHA invalidates the run claim.

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff, completes the cumulative documentation PR and release entry, shows version and QA context, and optionally cuts an exact release tag. Use for evening, end-of-day, wrap-up, handoff, or ship requests.
+description: Runs the end-of-day NemoClaw release handoff and optionally cuts an exact release tag. Use for evening, handoff, wrap-up, or ship requests.
 user_invocable: true
 ---
 
@@ -16,7 +16,7 @@ See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md
 cadence and the [release-train policy](../nemoclaw-maintainer-policies/references/release-train.md)
 for release rules.
 
-## 1. Fix the Target Version
+## 1. Select the Target Version
 
 Use the maintainer's exact `vX.Y.Z` when supplied. Otherwise, read the current target and show its
 merged and open work:
@@ -92,7 +92,7 @@ After tag readback, return immediately with:
 - plan and release-brief paths;
 - documentation, image, and exact Launchable evidence URLs;
 - E2E decision and exception reason, if any; and
-- current state of `latest`, release labels, public docs, release images, `lkg`, and the Announcement.
+- current state of `latest`, release labels, public documentation, release images, `lkg`, and the Announcement.
 
 Those states continue outside tag cutting; some share a workflow or depend on another post-tag
 state. A tag-triggered release-image rebuild can fail and be retried without changing the semver
@@ -104,6 +104,6 @@ tag. Draft the public Announcement later with
 - Never cut a tag without the maintainer's exact confirmation phrase.
 - Never bypass the release entry, approved-empty Pi result, applicable GHCR evidence, or exact
   staging Brev Launchable E2E and cleanup receipts.
-- Never make a different candidate stale merely because `main` advanced or a later docs PR opened.
-- Never wait for `latest`, label retirement, public docs, release images, `lkg`, or the Announcement
+- Never make a different candidate stale merely because `main` advanced or a later documentation PR opened.
+- Never wait for `latest`, label retirement, public documentation, release images, `lkg`, or the Announcement
   before reporting the tag as cut.
