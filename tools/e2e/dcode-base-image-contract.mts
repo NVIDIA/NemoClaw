@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 const AGENT = "langchain-deepagents-code";
 const IMAGE = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base";
 const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
-export const DCODE_BASE_IMAGE_ONBOARD_PLATFORM = "linux/amd64" as const;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const IMPORT_MARKER = "nemoclaw-dcode-base-imports-ok";
@@ -121,7 +120,10 @@ export function validateDcodeBaseImageContract(
   if (contract.sourceRevision !== expected.headSha) {
     throw new Error("base contract source revision does not match the selected publication");
   }
-  if (contract.run.id !== expected.runId || contract.run.attempt !== expected.runAttempt) {
+  if (
+    contract.run.id !== expected.runId ||
+    contract.run.attempt !== expected.runAttempt
+  ) {
     throw new Error("base contract run does not match the selected publication");
   }
   return contract;
@@ -170,11 +172,7 @@ function requiredInteger(value: string | undefined, label: string): number {
   return positiveInteger(Number(value), label);
 }
 
-export function main(
-  argv = process.argv.slice(2),
-  env = process.env,
-  runDocker?: (args: string[]) => string,
-): void {
+export function main(argv = process.argv.slice(2), env = process.env): void {
   if (argv.length !== 1) throw new Error("expected one managed base contract path");
   const outputPath = env.GITHUB_OUTPUT ?? "";
   if (!outputPath || outputPath.includes("\r") || outputPath.includes("\n")) {
@@ -188,11 +186,10 @@ export function main(
       headSha: env.PUBLICATION_HEAD_SHA ?? "",
     },
   );
-  const baseReference = contract.platformReferences[DCODE_BASE_IMAGE_ONBOARD_PLATFORM];
-  validateDcodeBaseImageImports(baseReference, runDocker);
+  validateDcodeBaseImageImports(contract.reference);
   appendFileSync(
     outputPath,
-    `base_ref=${baseReference}\ncontract=${JSON.stringify(contract)}\n`,
+    `base_ref=${contract.reference}\ncontract=${JSON.stringify(contract)}\n`,
     "utf8",
   );
 }

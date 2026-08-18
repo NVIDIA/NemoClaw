@@ -1,15 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  DCODE_BASE_IMAGE_ONBOARD_PLATFORM,
-  main,
   validateDcodeBaseImageContract,
   validateDcodeBaseImageImports,
 } from "../../../tools/e2e/dcode-base-image-contract.mts";
@@ -63,16 +57,15 @@ describe("Deep Agents Code E2E base contract", () => {
     expect(() => validateDcodeBaseImageContract(contract(override), expected)).toThrow(message);
   });
 
-  it("proves both imports from the selected platform digest in a locked-down container (#9386)", () => {
+  it("proves both imports from the exact digest in a locked-down container (#9049)", () => {
     const runDocker = vi.fn(() => "nemoclaw-dcode-base-imports-ok");
-    const platformReference = `${IMAGE}@sha256:${"c".repeat(64)}`;
-    validateDcodeBaseImageImports(platformReference, runDocker);
+    validateDcodeBaseImageImports(`${IMAGE}@${DIGEST}`, runDocker);
 
     expect(runDocker).toHaveBeenCalledWith([
       "run",
       "--rm",
       "--platform",
-      DCODE_BASE_IMAGE_ONBOARD_PLATFORM,
+      "linux/amd64",
       "--network",
       "none",
       "--cap-drop",
@@ -84,43 +77,11 @@ describe("Deep Agents Code E2E base contract", () => {
       "999:999",
       "--entrypoint",
       "/opt/venv/bin/python3",
-      platformReference,
+      `${IMAGE}@${DIGEST}`,
       "-I",
       "-c",
       'import deepagents; import deepagents_code; print("nemoclaw-dcode-base-imports-ok")',
     ]);
-  });
-
-  it("emits the selected platform reference while preserving the full contract (#9386)", () => {
-    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-dcode-base-contract-"));
-    const contractPath = join(directory, "contract.json");
-    const outputPath = join(directory, "github-output");
-    const contractValue = contract();
-    const platformReference = `${IMAGE}@sha256:${"c".repeat(64)}`;
-    const runDocker = vi.fn(() => "nemoclaw-dcode-base-imports-ok");
-    try {
-      writeFileSync(contractPath, JSON.stringify(contractValue), "utf8");
-
-      main(
-        [contractPath],
-        {
-          GITHUB_OUTPUT: outputPath,
-          PUBLICATION_HEAD_SHA: HEAD_SHA,
-          PUBLICATION_RUN_ATTEMPT: String(RUN_ATTEMPT),
-          PUBLICATION_RUN_ID: String(RUN_ID),
-        },
-        runDocker,
-      );
-
-      const [baseReferenceOutput, contractOutput] = readFileSync(outputPath, "utf8")
-        .trim()
-        .split("\n");
-      expect(baseReferenceOutput).toBe(`base_ref=${platformReference}`);
-      expect(JSON.parse(String(contractOutput).slice("contract=".length))).toEqual(contractValue);
-      expect(runDocker).toHaveBeenCalledWith(expect.arrayContaining([platformReference]));
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
   });
 
   it("rejects missing or noisy import evidence (#9049)", () => {
