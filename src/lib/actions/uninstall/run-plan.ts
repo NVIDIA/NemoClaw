@@ -832,12 +832,12 @@ function deletePortableOpenShellSandbox(
   const result = runtime.run("openshell", ["sandbox", "delete", "-g", gatewayName, sandboxName], {
     env: runtime.env,
   });
-  if (result.status !== 0 && !isExplicitPortableSandboxAbsence(result, sandboxName)) {
+  const deleteReportedAbsence = isExplicitPortableSandboxAbsence(result, sandboxName);
+  if (result.status !== 0 && !deleteReportedAbsence) {
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
-    return false;
   }
   if (result.status === 0) runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
-  else {
+  else if (deleteReportedAbsence) {
     runtime.warn(sandboxDeleteAbsentMessage(sandboxName));
   }
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -2813,6 +2813,17 @@ function executePlan(
         return { ok: false };
       }
     } else if (step.name === "NemoClaw CLI") {
+      const completion = completePortablePlan(
+        ok,
+        portableRuntimeCleanup,
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        sandboxNames,
+        teardownAuthority,
+      );
+      if (!completion.ok) return completion;
       runNemoclawCliUninstallStep(
         paths,
         options,
@@ -2939,16 +2950,7 @@ function executePlan(
       }
     }
   }
-  return completePortablePlan(
-    ok,
-    portableRuntimeCleanup,
-    paths,
-    options,
-    runtime,
-    scopedToSelectedGateway,
-    sandboxNames,
-    teardownAuthority,
-  );
+  return { ok };
 }
 
 function completePortablePlan(
@@ -2961,7 +2963,8 @@ function completePortablePlan(
   sandboxNames: readonly string[],
   authority: GatewayOwner,
 ): { ok: boolean } {
-  if (!ok || !portable) return { ok };
+  if (!portable) return { ok: true };
+  if (!ok) return { ok };
   if (
     !executeOpenShellResourceCleanup(paths, options, runtime, scoped, sandboxNames, authority, true)
   )
