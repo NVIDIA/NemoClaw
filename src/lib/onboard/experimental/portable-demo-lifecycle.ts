@@ -672,7 +672,6 @@ function matchingPortableSandboxContainerIds(
   ] as const;
   let result = transport.podman(args);
   if (result.status === 125) {
-    transport.assertRuntimeAuthority();
     result = transport.podman(args);
   }
   requireCommand(result, `Finding portable sandbox '${sandboxName}'`);
