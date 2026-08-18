@@ -9,27 +9,20 @@ network_policies:
   googlechat_hermes:
     name: googlechat_hermes
     endpoints:
-      # Inbound: pull Chat events from the Pub/Sub subscription over the REST
-      # unary API (:pull, :acknowledge). Not gRPC
-      # StreamingPull — REST keeps the egress L7-inspectable so the
-      # gateway-minted token is injected by the proxy (keyless). The
-      # subscription lives under /v1/projects/{project}/subscriptions/{sub}.
+      # Inbound: REST :pull / :acknowledge, not gRPC StreamingPull — REST keeps
+      # the egress inspectable so the proxy can inject the minted token.
       - host: pubsub.googleapis.com
         port: 443
         protocol: rest
         enforcement: enforce
         rules:
-          # Pub/Sub REST pull uses Google custom-method verbs with a colon
-          # suffix: `/v1/projects/{p}/subscriptions/{s}:pull`. The L7 matcher is
-          # `glob.match(pattern, ["/"], path)`, so `/` is the only delimiter and
-          # `*` spans the `:verb` suffix within a segment. Allow just the two
-          # operations the adapter issues; a broader `/v1/**` would also permit
-          # publish and subscription administration on the injected bearer.
+          # The L7 matcher is `glob.match(pattern, ["/"], path)`, so `*` spans the
+          # `:verb` suffix. Allow only the two operations the adapter issues: a
+          # broader `/v1/**` would also permit publish and subscription admin.
           - allow: { method: POST, path: "/v1/projects/*/subscriptions/*:pull" }
           - allow: { method: POST, path: "/v1/projects/*/subscriptions/*:acknowledge" }
-      # Outbound reply: send/update/delete messages in Chat spaces. Same rule
-      # shape as the OpenClaw preset — writes scoped to the Chat `spaces` tree,
-      # reads across the Chat REST v1 tree.
+      # Outbound reply: same rule shape as the OpenClaw preset — writes scoped to
+      # the Chat `spaces` tree, reads across the v1 tree.
       - host: chat.googleapis.com
         port: 443
         protocol: rest
@@ -39,12 +32,9 @@ network_policies:
           - allow: { method: POST, path: "/v1/spaces/**" }
           - allow: { method: PATCH, path: "/v1/spaces/**" }
           - allow: { method: DELETE, path: "/v1/spaces/**" }
-    # OpenShell matches the egressing binary by its resolved realpath and
-    # compares exactly (no glob). Hermes' venv python is a symlink chain
-    # `/opt/hermes/.venv/bin/python` -> `/usr/bin/python3` -> `/usr/bin/python3.13`,
-    # so the concrete interpreter `/usr/bin/python3.13` must be listed or the
-    # egress is denied. Mirrors the provider-profile binary list. Revisit the
-    # minor version when the Hermes base image bumps Python.
+    # OpenShell matches the resolved realpath EXACTLY, and Hermes' venv python
+    # resolves to /usr/bin/python3.13, so the concrete path must be listed.
+    # Revisit when the base image bumps Python.
     binaries:
       - { path: /opt/hermes/.venv/bin/python }
       - { path: /usr/bin/python3 }

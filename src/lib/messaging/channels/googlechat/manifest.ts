@@ -118,12 +118,10 @@ export const googlechatManifest = {
       },
     },
     // ── Hermes-only Pub/Sub pull config ──
-    // OpenClaw receives Chat events on an inbound webhook and never reads these.
-    // Hermes' adapter also supports an inbound HTTP-events webhook, but NemoClaw
-    // runs it in Pub/Sub pull mode instead: pulling needs no public inbound URL.
-    // It PULLS events from a Pub/Sub subscription bound to the Chat topic, so it
-    // needs the project + subscription. Prompted only under the hermes-gated
-    // hook and rendered only into ~/.hermes/.env.
+    // OpenClaw uses an inbound webhook and ignores these. Hermes supports a
+    // webhook too, but NemoClaw pulls instead — no public inbound URL needed —
+    // so it needs the project and subscription. Hermes-gated prompt, rendered
+    // only into ~/.hermes/.env.
     {
       id: "projectId",
       kind: "config",
@@ -250,12 +248,9 @@ export const googlechatManifest = {
       },
     },
     // ── Hermes render ──
-    // No SA JSON and no access-token env are delivered: the keyless Google Chat
-    // bridge provider (provider-profile/hermes.yaml) mints a chat.bot+pubsub
-    // token gateway-side, and the NemoClaw Google Chat adapter override emits the
-    // `openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN` placeholder on both the
-    // Pub/Sub :pull and the Chat reply, which the L7 proxy swaps for the minted
-    // bearer. Only non-secret pull config + the allowlist reach the sandbox here.
+    // Neither the SA JSON nor a token reaches the sandbox: the bridge provider
+    // mints one gateway-side and the runtime asset sends only the placeholder,
+    // which the L7 proxy swaps. Non-secret pull config and the allowlist only.
     {
       id: "googlechat-hermes-env",
       kind: "env-lines",
@@ -353,13 +348,9 @@ export const googlechatManifest = {
       },
       required: true,
     },
-    // Hermes keyless REST-pull adapter: the inherited connect() constructs a
-    // (never-subscribed) Pub/Sub SubscriberClient and the reply path uses
-    // google-auth, so the managed image must ship these. The base image has
-    // aiohttp (used by the REST :pull loop) but not the google-* SDKs.
-    // The adapter override itself is Hermes-side runtime code and lives in
-    // agents/hermes/plugin/googlechat_sandbox_adapter.py, loaded by that
-    // plugin only when GOOGLE_CHAT_SUBSCRIPTION_NAME is rendered below.
+    // The base image ships aiohttp but not the google-* SDKs, which the
+    // inherited connect() and reply path both need. The Hermes-side delta lives
+    // in runtime/hermes-adapter.py.
     {
       id: "hermesGooglePubsubPackage",
       agent: "hermes",

@@ -78,6 +78,10 @@ COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependen
 FROM scratch AS hermes-agent-payload
 
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
+# Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
+# __init__.py.
+COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py \
+    /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py
@@ -378,7 +382,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=89f530da6a8296c8bab449a2a324d8efedca1a90b04a5e0f57cf9203ed2011cd
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=521756ea979d58df44d52b7fc1c2f062a11db397835b925f15bc0265e33e48ea
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -635,6 +639,11 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-pe
         /opt/hermes/plugins/platforms/discord/recovery.py \
     && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
         discord-recovery-source
+
+# Pin the Hermes definitions the Google Chat override binds, so an upgrade fails
+# this build instead of silently falling back to the stock adapter.
+RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
+        googlechat-override-seams
 
 # Hermes v0.19.0's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only

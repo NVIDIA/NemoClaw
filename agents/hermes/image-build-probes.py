@@ -389,6 +389,35 @@ def verify_discord_reopen() -> None:
     assert store.call(reopen_probe) == ("gateway-reopened",)
 
 
+def verify_googlechat_override_seams() -> None:
+    """Fail the build when a Google Chat definition the channel override binds moves.
+
+    The override subclasses the bundled adapter because ``PlatformEntry`` carries
+    no credential or transport field. Those names are Hermes internals, so pin
+    them: an upgrade that renames one stops the build instead of letting the
+    channel fall back to the stock adapter unnoticed.
+    """
+    path = "/opt/hermes/plugins/platforms/google_chat/adapter.py"
+    source = Path(path).read_text(encoding="utf-8")
+    expected = {
+        "def _validate_config(self) -> Tuple[str, Optional[str]]:": 1,
+        "def _load_sa_credentials(self) -> Any:": 1,
+        "def _new_authed_http(self) -> Any:": 1,
+        "async def connect(self, *, is_reconnect: bool = False) -> bool:": 1,
+        # connect() gates its gRPC subscriber precheck and its own supervisor on
+        # this test; the override reports no subscription so both are skipped.
+        "if subscription_path is not None:": 2,
+    }
+    for needle, count in expected.items():
+        actual = source.count(needle)
+        assert actual == count, (
+            f"{path}: expected {count} occurrence(s) of {needle!r}, found {actual}. "
+            "The Google Chat channel override binds this definition; re-review "
+            "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py before "
+            "upgrading Hermes."
+        )
+
+
 COMMANDS: dict[str, Callable[[], None]] = {
     "cron-backup": verify_cron_backup,
     "cron-create": verify_cron_create,
@@ -399,6 +428,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "discord-recovery-source": verify_discord_recovery_source,
     "discord-reopen": verify_discord_reopen,
     "gateway-process-identity": verify_gateway_process_identity,
+    "googlechat-override-seams": verify_googlechat_override_seams,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
     "neutral-platform-inertness": verify_neutral_platform_inertness,

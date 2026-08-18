@@ -88,10 +88,8 @@ export interface MessagingBridgeSecretResolveDeps {
 export interface CollectMessagingBridgeTokenDefsInput extends MessagingBridgeSecretResolveDeps {
   readonly sandboxName: string;
   /**
-   * Sandbox agent. Bridge profiles are per-agent (`provider-profile/<agent>.yaml`),
-   * and a channel can ship both openclaw and hermes profiles (Google Chat does), so
-   * only the profile matching this sandbox's agent must produce a bridge — otherwise
-   * an openclaw sandbox would also mint the hermes bridge under the same name.
+   * Sandbox agent. Bridge profiles are per-agent, and a channel may ship both
+   * (Google Chat does), so only the matching profile may produce a bridge.
    */
   readonly agent: MessagingAgentId;
   readonly enabledChannels: readonly string[] | null;
@@ -407,12 +405,9 @@ function buildRefreshMaterial(
       { key: "client_email", value: clientEmail },
       { key: "private_key", value: privateKey },
     ];
-    // Scope comes from the profile's declared refresh scopes (single source of
-    // truth). Join all of them space-separated so ONE minted token carries every
-    // scope — a Google service-account JWT mints a multi-scope token from a
-    // space-separated `scope` claim. Hermes Google Chat needs chat.bot AND pubsub
-    // in a single credential (reply + Pub/Sub REST pull); taking only scopes[0]
-    // dropped pubsub and made `:pull` fail with 403 "insufficient scopes".
+    // Join every declared scope space-separated so ONE minted token carries all
+    // of them. Hermes Google Chat needs chat.bot AND pubsub in a single
+    // credential; taking only scopes[0] made `:pull` fail with 403.
     if (profile.scopes.length > 0) {
       material.push({ key: "scope", value: profile.scopes.join(" ") });
     }

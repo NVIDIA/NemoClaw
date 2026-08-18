@@ -9,7 +9,7 @@ managed by NemoClaw.
 
 Layout: channel-specific runtime overrides live in sibling modules loaded by
 register() only when that channel is configured, so a sandbox without the
-channel carries none of its behavior. Today that is googlechat_sandbox_adapter.py.
+channel carries none of its behavior. Today that is googlechat_adapter.py.
 
 Skill hot-reload: Hermes caches its skill slash-command registry in a
 module-global dict on first scan. New skills dropped on disk are invisible
@@ -1425,30 +1425,23 @@ def _handle_reload_skills(tool_input=None, context=None, **_kwargs):
     return "\n".join(lines)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Google Chat: keyless adapter override (NemoClaw)
-#
-# The override itself lives in the sibling ``googlechat_sandbox_adapter``
-# module — the same per-concern split Hermes' own plugins use
-# (``plugins/platforms/discord`` ships adapter.py, recovery.py, and
-# voice_mixer.py beside __init__.py). It is loaded only when the sandbox is
-# configured for the Google Chat channel, so a Hermes sandbox without that
-# channel never wraps the platform registry.
-# ─────────────────────────────────────────────────────────────────────────────
+# Google Chat: the channel owns the override. Source lives in
+# src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py; the Hermes
+# image copies it in beside this file. Loaded only when the channel is
+# configured, so other sandboxes never replace the bundled platform entry.
 _GOOGLE_CHAT_SUBSCRIPTION_ENV = "GOOGLE_CHAT_SUBSCRIPTION_NAME"
-_GOOGLE_CHAT_MODULE = "googlechat_sandbox_adapter.py"
+_GOOGLE_CHAT_MODULE = "googlechat_adapter.py"
 
 
 def _load_googlechat_adapter():
-    """Load the sibling Google Chat override module by file path.
+    """Load the sibling override module by path.
 
-    Hermes loads this plugin as a directory module under a synthetic name
-    (``hermes_cli/plugins.py`` ``_load_directory_module``), so there is no
-    package context for a relative import; load the sibling the same way.
+    Hermes loads this plugin as a directory module under a synthetic name, so
+    there is no package context for a relative import.
     """
     path = os.path.join(os.path.dirname(__file__), _GOOGLE_CHAT_MODULE)
     spec = importlib.util.spec_from_file_location(
-        "nemoclaw_hermes_googlechat_sandbox_adapter",
+        "nemoclaw_hermes_googlechat_adapter",
         path,
     )
     if spec is None or spec.loader is None:
@@ -1458,12 +1451,11 @@ def _load_googlechat_adapter():
     return module
 
 
-def _install_googlechat_sandbox_adapter(ctx):
-    """Install the keyless Google Chat override when that channel is configured.
+def _install_googlechat_adapter(ctx):
+    """Install the Google Chat override when that channel is configured.
 
-    Gating on the rendered subscription keeps every other Hermes sandbox free of
-    the platform-registry wrap. Returns whether the override module was loaded
-    and invoked; the module reports its own registry-wrap failures.
+    Returns whether the module was loaded and invoked; it reports its own
+    registration failures.
     """
     if not _get_env_value(_GOOGLE_CHAT_SUBSCRIPTION_ENV):
         return False
@@ -1487,7 +1479,7 @@ def register(ctx):
     """Register NemoClaw tools and hooks with Hermes."""
     _install_nous_tool_broker_patch()
     _install_messaging_response_patch()
-    _install_googlechat_sandbox_adapter(ctx)
+    _install_googlechat_adapter(ctx)
 
     # Register status tool
     ctx.register_tool(

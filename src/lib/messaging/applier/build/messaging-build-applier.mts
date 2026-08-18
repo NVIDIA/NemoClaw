@@ -1882,13 +1882,10 @@ function installHermesUvPackages(selectedPackages: readonly string[], env: Env):
       "--",
       ...selectedPackages,
     ],
-    // uv (rustls/webpki) ignores the corporate-only SSL_CERT_FILE the build step
-    // exports, so a PyPI fetch behind a corporate MITM proxy fails with
-    // `invalid peer certificate: UnknownIssuer`. Point uv at the full system
-    // bundle (public roots + corporate CA, merged into /etc/ssl/certs by
-    // `update-ca-certificates`, Dockerfile #6210) and enable UV_SYSTEM_CERTS so
-    // uv trusts it. (uv renamed UV_NATIVE_TLS → UV_SYSTEM_CERTS.) Harmless
-    // off-proxy — the same bundle still carries the public roots.
+    // uv (rustls) ignores the corporate-only SSL_CERT_FILE, so a PyPI fetch
+    // behind a MITM proxy fails with `UnknownIssuer`. Point it at the merged
+    // system bundle instead; harmless off-proxy, and UV_SYSTEM_CERTS is the
+    // current name for UV_NATIVE_TLS.
     {
       ...env,
       UV_SYSTEM_CERTS: "1",
