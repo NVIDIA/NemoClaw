@@ -68,42 +68,25 @@ const REGISTRY_TARGET_PHASES = [
   "verify the Personal stock fetch contract",
   "record target completion evidence",
 ] as const;
-const UNSUPPORTED_TARGET_PHASES = [
-  "identify the unsupported registry target",
-  "report that the registry target is not wired",
-] as const;
 
-const REGISTRY_TARGET_CASES = listTargets().map((target, targetIndex) => ({
-  support: liveTargetSupport(target),
-  target,
-  targetIndex,
-  testName: liveTargetTestName(target),
-}));
-const unsupportedTargetCases = REGISTRY_TARGET_CASES.filter(({ support }) => !support.supported);
-const selectedUnsupportedTarget = unsupportedTargetCases.find(
-  ({ target }) => SELECTED_TARGET_ID === target.id,
-);
-if (selectedUnsupportedTarget) {
-  console.warn(
-    `[not wired] ${selectedUnsupportedTarget.target.id}: ${selectedUnsupportedTarget.support.reasons.join("; ")}`,
-  );
-}
+for (const [targetIndex, target] of listTargets().entries()) {
+  const support = liveTargetSupport(target);
+  if (!support.supported) {
+    if (SELECTED_TARGET_ID === target.id) {
+      console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);
+    }
+    test.skip(
+      liveTargetTestName(target),
+      { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
+      () => {},
+    );
+    continue;
+  }
 
-test.skip.for(unsupportedTargetCases)(
-  "$testName",
-  { meta: { e2ePhases: UNSUPPORTED_TARGET_PHASES } },
-  (_targetCase, { progress }) => {
-    progress.phase("identify the unsupported registry target");
-    progress.phase("report that the registry target is not wired");
-  },
-);
-
-test.for(REGISTRY_TARGET_CASES.filter(({ support }) => support.supported))(
-  "$testName",
-  { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
-  async (
-    { support, target, targetIndex },
-    {
+  test(
+    liveTargetTestName(target),
+    { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
+    async ({
       artifacts,
       environment,
       host,
@@ -113,8 +96,7 @@ test.for(REGISTRY_TARGET_CASES.filter(({ support }) => support.supported))(
       sandbox,
       secrets,
       stateValidation,
-    },
-  ) => {
+    }) => {
       const dcodeBaseContract = loadDcodeBaseImagePublicationEvidence(
         target.id,
         artifacts.pathFor("dcode-base-image.json"),
@@ -228,5 +210,6 @@ test.for(REGISTRY_TARGET_CASES.filter(({ support }) => support.supported))(
           : undefined,
         ...(personalStockFetch ? { personalStockFetch } : {}),
       });
-  },
-);
+    },
+  );
+}

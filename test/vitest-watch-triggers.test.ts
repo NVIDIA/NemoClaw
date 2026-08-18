@@ -85,12 +85,14 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  it.each([
+  it.each(
+    [
         ".github/actions/docker-auth-setup/action.yaml",
         ".github/actions/docker-auth-cleanup/action.yaml",
         ".github/scripts/docker-auth-setup.sh",
         ".github/scripts/docker-auth-cleanup.sh",
-  ])("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
+      ],
+  )("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",
@@ -225,11 +227,11 @@ describe("Vitest opaque-input watch triggers", () => {
       const triggeredTests = new Set(OPAQUE_INPUTS.flatMap(triggeredBy));
 
       expect(triggeredTests.size).toBeGreaterThan(0);
-      triggeredTests.forEach((testFile) => {
+      for (const testFile of triggeredTests) {
         expect(testFile).toMatch(/\.test\.ts$/);
         expect(testFile).not.toMatch(/[?*{}[\]]/);
         expect(fs.existsSync(testFile), testFile).toBe(true);
-      });
+      }
 
       expect(trigger.pattern.global).toBe(false);
       expect(trigger.pattern.sticky).toBe(false);

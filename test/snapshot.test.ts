@@ -611,9 +611,9 @@ describe("sandbox directory backup semantics", () => {
       ];
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(stagingRoot);
-      existingDirs.forEach((dirName) => {
+      for (const dirName of existingDirs) {
         fs.mkdirSync(path.join(openclawDir, dirName), { recursive: true });
-      });
+      }
       fs.writeFileSync(path.join(openclawDir, "workspace", "marker.txt"), "marker\n");
 
       const openshell = writeFakeOpenshell(binDir);
@@ -850,9 +850,7 @@ process.exit(0);
       const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
       const existingDirs = ["agents", "extensions", "workspace"];
       fs.mkdirSync(binDir, { recursive: true });
-      existingDirs.forEach((d) => {
-        fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
-      });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
       const auditLines = [
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal\t../qrcode-terminal/bin/qrcode-terminal.js",
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
@@ -1031,9 +1029,7 @@ process.exit(0);
       const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
       const existingDirs = ["extensions", "workspace"];
       fs.mkdirSync(binDir, { recursive: true });
-      existingDirs.forEach((d) => {
-        fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
-      });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
       const auditLines = [
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
@@ -1077,9 +1073,10 @@ process.exit(0);
     }
   });
 
-  it.each(["weather", "slack"])(
-    "rejects a generic %s OpenClaw peer link with a tampered target",
-    (extensionName) => {
+  it.each([
+    "weather",
+    "slack",
+  ])("rejects a generic %s OpenClaw peer link with a tampered target", (extensionName) => {
     // The generic peer path is valid, but its target must remain the exact
     // global OpenClaw install rather than an arbitrary absolute path.
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
@@ -1090,9 +1087,7 @@ process.exit(0);
       const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
       const existingDirs = ["extensions"];
       fs.mkdirSync(binDir, { recursive: true });
-        existingDirs.forEach((d) => {
-          fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
-        });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
       const auditLines = [
         `l\t/sandbox/.openclaw/extensions/${extensionName}/node_modules/openclaw\t/etc/passwd`,
@@ -1133,8 +1128,7 @@ process.exit(0);
       process.env.PATH = oldPath;
       fs.rmSync(fixture, { recursive: true, force: true });
     }
-    },
-  );
+  });
 
   it("marks non-attributed directories failed when they are missing from partial extraction", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-missing-partial-"));
@@ -1211,9 +1205,7 @@ process.exit(0);
       const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
       const existingDirs = ["agents", "extensions", "workspace"];
       fs.mkdirSync(binDir, { recursive: true });
-      existingDirs.forEach((d) => {
-        fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
-      });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
@@ -1285,9 +1277,7 @@ process.exit(0);
       const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
       const existingDirs = ["agents", "workspace"];
       fs.mkdirSync(binDir, { recursive: true });
-      existingDirs.forEach((d) => {
-        fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
-      });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
       // `agents` simulates perm-denied (no rows emitted); `workspace` emits
       // a symlink that is not in the audit allow-list, which must still be

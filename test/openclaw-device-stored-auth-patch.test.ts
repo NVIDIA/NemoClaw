@@ -46,19 +46,17 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
         await runtime.approve({ json: true }, "request-1");
 
         expect(runtime.calls).toHaveLength(2);
-        (
-          [
-            ["device.pair.list", runtime.calls[0]],
-            ["device.pair.approve", runtime.calls[1]],
-          ] as const
-        ).forEach(([method, call]) => {
+        for (const [method, call] of [
+          ["device.pair.list", runtime.calls[0]],
+          ["device.pair.approve", runtime.calls[1]],
+        ] as const) {
           expect(call).toMatchObject({
             method,
             scopes: ["operator.pairing"],
             useStoredDeviceAuth: true,
             requiredStoredDeviceAuthScopes: ["operator.pairing"],
           });
-        });
+        }
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }

@@ -118,12 +118,14 @@ describe("OpenClaw managed extension snapshot restore", () => {
     pluginTransitions.map((transition) => ({ installIndexSource, ...transition })),
   );
 
-  it.each(installIndexCases)(
-    "preserves fresh extensions and handles image-plugin $name from the $installIndexSource install index",
-    ({ installIndexSource, previousPlugin, freshPlugin }) => {
-      const fixture = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-openclaw-extension-restore-"),
-      );
+  it.each(
+    installIndexCases,
+  )("preserves fresh extensions and handles image-plugin $name from the $installIndexSource install index", ({
+    installIndexSource,
+    previousPlugin,
+    freshPlugin,
+  }) => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-extension-restore-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
     try {
@@ -133,18 +135,16 @@ describe("OpenClaw managed extension snapshot restore", () => {
       const sshLog = path.join(fixture, "ssh-log.jsonl");
       const extensionsDir = path.join(openclawDir, "extensions");
       const builtInManagedExtensions =
-          "nemoclaw,diagnostics-otel,brave,discord,openclaw-weixin,slack,whatsapp,msteams".split(
-            ",",
-          );
+        "nemoclaw,diagnostics-otel,brave,discord,openclaw-weixin,slack,whatsapp,msteams".split(",");
       const freshImagePlugins = freshPlugin ? [freshPlugin] : [];
       const managedExtensions = [...builtInManagedExtensions, ...freshImagePlugins];
       fs.mkdirSync(binDir, { recursive: true });
-        managedExtensions.forEach((extensionName) => {
+      for (const extensionName of managedExtensions) {
         const extensionDir = path.join(extensionsDir, extensionName);
         fs.mkdirSync(extensionDir, { recursive: true });
         const marker = `fresh-${extensionName}\n`;
         fs.writeFileSync(path.join(extensionDir, "marker.txt"), marker);
-        });
+      }
       fs.mkdirSync(path.join(extensionsDir, "stale-user-extension"), { recursive: true });
       fs.writeFileSync(path.join(extensionsDir, "stale-user-extension", "marker.txt"), "stale\n");
       fs.writeFileSync(
@@ -173,12 +173,12 @@ describe("OpenClaw managed extension snapshot restore", () => {
         },
       ]);
       const backupExtensionsDir = path.join(manifest.backupPath, "extensions");
-        [...builtInManagedExtensions, previousPlugin].forEach((extensionName) => {
+      for (const extensionName of [...builtInManagedExtensions, previousPlugin]) {
         const extensionDir = path.join(backupExtensionsDir, extensionName);
         fs.mkdirSync(extensionDir, { recursive: true });
         const marker = `old-${extensionName}\n`;
         fs.writeFileSync(path.join(extensionDir, "marker.txt"), marker);
-        });
+      }
       fs.mkdirSync(path.join(backupExtensionsDir, "user-extension"), { recursive: true });
       fs.writeFileSync(
         path.join(backupExtensionsDir, "user-extension", "marker.txt"),
@@ -246,11 +246,11 @@ process.exit(0);
       });
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(["extensions"]);
-        managedExtensions.forEach((extensionName) => {
+      for (const extensionName of managedExtensions) {
         expect(
           fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
         ).toBe(`fresh-${extensionName}\n`);
-        });
+      }
       expect(fs.existsSync(path.join(extensionsDir, previousPlugin))).toBe(
         previousPlugin === freshPlugin,
       );
@@ -274,9 +274,9 @@ process.exit(0);
       );
       const cleanupCommand = cleanupCommands[0];
       expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
-        managedExtensions.forEach((extensionName) => {
+      for (const extensionName of managedExtensions) {
         expect(cleanupCommand).toContain(`! -name '${extensionName}'`);
-        });
+      }
 
       fs.writeFileSync(
         freshRegistryPath,
@@ -300,11 +300,11 @@ process.exit(0);
       expect(fs.existsSync(path.join(extensionsDir, previousPlugin))).toBe(
         previousPlugin === freshPlugin,
       );
-        managedExtensions.forEach((extensionName) => {
+      for (const extensionName of managedExtensions) {
         expect(
           fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
         ).toBe(`fresh-${extensionName}\n`);
-        });
+      }
       const commandsAfterRejectedRestore = fs
         .readFileSync(sshLog, "utf-8")
         .trim()
@@ -319,6 +319,5 @@ process.exit(0);
       restoreEnvBulk({ NEMOCLAW_OPENSHELL_BIN: oldOpenshell, PATH: oldPath });
       fs.rmSync(fixture, { recursive: true, force: true });
     }
-    },
-  );
+  });
 });
