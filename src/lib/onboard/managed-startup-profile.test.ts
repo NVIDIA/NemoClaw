@@ -735,10 +735,10 @@ describe("managed startup profile", () => {
   it("accepts schema-owned messaging pins, placeholders, and credential environment aliases (#9355)", () => {
     expect(() =>
       validateManagedStartupProfile({
-        ...OPENCLAW_PROFILE,
+        ...HERMES_PROFILE,
         messaging: {
           plan: {
-            ...OPENCLAW_PROFILE.messaging.plan,
+            ...HERMES_PROFILE.messaging.plan,
             buildSteps: [
               {
                 channelId: "slack",
@@ -753,7 +753,7 @@ describe("managed startup profile", () => {
               },
             ],
             agentRender: [
-              ...OPENCLAW_PROFILE.messaging.plan.agentRender,
+              ...HERMES_PROFILE.messaging.plan.agentRender,
               {
                 channelId: "slack",
                 agent: "hermes",
@@ -777,6 +777,12 @@ describe("managed startup profile", () => {
   });
 
   it.each([
+    ...listMessagingCredentialEnvAssignments({ agent: "hermes" })
+      .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+      .map(({ targetEnvKey, placeholder }) => [
+        "a cross-agent credential environment alias",
+        `${targetEnvKey}=${placeholder}`,
+      ] as const),
     ["a raw credential", `SLACK_BOT_TOKEN=xoxb-${"a".repeat(32)}`],
     ["a malformed assignment", "SLACK_BOT_TOKEN =openshell:resolve:env:SLACK_BOT_TOKEN"],
     ["more than one assignment", "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN=FORGED"],
@@ -792,7 +798,7 @@ describe("managed startup profile", () => {
       "a placeholder assigned to an unapproved credential environment key",
       "AWS_SECRET_ACCESS_KEY=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
     ],
-  ])("rejects %s in messaging environment lines (#9355)", (_label, line) => {
+  ] as const)("rejects %s in messaging environment lines (#9355)", (_label, line) => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
@@ -802,7 +808,7 @@ describe("managed startup profile", () => {
             agentRender: [
               {
                 channelId: "slack",
-                agent: "hermes",
+                agent: "openclaw",
                 target: "~/.hermes/.env",
                 kind: "env-lines",
                 lines: [line],
@@ -812,7 +818,7 @@ describe("managed startup profile", () => {
           },
         },
       }),
-    ).toThrow(/credential-shaped string data/);
+    ).toThrow(/credential-shaped string data|credential environment alias/);
   });
 
   it.each([

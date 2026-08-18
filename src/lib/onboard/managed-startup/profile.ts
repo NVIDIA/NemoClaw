@@ -60,11 +60,17 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
   /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
-const MESSAGING_CREDENTIAL_ENV_ALIASES = new Set(
-  listMessagingCredentialEnvAssignments()
-    .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
-    .map(({ sourceEnvKey, targetEnvKey }) => `${sourceEnvKey}\0${targetEnvKey}`),
-);
+const MESSAGING_CREDENTIAL_ENV_ALIASES = (() => {
+  const aliases = new Map<string, Set<string>>();
+  for (const { agent, sourceEnvKey, targetEnvKey } of listMessagingCredentialEnvAssignments()) {
+    if (sourceEnvKey === targetEnvKey) continue;
+    const key = `${sourceEnvKey}\0${targetEnvKey}`;
+    const agents = aliases.get(key) ?? new Set<string>();
+    agents.add(agent);
+    aliases.set(key, agents);
+  }
+  return aliases;
+})();
 const JSON_ARRAY_INDEX_SEGMENT_RE = /^\[(?:0|[1-9][0-9]*)\]$/u;
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /nvapi-[A-Za-z0-9_-]{10,}/u,
@@ -1061,6 +1067,33 @@ function isMessagingCredentialPlaceholderAssignment(
   );
 }
 
+function assertMessagingCredentialAliasAgents(
+  plan: Record<string, unknown>,
+  selectedAgent: ManagedStartupAgent,
+): void {
+  if (!Array.isArray(plan.agentRender)) return;
+  for (const render of plan.agentRender) {
+    if (!isPlainObject(render) || !Array.isArray(render.lines)) continue;
+    for (const line of render.lines) {
+      if (typeof line !== "string") continue;
+      const separator = line.indexOf("=");
+      if (separator <= 0) continue;
+      const targetEnvKey = line.slice(0, separator);
+      const sourceEnvKey = messagingCredentialPlaceholderEnvKey(line.slice(separator + 1));
+      if (sourceEnvKey === null || sourceEnvKey === targetEnvKey) continue;
+      const allowedAgents = MESSAGING_CREDENTIAL_ENV_ALIASES.get(
+        `${sourceEnvKey}\0${targetEnvKey}`,
+      );
+      if (
+        allowedAgents !== undefined &&
+        (render.agent !== selectedAgent || !allowedAgents.has(selectedAgent))
+      ) {
+        invalid("messaging credential environment alias must match the selected render agent");
+      }
+    }
+  }
+}
+
 function isMessagingRuntimeEnvAliasPath(path: readonly string[]): boolean {
   return (
     path.length === 5 &&
@@ -2050,6 +2083,9 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
       messagingPlan.agent !== agent)
   ) {
     invalid("messaging.plan must be a version 1 plan for the selected agent");
+  }
+  if (messagingPlan !== null) {
+    assertMessagingCredentialAliasAgents(messagingPlan, agent);
   }
 
   const corporateCa = requireRecord(profile.corporateCa, "corporateCa");
