@@ -6,10 +6,8 @@ import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import {
   dockerBuild,
-  dockerInfoFormat,
   dockerImageInspect,
   dockerImageInspectFormat,
-  dockerManifestInspect,
   dockerPull,
 } from "./adapters/docker";
 import { ROOT, redact } from "./runner";
@@ -138,108 +136,23 @@ function getRepoDigest(
   const inspectOutput = dockerImageInspectFormat("{{json .RepoDigests}}", imageRef, {
     ignoreError: true,
   });
-  let repoDigests: unknown = [];
-  if (inspectOutput) {
-    try {
-      repoDigests = JSON.parse(inspectOutput);
-    } catch {
-      addTraceEvent("nemoclaw.sandbox_base_image.repodigest_parse_failed", {
-        digest_pinned: pinnedDigest !== null,
-      });
-    }
+  if (!inspectOutput) return pinnedDigest;
+
+  let repoDigests: unknown;
+  try {
+    repoDigests = JSON.parse(inspectOutput || "[]");
+  } catch {
+    addTraceEvent("nemoclaw.sandbox_base_image.repodigest_parse_failed", {
+      digest_pinned: pinnedDigest !== null,
+    });
+    return pinnedDigest;
   }
   const repoDigest = Array.isArray(repoDigests)
     ? repoDigests.find((entry) => String(entry).startsWith(`${imageName}@sha256:`))
     : null;
-  const localResolution = repoDigest
-    ? (() => {
-        const digest = String(repoDigest).slice(String(repoDigest).indexOf("@") + 1);
-        return { digest, ref: `${imageName}@${digest}` };
-      })()
-    : pinnedDigest;
-
-  if (!pinnedDigest || localResolution?.digest !== pinnedDigest.digest) return localResolution;
-
-  const platformDigest = resolvePlatformManifestDigest(imageRef);
-  if (!platformDigest || platformDigest === pinnedDigest.digest) return localResolution;
-  const platformRef = `${imageName}@${platformDigest}`;
-  if (!localImageHasRepoDigest(platformRef)) {
-    const pullResult = dockerPull(platformRef, { ignoreError: true, suppressOutput: true });
-    if (pullResult.status !== 0 || !localImageHasRepoDigest(platformRef)) return localResolution;
-  }
-  return { digest: platformDigest, ref: platformRef };
-}
-
-const CANONICAL_SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
-const CANONICAL_ARM_VARIANT = /^v[1-9][0-9]*$/;
-
-function normalizeDockerArchitecture(value: string): string {
-  if (value === "x86_64") return "amd64";
-  if (value === "aarch64") return "arm64";
-  return value;
-}
-
-function getLocalArmVariant(imageRef: string): string | null {
-  const output = dockerImageInspectFormat("{{json .Variant}}", imageRef, {
-    ignoreError: true,
-  });
-  if (!output) return null;
-  try {
-    const variant = JSON.parse(output) as unknown;
-    return typeof variant === "string" && CANONICAL_ARM_VARIANT.test(variant) ? variant : null;
-  } catch {
-    return null;
-  }
-}
-
-function resolvePlatformManifestDigest(imageRef: string): string | null {
-  const daemonPlatform = dockerInfoFormat("{{.OSType}}/{{.Architecture}}", {
-    ignoreError: true,
-  }).trim();
-  const [osName, rawArchitecture, ...extra] = daemonPlatform.split("/");
-  if (!osName || !rawArchitecture || extra.length > 0) return null;
-  const architecture = normalizeDockerArchitecture(rawArchitecture);
-  const isArmArchitecture = architecture === "arm" || architecture === "arm64";
-  const armVariant = isArmArchitecture ? getLocalArmVariant(imageRef) : null;
-  if (isArmArchitecture && !armVariant) return null;
-
-  const manifestOutput = dockerManifestInspect(imageRef, { ignoreError: true });
-  if (!manifestOutput) return null;
-  try {
-    const parsed = JSON.parse(manifestOutput) as {
-      manifests?: Array<{
-        digest?: unknown;
-        platform?: { architecture?: unknown; os?: unknown; variant?: unknown };
-      }>;
-    };
-    const matches = Array.isArray(parsed.manifests)
-      ? parsed.manifests.flatMap((entry) =>
-          entry?.platform?.os === osName &&
-          normalizeDockerArchitecture(String(entry.platform.architecture ?? "")) === architecture &&
-          (!isArmArchitecture || entry.platform.variant === armVariant) &&
-          typeof entry.digest === "string" &&
-          CANONICAL_SHA256_DIGEST.test(entry.digest)
-            ? [entry.digest]
-            : [],
-        )
-      : [];
-    return matches.length === 1 ? (matches[0] ?? null) : null;
-  } catch {
-    return null;
-  }
-}
-
-function localImageHasRepoDigest(imageRef: string): boolean {
-  const output = dockerImageInspectFormat("{{json .RepoDigests}}", imageRef, {
-    ignoreError: true,
-  });
-  if (!output) return false;
-  try {
-    const repoDigests = JSON.parse(output) as unknown;
-    return Array.isArray(repoDigests) && repoDigests.some((entry) => entry === imageRef);
-  } catch {
-    return false;
-  }
+  if (!repoDigest) return pinnedDigest;
+  const digest = String(repoDigest).slice(String(repoDigest).indexOf("@") + 1);
+  return { digest, ref: `${imageName}@${digest}` };
 }
 
 type PulledCandidateOptions = {

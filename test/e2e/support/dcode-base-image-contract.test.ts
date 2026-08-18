@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  DCODE_BASE_IMAGE_ONBOARD_PLATFORM,
   validateDcodeBaseImageContract,
   validateDcodeBaseImageImports,
 } from "../../../tools/e2e/dcode-base-image-contract.mts";
@@ -57,15 +58,16 @@ describe("Deep Agents Code E2E base contract", () => {
     expect(() => validateDcodeBaseImageContract(contract(override), expected)).toThrow(message);
   });
 
-  it("proves both imports from the exact digest in a locked-down container (#9049)", () => {
+  it("proves both imports from the selected platform digest in a locked-down container (#9386)", () => {
     const runDocker = vi.fn(() => "nemoclaw-dcode-base-imports-ok");
-    validateDcodeBaseImageImports(`${IMAGE}@${DIGEST}`, runDocker);
+    const platformReference = `${IMAGE}@sha256:${"c".repeat(64)}`;
+    validateDcodeBaseImageImports(platformReference, runDocker);
 
     expect(runDocker).toHaveBeenCalledWith([
       "run",
       "--rm",
       "--platform",
-      "linux/amd64",
+      DCODE_BASE_IMAGE_ONBOARD_PLATFORM,
       "--network",
       "none",
       "--cap-drop",
@@ -77,7 +79,7 @@ describe("Deep Agents Code E2E base contract", () => {
       "999:999",
       "--entrypoint",
       "/opt/venv/bin/python3",
-      `${IMAGE}@${DIGEST}`,
+      platformReference,
       "-I",
       "-c",
       'import deepagents; import deepagents_code; print("nemoclaw-dcode-base-imports-ok")',
