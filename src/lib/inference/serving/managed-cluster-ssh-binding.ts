@@ -6,6 +6,7 @@ export type {
   QualifiedStationSshIdentity as QualifiedManagedVllmSshIdentity,
   WriteDualStationSshBindingOptions as WriteManagedVllmSshBindingOptions,
 } from "../vllm-station-ssh-binding.js";
+export { strictVllmSshTransportArgs as strictManagedVllmSshTransportArgs } from "./vllm-ssh-transport-policy.js";
 /**
  * Cardinality-neutral names for the pinned SSH transport shared by managed
  * vLLM clusters. The legacy Station implementation remains the compatibility
@@ -23,6 +24,5 @@ export {
   loadDualStationSshBindingForStatePath as loadManagedVllmSshBindingForStatePath,
   loadDualStationSshBindingHandoff as loadManagedVllmSshBindingHandoff,
   stationKnownHostsDigest as managedVllmKnownHostsDigest,
-  strictStationSshTransportArgs as strictManagedVllmSshTransportArgs,
   writeDualStationSshBinding as writeManagedVllmSshBinding,
 } from "../vllm-station-ssh-binding.js";
