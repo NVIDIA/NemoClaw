@@ -229,7 +229,7 @@ describe("Hermes sandbox connect light terminal skin", () => {
       agentName: "hermes",
       registryEntries: [
         { name: "alpha", agent: "hermes" },
-        { name: "beta", agent: "hermes" },
+        { name: "beta", agent: "hermes", provider: "ollama-local", model: "qwen3-vl:4b" },
       ],
       sessionAgent: {
         name: "hermes",

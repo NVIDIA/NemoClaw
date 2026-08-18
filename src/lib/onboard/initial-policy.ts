@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 import YAML from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
@@ -29,12 +30,15 @@ import {
 } from "./messaging-policy-presets";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
-import { cleanupTempDir, secureTempFile } from "./temp-files";
+import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "./temp-files";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 
 export type InitialSandboxPolicy = {
   policyPath: string;
   appliedPresets: string[];
+  sourceBytes?: Buffer;
   cleanup?: () => boolean;
+  cleanupExact?: () => boolean;
 };
 
 export function discloseInitialSandboxPolicy(policy: InitialSandboxPolicy): void {
@@ -274,24 +278,26 @@ export type DirectSandboxGpuProofCommand = {
 
 export function buildDirectSandboxGpuProofCommands(
   sandboxName: string,
+  gatewayName?: string,
 ): DirectSandboxGpuProofCommand[] {
+  const exec = ["sandbox", "exec", ...(gatewayName ? ["-g", gatewayName] : []), "-n", sandboxName];
   return [
     {
       id: "nvidia-smi",
       label: "nvidia-smi when available",
-      args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", NVIDIA_SMI_OPTIONAL_PROBE],
+      args: [...exec, "--", "sh", "-lc", NVIDIA_SMI_OPTIONAL_PROBE],
     },
     {
       id: "proc-comm-write",
       label: "/proc/<pid>/task/<tid>/comm write",
       optional: true,
-      args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", PROC_COMM_WRITE_PROBE],
+      args: [...exec, "--", "sh", "-lc", PROC_COMM_WRITE_PROBE],
     },
     {
       id: "cuda-init",
       label: "cuInit(0) via libcuda.so.1",
       optional: true,
-      args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", CUDA_INIT_PROBE],
+      args: [...exec, "--", "sh", "-lc", CUDA_INIT_PROBE],
     },
   ];
 }
@@ -307,26 +313,35 @@ function createPolicyTempCleanup(policyPath: string, expectedPrefix: string): ()
   };
 }
 
-function prepareDirectGpuSandboxPolicy(
-  basePolicyPath: string,
-  options: DirectGpuPolicyOptions = {},
-): InitialSandboxPolicy {
-  const basePolicy = fs.readFileSync(basePolicyPath, "utf-8");
-  const policyPath = secureTempFile("nemoclaw-gpu-policy", ".yaml");
-  const cleanup = createPolicyTempCleanup(policyPath, "nemoclaw-gpu-policy");
-  try {
-    fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy, options), {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
-  } catch (error) {
-    cleanup();
-    throw error;
-  }
-  return {
-    policyPath,
-    appliedPresets: [],
-    cleanup,
+type InitialPolicyOptions = {
+  directGpu?: boolean;
+  dockerGpuPatch?: boolean;
+  hostGpuAvailable?: boolean;
+  stationGb300SysfsReadOnlyPaths?: readonly string[];
+  additionalPresets?: string[];
+  agentName?: string | null;
+  policyTier?: string | null;
+  baselineExclusions?: readonly BaselineExclusionRequest[];
+};
+
+type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
+
+function createTempPolicyMaterializer(exactCleanup: boolean): PolicyMaterializer {
+  return (content, prefix) => {
+    const policyPath = secureTempFile(prefix, ".yaml");
+    const cleanup = createPolicyTempCleanup(policyPath, prefix);
+    try {
+      fs.writeFileSync(policyPath, content, { encoding: "utf-8", mode: 0o600 });
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+    return {
+      policyPath,
+      appliedPresets: [],
+      cleanup,
+      ...(exactCleanup ? { cleanupExact: createExactTempFileCleanup(policyPath, prefix) } : {}),
+    };
   };
 }
 
@@ -375,34 +390,57 @@ function isHermesPolicyPath(policyPath: string): boolean {
   return /(^|\/)agents\/hermes\/policy-additions\.yaml$/.test(normalized);
 }
 
-export function prepareInitialSandboxCreatePolicy(
+function resolveInitialSandboxCreatePolicy(
   basePolicyPath: string,
   activeMessagingChannels: string[],
-  options: {
-    directGpu?: boolean;
-    dockerGpuPatch?: boolean;
-    hostGpuAvailable?: boolean;
-    stationGb300SysfsReadOnlyPaths?: readonly string[];
-    additionalPresets?: string[];
-    agentName?: string | null;
-    policyTier?: string | null;
-    baselineExclusions?: readonly BaselineExclusionRequest[];
-  } = {},
+  options: InitialPolicyOptions,
+  materialize: PolicyMaterializer,
+  exactCleanup: boolean,
+  sourceBytes: boolean,
+  initialContent?: string,
 ): InitialSandboxPolicy {
-  const directGpuPolicy = options.directGpu
-    ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
+  let basePolicy = initialContent ?? fs.readFileSync(basePolicyPath, "utf-8");
+  let effectivePolicy: InitialSandboxPolicy = {
+    policyPath: basePolicyPath,
+    appliedPresets: [],
+    ...(sourceBytes ? { sourceBytes: Buffer.from(basePolicy) } : {}),
+  };
+  const cleanupFns: Array<() => boolean> = [];
+  const exactCleanupFns: Array<() => boolean> = [];
+  const adoptPolicy = (content: string, prefix: string): void => {
+    const next = materialize(content, prefix);
+    if (next.cleanup) cleanupFns.push(next.cleanup);
+    if (next.cleanupExact) exactCleanupFns.push(next.cleanupExact);
+    effectivePolicy = next;
+    basePolicy = content;
+  };
+  if (options.directGpu) {
+    adoptPolicy(
+      buildDirectGpuPolicyYaml(basePolicy, {
         procReadWrite: options.dockerGpuPatch === true,
         sysfsReadOnlyPaths:
           options.stationGb300SysfsReadOnlyPaths ??
           discoverHostStationGb300SysfsReadOnlyPaths({
             hasNvidiaGpu: options.hostGpuAvailable,
           }),
-      })
-    : null;
-  let effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
-  const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
+      }),
+      "nemoclaw-gpu-policy",
+    );
+  }
   const buildCleanup = () =>
     cleanupFns.length > 0 ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean) : undefined;
+  const buildExactCleanup = () =>
+    exactCleanupFns.length > 0
+      ? () => [...exactCleanupFns].reverse().map((cleanup) => cleanup()).every(Boolean)
+      : undefined;
+  const exactCleanupResult = () =>
+    exactCleanup ? { cleanupExact: buildExactCleanup() } : {};
+  const result = (appliedPresets: string[]): InitialSandboxPolicy => ({
+    ...effectivePolicy,
+    appliedPresets,
+    cleanup: buildCleanup(),
+    ...exactCleanupResult(),
+  });
   const cleanupOnError = () => {
     for (const cleanup of [...cleanupFns].reverse()) {
       try {
@@ -444,15 +482,10 @@ export function prepareInitialSandboxCreatePolicy(
     );
     const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
 
-    let basePolicy = fs.readFileSync(effectiveBasePolicyPath, "utf-8");
     if (isHermesPolicy) {
       const filtered = filterHermesInactiveMessagingPolicies(basePolicy, activeMessagingChannels);
       if (filtered.changed) {
-        const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
-        cleanupFns.push(createPolicyTempCleanup(policyPath, "nemoclaw-agent-policy"));
-        fs.writeFileSync(policyPath, filtered.content, { encoding: "utf-8", mode: 0o600 });
-        effectiveBasePolicyPath = policyPath;
-        basePolicy = filtered.content;
+        adoptPolicy(filtered.content, "nemoclaw-agent-policy");
       }
     }
 
@@ -467,32 +500,20 @@ export function prepareInitialSandboxCreatePolicy(
         policyAgent ?? "openclaw",
       );
       if (excluded.excludedKeys.length > 0) {
-        const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
-        cleanupFns.push(createPolicyTempCleanup(policyPath, "nemoclaw-agent-policy"));
-        fs.writeFileSync(policyPath, excluded.content, { encoding: "utf-8", mode: 0o600 });
-        effectiveBasePolicyPath = policyPath;
-        basePolicy = excluded.content;
+        adoptPolicy(excluded.content, "nemoclaw-agent-policy");
       }
     }
 
     const basePolicyNames = getNetworkPolicyNames(basePolicy);
     if (basePolicyNames === null) {
-      return {
-        policyPath: effectiveBasePolicyPath,
-        appliedPresets: [],
-        cleanup: buildCleanup(),
-      };
+      return result([]);
     }
     const existingChannelPresets = activeMessagingChannels.filter((channel) =>
       basePolicyNames.has(channel),
     );
 
     if (requestedCreateTimePresets.length === 0) {
-      return {
-        policyPath: effectiveBasePolicyPath,
-        appliedPresets: dedupe(existingChannelPresets),
-        cleanup: buildCleanup(),
-      };
+      return result(dedupe(existingChannelPresets));
     }
 
     const existingCreateTimePresets = requestedCreateTimePresets.filter((preset) =>
@@ -502,11 +523,7 @@ export function prepareInitialSandboxCreatePolicy(
       (preset) => !basePolicyNames.has(preset),
     );
     if (createTimePresets.length === 0) {
-      return {
-        policyPath: effectiveBasePolicyPath,
-        appliedPresets: dedupe([...existingChannelPresets, ...existingCreateTimePresets]),
-        cleanup: buildCleanup(),
-      };
+      return result(dedupe([...existingChannelPresets, ...existingCreateTimePresets]));
     }
 
     const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
@@ -519,21 +536,128 @@ export function prepareInitialSandboxCreatePolicy(
       );
     }
 
-    const policyPath = secureTempFile("nemoclaw-initial-policy", ".yaml");
-    cleanupFns.push(createPolicyTempCleanup(policyPath, "nemoclaw-initial-policy"));
-    fs.writeFileSync(policyPath, mergedPolicy.policy, { encoding: "utf-8", mode: 0o600 });
-
-    return {
-      policyPath,
-      appliedPresets: dedupe([
+    adoptPolicy(mergedPolicy.policy, "nemoclaw-initial-policy");
+    return result(
+      dedupe([
         ...existingChannelPresets,
         ...existingCreateTimePresets,
         ...mergedPolicy.appliedPresets,
       ]),
-      cleanup: buildCleanup(),
-    };
+    );
   } catch (error) {
     cleanupOnError();
     throw error;
   }
+}
+
+export function prepareInitialSandboxCreatePolicy(
+  basePolicyPath: string,
+  activeMessagingChannels: string[],
+  options: InitialPolicyOptions = {},
+): InitialSandboxPolicy {
+  const exactCleanup = options.agentName === "hermes" && isPortableExperimentalProfile();
+  return resolveInitialSandboxCreatePolicy(
+    basePolicyPath,
+    activeMessagingChannels,
+    options,
+    createTempPolicyMaterializer(exactCleanup),
+    exactCleanup,
+    false,
+  );
+}
+
+/** Plan exact schema-5 policy bytes without creating temporary files. */
+export function planHermesPortableInitialSandboxPolicy(
+  basePolicyPath: string,
+  activeMessagingChannels: string[],
+  options: InitialPolicyOptions,
+): InitialSandboxPolicy {
+  if (options.agentName !== "hermes" || !isPortableExperimentalProfile()) {
+    throw new Error("Hermes portable policy planning requires the schema-5 profile.");
+  }
+  return resolveInitialSandboxCreatePolicy(
+    basePolicyPath,
+    activeMessagingChannels,
+    options,
+    (content) => ({
+      policyPath: basePolicyPath,
+      sourceBytes: Buffer.from(content),
+      appliedPresets: [],
+    }),
+    false,
+    true,
+    (() => {
+      const uid = process.getuid?.();
+      if (uid === undefined) {
+        throw new Error("Hermes portable policy source has no current-user authority.");
+      }
+      const parentPath = path.dirname(basePolicyPath);
+      const parentBefore = fs.lstatSync(parentPath, { bigint: true });
+      const named = fs.lstatSync(basePolicyPath, { bigint: true });
+      if (
+        !parentBefore.isDirectory() ||
+        parentBefore.isSymbolicLink() ||
+        (parentBefore.uid !== 0n && parentBefore.uid !== BigInt(uid)) ||
+        (parentBefore.mode & 0o22n) !== 0n ||
+        !named.isFile() ||
+        named.isSymbolicLink()
+      ) {
+        throw new Error("Hermes portable policy source authority is unsafe.");
+      }
+      const descriptor = fs.openSync(
+        basePolicyPath,
+        fs.constants.O_RDONLY |
+          fs.constants.O_NOFOLLOW |
+          (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0),
+      );
+      try {
+        const before = fs.fstatSync(descriptor, { bigint: true });
+        if (
+          !before.isFile() ||
+          before.isSymbolicLink() ||
+          before.nlink !== 1n ||
+          (before.uid !== 0n && before.uid !== BigInt(uid)) ||
+          (before.mode & 0o22n) !== 0n ||
+          before.size < 1n ||
+          before.size > 256n * 1024n ||
+          named.dev !== before.dev ||
+          named.ino !== before.ino
+        ) {
+          throw new Error("Hermes portable policy source authority is unsafe.");
+        }
+        const bytes = fs.readFileSync(descriptor);
+        const after = fs.fstatSync(descriptor, { bigint: true });
+        const finalNamed = fs.lstatSync(basePolicyPath, { bigint: true });
+        const parentAfter = fs.lstatSync(parentPath, { bigint: true });
+        if (
+          before.dev !== after.dev ||
+          before.ino !== after.ino ||
+          before.mode !== after.mode ||
+          before.uid !== after.uid ||
+          before.nlink !== after.nlink ||
+          before.size !== after.size ||
+          before.mtimeNs !== after.mtimeNs ||
+          before.ctimeNs !== after.ctimeNs ||
+          finalNamed.dev !== after.dev ||
+          finalNamed.ino !== after.ino ||
+          parentBefore.dev !== parentAfter.dev ||
+          parentBefore.ino !== parentAfter.ino ||
+          parentBefore.mode !== parentAfter.mode ||
+          parentBefore.uid !== parentAfter.uid ||
+          parentBefore.mtimeNs !== parentAfter.mtimeNs ||
+          parentBefore.ctimeNs !== parentAfter.ctimeNs ||
+          BigInt(bytes.byteLength) !== after.size
+        ) {
+          throw new Error("Hermes portable policy source authority changed while reading.");
+        }
+        try {
+          return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch {
+          throw new Error("Hermes portable policy source is not strict UTF-8.");
+        }
+      } finally {
+        fs.closeSync(descriptor);
+      }
+    })(),
+  );
 }

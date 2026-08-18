@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import path from "node:path";
+
+import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
+  assertHermesPortableSandboxLifecycleAuthority,
+  buildHermesPortableOpenShellCommandAuthority,
+  buildHermesPortableOpenShellEnv,
   recoverHermesPortableSandboxLifecycle,
   stopHermesPortableSandboxLifecycle,
   type HermesPortableLifecycleDeps,
@@ -18,6 +25,9 @@ import {
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
 
 export type PortableAgentLifecycleDeps = PortableDemoLifecycleDeps & HermesPortableLifecycleDeps;
+export type PortableAgentLifecycleStopResult = PortableDemoLifecycleStopResult & {
+  readonly portableAgent?: "hermes";
+};
 
 export const HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE =
   "This command is not supported for an experimental Hermes portable sandbox.";
@@ -53,6 +63,59 @@ export function inspectPortableAgentReceiptDisposition(
         ? null
         : createHash("sha256").update(receipt.container.sandboxId).digest("hex"),
   };
+}
+
+/** Build a child environment from the exact active schema-5 runtime authority. */
+export function buildHermesPortableCommandEnvironment(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  stateDir = defaultPortableDemoStateDir(env),
+): NodeJS.ProcessEnv {
+  const authority = inspectPortableAgentReceiptAuthority(sandboxName, stateDir);
+  if (authority.kind !== "hermes" || authority.snapshot.receipt.phase !== "active") {
+    throw new Error("Hermes portable lifecycle authority is missing or incomplete");
+  }
+  return buildHermesPortableOpenShellEnv(env, authority.snapshot.receipt.runtimeAuthority);
+}
+
+/** Requalify the exact executable and environment for one direct schema-5 child. */
+export function buildHermesPortableCommandAuthority(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  stateDir = defaultPortableDemoStateDir(env),
+) {
+  if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
+    throw new Error("Hermes portable command authority requires the sandbox lifecycle lock");
+  }
+  const authority = inspectPortableAgentReceiptAuthority(sandboxName, stateDir);
+  if (authority.kind !== "hermes" || authority.snapshot.receipt.phase === "pending") {
+    throw new Error("Hermes portable lifecycle authority is missing or incomplete");
+  }
+  return buildHermesPortableOpenShellCommandAuthority(authority.snapshot.receipt, env);
+}
+
+/** Requalify a pending/configuring receipt only for its schema-5 onboarding child. */
+export function buildHermesPortableOnboardingCommandAuthority(
+  sandboxName: string,
+  gatewayName: string,
+  lifecycleGeneration: string,
+  env: NodeJS.ProcessEnv = process.env,
+  stateDir = defaultPortableDemoStateDir(env),
+) {
+  if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
+    throw new Error("Hermes portable onboarding command authority requires the lifecycle lock");
+  }
+  const authority = inspectPortableAgentReceiptAuthority(sandboxName, stateDir);
+  const receipt = authority.kind === "hermes" ? authority.snapshot.receipt : null;
+  if (
+    !receipt ||
+    receipt.phase === "active" ||
+    receipt.gatewayName !== gatewayName ||
+    receipt.lifecycleGeneration !== lifecycleGeneration
+  ) {
+    throw new Error("Hermes portable onboarding command authority is missing or disagrees");
+  }
+  return buildHermesPortableOpenShellCommandAuthority(receipt, env);
 }
 
 /** Whether recognized portable authority must bypass Docker preflight. */
@@ -109,13 +172,31 @@ export function recoverPortableAgentSandboxLifecycle(
   return recoverHermesPortableSandboxLifecycle(sandboxName, context, deps);
 }
 
+/** Requalify schema-5 authority without permitting lifecycle recovery or fallback. */
+export function assertHermesPortableAgentLifecycleAuthority(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  deps: PortableAgentLifecycleDeps = {},
+): void {
+  const disposition = inspectPortableAgentReceiptDisposition(
+    sandboxName,
+    deps.env ?? process.env,
+    deps.stateDir,
+  );
+  if (disposition.kind !== "hermes" || disposition.phase !== "active") {
+    throw new Error("Hermes portable lifecycle authority is missing or incomplete");
+  }
+  requireMatchingAgent(disposition, context);
+  assertHermesPortableSandboxLifecycleAuthority(sandboxName, context, deps);
+}
+
 /** Route one portable stop without permitting a Docker fallback. */
 export function stopPortableAgentSandboxLifecycle(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   beforeStop: () => void,
   deps: PortableAgentLifecycleDeps = {},
-): PortableDemoLifecycleStopResult {
+): PortableAgentLifecycleStopResult {
   const disposition = inspectPortableAgentReceiptDisposition(
     sandboxName,
     deps.env ?? process.env,
@@ -134,6 +215,8 @@ export function stopPortableAgentSandboxLifecycle(
   // Schema-5 owns only the exact Podman container. The Docker provider's
   // channel hook can select Docker transport, so it is never part of Hermes
   // portable stop authority.
-  return stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, deps);
+  return {
+    ...stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, deps),
+    portableAgent: "hermes",
+  };
 }
-import { createHash } from "node:crypto";

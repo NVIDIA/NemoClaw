@@ -25,6 +25,7 @@ import {
   discoverStationGb300SysfsReadOnlyPaths,
   getNetworkPolicyNames,
   isStationGb300ProductName,
+  planHermesPortableInitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy,
 } from "./initial-policy";
 
@@ -104,6 +105,7 @@ function addPciDevice(
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of tmpRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -132,6 +134,67 @@ function createStationGb300SysfsDirectories(sysfsRoot: string): void {
 }
 
 describe("initial sandbox policy helpers", () => {
+  it("plans schema-5 Personal policy bytes without creating a temporary file (#9203)", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    const mkdtemp = vi.spyOn(fs, "mkdtempSync");
+    const writeFile = vi.spyOn(fs, "writeFileSync");
+
+    const planned = planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
+      agentName: "hermes",
+      policyTier: "personal",
+      additionalPresets: ["personal-open-internet", "slack"],
+    });
+
+    expect(planned.policyPath).toBe(basePolicyPath);
+    expect(planned.appliedPresets).toEqual(["personal-open-internet", "slack"]);
+    expect(planned.sourceBytes?.toString("utf8")).toContain("personal-open-internet");
+    expect(planned.cleanup).toBeUndefined();
+    expect(planned.cleanupExact).toBeUndefined();
+    expect(mkdtemp).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed schema-5 base policy bytes before planning effects (#9203)", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies: {}\n");
+    fs.writeFileSync(basePolicyPath, Buffer.from([0xff, 0xfe]));
+
+    expect(() =>
+      planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
+        agentName: "hermes",
+        policyTier: "personal",
+        additionalPresets: ["personal-open-internet"],
+      }),
+    ).toThrow("not strict UTF-8");
+  });
+
+  it("rejects replaced, linked, or writable schema-5 policy authority (#9203)", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const original = tmpPolicy("version: 1\nnetwork_policies: {}\n");
+    const replacement = path.join(path.dirname(original), "replacement.yaml");
+    const plan = (policyPath: string) =>
+      planHermesPortableInitialSandboxPolicy(policyPath, [], {
+        agentName: "hermes",
+        policyTier: "personal",
+        additionalPresets: ["personal-open-internet"],
+      });
+
+    fs.writeFileSync(replacement, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
+    fs.unlinkSync(original);
+    fs.symlinkSync(replacement, original);
+    expect(() => plan(original)).toThrow("source authority is unsafe");
+
+    fs.unlinkSync(original);
+    fs.linkSync(replacement, original);
+    expect(() => plan(original)).toThrow("source authority is unsafe");
+
+    fs.unlinkSync(original);
+    fs.writeFileSync(original, "version: 1\nnetwork_policies: {}\n", { mode: 0o666 });
+    fs.chmodSync(original, 0o666);
+    expect(() => plan(original)).toThrow("source authority is unsafe");
+  });
+
   it.each([
     ["Dell Pro Max with Station GB300", true],
     ["NVIDIA DGX Station GB300", true],
@@ -467,6 +530,18 @@ network_policies: {}
     commands.forEach((command) => {
       expect(command.args.every((arg) => !/[\r\n]/.test(arg))).toBe(true);
     });
+    expect(buildDirectSandboxGpuProofCommands("alpha", "nemoclaw")[0]?.args).toEqual([
+      "sandbox",
+      "exec",
+      "-g",
+      "nemoclaw",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+      expect.stringContaining("command -v nvidia-smi"),
+    ]);
   });
 
   it("returns network policy names from a policy document", () => {
@@ -532,6 +607,31 @@ network_policies: {}
     );
     expect(prepared.cleanup?.()).toBe(true);
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
+  });
+
+  it("gives only portable Hermes an exact replacement-safe policy cleanup (#9203)", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const basePolicyPath = tmpPolicy(
+      "version: 1\nnetwork_policies:\n  discord: {}\n  slack: {}\n",
+    );
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["discord"], {
+      agentName: "hermes",
+    });
+    const parent = path.dirname(prepared.policyPath);
+    const original = path.join(parent, "original.yaml");
+    tmpRoots.push(parent);
+
+    expect(prepared.cleanupExact).toEqual(expect.any(Function));
+    fs.renameSync(prepared.policyPath, original);
+    fs.writeFileSync(prepared.policyPath, "replacement\n", { mode: 0o600 });
+    expect(prepared.cleanupExact?.()).toBe(false);
+    expect(fs.readFileSync(prepared.policyPath, "utf8")).toBe("replacement\n");
+    expect(fs.existsSync(original)).toBe(true);
+
+    const ordinary = prepareInitialSandboxCreatePolicy(basePolicyPath, ["discord"], {
+      agentName: "openclaw",
+    });
+    expect(ordinary).not.toHaveProperty("cleanupExact");
   });
 
   it("filters inactive Hermes messaging policies from the relative Hermes policy path", () => {

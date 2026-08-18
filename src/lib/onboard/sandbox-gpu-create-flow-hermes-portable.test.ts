@@ -53,6 +53,7 @@ import {
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowInput,
 } from "./sandbox-gpu-create-flow";
+import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 
 const PORTABLE_RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
   schemaVersion: 1,
@@ -86,6 +87,23 @@ describe("Hermes portable sandbox create flow", () => {
     try {
       expect(cleanupSandboxCreateSource(cleanup)).toBe(false);
       expect(process.listeners("exit")).toContain(cleanup);
+    } finally {
+      process.removeListener("exit", cleanup);
+    }
+  });
+
+  it("requires and uses exact source cleanup for Hermes portable custody (#9203)", () => {
+    const cleanup = vi.fn(() => true);
+    const exactCleanup = vi.fn(() => true);
+    process.on("exit", cleanup);
+    try {
+      expect(cleanupSandboxCreateSource(cleanup, { exactCleanup, requireExact: true })).toBe(true);
+      expect(exactCleanup).toHaveBeenCalledOnce();
+      expect(cleanup).not.toHaveBeenCalled();
+      expect(process.listeners("exit")).not.toContain(cleanup);
+      expect(() => cleanupSandboxCreateSource(cleanup, { requireExact: true })).toThrow(
+        "has no exact cleanup authority",
+      );
     } finally {
       process.removeListener("exit", cleanup);
     }
@@ -126,6 +144,56 @@ describe("Hermes portable sandbox create flow", () => {
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
     expect(deps.verifyDirectSandboxGpu).toHaveBeenCalledOnce();
+  });
+
+  it("keeps schema-5 create failure diagnostics out of ambient gateway logs (#9203)", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "native-only";
+    input.hermesPortableLifecycle = true;
+    input.lifecycleGeneration = "generation-1";
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
+    const deps = createDeps();
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 7,
+      output: "create rejected",
+      sawProgress: false,
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("exit 7");
+
+    expect(exit).toHaveBeenCalledWith(7);
+    expect(mocks.printSandboxCreateFailureDiagnostics).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("did not complete receipt-owned creation"),
+    );
+  });
+
+  it("preserves receipt authority instead of suggesting name-only cleanup (#9203)", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "native-only";
+    input.hermesPortableLifecycle = true;
+    input.lifecycleGeneration = "generation-1";
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
+    const deps = createDeps();
+    vi.spyOn(sandboxGpuCreateAttempt, "executeSandboxGpuCreatePlan").mockResolvedValue({
+      ok: false,
+      route: "native",
+      stage: "gpu-proof",
+      error: new Error("GPU proof failed"),
+      fallbackEligible: false,
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("exit 1");
+
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("Preserve its lifecycle receipt and resume onboarding");
+    expect(output).not.toContain("openshell sandbox delete");
   });
 
   it("rejects compatibility and managed bootstrap before Hermes portable create effects (#9203)", async () => {

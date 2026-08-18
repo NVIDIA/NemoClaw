@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import type {
   OpenClawImagePluginInstall,
   OpenClawManagedExtensionDiscoveryResult,
@@ -17,13 +19,17 @@ import {
 import * as sandboxState from "../state/sandbox";
 import * as buildContext from "../build-context";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
-import type { SelectionDrift } from "./selection-drift";
+import { restoreDefaultAfterRecreate } from "./default-preservation";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
+import { warnIfLandlockUnsupported } from "./landlock-warning";
 import * as managedWorkloadOnboard from "./managed-workload/onboard-orchestration";
+import { printMessagingProviderMissing } from "./preflight-messages";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
+import type { SelectionDrift } from "./selection-drift";
+import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 import {
   creationFidelity,
   registerCreatedSandbox,
@@ -140,6 +146,128 @@ export interface CreatedSandboxCompletionActions {
   ): Promise<void>;
 }
 
+type OnboardCreatedSandboxRegistration = (
+  created: SandboxGpuCreateFlowResult | null,
+  configuredReceipt: HermesPortableConfiguredReceipt | null,
+  configuredLiveIdentityFingerprint?: string,
+  revalidateHermesAuthority?: () => string,
+) => Promise<void>;
+
+/** Bind the post-create registration callback to its finalization authorities. */
+export function createOnboardCreatedSandboxRegistration(input: {
+  readonly completion: CreatedSandboxCompletionActions;
+  readonly createdLifecycle: CreatedSandboxLifecycle;
+  readonly cleanupBuildContext: () => void;
+  readonly manageDashboard: boolean;
+  readonly sandboxGpuEnabled: boolean;
+}): OnboardCreatedSandboxRegistration {
+  return async (created, configuredReceipt, configuredLiveIdentityFingerprint, revalidate) => {
+    if (!created && !configuredReceipt) {
+      throw new Error("Sandbox registration requires create or Hermes receipt authority.");
+    }
+    input.cleanupBuildContext();
+    const providerGpuDisposition = !input.sandboxGpuEnabled
+      ? "disabled"
+      : configuredReceipt
+        ? "hermes"
+        : "created";
+    const lifecycle = configuredReceipt
+      ? createHermesPortableCreatedSandboxLifecycle(
+          configuredReceipt,
+          revalidate ??
+            (() => {
+              throw new Error(
+                "Hermes portable registry publication has no revalidation authority.",
+              );
+            }),
+        )
+      : input.createdLifecycle;
+    await input.completion.complete(
+      created,
+      configuredReceipt,
+      providerGpuDisposition,
+      input.manageDashboard,
+      () =>
+        configuredReceipt
+          ? {
+              lifecycleGeneration: configuredReceipt.lifecycleGeneration,
+              lifecycleLiveIdentityFingerprint: configuredLiveIdentityFingerprint,
+            }
+          : created!.lifecycleRegistrationFields,
+      lifecycle,
+    );
+  };
+}
+
+/** Finish ordinary post-registration actions after portable onboarding has returned. */
+export function completeOrdinaryOnboardSandboxCreation(
+  input: {
+    readonly sandboxName: string;
+    readonly sandboxWasLiveDefault: boolean;
+    readonly runtimeFields: RegistrationSeed["runtimeFields"];
+    readonly messagingProviders: readonly string[];
+    readonly liveExists: boolean;
+  },
+  deps: {
+    readonly setDefault: (sandboxName: string) => void;
+    readonly runFile: (command: string, args: string[], options: { ignoreError: true }) => unknown;
+    readonly scriptsDir: string;
+    readonly gatewayName: string;
+    readonly providerExistsInGateway: (providerName: string) => boolean;
+    readonly armCancelRollback: (sandboxName: string) => void;
+    readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
+    readonly runCapture: Parameters<typeof warnIfLandlockUnsupported>[0]["runCapture"];
+  },
+): string {
+  restoreDefaultAfterRecreate(deps.setDefault, input.sandboxName, input.sandboxWasLiveDefault);
+  if (input.runtimeFields.openshellDriver === "kubernetes") {
+    console.log("  Setting up sandbox DNS proxy...");
+    deps.runFile(
+      "bash",
+      [path.join(deps.scriptsDir, "setup-dns-proxy.sh"), deps.gatewayName, input.sandboxName],
+      { ignoreError: true },
+    );
+  }
+  applyOnboardVmDnsMonkeypatch(input.sandboxName, input.runtimeFields);
+  for (const provider of input.messagingProviders) {
+    if (!deps.providerExistsInGateway(provider)) printMessagingProviderMissing(provider);
+  }
+  console.log(`  ✓ Sandbox '${input.sandboxName}' created`);
+  warnIfLandlockUnsupported(deps);
+  if (!input.liveExists) deps.armCancelRollback(input.sandboxName);
+  return input.sandboxName;
+}
+
+/** Revalidate the configuring receipt at both registry-publication checks. */
+export function createHermesPortableCreatedSandboxLifecycle(
+  receipt: HermesPortableConfiguredReceipt,
+  revalidate: () => string,
+): CreatedSandboxLifecycle {
+  const requireCurrent = () => ({
+    lifecycleGeneration: receipt.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: revalidate(),
+  });
+  return {
+    generation: receipt.lifecycleGeneration,
+    capture: (fields) => {
+      if (fields.lifecycleGeneration !== receipt.lifecycleGeneration) {
+        throw new Error("Hermes portable registry generation disagrees with receipt authority.");
+      }
+      return requireCurrent();
+    },
+    revalidate: (registration) => {
+      const current = requireCurrent();
+      if (
+        registration.lifecycleGeneration !== current.lifecycleGeneration ||
+        registration.lifecycleLiveIdentityFingerprint !== current.lifecycleLiveIdentityFingerprint
+      ) {
+        throw new Error("Hermes portable registry publication disagrees with receipt authority.");
+      }
+      return current;
+    },
+  };
+}
+
 /** Keep post-Ready action bodies with the finalization owner while onboarding retains decisions. */
 export function createCreatedSandboxCompletionActions(
   options: CreatedSandboxCompletionOptions,
@@ -213,6 +341,13 @@ export function createCreatedSandboxCompletionActions(
         register: (openclawImagePluginInstalls) =>
           (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
             ...options.registration,
+            runtimeFields: {
+              ...options.registration.runtimeFields,
+              openshellVersion:
+                configuredReceipt?.openshellExecutableAuthority.version ??
+                options.registration.runtimeFields.openshellVersion,
+            },
+            hermesPortableLifecycle: configuredReceipt !== null,
             imageTag: resolved.resolvedImageTag,
             workload: resolved.workloadReceipt,
             openclawImagePluginInstalls,

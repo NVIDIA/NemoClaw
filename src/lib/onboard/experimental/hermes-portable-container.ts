@@ -20,6 +20,7 @@ import type {
   HermesPortableContainerAuthority,
   HermesPortableLifecycleReceipt,
 } from "./hermes-portable-receipt";
+import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 
 const FULL_ID = /^[a-f0-9]{64}$/u;
 const SAFE = /^[^\u0000-\u001f\u007f-\u009f]+$/u;
@@ -28,6 +29,22 @@ const MUTATION_TIMEOUT_MS = 40_000;
 const STOP_RECONCILIATION_TIMEOUT_MS = 30_000;
 const STOP_RECONCILIATION_INTERVAL_MS = 1_000;
 const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+const PODMAN_CONNECTION_SELECTORS = [
+  "CONTAINER_CONNECTION",
+  "CONTAINER_CERT_PATH",
+  "CONTAINER_HOST",
+  "CONTAINER_SSHKEY",
+  "CONTAINER_TLS_VERIFY",
+  "CONTAINERS_CONF",
+  "CONTAINERS_STORAGE_CONF",
+  "DOCKER_CONTEXT",
+  "DOCKER_HOST",
+  "DOCKER_TLS",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+  "PODMAN_CONNECTIONS_CONF",
+  "REGISTRY_AUTH_FILE",
+] as const;
 const AUTHENTICATED_HEALTH_SCRIPT = String.raw`
 import pathlib, re, urllib.error, urllib.request
 text = pathlib.Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
@@ -43,7 +60,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, file_pointer, code, message, headers, new_url):
         raise urllib.error.HTTPError(request.full_url, code, "redirect refused", headers, file_pointer)
 try:
-    response = urllib.request.build_opener(NoRedirect).open(request, timeout=5)
+    response = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect).open(
+        request, timeout=5
+    )
     print(response.status)
 except urllib.error.HTTPError as error:
     print(error.code)
@@ -79,6 +98,30 @@ export interface HermesPortableContainerDeps {
 
 export type HermesPortableContainerStartResult = "already-running" | "started";
 export type HermesPortableContainerStopResult = "already-stopped" | "stopped";
+
+/** Bind schema-5 Podman to the receipt-owned current-user namespace. */
+export function buildHermesPortablePodmanEnvironment(
+  runtimeAuthority: CheckpointPortableRuntimeAuthority,
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+): Readonly<Record<string, string>> {
+  const expected = {
+    HOME: runtimeAuthority.homeDir,
+    XDG_CONFIG_HOME: runtimeAuthority.configHome,
+    XDG_RUNTIME_DIR: runtimeAuthority.runtimeDir,
+  } as const;
+  for (const [name, value] of Object.entries(expected)) {
+    const ambient = sourceEnv[name];
+    if (ambient !== undefined && ambient !== "" && ambient !== value) {
+      fail("Podman current-user namespace disagrees with receipt authority");
+    }
+  }
+  for (const name of PODMAN_CONNECTION_SELECTORS) {
+    if (sourceEnv[name]?.trim()) {
+      fail("Podman connection selector is not allowed");
+    }
+  }
+  return Object.freeze({ ...expected });
+}
 
 function fail(message: string): never {
   throw new Error(`Hermes portable container authority ${message}`);
@@ -134,11 +177,8 @@ function labelsDigest(value: Readonly<Record<string, string>>): string {
 
 function requireCommand(result: HermesPortablePodmanResult, operation: string): string {
   if (result.status === 0 && !result.error) return result.stdout;
-  const detail = (result.stderr || result.stdout || result.error?.message || "unknown failure")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(-500);
-  fail(`${operation} failed with status ${String(result.status)}: ${detail}`);
+  const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
+  fail(`${operation} failed with status ${String(result.status)}${code ? ` (${code})` : ""}`);
 }
 
 function isCommandTimeout(result: HermesPortablePodmanResult): boolean {
@@ -407,29 +447,37 @@ export function stopHermesPortableContainer(
   if (receipt.phase !== "active") fail("stop requires active receipt authority");
   const before = assertCurrentHermesPortableContainer(receipt, deps);
   if (before.paused) fail("stop will not reinterpret a paused container");
-  if (!before.authority.running) return "already-stopped";
+  const settled = (inspection: HermesPortableContainerInspection): boolean => {
+    if (inspection.paused) fail("container became paused while stopping");
+    return !inspection.authority.running && inspection.status === "exited";
+  };
+  if (settled(before)) return "already-stopped";
+  const waitForSettled = (): boolean => {
+    const now = deps.now ?? Date.now;
+    const sleep = deps.sleep ?? defaultSleep;
+    const deadline = now() + STOP_RECONCILIATION_TIMEOUT_MS;
+    do {
+      if (settled(assertCurrentHermesPortableContainer(receipt, deps))) return true;
+      sleep(Math.min(STOP_RECONCILIATION_INTERVAL_MS, Math.max(1, deadline - now())));
+    } while (now() < deadline);
+    return settled(assertCurrentHermesPortableContainer(receipt, deps));
+  };
+  if (!before.authority.running) {
+    if (waitForSettled()) return "stopped";
+    fail("exact container did not settle in exited state");
+  }
   assertSocket(receipt, deps);
   const result = deps.podman(
     ["container", "stop", receipt.container.containerId],
     MUTATION_TIMEOUT_MS,
   );
   assertSocket(receipt, deps);
-  const stopped = (): boolean => {
-    const inspection = assertCurrentHermesPortableContainer(receipt, deps);
-    if (inspection.paused) fail("container became paused while stopping");
-    return !inspection.authority.running;
-  };
   if (isCommandTimeout(result)) {
-    const now = deps.now ?? Date.now;
-    const sleep = deps.sleep ?? defaultSleep;
-    const deadline = now() + STOP_RECONCILIATION_TIMEOUT_MS;
-    do {
-      if (stopped()) return "stopped";
-      sleep(Math.min(STOP_RECONCILIATION_INTERVAL_MS, Math.max(1, deadline - now())));
-    } while (now() < deadline);
+    if (waitForSettled()) return "stopped";
+    requireCommand(result, "exact container stop");
   }
   requireCommand(result, "exact container stop");
-  if (!stopped()) fail("exact container did not enter stopped state");
+  if (!waitForSettled()) fail("exact container did not settle in exited state");
   return "stopped";
 }
 

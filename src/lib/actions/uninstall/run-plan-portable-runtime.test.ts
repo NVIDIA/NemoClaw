@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
   withProvenManagedGatewayProcess,
   writeManagedGatewayRuntimeProof,
@@ -214,7 +215,7 @@ afterEach(() => {
   }
 });
 
-describe("portable runtime cleanup in the uninstall run plan", () => {
+describe("portable runtime cleanup in the uninstall run plan", testTimeoutOptions(15_000), () => {
   it.each<[string, EvidenceMutation]>([
     ["receipt without configuration", (home, state) => writeAdmissionReceipt(home, state)],
     [

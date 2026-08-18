@@ -13,6 +13,7 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
+import { withSandboxLifecycleLock } from "./gateway-state";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -74,6 +75,7 @@ export interface SandboxStartDeps {
   waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
+  withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
 }
 
@@ -155,6 +157,15 @@ function checkStartedSandboxInference(
 export async function startSandbox(
   sandboxName: string,
   deps: SandboxStartDeps = {},
+): Promise<SandboxLifecycleResult> {
+  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(sandboxName, () =>
+    startSandboxWithinLifecycleFence(sandboxName, deps),
+  );
+}
+
+async function startSandboxWithinLifecycleFence(
+  sandboxName: string,
+  deps: SandboxStartDeps,
 ): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
   const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);

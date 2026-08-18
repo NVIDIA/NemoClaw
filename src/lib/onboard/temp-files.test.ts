@@ -5,13 +5,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { cleanupTempDir, secureTempFile } from "./temp-files";
+import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "./temp-files";
 
 const createdParents: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const parent of createdParents.splice(0)) {
     fs.rmSync(parent, { recursive: true, force: true });
   }
@@ -68,6 +69,62 @@ describe("onboard temp file helpers", () => {
     cleanupTempDir(filePath, "nemoclaw-cleanup");
 
     expect(fs.existsSync(parent)).toBe(false);
+  });
+
+  it("removes only the captured private file generation and is idempotent (#9203)", () => {
+    const filePath = secureTempFile("nemoclaw-cleanup", ".txt");
+    const parent = path.dirname(filePath);
+    fs.writeFileSync(filePath, "captured", { mode: 0o600 });
+    const cleanup = createExactTempFileCleanup(filePath, "nemoclaw-cleanup");
+
+    expect(cleanup()).toBe(true);
+    expect(cleanup()).toBe(true);
+    expect(fs.existsSync(parent)).toBe(false);
+  });
+
+  it("preserves a replacement file generation and fails closed (#9203)", () => {
+    const filePath = secureTempFile("nemoclaw-cleanup", ".txt");
+    const parent = path.dirname(filePath);
+    const original = path.join(parent, "original.txt");
+    createdParents.push(parent);
+    fs.writeFileSync(filePath, "captured", { mode: 0o600 });
+    const cleanup = createExactTempFileCleanup(filePath, "nemoclaw-cleanup");
+    fs.renameSync(filePath, original);
+    fs.writeFileSync(filePath, "replacement", { mode: 0o600 });
+
+    expect(cleanup()).toBe(false);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("replacement");
+    expect(fs.readFileSync(original, "utf8")).toBe("captured");
+  });
+
+  it("preserves a replaced task directory and fails closed (#9203)", () => {
+    const filePath = secureTempFile("nemoclaw-cleanup", ".txt");
+    const parent = path.dirname(filePath);
+    const originalParent = `${parent}-original`;
+    createdParents.push(parent, originalParent);
+    fs.writeFileSync(filePath, "captured", { mode: 0o600 });
+    const cleanup = createExactTempFileCleanup(filePath, "nemoclaw-cleanup");
+    fs.renameSync(parent, originalParent);
+    fs.mkdirSync(parent, { mode: 0o700 });
+    fs.writeFileSync(filePath, "replacement", { mode: 0o600 });
+
+    expect(cleanup()).toBe(false);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("replacement");
+    expect(fs.readFileSync(path.join(originalParent, path.basename(filePath)), "utf8")).toBe(
+      "captured",
+    );
+  });
+
+  it("fails closed when current-user ownership cannot be established (#9203)", () => {
+    const filePath = secureTempFile("nemoclaw-cleanup", ".txt");
+    const parent = path.dirname(filePath);
+    createdParents.push(parent);
+    fs.writeFileSync(filePath, "captured", { mode: 0o600 });
+    vi.spyOn(process, "getuid").mockReturnValue(undefined as never);
+
+    expect(() => createExactTempFileCleanup(filePath, "nemoclaw-cleanup")).toThrow(
+      "Current-user temporary file authority is unavailable",
+    );
   });
 
   it("does not remove unrelated temp directories", () => {

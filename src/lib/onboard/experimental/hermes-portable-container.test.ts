@@ -10,6 +10,7 @@ import type {
   HermesPortablePendingReceipt,
 } from "./hermes-portable-receipt";
 import {
+  buildHermesPortablePodmanEnvironment,
   configureHermesPortableRestartPolicy,
   enrollHermesPortableContainer,
   hermesPortableContainerInternals,
@@ -30,6 +31,40 @@ const LABELS = {
   "openshell.ai/sandbox-workspace": "default",
 };
 
+describe("Hermes portable Podman environment", () => {
+  it("uses only the receipt-owned current-user namespace", () => {
+    const authority = receipt().runtimeAuthority;
+    const environment = buildHermesPortablePodmanEnvironment(authority, {
+      HOME: authority.homeDir,
+      XDG_CONFIG_HOME: authority.configHome,
+      XDG_RUNTIME_DIR: authority.runtimeDir,
+      HTTP_PROXY: "https://user:secret@proxy.test",
+      KUBECONFIG: "/tmp/kubeconfig",
+      SSH_AUTH_SOCK: "/tmp/agent.sock",
+    });
+
+    expect(environment).toEqual({
+      HOME: authority.homeDir,
+      XDG_CONFIG_HOME: authority.configHome,
+      XDG_RUNTIME_DIR: authority.runtimeDir,
+    });
+  });
+
+  it("rejects namespace drift and ambient connection selection", () => {
+    const authority = receipt().runtimeAuthority;
+
+    expect(() =>
+      buildHermesPortablePodmanEnvironment(authority, { HOME: "/home/replacement" }),
+    ).toThrow("current-user namespace disagrees");
+    expect(() =>
+      buildHermesPortablePodmanEnvironment(authority, {
+        HOME: authority.homeDir,
+        CONTAINER_HOST: "ssh://remote.test/run/podman.sock",
+      }),
+    ).toThrow("connection selector is not allowed");
+  });
+});
+
 function receipt(): HermesPortablePendingReceipt {
   const uid = process.getuid!();
   return {
@@ -37,6 +72,7 @@ function receipt(): HermesPortablePendingReceipt {
     agent: "hermes",
     phase: "pending",
     transactionId: randomUUID(),
+    createIntentSha256: "c".repeat(64),
     sandboxName: "alpha",
     gatewayName: "nemoclaw",
     lifecycleGeneration: "generation-1",
@@ -50,6 +86,8 @@ function receipt(): HermesPortablePendingReceipt {
       runtimeDir: `/run/user/${String(uid)}`,
       socketPath: `/run/user/${String(uid)}/podman/podman.sock`,
     },
+    openshellExecutableAuthority: {} as never,
+    podmanExecutableAuthority: {} as never,
     socketAuthority: {
       device: "1",
       inode: "2",
@@ -67,6 +105,7 @@ function inspect(
   restartPolicy = "no",
   labels = LABELS,
   running = true,
+  status = running ? "running" : "exited",
 ): HermesPortablePodmanResult {
   return {
     status: 0,
@@ -76,7 +115,7 @@ function inspect(
         Image: IMAGE,
         Name: `openshell-default--alpha-${SANDBOX_ID}`,
         Config: { Labels: labels },
-        State: { Running: running, Paused: false, Status: running ? "running" : "exited" },
+        State: { Running: running, Paused: false, Status: status },
         HostConfig: { RestartPolicy: { Name: restartPolicy } },
       },
     ]),
@@ -250,6 +289,7 @@ describe("Hermes portable container authority", () => {
     expect(argv.slice(0, 4)).toEqual(["container", "exec", ID, "python3"]);
     expect(argv.join(" ")).toContain("API_SERVER_KEY");
     expect(argv.join(" ")).toContain("NoRedirect");
+    expect(argv.join(" ")).toContain("ProxyHandler({})");
     expect(argv.join(" ")).toContain("redirect refused");
     expect(argv.join(" ")).not.toContain("Bearer test-token");
   });
@@ -287,6 +327,31 @@ describe("Hermes portable container authority", () => {
         assertSocketAuthority: vi.fn(),
       }),
     ).toThrow("returned status '401'");
+  });
+
+  it("does not expose inspect output or error text in command failures (#9203)", () => {
+    const podman = vi.fn(() => ({
+      status: 1,
+      stdout: '{"Config":{"Env":["API_KEY=do-not-log"]}}',
+      stderr: "do-not-log",
+      error: Object.assign(new Error("do-not-log"), { code: "EIO" }),
+    }));
+
+    expect(() =>
+      enrollHermesPortableContainer(receipt(), SANDBOX_ID, {
+        podman,
+        assertSocketAuthority: vi.fn(),
+      }),
+    ).toThrow("status 1 (EIO)");
+    try {
+      enrollHermesPortableContainer(receipt(), SANDBOX_ID, {
+        podman,
+        assertSocketAuthority: vi.fn(),
+      });
+    } catch (error) {
+      expect(String(error)).not.toContain("do-not-log");
+      expect(String(error)).not.toContain("Config");
+    }
   });
 
   it("starts one exact full ID and never discovers by name (#9203)", () => {
@@ -331,5 +396,47 @@ describe("Hermes portable container authority", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([
       [["container", "stop", ID], 40_000],
     ]);
+  });
+
+  it("waits for exited after a successful stop reports a transitional state (#9203)", () => {
+    let now = 0;
+    const podman = vi
+      .fn()
+      .mockReturnValueOnce(inspect("unless-stopped"))
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce(inspect("unless-stopped", LABELS, false, "stopping"))
+      .mockReturnValueOnce(inspect("unless-stopped", LABELS, false, "exited"));
+
+    expect(
+      stopHermesPortableContainer(activeReceipt(), {
+        podman,
+        assertSocketAuthority: vi.fn(),
+        now: () => now,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+      }),
+    ).toBe("stopped");
+    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
+  });
+
+  it("reconciles an already-stopping container without another stop command (#9203)", () => {
+    let now = 0;
+    const podman = vi
+      .fn()
+      .mockReturnValueOnce(inspect("unless-stopped", LABELS, false, "stopping"))
+      .mockReturnValueOnce(inspect("unless-stopped", LABELS, false, "exited"));
+
+    expect(
+      stopHermesPortableContainer(activeReceipt(), {
+        podman,
+        assertSocketAuthority: vi.fn(),
+        now: () => now,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+      }),
+    ).toBe("stopped");
+    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
 });

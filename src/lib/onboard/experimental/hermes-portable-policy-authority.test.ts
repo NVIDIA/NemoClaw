@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   hermesPortableCreatePolicySemanticDigest,
+  hermesPortablePolicyAuthorityInternals,
   proveHermesPortableLivePolicy,
   type HermesPortablePolicyCaptureResult,
 } from "./hermes-portable-policy-authority";
@@ -31,6 +32,16 @@ function result(
   stderr = Buffer.alloc(0),
 ): HermesPortablePolicyCaptureResult {
   return { status, stdout, stderr };
+}
+
+function deeplyNestedPolicyAuthority(): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  let current = root;
+  for (let index = 0; index < 70; index += 1) {
+    current.next = {};
+    current = current.next as Record<string, unknown>;
+  }
+  return root;
 }
 
 describe("Hermes portable policy authority", () => {
@@ -79,6 +90,34 @@ network_policies:
         capture,
       }),
     ).toThrow("unproven provider-composed or out-of-band delta");
+  });
+
+  it("does not erase a __proto__ policy entry during semantic comparison (#9203)", () => {
+    const full = Buffer.from(`${CREATE.toString("utf8")}  __proto__:
+    name: injected
+    endpoints: []
+`);
+
+    expect(() =>
+      proveHermesPortableLivePolicy({
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+        createPolicyBytes: CREATE,
+        capture: (args) => result(args.includes("--base") ? CREATE : full),
+      }),
+    ).toThrow("out-of-band delta");
+  });
+
+  it("rejects cyclic and oversized semantic structures deterministically (#9203)", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    expect(() => hermesPortablePolicyAuthorityInternals.semanticDigest(cyclic)).toThrow(
+      "cyclic semantic structure",
+    );
+    expect(() =>
+      hermesPortablePolicyAuthorityInternals.semanticDigest(deeplyNestedPolicyAuthority()),
+    ).toThrow("oversized semantic structure");
   });
 
   it("rejects capture ambiguity even when the child status is zero (#9203)", () => {

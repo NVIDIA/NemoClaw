@@ -25,6 +25,7 @@ export type SandboxExecOptions = {
   tty?: boolean | null;
   timeoutSeconds?: number;
   stdin?: boolean;
+  subprocessEnv?: NodeJS.ProcessEnv;
 };
 
 export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
@@ -238,7 +239,10 @@ export function cleanupOpenClawAfterExec(
 }
 
 const defaultSandboxExecSpawner: SandboxExecSpawner = (binary, args, options) =>
-  spawn(binary, [...args], { stdio: buildSandboxExecStdio(options) });
+  spawn(binary, [...args], {
+    stdio: buildSandboxExecStdio(options),
+    ...(options.subprocessEnv ? { env: options.subprocessEnv } : {}),
+  });
 
 const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
   add: (signal, listener) => process.on(signal, listener),
@@ -346,10 +350,12 @@ export function validateWorkdirOrFail(
   }
 }
 
-function defaultResolveBinary(): string {
+export function resolveSandboxExecBinary(): string {
   const { getOpenshellBinary } = require("../../adapters/openshell/runtime");
   return getOpenshellBinary();
 }
+
+const defaultResolveBinary = resolveSandboxExecBinary;
 
 function defaultSelectGateway(sandboxName: string): GatewaySelectResult {
   return (

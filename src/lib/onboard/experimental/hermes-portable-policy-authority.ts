@@ -41,17 +41,36 @@ function decode(bytes: Buffer, label: string): string {
   }
 }
 
-function canonical(value: unknown): unknown {
+interface CanonicalState {
+  readonly active: WeakSet<object>;
+  nodes: number;
+}
+
+function canonical(
+  value: unknown,
+  state: CanonicalState = { active: new WeakSet(), nodes: 0 },
+  depth = 0,
+): unknown {
+  state.nodes += 1;
+  if (state.nodes > 16_384 || depth > 64) fail("contains an oversized semantic structure");
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== "object") fail("contains a non-JSON semantic value");
-  const result: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    if (key.length === 0 || key.length > 1024) fail("contains an invalid mapping key");
-    result[key] = canonical((value as Record<string, unknown>)[key]);
+  if (state.active.has(value)) fail("contains a cyclic semantic structure");
+  state.active.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((entry) => canonical(entry, state, depth + 1));
+    }
+    const result: Record<string, unknown> = Object.create(null);
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      if (key.length === 0 || key.length > 1024) fail("contains an invalid mapping key");
+      result[key] = canonical((value as Record<string, unknown>)[key], state, depth + 1);
+    }
+    return result;
+  } finally {
+    state.active.delete(value);
   }
-  return result;
 }
 
 function parseOnePolicyDocument(raw: string, label: string): Record<string, unknown> {

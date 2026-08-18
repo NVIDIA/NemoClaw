@@ -273,9 +273,23 @@ function stopDockerSandboxUnlocked(
       },
     );
     if (portable.kind === "already-stopped") {
-      return { exitCode: 0, state: "already-stopped" };
+      return portable.portableAgent === "hermes"
+        ? ({
+            exitCode: 0,
+            state: "already-stopped",
+            hermesPortableVerified: true,
+          } as RuntimeProviderLifecycleStopOutcome & { readonly hermesPortableVerified: true })
+        : { exitCode: 0, state: "already-stopped" };
     }
-    if (portable.kind === "stopped") return { exitCode: 0, state: "stopped" };
+    if (portable.kind === "stopped") {
+      return portable.portableAgent === "hermes"
+        ? ({
+            exitCode: 0,
+            state: "stopped",
+            hermesPortableVerified: true,
+          } as RuntimeProviderLifecycleStopOutcome & { readonly hermesPortableVerified: true })
+        : { exitCode: 0, state: "stopped" };
+    }
   } catch (error) {
     return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
   }

@@ -9,6 +9,8 @@ import path from "node:path";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
 
 import {
+  assertNoHermesPortableHostAuthority,
+  getHermesPortableHostAuthorityEntryCount,
   hasPortableRetirementRecord,
   inspectPortableRetirementRecovery,
   portableRetirementFingerprint,
@@ -85,6 +87,32 @@ afterEach(() => {
 });
 
 describe("portable uninstall retirement state", () => {
+  it.each([1, 2])(
+    "fails closed on %i malformed or ambiguous schema-5 authority entries (#9203)",
+    (entryCount) => {
+      const test = fixture();
+      const authorityRoot = path.join(test.stateDir, "hermes-portable-lifecycle");
+      fs.mkdirSync(authorityRoot, { mode: 0o700 });
+      Array.from({ length: entryCount }, (_unused, index) =>
+        fs.writeFileSync(path.join(authorityRoot, `ambiguous-${index}`), "not-a-receipt\n", {
+          mode: 0o600,
+        }),
+      );
+
+      expect(getHermesPortableHostAuthorityEntryCount(test.stateDir)).toBe(entryCount);
+      expect(() => assertNoHermesPortableHostAuthority(test.stateDir, "list")).toThrow(
+        "Command 'list' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.",
+      );
+    },
+  );
+
+  it("preserves ordinary host command admission when schema-5 authority is absent (#9203)", () => {
+    const test = fixture();
+
+    expect(getHermesPortableHostAuthorityEntryCount(test.stateDir)).toBe(0);
+    expect(() => assertNoHermesPortableHostAuthority(test.stateDir, "list")).not.toThrow();
+  });
+
   it("publishes the sole private retry record without raw cleanup authority (#9189)", () => {
     const test = fixture();
     const prepared = prepareFixture(test);

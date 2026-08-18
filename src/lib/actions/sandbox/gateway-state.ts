@@ -13,7 +13,10 @@ import {
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+} from "../../state/mcp-lifecycle-lock-acquisition";
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
@@ -51,6 +54,9 @@ import {
   recoverDockerDriverSandbox,
 } from "../../onboard/docker-driver-sandbox-recovery";
 import {
+  assertHermesPortableAgentLifecycleAuthority,
+  buildHermesPortableCommandEnvironment,
+  buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
   recoverPortableAgentSandboxLifecycle,
 } from "../../onboard/experimental/portable-agent-lifecycle";
@@ -84,8 +90,11 @@ export type SandboxGatewayState = {
 };
 
 export type { PortableAgentReceiptDisposition } from "../../onboard/experimental/portable-agent-lifecycle";
+export { buildHermesPortableCommandAuthority, buildHermesPortableCommandEnvironment };
 
 export { inspectPortableAgentReceiptDisposition };
+export const withSandboxLifecycleLock = withMcpLifecycleLock;
+export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
 export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
 
 type SandboxGatewayStateLookup = (
@@ -136,6 +145,25 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
       },
       readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
     },
+  );
+}
+
+/** Requalify Hermes receipt authority without starting or mutating its sandbox. */
+export function assertHermesPortableLifecycleForConnect(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  gatewayName: string,
+): void {
+  assertHermesPortableAgentLifecycleAuthority(
+    sandboxName,
+    {
+      agent: sandbox.agent,
+      gatewayName,
+      lifecycleGeneration: sandbox.lifecycleGeneration,
+      openshellDriver: sandbox.openshellDriver,
+      provider: sandbox.provider,
+    },
+    { readRegistry: (name: string) => (name === sandboxName ? sandbox : null) },
   );
 }
 
@@ -539,14 +567,18 @@ export type GatewayRecoveryMode = "observe" | "recover";
 
 export async function getReconciledSandboxGatewayState(
   sandboxName: string,
-  opts: { getState?: SandboxGatewayStateLookup; gatewayRecovery?: GatewayRecoveryMode } = {},
+  opts: {
+    getState?: SandboxGatewayStateLookup;
+    gatewayRecovery?: GatewayRecoveryMode;
+    selectOwningGateway?: boolean;
+  } = {},
 ): Promise<SandboxGatewayState> {
   const getState = opts.getState ?? getSandboxGatewayState;
   const gatewayRecovery: GatewayRecoveryMode = opts.gatewayRecovery ?? "recover";
   let targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName) ?? undefined;
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
-  if (targetGatewayName) {
+  if (targetGatewayName && opts.selectOwningGateway !== false) {
     // Keep OpenShell's active selection aligned for downstream operations, but
     // never trust that process-global state for this lookup: another CLI can
     // change it immediately after selection. The explicit gateway argument
@@ -665,9 +697,17 @@ export async function ensureLiveSandboxOrExit(
   {
     allowNonReadyPhase = false,
     gatewayRecovery = "recover",
-  }: { allowNonReadyPhase?: boolean; gatewayRecovery?: GatewayRecoveryMode } = {},
+    selectOwningGateway = true,
+  }: {
+    allowNonReadyPhase?: boolean;
+    gatewayRecovery?: GatewayRecoveryMode;
+    selectOwningGateway?: boolean;
+  } = {},
 ): Promise<SandboxGatewayState> {
-  const lookup = await getReconciledSandboxGatewayState(sandboxName, { gatewayRecovery });
+  const lookup = await getReconciledSandboxGatewayState(sandboxName, {
+    gatewayRecovery,
+    selectOwningGateway,
+  });
   if (lookup.state === "present") {
     const phase = parseSandboxPhase(lookup.output || "");
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
@@ -769,7 +809,10 @@ export async function ensureLiveSandboxOrExit(
     } catch {
       /* best-effort cleanup */
     }
-    const retry = await getReconciledSandboxGatewayState(sandboxName, { gatewayRecovery });
+    const retry = await getReconciledSandboxGatewayState(sandboxName, {
+      gatewayRecovery,
+      selectOwningGateway,
+    });
     if (retry.state === "present") {
       console.error("  ✓ Reconnected after clearing stale SSH host keys.");
       return retry;

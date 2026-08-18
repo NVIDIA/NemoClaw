@@ -486,44 +486,47 @@ describe("dockerfile patch helpers", () => {
       "NEMOCLAW_UPSTREAM_ENDPOINT_URL must not contain control characters.",
       "[update]",
     ],
-  ])("rejects unsafe upstream endpoint URLs with %s before Dockerfile write", (_label, upstreamEndpointUrl, error, leakedValue) => {
-    const dockerfilePath = dockerfileWith(
-      [
-        "ARG NEMOCLAW_MODEL=old",
-        "ARG NEMOCLAW_PROVIDER_KEY=old",
-        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
-        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
-        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
-        "ARG CHAT_UI_URL=old",
-        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
-        "ARG NEMOCLAW_INFERENCE_API=old",
-        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
-        "ARG NEMOCLAW_BUILD_ID=old",
-        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
-      ].join("\n"),
-    );
+  ])(
+    "rejects unsafe upstream endpoint URLs with %s before Dockerfile write",
+    (_label, upstreamEndpointUrl, error, leakedValue) => {
+      const dockerfilePath = dockerfileWith(
+        [
+          "ARG NEMOCLAW_MODEL=old",
+          "ARG NEMOCLAW_PROVIDER_KEY=old",
+          "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+          "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
+          "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+          "ARG CHAT_UI_URL=old",
+          "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+          "ARG NEMOCLAW_INFERENCE_API=old",
+          "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+          "ARG NEMOCLAW_BUILD_ID=old",
+          "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+        ].join("\n"),
+      );
 
-    expect(() =>
-      patchStagedDockerfile(
-        dockerfilePath,
-        "nvidia/nemotron-3-ultra-550b-a55b",
-        "https://chat.example",
-        "build-1",
-        "compatible-endpoint",
-        null,
-        null,
-        null,
-        false,
-        null,
-        [],
-        { upstreamEndpointUrl },
-      ),
-    ).toThrow(error);
+      expect(() =>
+        patchStagedDockerfile(
+          dockerfilePath,
+          "nvidia/nemotron-3-ultra-550b-a55b",
+          "https://chat.example",
+          "build-1",
+          "compatible-endpoint",
+          null,
+          null,
+          null,
+          false,
+          null,
+          [],
+          { upstreamEndpointUrl },
+        ),
+      ).toThrow(error);
 
-    const dockerfile = fs.readFileSync(dockerfilePath, "utf-8");
-    expect(dockerfile).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old");
-    expect(dockerfile).not.toContain(leakedValue);
-  });
+      const dockerfile = fs.readFileSync(dockerfilePath, "utf-8");
+      expect(dockerfile).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old");
+      expect(dockerfile).not.toContain(leakedValue);
+    },
+  );
 
   it("falls back to the provider key when no upstream provider is supplied", () => {
     const dockerfilePath = dockerfileWith(

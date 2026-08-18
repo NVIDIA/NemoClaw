@@ -83,6 +83,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
     warn,
     exclusivelyHeldOllamaModel,
     withOllamaModelOwnershipLock: (operation) => operation(),
+    withLifecycleLockSync: (_sandboxName, operation) => operation(),
     ...actionOverrides,
   };
   return {
@@ -303,7 +304,8 @@ describe("stopSandbox", () => {
   });
 
   it("keeps active Hermes stop out of Docker and Docker-capable channel transport (#9203)", () => {
-    const h = harness();
+    const unloadOllamaModels = vi.fn();
+    const h = harness({ unloadOllamaModels });
     h.getSandbox.mockReturnValue(
       sandbox({
         agent: "hermes",
@@ -311,10 +313,11 @@ describe("stopSandbox", () => {
         lifecycleGeneration: "generation-alpha",
         lifecycleLiveIdentityFingerprint: "identity-alpha",
         openshellDriver: "docker",
+        provider: "ollama/qwen3-vl:4b",
       }),
     );
     h.hasPortableLifecycleReceipt.mockReturnValue(true);
-    h.stopPortableSandbox.mockReturnValue({ kind: "stopped" });
+    h.stopPortableSandbox.mockReturnValue({ kind: "stopped", portableAgent: "hermes" });
 
     expect(stopSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
 
@@ -322,6 +325,8 @@ describe("stopSandbox", () => {
     expect(h.stopSandboxChannels).not.toHaveBeenCalled();
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.dockerStop).not.toHaveBeenCalled();
+    expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
   it("succeeds idempotently when the container is already stopped (#6026)", () => {

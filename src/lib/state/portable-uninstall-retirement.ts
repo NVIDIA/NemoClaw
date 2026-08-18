@@ -4,6 +4,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { isErrnoException } from "../core/errno";
@@ -99,16 +100,20 @@ const tails = new Map<string, Promise<void>>();
 export const portableHostFencePath = (homeDir: string): string =>
   path.join(homeDir, ".nemoclaw-portable-host.lock");
 
+/** Count bounded schema-5 authority leaves while the caller holds the host fence. */
+export function getHermesPortableHostAuthorityEntryCount(stateDir: string): number {
+  return readPortableAuthorityDirectory(
+    path.join(stateDir, "hermes-portable-lifecycle"),
+    false,
+  ).entries.length;
+}
+
 /** Reject host-wide legacy work while schema-5 receipt authority exists. */
 export function assertNoHermesPortableHostAuthority(
   stateDir: string,
   commandId: string,
 ): void {
-  const authority = readPortableAuthorityDirectory(
-    path.join(stateDir, "hermes-portable-lifecycle"),
-    false,
-  );
-  if (authority.entries.length > 0) {
+  if (getHermesPortableHostAuthorityEntryCount(stateDir) > 0) {
     throw new Error(
       `Command '${commandId}' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.`,
     );
@@ -186,6 +191,11 @@ export async function withPortableHostFence<T>(
       if (tails.get(lockPath) === tail) tails.delete(lockPath);
     }
   }
+}
+
+/** Hold the portable host fence for the current process home without a second state owner. */
+export function withCurrentPortableHostFence<T>(operation: () => Promise<T> | T): Promise<T> {
+  return withPortableHostFence(process.env.HOME || os.homedir(), operation);
 }
 
 const root = (homeDir: string): string => path.join(homeDir, ".nemoclaw");

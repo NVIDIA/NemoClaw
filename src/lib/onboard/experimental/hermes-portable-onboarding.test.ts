@@ -8,20 +8,28 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PodmanSocketAuthority, PodmanSocketAuthorityDeps } from "../../adapters/podman";
+import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/openshell/resolve-shared";
+import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-podman-authority";
 import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
-import { hermesPortableContainerInternals } from "./hermes-portable-container";
 import {
   captureHermesPortablePolicySource,
   createHermesPortableTransactionId,
+  hermesPortableReceiptDirectory,
   publishHermesPortableDurablePolicySource,
 } from "./hermes-portable-receipt";
 import { hermesPortableCreatePolicySemanticDigest } from "./hermes-portable-policy-authority";
 import {
   classifyHermesPortableRegistry,
+  createHermesPortableChildEnvironment,
+  createHermesPortableReadyRunner,
+  createHermesPortableOpenShellCapture,
+  createHermesPortableReadyCapture,
   observeHermesPortableSandbox,
   rewriteHermesPortableCreatePolicyArgv,
   runHermesPortableOnboardingTransaction,
+  scopeHermesPortableCreateGatewayArgv,
+  shouldManageHermesPortableDashboard,
   type HermesPortableOnboardingDeps,
 } from "./hermes-portable-onboarding";
 
@@ -85,15 +93,123 @@ function removePolicySource(): true {
   return true;
 }
 
+function interruptReceiptWrite(
+  marker: Buffer,
+  message: string,
+  writtenLength: (requestedLength: number) => number,
+): void {
+  const originalWrite = fs.writeSync;
+  let interrupted = false;
+  const writeSpy = vi.spyOn(fs, "writeSync") as unknown as {
+    mockImplementation(
+      implementation: (
+        descriptor: number,
+        buffer: Uint8Array,
+        offset: number,
+        length: number,
+        position: number | null,
+      ) => number,
+    ): void;
+  };
+  writeSpy.mockImplementation((descriptor, buffer, offset, length, position) => {
+    interrupted &&
+      (() => {
+        throw new Error(message);
+      })();
+    const requested = Buffer.from(buffer).subarray(offset, offset + length);
+    return position === 0 && requested.includes(marker)
+      ? ((interrupted = true),
+        originalWrite(descriptor, buffer, offset, writtenLength(length), position))
+      : originalWrite(descriptor, buffer, offset, length, position);
+  });
+}
+
+function interruptCanonicalReceiptLink(phase: "configuring" | "active"): void {
+  const originalLink = fs.linkSync;
+  let interrupted = false;
+  vi.spyOn(fs, "linkSync").mockImplementation((source, target) => {
+    originalLink(source, target);
+    !interrupted &&
+      String(target).endsWith(`${phase}.json`) &&
+      (() => {
+        interrupted = true;
+        throw new Error(`simulated ${phase} canonical-link exit`);
+      })();
+  });
+}
+
+function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
+  return {
+    version: "0.0.101",
+    executable: {
+      executablePath: "/usr/bin/openshell",
+      device: "1",
+      inode: "10",
+      mode: String(0o100755),
+      ownerUid: "0",
+      size: "1024",
+      modifiedTimeNanoseconds: "11",
+      changedTimeNanoseconds: "12",
+      sha256: "f".repeat(64),
+      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
+        device: "1",
+        inode: String(index + 20),
+        mode: String(0o40755),
+        ownerUid: "0",
+        path: directory,
+      })),
+    },
+  };
+}
+
+function podmanExecutableAuthority(): HermesPortablePodmanExecutableAuthority {
+  return {
+    version: "5.7.0",
+    executable: {
+      executablePath: "/usr/bin/podman",
+      device: "1",
+      inode: "30",
+      mode: String(0o100755),
+      ownerUid: "0",
+      size: "2048",
+      modifiedTimeNanoseconds: "31",
+      changedTimeNanoseconds: "32",
+      sha256: "9".repeat(64),
+      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
+        device: "1",
+        inode: String(index + 40),
+        mode: String(0o40755),
+        ownerUid: "0",
+        path: directory,
+      })),
+    },
+  };
+}
+
 function input() {
   const uid = process.getuid!();
+  const sourceDockerfilePath = `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`;
   return {
     sandboxName: "alpha",
     gatewayName: "nemoclaw",
     lifecycleGeneration: "generation-1",
     stateDir,
     createPolicyPath: policyPath,
-    createArgv: ["openshell", "sandbox", "create", "--policy", policyPath, "alpha"],
+    createArgv: [
+      "/usr/bin/openshell",
+      "sandbox",
+      "create",
+      "-g",
+      "nemoclaw",
+      "--from",
+      sourceDockerfilePath,
+      "--name",
+      "alpha",
+      "--policy",
+      policyPath,
+      "--",
+      ...startupArgv(),
+    ],
     runtimeAuthority: {
       schemaVersion: 1 as const,
       kind: "podman" as const,
@@ -103,6 +219,24 @@ function input() {
       configHome: "/home/test/.config",
       runtimeDir: `/run/user/${String(uid)}`,
       socketPath: `/run/user/${String(uid)}/podman/podman.sock`,
+    },
+    openshellExecutableAuthority: openshellExecutableAuthority(),
+    buildContext: {
+      authority: {
+        schemaVersion: 1 as const,
+        sourceRevision: "1".repeat(40),
+        dockerfileRelativePath: "agents/hermes/Dockerfile" as const,
+        sourceManifestSha256: "2".repeat(64),
+        contextManifestSha256: "3".repeat(64),
+      },
+      sourceDockerfilePath,
+      assertCurrentSource: vi.fn(),
+      materialize: vi.fn(() => ({
+        buildContextPath: "/private/staged-hermes",
+        dockerfilePath: "/private/staged-hermes/agents/hermes/Dockerfile",
+        assertCurrent: vi.fn(),
+      })),
+      retire: vi.fn(() => true),
     },
     startup: {
       agent: loadAgent("hermes"),
@@ -122,13 +256,18 @@ function deps(
       expected: PodmanSocketAuthority,
       deps?: PodmanSocketAuthorityDeps,
     ) => void;
+    assertOpenShellExecutableAuthority?: () => void;
     afterRegistryCommit?: () => void | Promise<void>;
     observeSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["observeSandbox"];
+    registryOpenShellVersion?: string | null;
+    registryLiveFingerprint?: string;
+    existingRegistry?: boolean;
+    podmanAuthority?: HermesPortablePodmanExecutableAuthority;
   } = {},
 ) {
   let present = options.existingSandbox === true;
   let restartPolicy = "no";
-  let registry = false;
+  let registry = options.existingRegistry === true;
   const registryFailures = options.failAfterRegistry
     ? [new Error("simulated registry-to-active exit")]
     : [];
@@ -182,10 +321,12 @@ function deps(
         })),
       };
     },
+    capturePodmanExecutableAuthority: () => options.podmanAuthority ?? podmanExecutableAuthority(),
     container: {
       podman,
       assertSocketAuthority: options.assertSocketAuthority ?? vi.fn(),
     },
+    assertOpenShellExecutableAuthority: options.assertOpenShellExecutableAuthority ?? vi.fn(),
     capturePolicy: (args) => {
       events.push(args.includes("--base") ? "policy-base" : "policy-full");
       return result(POLICY);
@@ -200,22 +341,37 @@ function deps(
               liveIdentityFingerprint: LIVE_IDENTITY_FINGERPRINT,
             }
           : { kind: "absent" }),
-    createSandbox: async (argv) => {
+    createSandbox: async (argv, buildContextPath) => {
       events.push("create");
       const policyIndex = argv.indexOf("--policy");
       expect(argv[policyIndex + 1]).toContain("policy.");
+      expect(argv[argv.indexOf("--from") + 1]).toBe(
+        "/private/staged-hermes/agents/hermes/Dockerfile",
+      );
+      expect(buildContextPath).toBe("/private/staged-hermes");
       present = true;
       return { ready: true };
     },
-    registryDisposition: () =>
-      registry
-        ? {
-            kind: "matching",
-            entry: {
-              lifecycleLiveIdentityFingerprint: LIVE_IDENTITY_FINGERPRINT,
-            } as never,
-          }
-        : { kind: "missing" },
+    registryExists: () => registry,
+    registryDisposition: (receipt) =>
+      classifyHermesPortableRegistry(
+        receipt,
+        registry
+          ? ({
+              name: "alpha",
+              agent: "hermes",
+              gatewayName: "nemoclaw",
+              lifecycleGeneration: "generation-1",
+              openshellDriver: "docker",
+              lifecycleLiveIdentityFingerprint:
+                options.registryLiveFingerprint ?? LIVE_IDENTITY_FINGERPRINT,
+              openshellVersion:
+                "registryOpenShellVersion" in options
+                  ? options.registryOpenShellVersion
+                  : "0.0.101",
+            } as never)
+          : null,
+      ),
     registerSandbox: () => {
       events.push("registry");
       registry = true;
@@ -241,6 +397,107 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(stateDir, { recursive: true, force: true }));
 
 describe("Hermes portable onboarding transaction", () => {
+  it("uses only the receipt-owned child environment and exact gateway observations (#9203)", () => {
+    const runtimeAuthority = input().runtimeAuthority;
+    const sourceEnv = {
+      HOME: "/home/test",
+      PATH: "/usr/bin",
+      XDG_CONFIG_HOME: "/home/test/.config",
+      XDG_RUNTIME_DIR: runtimeAuthority.runtimeDir,
+      XDG_CACHE_HOME: "/tmp/ambient-cache",
+      SSL_CERT_FILE: "/etc/ssl/certs.pem",
+      OPENSHELL_GATEWAY: "ambient",
+      DOCKER_HOST: "unix:///run/docker.sock",
+      KUBECONFIG: "/home/test/.kube/config",
+      SSH_AUTH_SOCK: "/run/user/1000/agent.sock",
+      HTTPS_PROXY: "https://user:secret@proxy.example",
+    } satisfies NodeJS.ProcessEnv;
+    const spawn = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      output: [],
+      pid: 1,
+      stdout: Buffer.from("Name: alpha\nID: sandbox-id-1\nPhase: Ready\n"),
+      stderr: Buffer.alloc(0),
+      error: undefined,
+    }));
+    const capture = createHermesPortableOpenShellCapture(
+      (args) => ["/usr/bin/openshell", ...args],
+      sourceEnv,
+      runtimeAuthority,
+      undefined,
+      spawn as never,
+    );
+    const ready = createHermesPortableReadyCapture("alpha", "nemoclaw", capture);
+
+    expect(ready(["sandbox", "list"])).toContain("Phase: Ready");
+    expect(spawn).toHaveBeenCalledWith(
+      "/usr/bin/openshell",
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.objectContaining({
+        env: {
+          HOME: "/home/test",
+          PATH: "/usr/bin",
+          XDG_CONFIG_HOME: "/home/test/.config",
+          XDG_RUNTIME_DIR: runtimeAuthority.runtimeDir,
+          SSL_CERT_FILE: "/etc/ssl/certs.pem",
+        },
+      }),
+    );
+    expect(createHermesPortableChildEnvironment(sourceEnv, runtimeAuthority)).not.toHaveProperty(
+      "OPENSHELL_GATEWAY",
+    );
+    expect(createHermesPortableChildEnvironment(sourceEnv, runtimeAuthority)).not.toHaveProperty(
+      "XDG_CACHE_HOME",
+    );
+    expect(() =>
+      createHermesPortableChildEnvironment({ ...sourceEnv, HOME: "/home/other" }, runtimeAuthority),
+    ).toThrow("HOME disagrees with runtime authority");
+  });
+
+  it("rejects ambient endpoint selectors before an OpenShell child starts (#9203)", () => {
+    const spawn = vi.fn();
+    const capture = createHermesPortableOpenShellCapture(
+      (args) => ["/usr/bin/openshell", ...args],
+      { HOME: "/home/test", OPENSHELL_GATEWAY_ENDPOINT: "https://ambient.invalid" },
+      input().runtimeAuthority,
+      undefined,
+      spawn as never,
+    );
+
+    expect(() => capture(["sandbox", "list", "-g", "nemoclaw"])).toThrow(
+      "OPENSHELL_GATEWAY_ENDPOINT is set",
+    );
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("adds exactly one create gateway and rejects existing gateway selection (#9203)", () => {
+    const current = input();
+    const unscoped = current.createArgv.filter((value) => !["-g", "nemoclaw"].includes(value));
+    expect(scopeHermesPortableCreateGatewayArgv(unscoped, "nemoclaw")).toEqual(current.createArgv);
+    expect(() => scopeHermesPortableCreateGatewayArgv(current.createArgv, "nemoclaw")).toThrow(
+      "already contains gateway selection authority",
+    );
+  });
+
+  it("does not enroll dashboard/TUI forward authority for schema-5 Hermes (#9203)", () => {
+    expect(
+      shouldManageHermesPortableDashboard(true, loadAgent("hermes"), {
+        NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      }),
+    ).toBe(false);
+    expect(
+      shouldManageHermesPortableDashboard(true, loadAgent("hermes"), {
+        NEMOCLAW_EXPERIMENTAL_PROFILE: "default",
+      }),
+    ).toBe(true);
+    expect(
+      shouldManageHermesPortableDashboard(true, loadAgent("openclaw"), {
+        NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      }),
+    ).toBe(true);
+  });
+
   it("holds one lock through reserve, create, configuring, registry, and active publication (#9203)", async () => {
     const fixture = deps();
 
@@ -256,8 +513,30 @@ describe("Hermes portable onboarding transaction", () => {
     );
   });
 
+  it("rejects a pre-existing live sandbox before durable reservation (#9203)", async () => {
+    const fixture = deps({ existingSandbox: true });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "live sandbox authority already exists before reservation",
+    );
+    expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
+    expect(fixture.events).not.toContain("create");
+    expect(fixture.podman).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pre-existing registry row before durable reservation (#9203)", async () => {
+    const fixture = deps({ existingRegistry: true });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "registry authority already exists before reservation",
+    );
+    expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
+    expect(fixture.events).not.toContain("create");
+    expect(fixture.podman).not.toHaveBeenCalled();
+  });
+
   it("resumes identical pending authority with effects without a duplicate create (#9203)", async () => {
-    const first = deps({ existingSandbox: true, updateFails: true });
+    const first = deps({ updateFails: true });
     await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
       "restart-policy update failed",
     );
@@ -272,6 +551,241 @@ describe("Hermes portable onboarding transaction", () => {
     expect(second.events).toContain("temp-cleanup");
     expect(fs.existsSync(policyPath)).toBe(false);
   });
+
+  it("rejects changed non-policy create intent on pending reentry before effects (#9203)", async () => {
+    const first = deps({ cleanupFails: true });
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "temporary policy cleanup did not complete",
+    );
+    const pendingBytes = fs.readFileSync(
+      path.join(hermesPortableReceiptDirectory("alpha", stateDir), "pending.json"),
+      "utf8",
+    );
+    expect(JSON.parse(pendingBytes).createIntentSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(pendingBytes).not.toContain("ghcr.io/nvidia/nemoclaw/hermes");
+    const changed = input();
+    changed.createArgv.splice(changed.createArgv.indexOf("--"), 0, "--gpu");
+    const second = deps();
+
+    await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
+      "saved transaction disagrees",
+    );
+    expect(second.events).not.toContain("create");
+  });
+
+  it("binds the staged build-context manifest into pending create intent (#9203)", async () => {
+    const localInput = input();
+    const first = deps({ cleanupFails: true });
+    await expect(runHermesPortableOnboardingTransaction(localInput, first.value)).rejects.toThrow(
+      "temporary policy cleanup did not complete",
+    );
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+    const changed = input();
+    changed.buildContext.authority = {
+      ...changed.buildContext.authority,
+      contextManifestSha256: "4".repeat(64),
+    };
+    const second = deps();
+
+    await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
+      "saved transaction disagrees",
+    );
+    expect(second.events).not.toContain("create");
+  });
+
+  it("rejects a changed OpenShell executable identity on pending reentry (#9203)", async () => {
+    const first = deps({ cleanupFails: true });
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "temporary policy cleanup did not complete",
+    );
+    const changed = input();
+    changed.createArgv[0] = "/other/openshell";
+    const second = deps();
+
+    await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
+      "saved transaction disagrees",
+    );
+    expect(second.events).not.toContain("create");
+  });
+
+  it("rejects changed Podman executable authority on pending reentry before effects (#9203)", async () => {
+    const first = deps({ cleanupFails: true });
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "temporary policy cleanup did not complete",
+    );
+    const changedAuthority = podmanExecutableAuthority();
+    const second = deps({
+      podmanAuthority: {
+        ...changedAuthority,
+        executable: { ...changedAuthority.executable, inode: "31" },
+      },
+    });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), second.value)).rejects.toThrow(
+      "saved transaction disagrees",
+    );
+    expect(second.events).not.toContain("create");
+    expect(second.podman).not.toHaveBeenCalled();
+  });
+
+  it("rejects executable generation drift before OpenShell, create, or Podman effects (#9203)", async () => {
+    const fixture = deps({
+      assertOpenShellExecutableAuthority: () => {
+        throw new Error("simulated OpenShell executable generation drift");
+      },
+    });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "simulated OpenShell executable generation drift",
+    );
+    expect(fixture.events).not.toContain("create");
+    expect(fixture.events).not.toContain("policy-base");
+    expect(fixture.podman).not.toHaveBeenCalled();
+  });
+
+  it("keeps configuring authority when registry OpenShell version disagrees (#9203)", async () => {
+    const first = deps({ failAfterRegistry: true });
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "registry-to-active exit",
+    );
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+    const fixture = deps({
+      existingSandbox: true,
+      existingRegistry: true,
+      registryOpenShellVersion: "0.0.102",
+    });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "registry conflicts with configuring authority",
+    );
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(hermesPortableReceiptDirectory("alpha", stateDir), "configuring.json"),
+          "utf8",
+        ),
+      ).phase,
+    ).toBe("configuring");
+    expect(
+      fs.existsSync(path.join(hermesPortableReceiptDirectory("alpha", stateDir), "active.json")),
+    ).toBe(false);
+    expect(fixture.podman).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["container", "update"]),
+    );
+  });
+
+  it("does not update Podman when a matching registry row has stale live identity (#9203)", async () => {
+    const first = deps({ failAfterRegistry: true });
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "registry-to-active exit",
+    );
+    fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+    const resumed = deps({
+      existingSandbox: true,
+      existingRegistry: true,
+      registryLiveFingerprint: "0".repeat(64),
+    });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), resumed.value)).rejects.toThrow(
+      "registry live identity disagrees",
+    );
+    expect(resumed.podman).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["container", "update"]),
+    );
+  });
+
+  it("rejects receipt-gateway drift on pending reentry before create (#9203)", async () => {
+    const first = deps({ cleanupFails: true });
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "temporary policy cleanup did not complete",
+    );
+    const changed = input();
+    changed.gatewayName = "other-gateway";
+    changed.createArgv[changed.createArgv.indexOf("-g") + 1] = "other-gateway";
+    const second = deps();
+
+    await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
+      "saved transaction disagrees",
+    );
+    expect(second.events).not.toContain("create");
+  });
+
+  it("rejects credential-bearing create env before durable reservation (#9203)", async () => {
+    const current = input();
+    current.createArgv.splice(current.createArgv.indexOf("--"), 0, "--env", "API_KEY=do-not-log");
+    const fixture = deps();
+
+    await expect(runHermesPortableOnboardingTransaction(current, fixture.value)).rejects.toThrow(
+      "unsupported effect-bearing option",
+    );
+    expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
+    expect(fixture.events).not.toContain("create");
+  });
+
+  it("resumes an exact interrupted pending receipt prefix after process-style reentry (#9203)", async () => {
+    interruptReceiptWrite(
+      Buffer.from('{"schemaVersion":5'),
+      "simulated process exit during pending write",
+      (length) => Math.floor(length / 2),
+    );
+    const first = deps();
+    await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+      "simulated process exit during pending write",
+    );
+    vi.restoreAllMocks();
+
+    const second = deps();
+    const resumed = await runHermesPortableOnboardingTransaction(input(), second.value);
+
+    expect(resumed.active.receipt.phase).toBe("active");
+    expect(second.events.filter((event) => event === "create")).toHaveLength(1);
+  });
+
+  it.each(["configuring", "active"] as const)(
+    "resumes an exact interrupted %s receipt prefix after process-style reentry (#9203)",
+    async (phase) => {
+      interruptReceiptWrite(
+        Buffer.from(`\"phase\":\"${phase}\"`),
+        `simulated process exit during ${phase} write`,
+        () => 1,
+      );
+      const first = deps();
+      await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+        `simulated process exit during ${phase} write`,
+      );
+      vi.restoreAllMocks();
+      fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+
+      const retry = phase === "active" ? first : deps({ existingSandbox: true });
+      const resumed = await runHermesPortableOnboardingTransaction(input(), retry.value);
+
+      expect(resumed.active.receipt.phase).toBe("active");
+      expect(retry.events.filter((event) => event === "create")).toHaveLength(
+        phase === "active" ? 1 : 0,
+      );
+    },
+  );
+
+  it.each(["configuring", "active"] as const)(
+    "resumes %s after a canonical hard-link process exit (#9203)",
+    async (phase) => {
+      interruptCanonicalReceiptLink(phase);
+      const first = deps();
+      await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
+        `simulated ${phase} canonical-link exit`,
+      );
+      vi.restoreAllMocks();
+      fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
+
+      const retry = phase === "active" ? first : deps({ existingSandbox: true });
+      const resumed = await runHermesPortableOnboardingTransaction(input(), retry.value);
+
+      expect(resumed.active.receipt.phase).toBe("active");
+      expect(retry.events.filter((event) => event === "create")).toHaveLength(
+        phase === "active" ? 1 : 0,
+      );
+    },
+  );
 
   it("preserves configuring after an ambiguous update and completes registry on retry (#9203)", async () => {
     const first = deps({ updateFails: true });
@@ -416,6 +930,26 @@ describe("Hermes portable onboarding transaction", () => {
     ).toThrow();
   });
 
+  it("rejects a noncanonical policy option before durable policy or create effects (#9203)", async () => {
+    const fixture = deps();
+    const invalid = input();
+    invalid.createArgv = [
+      "openshell",
+      "sandbox",
+      "create",
+      "--policy",
+      policyPath,
+      `--policy=${policyPath}`,
+      "alpha",
+    ];
+
+    await expect(runHermesPortableOnboardingTransaction(invalid, fixture.value)).rejects.toThrow(
+      "one canonical '--policy <path>' option",
+    );
+    expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
+    expect(fixture.events).not.toContain("create");
+  });
+
   it("classifies absence only after a reachable gateway returns exact sandbox-not-found evidence (#9203)", () => {
     const capture = vi
       .fn()
@@ -429,6 +963,59 @@ describe("Hermes portable onboarding transaction", () => {
       [["sandbox", "list", "-g", "nemoclaw"]],
       [["sandbox", "get", "-g", "nemoclaw", "alpha"]],
     ]);
+  });
+
+  it("accepts Ready identity only from the exact receipt gateway (#9203)", () => {
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "alpha Ready", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "Name: alpha\nID: sandbox-id-1\nPhase: Ready\n",
+        stderr: "",
+      });
+
+    expect(observeHermesPortableSandbox("alpha", "nemoclaw", capture)).toMatchObject({
+      kind: "present",
+      sandboxId: "sandbox-id-1",
+    });
+    expect(capture).toHaveBeenLastCalledWith(["sandbox", "get", "-g", "nemoclaw", "alpha"]);
+  });
+
+  it("routes generic Ready identity and exec checks through the exact gateway (#9203)", () => {
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: Buffer.from("ready"),
+      stderr: Buffer.alloc(0),
+    }));
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+
+    expect(run(["sandbox", "get", "alpha"]).status).toBe(0);
+    expect(run(["sandbox", "exec", "--name", "alpha", "--", "true"]).status).toBe(0);
+    expect(capture.mock.calls).toEqual([
+      [["sandbox", "get", "-g", "nemoclaw", "alpha"]],
+      [["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"]],
+    ]);
+    expect(() => run(["sandbox", "get", "beta"])).toThrow("unsupported OpenShell command");
+    expect(() => run(["sandbox", "exec", "--name", "beta", "--", "true"])).toThrow(
+      "unsupported OpenShell command",
+    );
+  });
+
+  it("rejects exact-gateway identity that has not reached Ready (#9203)", () => {
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "alpha Creating", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "Name: alpha\nID: sandbox-id-1\nPhase: Creating\n",
+        stderr: "",
+      });
+
+    expect(observeHermesPortableSandbox("alpha", "nemoclaw", capture)).toEqual({
+      kind: "ambiguous",
+      detail: "exact OpenShell sandbox is not Ready",
+    });
   });
 
   it.each([
@@ -454,6 +1041,7 @@ describe("Hermes portable onboarding transaction", () => {
       sandboxName: "alpha",
       gatewayName: "nemoclaw",
       lifecycleGeneration: "generation-1",
+      openshellExecutableAuthority: openshellExecutableAuthority(),
     } as never;
     const matching = {
       name: "alpha",
@@ -461,6 +1049,7 @@ describe("Hermes portable onboarding transaction", () => {
       gatewayName: "nemoclaw",
       lifecycleGeneration: "generation-1",
       openshellDriver: "docker",
+      openshellVersion: "0.0.101",
     };
 
     expect(classifyHermesPortableRegistry(receipt, null)).toEqual({ kind: "missing" });

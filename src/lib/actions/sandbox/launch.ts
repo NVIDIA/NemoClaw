@@ -3,10 +3,10 @@
 
 import * as agentRuntime from "../../agent/runtime";
 import type { AgentDefinition } from "../../agent/definition-types";
+import { spawnExitCode } from "../../core/process-exit";
 import { requireCuaLifecycleReadiness } from "../../cua/lifecycle-readiness";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
-import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
 import {
   completeReadinessQualifiedInteractiveSessionSetup,
@@ -14,10 +14,18 @@ import {
   printInteractiveSessionHints,
 } from "./connect";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
-import { execSandbox } from "./exec";
 import {
+  buildOpenshellExecArgs,
+  execSandbox,
+  resolveSandboxExecBinary,
+  runSandboxExecChild,
+  wrapExecCommandWithRuntimeEnv,
+} from "./exec";
+import {
+  buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
   recoverPortableDemoSandboxLifecycleForConnect,
+  withSandboxLifecycleLock as withSandboxMutationLock,
 } from "./gateway-state";
 import { getKnownSandboxTarget } from "./gateway-target";
 import {
@@ -52,12 +60,17 @@ interface LaunchSandboxDeps {
 async function launchCuaUnderMutationLocks(
   sandboxName: string,
   deps: LaunchSandboxDeps,
+  beforeOrdinaryLaunch?: () => void,
 ): Promise<void> {
   const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
   const lockGateway = deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock;
   const getSandbox = deps.getSandbox ?? getKnownSandboxTarget;
   const resolveGateway = deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName;
   await lockSandbox(sandboxName, async () => {
+    if (inspectPortableAgentReceiptDisposition(sandboxName).kind === "hermes") {
+      throw new Error("Hermes portable lifecycle authority changed before agent launch.");
+    }
+    beforeOrdinaryLaunch?.();
     const lockedEntry = getSandbox(sandboxName);
     if (!lockedEntry || lockedEntry.agent !== "nemocua") {
       throw new Error(
@@ -81,10 +94,12 @@ async function launchAgentWithPortableAuthority(
   sandboxName: string,
   agent: AgentDefinition | null,
   entry: SandboxEntry | null,
+  hermesPortableSnapshot: boolean,
   command: readonly string[],
   deps: LaunchSandboxDeps,
+  beforeOrdinaryLaunch?: () => void,
 ): Promise<void> {
-  const runAgent = async (): Promise<void> => {
+  const runOrdinaryAgent = async (): Promise<void> => {
     prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
     await execSandbox(sandboxName, command, {
       tty: true,
@@ -92,11 +107,41 @@ async function launchAgentWithPortableAuthority(
       timeoutSeconds: 0,
     });
   };
+  const runHermesPortableAgent = async (gatewayName: string): Promise<void> => {
+    const commandAuthority = buildHermesPortableCommandAuthority(sandboxName);
+    const options = {
+      tty: true,
+      stdin: true,
+      timeoutSeconds: 0,
+      subprocessEnv: commandAuthority.env,
+    } as const;
+    const result = await runSandboxExecChild(
+      commandAuthority.executablePath,
+      buildOpenshellExecArgs(
+        sandboxName,
+        wrapExecCommandWithRuntimeEnv(command),
+        options,
+        gatewayName,
+      ),
+      options,
+    );
+    try {
+      if (result.error) throw result.error;
+      const exitCode = spawnExitCode(result);
+      if (exitCode !== 0) process.exit(exitCode);
+    } finally {
+      result.releaseSignals?.();
+    }
+  };
   const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
   await lockSandbox(sandboxName, async () => {
     const current = inspectPortableAgentReceiptDisposition(sandboxName);
+    if ((current.kind === "hermes") !== hermesPortableSnapshot) {
+      throw new Error("Hermes portable lifecycle authority changed before agent launch.");
+    }
     if (current.kind !== "hermes") {
-      await runAgent();
+      beforeOrdinaryLaunch?.();
+      await runOrdinaryAgent();
       return;
     }
     if (current.phase !== "active") {
@@ -104,7 +149,16 @@ async function launchAgentWithPortableAuthority(
     }
     const getSandbox = deps.getSandbox ?? getKnownSandboxTarget;
     const registered = getSandbox(sandboxName);
-    if (!registered || registered.agent !== "hermes") {
+    if (
+      agent?.name !== "hermes" ||
+      entry?.agent !== "hermes" ||
+      !registered ||
+      registered.agent !== "hermes" ||
+      registered.gatewayName !== entry.gatewayName ||
+      registered.lifecycleGeneration !== entry.lifecycleGeneration ||
+      current.gatewayName !== entry.gatewayName ||
+      current.lifecycleGeneration !== entry.lifecycleGeneration
+    ) {
       throw new Error("Hermes portable registry authority changed before agent launch.");
     }
     const gatewayName = (deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName)(registered);
@@ -116,7 +170,15 @@ async function launchAgentWithPortableAuthority(
     if (recovery.kind === "not-installed") {
       throw new Error("Hermes portable lifecycle authority disappeared before agent launch.");
     }
-    await runAgent();
+    const finalRecovery = recoverPortableDemoSandboxLifecycleForConnect(
+      sandboxName,
+      registered,
+      gatewayName,
+    );
+    if (finalRecovery.kind === "not-installed") {
+      throw new Error("Hermes portable lifecycle authority disappeared at agent launch.");
+    }
+    await runHermesPortableAgent(gatewayName);
   });
 }
 
@@ -128,14 +190,24 @@ export async function launchSandbox(
   const enterMutationGate = deps.withLaunchReadinessMutationGate ?? withLaunchReadinessMutationGate;
   let decision = await inspect(sandboxName);
   let session: Awaited<ReturnType<typeof prepareInteractiveSession>>;
+  let acceptedReadinessSetup: (() => void) | undefined;
   while (true) {
     if (decision.kind === "accepted") {
-      printInteractiveSessionHints(sandboxName);
-      completeReadinessQualifiedInteractiveSessionSetup(sandboxName, decision.agent, decision.sb);
+      const acceptedDecision = decision;
+      const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
+      const hermesPortable = disposition.kind === "hermes";
+      acceptedReadinessSetup = () => {
+        printInteractiveSessionHints(sandboxName);
+        completeReadinessQualifiedInteractiveSessionSetup(
+          sandboxName,
+          acceptedDecision.agent,
+          acceptedDecision.sb,
+        );
+      };
       session = {
-        agent: decision.agent,
-        sb: decision.sb,
-        hermesPortable: inspectPortableAgentReceiptDisposition(sandboxName).kind === "hermes",
+        agent: acceptedDecision.agent,
+        sb: acceptedDecision.sb,
+        hermesPortable,
       };
       break;
     }
@@ -169,7 +241,7 @@ export async function launchSandbox(
     session = gated.value.prepared;
     break;
   }
-  const { agent, sb } = session;
+  const { agent, sb, hermesPortable = false } = session;
   const isCua = sb?.agent === "nemocua";
   const agentCommand = isCua
     ? agentRuntime.getTerminalCommand(agent, "interactive")
@@ -194,10 +266,20 @@ export async function launchSandbox(
   // agent under a different auth mode than `connect` gives it, so `-l` is
   // load-bearing: do not flatten this to `bash -c` or to the split command.
   if (isCua) {
-    prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
-    await launchCuaUnderMutationLocks(sandboxName, deps);
+    await launchCuaUnderMutationLocks(sandboxName, deps, () => {
+      acceptedReadinessSetup?.();
+      prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+    });
     return;
   }
   const command = ["bash", "-lc", agentCommand];
-  await launchAgentWithPortableAuthority(sandboxName, agent, sb, command, deps);
+  await launchAgentWithPortableAuthority(
+    sandboxName,
+    agent,
+    sb,
+    hermesPortable,
+    command,
+    deps,
+    acceptedReadinessSetup,
+  );
 }

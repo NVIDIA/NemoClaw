@@ -37,6 +37,19 @@ function copyAgent(): AgentDefinition {
   return { ...source, manifestPath };
 }
 
+function setExpectedManifestVersion(
+  agent: AgentDefinition,
+  expectedVersion: string | undefined,
+): void {
+  const source = fs.readFileSync(agent.manifestPath, "utf8");
+  const replacement =
+    expectedVersion === undefined ? "" : `expected_version: ${JSON.stringify(expectedVersion)}`;
+  fs.writeFileSync(agent.manifestPath, source.replace(/^expected_version:.*$/mu, replacement), {
+    mode: 0o644,
+  });
+  agent.expected_version = expectedVersion;
+}
+
 function expectStartupCandidatesRejected(
   contract: ReturnType<typeof resolveHermesPortableStartupContract>,
   agent: AgentDefinition,
@@ -82,6 +95,41 @@ describe("Hermes portable startup contract", () => {
       devicePairing: false,
       configDir: "/sandbox/.hermes",
     });
+    expect(agent.expected_version).toBe("0.19.0");
+  });
+
+  it.each([undefined, "", "0.19.1"])(
+    "rejects Hermes manifest version %j outside the accepted portable matrix (#9203)",
+    (expectedVersion) => {
+      const agent = copyAgent();
+      setExpectedManifestVersion(agent, expectedVersion);
+
+      expect(() =>
+        resolveHermesPortableStartupContract({
+          agent,
+          sandboxName: SANDBOX,
+          startupArgv: startupArgv(),
+        }),
+      ).toThrow("current Hermes manifest does not match the accepted lifecycle contract");
+    },
+  );
+
+  it("rejects an accepted receipt when the current Hermes matrix version drifts (#9203)", () => {
+    const accepted = copyAgent();
+    const contract = resolveHermesPortableStartupContract({
+      agent: accepted,
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    });
+    setExpectedManifestVersion(accepted, "0.19.1");
+
+    expect(() =>
+      assertCurrentHermesPortableStartupContract(contract, {
+        agent: accepted,
+        sandboxName: SANDBOX,
+        startupArgv: startupArgv(),
+      }),
+    ).toThrow("current Hermes manifest does not match the accepted lifecycle contract");
   });
 
   it("rejects current manifest byte drift before reusing a receipt (#9203)", () => {
@@ -104,13 +152,13 @@ describe("Hermes portable startup contract", () => {
     const contract = resolveHermesPortableStartupContract({
       agent,
       sandboxName: SANDBOX,
-      startupArgv: startupArgv("NEMOCLAW_HERMES_DASHBOARD=0"),
+      startupArgv: startupArgv("NEMOCLAW_PROXY_HOST=proxy.internal"),
     });
 
     expectStartupCandidatesRejected(contract, agent, [
       startupArgv(),
-      startupArgv("NEMOCLAW_HERMES_DASHBOARD=1"),
-      startupArgv("NEMOCLAW_HERMES_DASHBOARD=0", "NEMOCLAW_HERMES_DASHBOARD_TUI=0"),
+      startupArgv("NEMOCLAW_PROXY_HOST=other.internal"),
+      startupArgv("NEMOCLAW_PROXY_HOST=proxy.internal", "NEMOCLAW_PROXY_PORT=8080"),
     ]);
   });
 
@@ -149,6 +197,8 @@ describe("Hermes portable startup contract", () => {
     "API_SERVER_KEY=secret-value",
     "NEMOCLAW_SANDBOX_NAME=other",
     "NEMOCLAW_HERMES_API_PORT=8643",
+    "CHAT_UI_URL=http://127.0.0.1:8643/",
+    "NEMOCLAW_HERMES_DASHBOARD=0",
     "NEMOCLAW_HERMES_DASHBOARD=$(touch /tmp/owned)",
     "UNREVIEWED_ENV=value",
   ])("rejects unsafe or unowned startup assignment %s (#9203)", (assignment) => {

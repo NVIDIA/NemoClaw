@@ -50,7 +50,7 @@ export function getOpenshellBinary(): string {
 
 /** Run an OpenShell command, inheriting stdio (no output capture). */
 export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
-  return runOpenshellCommand(getOpenshellBinary(), args, {
+  return runOpenshellCommand(opts.openshellBinary ?? getOpenshellBinary(), args, {
     cwd: ROOT,
     env: opts.env,
     replaceEnv: opts.replaceEnv,
@@ -70,7 +70,7 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
  * must stay non-fatal yet still read status text OpenShell writes to stderr).
  */
 export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
-  return captureOpenshellCommand(getOpenshellBinary(), args, {
+  return captureOpenshellCommand(opts.openshellBinary ?? getOpenshellBinary(), args, {
     cwd: ROOT,
     env: opts.env,
     replaceEnv: opts.replaceEnv,

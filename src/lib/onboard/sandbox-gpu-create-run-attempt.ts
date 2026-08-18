@@ -198,6 +198,14 @@ export function createSandboxGpuCreateAttemptRunner(
   deps: SandboxGpuCreateFlowDeps,
 ) {
   const portableLifecycle = input.portableLifecycle === true;
+  const printCreateFailureDiagnostics =
+    deps.printCreateFailureDiagnostics ??
+    (input.hermesPortableLifecycle
+      ? (sandboxName: string) =>
+          console.error(
+            `  Hermes portable sandbox '${sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`,
+          )
+      : printSandboxCreateFailureDiagnostics);
   if (
     portableLifecycle &&
     (input.gpuRoutePlan === "compatibility-only" ||
@@ -326,6 +334,7 @@ export function createSandboxGpuCreateAttemptRunner(
     if (!createExecutable) throw new Error("Sandbox create executable is missing.");
     const streamCreate = () =>
       streamSandboxCreate(createExecutable, createExecutableArgs, input.sandboxEnv, {
+        ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
         readyCheck: () => {
           const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
           return isSandboxReady(list, input.sandboxName);
@@ -492,7 +501,7 @@ export function createSandboxGpuCreateAttemptRunner(
           },
           {
             classifyCreateFailure: classifySandboxCreateFailure,
-            printCreateFailureDiagnostics: printSandboxCreateFailureDiagnostics,
+            printCreateFailureDiagnostics,
             printRecoveryHints: printSandboxCreateRecoveryHints,
             warn: (message) => console.warn(message),
             error: (message) => console.error(message),
@@ -511,7 +520,7 @@ export function createSandboxGpuCreateAttemptRunner(
       console.error(
         `  Sandbox '${input.sandboxName}' reached Ready, but OpenShell did not return one exact durable sandbox ID before runtime recreation.`,
       );
-      printSandboxCreateFailureDiagnostics(input.sandboxName, {
+      printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
       });
       process.exit(createResult.status === 0 ? 1 : createResult.status);
@@ -581,7 +590,7 @@ export function createSandboxGpuCreateAttemptRunner(
         } as const;
       }
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
-      printSandboxCreateFailureDiagnostics(input.sandboxName, {
+      printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
       });
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();

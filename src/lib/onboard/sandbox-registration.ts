@@ -83,6 +83,8 @@ export interface CreatedSandboxRegistryEntryInput {
   hermesDashboardState: HermesDashboardOnboardState;
   /** Host port this sandbox exposes its OpenAI-compatible API on. */
   hermesApiPort?: number | null;
+  /** True only when schema-5 receipt authority owns this Hermes registration. */
+  hermesPortableLifecycle?: boolean;
   dashboardPort: number;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
@@ -277,11 +279,13 @@ export function buildCreatedSandboxRegistryEntry(
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
     hermesApiPort:
       input.agent?.name === "hermes"
-        ? (input.hermesApiPort ??
-          resolveOnboardHermesApiPort(input.sandboxName, {
-            // Registration follows a successful create/recreate that applied this environment.
-            allowRegisteredOverride: true,
-          }))
+        ? input.hermesPortableLifecycle === true
+          ? undefined
+          : (input.hermesApiPort ??
+            resolveOnboardHermesApiPort(input.sandboxName, {
+              // Registration follows a successful create/recreate that applied this environment.
+              allowRegisteredOverride: true,
+            }))
         : undefined,
     dashboardPort: input.dashboardPort,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,

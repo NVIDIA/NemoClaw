@@ -8,6 +8,7 @@ import path from "node:path";
 import { Args } from "@oclif/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as receiptAuthority from "../onboard/experimental/hermes-portable-receipt";
+import * as portableHostAuthority from "../state/portable-uninstall-retirement";
 import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock-acquisition";
 import { log } from "./logger";
 import { type CommandExitResult, NemoClawCommand } from "./nemoclaw-oclif-command";
@@ -119,6 +120,17 @@ class ParsedSupportedSandboxCommand extends NemoClawCommand {
   }
 }
 
+class GlobalUnsupportedMutationCommand extends NemoClawCommand {
+  static id = "tunnel:start";
+  static flags = { ...NemoClawCommand.baseFlags };
+  static ran = false;
+
+  public async run(): Promise<void> {
+    await this.parse(GlobalUnsupportedMutationCommand);
+    GlobalUnsupportedMutationCommand.ran = true;
+  }
+}
+
 function useHermesPortableAuthority(): void {
   vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
     kind: "hermes",
@@ -148,6 +160,7 @@ describe("NemoClawCommand", () => {
     RawSandboxDoctorCommand.ran = false;
     ParsedUnsupportedSandboxCommand.ran = false;
     ParsedSupportedSandboxCommand.operation = async () => undefined;
+    GlobalUnsupportedMutationCommand.ran = false;
   });
 
   it("records status-like command results without throwing", () => {
@@ -315,13 +328,46 @@ describe("NemoClawCommand", () => {
     expect(RawUnsupportedSandboxCommand.ran).toBe(false);
   });
 
-  it("preserves raw help before schema-5 action admission (#9203)", async () => {
+  it("does not treat raw payload help as a schema-5 admission bypass (#9203)", async () => {
     useHermesPortableAuthority();
 
     await expect(
       RawUnsupportedSandboxCommand.run(["alpha", "--help"], process.cwd()),
-    ).resolves.toBeUndefined();
-    expect(RawUnsupportedSandboxCommand.ran).toBe(true);
+    ).rejects.toThrow("not supported for an experimental Hermes portable sandbox");
+    expect(RawUnsupportedSandboxCommand.ran).toBe(false);
+  });
+
+  it("reclassifies raw commands after waiting for schema-5 publication (#9203)", async () => {
+    const inspect = vi
+      .spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority")
+      .mockReturnValue({ kind: "none" });
+    let releasePublisher!: () => void;
+    const publisherWaiting = new Promise<void>((resolve) => {
+      releasePublisher = resolve;
+    });
+    let publisherEntered!: () => void;
+    const publisherStarted = new Promise<void>((resolve) => {
+      publisherEntered = resolve;
+    });
+    const publisher = withMcpLifecycleLock("alpha", async () => {
+      inspect.mockReturnValue({
+        kind: "hermes",
+        snapshot: { receipt: { phase: "active" } } as never,
+      });
+      publisherEntered();
+      await publisherWaiting;
+    });
+    await publisherStarted;
+    const command = RawUnsupportedSandboxCommand.run(["alpha", "--", "--help"], process.cwd());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(RawUnsupportedSandboxCommand.ran).toBe(false);
+    releasePublisher();
+    await publisher;
+    await expect(command).rejects.toThrow(
+      "not supported for an experimental Hermes portable sandbox",
+    );
+    expect(RawUnsupportedSandboxCommand.ran).toBe(false);
   });
 
   it("rejects schema-5 doctor --fix with option-specific guidance (#9203)", async () => {
@@ -333,5 +379,38 @@ describe("NemoClawCommand", () => {
       "The --fix option is not supported for an experimental Hermes portable sandbox",
     );
     expect(RawSandboxDoctorCommand.ran).toBe(false);
+  });
+
+  it("holds the host fence and rejects global mutations before effects (#9203)", async () => {
+    const events: string[] = [];
+    vi.spyOn(portableHostAuthority, "withCurrentPortableHostFence").mockImplementation(
+      async (operation) => {
+        events.push("fence");
+        return await operation();
+      },
+    );
+    vi.spyOn(portableHostAuthority, "assertNoHermesPortableHostAuthority").mockImplementation(
+      () => {
+        events.push("classify");
+        throw new Error("schema-5 host authority exists");
+      },
+    );
+
+    await expect(GlobalUnsupportedMutationCommand.run([], process.cwd())).rejects.toThrow(
+      "schema-5 host authority exists",
+    );
+    expect(events).toEqual(["fence", "classify"]);
+    expect(GlobalUnsupportedMutationCommand.ran).toBe(false);
+  });
+
+  it("preserves side-effect-free help for host mutation commands (#9203)", async () => {
+    const fence = vi.spyOn(portableHostAuthority, "withCurrentPortableHostFence");
+
+    await expect(
+      GlobalUnsupportedMutationCommand.run(["--help"], process.cwd()),
+    ).rejects.toThrow("Parsing --help");
+
+    expect(fence).not.toHaveBeenCalled();
+    expect(GlobalUnsupportedMutationCommand.ran).toBe(false);
   });
 });

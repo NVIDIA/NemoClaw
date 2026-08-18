@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../lib/credentials/store", () => ({
   KNOWN_CREDENTIAL_ENV_KEYS: ["NVIDIA_INFERENCE_API_KEY"],
+  getCredential: vi.fn(),
   prompt: mocks.prompt,
+  saveCredential: vi.fn(),
 }));
 vi.mock("../lib/actions/global", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,

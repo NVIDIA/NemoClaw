@@ -9,6 +9,26 @@ import {
   requireDist,
 } from "../../../../test/support/connect-flow-test-harness";
 
+function captureInferenceRouteThenDrift(
+  harness: ReturnType<typeof createConnectHarness>,
+): (args: unknown) => { status: number; output: string; stderr?: string } {
+  return (args: unknown) => {
+    const argv = Array.isArray(args) ? args : [];
+    switch (argv.slice(0, 2).join("\0")) {
+      case "inference\0get":
+        harness.registryEntries[0]!.model = "changed-model";
+        return {
+          status: 0,
+          output: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n",
+        };
+      case "sandbox\0exec":
+        return { status: 0, output: "OK 200", stderr: "" };
+      default:
+        return { status: 0, output: "alpha Ready" };
+    }
+  };
+}
+
 describe("connectSandbox flow", () => {
   let exitSpy: MockInstance;
   const originalStdinIsTty = process.stdin.isTTY;
@@ -934,21 +954,71 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.objectContaining({
+        env: expect.objectContaining({ HOME: "/home/test" }),
+        openshellBinary: "/usr/bin/openshell",
+        replaceEnv: true,
+      }),
+    );
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(
+      harness.runOpenshellSpy.mock.calls.some(([args]) =>
+        Array.isArray(args) ? args[0] === "inference" && args[1] === "set" : false,
+      ),
+    ).toBe(false);
     expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalled();
   });
 
-  it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
-    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "do-not-forward");
-    vi.stubEnv("GITHUB_TOKEN", "do-not-forward");
-    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "do-not-forward");
-    vi.stubEnv("DOCKER_HOST", "unix:///run/docker.sock");
-    vi.stubEnv("KUBECONFIG", "/home/test/.kube/config");
-    vi.stubEnv("SSH_AUTH_SOCK", "/run/user/1000/ssh-agent.sock");
-    vi.stubEnv("HTTPS_PROXY", "https://user:token@proxy.example");
-    vi.stubEnv("OPENSHELL_GATEWAY", "ambient");
+  it.each([
+    ["absent", { registryEntry: { provider: null, model: null } }],
+    [
+      "mismatched",
+      {
+        inferenceGetOutput:
+          "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/other-model\n",
+      },
+    ],
+    ["unreachable", { inferenceProbeResponses: ["BROKEN 503"] }],
+  ] as const)(
+    "rejects a %s schema-5 inference route without mutation (#9203)",
+    async (_label, routeOptions) => {
+      const harness = createConnectHarness({
+        agentName: "hermes",
+        sessionAgent: { name: "hermes" },
+        registryEntry: {
+          openshellDriver: "docker",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "generation-1",
+          ...("registryEntry" in routeOptions ? routeOptions.registryEntry : {}),
+        },
+        portableReceiptDisposition: { kind: "hermes", phase: "active" },
+        portableRecoveryResult: { kind: "already-running" },
+        ...("inferenceGetOutput" in routeOptions
+          ? { inferenceGetOutput: routeOptions.inferenceGetOutput }
+          : {}),
+        ...("inferenceProbeResponses" in routeOptions
+          ? { inferenceProbeResponses: [...routeOptions.inferenceProbeResponses] }
+          : {}),
+      });
+
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+        "Hermes portable inference authority",
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+      expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects schema-5 inference authority that changes during read-only verification (#9203)", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
@@ -960,6 +1030,112 @@ describe("connectSandbox flow", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
+    harness.captureResolvedOpenshellSpy.mockImplementation(captureInferenceRouteThenDrift(harness));
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "changed during verification",
+    );
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+  });
+
+  it("requalifies accepted probe evidence against active schema-5 authority (#9203)", async () => {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      policies: [],
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+    } as never;
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: entry,
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+      readinessDecision: {
+        kind: "accepted",
+        category: "accepted",
+        agent: { name: "hermes" },
+        sb: entry,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects accepted probe evidence when schema-5 authority disappears (#9203)", async () => {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      provider: null,
+      model: null,
+      policies: [],
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+    } as never;
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      registryEntry: entry,
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "not-installed" },
+      readinessDecision: {
+        kind: "accepted",
+        category: "accepted",
+        agent: { name: "hermes" },
+        sb: entry,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "authority disappeared during probe",
+    );
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "do-not-forward");
+    vi.stubEnv("GITHUB_TOKEN", "do-not-forward");
+    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "do-not-forward");
+    vi.stubEnv("DOCKER_HOST", "unix:///run/docker.sock");
+    vi.stubEnv("KUBECONFIG", "/home/test/.kube/config");
+    vi.stubEnv("SSH_AUTH_SOCK", "/run/user/1000/ssh-agent.sock");
+    vi.stubEnv("HTTPS_PROXY", "https://user:token@proxy.example");
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient");
+    const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
+    const broker = requireDist("../../src/lib/hermes-tool-gateway-broker.js");
+    const brokerSpy = vi
+      .spyOn(broker, "ensureHermesToolGatewayBrokerForSandboxEntry")
+      .mockImplementation(() => undefined);
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+        hermesToolGateways: ["tool-gateway"],
+      },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
@@ -967,13 +1143,16 @@ describe("connectSandbox flow", () => {
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.preflightVllmSpy).not.toHaveBeenCalled();
     expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
     expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
+    expect(sandboxVersion.checkAgentVersion).not.toHaveBeenCalled();
+    expect(brokerSpy).not.toHaveBeenCalled();
     const connectCall = harness.spawnSyncSpy.mock.calls.find(
       ([command, args]) =>
-        command === "openshell" &&
+        command === "/usr/bin/openshell" &&
         Array.isArray(args) &&
-        args.join("\0") === ["sandbox", "connect", "alpha"].join("\0"),
+        args.join("\0") === ["sandbox", "connect", "-g", "nemoclaw", "alpha"].join("\0"),
     );
     expect(connectCall?.[2]).toMatchObject({
       env: expect.not.objectContaining({
@@ -987,6 +1166,35 @@ describe("connectSandbox flow", () => {
         OPENSHELL_GATEWAY: expect.anything(),
       }),
     });
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledTimes(5);
+  });
+
+  it("rejects external Hermes authority drift at the final connect boundary (#9203)", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+    harness.recoverPortableDemoLifecycleSpy.mockImplementation(() =>
+      harness.recoverPortableDemoLifecycleSpy.mock.calls.length >= 5
+        ? { kind: "not-installed" }
+        : { kind: "already-running" },
+    );
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow(
+      "lifecycle authority disappeared before interactive connect",
+    );
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "-g", "nemoclaw", "alpha"],
+      expect.any(Object),
+    );
   });
 
   it("fails before Docker when Hermes receipt authority disappears during probe (#9203)", async () => {

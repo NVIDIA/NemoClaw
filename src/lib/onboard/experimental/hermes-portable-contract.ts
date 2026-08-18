@@ -3,9 +3,24 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
-import type { AgentDefinition } from "../../agent/definition-types";
+import type { AgentDefinition, ManifestRecord } from "../../agent/definition-types";
+import {
+  parseManifestRecord,
+  readBoolean,
+  readConfigShieldsFiles,
+  readHealthProbe,
+  readObject,
+  readStateFiles,
+  readStateLockPlanInImage,
+  readString,
+  readUserManagedFiles,
+} from "../../agent/manifest-readers";
+import { readAgentRuntime } from "../../agent/runtime-manifest";
+import { buildStateLockPlan, readStateDirectories } from "../../agent/state-directory-contract";
+import { readWebAuth } from "../../agent/web-auth";
 import {
   buildCurrentHermesPortableRuntimeEnvArgs,
   currentHermesPortableAgentDefinition,
@@ -20,19 +35,13 @@ const PORT = /^(?:[1-9][0-9]{0,4})$/u;
 const PLACEHOLDER_KEYS = /^[A-Z_][A-Z0-9_]*(?:,[A-Z_][A-Z0-9_]*)*$/u;
 const SHELL_PAYLOAD = /(?:[`;|]|&&|\$\()/u;
 const ALLOWED_ENV = new Set([
-  "CHAT_UI_URL",
   "HTTP_PROXY",
   "HTTPS_PROXY",
   "NO_PROXY",
   "http_proxy",
   "https_proxy",
   "no_proxy",
-  "NEMOCLAW_DASHBOARD_PORT",
   "NEMOCLAW_HERMES_API_PORT",
-  "NEMOCLAW_HERMES_DASHBOARD",
-  "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT",
-  "NEMOCLAW_HERMES_DASHBOARD_PORT",
-  "NEMOCLAW_HERMES_DASHBOARD_TUI",
   "NEMOCLAW_PROXY_HOST",
   "NEMOCLAW_PROXY_PORT",
   "NEMOCLAW_SANDBOX_NAME",
@@ -64,15 +73,26 @@ function canonical(value: unknown): unknown {
 }
 
 function readExactManifestPath(manifestPath: string): Buffer {
+  const parentPath = path.dirname(manifestPath);
+  const parentBefore = fs.lstatSync(parentPath, { bigint: true });
   const descriptor = fs.openSync(manifestPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
     const before = fs.fstatSync(descriptor, { bigint: true });
     const named = fs.lstatSync(manifestPath, { bigint: true });
+    const uid = process.getuid?.();
     if (
+      uid === undefined ||
       !before.isFile() ||
       named.isSymbolicLink() ||
+      before.nlink !== 1n ||
+      (before.uid !== 0n && before.uid !== BigInt(uid)) ||
+      (before.mode & 0o22n) !== 0n ||
       before.dev !== named.dev ||
       before.ino !== named.ino ||
+      !parentBefore.isDirectory() ||
+      parentBefore.isSymbolicLink() ||
+      (parentBefore.uid !== 0n && parentBefore.uid !== BigInt(uid)) ||
+      (parentBefore.mode & 0o22n) !== 0n ||
       before.size < 1n ||
       before.size > BigInt(MAX_MANIFEST_BYTES)
     ) {
@@ -86,12 +106,22 @@ function readExactManifestPath(manifestPath: string): Buffer {
       offset += read;
     }
     const after = fs.fstatSync(descriptor, { bigint: true });
+    const finalNamed = fs.lstatSync(manifestPath, { bigint: true });
+    const parentAfter = fs.lstatSync(parentPath, { bigint: true });
     if (
       before.dev !== after.dev ||
       before.ino !== after.ino ||
       before.size !== after.size ||
       before.mtimeNs !== after.mtimeNs ||
-      before.ctimeNs !== after.ctimeNs
+      before.ctimeNs !== after.ctimeNs ||
+      finalNamed.dev !== after.dev ||
+      finalNamed.ino !== after.ino ||
+      parentBefore.dev !== parentAfter.dev ||
+      parentBefore.ino !== parentAfter.ino ||
+      parentBefore.mode !== parentAfter.mode ||
+      parentBefore.uid !== parentAfter.uid ||
+      parentBefore.mtimeNs !== parentAfter.mtimeNs ||
+      parentBefore.ctimeNs !== parentAfter.ctimeNs
     ) {
       fail("manifest changed during read");
     }
@@ -108,6 +138,64 @@ function readExactManifestPath(manifestPath: string): Buffer {
 
 function readExactManifest(agent: AgentDefinition): Buffer {
   return readExactManifestPath(agent.manifestPath);
+}
+
+function manifestConfigPaths(config: ManifestRecord | undefined) {
+  return {
+    dir: readString(config ?? {}, "dir") ?? "/sandbox/.openclaw",
+    configFile: readString(config ?? {}, "config_file") ?? "openclaw.json",
+    envFile: readString(config ?? {}, "env_file") ?? null,
+    format: readString(config ?? {}, "format") ?? "json",
+    shieldsFiles: readConfigShieldsFiles(config),
+  };
+}
+
+function manifestProjection(record: ManifestRecord) {
+  const config = readObject(record, "config");
+  const stateDirectories = readStateDirectories(record);
+  return {
+    name: readString(record, "name"),
+    expectedVersion: readString(record, "expected_version"),
+    gatewayCommand: readString(record, "gateway_command"),
+    runtime: readAgentRuntime(record),
+    healthProbe: readHealthProbe(record) ?? null,
+    devicePairing: readBoolean(record, "device_pairing"),
+    webAuth: readWebAuth(record),
+    configPaths: manifestConfigPaths(config),
+    stateDirectories,
+    stateFiles: readStateFiles(record) ?? [],
+    stateLockPlan: buildStateLockPlan(stateDirectories),
+    stateLockPlanInImage: readStateLockPlanInImage(record),
+    userManagedFiles: readUserManagedFiles(record) ?? [],
+  };
+}
+
+function agentProjection(agent: AgentDefinition): ReturnType<typeof manifestProjection> {
+  return {
+    name: agent.name,
+    expectedVersion: agent.expected_version,
+    gatewayCommand: agent.gateway_command,
+    runtime: agent.runtime ?? { kind: "gateway" },
+    healthProbe: agent.healthProbe,
+    devicePairing: agent.device_pairing,
+    webAuth: agent.webAuth,
+    configPaths: agent.configPaths,
+    stateDirectories: agent.stateDirectories,
+    stateFiles: agent.stateFiles,
+    stateLockPlan: agent.stateLockPlan,
+    stateLockPlanInImage: agent.stateLockPlanInImage,
+    userManagedFiles: agent.userManagedFiles,
+  };
+}
+
+function parseExactManifest(bytes: Buffer): ReturnType<typeof manifestProjection> {
+  let record: ManifestRecord;
+  try {
+    record = parseManifestRecord(UTF8.decode(bytes), "Hermes portable manifest");
+    return manifestProjection(record);
+  } catch {
+    fail("manifest is invalid");
+  }
 }
 
 function validateUrl(value: string, label: string): void {
@@ -143,7 +231,6 @@ function validateAssignment(key: string, value: string, sandboxName: string): vo
     fail("argv placeholder names are invalid");
   }
   if (
-    key === "CHAT_UI_URL" ||
     key === "HTTP_PROXY" ||
     key === "HTTPS_PROXY" ||
     key === "http_proxy" ||
@@ -199,34 +286,15 @@ function rerenderCurrentStartupArgv(
 ): readonly string[] {
   const argv = validateStartupArgv(storedArgv, sandboxName);
   const assignments = startupAssignments(argv);
-  const chatUiUrl = assignments.get("CHAT_UI_URL");
-  const manageDashboard = chatUiUrl !== undefined;
-  const effectiveDashboardPort = manageDashboard
-    ? requiredAssignment(assignments, "NEMOCLAW_DASHBOARD_PORT")
-    : "0";
-  const hermesDashboardEnabled = assignments.get("NEMOCLAW_HERMES_DASHBOARD") === "1";
-  const hermesDashboardState = hermesDashboardEnabled
-    ? {
-        enabled: true,
-        config: {
-          enabled: true,
-          port: Number(requiredAssignment(assignments, "NEMOCLAW_HERMES_DASHBOARD_PORT")),
-          internalPort: Number(
-            requiredAssignment(assignments, "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT"),
-          ),
-          tuiEnabled: assignments.get("NEMOCLAW_HERMES_DASHBOARD_TUI") === "1",
-        },
-      }
-    : { enabled: false, config: null };
   const environment = Object.fromEntries(assignments);
   const extraPlaceholderKeys = (assignments.get("NEMOCLAW_EXTRA_PLACEHOLDER_KEYS") ?? "")
     .split(",")
     .filter(Boolean);
   const rendered = buildCurrentHermesPortableRuntimeEnvArgs({
-    chatUiUrl: chatUiUrl ?? "http://127.0.0.1:8642/",
-    manageDashboard,
-    getDashboardForwardPort: () => effectiveDashboardPort,
-    hermesDashboardState,
+    chatUiUrl: "http://127.0.0.1:8642/",
+    manageDashboard: false,
+    getDashboardForwardPort: () => "0",
+    hermesDashboardState: { enabled: false, config: null },
     hermesApiPort: Number(requiredAssignment(assignments, "NEMOCLAW_HERMES_API_PORT")),
     extraPlaceholderKeys,
     sandboxName,
@@ -235,16 +303,16 @@ function rerenderCurrentStartupArgv(
   return ["env", ...rendered.envArgs, STARTUP_EXECUTABLE];
 }
 
-function stateIdentity(agent: AgentDefinition): string {
+function stateIdentity(projection: ReturnType<typeof manifestProjection>): string {
   return sha256(
     JSON.stringify(
       canonical({
-        configPaths: agent.configPaths,
-        stateDirectories: agent.stateDirectories,
-        stateFiles: agent.stateFiles,
-        stateLockPlan: agent.stateLockPlan,
-        stateLockPlanInImage: agent.stateLockPlanInImage,
-        userManagedFiles: agent.userManagedFiles,
+        configPaths: projection.configPaths,
+        stateDirectories: projection.stateDirectories,
+        stateFiles: projection.stateFiles,
+        stateLockPlan: projection.stateLockPlan,
+        stateLockPlanInImage: projection.stateLockPlanInImage,
+        userManagedFiles: projection.userManagedFiles,
       }),
     ),
   );
@@ -256,34 +324,39 @@ export function resolveHermesPortableStartupContract(
 ): HermesPortableStartupContract {
   const { agent, sandboxName } = input;
   const manifestBytes = readExactManifest(agent);
+  const manifest = parseExactManifest(manifestBytes);
+  if (!isDeepStrictEqual(manifest, agentProjection(agent))) {
+    fail("loaded Hermes manifest disagrees with its exact source");
+  }
   if (
-    agent.name !== "hermes" ||
-    agent.gateway_command !== "hermes gateway run" ||
-    agent.runtime?.interactive_command !== "hermes" ||
-    agent.healthProbe?.url !== "http://localhost:8642/health" ||
-    agent.healthProbe.port !== 8642 ||
-    agent.device_pairing !== false ||
-    agent.webAuth.method !== "bearer_token" ||
-    agent.webAuth.env !== "API_SERVER_KEY" ||
-    agent.configPaths.dir !== "/sandbox/.hermes"
+    manifest.name !== "hermes" ||
+    manifest.expectedVersion !== "0.19.0" ||
+    manifest.gatewayCommand !== "hermes gateway run" ||
+    manifest.runtime.interactive_command !== "hermes" ||
+    manifest.healthProbe?.url !== "http://localhost:8642/health" ||
+    manifest.healthProbe.port !== 8642 ||
+    manifest.devicePairing !== false ||
+    manifest.webAuth.method !== "bearer_token" ||
+    manifest.webAuth.env !== "API_SERVER_KEY" ||
+    manifest.configPaths.dir !== "/sandbox/.hermes"
   ) {
     fail("current Hermes manifest does not match the accepted lifecycle contract");
   }
   const argv = validateStartupArgv(input.startupArgv, sandboxName);
-  const stateIdentitySha256 = stateIdentity(agent);
+  const stateIdentitySha256 = stateIdentity(manifest);
   return {
     manifestSha256: sha256(manifestBytes),
     startupDescriptorSha256: sha256(
       JSON.stringify(
         canonical({
           argv,
-          configDir: agent.configPaths.dir,
-          devicePairing: agent.device_pairing,
-          gatewayCommand: agent.gateway_command,
-          health: agent.healthProbe,
-          interactiveCommand: agent.runtime?.interactive_command,
+          configDir: manifest.configPaths.dir,
+          devicePairing: manifest.devicePairing,
+          gatewayCommand: manifest.gatewayCommand,
+          health: manifest.healthProbe,
+          interactiveCommand: manifest.runtime.interactive_command,
           stateIdentitySha256,
-          webAuth: agent.webAuth,
+          webAuth: manifest.webAuth,
         }),
       ),
     ),

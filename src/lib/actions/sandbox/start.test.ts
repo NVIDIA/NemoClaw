@@ -91,6 +91,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     waitForManagedGatewaySupervisor,
     verifyGateway,
     log,
+    withLifecycleLock: async (_sandboxName, operation) => operation(),
     ...overrides,
   };
   return {

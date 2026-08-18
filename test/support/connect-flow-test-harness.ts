@@ -30,6 +30,7 @@ delete require.cache[requireDist.resolve(connectModulePath)];
 export type ConnectHarness = {
   applyVmDnsMonkeypatchSpy: MockInstance;
   captureOpenshellSpy: MockInstance;
+  captureResolvedOpenshellSpy: MockInstance;
   checkAndRecoverSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
@@ -89,7 +90,12 @@ export type ConnectHarnessOptions = {
   portableReceiptDisposition?:
     | { kind: "absent" }
     | { kind: "openclaw" }
-    | { kind: "hermes"; phase: "pending" | "configuring" | "active" };
+    | {
+        kind: "hermes";
+        phase: "pending" | "configuring" | "active";
+        gatewayName?: string;
+        lifecycleGeneration?: string;
+      };
   dockerRuntime?: {
     health?: string;
     paused?: boolean;
@@ -189,9 +195,41 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     _sandboxName: string,
     operation: () => Promise<unknown>,
   ) => operation()) as never);
+  vi.spyOn(gatewayState, "buildHermesPortableCommandEnvironment").mockReturnValue({
+    HOME: "/home/test",
+    XDG_CONFIG_HOME: "/home/test/.config",
+    XDG_RUNTIME_DIR: "/run/user/1000",
+  });
+  vi.spyOn(gatewayState, "buildHermesPortableCommandAuthority").mockReturnValue({
+    env: {
+      HOME: "/home/test",
+      XDG_CONFIG_HOME: "/home/test/.config",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    },
+    executablePath: "/usr/bin/openshell",
+  });
+  vi.spyOn(gatewayState, "assertHermesPortableLifecycleForConnect").mockImplementation(
+    () => undefined,
+  );
+  const requestedPortableDisposition = options.portableReceiptDisposition ?? { kind: "absent" };
+  const portableDisposition =
+    requestedPortableDisposition.kind === "hermes"
+      ? {
+          ...requestedPortableDisposition,
+          gatewayName:
+            requestedPortableDisposition.gatewayName ??
+            options.registryEntry?.gatewayName ??
+            "nemoclaw",
+          lifecycleGeneration:
+            requestedPortableDisposition.lifecycleGeneration ??
+            options.registryEntry?.lifecycleGeneration ??
+            "generation-1",
+          liveIdentityFingerprint: "f".repeat(64),
+        }
+      : requestedPortableDisposition;
   const inspectPortableReceiptDispositionSpy = vi
     .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
-    .mockReturnValue(options.portableReceiptDisposition ?? { kind: "absent" });
+    .mockReturnValue(portableDisposition);
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -236,9 +274,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   });
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
-  const captureOpenshellSpy = vi
-    .spyOn(runtime, "captureOpenshell")
-    .mockImplementation((args: unknown) => {
+  const captureOpenshellImplementation = (args: unknown) => {
       const argv = Array.isArray(args) ? args : [];
       if (argv[0] === "sandbox" && argv[1] === "list") {
         return {
@@ -252,7 +288,11 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       if (argv[0] === "inference" && argv[1] === "get") {
         return {
           status: 0,
-          output: options.inferenceGetOutput ?? "Provider: unknown\nModel: unknown\n",
+          output:
+            options.inferenceGetOutput ??
+            (options.agentName === "hermes"
+              ? "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n"
+              : "Provider: unknown\nModel: unknown\n"),
         };
       }
       if (
@@ -264,7 +304,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         return typeof response === "string" ? { status: 0, output: response } : response;
       }
       return { status: 0, output: "" };
-    });
+    };
+  const captureOpenshellSpy = vi
+    .spyOn(runtime, "captureOpenshell")
+    .mockImplementation(captureOpenshellImplementation);
+  const captureResolvedOpenshellSpy = vi
+    .spyOn(runtime, "captureResolvedOpenshell")
+    .mockImplementation(captureOpenshellImplementation);
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockReturnValue({ status: 0 });
   const withGatewayRouteMutationLockSpy = vi
     .spyOn(gatewayRouteMutationLock, "withGatewayRouteMutationLock")
@@ -317,8 +363,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const primaryRegistryEntry: SandboxEntry = {
     name: "alpha",
     agent: options.agentName ?? "openclaw",
-    provider: null,
-    model: null,
+    provider: options.agentName === "hermes" ? "ollama-local" : null,
+    model: options.agentName === "hermes" ? "qwen3-vl:4b" : null,
     gpuEnabled: false,
     policies: [],
     ...options.registryEntry,
@@ -383,6 +429,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   return {
     applyVmDnsMonkeypatchSpy,
     captureOpenshellSpy,
+    captureResolvedOpenshellSpy,
     checkAndRecoverSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,

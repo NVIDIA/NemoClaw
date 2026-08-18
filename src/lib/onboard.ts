@@ -114,9 +114,7 @@ const {
   requiresSelectionRecreate,
   usesManagedDcodeIdentity,
 }: typeof import("./onboard/dcode-selection-drift") = require("./onboard/dcode-selection-drift");
-const {
-  createOnboardCreatedSandboxCompletion,
-}: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
+const { completeOrdinaryOnboardSandboxCreation, createOnboardCreatedSandboxCompletion, createOnboardCreatedSandboxRegistration }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
 const dockerDriverPlatform: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
@@ -245,7 +243,6 @@ const setupInferenceFactory: typeof import("./onboard/setup-inference") =
 const hermesProviderAuth = require("./hermes-provider-auth");
 const onboardHermesDashboard: typeof import("./onboard/hermes-dashboard") = require("./onboard/hermes-dashboard");
 const hermesAuth: typeof import("./onboard/hermes-auth") = require("./onboard/hermes-auth");
-const { warnIfLandlockUnsupported } = require("./onboard/landlock-warning");
 const {
   HERMES_AUTH_METHOD_API_KEY,
   HERMES_AUTH_METHOD_OAUTH,
@@ -454,7 +451,6 @@ const {
   installSandboxCancelRollback,
   makeOnboardCancelExit,
   wasSandboxDefault,
-  restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
 const { createCoreOnboardFlowPhases, prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-composition") = require("./onboard/machine/core-flow-composition");
 const {
@@ -571,7 +567,6 @@ import { createOnboardPolicyApplication } from "./onboard/policy-selection";
 import {
   printGpuPreflightLines,
   printLowMemoryWarning,
-  printMessagingProviderMissing,
   printSwapCreationFailed,
 } from "./onboard/preflight-messages";
 import { shouldSkipPreRecreateBackup } from "./onboard/sandbox-backup-on-recreate";
@@ -1559,21 +1554,17 @@ async function createSandboxWithBaseImageResolution(
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
-  const extraProviderPlan = createIntent?.extraProviders
-    ? { extraProviders: createIntent.extraProviders, staleExtraProviders: [] }
-    : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
-  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, baselineExclusions: sandboxRegistration.baselineExclusionsForCreate(sandboxName), ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
-  const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
-    {
-      sandboxName,
-      enabledChannels,
-      webSearchConfig,
-      agent,
-      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
-    },
-    resolvedCreateIntent,
+  const agentCreateInput = sandboxGpuCreateFlow.resolveAgentCreateInput(agent, isLinuxDockerDriverGatewayEnabled());
+  const preparedCreateIntent = await sandboxCreateIntentResolver.resolvePortableLifecycle(
+    { sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, baselineExclusions: sandboxRegistration.baselineExclusionsForCreate(sandboxName), ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) },
+    { hermesPortable: agentCreateInput.hermesPortableLifecycle, requestedExtraProviders: createIntent?.extraProviders, resolvedIntent: createIntent?.resolved, planOrdinaryExtraProviders: () => planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }) },
   );
-  const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
+  const resolvedCreateIntent = preparedCreateIntent.intent;
+  const messagingCapabilities = preparedCreateIntent.messagingCapabilities;
+  const manageDashboard = sandboxGpuCreateFlow.shouldManageHermesPortableDashboard(
+    dashboardRuntime.shouldManageDashboardForAgent(agent),
+    agent,
+  );
   const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
   let effectivePort = 0, chatUiUrl = "", hermesApiPortReservationInput = { agentName: agent?.name, sandboxName, env: process.env, getSandbox: registry.getSandbox, captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }), warn: (message: string) => console.warn(message) };
   if (manageDashboard) {
@@ -1585,7 +1576,9 @@ async function createSandboxWithBaseImageResolution(
   const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
   const { messagingTokenDefs, hasMessagingTokens } = messagingCapabilities;
 
-  const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
+  const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = agentCreateInput.hermesPortableLifecycle
+    ? toolDisclosureFlow.prepareHermesPortableToolDisclosure(createIntent?.toolDisclosure ?? null)
+    : toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
   let recreateRuntime: import("./onboard/sandbox-recreate-transaction").SandboxRecreateRuntime | recreateJournal.OwnedSandboxRecreateRuntime = sandboxRecreateTransaction.createSandboxRecreateRuntime(onboardSession, createIntent?.recreateTransaction, sandboxName, GATEWAY_NAME, existingEntry, getSandboxRecreateObservation, note);
   const restoreReusedSandboxDashboard = async (selectionVerified: boolean): Promise<void> => {
     await dashboardPortReservationScope.release();
@@ -1616,7 +1609,12 @@ async function createSandboxWithBaseImageResolution(
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const managedWorkloadRuntime = managedWorkloadOnboard.createManagedWorkloadOnboardRuntime({ computePlan, managedWorkloadRebuild, tempManagedRuntime, tempManagedRuntimeCatalog, agentName: requestedAgentName, legacyDockerfilePath, customDockerfilePath: fromDockerfile ?? (preparedBuildContext ? preparedBuildContext.stagedDockerfile : null), rootDir: ROOT, model, provider, preferredInferenceApi, endpointUrl: createIntent?.endpointUrl ?? null, startupProfile: { chatUiUrl, effectiveDashboardPort: effectivePort, manageDashboard, dashboardBindAddress: process.env.NEMOCLAW_DASHBOARD_BIND, wslExposure: requestedAgentName === "openclaw" && isWsl(), hermesDashboardState, webSearch: webSearchConfig, toolDisclosure: effectiveToolDisclosure, hermesToolGateways, messagingPlan: plannedMessagingState?.plan ?? null, dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode, observabilityEnabled: createIntent?.observabilityEnabled === true, environment: process.env }, note, fallbackBuildEstimate: () => process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1" ? null : formatSandboxBuildEstimateNote(assessHost()) }, { resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi, getSandboxInferenceConfig });
-  const ensurePreparedSandboxWorkload = () => managedWorkloadOnboard.prepareSandboxWorkloadForPortableLifecycle(managedWorkloadRuntime, sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent));
+  const ensurePreparedSandboxWorkload = () => agentCreateInput.hermesPortableLifecycle
+    ? managedWorkloadOnboard.prepareHermesPortableSandboxWorkloadForLifecycle(
+        managedWorkloadRuntime,
+        legacyDockerfilePath,
+      )
+    : managedWorkloadOnboard.prepareSandboxWorkloadForPortableLifecycle(managedWorkloadRuntime, sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent));
   const prepareHermesStateVolumeLifecycle = (workload: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>) => managedWorkloadOnboard.createManagedHermesStateVolumeOnboardLifecycle({ agentName: requestedAgentName, runtimeProvider: managedWorkloadRuntime.runtimeProvider, sandboxName, workloadKind: workload.source.kind });
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
@@ -1635,7 +1633,7 @@ async function createSandboxWithBaseImageResolution(
   let pendingStateRestoreBackupPath: string | null = null, preparedSandboxWorkload!: Awaited<ReturnType<typeof ensurePreparedSandboxWorkload>>, hermesStateVolumeLifecycle!: ReturnType<typeof prepareHermesStateVolumeLifecycle>;
   if (!liveExists && existingEntry) ({ runtime: recreateRuntime, backupPath: pendingStateRestoreBackupPath } = recreateProtection.selectJournalBoundPreUpgradeBackup({ runtime: recreateRuntime, openJournal: createIntent?.recreateTransaction ? null : openRecreateJournal, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT, readRegistryEntry: () => registry.getSandbox(sandboxName), observe: () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME) }));
 
-  if (liveExists) {
+  if (liveExists && !agentCreateInput.hermesPortableLifecycle) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
     const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
     let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
@@ -1893,25 +1891,45 @@ async function createSandboxWithBaseImageResolution(
       hermesApiPortReservationInput,
     );
   }
-  if (!liveExists) { await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput); preparedSandboxWorkload = await ensurePreparedSandboxWorkload(); hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload); }
-  applyExtraProviderReconciliation({
-    extraProviders: resolvedCreateIntent.extraProviders,
-    staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
-  });
-  const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
-  const { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, messagingProviders, gpuRoutePlan, compatibilityPolicyPath, initialGpuRoute, sandboxReadyTimeoutSecs, buildId, dashboardRemoteBindPrepared, legacyBuildContext, launch: { createArgv, effectiveDashboardPort, intendedSandboxStartupCommand, managedBootstrapIdentity, managedStartupRootApplyRequest, prebuild, sandboxEnv, sandboxStartupCommand } } = await managedWorkloadOnboard.prepareOnboardSandboxWorkloadLaunch({
+  if (!liveExists || agentCreateInput.hermesPortableLifecycle) {
+    if (!agentCreateInput.hermesPortableLifecycle) {
+      await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
+    }
+    preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
+    hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
+  }
+  sandboxCreatePlanMaterialization.applyOrdinaryExtraProviderReconciliation(
+    agentCreateInput.hermesPortableLifecycle,
+    () =>
+      applyExtraProviderReconciliation({
+        extraProviders: resolvedCreateIntent.extraProviders,
+        staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
+      }),
+  );
+  const preparedOnboardLaunch =
+    await managedWorkloadOnboard.prepareSelectedOnboardSandboxWorkloadLaunch(
+      agentCreateInput.hermesPortableLifecycle,
+      () => managedWorkloadOnboard.prepareHermesPortableOnboardSandboxLaunch({
+        intent: resolvedCreateIntent,
+        fromRef: preparedSandboxWorkload.source.kind === "legacy-dockerfile" ? preparedSandboxWorkload.source.dockerfilePath : "",
+        launchInput: { agent, observabilityEnabled: false, chatUiUrl: "", sandboxName, env: process.env, extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys, getDashboardForwardPort, hermesDashboardState: { enabled: false, config: null }, hermesApiPort: null, manageDashboard: false, openshellShellCommand, openshellArgv },
+        gpuConfig: effectiveSandboxGpuConfig,
+      }),
+      () => managedWorkloadOnboard.prepareOnboardSandboxWorkloadLaunch({
     runtime: managedWorkloadRuntime, workload: preparedSandboxWorkload,
     legacy: { preparedBuildContext, agent, fromDockerfile, createAgentSandbox: (selectedAgent) => baseImageResolutionFlow.createAgentSandboxWithResolution(baseImageResolutionContext, selectedAgent, agentOnboard.createAgentSandbox), resolvePatchInput: () => ({ preparedBuildContext, agent, fromDockerfile, model, chatUiUrl, provider, endpointUrl: createIntent?.endpointUrl ?? null, compatibleEndpointReasoning: createIntent?.compatibleEndpointReasoning, preferredInferenceApi, webSearchConfig, toolDisclosure: effectiveToolDisclosure, rebuildPreservedEnv: createIntent?.rebuildPreservedEnv, ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}), hermesToolGateways, sandboxGpuConfig: effectiveSandboxGpuConfig, ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext), gatewayPort: GATEWAY_PORT }) },
     plan: { intent: resolvedCreateIntent, rebindMessagingTokenDefs: async () => (await sandboxCreateIntentResolver.rebind({ sandboxName, enabledChannels, webSearchConfig, agent, ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}) }, resolvedCreateIntent)).messagingTokenDefs, runProviderPreDeleteCleanup: () => runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact, tolerateMissingSandbox: true }), upsertMessagingProviders, getHermesToolGatewayProviderName: (targetSandbox) => getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox), discloseInitialSandboxPolicy },
-    launchInput: { agent, observabilityEnabled: createIntent?.observabilityEnabled === true, chatUiUrl, sandboxName, env: process.env, extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys, getDashboardForwardPort, hermesDashboardState, hermesApiPort: hermesApiPortReservationScope.effectivePort, manageDashboard, openshellShellCommand, openshellArgv },
+    launchInput: { agent, observabilityEnabled: createIntent?.observabilityEnabled === true, chatUiUrl, sandboxName, env: process.env, extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys, getDashboardForwardPort, hermesDashboardState: agentCreateInput.hermesPortableLifecycle ? { enabled: false, config: null } : hermesDashboardState, hermesApiPort: hermesApiPortReservationScope.effectivePort, manageDashboard, openshellShellCommand, openshellArgv },
     plannedMessagingPlan: plannedMessagingState?.plan ?? null,
-    gpu: { provider, config: effectiveSandboxGpuConfig, dockerDriverGateway, gatewayPort: GATEWAY_PORT },
+    gpu: { provider, config: effectiveSandboxGpuConfig, dockerDriverGateway: agentCreateInput.dockerDriverGateway, gatewayPort: GATEWAY_PORT },
     dependencies: { materializeSandboxCreatePlan: (input) => hermesStateVolumeLifecycle.materializeSandboxCreatePlan(input, sandboxCreatePlanMaterialization.materializeSandboxCreatePlan), prepareSandboxBuildPatchConfig: sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig },
-  });
+      }),
+    );
+  const { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, messagingProviders, gpuRoutePlan, compatibilityPolicyPath, initialGpuRoute, sandboxReadyTimeoutSecs, buildId, dashboardRemoteBindPrepared, legacyBuildContext, launch: { createArgv, effectiveDashboardPort, intendedSandboxStartupCommand, managedBootstrapIdentity, managedStartupRootApplyRequest, prebuild, sandboxEnv, sandboxStartupCommand } } = preparedOnboardLaunch;
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
   onboardSessionBootstrap.verifyReadOnlyHostMountSources(resolvedCreateIntent.hostMounts);
-  recreateRuntime.advance("creating");
+  if (!agentCreateInput.hermesPortableLifecycle) recreateRuntime.advance("creating");
   const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
     runtime: managedWorkloadRuntime,
     workload: preparedSandboxWorkload,
@@ -1925,8 +1943,21 @@ async function createSandboxWithBaseImageResolution(
     { sandboxName, gatewayName: GATEWAY_NAME },
     getSandboxRecreateObservation,
   );
-  const agentCreateInput = sandboxGpuCreateFlow.resolveAgentCreateInput(agent, dockerDriverGateway);
-  const runCreateFlow = (attemptCreateArgv: string[]) =>
+  const hermesGpuAuthority = agentCreateInput.hermesPortableLifecycle
+    ? sandboxGpuCreateFlow.createHermesPortableGpuProofAuthority({
+        sandboxName, gatewayName: GATEWAY_NAME, sourceEnv: sandboxEnv,
+        lifecycleGeneration: createdSandboxLifecycle.generation,
+        runtimeAuthority: portableRuntimeAuthority!, runOpenshell, compactText, redact,
+      })
+    : null;
+  const createFlowEnvironment = hermesGpuAuthority?.env ?? sandboxEnv;
+  const createGpuVerifier = hermesGpuAuthority?.verify ?? verifyDirectSandboxGpu;
+  const runCreateFlow = (
+    attemptCreateArgv: string[],
+    hermesPortableReadyCapture?: import("./onboard/sandbox-gpu-create-flow").HermesPortableReadyCapture,
+    hermesPortableReadyRunner?: import("./onboard/sandbox-gpu-create-flow").HermesPortableReadyRunner,
+    createWorkingDirectory?: string,
+  ) =>
     sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
       {
         sandboxName,
@@ -1935,11 +1966,11 @@ async function createSandboxWithBaseImageResolution(
         gpuRoutePlan,
         initialGpuRoute,
         compatibilityPolicyPath,
-        dockerDriverGateway,
         gatewayPort: GATEWAY_PORT,
         sandboxReadyTimeoutSecs,
         createArgv: attemptCreateArgv,
-        sandboxEnv,
+        ...(createWorkingDirectory ? { createWorkingDirectory } : {}),
+        sandboxEnv: createFlowEnvironment,
         sandboxStartupCommand,
         lifecycleGeneration: createdSandboxLifecycle.generation,
         portableRuntimeAuthority,
@@ -1950,23 +1981,24 @@ async function createSandboxWithBaseImageResolution(
         ...agentCreateInput,
       },
       {
-        runOpenshell,
-        runCaptureOpenshell,
+        runOpenshell: hermesPortableReadyRunner ?? runOpenshell,
+        runCaptureOpenshell: hermesPortableReadyCapture ?? runCaptureOpenshell,
         sleep: sleepSeconds,
         openshellArgv,
-        verifyDirectSandboxGpu,
+        verifyDirectSandboxGpu: createGpuVerifier,
       },
     );
 
-  const cleanupBuildCtx = legacyBuildContext?.cleanupBuildCtx;
-  const cleanupBuildContext = (): void => {
-    if (cleanupBuildCtx?.()) process.removeListener("exit", cleanupBuildCtx);
-  };
-  const cleanupInitialCreateSource = (): boolean => {
-    if (!initialSandboxPolicy.cleanup) return true;
-    return sandboxGpuCreateFlow.cleanupSandboxCreateSource(initialSandboxPolicy.cleanup);
-  };
-  const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
+  const cleanupBuildContext = sandboxGpuCreateFlow.createSandboxBuildContextCleanup(legacyBuildContext);
+  const cleanupInitialCreateSource = sandboxGpuCreateFlow.createSandboxCreateSourceCleanup(
+    initialSandboxPolicy, agentCreateInput.hermesPortableLifecycle,
+  );
+  const sandboxRuntimeFields = agentCreateInput.hermesPortableLifecycle
+    ? sandboxRegistryMetadata.getHermesPortableSandboxRuntimeRegistryFields(
+        effectiveSandboxGpuConfig,
+        "0.0.101",
+      )
+    : getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   const createdSandboxCompletion = createOnboardCreatedSandboxCompletion(
     sandboxName,
     restoreBackupPath,
@@ -1986,8 +2018,8 @@ async function createSandboxWithBaseImageResolution(
     prebuild.imageRef,
     buildId,
     effectiveSandboxGpuConfig,
-    dockerDriverGateway,
-    verifyDirectSandboxGpu,
+    agentCreateInput.dockerDriverGateway,
+    createGpuVerifier,
     runCaptureOpenshell,
     chatUiUrl,
     hermesDashboardState,
@@ -2000,36 +2032,13 @@ async function createSandboxWithBaseImageResolution(
     preparedSandboxWorkload,
     note,
   );
-  type Receipt = NonNullable<Parameters<typeof createdSandboxCompletion.complete>[1]>;
-  async function completeCreatedSandboxRegistration(
-    created: import("./onboard/sandbox-gpu-create-flow").SandboxGpuCreateFlowResult | null,
-    configuredReceipt: Receipt | null,
-    configuredLiveIdentityFingerprint?: string,
-  ): Promise<void> {
-    if (!created && !configuredReceipt) {
-      throw new Error("Sandbox registration requires create or Hermes receipt authority.");
-    }
-    cleanupBuildContext();
-    let providerGpuDisposition: "disabled" | "created" | "hermes" = "disabled";
-    if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-      if (created) providerGpuDisposition = "created";
-      else providerGpuDisposition = "hermes";
-    }
-    await createdSandboxCompletion.complete(
-      created,
-      configuredReceipt,
-      providerGpuDisposition,
-      manageDashboard,
-      () =>
-        configuredReceipt
-          ? {
-              lifecycleGeneration: configuredReceipt.lifecycleGeneration,
-              lifecycleLiveIdentityFingerprint: configuredLiveIdentityFingerprint,
-            }
-          : created!.lifecycleRegistrationFields,
-      createdSandboxLifecycle,
-    );
-  }
+  const completeCreatedSandboxRegistration = createOnboardCreatedSandboxRegistration({
+    completion: createdSandboxCompletion,
+    createdLifecycle: createdSandboxLifecycle,
+    cleanupBuildContext,
+    manageDashboard,
+    sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
+  });
 
   if (agentCreateInput.hermesPortableLifecycle) {
     if (!agent || agent.name !== "hermes" || !portableRuntimeAuthority) {
@@ -2051,13 +2060,21 @@ async function createSandboxWithBaseImageResolution(
       initialSandboxPolicy.policyPath,
       { agent, sandboxName, startupArgv: intendedSandboxStartupCommand },
       sandboxMutationLock.withMcpLifecycleLock,
-      run,
+      sandboxEnv,
       openshellArgv,
-      (attemptArgv) => runCreateFlow([...attemptArgv]),
+      (attemptArgv, readyCapture, readyRunner, buildContextPath) =>
+        runCreateFlow([...attemptArgv], readyCapture, readyRunner, buildContextPath),
       () => registry.getSandbox(sandboxName),
-      (created, receipt, liveIdentityFingerprint) =>
-        completeCreatedSandboxRegistration(created, receipt, liveIdentityFingerprint),
+      (created, receipt, liveIdentityFingerprint, revalidate) =>
+        completeCreatedSandboxRegistration(
+          created,
+          receipt,
+          liveIdentityFingerprint,
+          revalidate,
+      ),
+      ROOT, { model, provider, preferredInferenceApi, toolDisclosure: effectiveToolDisclosure },
       cleanupInitialCreateSource,
+      initialSandboxPolicy.sourceBytes,
     );
     cleanupBuildContext();
   } else {
@@ -2067,37 +2084,14 @@ async function createSandboxWithBaseImageResolution(
   }
   hermesStateVolumeLifecycle.commit();
   if ("complete" in recreateRuntime) recreateRuntime.complete();
-  restoreDefaultAfterRecreate(registry.setDefault, sandboxName, sandboxWasLiveDefault); // #4614: default deferred to finalization
-
-  // DNS proxy — run a forwarder in the sandbox pod so the isolated
-  // sandbox namespace can resolve hostnames (fixes #626).
-  if (sandboxRuntimeFields.openshellDriver === "kubernetes") {
-    console.log("  Setting up sandbox DNS proxy...");
-    runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
-      ignoreError: true,
-    });
-  }
-
-  require("./onboard/vm-dns-monkeypatch").applyOnboardVmDnsMonkeypatch(
-    sandboxName,
-    sandboxRuntimeFields,
+  if (agentCreateInput.hermesPortableLifecycle) return sandboxName;
+  return completeOrdinaryOnboardSandboxCreation(
+    { sandboxName, sandboxWasLiveDefault, runtimeFields: sandboxRuntimeFields,
+      messagingProviders, liveExists },
+    { setDefault: registry.setDefault, runFile, scriptsDir: SCRIPTS, gatewayName: GATEWAY_NAME,
+      providerExistsInGateway, armCancelRollback: sandboxCancelRollback.arm,
+      dockerInfoFormat, runCapture },
   );
-
-  // Check that messaging providers exist in the gateway (sandbox attachment
-  // cannot be verified via CLI yet — only gateway-level existence is checked).
-  for (const p of messagingProviders) {
-    if (!providerExistsInGateway(p)) {
-      printMessagingProviderMissing(p);
-    }
-  }
-
-  console.log(`  ✓ Sandbox '${sandboxName}' created`);
-
-  warnIfLandlockUnsupported({ dockerInfoFormat, runCapture });
-
-  // #4614: arm rollback only when the sandbox was not live before (never a recreate/rebuild).
-  if (!liveExists) sandboxCancelRollback.arm(sandboxName);
-  return sandboxName;
 }
 
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =

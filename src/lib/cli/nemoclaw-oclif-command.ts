@@ -10,6 +10,10 @@ import {
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import { isDeferredShieldsExit } from "../shields/deferred-exit";
+import {
+  assertNoHermesPortableHostAuthority,
+  withCurrentPortableHostFence,
+} from "../state/portable-uninstall-retirement";
 import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock-acquisition";
 import { log } from "./logger";
 
@@ -43,6 +47,18 @@ const RAW_SANDBOX_NAME_COMMANDS = new Set([
 ]);
 
 const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
+
+const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
+  "debug",
+  "inference:get",
+  "list",
+  "stop",
+  "tunnel:start",
+  "tunnel:stop",
+  "upgrade-sandboxes",
+  "use",
+]);
+const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status"]);
 
 export { HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE };
 export { assertHermesPortableCommandUnavailable };
@@ -122,9 +138,34 @@ export abstract class NemoClawCommand extends Command {
   }
 
   protected override async _run<T>(): Promise<T> {
+    const commandId = this.id;
+    if (
+      typeof commandId === "string" &&
+      HERMES_PORTABLE_HOST_FENCED_READS.has(commandId) &&
+      !this.argv.includes("--help") &&
+      !this.argv.includes("-h")
+    ) {
+      return await withCurrentPortableHostFence(() => super._run<T>());
+    }
+    if (
+      typeof commandId === "string" &&
+      HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS.has(commandId) &&
+      !this.argv.includes("--help") &&
+      !this.argv.includes("-h")
+    ) {
+      return await withCurrentPortableHostFence(() => {
+        assertNoHermesPortableHostAuthority(defaultPortableDemoStateDir(process.env), commandId);
+        return super._run<T>();
+      });
+    }
     const sandboxName = await this.resolveLifecycleSandboxName();
     if (!sandboxName) return await super._run<T>();
-    return await withMcpLifecycleLock(sandboxName, () => super._run<T>());
+    return await withMcpLifecycleLock(sandboxName, () => {
+      if (typeof commandId === "string" && RAW_SANDBOX_NAME_COMMANDS.has(commandId)) {
+        assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
+      }
+      return super._run<T>();
+    });
   }
 
   private async resolveLifecycleSandboxName(): Promise<string | null> {

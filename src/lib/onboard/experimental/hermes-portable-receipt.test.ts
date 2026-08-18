@@ -9,7 +9,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { PodmanSocketAuthority } from "../../adapters/podman";
+import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/openshell/resolve-shared";
+import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-podman-authority";
 import {
   HERMES_PORTABLE_RECEIPT_SCHEMA_VERSION,
   captureHermesPortablePolicySource,
@@ -18,6 +21,7 @@ import {
   hermesPortableReceiptInternals,
   hermesPortableReceiptRoot,
   inspectPortableAgentReceiptAuthority,
+  inspectPortableAgentReceiptAuthorityForPublicationRecovery,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
   readHermesPortableLifecycleReceipt,
@@ -73,6 +77,42 @@ function failShortWrite(): never {
   throw new Error("simulated short-write exit");
 }
 
+function createUnaccountedReceiptLinks(target: string, count: number): void {
+  for (let index = 0; index < count; index += 1) {
+    fs.linkSync(target, path.join(stateDir, `unaccounted-${index}.json`));
+  }
+}
+
+function installShortWrite(prefixLength: number): void {
+  const originalWrite = fs.writeSync;
+  const writeSpy = vi.spyOn(fs, "writeSync") as unknown as {
+    mockImplementationOnce(
+      implementation: (
+        descriptor: number,
+        buffer: Uint8Array,
+        offset: number,
+        length: number,
+        position: number | null,
+      ) => number,
+    ): void;
+  };
+  writeSpy.mockImplementationOnce((descriptor, buffer, offset, length, position) =>
+    originalWrite(descriptor, buffer, offset, Math.min(prefixLength, length), position),
+  );
+}
+
+function failReceiptShortWrite(written: number, total: number): void {
+  written < total ? failShortWrite() : undefined;
+}
+
+function failPolicyShortWrite(written: number, total: number): void {
+  written < total
+    ? (() => {
+        throw new Error("simulated policy short-write exit");
+      })()
+    : undefined;
+}
+
 function runtimeAuthority(): CheckpointPortableRuntimeAuthority {
   const currentUid = uid();
   return {
@@ -103,6 +143,54 @@ function socketAuthority(): PodmanSocketAuthority {
       ownerUid: String(index === 0 ? uid() : 0),
       path: directory,
     })),
+  };
+}
+
+function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
+  return {
+    version: "0.0.101",
+    executable: {
+      executablePath: "/usr/bin/openshell",
+      device: "1",
+      inode: "10",
+      mode: String(0o100755),
+      ownerUid: "0",
+      size: "1024",
+      modifiedTimeNanoseconds: "11",
+      changedTimeNanoseconds: "12",
+      sha256: "8".repeat(64),
+      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
+        device: "1",
+        inode: String(index + 20),
+        mode: String(0o40755),
+        ownerUid: "0",
+        path: directory,
+      })),
+    },
+  };
+}
+
+function podmanExecutableAuthority(): HermesPortablePodmanExecutableAuthority {
+  return {
+    version: "5.7.0",
+    executable: {
+      executablePath: "/usr/bin/podman",
+      device: "1",
+      inode: "30",
+      mode: String(0o100755),
+      ownerUid: "0",
+      size: "2048",
+      modifiedTimeNanoseconds: "31",
+      changedTimeNanoseconds: "32",
+      sha256: "9".repeat(64),
+      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
+        device: "1",
+        inode: String(index + 40),
+        mode: String(0o40755),
+        ownerUid: "0",
+        path: directory,
+      })),
+    },
   };
 }
 
@@ -152,10 +240,13 @@ function pending(
     agent: "hermes",
     phase: "pending",
     transactionId,
+    createIntentSha256: "c".repeat(64),
     sandboxName: SANDBOX,
     gatewayName: GATEWAY,
     lifecycleGeneration: GENERATION,
     runtimeAuthority: runtimeAuthority(),
+    openshellExecutableAuthority: openshellExecutableAuthority(),
+    podmanExecutableAuthority: podmanExecutableAuthority(),
     socketAuthority: socketAuthority(),
     startup: startup(),
     policy: overrides.policy ?? policy(transactionId),
@@ -217,6 +308,36 @@ function publish(
   });
 }
 
+function leaveInterruptedReceiptPrefix(receipt: HermesPortablePendingReceipt): string {
+  const originalWrite = fs.writeSync;
+  const writeSpy = vi.spyOn(fs, "writeSync") as unknown as {
+    mockImplementationOnce(
+      implementation: (
+        descriptor: number,
+        buffer: Uint8Array,
+        offset: number,
+        length: number,
+        position: number | null,
+      ) => number,
+    ): void;
+  };
+  writeSpy.mockImplementationOnce((descriptor, buffer, offset, length, position) =>
+    originalWrite(descriptor, buffer, offset, Math.max(1, Math.floor(length / 2)), position),
+  );
+  expect(() =>
+    publish(receipt, {
+      afterStageWrite: (written, total) => {
+        return written < total ? failShortWrite() : undefined;
+      },
+    }),
+  ).toThrow("simulated short-write exit");
+  vi.restoreAllMocks();
+  return hermesPortableReceiptInternals.stagePath(
+    hermesPortableReceiptDirectory(SANDBOX, stateDir),
+    receipt,
+  );
+}
+
 beforeEach(() => {
   stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-receipt-"));
   homeDir = path.join(stateDir, "home");
@@ -251,6 +372,32 @@ describe("Hermes portable receipt authority", () => {
       kind: "hermes",
       snapshot: published,
     });
+  });
+
+  it("rejects a schema-5 receipt without create intent before writing a stage (#9203)", () => {
+    const receipt = pending();
+    const missingIntent = { ...receipt } as Record<string, unknown>;
+    delete missingIntent.createIntentSha256;
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+
+    expect(() => publish(missingIntent as never)).toThrow("invalid identity fields");
+    expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
+    expect(fs.readdirSync(directory).sort()).toEqual([`policy.${receipt.transactionId}.yaml`]);
+  });
+
+  it("rejects a schema-5 receipt outside the exact Podman 5.7.0 authority (#9203)", () => {
+    const receipt = pending();
+    const wrongVersion = {
+      ...receipt,
+      podmanExecutableAuthority: {
+        ...receipt.podmanExecutableAuthority,
+        version: "5.8.0",
+      },
+    };
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+
+    expect(() => publish(wrongVersion as never)).toThrow("invalid Podman executable authority");
+    expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
   });
 
   it("keeps the receipt root usable beyond eight independent Hermes sandboxes (#9203)", () => {
@@ -295,7 +442,7 @@ describe("Hermes portable receipt authority", () => {
     const first = publish(pending());
     const conflicting = { ...first.receipt, lifecycleGeneration: "generation-2" };
 
-    expect(() => publish(conflicting)).toThrow("pending phase already has other authority");
+    expect(() => publish(conflicting)).toThrow("publication artifacts disagree");
     expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.bytes).toEqual(first.bytes);
   });
 
@@ -343,11 +490,7 @@ describe("Hermes portable receipt authority", () => {
 
     const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
     const target = hermesPortableReceiptInternals.phasePath(directory, "pending");
-    const staged = hermesPortableReceiptInternals.stagePath(
-      directory,
-      "pending",
-      receipt.transactionId,
-    );
+    const staged = hermesPortableReceiptInternals.stagePath(directory, receipt);
     expect(fs.statSync(target).ino).toBe(fs.statSync(staged).ino);
     expect(fs.statSync(target).nlink).toBe(2);
     expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
@@ -359,6 +502,24 @@ describe("Hermes portable receipt authority", () => {
     expect(fs.statSync(target).nlink).toBe(1);
     expect(fs.existsSync(staged)).toBe(false);
   });
+
+  it.each([1, 2])(
+    "rejects %i unaccounted hard link(s) during publication recovery (#9203)",
+    (linkCount) => {
+      const receipt = pending();
+      const published = publish(receipt);
+      createUnaccountedReceiptLinks(published.path, linkCount);
+
+      expect(() =>
+        withMcpLifecycleLockSync(
+          SANDBOX,
+          () => inspectPortableAgentReceiptAuthorityForPublicationRecovery(SANDBOX, stateDir),
+          { stateDir: path.join(stateDir, "state") },
+        ),
+      ).toThrow("unaccounted or different generations");
+      expect(fs.readFileSync(published.path)).toEqual(published.bytes);
+    },
+  );
 
   it("retires an exact empty phase stage left before the first write (#9203)", () => {
     const receipt = pending();
@@ -372,8 +533,7 @@ describe("Hermes portable receipt authority", () => {
 
     const staged = hermesPortableReceiptInternals.stagePath(
       hermesPortableReceiptDirectory(SANDBOX, stateDir),
-      "pending",
-      receipt.transactionId,
+      receipt,
     );
     expect(fs.statSync(staged).size).toBe(0);
 
@@ -408,7 +568,34 @@ describe("Hermes portable receipt authority", () => {
     },
   );
 
-  it("preserves a short private stage as ambiguous crash evidence (#9203)", () => {
+  it.each([1, 8])(
+    "retires an exact %i-byte authorized receipt prefix and resumes publication (#9203)",
+    (prefixLength) => {
+      const receipt = pending();
+      installShortWrite(prefixLength);
+      expect(() =>
+        publish(receipt, {
+          afterStageWrite: failReceiptShortWrite,
+        }),
+      ).toThrow("simulated short-write exit");
+      vi.restoreAllMocks();
+
+      expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
+        "incomplete or unknown publication evidence",
+      );
+      const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+      const staged = hermesPortableReceiptInternals.stagePath(directory, receipt);
+      const prior = fs.readFileSync(staged);
+      const priorIdentity = fs.statSync(staged).ino;
+      expect(prior.length).toBeGreaterThan(0);
+      expect(priorIdentity).toBeGreaterThan(0);
+      expect(publish(receipt).receipt).toEqual(receipt);
+      expect(fs.existsSync(staged)).toBe(false);
+      expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(true);
+    },
+  );
+
+  it("preserves a non-prefix interrupted stage without publishing (#9203)", () => {
     const receipt = pending();
     const originalWrite = fs.writeSync;
     const writeSpy = vi.spyOn(fs, "writeSync") as unknown as {
@@ -428,27 +615,74 @@ describe("Hermes portable receipt authority", () => {
     expect(() =>
       publish(receipt, {
         afterStageWrite: (written, total) => {
-          return written < total ? failShortWrite() : undefined;
+          written < total
+            ? (() => {
+                throw new Error("simulated short-write exit");
+              })()
+            : undefined;
         },
       }),
     ).toThrow("simulated short-write exit");
     vi.restoreAllMocks();
 
-    expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
-      "incomplete or unknown publication evidence",
-    );
     const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
-    const staged = hermesPortableReceiptInternals.stagePath(
-      directory,
-      "pending",
-      receipt.transactionId,
-    );
-    const prior = fs.readFileSync(staged);
-    const priorIdentity = fs.statSync(staged).ino;
-    expect(() => publish(receipt)).toThrow("publication artifacts disagree");
-    expect(fs.readFileSync(staged)).toEqual(prior);
-    expect(fs.statSync(staged).ino).toBe(priorIdentity);
+    const staged = hermesPortableReceiptInternals.stagePath(directory, receipt);
+    const changed = fs.readFileSync(staged);
+    changed[changed.length - 1] ^= 1;
+    fs.writeFileSync(staged, changed, { mode: 0o600 });
+    const identity = fs.statSync(staged).ino;
+
+    expect(() => publish(receipt)).toThrow("not the exact authorized receipt prefix");
+    expect(fs.readFileSync(staged)).toEqual(changed);
+    expect(fs.statSync(staged).ino).toBe(identity);
     expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
+  });
+
+  it("preserves an identity-rotated prefix stage at the retirement boundary (#9203)", () => {
+    const receipt = pending();
+    const staged = leaveInterruptedReceiptPrefix(receipt);
+    const prior = fs.readFileSync(staged);
+
+    expect(() =>
+      publish(receipt, {
+        beforeInterruptedStageRetirement: () => {
+          fs.unlinkSync(staged);
+          fs.writeFileSync(staged, prior, { mode: 0o600 });
+        },
+      }),
+    ).toThrow("changed before exact retirement");
+    expect(fs.readFileSync(staged)).toEqual(prior);
+    expect(fs.existsSync(path.join(path.dirname(staged), "pending.json"))).toBe(false);
+  });
+
+  it("preserves a contender that publishes canonical evidence before prefix retirement (#9203)", () => {
+    const receipt = pending();
+    const staged = leaveInterruptedReceiptPrefix(receipt);
+    const target = path.join(path.dirname(staged), "pending.json");
+    const contender = Buffer.from("contender evidence\n");
+
+    expect(() =>
+      publish(receipt, {
+        beforeInterruptedStageRetirement: () => {
+          fs.writeFileSync(target, contender, { flag: "wx", mode: 0o600 });
+        },
+      }),
+    ).toThrow("conflicts with other publication evidence");
+    expect(fs.readFileSync(target)).toEqual(contender);
+    expect(fs.existsSync(staged)).toBe(true);
+  });
+
+  it("fails on prefix-retirement directory fsync and completes an identical retry (#9203)", () => {
+    const receipt = pending();
+    const staged = leaveInterruptedReceiptPrefix(receipt);
+    vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+      throw new Error("simulated prefix retirement fsync failure");
+    });
+
+    expect(() => publish(receipt)).toThrow("simulated prefix retirement fsync failure");
+    vi.restoreAllMocks();
+    expect(fs.existsSync(staged)).toBe(false);
+    expect(publish(receipt).receipt).toEqual(receipt);
   });
 
   it("does not unlink a replacement injected at the final cleanup boundary (#9203)", () => {
@@ -460,11 +694,7 @@ describe("Hermes portable receipt authority", () => {
       publish(receipt, {
         beforeCleanupUnlink: () => {
           const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
-          const staged = hermesPortableReceiptInternals.stagePath(
-            directory,
-            "pending",
-            receipt.transactionId,
-          );
+          const staged = hermesPortableReceiptInternals.stagePath(directory, receipt);
           replacedPath = `${staged}.cleanup`;
           fs.unlinkSync(replacedPath);
           fs.writeFileSync(replacedPath, replacement, { mode: 0o600 });
@@ -476,6 +706,52 @@ describe("Hermes portable receipt authority", () => {
     expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
       "incomplete or unknown publication evidence",
     );
+  });
+
+  it("reconciles exact same-generation cleanup evidence before canonical success (#9203)", () => {
+    const receipt = pending();
+    const published = publish(receipt);
+    const staged = hermesPortableReceiptInternals.stagePath(path.dirname(published.path), receipt);
+    const cleanup = `${staged}.cleanup`;
+    fs.linkSync(published.path, cleanup);
+
+    expect(publish(receipt)).toEqual(published);
+    expect(fs.existsSync(cleanup)).toBe(false);
+    expect(fs.statSync(published.path).nlink).toBe(1);
+  });
+
+  it("preserves mismatched cleanup evidence instead of accepting canonical authority (#9203)", () => {
+    const receipt = pending();
+    const published = publish(receipt);
+    const staged = hermesPortableReceiptInternals.stagePath(path.dirname(published.path), receipt);
+    const cleanup = `${staged}.cleanup`;
+    const mismatch = Buffer.from("mismatched cleanup generation\n");
+    fs.writeFileSync(cleanup, mismatch, { mode: 0o600 });
+
+    expect(() => publish(receipt)).toThrow("publication artifacts disagree");
+    expect(fs.readFileSync(published.path)).toEqual(published.bytes);
+    expect(fs.readFileSync(cleanup)).toEqual(mismatch);
+  });
+
+  it("rejects an oversized receipt before creating a private stage (#9203)", () => {
+    const receipt = pending({
+      startup: {
+        ...startup(),
+        argv: [
+          "env",
+          ...Array.from(
+            { length: 20 },
+            (_value, index) => `NEMOCLAW_TEST_${String(index)}=${"x".repeat(2000)}`,
+          ),
+          "/usr/local/bin/nemoclaw-start",
+        ],
+      },
+    });
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+
+    expect(() => publish(receipt)).toThrow("exceeds the bounded receipt size");
+    expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
+    expect(fs.existsSync(hermesPortableReceiptInternals.stagePath(directory, receipt))).toBe(false);
   });
 
   it("preserves a fully written pre-link stage and resumes only the same transaction (#9203)", () => {
@@ -500,11 +776,7 @@ describe("Hermes portable receipt authority", () => {
   it("preserves a staged receipt when the retry presents different authority (#9203)", () => {
     const receipt = pending();
     const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
-    const staged = hermesPortableReceiptInternals.stagePath(
-      directory,
-      "pending",
-      receipt.transactionId,
-    );
+    const staged = hermesPortableReceiptInternals.stagePath(directory, receipt);
     expect(() =>
       publish(receipt, {
         afterStageFsync: () => {
@@ -516,7 +788,7 @@ describe("Hermes portable receipt authority", () => {
     const priorIdentity = fs.statSync(staged).ino;
 
     expect(() => publish({ ...receipt, lifecycleGeneration: "generation-2" })).toThrow(
-      "publication artifacts disagree",
+      "directory contains other publication evidence",
     );
     expect(fs.readFileSync(staged)).toEqual(prior);
     expect(fs.statSync(staged).ino).toBe(priorIdentity);
@@ -629,11 +901,135 @@ describe("Hermes portable receipt authority", () => {
     expect(fs.statSync(authority.sourcePath).nlink).toBe(1);
   });
 
+  it("preserves durable policy publication when an unaccounted hard link appears (#9203)", () => {
+    const transactionId = randomUUID();
+    const source = captureHermesPortablePolicySource(policyPath);
+    const input = {
+      sandboxName: SANDBOX,
+      transactionId,
+      stateDir,
+      intendedSemanticSha256: "f".repeat(64),
+      source,
+    } as const;
+
+    expect(() =>
+      publishHermesPortableDurablePolicySource({
+        ...input,
+        hooks: {
+          assertLifecycleLock: () => {},
+          afterCanonicalLink: () => {
+            throw new Error("simulated policy publication exit");
+          },
+        },
+      }),
+    ).toThrow("simulated policy publication exit");
+    const target = hermesPortablePolicySourcePath(SANDBOX, transactionId, stateDir);
+    const staged = hermesPortableReceiptInternals.policyStagePath(
+      path.dirname(target),
+      transactionId,
+      source.sha256,
+      input.intendedSemanticSha256,
+    );
+    const external = path.join(stateDir, "unaccounted-policy-link.yaml");
+    fs.linkSync(target, external);
+    const before = fs.readdirSync(path.dirname(target)).sort();
+
+    expect(() =>
+      publishHermesPortableDurablePolicySource({
+        ...input,
+        hooks: { assertLifecycleLock: () => {} },
+      }),
+    ).toThrow("publication artifacts have unaccounted links");
+    expect(fs.readdirSync(path.dirname(target)).sort()).toEqual(before);
+    expect(fs.readFileSync(target)).toEqual(source.bytes);
+    expect(fs.statSync(target).ino).toBe(fs.statSync(staged).ino);
+    expect(fs.statSync(target).nlink).toBe(3);
+  });
+
+  it.each([1, 4, 16])(
+    "retires an exact %i-byte durable-policy prefix and resumes publication (#9203)",
+    (prefixLength) => {
+      const transactionId = randomUUID();
+      const source = captureHermesPortablePolicySource(policyPath);
+      const input = {
+        sandboxName: SANDBOX,
+        transactionId,
+        stateDir,
+        intendedSemanticSha256: "f".repeat(64),
+        source,
+      } as const;
+      installShortWrite(prefixLength);
+      expect(() =>
+        publishHermesPortableDurablePolicySource({
+          ...input,
+          hooks: {
+            assertLifecycleLock: () => {},
+            afterStageWrite: failPolicyShortWrite,
+          },
+        }),
+      ).toThrow("simulated policy short-write exit");
+      vi.restoreAllMocks();
+
+      const authority = publishHermesPortableDurablePolicySource({
+        ...input,
+        hooks: { assertLifecycleLock: () => {} },
+      });
+      expect(fs.readFileSync(authority.sourcePath)).toEqual(source.bytes);
+    },
+  );
+
+  it("reconciles or preserves durable-policy cleanup evidence before canonical success (#9203)", () => {
+    const transactionId = randomUUID();
+    const source = captureHermesPortablePolicySource(policyPath);
+    const input = {
+      sandboxName: SANDBOX,
+      transactionId,
+      stateDir,
+      intendedSemanticSha256: "f".repeat(64),
+      source,
+    } as const;
+    const authority = publishHermesPortableDurablePolicySource({
+      ...input,
+      hooks: { assertLifecycleLock: () => {} },
+    });
+    const staged = hermesPortableReceiptInternals.policyStagePath(
+      path.dirname(authority.sourcePath),
+      transactionId,
+      source.sha256,
+      input.intendedSemanticSha256,
+    );
+    const cleanup = `${staged}.cleanup`;
+    fs.linkSync(authority.sourcePath, cleanup);
+    expect(
+      publishHermesPortableDurablePolicySource({
+        ...input,
+        hooks: { assertLifecycleLock: () => {} },
+      }).sourcePath,
+    ).toBe(authority.sourcePath);
+    expect(fs.existsSync(cleanup)).toBe(false);
+
+    const mismatch = Buffer.from("mismatched policy cleanup\n");
+    fs.writeFileSync(cleanup, mismatch, { mode: 0o600 });
+    expect(() =>
+      publishHermesPortableDurablePolicySource({
+        ...input,
+        hooks: { assertLifecycleLock: () => {} },
+      }),
+    ).toThrow("publication artifacts disagree");
+    expect(fs.readFileSync(authority.sourcePath)).toEqual(source.bytes);
+    expect(fs.readFileSync(cleanup)).toEqual(mismatch);
+  });
+
   it("preserves a staged durable policy when retry bytes disagree (#9203)", () => {
     const transactionId = randomUUID();
     const source = captureHermesPortablePolicySource(policyPath);
     const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
-    const staged = path.join(directory, `.policy.${transactionId}.next`);
+    const staged = hermesPortableReceiptInternals.policyStagePath(
+      directory,
+      transactionId,
+      source.sha256,
+      "f".repeat(64),
+    );
     expect(() =>
       publishHermesPortableDurablePolicySource({
         sandboxName: SANDBOX,
@@ -664,7 +1060,7 @@ describe("Hermes portable receipt authority", () => {
         source: captureHermesPortablePolicySource(policyPath),
         hooks: { assertLifecycleLock: () => {} },
       }),
-    ).toThrow("publication artifacts disagree");
+    ).toThrow("directory contains other policy authority");
     expect(fs.readFileSync(staged)).toEqual(prior);
     expect(fs.statSync(staged).ino).toBe(priorIdentity);
     expect(fs.existsSync(hermesPortablePolicySourcePath(SANDBOX, transactionId, stateDir))).toBe(

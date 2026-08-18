@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +12,10 @@ import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock";
 import type { SandboxEntry } from "../../state/registry";
 import { fingerprintOpenShellSandboxLiveIdentity } from "../../adapters/openshell/sandbox-identity";
+import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/openshell/resolve-shared";
+import type { PodmanExecutableAuthorityDeps, PodmanExecutableStat } from "../../adapters/podman";
+import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
+import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-podman-authority";
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
 import { resolveHermesPortableStartupContract } from "./hermes-portable-contract";
 import {
@@ -65,6 +69,84 @@ function directoryChain(directory: string): string[] {
   return parent === directory ? [directory] : [directory, ...directoryChain(parent)];
 }
 
+function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
+  return {
+    version: "0.0.101",
+    executable: {
+      executablePath: "/usr/bin/openshell",
+      device: "1",
+      inode: "10",
+      mode: String(0o100755),
+      ownerUid: "0",
+      size: "1024",
+      modifiedTimeNanoseconds: "11",
+      changedTimeNanoseconds: "12",
+      sha256: "f".repeat(64),
+      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
+        device: "1",
+        inode: String(index + 20),
+        mode: String(0o40755),
+        ownerUid: "0",
+        path: directory,
+      })),
+    },
+  };
+}
+
+function podmanExecutableAuthority(): HermesPortablePodmanExecutableAuthority {
+  const bytes = Buffer.from("podman-5.7.0-test", "utf8");
+  return {
+    version: "5.7.0",
+    executable: {
+      executablePath: "/usr/bin/podman",
+      device: "1",
+      inode: "30",
+      mode: String(0o100755),
+      ownerUid: "0",
+      size: String(bytes.byteLength),
+      modifiedTimeNanoseconds: "31",
+      changedTimeNanoseconds: "32",
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
+        device: "1",
+        inode: String(index + 40),
+        mode: String(0o40755),
+        ownerUid: "0",
+        path: directory,
+      })),
+    },
+  };
+}
+
+function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
+  const bytes = Buffer.from("podman-5.7.0-test", "utf8");
+  const stat = (filePath: string): PodmanExecutableStat => ({
+    dev: 1n,
+    ino:
+      filePath === "/usr/bin/podman"
+        ? 30n
+        : filePath === "/usr/bin"
+          ? 40n
+          : filePath === "/usr"
+            ? 41n
+            : 42n,
+    mode: filePath === "/usr/bin/podman" ? 0o100755n : 0o40755n,
+    uid: 0n,
+    size: filePath === "/usr/bin/podman" ? BigInt(bytes.byteLength) : 0n,
+    mtimeNs: 31n,
+    ctimeNs: 32n,
+    isDirectory: () => filePath !== "/usr/bin/podman",
+    isFile: () => filePath === "/usr/bin/podman",
+    isSymbolicLink: () => false,
+  });
+  return {
+    uid: process.getuid!(),
+    lstat: stat,
+    readFile: () => bytes,
+    realpath: (filePath) => filePath,
+  };
+}
+
 function activeReceipt(): HermesPortableConfiguredReceipt {
   const uid = process.getuid!();
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
@@ -83,6 +165,7 @@ function activeReceipt(): HermesPortableConfiguredReceipt {
     agent: "hermes",
     phase: "pending",
     transactionId,
+    createIntentSha256: "c".repeat(64),
     sandboxName: SANDBOX,
     gatewayName: GATEWAY,
     lifecycleGeneration: GENERATION,
@@ -96,6 +179,8 @@ function activeReceipt(): HermesPortableConfiguredReceipt {
       runtimeDir: `/run/user/${String(uid)}`,
       socketPath,
     },
+    openshellExecutableAuthority: openshellExecutableAuthority(),
+    podmanExecutableAuthority: podmanExecutableAuthority(),
     socketAuthority: {
       device: "1",
       inode: "2",
@@ -197,6 +282,12 @@ function lifecycleDeps(receipt: HermesPortableConfiguredReceipt, initiallyRunnin
   return {
     deps: {
       stateDir,
+      env: {
+        HOME: "/home/test",
+        PATH: "/usr/bin",
+        XDG_CONFIG_HOME: "/home/test/.config",
+        XDG_RUNTIME_DIR: `/run/user/${String(process.getuid!())}`,
+      },
       readRegistry: () =>
         ({
           name: SANDBOX,
@@ -205,8 +296,10 @@ function lifecycleDeps(receipt: HermesPortableConfiguredReceipt, initiallyRunnin
           gatewayName: GATEWAY,
           lifecycleGeneration: GENERATION,
           lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
+          openshellVersion: "0.0.101",
         }) as SandboxEntry,
       captureOpenShell,
+      assertOpenShellExecutableAuthority: vi.fn(() => "/usr/bin/openshell"),
       launchOpenShell: vi.fn(),
       container: { podman, assertSocketAuthority: vi.fn() },
       sleep: vi.fn(),
@@ -239,12 +332,24 @@ afterEach(() => {
 
 describe("Hermes portable lifecycle", () => {
   it("passes only private state, terminal, locale, and TLS variables to child commands (#9203)", () => {
-    const env = hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv({
+    const runtimeAuthority = {
+      schemaVersion: 1 as const,
+      kind: "podman" as const,
+      ownership: "current-user" as const,
+      uid: process.getuid!(),
+      homeDir: "/home/test",
+      configHome: "/home/test/.config",
+      runtimeDir: "/run/user/1000",
+      socketPath: "/run/user/1000/podman/podman.sock",
+    };
+    const sourceEnv = {
       HOME: "/home/test",
       PATH: "/usr/bin",
       TERM: "xterm-256color",
       LANG: "C.UTF-8",
       XDG_CONFIG_HOME: "/home/test/.config",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      XDG_CACHE_HOME: "/tmp/ambient-cache",
       HTTPS_PROXY: "http://127.0.0.1:8118",
       SSL_CERT_FILE: "/etc/ssl/cert.pem",
       DOCKER_HOST: "unix:///run/docker.sock",
@@ -255,7 +360,11 @@ describe("Hermes portable lifecycle", () => {
       NVIDIA_INFERENCE_API_KEY: "do-not-forward",
       GITHUB_TOKEN: "do-not-forward",
       AWS_SECRET_ACCESS_KEY: "do-not-forward",
-    });
+    };
+    const env = hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
+      sourceEnv,
+      runtimeAuthority,
+    );
 
     expect(env).toMatchObject({
       HOME: "/home/test",
@@ -263,9 +372,11 @@ describe("Hermes portable lifecycle", () => {
       TERM: "xterm-256color",
       LANG: "C.UTF-8",
       XDG_CONFIG_HOME: "/home/test/.config",
+      XDG_RUNTIME_DIR: "/run/user/1000",
       SSL_CERT_FILE: "/etc/ssl/cert.pem",
     });
     expect(env).not.toHaveProperty("HTTPS_PROXY");
+    expect(env).not.toHaveProperty("XDG_CACHE_HOME");
     expect(env).not.toHaveProperty("DOCKER_HOST");
     expect(env).not.toHaveProperty("KUBECONFIG");
     expect(env).not.toHaveProperty("SSH_AUTH_SOCK");
@@ -274,6 +385,101 @@ describe("Hermes portable lifecycle", () => {
     expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(env).not.toHaveProperty("GITHUB_TOKEN");
     expect(env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+    expect(() =>
+      hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
+        { ...sourceEnv, XDG_CONFIG_HOME: "/tmp/other-config" },
+        runtimeAuthority,
+      ),
+    ).toThrow("XDG_CONFIG_HOME disagrees with runtime authority");
+  });
+
+  it("constructs production Podman dependencies from the receipt authority (#9203)", () => {
+    const receipt = activeReceipt();
+    const capture = vi.fn<ContainerEngineCommandCapture>(
+      (_executable, args, _timeoutMs, _input, environment) => {
+        expect(environment).toEqual({
+          HOME: receipt.runtimeAuthority.homeDir,
+          XDG_CONFIG_HOME: receipt.runtimeAuthority.configHome,
+          XDG_RUNTIME_DIR: receipt.runtimeAuthority.runtimeDir,
+        });
+        const operation = args.includes("version")
+          ? "version"
+          : args.includes("info")
+            ? "info"
+            : "business";
+        const responses = {
+          version: {
+            status: 0,
+            stdout: JSON.stringify({
+              Client: { Version: "5.7.0" },
+              Server: { Version: "5.7.0" },
+            }),
+            stderr: "",
+          },
+          info: {
+            status: 0,
+            stdout: JSON.stringify({
+              host: {
+                arch: "amd64",
+                os: "linux",
+                cgroupVersion: "v2",
+                networkBackend: "netavark",
+                security: { rootless: true },
+                idMappings: {
+                  uidmap: [
+                    { container_id: 0, host_id: receipt.runtimeAuthority.uid, size: 1 },
+                    { container_id: 1, host_id: 100000, size: 65536 },
+                  ],
+                  gidmap: [
+                    { container_id: 0, host_id: receipt.runtimeAuthority.uid, size: 1 },
+                    { container_id: 1, host_id: 100000, size: 65536 },
+                  ],
+                },
+              },
+            }),
+            stderr: "",
+          },
+          business: { status: 0, stdout: "exact container", stderr: "" },
+        } as const;
+        return responses[operation];
+      },
+    );
+    const container = hermesPortableLifecycleInternals.createContainerDeps(
+      receipt,
+      {
+        HOME: receipt.runtimeAuthority.homeDir,
+        PATH: "/usr/bin",
+        XDG_CONFIG_HOME: receipt.runtimeAuthority.configHome,
+        XDG_RUNTIME_DIR: receipt.runtimeAuthority.runtimeDir,
+      },
+      {
+        capture,
+        executableAuthorityDeps: podmanExecutableAuthorityDeps(),
+        assertSocketAuthority: vi.fn(),
+        resolveExecutablePath: () => receipt.podmanExecutableAuthority.executable.executablePath,
+        platform: "linux",
+        architecture: "x64",
+        uid: receipt.runtimeAuthority.uid,
+      },
+    );
+
+    expect(container.podman(["container", "inspect", CONTAINER_ID], 5_000)).toMatchObject({
+      status: 0,
+      stdout: "exact container",
+    });
+    expect(capture).toHaveBeenLastCalledWith(
+      receipt.podmanExecutableAuthority.executable.executablePath,
+      [
+        "--url",
+        `unix://${receipt.socketAuthority.socketPath}`,
+        "container",
+        "inspect",
+        CONTAINER_ID,
+      ],
+      5_000,
+      undefined,
+      expect.any(Object),
+    );
   });
 
   it("starts and proves exact receipt-owned authenticated health without Docker (#9203)", () => {
@@ -324,6 +530,49 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([
       [["container", "stop", CONTAINER_ID], 40_000],
     ]);
+  });
+
+  it("reconciles a receipt-owned stopping state without another stop command (#9203)", () => {
+    const receipt = activeReceipt();
+    const { deps, podman } = lifecycleDeps(receipt, false);
+    let inspectionCount = 0;
+    podman.mockImplementation((args: readonly string[]) => {
+      inspectionCount += args[1] === "inspect" ? 1 : 0;
+      const status = inspectionCount < 4 ? "stopping" : "exited";
+      return args[1] === "inspect"
+        ? {
+            status: 0,
+            stdout: JSON.stringify([
+              {
+                Id: CONTAINER_ID,
+                Image: IMAGE,
+                Name: receipt.container.name,
+                Config: { Labels: LABELS },
+                State: { Running: false, Paused: false, Status: status },
+                HostConfig: { RestartPolicy: { Name: "unless-stopped" } },
+              },
+            ]),
+            stderr: "",
+          }
+        : poisonUnexpectedCommand("podman", args);
+    });
+    let now = 0;
+
+    const result = withMcpLifecycleLockSync(
+      SANDBOX,
+      () =>
+        stopHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), vi.fn(), {
+          ...deps,
+          now: () => now,
+          sleep: (milliseconds) => {
+            now += milliseconds;
+          },
+        }),
+      { stateDir: path.join(stateDir, "state") },
+    );
+
+    expect(result).toEqual({ kind: "stopped" });
+    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
 
   it("fails closed when OpenShell same-name identity changes (#9203)", () => {
