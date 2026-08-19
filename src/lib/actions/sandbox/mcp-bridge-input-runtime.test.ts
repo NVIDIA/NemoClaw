@@ -2,16 +2,49 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
 
 import {
   addMcpBridge,
   buildMcpBridgeProviderArgs,
   dispatchMcpBridgeCommand,
   redactCredentialValuesForDisplay,
+  removeMcpBridge,
+  restartMcpBridge,
   resolveCredentialEnv,
 } from "./mcp-bridge";
 
 describe("MCP input runtime boundaries", () => {
+  it("rejects schema-5 MCP mutations inside their lifecycle fences (#9203)", async ({
+    onTestFinished,
+  }) => {
+    const guard = vi
+      .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
+      .mockImplementation(() => {
+        throw new Error("schema-5 rejected");
+      });
+    onTestFinished(() => guard.mockRestore());
+
+    await expect(
+      addMcpBridge("missing-sandbox", {
+        server: "github",
+        url: "https://mcp.example.test/mcp",
+        env: [{ name: "TOKEN" }],
+      }),
+    ).rejects.toThrow("schema-5 rejected");
+    await expect(removeMcpBridge("missing-sandbox", "github")).rejects.toThrow(
+      "schema-5 rejected",
+    );
+    await expect(restartMcpBridge("missing-sandbox", "github")).rejects.toThrow(
+      "schema-5 rejected",
+    );
+    expect(guard.mock.calls.map((call) => call[1])).toEqual([
+      "sandbox:mcp:add",
+      "sandbox:mcp:remove",
+      "sandbox:mcp:restart",
+    ]);
+  });
+
   it("rejects unauthenticated direct add callers before sandbox or network side effects", async () => {
     await expect(
       addMcpBridge("missing-sandbox", {

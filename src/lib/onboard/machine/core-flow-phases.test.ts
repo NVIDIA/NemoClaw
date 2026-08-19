@@ -3,7 +3,18 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  type InferenceEndpointSource,
+  normalizeInferenceSelection,
+} from "../../inference/selection";
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
+import {
+  getSandbox,
+  isPendingReservationForSession,
+  removeSandbox,
+  reserveSandboxInferenceRoute,
+} from "../../state/registry";
+import { classifySandboxInferenceRouteReservation } from "../../state/registry/route-reservation";
 import {
   type CoreOnboardFlowPhases,
   createProviderInferenceOnboardFlowPhase,
@@ -311,6 +322,120 @@ function createPhases(
 }
 
 describe("core onboard flow phases", () => {
+  it("preserves the fresh install-ollama reservation endpoint source for Hermes portable creation (#9203)", async () => {
+    const durableSession = createSession();
+    const sandboxName = `hermes-route-${durableSession.sessionId}`;
+    const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
+      Object.assign(durableSession, updates);
+      return durableSession;
+    });
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const authority = args.at(-2) as { sessionId?: unknown } | null;
+      const createIntent = args.at(-1) as {
+        endpointSource?: InferenceEndpointSource | null;
+      };
+      const reservation = getSandbox(sandboxName);
+      expect(authority).toEqual({ sessionId: durableSession.sessionId });
+      expect(createIntent.endpointSource).toBeNull();
+      expect(isPendingReservationForSession(reservation, authority?.sessionId as string)).toBe(
+        true,
+      );
+      expect(
+        classifySandboxInferenceRouteReservation(
+          {
+            sandboxName,
+            gatewayName: "nemoclaw",
+            sessionId: authority?.sessionId as string,
+            selection: normalizeInferenceSelection({
+              ...reservation,
+              endpointSource: "onboard",
+            }),
+          },
+          reservation,
+        ).kind,
+      ).toBe("conflict");
+      expect(
+        classifySandboxInferenceRouteReservation(
+          {
+            sandboxName,
+            gatewayName: "nemoclaw",
+            sessionId: authority?.sessionId as string,
+            selection: normalizeInferenceSelection({
+              ...reservation,
+              endpointSource: createIntent.endpointSource,
+            }),
+          },
+          reservation,
+        ).kind,
+      ).toBe("owned");
+      return "created-sandbox";
+    });
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+      providerDeps: {
+        setupNim: vi.fn(async () => ({
+          model: "qwen3-vl:4b",
+          provider: "ollama-local",
+          endpointUrl: "http://inference.local/v1",
+          credentialEnv: null,
+          hermesAuthMethod: null,
+          hermesToolGateways: [],
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        })),
+        recordStepComplete,
+        promptValidatedSandboxName: vi.fn(async () => sandboxName),
+        setupInference: vi.fn(
+          async (name, model, provider, endpointUrl, credentialEnv, _auth, _gateways, options) => {
+            expect(options?.reservationSessionId).toBe(durableSession.sessionId);
+            expect(
+              reserveSandboxInferenceRoute(name, {
+                provider,
+                model,
+                endpointUrl,
+                endpointSource: options?.endpointSource ?? null,
+                credentialEnv,
+                preferredInferenceApi: options?.preferredInferenceApi ?? null,
+                gatewayName: options?.gatewayName ?? "nemoclaw",
+                reservationSessionId: options?.reservationSessionId,
+              }),
+            ).toBe(true);
+            return { ok: true as const };
+          },
+        ),
+      },
+      sandboxDeps: {
+        createSandbox,
+        getSandboxRegistryEntry: getSandbox,
+        promptValidatedSandboxName: vi.fn(async () => sandboxName),
+      },
+      sandboxOptions: { hermesPortableLifecycle: true },
+    });
+
+    try {
+      const providerResult = await providerPhase.run(
+        context({
+          fresh: true,
+          session: durableSession,
+          agent: { name: "hermes" },
+          sandboxName,
+        }),
+      );
+      expect(providerResult.context).toMatchObject({
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
+        endpointSource: null,
+        hostLocalInferenceRouteOnly: false,
+      });
+      await sandboxPhase.run(providerResult.context);
+
+      expect(createSandbox).toHaveBeenCalledOnce();
+    } finally {
+      removeSandbox(sandboxName);
+    }
+  });
+
   it("carries provider selection output into sandbox setup", async () => {
     const updateSandboxRegistry = vi.fn();
     const createSandbox = vi.fn(async () => "created-sandbox");

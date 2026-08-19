@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { resolveHostPathFromCwd } from "./host-path";
 import {
@@ -58,6 +60,15 @@ export interface SandboxDownloadResult {
 }
 
 export async function downloadFromSandbox(
+  opts: SandboxDownloadOptions,
+): Promise<SandboxDownloadResult> {
+  return withMcpLifecycleLock(opts.sandboxName, () => {
+    assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:download");
+    return downloadFromSandboxUnlocked(opts);
+  });
+}
+
+async function downloadFromSandboxUnlocked(
   opts: SandboxDownloadOptions,
 ): Promise<SandboxDownloadResult> {
   const sandboxPath = (opts.sandboxPath ?? "").trim();
