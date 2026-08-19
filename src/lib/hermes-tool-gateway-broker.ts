@@ -63,6 +63,8 @@ const HERMES_TOOL_GATEWAY_CONTROL_CONTRACT_PATH = path.join(
 );
 const HERMES_TOOL_GATEWAY_RUNTIME_MISMATCH_RECOVERY =
   "Reauthorize every managed-tool Hermes sandbox, then retry.";
+const HERMES_TOOL_GATEWAY_UNOWNED_LISTENER_RECOVERY =
+  "Stop the process holding that port, then retry.";
 const HERMES_TOOL_GATEWAY_CONTROL_CLIENT_SOURCE = [
   'const http = require("node:http");',
   "const [socketPath, route, timeoutValue] = process.argv.slice(1);",
@@ -117,8 +119,6 @@ const HERMES_TOOL_GATEWAY_CONTROL_CLIENT_SOURCE = [
   "  request.end(requestBody);",
   "});",
 ].join("\n");
-
-let brokerStartedThisRun = false;
 
 function sleep(ms) {
   const lock = new Int32Array(new SharedArrayBuffer(4));
@@ -555,7 +555,7 @@ function preflightHermesToolGatewayCloneBinding(sandboxName) {
   }
 
   const pid = readPid();
-  const currentBrokerOwned = isHermesToolGatewayBrokerProcess(pid) || brokerStartedThisRun;
+  const currentBrokerOwned = isHermesToolGatewayBrokerProcess(pid);
   const currentBrokerHealthy = isHermesToolGatewayBrokerHealthy();
   if (currentBrokerHealthy && !currentBrokerOwned) {
     throw new Error("Hermes managed-tool broker health endpoint is not owned by NemoClaw");
@@ -738,8 +738,23 @@ function ensureHermesToolGatewayBroker(options = {}) {
   const desiredHash = brokerRuntimeHash();
   const hashMatches = readBrokerHash() === desiredHash;
   const pid = readPid();
-  const currentBrokerOwned = isHermesToolGatewayBrokerProcess(pid) || brokerStartedThisRun;
-  const currentBrokerHealthy = currentBrokerOwned && isHermesToolGatewayBrokerHealthy();
+  const currentBrokerOwned = isHermesToolGatewayBrokerProcess(pid);
+  const brokerHealthy = isHermesToolGatewayBrokerHealthy();
+  const currentBrokerHealthy = currentBrokerOwned && brokerHealthy;
+  // `/health` is unauthenticated on a fixed port, so reachability proves
+  // liveness and never identity. Ownership comes only from a recorded pid that
+  // still resolves to a running broker, re-proved on every call: a broker can
+  // exit and leave the port free for another process to bind. Refuse before any
+  // path can adopt, restart around, or stage credentials against a listener
+  // NemoClaw cannot prove it owns.
+  if (brokerHealthy && !currentBrokerOwned) {
+    console.error(
+      "Hermes managed-tool broker health endpoint is not owned by NemoClaw; " +
+        `refusing to reuse the listener on port ${HERMES_TOOL_GATEWAY_PORT}. ` +
+        HERMES_TOOL_GATEWAY_UNOWNED_LISTENER_RECOVERY,
+    );
+    return false;
+  }
   if (options.startWithoutCredential) {
     if (currentBrokerHealthy) {
       return hashMatches && fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH);
@@ -752,7 +767,6 @@ function ensureHermesToolGatewayBroker(options = {}) {
         isHermesToolGatewayBrokerHealthy() &&
         fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH)
       ) {
-        brokerStartedThisRun = true;
         return true;
       }
       sleep(250);
@@ -779,7 +793,6 @@ function ensureHermesToolGatewayBroker(options = {}) {
       refreshToken,
       options.sandboxName ?? null,
     );
-    if (registered) brokerStartedThisRun = true;
     return registered;
   }
   if (refreshPlan === "start-or-restart") {
@@ -791,7 +804,6 @@ function ensureHermesToolGatewayBroker(options = {}) {
         isHermesToolGatewayBrokerHealthy() &&
         registerHermesToolGatewayRuntimeCredential(refreshToken, options.sandboxName ?? null)
       ) {
-        brokerStartedThisRun = true;
         return true;
       }
       sleep(250);
@@ -799,25 +811,9 @@ function ensureHermesToolGatewayBroker(options = {}) {
     return false;
   }
 
-  if (
-    !options.forceRestart &&
-    hashMatches &&
-    brokerStartedThisRun &&
-    isHermesToolGatewayBrokerHealthy()
-  ) {
-    return true;
-  }
-  if (
-    !options.forceRestart &&
-    hashMatches &&
-    isHermesToolGatewayBrokerProcess(pid) &&
-    isHermesToolGatewayBrokerHealthy()
-  ) {
-    brokerStartedThisRun = true;
-    return true;
-  }
-  if (!options.forceRestart && hashMatches && isHermesToolGatewayBrokerHealthy()) {
-    brokerStartedThisRun = true;
+  // `currentBrokerHealthy` already requires ownership, covering both proofs the
+  // three former branches tested separately, so reuse is one condition.
+  if (!options.forceRestart && hashMatches && currentBrokerHealthy) {
     return true;
   }
   // Raw Nous OAuth stays out of durable ~/.nemoclaw state. If the broker is
