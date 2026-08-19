@@ -15,6 +15,9 @@ import * as sandboxGatewayStop from "./sandbox-gateway-stop";
 import { stopAll } from "./services";
 
 vi.mock("../adapters/docker", () => ({
+  dockerCapture: vi.fn(),
+  dockerForceRm: vi.fn(),
+  dockerRunDetached: vi.fn(),
   dockerSpawnSync: vi.fn(() => ({ status: 1, stdout: "", stderr: "" })),
 }));
 

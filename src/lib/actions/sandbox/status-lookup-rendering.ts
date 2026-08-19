@@ -3,6 +3,7 @@
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { D, R } from "../../cli/terminal-style";
+import { deferSandboxLifecycleExit } from "../../core/process-exit";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { isTerminalSandboxPhase } from "../../state/gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -37,10 +38,10 @@ export async function printSandboxGatewayLookupStatus(
       return;
     case "gateway_schema_mismatch":
       console.log(context.lookup.output);
-      process.exit(1);
+      deferSandboxLifecycleExit(1);
     case "missing":
       printMissingLiveSandboxStatusGuidance(context);
-      process.exit(1);
+      deferSandboxLifecycleExit(1);
     case "identity_drift":
       printIdentityDriftLookupStatus(context);
       return;
@@ -73,7 +74,7 @@ function printSandboxRecoveryFailedLookupStatus({
   console.log(
     `  Retry \`${CLI_NAME} ${sandboxName} recover\` after addressing the reported layer.`,
   );
-  process.exit(1);
+  deferSandboxLifecycleExit(1);
 }
 
 function printMissingLiveSandboxStatusGuidance({
@@ -146,7 +147,7 @@ function printWrongGatewayActiveLookupStatus({
       : undefined;
   console.log("");
   printWrongGatewayActiveGuidance(sandboxName, activeGateway, console.log);
-  process.exit(1);
+  deferSandboxLifecycleExit(1);
 }
 
 function printIdentityDriftLookupStatus({
@@ -166,7 +167,7 @@ function printIdentityDriftLookupStatus({
   console.log(
     `  Recreate this sandbox with \`${CLI_NAME} onboard\` once the gateway runtime is stable.`,
   );
-  process.exit(1);
+  deferSandboxLifecycleExit(1);
 }
 
 async function printGatewayUnreachableAfterRestartLookupStatus({
@@ -188,7 +189,7 @@ async function printGatewayUnreachableAfterRestartLookupStatus({
   console.log(
     "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
   );
-  process.exit(1);
+  deferSandboxLifecycleExit(1);
 }
 
 async function printGatewayMissingAfterRestartLookupStatus({
@@ -208,7 +209,7 @@ async function printGatewayMissingAfterRestartLookupStatus({
   console.log(
     "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
   );
-  process.exit(1);
+  deferSandboxLifecycleExit(1);
 }
 
 async function printUnknownGatewayLookupStatus({
@@ -223,7 +224,7 @@ async function printUnknownGatewayLookupStatus({
   }
   await printGatewayFailureLayerHeader(sandboxName, effectivePreflight.failureLayer);
   printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
-  process.exit(1);
+  deferSandboxLifecycleExit(1);
 }
 
 function printNonReadySandboxPhaseGuidance({
@@ -254,7 +255,7 @@ function printNonReadySandboxPhaseGuidance({
   if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
     console.log("");
     printDockerRuntimeDownGuidance(sandboxName, { writer: console.log });
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
   // A paused Docker-driver container can surface upstream as `Phase: Error`
   // (e.g. GPU passthrough on Ubuntu 24.04) even though the sandbox is

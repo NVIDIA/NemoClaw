@@ -8,9 +8,16 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
-import { finalizeCreatedSandbox } from "./created-sandbox-finalization";
+import {
+  createCreatedSandboxCompletionActions,
+  finalizeCreatedSandbox,
+} from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
+import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
+import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
 
 const fixtures: string[] = [];
 
@@ -355,7 +362,9 @@ describe("created DCode sandbox finalization", () => {
             return sandboxState.restoreRecreatedSandboxState(name, backup, options);
           },
           getDcodeSelectionDrift: vi.fn(),
-          register: () => registeredConfigs.push(fs.readFileSync(fixture.currentPath, "utf8")),
+          register: () => {
+            registeredConfigs.push(fs.readFileSync(fixture.currentPath, "utf8"));
+          },
           note: vi.fn(),
           error: vi.fn(),
           exitProcess: (code): never => {
@@ -419,7 +428,9 @@ describe("created OpenClaw sandbox finalization", () => {
   it("captures and registers a fresh image plugin baseline without a restore", () => {
     const order: string[] = [];
     const restoreRecreatedSandboxState = vi.fn();
-    const register = vi.fn(() => order.push("register"));
+    const register = vi.fn(() => {
+      order.push("register");
+    });
 
     finalizeCreatedSandbox(
       {
@@ -456,7 +467,9 @@ describe("created OpenClaw sandbox finalization", () => {
 
   it("preserves the fresh image plugin baseline across recreation before registration", () => {
     const order: string[] = [];
-    const register = vi.fn(() => order.push("register"));
+    const register = vi.fn(() => {
+      order.push("register");
+    });
     const restoreRecreatedSandboxState = vi.fn(() => {
       order.push("restore");
       return {
@@ -651,4 +664,188 @@ describe("created OpenClaw sandbox finalization", () => {
     );
     expect(error).toHaveBeenCalledWith("  Manual recovery: /tmp/openclaw-backup");
   });
+});
+
+describe("created sandbox completion actions", () => {
+  it.each([
+    ["ordinary", true],
+    ["schema-5", false],
+  ] as const)(
+    "keeps %s dashboard completion ordered and bounded (#9203)",
+    async (_route, manageDashboard) => {
+      const order: string[] = [];
+      const gpuProof = {
+        status: "verified" as const,
+        cudaVerified: true,
+        at: "2026-08-17T00:00:00.000Z",
+      };
+      const gpuConfig: SandboxGpuConfig = {
+        mode: "1" as const,
+        hostGpuDetected: true,
+        hostGpuPlatform: "linux" as const,
+        sandboxGpuEnabled: true,
+        sandboxGpuDevice: null,
+        errors: [],
+      };
+      const registerCreatedSandbox = vi.fn((input: CreatedSandboxRegistrationInput) => {
+        order.push("registry");
+        return input as unknown as SandboxEntry;
+      });
+      const completion = createCreatedSandboxCompletionActions(
+        {
+          finalization: {
+            sandboxName: "hermes",
+            restoreBackupPath: null,
+            preUpgradeBackup: false,
+            targetAgentType: "hermes",
+            validateManagedDcode: false,
+            provider: "ollama",
+            model: "qwen3-vl:4b",
+            preferredInferenceApi: "openai-completions",
+          },
+          registration: {
+            sandboxName: "hermes",
+            inferenceSelection: {
+              provider: "ollama",
+              model: "qwen3-vl:4b",
+              endpointUrl: null,
+              endpointSource: null,
+              credentialEnv: null,
+              preferredInferenceApi: "openai-completions",
+              compatibleEndpointReasoning: null,
+              compatibleEndpointReasoningEffort: null,
+              nimContainer: null,
+            },
+            runtimeFields: {
+              gpuEnabled: true,
+              hostGpuDetected: true,
+              sandboxGpuEnabled: true,
+              sandboxGpuMode: "1",
+              sandboxGpuDevice: null,
+              sandboxGpuProof: null,
+              openshellDriver: "docker",
+              openshellVersion: "0.0.101",
+            },
+            agent: null,
+            agentVersionKnown: true,
+            appliedPolicies: ["personal-open-internet"],
+            plannedMessagingState: undefined,
+            hermesToolGateways: [],
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+          },
+          gpu: {
+            config: gpuConfig,
+            provider: "ollama",
+            dockerDriverGateway: true,
+            verifyDirectSandboxGpu: () => {
+              order.push("gpu");
+              return gpuProof;
+            },
+            runCaptureOpenshell: vi.fn(),
+          },
+          dashboard: {
+            chatUiUrl: "http://127.0.0.1:8643",
+            initialHermesState: { config: null, enabled: false },
+            releasePort: async () => {
+              order.push("dashboard-release");
+            },
+            ensureForward: () => {
+              order.push("dashboard-forward");
+              return 8644;
+            },
+            getForwardPort: () => "8643",
+            resolveHermesState: () => ({ config: null, enabled: false }),
+            ensureHermesForward: () => order.push("dashboard-hermes"),
+          },
+          workload: {
+            runtime: {
+              runtimeProvider: null,
+              ensurePreparedWorkload: vi.fn(),
+              ensurePreparedProfile: vi.fn(),
+            },
+            workload: {
+              source: {
+                kind: "legacy-dockerfile",
+                dockerfilePath: "/workspace/Dockerfile",
+                reason: "agent-not-managed",
+              },
+              release: null,
+              fallbackDiagnostic: null,
+            },
+            prebuildImageRef: null,
+            buildId: "build-1",
+            extractBuiltImageRef: () => {
+              order.push("workload");
+              return "hermes:test";
+            },
+            resolveSandboxImageTagFromCreateOutput: vi.fn(),
+          },
+        },
+        {
+          discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+          restoreRecreatedSandboxState: vi.fn(),
+          getDcodeSelectionDrift: vi.fn(),
+          note: vi.fn(),
+          error: vi.fn(),
+          exitProcess: (code): never => {
+            throw new Error(`unexpected exit ${code}`);
+          },
+          registerCreatedSandbox,
+        },
+      );
+      const created = {
+        createResult: { status: 0, output: "", sawProgress: true },
+        route: "native",
+        firstCreateOutput: "",
+        registryImageRef: null,
+        lifecycleRegistrationFields: { lifecycleGeneration: "generation-1" },
+      } as SandboxGpuCreateFlowResult;
+      const lifecycle = {
+        generation: "generation-1",
+        capture: () => {
+          order.push("lifecycle-capture");
+          return {
+            lifecycleGeneration: "generation-1",
+            lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          };
+        },
+        revalidate: (registration: {
+          lifecycleGeneration: string;
+          lifecycleLiveIdentityFingerprint: string;
+        }) => {
+          order.push("lifecycle-revalidate");
+          return registration;
+        },
+      };
+
+      await completion.complete(
+        created,
+        null,
+        "hermes",
+        manageDashboard,
+        () => ({ lifecycleGeneration: "generation-1" }),
+        lifecycle,
+      );
+
+      expect(order).toEqual([
+        "gpu",
+        ...(manageDashboard ? ["dashboard-release", "dashboard-forward", "dashboard-hermes"] : []),
+        "workload",
+        "lifecycle-capture",
+        "lifecycle-revalidate",
+        "registry",
+      ]);
+      expect(gpuConfig.sandboxGpuProof).toEqual(gpuProof);
+      expect(registerCreatedSandbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          imageTag: "hermes:test",
+          appliedPolicies: ["personal-open-internet"],
+          dashboardPort: manageDashboard ? 8644 : 0,
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        }),
+      );
+    },
+  );
 });

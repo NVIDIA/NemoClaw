@@ -4,7 +4,11 @@
 import { Args } from "@oclif/core";
 import type { AgentDefinition } from "../../../lib/agent/defs";
 import { quietFlag } from "../../../lib/cli/common-flags";
-import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
+import {
+  assertHermesPortableCommandUnavailable,
+  NemoClawCommand,
+  withSandboxCommandLifecycleLock,
+} from "../../../lib/cli/nemoclaw-oclif-command";
 
 import {
   GatewayTokenCommandError,
@@ -129,17 +133,20 @@ export default class GatewayTokenCliCommand extends NemoClawCommand {
       throw err;
     });
 
-    const runtime = getRuntimeBridge();
     try {
-      runGatewayTokenCommand(
-        args.sandboxName,
-        { quiet: flags.quiet === true },
-        {
-          fetchToken: runtime.fetchToken,
-          getSandboxAgent: runtime.getSandboxAgent,
-          agentExposesToken: runtime.agentExposesToken,
-        },
-      );
+      await withSandboxCommandLifecycleLock(args.sandboxName, () => {
+        assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:gateway:token");
+        const runtime = getRuntimeBridge();
+        runGatewayTokenCommand(
+          args.sandboxName,
+          { quiet: flags.quiet === true },
+          {
+            fetchToken: runtime.fetchToken,
+            getSandboxAgent: runtime.getSandboxAgent,
+            agentExposesToken: runtime.agentExposesToken,
+          },
+        );
+      });
       // CodeRabbit #3182: if a prior run() left process.exitCode = 1, a later
       // successful invocation must still report success. Always overwrite.
       this.setExitCode(0);

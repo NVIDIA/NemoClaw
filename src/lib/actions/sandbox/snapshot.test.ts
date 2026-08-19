@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import {
   type DcodeProbeState,
@@ -52,6 +53,85 @@ describe("runSandboxSnapshot", () => {
         .find((args) => args[0] === "sandbox" && args[1] === "exec") ?? [];
     return String(execArgs.at(-1) ?? "");
   }
+
+  it(
+    "rejects schema-5 snapshot creation before Docker or OpenShell work (#9203)",
+    testTimeoutOptions(30_000),
+    async () => {
+      f.assertHermesPortableCommandUnavailableMock.mockImplementation(() => {
+        throw new Error("schema-5 rejected");
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
+
+      await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toThrow(
+        "schema-5 rejected",
+      );
+
+      expect(f.captureOpenshellMock).not.toHaveBeenCalled();
+      expect(f.dockerInspectMock).not.toHaveBeenCalled();
+      expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rechecks schema-5 snapshot authority after the lifecycle lock is acquired (#9203)", async () => {
+    f.assertHermesPortableCommandUnavailableMock
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("schema-5 appeared");
+      });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toThrow(
+      "schema-5 appeared",
+    );
+
+    expect(f.captureOpenshellMock).not.toHaveBeenCalled();
+    expect(f.dockerInspectMock).not.toHaveBeenCalled();
+    expect(f.backupSandboxStateMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects schema-5 snapshot listing inside the lifecycle fence (#9203)", async () => {
+    f.assertHermesPortableCommandUnavailableMock.mockImplementation(() => {
+      throw new Error("schema-5 list rejected");
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "list" })).rejects.toThrow(
+      "schema-5 list rejected",
+    );
+
+    expect(f.listBackupsMock).not.toHaveBeenCalled();
+    expect(f.captureOpenshellMock).not.toHaveBeenCalled();
+    expect(f.dockerInspectMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a schema-5 snapshot restore source or destination before effects (#9203)", async () => {
+    f.assertHermesPortableCommandUnavailableMock.mockImplementation(
+      (sandboxName: string) => {
+        switch (sandboxName) {
+          case "beta":
+            throw new Error("schema-5 destination rejected");
+        }
+      },
+    );
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toThrow("schema-5 destination rejected");
+
+    expect(f.assertHermesPortableCommandUnavailableMock).toHaveBeenCalledWith(
+      "alpha",
+      "sandbox:snapshot:restore",
+    );
+    expect(f.assertHermesPortableCommandUnavailableMock).toHaveBeenCalledWith(
+      "beta",
+      "sandbox:snapshot:restore",
+    );
+    expect(f.captureOpenshellMock).not.toHaveBeenCalled();
+    expect(f.dockerInspectMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
 
   function runProbeScriptWithProcesses(
     script: string,

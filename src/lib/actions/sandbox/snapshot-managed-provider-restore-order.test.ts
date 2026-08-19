@@ -70,6 +70,7 @@ const providerRestore = vi.hoisted(() => {
 });
 
 vi.mock("./snapshot/dependencies", () => ({
+  assertSandboxSnapshotCommandAvailable: vi.fn(),
   backupSandboxStateWithManagedAuthority: vi.fn(),
   captureSandboxRuntimeSnapshot: vi.fn(),
   confirmSandboxRuntimeRestore: providerRestore.confirmSandboxRuntimeRestore,
