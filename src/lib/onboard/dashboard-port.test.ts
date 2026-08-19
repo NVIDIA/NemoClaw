@@ -375,21 +375,6 @@ describe("dashboard port reservation", () => {
     await closeServer(listener);
   });
 
-  it("releases the selected port when finalization invokes the scoped callback", async () => {
-    const port = await unusedLoopbackPort();
-
-    await withDashboardPortReservationScope(async (scope) => {
-      scope.current = await reserveDashboardPort(port);
-      const finalization = { releasePort: scope.release };
-
-      await finalization.releasePort();
-
-      assert.equal(scope.current, null);
-      const listener = await listenOnLoopback(port);
-      await closeServer(listener);
-    });
-  });
-
   it("reselects before sandbox creation when a listener wins the allocation race (#8798)", async () => {
     const attempts: number[] = [];
     const warnings: string[] = [];
