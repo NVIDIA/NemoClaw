@@ -2674,7 +2674,7 @@ def _hold_exact_processes(
     expected_mount_namespace: str,
     activation: ActivationProof | None,
 ) -> None:
-    _supervisor, _start = _prove_fence_shape(fence, expected_mount_namespace)
+    _prove_fence_shape(fence, expected_mount_namespace)
     # PID-namespace init accepts SIGSTOP only from an ancestor PID namespace.
     # The provider must therefore stop the exact persisted runtime through its
     # host-side engine authority before invoking this root helper. Keep the
@@ -3687,7 +3687,7 @@ def _retire_activation_tree(
     marker: dict[str, object], runtime_fd: int, activation: ActivationProof
 ) -> None:
     fence = _fence_from_value(marker["fence"])
-    _supervisor, _start = _prove_fence_shape(fence, str(marker["mountNamespace"]))
+    _prove_fence_shape(fence, str(marker["mountNamespace"]))
     _wait_for_host_stopped_supervisor(fence.supervisor)
     _stop_reference(fence.start)
     for reference in activation.processes:
@@ -3831,9 +3831,7 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
         _fail("activation-marker-invalid")
     _verify_activation_checkpoint(marker, fence, activation)
     _publish_activation_release(durable_fd, marker, fence, activation)
-    _supervisor, _start = _prove_fence_shape(
-        fence, str(marker["mountNamespace"])
-    )
+    _prove_fence_shape(fence, str(marker["mountNamespace"]))
     persistent = set(activation.persistent_pids)
     for reference in activation.processes:
         if _reference_is_terminated(reference):
