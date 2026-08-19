@@ -11,7 +11,6 @@ const MUSE_MERGE_COMMIT = "6adad08767583f52eb4d2122111af0bf638ed5e6";
 const REVISION_FIX_COMMIT = "90984ddbed27a09409506d6d6c0eea87f54b04b5";
 const MODEL_REVISION = "d35cb79050f419c457611b1cee5c5d15b176f285";
 const PIPELINE_ID = "019d130e-464e-4ff7-b84b-492992c0c06b";
-const PIPELINE_URL = "https://buildkite.com/vllm/release-v2/builds/5352";
 
 const EXPECTED_PROVENANCE = {
   schemaVersion: 1,
@@ -43,32 +42,23 @@ const EXPECTED_PROVENANCE = {
     },
   },
   build: {
-    sourceRepository: "https://github.com/vllm-project/vllm",
     sourceRevision: SOURCE_REVISION,
-    sourceRevisionUrl: `https://github.com/vllm-project/vllm/commit/${SOURCE_REVISION}`,
     imageTag: `vllm/vllm-openai:nightly-${SOURCE_REVISION}`,
     pipelineId: PIPELINE_ID,
-    pipelineUrl: PIPELINE_URL,
   },
   upstreamSupport: {
     museMergeCommit: MUSE_MERGE_COMMIT,
-    museMergeCommitUrl: `https://github.com/vllm-project/vllm/commit/${MUSE_MERGE_COMMIT}`,
-    comparisonUrl: `https://github.com/vllm-project/vllm/compare/${MUSE_MERGE_COMMIT}...${SOURCE_REVISION}`,
     relationship: "descendant",
     aheadBy: 173,
     revisionFixCommit: REVISION_FIX_COMMIT,
-    revisionFixCommitUrl: `https://github.com/vllm-project/vllm/commit/${REVISION_FIX_COMMIT}`,
-    revisionFixComparisonUrl: `https://github.com/vllm-project/vllm/compare/${REVISION_FIX_COMMIT}...${SOURCE_REVISION}`,
     revisionFixRelationship: "descendant",
     revisionFixAheadBy: 33,
   },
   reportedLabels: {
     "ai.vllm.build.commit": SOURCE_REVISION,
     "ai.vllm.build.pipeline": PIPELINE_ID,
-    "ai.vllm.build.url": PIPELINE_URL,
     "ai.vllm.image.tag": `vllm/vllm-openai:nightly-${SOURCE_REVISION}`,
     "org.opencontainers.image.revision": SOURCE_REVISION,
-    "org.opencontainers.image.source": "https://github.com/vllm-project/vllm",
   },
   runtimeDependencies: {
     vllmVersion: "0.26.1rc1.dev942+g5a4c8d992",
