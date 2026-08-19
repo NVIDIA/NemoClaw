@@ -12,13 +12,17 @@ export interface ValidationRecoveryPromptDeps {
   exitOnboardFromPrompt(): never;
 }
 
+export type ValidationRecoveryCredentialResult =
+  | { kind: "credential"; value: string }
+  | { kind: "selection" };
+
 export interface ValidationRecoveryPromptHelpers {
   replaceNamedCredential(
     envName: string,
     label: string,
     helpUrl?: string | null,
     validator?: ((value: string) => string | null) | null,
-  ): Promise<string | "selection">;
+  ): Promise<ValidationRecoveryCredentialResult>;
   promptValidationRecovery(
     label: string,
     recovery: ProbeRecovery,
@@ -35,7 +39,7 @@ export function createValidationRecoveryPromptHelpers(
     label: string,
     helpUrl: string | null = null,
     validator: ((value: string) => string | null) | null = null,
-  ): Promise<string | "selection"> {
+  ): Promise<ValidationRecoveryCredentialResult> {
     if (helpUrl) {
       console.log("");
       console.log(`  Get your ${label} from: ${helpUrl}`);
@@ -44,7 +48,7 @@ export function createValidationRecoveryPromptHelpers(
 
     while (true) {
       const intent = getCredentialPromptIntent(await deps.prompt(`  ${label}: `, { secret: true }));
-      if (intent.kind === "back") return "selection";
+      if (intent.kind === "back") return { kind: "selection" };
       if (intent.kind === "exit") deps.exitOnboardFromPrompt();
       if (intent.kind === "help") {
         console.log("  Type back to choose a different provider, or exit to quit.");
@@ -65,7 +69,7 @@ export function createValidationRecoveryPromptHelpers(
       console.log("");
       console.log("  Credential staged. Onboarding will register it with the OpenShell gateway.");
       console.log("");
-      return key;
+      return { kind: "credential", value: key };
     }
   }
 
@@ -116,7 +120,7 @@ export function createValidationRecoveryPromptHelpers(
           helpUrl,
           validator,
         );
-        if (result === "selection") {
+        if (result.kind === "selection") {
           console.log("  Returning to provider selection.");
           console.log("");
           return "selection";
@@ -138,7 +142,7 @@ export function createValidationRecoveryPromptHelpers(
           helpUrl,
           validator,
         );
-        if (result === "selection") {
+        if (result.kind === "selection") {
           console.log("  Returning to provider selection.");
           console.log("");
           return "selection";

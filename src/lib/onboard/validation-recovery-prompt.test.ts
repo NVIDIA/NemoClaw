@@ -43,6 +43,33 @@ describe("validation recovery credential prompt", () => {
     expect(log).toHaveBeenCalledWith("  Returning to provider selection.");
   });
 
+  it("stages selection when the re-entry prompt receives selection as a credential (#9557)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, prompt } = createRecoveryPrompt(["retry", "selection"]);
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).resolves.toBe("credential");
+
+    expect(process.env.OPENAI_API_KEY).toBe("selection");
+    expect(prompt).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns to provider selection from the paste-guard re-entry path (#9557)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, prompt } = createRecoveryPrompt(["sk-pasted", "back"]);
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).resolves.toBe("selection");
+
+    expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith("  Returning to provider selection.");
+  });
+
   it("exits onboarding when the re-entry prompt receives exit (#9557)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "sk-bad");
     vi.spyOn(console, "log").mockImplementation(() => undefined);
