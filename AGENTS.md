@@ -304,7 +304,7 @@ If the command trace contains no reviewer-request write, report the event as an 
 **Adding a network policy preset:**
 
 - Add YAML to `nemoclaw-blueprint/policies/presets/`
-- Follow existing preset structure (see `slack.yaml`, `discord.yaml`)
+- Follow existing preset structure (see `github.yaml`, `brave.yaml`)
 
 **Adding model-specific sandbox compatibility:**
 

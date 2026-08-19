@@ -19,6 +19,7 @@ const AUTHORITY_ID = /^[a-z][a-z0-9-]{0,62}:[A-Za-z0-9._:-]{1,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CDI_QUALIFIED_DEVICE =
   /^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\/[A-Za-z0-9][A-Za-z0-9._-]{0,62}=[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$/u;
+const PRODUCT_QUALIFIED_INFERENCE_AUTHORITY = Symbol("product-qualified-inference-authority");
 
 export interface PodmanHostPreflightReceipt {
   readonly providerId: "podman";
@@ -56,6 +57,18 @@ export interface PodmanHostPreflightOptions {
 export interface PodmanEndpointHostQualificationOptions extends PodmanHostPreflightOptions {
   readonly expectedVersion: string;
   readonly expectedNetworkBackend: string;
+}
+
+export interface PodmanInferenceQualificationOptions {
+  /** Exact server version accepted by a product-specific runtime matrix. */
+  readonly expectedVersion?: string;
+  /**
+   * Fresh authoritative CDI capture for a product-specific runtime matrix
+   * whose Podman release cannot report its inventory through `podman info`.
+   */
+  readonly captureCurrentCdiDevices?: (engine: ContainerEngine) => readonly string[];
+  /** Product-owned authority matrix that must stay current around every qualification. */
+  readonly assertCurrentAuthority?: () => void;
 }
 
 export class PodmanHostPreflightError extends Error {
@@ -392,8 +405,9 @@ function inferenceAuthorityDigest(
   return createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
 }
 
-export function normalizePodmanInferenceAuthorityReceipt(
+function normalizeInferenceAuthorityReceipt(
   value: unknown,
+  minimumVersion: string,
 ): PodmanInferenceAuthorityReceipt {
   const receipt = record(value);
   if (
@@ -408,7 +422,7 @@ export function normalizePodmanInferenceAuthorityReceipt(
     !AUTHORITY_ID.test(receipt.authorityId) ||
     typeof receipt.serverVersion !== "string" ||
     receipt.serverVersion !== receipt.serverVersion.trim() ||
-    !isPodmanVersionSupported(receipt.serverVersion, MINIMUM_PODMAN_INFERENCE_VERSION) ||
+    !isPodmanVersionSupported(receipt.serverVersion, minimumVersion) ||
     receipt.rootless !== true ||
     receipt.cgroupVersion !== "v2" ||
     receipt.os !== "linux" ||
@@ -433,13 +447,51 @@ export function normalizePodmanInferenceAuthorityReceipt(
   return Object.freeze({ ...payload, receiptSha256 });
 }
 
+export function normalizePodmanInferenceAuthorityReceipt(
+  value: unknown,
+): PodmanInferenceAuthorityReceipt {
+  return normalizeInferenceAuthorityReceipt(value, MINIMUM_PODMAN_INFERENCE_VERSION);
+}
+
+export function normalizeQualifiedPodmanInferenceAuthorityReceipt(
+  value: unknown,
+): PodmanInferenceAuthorityReceipt {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { [PRODUCT_QUALIFIED_INFERENCE_AUTHORITY]?: unknown })[
+      PRODUCT_QUALIFIED_INFERENCE_AUTHORITY
+    ] === true
+  ) {
+    return normalizeInferenceAuthorityReceipt(value, MINIMUM_PODMAN_VERSION);
+  }
+  return normalizePodmanInferenceAuthorityReceipt(value);
+}
+
 /** Qualify the exact endpoint's authoritative NVIDIA CDI inventory, including empty. */
 export function qualifyPodmanInferenceAuthority(
   engine: ContainerEngine,
+  options: PodmanInferenceQualificationOptions = {},
 ): PodmanInferenceAuthorityReceipt {
+  options.assertCurrentAuthority?.();
   requireInferenceEngine(engine);
-  const { reportedVersion } = inspectServerVersion(engine, MINIMUM_PODMAN_INFERENCE_VERSION);
+  if (
+    (options.expectedVersion === undefined) !==
+    (options.captureCurrentCdiDevices === undefined)
+  ) {
+    throw new PodmanHostPreflightError(
+      "an exact inference version and CDI inventory must be supplied together",
+    );
+  }
+  const minimumVersion = options.expectedVersion ?? MINIMUM_PODMAN_INFERENCE_VERSION;
+  if (!isPodmanVersionSupported(minimumVersion, MINIMUM_PODMAN_VERSION)) {
+    throw new PodmanHostPreflightError("the exact inference version is unsupported");
+  }
+  const { reportedVersion } = inspectServerVersion(engine, minimumVersion);
   const serverVersion = safeSchemaText(reportedVersion, "Podman server version");
+  if (options.expectedVersion !== undefined && serverVersion !== options.expectedVersion) {
+    throw new PodmanHostPreflightError("the Podman server version changed after qualification");
+  }
   const info = inspectInfo(engine, "CDI inventory inspection");
   const host = record(info.host);
   const architecture = normalizeArchitecture(textField(host, "arch").toLowerCase());
@@ -458,24 +510,48 @@ export function qualifyPodmanInferenceAuthority(
     engine.authorityId,
     serverVersion,
     architecture,
-    exactNvidiaCdiInventory(info),
+    options.captureCurrentCdiDevices === undefined
+      ? exactNvidiaCdiInventory(info)
+      : normalizePodmanCdiInventory(options.captureCurrentCdiDevices(engine)),
   );
-  return Object.freeze({ ...payload, receiptSha256: inferenceAuthorityDigest(payload) });
+  const receipt = { ...payload, receiptSha256: inferenceAuthorityDigest(payload) };
+  if (options.expectedVersion !== undefined) {
+    Object.defineProperty(receipt, PRODUCT_QUALIFIED_INFERENCE_AUTHORITY, { value: true });
+  }
+  options.assertCurrentAuthority?.();
+  return Object.freeze(receipt);
 }
 
 /** Refresh endpoint-native CDI state and reject drift before one mutation. */
 export function revalidatePodmanInferenceAuthority(
   engine: ContainerEngine,
   expected: PodmanInferenceAuthorityReceipt,
+  options: PodmanInferenceQualificationOptions = {},
 ): PodmanInferenceAuthorityReceipt {
   requireInferenceEngine(engine);
-  const normalized = normalizePodmanInferenceAuthorityReceipt(expected);
+  const normalized = normalizeQualifiedPodmanInferenceAuthorityReceipt(expected);
   if (engine.authorityId !== normalized.authorityId) {
     throw new PodmanHostPreflightError(
       "the Podman endpoint authority changed before local-inference mutation",
     );
   }
-  const refreshed = qualifyPodmanInferenceAuthority(engine);
+  const refreshed =
+    options.captureCurrentCdiDevices === undefined &&
+    isPodmanVersionSupported(normalized.serverVersion, MINIMUM_PODMAN_INFERENCE_VERSION)
+      ? qualifyPodmanInferenceAuthority(engine, {
+          assertCurrentAuthority: options.assertCurrentAuthority,
+        })
+      : qualifyPodmanInferenceAuthority(engine, {
+          expectedVersion: normalized.serverVersion,
+          assertCurrentAuthority: options.assertCurrentAuthority,
+          captureCurrentCdiDevices:
+            options.captureCurrentCdiDevices ??
+            (() => {
+              throw new PodmanHostPreflightError(
+                "fresh CDI authority is required to revalidate this Podman release",
+              );
+            }),
+        });
   if (refreshed.receiptSha256 !== normalized.receiptSha256) {
     throw new PodmanHostPreflightError(
       "the Podman server or NVIDIA CDI authority changed before local-inference mutation",

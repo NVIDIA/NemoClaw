@@ -55,6 +55,86 @@ describe("PR review advisor", () => {
     expect(comment.match(/`PRA-1`/g)).toHaveLength(1);
   });
 
+  it("keeps blocker evidence separate from brief refactoring guidance", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        findings: [
+          {
+            severity: "blocker",
+            category: "architecture",
+            file: "src/lib/example.ts",
+            line: 24,
+            title: "Keep one cleanup result path",
+            description: "Cleanup failure has four state representations.",
+            impact: "The removal order is harder to verify.",
+            recommendation: "Preserve one fail-closed result path before removal.",
+            verificationHint: "Inspect the cleanup result at the removal boundary.",
+            missingRegressionTest: "The existing cleanup ordering test covers the boundary.",
+            evidence: "The diff adds a flag, exception, catch branch, and outer result.",
+            simplification: {
+              tag: "shrink",
+              cut: "the flag, exception, helper, catch branch, and repeated completion call",
+              replacement: "the existing cleanup result path",
+              estimatedNetLines: -31,
+              safetyBoundary: "Preserve failure ordering and authority-drift coverage.",
+            },
+          },
+        ],
+      }),
+      metadata(),
+    );
+
+    const comment = buildComment({ summary: renderSummary(result), result });
+    const blockers = comment.indexOf("### Blockers");
+    const refactoring = comment.indexOf("### Recommended refactoring");
+
+    expect(blockers).toBeGreaterThan(-1);
+    expect(refactoring).toBeGreaterThan(blockers);
+    expect(comment.slice(blockers, refactoring)).not.toContain("Simplification (shrink)");
+    expect(comment).toContain(
+      "- **`PRA-1`:** Remove the flag, exception, helper, catch branch, and repeated completion call; use the existing cleanup result path. Net: -31 lines. Keep: Preserve failure ordering and authority-drift coverage.",
+    );
+    expect(comment).toContain(
+      "_Implementation guidance; a fix with equal or lower complexity is acceptable._",
+    );
+    expect(comment.match(/`PRA-1`/g)).toHaveLength(2);
+  });
+
+  it("keeps refactoring guidance within the visible blocker cap", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        findings: Array.from({ length: 21 }, (_, index) => ({
+          severity: "blocker",
+          category: "architecture",
+          file: "src/lib/example.ts",
+          line: index + 1,
+          title: `Blocker ${index + 1}`,
+          description: "The changed path has an unresolved design issue.",
+          impact: "The implementation remains harder to maintain.",
+          recommendation: "Use the existing result path.",
+          ...(index === 20
+            ? {
+                simplification: {
+                  tag: "shrink",
+                  cut: "the extra state path",
+                  replacement: "the existing result path",
+                  estimatedNetLines: -12,
+                  safetyBoundary: "Preserve cleanup ordering.",
+                },
+              }
+            : {}),
+        })),
+      }),
+      metadata(),
+    );
+
+    const comment = buildComment({ summary: renderSummary(result), result });
+
+    expect(comment).toContain("#### `PRA-20` Blocker — Blocker 20");
+    expect(comment).not.toContain("`PRA-21`");
+    expect(comment).not.toContain("### Recommended refactoring");
+  });
+
   it("keeps warning-only reviews non-blocking without synthetic test tasks", () => {
     const result = normalizeReviewResult(
       validResult({
