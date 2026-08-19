@@ -406,6 +406,54 @@ describe("preparePortableExperimentalHost", () => {
     );
   });
 
+  it("retries registry startup by reusing the portable alias and network (#9461)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result()) // first --version probe
+      .mockReturnValueOnce(result(1)) // first network inspect: absent
+      .mockReturnValueOnce(result()) // network create
+      .mockReturnValueOnce(result(1)) // first registry inspect: absent
+      .mockReturnValueOnce(result(1, "registry startup failed")) // first registry run
+      .mockReturnValueOnce(result()) // retry --version probe
+      .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }]))) // retry network inspect: reuse
+      .mockReturnValueOnce(result(1)) // retry registry inspect: absent
+      .mockReturnValueOnce(result()); // retry registry run
+    const ip = vi.fn(() =>
+      result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`),
+    );
+    const sudo = vi.fn(() => result());
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    const deps = portablePreparationDeps(home, docker, { ip, sudo });
+
+    expect(() =>
+      preparePortableExperimentalHost(env, deps, undefined, {
+        simulateExistingPortableNetwork: false,
+      }),
+    ).toThrow(/Starting the managed portable registry failed/u);
+
+    preparePortableExperimentalHost(env, deps, undefined, {
+      simulateExistingPortableNetwork: false,
+    });
+
+    const commands = docker.mock.calls.map(([args]) => args);
+    expect(commands.filter(([command]) => command === "network")).toEqual([
+      ["network", "inspect", "--format", "{{json .IPAM.Config}}", PORTABLE_DOCKER_NETWORK_NAME],
+      [
+        "network",
+        "create",
+        "--subnet",
+        PORTABLE_DOCKER_NETWORK_SUBNET,
+        PORTABLE_DOCKER_NETWORK_NAME,
+      ],
+      ["network", "inspect", "--format", "{{json .IPAM.Config}}", PORTABLE_DOCKER_NETWORK_NAME],
+    ]);
+    expect(commands.filter(([command]) => command === "run")).toHaveLength(2);
+    expect(ip).toHaveBeenCalledTimes(2);
+    expect(sudo).not.toHaveBeenCalled();
+  });
+
   it("configures and verifies the portable gateway loopback alias before registry mutation (#9461)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
