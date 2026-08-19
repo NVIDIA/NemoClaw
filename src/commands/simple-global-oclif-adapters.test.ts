@@ -342,9 +342,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
     );
     expect(mocks.resolveDefaultSandboxName).toHaveBeenCalledWith(expect.any(Function));
-    expect(mocks.showStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ sandboxName: "resolved-sandbox" }),
-    );
+    expect(mocks.showStatus).toHaveBeenCalledWith({ sandboxName: "resolved-sandbox" });
     expect(mocks.runStopCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), stopAll: mocks.stopAll }),
     );
