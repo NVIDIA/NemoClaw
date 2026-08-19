@@ -116,6 +116,10 @@ export function formatOnboardConfigSummary({
   const profileLines = servingProfileProvenance
     ? [
         `  Profile:       ${servingProfileProvenance.preset.displayName} (${servingProfileProvenance.preset.id})`,
+        // `profiles list` reports the recipe's model id, while the Model line
+        // above shows the served alias the endpoint reports. Recipes that pin a
+        // different alias made the two outputs impossible to compare (#9563).
+        `  Profile model: ${servingProfileProvenance.model.id}`,
         `  Recipe:        ${servingProfileProvenance.recipe.id}`,
         `  Support:       ${servingProfileProvenance.preset.supportState}`,
         `  Runtime image: ${servingProfileProvenance.runtimeImage ?? "(not declared)"}`,
