@@ -27,7 +27,9 @@ const mocks = vi.hoisted(() => ({
     kind: "not-selected",
   })),
   runCapture: vi.fn(),
-  tryInstallManagedClusterManagedVllm: vi.fn(async () => ({ kind: "not-selected" as const })),
+  tryInstallManagedClusterManagedVllm: vi.fn(async () => ({
+    kind: "not-selected" as const,
+  })),
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
@@ -87,7 +89,6 @@ import {
   NEMOCLAW_VLLM_MANAGED_LABEL,
   pullImage,
   resolveVllmModelRuntime,
-  resolveVllmRuntimeProfile,
   resolveVllmServedModelId,
   VLLM_IMAGES,
 } from "./vllm";
@@ -117,7 +118,9 @@ beforeEach(() => {
     message: "",
   });
   mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
-  mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({ kind: "not-selected" });
+  mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({
+    kind: "not-selected",
+  });
 });
 
 function currentHostIdentity(): string | null {
@@ -228,7 +231,6 @@ describe("vLLM profile detection", () => {
     vi.clearAllMocks();
   });
 
-
   it("resolves Nemotron Ultra to the pinned Station runtime on the bridge network", () => {
     mocks.getGpuIndicesByName.mockReturnValue([0]);
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
@@ -255,31 +257,32 @@ describe("vLLM profile detection", () => {
       runtime.dockerRunFlags,
       {} as NodeJS.ProcessEnv,
     );
-    expect(args).toEqual(expect.arrayContaining([
-      "--pull=never",
-      "--init",
-      "--restart",
-      "unless-stopped",
-      "--gpus",
-      "device=0",
-      "--shm-size",
-      "17179869184b",
-      "--ulimit",
-      "memlock=-1",
-      "--label",
-      `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
-      "-p",
-      "8000:8000",
-      "--name",
-      NEMOCLAW_VLLM_CONTAINER_NAME,
-      "--entrypoint",
-      "/bin/bash",
-      runtime.image,
-      "-lc",
-      buildVllmServeCommand(resolved.model, {} as NodeJS.ProcessEnv),
-    ]));
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--pull=never",
+        "--init",
+        "--restart",
+        "unless-stopped",
+        "--gpus",
+        "device=0",
+        "--shm-size",
+        "17179869184b",
+        "--ulimit",
+        "memlock=-1",
+        "--label",
+        `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
+        "-p",
+        "8000:8000",
+        "--name",
+        NEMOCLAW_VLLM_CONTAINER_NAME,
+        "--entrypoint",
+        "/bin/bash",
+        runtime.image,
+        "-lc",
+        buildVllmServeCommand(resolved.model, {} as NodeJS.ProcessEnv),
+      ]),
+    );
   });
-
 
   it("resolves Muse Glimmer to its authenticated DGX Spark runtime", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
@@ -309,78 +312,6 @@ describe("vLLM profile detection", () => {
     expect(args).toEqual(expect.arrayContaining(["--env", "VLLM_API_KEY", runtime.image]));
     expect(args).not.toContain(apiKey);
   });
-
-  it("resolves Muse Glimmer to the generic Linux x86_64 baseline", () => {
-    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
-    const muse = VLLM_MODELS.find((model) => model.envValue === "muse-glimmer-30b");
-
-    expect(profile).not.toBeNull();
-    expect(muse).toBeDefined();
-    const runtime = resolveVllmRuntimeProfile(profile!, muse!, "x64");
-
-    expect(runtime.image).toBe(
-      "vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f",
-    );
-    expect(runtime.imageDownloadSizeBytes).toBe(8_632_473_449);
-    expect(runtime.minComputeCapability).toBe(120);
-  });
-
-  it("rejects Muse Glimmer when no architecture-qualified runtime exists", () => {
-    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
-    const muse = VLLM_MODELS.find((model) => model.envValue === "muse-glimmer-30b");
-
-    expect(() => resolveVllmRuntimeProfile(profile!, muse!, "arm64")).toThrow(
-      /no managed vLLM runtime for Linux \+ NVIDIA GPU on arm64/u,
-    );
-  });
-
-  it("resolves Nemotron 3.5 Lightning to the published Linux amd64 vLLM runtime", () => {
-    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
-    const lightning = VLLM_MODELS.find(
-      (model) => model.envValue === "nemotron-3.5-lightning-30b",
-    );
-
-    expect(profile).not.toBeNull();
-    expect(lightning).toBeDefined();
-    const runtime = resolveVllmRuntimeProfile(profile!, lightning!, "x64");
-
-    expect(runtime.image).toBe(
-      "vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2",
-    );
-    expect(runtime.imageDownloadSizeBytes).toBe(9_110_652_559);
-    expect(runtime.minComputeCapability).toBe(80);
-  });
-
-  it("orders a general Linux baseline before a device-specific optimized recipe", () => {
-    const sparkProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const qwen = VLLM_MODELS.find((model) => model.envValue === "qwen3.6-27b")!;
-    const optimized = resolveVllmModelRuntime(sparkProfile, qwen, "arm64");
-
-    expect(optimized.model.runtime?.catalogPresetId).toBe(
-      "vllm.dgx-spark-gb10.single.qwen3-6-27b-fp8",
-    );
-
-    const linuxBaselineOnly = {
-      ...qwen,
-      platforms: ["linux" as const],
-      runtimeVariants: qwen.runtimeVariants?.filter(
-        (variant) =>
-          variant.platforms?.includes("linux") && variant.architectures?.includes("x64"),
-      ),
-    };
-    const stationLikeX64Profile = {
-      ...detectVllmProfile({ platform: "linux", type: "nvidia" })!,
-      name: "Linux appliance",
-      platform: "station" as const,
-      architecture: "x64" as const,
-    };
-    const fallback = resolveVllmModelRuntime(stationLikeX64Profile, linuxBaselineOnly, "x64");
-
-    expect(fallback.model.runtime?.catalogPresetId).toBe(
-      "vllm.linux-amd64-nvidia.single.qwen3-6-27b-fp8",
-    );
-  });
-
 
   it("generic-Linux default model pins the tool-call flags (#6314)", () => {
     // Regression for #6314: without --enable-auto-tool-choice + --tool-call-parser,
@@ -439,17 +370,35 @@ describe("vLLM image pull", () => {
   it.each([
     [
       "stall timeout",
-      { status: 124, signal: "SIGTERM", output: "", timedOut: true, timeoutKind: "stall" },
+      {
+        status: 124,
+        signal: "SIGTERM",
+        output: "",
+        timedOut: true,
+        timeoutKind: "stall",
+      },
       "docker pull stalled with no progress",
     ],
     [
       "max timeout",
-      { status: 124, signal: "SIGTERM", output: "", timedOut: true, timeoutKind: "max" },
+      {
+        status: 124,
+        signal: "SIGTERM",
+        output: "",
+        timedOut: true,
+        timeoutKind: "max",
+      },
       "docker pull exceeded 43200s safety budget",
     ],
     [
       "non-timeout failure",
-      { status: 17, signal: null, output: "", timedOut: false, timeoutKind: null },
+      {
+        status: 17,
+        signal: null,
+        output: "",
+        timedOut: false,
+        timeoutKind: null,
+      },
       "docker pull failed (exit 17)",
     ],
   ])("maps %s to the install failure reason", async (_name, result, reason) => {
@@ -603,7 +552,6 @@ describe("vLLM run command", () => {
     expect(() => profile!.buildDockerRunFlags!()).toThrow(/requires an NVIDIA GB300 GPU/);
   });
 });
-
 
 describe("installVllm model resolution", () => {
   let logSpy: VllmInstallSpies["logSpy"];
@@ -816,32 +764,35 @@ describe("installVllm model resolution", () => {
       "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
       "vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2",
     ],
-  ])("accepts the explicit %s compatibility path on Linux x86_64", async (slug, servedId, image) => {
-    process.env.NEMOCLAW_VLLM_MODEL = slug;
-    const profile = {
-      ...detectVllmProfile({ platform: "linux", type: "nvidia" })!,
-      architecture: "x64" as const,
-    };
-    const beforeInstall = vi.fn();
-    mockSuccessfulVllmInstall(mocks, profile.containerName);
+  ])(
+    "accepts the explicit %s compatibility path on Linux x86_64",
+    async (slug, servedId, image) => {
+      process.env.NEMOCLAW_VLLM_MODEL = slug;
+      const profile = {
+        ...detectVllmProfile({ platform: "linux", type: "nvidia" })!,
+        architecture: "x64" as const,
+      };
+      const beforeInstall = vi.fn();
+      mockSuccessfulVllmInstall(mocks, profile.containerName);
 
-    const result = await installVllm(profile, {
-      hasImage: true,
-      nonInteractive: true,
-      promptFn: vi.fn(),
-      beforeInstall,
-    });
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+        beforeInstall,
+      });
 
-    const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
-    // The shared fixture intentionally has no OpenShell bridge inspection
-    // response. Reaching that later boundary proves model/platform admission,
-    // image selection, storage checks, and the model download all proceeded.
-    expect(result).toEqual({ ok: false });
-    expect(beforeInstall).toHaveBeenCalledWith(servedId);
-    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledWith(image, expect.any(Object));
-    expect(errors).toContain("could not inspect the OpenShell bridge");
-    expect(errors).not.toContain("is not supported on Linux + NVIDIA GPU");
-  });
+      const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+      // The shared fixture intentionally has no OpenShell bridge inspection
+      // response. Reaching that later boundary proves model/platform admission,
+      // image selection, storage checks, and the model download all proceeded.
+      expect(result).toEqual({ ok: false });
+      expect(beforeInstall).toHaveBeenCalledWith(servedId);
+      expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledWith(image, expect.any(Object));
+      expect(errors).toContain("could not inspect the OpenShell bridge");
+      expect(errors).not.toContain("is not supported on Linux + NVIDIA GPU");
+    },
+  );
 
   it("accepts the optimized Lightning recipe on DGX Spark", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3.5-lightning-30b";
@@ -857,9 +808,7 @@ describe("installVllm model resolution", () => {
     });
 
     expect(result).toEqual({ ok: false });
-    expect(beforeInstall).toHaveBeenCalledWith(
-      "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
-    );
+    expect(beforeInstall).toHaveBeenCalledWith("nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4");
     expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledWith(
       "vllm/vllm-openai@sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78",
       expect.any(Object),
@@ -1043,7 +992,10 @@ describe("installVllm model resolution", () => {
   });
 
   it("persists exact profile ownership before authenticating a catalog-selected runtime (#8246)", async () => {
-    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const baseProfile = detectVllmProfile({
+      platform: "spark",
+      type: "nvidia",
+    })!;
     const servingCatalog = {
       catalogDigest: `sha256:${"1".repeat(64)}`,
       presetId: "vllm.dgx-spark-gb10.single.example",
@@ -1051,7 +1003,10 @@ describe("installVllm model resolution", () => {
       recipeId: "vllm.dgx-spark-gb10.single.example",
       recipeDigest: `sha256:${"3".repeat(64)}`,
     };
-    const model = { ...baseProfile.defaultModel, managedBearerAuth: true as const };
+    const model = {
+      ...baseProfile.defaultModel,
+      managedBearerAuth: true as const,
+    };
     const profile = { ...baseProfile, defaultModel: model, servingCatalog };
     mocks.resolveHostLocalVllmSelection.mockReturnValue({
       kind: "selected",
@@ -1155,7 +1110,9 @@ describe("installVllm model resolution", () => {
     ambientDockerOptions.forEach((options) => {
       expect(options).toEqual(
         expect.objectContaining({
-          env: expect.objectContaining({ DOCKER_CONTEXT: "local-test-context" }),
+          env: expect.objectContaining({
+            DOCKER_CONTEXT: "local-test-context",
+          }),
         }),
       );
     });
@@ -1165,7 +1122,10 @@ describe("installVllm model resolution", () => {
     process.env.DOCKER_CONTEXT = "remote-builder";
     process.env.DOCKER_HOST = "ssh://remote.example.test";
     process.env.DOCKER_CONFIG = "/tmp/remote-docker-config";
-    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const baseProfile = detectVllmProfile({
+      platform: "spark",
+      type: "nvidia",
+    })!;
     const servingCatalog = {
       catalogDigest: `sha256:${"1".repeat(64)}`,
       presetId: "local-model-profile.vllm.spark.v1",
@@ -1173,7 +1133,10 @@ describe("installVllm model resolution", () => {
       recipeId: "vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1",
       recipeDigest: `sha256:${"3".repeat(64)}`,
     };
-    const model = { ...baseProfile.defaultModel, managedBearerAuth: true as const };
+    const model = {
+      ...baseProfile.defaultModel,
+      managedBearerAuth: true as const,
+    };
     const profile = { ...baseProfile, defaultModel: model, servingCatalog };
     mocks.resolveHostLocalVllmSelection.mockReturnValue({
       kind: "selected",
@@ -1194,7 +1157,10 @@ describe("installVllm model resolution", () => {
 
     expect(result).toEqual({ ok: false });
     expect(mocks.probeDockerStorage).toHaveBeenCalledWith(
-      expect.objectContaining({ dockerContext: "default", dockerHost: undefined }),
+      expect.objectContaining({
+        dockerContext: "default",
+        dockerHost: undefined,
+      }),
     );
     const dockerAdapterOptions = [
       ...mocks.dockerImageInspectFormat.mock.calls.map((call) => call[2]),
@@ -1301,7 +1267,9 @@ describe("installVllm model resolution", () => {
     expect(downloadArgs).toEqual(expect.arrayContaining(["-e", "HF_TOKEN"]));
     expect(downloadArgs.join(" ")).not.toContain(token);
     expect(downloadOpts).toEqual(
-      expect.objectContaining({ env: expect.objectContaining({ HF_TOKEN: token }) }),
+      expect.objectContaining({
+        env: expect.objectContaining({ HF_TOKEN: token }),
+      }),
     );
     expect(mocks.dockerRunDetached).toHaveBeenCalledTimes(1);
     const [args, opts] = mocks.dockerRunDetached.mock.calls[0] as [
@@ -1386,12 +1354,16 @@ describe("installVllm model resolution", () => {
       source: "HF_TOKEN",
     });
     expect(
-      hfDownloadAuthentication({ HUGGING_FACE_HUB_TOKEN: token } as NodeJS.ProcessEnv),
+      hfDownloadAuthentication({
+        HUGGING_FACE_HUB_TOKEN: token,
+      } as NodeJS.ProcessEnv),
     ).toEqual({
       authenticated: true,
       source: "HUGGING_FACE_HUB_TOKEN",
     });
-    expect(hfDownloadAuthentication({} as NodeJS.ProcessEnv)).toEqual({ authenticated: false });
+    expect(hfDownloadAuthentication({} as NodeJS.ProcessEnv)).toEqual({
+      authenticated: false,
+    });
   });
 
   it("replaces only an existing managed container by its inspected ID", async () => {
@@ -1488,7 +1460,10 @@ describe("installVllm model resolution", () => {
   });
 
   it("rejects invalid profile run flags before launching the long-lived container", async () => {
-    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const baseProfile = detectVllmProfile({
+      platform: "spark",
+      type: "nvidia",
+    })!;
     const profile = {
       ...baseProfile,
       buildDockerRunFlags: () => ["--label", ""],

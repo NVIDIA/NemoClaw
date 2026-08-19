@@ -40,16 +40,25 @@ describe("vllm model registry", () => {
       activeHostLocalPresets.length,
     );
     expect(new Set(VLLM_MODELS.map((model) => model.envValue)).size).toBe(VLLM_MODELS.length);
-    for (const model of VLLM_MODELS) {
-      expect(model.capabilities).toMatchObject({ chatCompletions: true, toolCalls: true });
-      expect(model.probePolicyRef).toMatch(/^nvidia\.endpoint-validation\./u);
-      expect(model.runtimeVariants?.length).toBeGreaterThan(0);
-      for (const variant of model.runtimeVariants ?? []) {
-        expect(variant.catalogPresetId).toMatch(/^vllm\./u);
-        expect(variant.platforms).toHaveLength(1);
-        expect(variant.architectures).toHaveLength(1);
-      }
-    }
+  });
+
+  it.each(VLLM_MODELS)("derives capabilities and probe policy for $envValue", (model) => {
+    expect(model.capabilities).toMatchObject({
+      chatCompletions: true,
+      toolCalls: true,
+    });
+    expect(model.probePolicyRef).toMatch(/^nvidia\.endpoint-validation\./u);
+    expect(model.runtimeVariants?.length).toBeGreaterThan(0);
+  });
+
+  it.each(
+    VLLM_MODELS.flatMap((model) =>
+      (model.runtimeVariants ?? []).map((variant) => [model.envValue, variant] as const),
+    ),
+  )("derives a qualified catalog runtime for %s [case %#]", (_model, variant) => {
+    expect(variant.catalogPresetId).toMatch(/^vllm\./u);
+    expect(variant.platforms).toHaveLength(1);
+    expect(variant.architectures).toHaveLength(1);
   });
 
   it("discovers special orchestration and probe behavior through catalog references", () => {
@@ -63,23 +72,23 @@ describe("vllm model registry", () => {
       expect.arrayContaining([
         expect.objectContaining({
           orchestrationRef: STATION_PAIR_OPTIONAL_ORCHESTRATION,
-          stationPair: expect.objectContaining({ nodeCount: 2, pipelineParallelSize: 2 }),
+          stationPair: expect.objectContaining({
+            nodeCount: 2,
+            pipelineParallelSize: 2,
+          }),
         }),
       ]),
     );
     expect(vllmProbePolicyForModel("deepseek-ai/deepseek-v4-flash")).toBe(
       "nvidia.endpoint-validation.extended/v1",
     );
-    expect(vllmProbePolicyForModel("unknown/model")).toBe(
-      "nvidia.endpoint-validation.standard/v1",
-    );
+    expect(vllmProbePolicyForModel("unknown/model")).toBe("nvidia.endpoint-validation.standard/v1");
   });
 
   it("adds a model through catalog data without a TypeScript registry edit", () => {
     const catalog = loadManagedInferenceCatalog();
     const sourceRecipe = catalog.recipes.find(
-      ({ metadata }) =>
-        metadata.id === "vllm.nemotron-3-nano-4b-fp8.linux-amd64-single.v1",
+      ({ metadata }) => metadata.id === "vllm.nemotron-3-nano-4b-fp8.linux-amd64-single.v1",
     ) as HostLocalInferenceServingRecipe;
     const sourcePreset = catalog.presets.find(
       ({ spec }) => spec.plan.recipeRef === sourceRecipe.metadata.id,
@@ -87,7 +96,11 @@ describe("vllm model registry", () => {
     const recipeId = "vllm.catalog-only-test-model.linux-amd64-single.v1";
     const addedRecipe: HostLocalInferenceServingRecipe = {
       ...sourceRecipe,
-      metadata: { ...sourceRecipe.metadata, id: recipeId, displayName: "Catalog-only test model" },
+      metadata: {
+        ...sourceRecipe.metadata,
+        id: recipeId,
+        displayName: "Catalog-only test model",
+      },
       spec: {
         ...sourceRecipe.spec,
         model: {
@@ -98,7 +111,10 @@ describe("vllm model registry", () => {
           menuOrder: 999,
           servedName: "catalog-only-model",
         },
-        readiness: { ...sourceRecipe.spec.readiness, expectedModel: "catalog-only-model" },
+        readiness: {
+          ...sourceRecipe.spec.readiness,
+          expectedModel: "catalog-only-model",
+        },
       },
     };
     const addedPreset = {
@@ -337,25 +353,35 @@ describe("vllm model registry", () => {
 
   it("rejects an unknown NEMOCLAW_VLLM_MODEL with a helpful message", () => {
     expect(() =>
-      selectVllmModelFromEnv({ NEMOCLAW_VLLM_MODEL: "made-up-model" } as NodeJS.ProcessEnv),
+      selectVllmModelFromEnv({
+        NEMOCLAW_VLLM_MODEL: "made-up-model",
+      } as NodeJS.ProcessEnv),
     ).toThrow(/Unknown NEMOCLAW_VLLM_MODEL='made-up-model'/);
   });
 
   it("treats an empty NEMOCLAW_VLLM_MODEL the same as unset", () => {
-    expect(selectVllmModelFromEnv({ NEMOCLAW_VLLM_MODEL: "   " } as NodeJS.ProcessEnv)).toBeNull();
+    expect(
+      selectVllmModelFromEnv({
+        NEMOCLAW_VLLM_MODEL: "   ",
+      } as NodeJS.ProcessEnv),
+    ).toBeNull();
   });
 
   it("passes the gated check when HF_TOKEN is present", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
     expect(() =>
-      assertGatedModelAccess(deepseek!, { HF_TOKEN: "hf_abc" } as NodeJS.ProcessEnv),
+      assertGatedModelAccess(deepseek!, {
+        HF_TOKEN: "hf_abc",
+      } as NodeJS.ProcessEnv),
     ).not.toThrow();
   });
 
   it("accepts HUGGING_FACE_HUB_TOKEN as an equivalent token", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
     expect(() =>
-      assertGatedModelAccess(deepseek!, { HUGGING_FACE_HUB_TOKEN: "hf_abc" } as NodeJS.ProcessEnv),
+      assertGatedModelAccess(deepseek!, {
+        HUGGING_FACE_HUB_TOKEN: "hf_abc",
+      } as NodeJS.ProcessEnv),
     ).not.toThrow();
   });
 
@@ -609,9 +635,7 @@ describe("vllm model registry", () => {
   });
 
   it("uses the published hardware-neutral parser baseline for Lightning on Linux", () => {
-    const lightning = VLLM_MODELS.find(
-      (model) => model.envValue === "nemotron-3.5-lightning-30b",
-    );
+    const lightning = VLLM_MODELS.find((model) => model.envValue === "nemotron-3.5-lightning-30b");
 
     expect(lightning).toMatchObject({
       id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
@@ -682,9 +706,11 @@ describe("modelsForPlatform", () => {
 describe("parseVllmExtraServeArgs", () => {
   it("returns no extra args when the env var is unset or blank", () => {
     expect(parseVllmExtraServeArgs({} as NodeJS.ProcessEnv)).toEqual([]);
-    expect(parseVllmExtraServeArgs({ [VLLM_EXTRA_ARGS_ENV]: "  " } as NodeJS.ProcessEnv)).toEqual(
-      [],
-    );
+    expect(
+      parseVllmExtraServeArgs({
+        [VLLM_EXTRA_ARGS_ENV]: "  ",
+      } as NodeJS.ProcessEnv),
+    ).toEqual([]);
   });
 
   it("parses a JSON array of extra vLLM serve argument tokens", () => {
@@ -724,12 +750,16 @@ describe("parseVllmExtraServeArgs", () => {
 
 describe("preflightVllmModelEnv", () => {
   it("succeeds when NEMOCLAW_VLLM_MODEL is unset", () => {
-    expect(preflightVllmModelEnv({} as NodeJS.ProcessEnv)).toEqual({ ok: true });
+    expect(preflightVllmModelEnv({} as NodeJS.ProcessEnv)).toEqual({
+      ok: true,
+    });
   });
 
   it("succeeds for a recognised non-gated slug", () => {
     expect(
-      preflightVllmModelEnv({ NEMOCLAW_VLLM_MODEL: "qwen3.6-27b" } as NodeJS.ProcessEnv),
+      preflightVllmModelEnv({
+        NEMOCLAW_VLLM_MODEL: "qwen3.6-27b",
+      } as NodeJS.ProcessEnv),
     ).toEqual({ ok: true });
   });
 
