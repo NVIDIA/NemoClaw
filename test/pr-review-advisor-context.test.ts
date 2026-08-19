@@ -147,6 +147,12 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "Report all currently visible, evidence-backed recommendations in this stage's single ledger batch",
     );
     expect(investigate?.prompt).toContain("rescan the resulting design");
+    expect(investigate?.prompt).toContain(
+      "A design finding does not require a runtime failure when the current code proves that cost",
+    );
+    expect(investigate?.prompt).toContain(
+      "classify the finding as blocker instead of downgrading it because behavior passes",
+    );
     expect(investigate?.prompt).toContain("Never simplify away trust-boundary validation");
     expect(investigate?.prompt).not.toContain("<pr_review_advisor_json>");
     expect(turns.every((turn) => !turn.prompt.includes(poisonedDiff))).toBe(true);
@@ -175,6 +181,13 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(challenge?.prompt).toContain("Turn 2/2 — challenge-and-record");
     expect(challenge?.prompt).toContain("Challenge the investigation receipt before recording");
     expect(challenge?.prompt).toContain("Then dedupe");
+    expect(challenge?.prompt).toContain(
+      "Do not remove a design finding because behavior passes",
+    );
+    expect(challenge?.prompt).toContain("If the author should change the PR before merge");
+    expect(challenge?.prompt).toContain(
+      "hypothetical future failures without a present defect",
+    );
     expect(challenge?.prompt).toContain("Then batch-record in this exact sequence");
     expect(challenge?.prompt.indexOf("record_findings")).toBeLessThan(
       challenge?.prompt.indexOf("record_review_receipt") ?? -1,

@@ -113,6 +113,35 @@ describe("PR review advisor writing guides", () => {
     expect(prompt).toContain("suggestion renders as 'Suggestion'");
   });
 
+  it("treats material present design defects as blockers", () => {
+    const prompt = buildSystemPrompt();
+
+    expect(prompt).toContain(
+      "present behavioral, security, scope, or material codebase-design defect",
+    );
+    expect(prompt).toContain(
+      "If a finding asks the author to change code before merge, classify it as blocker",
+    );
+    expect(prompt).toContain(
+      "Passing tests or currently matching outputs do not downgrade duplicated authority",
+    );
+    expect(prompt).toContain("basis.kind=unnecessary_complexity");
+    expect(prompt).toContain("does not require an externally visible behavior failure");
+    expect(prompt).toContain(
+      "Requiring synchronized edits to two current implementations of one contract is a present defect",
+    );
+    expect(prompt).toContain("a raw line count by itself");
+    expect(prompt).toContain("mere open-PR overlap or merge coordination");
+    expect(prompt).toContain("the refreshed base already contains equivalent behavior");
+    expect(prompt).toContain(
+      "missing that authorization is a current scope defect, not template noncompliance",
+    );
+    expect(prompt).toContain("Duplicated test setup, parallel test owners");
+    expect(prompt).toContain(
+      "Preserve semantic regression coverage and necessary boundary evidence",
+    );
+  });
+
   it("documents the same-session conversation contract", () => {
     const prompt = buildSystemPrompt();
 
