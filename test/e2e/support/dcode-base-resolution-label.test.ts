@@ -184,4 +184,12 @@ describe("Deep Agents Code managed-image base resolution label", () => {
       /inspected source revision is missing/u,
     );
   });
+
+  it("rejects a base below the declared minimum glibc version (#9386)", () => {
+    dockerOutputs.set("run --rm", "glibc 2.38");
+
+    expect(() => exportDcodeBaseResolutionLabel(exporterArguments())).toThrow(
+      /glibc version is below the required minimum/u,
+    );
+  });
 });
