@@ -555,7 +555,7 @@ function preflightHermesToolGatewayCloneBinding(sandboxName) {
   }
 
   const pid = readPid();
-  const currentBrokerOwned = isHermesToolGatewayBrokerProcess(pid);
+  const currentBrokerOwned = isHermesToolGatewayBrokerPortOwner(pid);
   const currentBrokerHealthy = isHermesToolGatewayBrokerHealthy();
   if (currentBrokerHealthy && !currentBrokerOwned) {
     throw new Error("Hermes managed-tool broker health endpoint is not owned by NemoClaw");
@@ -650,6 +650,16 @@ function isHermesToolGatewayBrokerProcess(pid) {
   return Boolean(cmdline && cmdline.includes("tool-gateway-broker.ts"));
 }
 
+function isHermesToolGatewayBrokerPortOwner(pid) {
+  if (!isHermesToolGatewayBrokerProcess(pid)) return false;
+  const listenerPids = runCapture(["lsof", "-ti", `:${HERMES_TOOL_GATEWAY_PORT}`, "-sTCP:LISTEN"], {
+    ignoreError: true,
+  })
+    .split(/\r?\n/u)
+    .map((line) => Number.parseInt(line.trim(), 10));
+  return listenerPids.includes(pid);
+}
+
 function isHermesToolGatewayBrokerHealthy() {
   const result = run(
     [
@@ -738,7 +748,7 @@ function ensureHermesToolGatewayBroker(options = {}) {
   const desiredHash = brokerRuntimeHash();
   const hashMatches = readBrokerHash() === desiredHash;
   const pid = readPid();
-  const currentBrokerOwned = isHermesToolGatewayBrokerProcess(pid);
+  const currentBrokerOwned = isHermesToolGatewayBrokerPortOwner(pid);
   const brokerHealthy = isHermesToolGatewayBrokerHealthy();
   const currentBrokerHealthy = currentBrokerOwned && brokerHealthy;
   // `/health` is unauthenticated on a fixed port, so reachability proves
@@ -763,7 +773,7 @@ function ensureHermesToolGatewayBroker(options = {}) {
     const nextPid = spawnHermesToolGatewayBroker("");
     for (let attempt = 0; attempt < 20; attempt++) {
       if (
-        isHermesToolGatewayBrokerProcess(nextPid) &&
+        isHermesToolGatewayBrokerPortOwner(nextPid) &&
         isHermesToolGatewayBrokerHealthy() &&
         fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH)
       ) {
@@ -800,7 +810,7 @@ function ensureHermesToolGatewayBroker(options = {}) {
     const nextPid = spawnHermesToolGatewayBroker(refreshToken, options.sandboxName ?? null);
     for (let attempt = 0; attempt < 20; attempt++) {
       if (
-        isHermesToolGatewayBrokerProcess(nextPid) &&
+        isHermesToolGatewayBrokerPortOwner(nextPid) &&
         isHermesToolGatewayBrokerHealthy() &&
         registerHermesToolGatewayRuntimeCredential(refreshToken, options.sandboxName ?? null)
       ) {
@@ -909,6 +919,7 @@ module.exports = {
   discardHermesToolGatewayCloneBinding,
   bindHermesToolGatewayCloneProviderState,
   planHermesToolGatewayBrokerRefresh,
+  brokerRuntimeHash,
   isHermesToolGatewayBrokerHealthy,
   killStaleHermesToolGatewayBroker,
   ensureHermesToolGatewayBroker,

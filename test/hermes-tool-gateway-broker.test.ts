@@ -13,7 +13,12 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { vi } from "vitest";
 import { handleHermesBrokerCoexistencePortal } from "./helpers/hermes-tool-gateway-broker-fixture";
-import { describe, expect, test as it } from "./helpers/owned-test-resources";
+import {
+  describe,
+  expect,
+  type OwnedTestResources,
+  test as it,
+} from "./helpers/owned-test-resources";
 import { testTimeout } from "./helpers/timeouts";
 
 const SCRIPT = path.join(
@@ -71,6 +76,102 @@ function listen(server: http.Server): Promise<number> {
       resolve(typeof address === "object" && address ? address.port : 0);
     });
   });
+}
+
+async function startForeignHealthListener(
+  resources: OwnedTestResources,
+  port: number,
+): Promise<ChildProcess> {
+  const source = [
+    'const http = require("node:http");',
+    "const port = Number(process.argv[1]);",
+    "const listener = http.createServer((_request, response) => {",
+    '  response.writeHead(200, { "content-type": "application/json" });',
+    '  response.end("{\\\"ok\\\":true}");',
+    "});",
+    'listener.once("error", (error) => {',
+    "  process.stderr.write(`port ${port} ${error.code || error.message}\\n`);",
+    "  process.exit(1);",
+    "});",
+    'listener.listen(port, "127.0.0.1", () => process.stdout.write("ready\\n"));',
+    'process.once("SIGTERM", () => listener.close(() => process.exit(0)));',
+  ].join("\n");
+  const child = resources.ownChild(
+    spawn(process.execPath, ["--input-type=commonjs", "--eval", source, String(port)], {
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+  let output = "";
+  child.stdout?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  child.stderr?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  await waitForBrokerCondition(
+    "foreign health listener",
+    child,
+    () => output,
+    () => output.includes("ready"),
+  );
+  return child;
+}
+
+async function startBrokerLikeListener(
+  resources: OwnedTestResources,
+  port: number,
+  controlSocket: string,
+): Promise<ChildProcess> {
+  const source = [
+    'const http = require("node:http");',
+    "const [, portValue, controlSocket] = process.argv.slice(1);",
+    "const listener = http.createServer((_request, response) => {",
+    '  response.writeHead(200, { "content-type": "application/json" });',
+    '  response.end("{\\\"ok\\\":true}");',
+    "});",
+    "const control = http.createServer((_request, response) => {",
+    "  response.writeHead(200);",
+    '  response.end("{}");',
+    "});",
+    'listener.once("error", (error) => {',
+    "  process.stderr.write(`${error.code || error.message}\\n`);",
+    "  process.exit(1);",
+    "});",
+    'listener.listen(Number(portValue), "127.0.0.1", () => {',
+    '  control.listen(controlSocket, () => process.stdout.write("ready\\n"));',
+    "});",
+    'process.once("SIGTERM", () => {',
+    "  listener.close(() => control.close(() => process.exit(0)));",
+    "});",
+  ].join("\n");
+  const child = resources.ownChild(
+    spawn(
+      process.execPath,
+      [
+        "--input-type=commonjs",
+        "--eval",
+        source,
+        "tool-gateway-broker.ts",
+        String(port),
+        controlSocket,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    ),
+  );
+  let output = "";
+  child.stdout?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  child.stderr?.on("data", (chunk) => {
+    output += chunk.toString();
+  });
+  await waitForBrokerCondition(
+    "broker-like listener",
+    child,
+    () => output,
+    () => output.includes("ready"),
+  );
+  return child;
 }
 
 function brokerDiagnostics(child: ChildProcess, output: () => string): string {
@@ -234,47 +335,138 @@ describe("Hermes managed-tool gateway broker", () => {
   });
 
   it(
-    "refuses a healthy listener on the managed-tool port that it does not own",
+    "reuses its listener and rechecks ownership after the process exits",
     async ({ resources, skip }) => {
-      const { home } = resources.home("nemoclaw-broker-ownership-");
+      const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-broker-ownership-"));
+      vi.stubEnv("HOME", home);
+      delete require.cache[require.resolve(BROKER_WRAPPER)];
+      const broker = require(BROKER_WRAPPER);
+      const credsDir = path.dirname(broker.HERMES_TOOL_GATEWAY_STATE_DIR);
+      const pidPath = path.join(credsDir, "hermes-tool-gateway-broker.pid");
+      const hashPath = path.join(credsDir, "hermes-tool-gateway-broker.hash");
+      fs.mkdirSync(credsDir, { recursive: true, mode: 0o700 });
+
+      let ownedBroker: ChildProcess;
+      try {
+        ownedBroker = await startBrokerLikeListener(
+          resources,
+          broker.HERMES_TOOL_GATEWAY_PORT,
+          broker.HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH,
+        );
+      } catch (error) {
+        skip(
+          String(error).includes("EADDRINUSE"),
+          `port ${String(broker.HERMES_TOOL_GATEWAY_PORT)} is already held`,
+        );
+        throw error;
+      }
+
+      try {
+        fs.writeFileSync(pidPath, `${String(ownedBroker.pid)}\n`, { mode: 0o600 });
+        fs.writeFileSync(hashPath, `${broker.brokerRuntimeHash()}\n`, { mode: 0o600 });
+        expect(broker.ensureHermesToolGatewayBroker({ startWithoutCredential: true })).toBe(true);
+
+        const ownedBrokerExit = once(ownedBroker, "exit");
+        ownedBroker.kill("SIGTERM");
+        await ownedBrokerExit;
+
+        try {
+          await startForeignHealthListener(resources, broker.HERMES_TOOL_GATEWAY_PORT);
+        } catch (error) {
+          skip(
+            String(error).includes("EADDRINUSE"),
+            `port ${String(broker.HERMES_TOOL_GATEWAY_PORT)} is already held`,
+          );
+          throw error;
+        }
+
+        const refusal = vi.spyOn(console, "error").mockImplementation(() => {});
+        expect(broker.ensureHermesToolGatewayBroker({ startWithoutCredential: true })).toBe(false);
+        expect(refusal.mock.calls.flat().join("\n")).toContain(
+          String(broker.HERMES_TOOL_GATEWAY_PORT),
+        );
+      } finally {
+        delete require.cache[require.resolve(BROKER_WRAPPER)];
+      }
+    },
+    BROKER_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a live recorded process that does not own the managed-tool port",
+    async ({ resources, skip }) => {
+      const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-broker-port-owner-"));
       vi.stubEnv("HOME", home);
       delete require.cache[require.resolve(BROKER_WRAPPER)];
       const broker = require(BROKER_WRAPPER);
 
-      const impostor = resources.ownServer(
-        http.createServer((_req, res) => {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true, services: [] }));
+      try {
+        await startForeignHealthListener(resources, broker.HERMES_TOOL_GATEWAY_PORT);
+      } catch (error) {
+        skip(
+          String(error).includes("EADDRINUSE"),
+          `port ${String(broker.HERMES_TOOL_GATEWAY_PORT)} is already held`,
+        );
+        throw error;
+      }
+
+      const brokerLikeProcess = resources.ownChild(
+        spawn(
+          process.execPath,
+          [
+            "--input-type=commonjs",
+            "--eval",
+            'process.stdout.write("ready\\n"); setInterval(() => {}, 1_000);',
+            "tool-gateway-broker.ts",
+          ],
+          { stdio: ["ignore", "pipe", "pipe"] },
+        ),
+      );
+      let brokerLikeOutput = "";
+      brokerLikeProcess.stdout?.on("data", (chunk) => {
+        brokerLikeOutput += chunk.toString();
+      });
+      await waitForBrokerCondition(
+        "broker-like non-listener",
+        brokerLikeProcess,
+        () => brokerLikeOutput,
+        () => brokerLikeOutput.includes("ready"),
+      );
+
+      const credsDir = path.dirname(broker.HERMES_TOOL_GATEWAY_STATE_DIR);
+      fs.mkdirSync(credsDir, { recursive: true, mode: 0o700 });
+      const pidPath = path.join(credsDir, "hermes-tool-gateway-broker.pid");
+      fs.writeFileSync(pidPath, `${String(brokerLikeProcess.pid)}\n`, { mode: 0o600 });
+      let controlRequests = 0;
+      const control = resources.ownServer(
+        http.createServer((_request, response) => {
+          controlRequests += 1;
+          response.writeHead(200);
+          response.end("{}");
         }),
       );
       await new Promise<void>((resolve, reject) => {
-        impostor.once("error", reject);
-        impostor.listen(broker.HERMES_TOOL_GATEWAY_PORT, "127.0.0.1", () => resolve());
+        control.once("error", reject);
+        control.listen(broker.HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH, () => resolve());
       });
 
-      // The health probe shells out to curl. Where a harness blocks loopback
-      // HTTP for subprocesses no listener reads as healthy, so report that gap
-      // instead of asserting nothing.
-      skip(
-        !broker.isHermesToolGatewayBrokerHealthy(),
-        "curl cannot read a loopback response in this environment",
-      );
-
-      const refusal = vi.spyOn(console, "error").mockImplementation(() => {});
-      // Reachability is not identity: `/health` is unauthenticated, so an
-      // unowned listener must never be adopted as this run's broker.
-      expect(broker.ensureHermesToolGatewayBroker({})).toBe(false);
-      const diagnostics = refusal.mock.calls.map((call) => call.join(" ")).join("\n");
-
-      // The refusal has to name the port it declined, and it must leave no pid
-      // record, which would mean a broker was spawned against the held port.
-      expect(diagnostics).toContain(String(broker.HERMES_TOOL_GATEWAY_PORT));
-      const pidPath = path.join(
-        path.dirname(broker.HERMES_TOOL_GATEWAY_STATE_DIR),
-        "hermes-tool-gateway-broker.pid",
-      );
-      expect(fs.existsSync(pidPath)).toBe(false);
-      delete require.cache[require.resolve(BROKER_WRAPPER)];
+      try {
+        const refusal = vi.spyOn(console, "error").mockImplementation(() => {});
+        // Process identity without listener ownership cannot authorize a
+        // credential registration through the private control socket.
+        expect(
+          broker.ensureHermesToolGatewayBroker({
+            refreshToken: "test-only-refresh",
+            sandboxName: "sandbox",
+          }),
+        ).toBe(false);
+        expect(refusal.mock.calls.flat().join("\n")).toContain(
+          String(broker.HERMES_TOOL_GATEWAY_PORT),
+        );
+        expect(controlRequests).toBe(0);
+      } finally {
+        delete require.cache[require.resolve(BROKER_WRAPPER)];
+      }
     },
     BROKER_TEST_TIMEOUT_MS,
   );
@@ -829,6 +1021,7 @@ describe("Hermes managed-tool gateway broker", () => {
       // exceed that limit before the socket name is appended.
       const socketDir = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-hermes-broker-"));
       const controlSocket = path.join(socketDir, "control.sock");
+      // The broad starting mode proves that broker startup narrows the directory to 0o700.
       fs.chmodSync(socketDir, 0o777);
       fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
       fs.mkdirSync(binDir, { recursive: true });
