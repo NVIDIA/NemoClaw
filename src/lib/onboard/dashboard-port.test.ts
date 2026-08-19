@@ -40,6 +40,11 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
+async function listenAndCloseOnLoopback(port: number): Promise<void> {
+  const server = await listenOnLoopback(port);
+  await closeServer(server);
+}
+
 async function unusedLoopbackPort(): Promise<number> {
   const server = await listenOnLoopback(0);
   const address = server.address();
@@ -363,7 +368,7 @@ describe("dashboard port reservation", () => {
       withDashboardPortReservationScope(async (scope) => {
         scope.current = await reserveDashboardPort(port);
         await assert.rejects(
-          listenOnLoopback(port),
+          listenAndCloseOnLoopback(port),
           (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
         );
         throw new Error("sandbox build failed");
@@ -380,12 +385,8 @@ describe("dashboard port reservation", () => {
 
     await withDashboardPortReservationScope(async (scope) => {
       scope.current = await reserveDashboardPort(port);
-      const blockedAttempt = listenOnLoopback(port).then(async (listener) => {
-        await closeServer(listener);
-        throw new Error("expected dashboard reservation to hold the port");
-      });
       await assert.rejects(
-        blockedAttempt,
+        listenAndCloseOnLoopback(port),
         (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
       );
 
