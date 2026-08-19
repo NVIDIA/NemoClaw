@@ -294,6 +294,12 @@ describe("inference health", () => {
         '{"choices":[{"message":{"content":"OK","tool_calls":"none"}}]}',
       ],
       ["numeric streaming delta", 'data: {"choices":[{"delta":{"content":123}}]}\n'],
+      ["a null content field and no tool call", '{"choices":[{"message":{"content":null}}]}'],
+      [
+        "a null reasoning field and no tool call",
+        '{"choices":[{"message":{"reasoning_content":null}}]}',
+      ],
+      ["a null refusal field and no tool call", '{"choices":[{"message":{"refusal":null}}]}'],
     ])("rejects a Chat Completions response with %s", (_description, body) => {
       const result = probeRemoteProviderHealth("openai-api", {
         model: "gpt-4o-mini",
@@ -305,6 +311,22 @@ describe("inference health", () => {
       expect(result?.probed).toBe(true);
       expect(result?.failureLabel).toBe("unhealthy");
       expect(result?.detail).toContain("not a Chat Completions result");
+    });
+
+    it("accepts a null content field with a valid tool call", () => {
+      const result = probeRemoteProviderHealth("openai-api", {
+        model: "gpt-4o-mini",
+        getCredentialImpl: () => "sk-test-secret",
+        runCurlProbeImpl: () =>
+          httpOk(
+            '{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call_probe","type":"function","function":{"name":"probe","arguments":"{}"}}]}}]}',
+          ),
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBeUndefined();
+      expect(result?.detail).toContain("succeeded");
     });
 
     it.each([
