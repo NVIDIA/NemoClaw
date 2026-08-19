@@ -6,13 +6,21 @@
 // it does not expose credential-bearing OpenClaw configuration.
 
 export interface OpenClawTelegramState {
+  accountPresent: boolean;
   accountEnabled: boolean;
   channelEnabled: boolean;
   channelPresent: boolean;
+  credentialPresent: boolean;
   pluginEnabled: boolean;
   pluginPresent: boolean;
 }
 
 export function openClawHasConfiguredTelegram(state: OpenClawTelegramState): boolean {
-  return state.channelEnabled && state.pluginEnabled;
+  return (
+    state.accountPresent ||
+    state.accountEnabled ||
+    state.channelEnabled ||
+    state.credentialPresent ||
+    state.pluginEnabled
+  );
 }
