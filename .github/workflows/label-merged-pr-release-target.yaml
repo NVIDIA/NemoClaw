@@ -115,9 +115,6 @@ jobs:
                 return 0;
               });
 
-              if (releaseTags.length === 0) {
-                throw new Error('No strict semver release tags were found');
-              }
               return releaseTags;
             }
 
@@ -292,6 +289,7 @@ jobs:
             async function refreshLatestRelease(expectedName, expectedCommit) {
               const releaseTags = await loadReleaseTags();
               const latest = releaseTags[0];
+              if (!latest) return { changed: true };
               const latestCommit = await peelReleaseTag(latest);
               return {
                 changed: latest.name !== expectedName || latestCommit !== expectedCommit,
@@ -299,6 +297,10 @@ jobs:
             }
 
             async function reconcileReleaseTargets(releaseTags, restartCount = 0) {
+              if (releaseTags.length === 0) {
+                core.info('No strict semver release tags were found; no release target labels reconciled');
+                return;
+              }
               const latestRelease = releaseTags[0];
               const latestCommit = await peelReleaseTag(latestRelease);
               const main = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
@@ -334,6 +336,12 @@ jobs:
                 context.payload.pull_request,
               );
               const releaseTags = await loadReleaseTags();
+              if (releaseTags.length === 0) {
+                core.info(
+                  `No strict semver release tags were found; no release target label added to PR #${pullRequest.number}`,
+                );
+                return;
+              }
               const target = await resolveTargetForMerge(mergeSha, releaseTags);
               if (target) {
                 await applyTarget(pullRequest, target.label, target.boundary);
