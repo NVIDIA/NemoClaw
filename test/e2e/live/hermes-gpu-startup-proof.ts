@@ -37,6 +37,13 @@ interface HermesGpuStartupProofOptions {
   status: Pick<ShellProbeResult, "stdout" | "stderr">;
 }
 
+interface HermesManagedWorkloadAuthorityProof {
+  readonly agent: unknown;
+  readonly contract: { readonly agent?: unknown; readonly reference?: unknown };
+  readonly profile: { readonly agent?: unknown };
+  readonly receipt: { readonly kind?: unknown; readonly reference?: unknown };
+}
+
 export function assertHermesGpuStartupOutputContract(
   gpuRoute: HermesGpuStartupProofOptions["gpuRoute"],
   installText: string,
@@ -58,6 +65,40 @@ export function assertHermesGpuStartupOutputContract(
       expect(installText).not.toContain(fragment);
     }
   }
+}
+
+export function assertHermesManagedWorkloadAuthority(
+  sandboxName: string,
+  registryImageTag: string | null | undefined,
+  authority: HermesManagedWorkloadAuthorityProof | null,
+): string {
+  if (!authority) {
+    throw new Error(`Hermes GPU sandbox '${sandboxName}' has no managed workload authority`);
+  }
+  if (typeof registryImageTag !== "string" || typeof authority.receipt.reference !== "string") {
+    throw new Error(`Hermes GPU sandbox '${sandboxName}' has no immutable image reference`);
+  }
+  const authorityReference = authority.receipt.reference;
+  expect(authority).toMatchObject({
+    agent: "hermes",
+    contract: {
+      agent: "hermes",
+      reference: authorityReference,
+    },
+    profile: { agent: "hermes" },
+    receipt: {
+      kind: "managed-image",
+      reference: registryImageTag,
+    },
+  });
+  return authorityReference;
+}
+
+export function assertHermesContainerImageAuthority(
+  containerImage: unknown,
+  authorityReference: string,
+): void {
+  expect(containerImage).toBe(authorityReference);
 }
 
 export async function assertHermesGpuStartupProof({
@@ -134,21 +175,11 @@ export async function assertHermesGpuStartupProof({
     throw new Error(`Hermes GPU sandbox '${sandboxName}' is missing from the registry`);
   }
   const managedAuthority = readManagedWorkloadAuthority(registryEntry);
-  if (!managedAuthority) {
-    throw new Error(`Hermes GPU sandbox '${sandboxName}' has no managed-image authority`);
-  }
-  expect(managedAuthority).toMatchObject({
-    agent: "hermes",
-    contract: {
-      agent: "hermes",
-      reference: managedAuthority.receipt.reference,
-    },
-    profile: { agent: "hermes" },
-    receipt: {
-      kind: "managed-image",
-      reference: registryEntry.imageTag,
-    },
-  });
+  const managedImageReference = assertHermesManagedWorkloadAuthority(
+    sandboxName,
+    registryEntry.imageTag,
+    managedAuthority,
+  );
 
   const expectedExtraPlaceholderAssignment = `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=${HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(",")}`;
   const extraPlaceholderEnv = await host.command(
@@ -251,9 +282,9 @@ raise SystemExit(1)`,
   expect(commandBoundary).toMatchObject({
     cmd: ["--workdir", "/sandbox"],
     entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-    image: managedAuthority.receipt.reference,
     has_openshell_sandbox_command: true,
   });
+  assertHermesContainerImageAuthority(commandBoundary.image, managedImageReference);
   expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
   expect(commandBoundary.command_is_sleep_infinity).toBe(false);
 
