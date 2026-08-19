@@ -146,13 +146,17 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(investigate?.prompt).toContain(
       "Report all currently visible, evidence-backed recommendations in this stage's single ledger batch",
     );
-    expect(investigate?.prompt).toContain("rescan the resulting design");
+    expect(investigate?.prompt).toContain("rescan for follow-on risks");
     expect(investigate?.prompt).toContain(
       "A design finding does not require a runtime failure when the current code proves that cost",
     );
     expect(investigate?.prompt).toContain(
       "classify the finding as blocker instead of downgrading it because behavior passes",
     );
+    expect(investigate?.prompt).toContain(
+      "Include a follow-on finding only when the current diff or surrounding current code independently proves the defect",
+    );
+    expect(investigate?.prompt).toContain("non-finding investigation note");
     expect(investigate?.prompt).toContain("Never simplify away trust-boundary validation");
     expect(investigate?.prompt).not.toContain("<pr_review_advisor_json>");
     expect(turns.every((turn) => !turn.prompt.includes(poisonedDiff))).toBe(true);

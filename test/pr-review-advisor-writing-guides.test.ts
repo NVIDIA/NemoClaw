@@ -132,7 +132,13 @@ describe("PR review advisor writing guides", () => {
     );
     expect(prompt).toContain("a raw line count by itself");
     expect(prompt).toContain("mere open-PR overlap or merge coordination");
-    expect(prompt).toContain("the refreshed base already contains equivalent behavior");
+    expect(prompt).toContain(
+      "checked-out evidence shows that the current PR introduces or retains duplicate or conflicting ownership",
+    );
+    expect(prompt).toContain(
+      "If a refreshed base only makes the PR unnecessary without leaving duplicate or conflicting code",
+    );
+    expect(prompt).toContain("use recommendation=superseded");
     expect(prompt).toContain(
       "missing that authorization is a current scope defect, not template noncompliance",
     );
