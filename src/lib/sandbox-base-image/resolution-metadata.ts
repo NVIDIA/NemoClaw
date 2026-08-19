@@ -14,6 +14,19 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "./types";
 
+const SOURCE_REVISION_RE = /^[0-9a-f]{40}$/;
+
+function inspectedSourceRevision(
+  inspected: LocalImageMetadata | null,
+  label: string | undefined,
+): string | null {
+  if (!label) return null;
+  const labels = inspected?.Config?.Labels;
+  if (!labels || typeof labels !== "object") return null;
+  const revision = (labels as Record<string, unknown>)[label];
+  return typeof revision === "string" && SOURCE_REVISION_RE.test(revision) ? revision : null;
+}
+
 export function inspectLocalImageMetadata(imageRef: string): LocalImageMetadata | null {
   const output = dockerImageInspectFormat("{{json .}}", imageRef, { ignoreError: true });
   if (!output) return null;
@@ -25,11 +38,7 @@ export function inspectLocalImageMetadata(imageRef: string): LocalImageMetadata 
   }
 }
 
-function isExactSameRepositoryDigestRef(
-  imageName: string,
-  digest: string,
-  ref: string,
-): boolean {
+function isExactSameRepositoryDigestRef(imageName: string, digest: string, ref: string): boolean {
   return /^sha256:[0-9a-f]{64}$/u.test(digest) && ref === `${imageName}@${digest}`;
 }
 
@@ -40,6 +49,7 @@ export function validateSandboxBaseImageResolutionMetadata(input: {
   pinnedRemoteRef?: string;
   requireOpenshellSandboxAbi: boolean;
   minGlibcVersion: string;
+  sourceRevisionLabel?: string;
   inspected: LocalImageMetadata | null;
 }): BaseImageResolutionValidation {
   const { metadata, inspected } = input;
@@ -72,6 +82,16 @@ export function validateSandboxBaseImageResolutionMetadata(input: {
   ) {
     return { ok: false, reason: "local_image_changed" };
   }
+  if (input.sourceRevisionLabel) {
+    const sourceRevision = (metadata as unknown as Record<string, unknown>).sourceRevision;
+    if (
+      typeof sourceRevision !== "string" ||
+      !SOURCE_REVISION_RE.test(sourceRevision) ||
+      inspectedSourceRevision(inspected, input.sourceRevisionLabel) !== sourceRevision
+    ) {
+      return { ok: false, reason: "source_revision_mismatch" };
+    }
+  }
   if (metadata.digest) {
     const expectedRepoDigest = `${input.imageName}@${metadata.digest}`;
     const repoDigests = Array.isArray(inspected.RepoDigests) ? inspected.RepoDigests : [];
@@ -96,6 +116,8 @@ export function createSandboxBaseImageResolutionMetadata(
   const osName = typeof inspected?.Os === "string" ? inspected.Os : "";
   const architecture = typeof inspected?.Architecture === "string" ? inspected.Architecture : "";
   if (!imageId || !osName || !architecture) return null;
+  const sourceRevision = inspectedSourceRevision(inspected, options.sourceRevisionLabel);
+  if (options.sourceRevisionLabel && !sourceRevision) return null;
 
   if (resolution.digest) {
     const expectedRepoDigest = `${options.imageName}@${resolution.digest}`;
@@ -122,6 +144,7 @@ export function createSandboxBaseImageResolutionMetadata(
     ref: resolution.ref,
     digest: resolution.digest,
     source: resolution.source,
+    ...(sourceRevision ? { sourceRevision } : {}),
     ...(resolution.pinnedRemoteRef ? { pinnedRemoteRef: resolution.pinnedRemoteRef } : {}),
     imageId,
     os: osName,
@@ -160,6 +183,11 @@ export function finalizeSandboxBaseImageResolution(
     }
   }
   const metadata = createSandboxBaseImageResolutionMetadata(options, key, locallyProvenResolution);
+  if (!metadata && options.sourceRevisionLabel) {
+    throw new Error(
+      `${options.label || "Sandbox base image"} is missing required immutable source revision metadata`,
+    );
+  }
   return metadata ? { ...locallyProvenResolution, metadata } : resolution;
 }
 
@@ -176,6 +204,7 @@ export function reuseSandboxBaseImageResolutionHint(
     pinnedRemoteRef: options.pinnedRemoteRef,
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
     minGlibcVersion: options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC,
+    sourceRevisionLabel: options.sourceRevisionLabel,
     inspected: inspectLocalImageMetadata(hint.ref),
   });
   if (!validation.ok) {

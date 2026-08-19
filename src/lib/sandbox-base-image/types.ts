@@ -57,6 +57,7 @@ export type ResolveBaseImageOptions = {
   preferPinnedRemoteRef?: boolean;
   validateImage?: (imageRef: string) => boolean;
   validationDescription?: string;
+  sourceRevisionLabel?: string;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceRefresh?: boolean;
   trustedLocalOverride?: TrustedLocalBaseImageOverride;
@@ -94,5 +95,6 @@ export type BaseImageResolutionValidation =
         | "requirements_changed"
         | "abi_incompatible"
         | "local_image_changed"
-        | "repo_digest_missing";
+        | "repo_digest_missing"
+        | "source_revision_mismatch";
     };

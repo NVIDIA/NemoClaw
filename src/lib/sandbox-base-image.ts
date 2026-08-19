@@ -10,6 +10,7 @@ import {
   dockerImageInspectFormat,
   dockerPull,
 } from "./adapters/docker";
+import { resolveSourceBuildIdentity } from "./core/version";
 import { ROOT, redact } from "./runner";
 import { imageMeetsMinimumGlibc } from "./sandbox-base-image/image-compatibility";
 import { withLocalBuildHeartbeat } from "./sandbox-base-image/local-build-heartbeat";
@@ -49,6 +50,24 @@ export * from "./sandbox-base-image/types";
 
 const BUILD_FAILURE_DIAGNOSTIC_LIMIT = 8_000;
 const BUILD_FAILURE_TRUNCATED_SUFFIX = "\n[diagnostic truncated]";
+
+export function createSandboxBaseImageBuildLabels(options: ResolveBaseImageOptions): {
+  labels: Record<string, string>;
+  provenance: string;
+} {
+  const provenance = createSandboxBaseImageBuildProvenance(options);
+  const labels: Record<string, string> = { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance };
+  if (options.sourceRevisionLabel) {
+    const sourceRevision = resolveSourceBuildIdentity({
+      rootDir: options.rootDir || ROOT,
+    }).sourceRevision;
+    if (!/^[0-9a-f]{40}$/u.test(sourceRevision)) {
+      throw new Error("Sandbox base build source revision is not a lowercase SHA");
+    }
+    labels[options.sourceRevisionLabel] = sourceRevision;
+  }
+  return { labels, provenance };
+}
 
 /**
  * Combine stderr + stdout from a captured `dockerBuild` failure and pass them
@@ -401,13 +420,12 @@ function resolveLocalCandidate(
   // `suppressOutput` keeps captured stdio out of the user's terminal.
   // On failure, surface the captured stderr so the user still gets a
   // useful diagnostic.
+  const buildLabels = createSandboxBaseImageBuildLabels(options);
   const buildResult = withLocalBuildHeartbeat(() =>
     dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
       buildArgs: options.buildArgs,
 
-      labels: {
-        [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: createSandboxBaseImageBuildProvenance(options),
-      },
+      labels: buildLabels.labels,
       quiet: true,
       ignoreError: true,
       suppressOutput: true,
