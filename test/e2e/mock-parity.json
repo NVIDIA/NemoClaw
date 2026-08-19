@@ -101,6 +101,7 @@
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
         "test/e2e/support/hermes-gpu-startup-integrity.test.ts",
+        "test/e2e/support/hermes-gpu-startup-proof.test.ts",
         "test/e2e/support/hermes-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
