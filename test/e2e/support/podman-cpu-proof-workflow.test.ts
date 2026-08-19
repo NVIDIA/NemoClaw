@@ -361,6 +361,15 @@ function withProofFixture(run: (fixture: ProofFixture) => void): void {
   }
 }
 describe("native Podman CPU proof workflow", () => {
+  it("selects the rootless proof when the Portable gateway authority changes (#9587)", () => {
+    const authorityPath = "src/lib/onboard/experimental/portable-profile.ts";
+    const selectedPath = workflow().on.pull_request.paths.find(
+      (candidate) => candidate === authorityPath,
+    );
+
+    expect(selectedPath).toBe(authorityPath);
+  });
+
   it("executes the five typed proof modes with exact argv and durable cleanup receipts (#9188)", () => {
     withProofFixture((fixture) => {
       const modes: readonly PortableCpuDelegationProofMode[] = [

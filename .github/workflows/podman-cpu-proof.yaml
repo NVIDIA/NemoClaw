@@ -28,6 +28,7 @@ on:
       - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
       - "src/lib/onboard/experimental/portable-host-preparation*.ts"
+      - "src/lib/onboard/experimental/portable-profile.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"
       - "scripts/install-openshell.sh"
       - "scripts/checks/run-portable-cpu-delegation-proof.mts"
