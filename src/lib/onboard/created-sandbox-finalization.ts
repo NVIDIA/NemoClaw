@@ -401,6 +401,7 @@ type OnboardInferenceSelection = {
   readonly provider: string;
   readonly model: string;
   readonly preferredInferenceApi: string | null;
+  readonly endpointUrl: string | null;
 };
 type OnboardMessagingRegistration = {
   readonly plannedMessagingState: RegistrationSeed["plannedMessagingState"];
@@ -459,7 +460,7 @@ export function createOnboardCreatedSandboxCompletion(
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
 ): CreatedSandboxCompletionActions {
-  const { provider, model, preferredInferenceApi } = inference;
+  const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
   return createCreatedSandboxCompletionActions(
     {
@@ -474,6 +475,7 @@ export function createOnboardCreatedSandboxCompletion(
         provider,
         model,
         preferredInferenceApi,
+        endpointUrl,
       },
       registration: {
         sandboxName,

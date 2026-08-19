@@ -1051,7 +1051,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       agent,
       fromDockerfile,
       { customOpenClawImage, isManagedDcodeAgent },
-      { provider, model, preferredInferenceApi },
+      { provider, model, preferredInferenceApi, endpointUrl: createIntent?.endpointUrl ?? null },
       { createIntent, resolvedCreateIntent },
       sandboxRuntimeFields,
       agentCreateInput.portableLifecycle,
