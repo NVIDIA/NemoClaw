@@ -67,16 +67,14 @@ describe("sandbox registry normalization", () => {
     estimatedModelDownloadBytes: null,
   } as const;
 
-  it.each([
-    null,
-    [],
-    42,
-    "invalid",
-  ])("treats a non-object top-level registry document as empty: %j", async (document) => {
-    const registry = await loadRegistryDocument(document);
+  it.each([null, [], 42, "invalid"])(
+    "treats a non-object top-level registry document as empty: %j",
+    async (document) => {
+      const registry = await loadRegistryDocument(document);
 
-    expect(registry.listSandboxes()).toEqual({ sandboxes: [], defaultSandbox: null });
-  });
+      expect(registry.listSandboxes()).toEqual({ sandboxes: [], defaultSandbox: null });
+    },
+  );
 
   it("drops a malformed sandboxes container at the file boundary", async () => {
     const registry = await loadRegistryDocument({
@@ -99,6 +97,50 @@ describe("sandbox registry normalization", () => {
 
     expect(registry.listSandboxes().sandboxes).toEqual([
       { name: "valid", createdAt: "2026-07-09T00:00:00.000Z" },
+    ]);
+  });
+
+  it("lists managed MCP credential reservations in a stable order", async () => {
+    const registry = await loadRegistryWith({
+      zeta: {
+        name: "zeta",
+        mcp: {
+          bridges: {
+            search: {
+              server: "search",
+              agent: "openclaw",
+              url: "https://8.8.8.8/mcp",
+              env: ["SEARCH_TOKEN", "SEARCH_REGION"],
+              policyName: "mcp-bridge-search",
+              addedAt: "2026-08-18T00:00:00.000Z",
+            },
+          },
+        },
+      },
+      alpha: {
+        name: "alpha",
+        mcp: {
+          bridges: {
+            files: {
+              server: "files",
+              agent: "hermes",
+              url: "https://1.1.1.1/mcp",
+              env: ["FILES_TOKEN"],
+              policyName: "mcp-bridge-files",
+              addedAt: "2026-08-18T00:00:00.000Z",
+            },
+          },
+        },
+      },
+    });
+
+    expect(registry.listManagedMcpCredentialReservations()).toEqual([
+      { sandboxName: "alpha", server: "files", credentialKeys: ["FILES_TOKEN"] },
+      {
+        sandboxName: "zeta",
+        server: "search",
+        credentialKeys: ["SEARCH_TOKEN", "SEARCH_REGION"],
+      },
     ]);
   });
 
@@ -163,9 +205,8 @@ describe("sandbox registry normalization", () => {
 
   it("backfills a lifecycle generation only for the unchanged legacy Docker row (#8584)", async () => {
     const registry = await loadRegistryWith({});
-    const { compareAndSetLegacySandboxLifecycleGeneration } = await import(
-      "./registry/lifecycle-generation"
-    );
+    const { compareAndSetLegacySandboxLifecycleGeneration } =
+      await import("./registry/lifecycle-generation");
     registry.registerSandbox({ name: "portable", openshellDriver: "docker" });
     const expected = registry.getSandbox("portable")!;
 
