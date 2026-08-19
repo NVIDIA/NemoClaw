@@ -651,17 +651,11 @@ function inspectProviderNetwork(
     const mask = prefix === 32 ? 0xffffffff : (0xffffffff << (32 - prefix)) >>> 0;
     const listener = toNumber(externalListenerIp);
     const network = (toNumber(subnetAddress) & mask) >>> 0;
-    const broadcast = (network | (~mask >>> 0)) >>> 0;
     const firstOctet = Number(externalListenerIp.slice(0, externalListenerIp.indexOf(".")));
-    if (
-      firstOctet === 0 ||
-      firstOctet >= 224 ||
-      (listener & mask) >>> 0 !== network ||
-      listener === network ||
-      listener === broadcast ||
-      externalListenerIp === gatewayIp
-    ) {
-      throw new Error("External inference listener must be an exact unicast host address.");
+    if (firstOctet === 0 || firstOctet >= 224 || (listener & mask) >>> 0 === network) {
+      throw new Error(
+        "External inference listener must be an exact unicast host address outside the qualified sandbox subnet.",
+      );
     }
   }
   const externalNetwork = external

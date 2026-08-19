@@ -545,7 +545,10 @@ export function createOnboardCreatedSandboxCompletion(
           agent?.configPaths.dir,
         ),
       restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
-      getDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
+      getDcodeSelectionDrift: createDcodeSelectionDriftReader(
+        runCaptureOpenshell,
+        () => gateway.gatewayName,
+      ),
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
