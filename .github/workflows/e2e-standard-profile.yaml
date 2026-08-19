@@ -21,6 +21,9 @@ on:
       cli_artifact_provenance:
         required: true
         type: string
+      managed_image_catalog:
+        required: true
+        type: string
       credential_boundary:
         required: true
         type: string
@@ -389,6 +392,29 @@ jobs:
         with:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
 
+      - name: Materialize temporary managed-image catalog
+        if: ${{ inputs.managed_image_catalog != '' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          MANAGED_IMAGE_CATALOG: ${{ inputs.managed_image_catalog }}
+        run: |
+          set -euo pipefail
+          release="$(jq -r 'first(.[]).source.release' <<<"$MANAGED_IMAGE_CATALOG")"
+          catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
+          jq --arg release "$release" --arg revision "$CANDIDATE_SHA" '
+            with_entries(
+              if .value.source.revision != $revision then error("managed-image catalog revision mismatch")
+              else .value.source.release = $release end
+            )
+          ' <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
+          [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
+            echo "::error::temporary managed-image catalog is invalid" >&2
+            exit 1
+          }
+          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
+          printf 'NEMOCLAW_E2E_EXACT_RELEASE=%s\n' "$release" >>"$GITHUB_ENV"
+
       - name: Install reviewed cloudflared
         if: ${{ inputs.cloudflared }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
@@ -548,8 +574,37 @@ jobs:
           COMPATIBLE_API_KEY: ${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           BRAVE_API_KEY: ${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && inputs.trusted_main && github.token || '' }}
+          TARGET_ID: ${{ inputs.target_id }}
         run: |
           set -euo pipefail
+          if [[ "$TARGET_ID" == "full-e2e" && -n "${NEMOCLAW_E2E_EXACT_RELEASE:-}" ]]; then
+            [[ "$NEMOCLAW_E2E_EXACT_RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[0-9a-f]+$ ]] || {
+              echo "::error::exact E2E release identity is invalid" >&2
+              exit 1
+            }
+            real_git="$(command -v git)"
+            [[ "$real_git" == /* ]] || { echo "::error::real git path is invalid" >&2; exit 1; }
+            shim_dir="${RUNNER_TEMP}/nemoclaw-e2e-exact-git"
+            install -d -m 0700 "$shim_dir"
+            printf '%s\n' "$NEMOCLAW_E2E_EXACT_RELEASE" >"${shim_dir}/version"
+            chmod 0600 "${shim_dir}/version"
+            {
+              printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
+              printf 'real_git=%q\n' "$real_git"
+              printf '%s\n' \
+                'if [[ $# -eq 4 && $1 == describe && $2 == --tags && $3 == --match && $4 == "v*" ]]; then' \
+                '  cat "$(dirname -- "$0")/version"' \
+                '  exit 0' \
+                'fi' \
+                'if [[ $# -eq 6 && $1 == -C && -n $2 && $3 == describe && $4 == --tags && $5 == --match && $6 == "v*" ]]; then' \
+                '  cat "$(dirname -- "$0")/version"' \
+                '  exit 0' \
+                'fi' \
+                'exec "$real_git" "$@"'
+            } >"${shim_dir}/git"
+            chmod 0700 "${shim_dir}/git"
+            export PATH="${shim_dir}:${PATH}"
+          fi
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           if [ "$INSTALL_MODE" != "none" ]; then
             if command -v openshell >/dev/null 2>&1; then

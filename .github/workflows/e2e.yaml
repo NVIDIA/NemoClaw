@@ -183,6 +183,7 @@ jobs:
       pull-requests: read
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
+      managed_image_catalog: ${{ steps.package_cli_artifact.outputs.managed_image_catalog }}
       e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
@@ -577,9 +578,9 @@ jobs:
           NODE
           for agent in openclaw hermes langchain-deepagents-code; do
             contract="$contracts/$agent/contract.json"
-            jq --arg release 'v0.0.110-84-ga4f9b59aa' --arg revision 'a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e' '
+            jq --arg revision 'a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e' '
               if .source.revision != $revision or .source.release != "v0.1.0" then error("unexpected reused contract source identity")
-              else .source.release = $release end
+              else . end
             ' "$contract" >"$contract.next"
             mv "$contract.next" "$contract"
           done
@@ -710,7 +711,16 @@ jobs:
           if [[ -e "$managed_catalog" ]]; then
             [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] ||
               { echo "::error::trusted PR managed-image catalog is not a nonempty regular file"; exit 1; }
+            candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
+            jq --arg release "$candidate_release" --arg revision "$CANDIDATE_SHA" '
+              with_entries(
+                if .value.source.revision != $revision then error("managed-image catalog revision mismatch")
+                else .value.source.release = $release end
+              )
+            ' "$managed_catalog" >"${managed_catalog}.next"
+            mv "${managed_catalog}.next" "$managed_catalog"
             install -m 0600 "$managed_catalog" dist/e2e-managed-image-catalog.json
+            printf 'managed_image_catalog=%s\n' "$(jq -c . "$managed_catalog")" >>"$GITHUB_OUTPUT"
           fi
 
           artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
@@ -2895,6 +2905,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: no provider credential
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -2934,6 +2945,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: NVIDIA API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -2974,6 +2986,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: NVIDIA inference API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3014,6 +3027,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: GitHub read token
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3054,6 +3068,7 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: Brave and NVIDIA inference API keys
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -5269,6 +5284,29 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Materialize cloud-onboard managed-image catalog
+        if: ${{ needs.generate-matrix.outputs.managed_image_catalog != '' }}
+        env:
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          MANAGED_IMAGE_CATALOG: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$(jq -r 'first(.[]).source.release' <<<"$MANAGED_IMAGE_CATALOG")"
+          catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
+          jq --arg release "$release" --arg revision "$CANDIDATE_SHA" '
+            with_entries(
+              if .value.source.revision != $revision then error("managed-image catalog revision mismatch")
+              else .value.source.release = $release end
+            )
+          ' <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
+          [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
+            echo "::error::temporary managed-image catalog is invalid" >&2
+            exit 1
+          }
+          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
+          printf 'NEMOCLAW_E2E_EXACT_RELEASE=%s\n' "$release" >>"$GITHUB_ENV"
+
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
@@ -5277,6 +5315,40 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
+          if [[ -n "${NEMOCLAW_E2E_EXACT_RELEASE:-}" ]]; then
+            [[ "$NEMOCLAW_E2E_EXACT_RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[0-9a-f]+$ ]] || {
+              echo "::error::exact E2E release identity is invalid" >&2
+              exit 1
+            }
+            real_git="$(command -v git)"
+            [[ "$real_git" == /* ]] || { echo "::error::real git path is invalid" >&2; exit 1; }
+            shim_dir="${RUNNER_TEMP}/nemoclaw-e2e-exact-git"
+            install -d -m 0700 "$shim_dir"
+            printf '%s\n' "$NEMOCLAW_E2E_EXACT_RELEASE" >"${shim_dir}/version"
+            chmod 0600 "${shim_dir}/version"
+            {
+              printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
+              printf 'real_git=%q\n' "$real_git"
+              printf '%s\n' \
+                'if [[ $# -eq 4 && $1 == describe && $2 == --tags && $3 == --match && $4 == "v*" ]]; then' \
+                '  cat "$(dirname -- "$0")/version"' \
+                '  exit 0' \
+                'fi' \
+                'if [[ $# -eq 6 && $1 == -C && -n $2 && $3 == describe && $4 == --tags && $5 == --match && $6 == "v*" ]]; then' \
+                '  cat "$(dirname -- "$0")/version"' \
+                '  exit 0' \
+                'fi' \
+                'exec "$real_git" "$@"'
+            } >"${shim_dir}/git"
+            chmod 0700 "${shim_dir}/git"
+            export PATH="${shim_dir}:${PATH}"
+            profile_path="/etc/profile.d/nemoclaw-e2e-git-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
+            sudo test ! -e "$profile_path" || { echo "::error::temporary E2E profile path already exists" >&2; exit 1; }
+            printf 'export PATH=%q:"$PATH"\n' "$shim_dir" | sudo tee "$profile_path" >/dev/null
+            sudo chmod 0644 "$profile_path"
+            cleanup_exact_git() { sudo rm -f -- "$profile_path"; }
+            trap cleanup_exact_git EXIT
+          fi
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           if command -v openshell >/dev/null 2>&1; then
             OPENSHELL_BIN="$(command -v openshell)"
