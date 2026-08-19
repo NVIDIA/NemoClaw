@@ -9,7 +9,6 @@ import type { PullRequestFile } from "./pr-blob-client";
 const BUDGET_FILE = "ci/test-file-size-budget.json";
 const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
 const JAVASCRIPT_FILE_RE = /\.(?:cjs|js|mjs)$/;
-const GITHUB_ACTION_ENTRY_RE = /^\.github\/actions\/[^/]+\/index\.mjs$/;
 const TEST_FILE_RE = /^(?:test|src|nemoclaw\/src)\/.*\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
 const ONBOARD_ENTRY = "src/lib/onboard.ts";
 
@@ -278,7 +277,6 @@ export function addedJavaScriptViolations(files: readonly PullRequestFile[]): st
     .filter(
       ({ filename, previous_filename, status }) =>
         JAVASCRIPT_FILE_RE.test(filename) &&
-        !GITHUB_ACTION_ENTRY_RE.test(filename) &&
         (status === "added" ||
           (status === "renamed" && !JAVASCRIPT_FILE_RE.test(previous_filename ?? ""))),
     )

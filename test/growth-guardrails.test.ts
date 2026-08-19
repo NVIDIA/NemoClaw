@@ -72,7 +72,6 @@ describe("codebase growth guardrail test support", () => {
     expect(
       addedJavaScriptViolations([
         { filename: "test/new.test.js", status: "added" },
-        { filename: ".github/actions/example/index.mjs", status: "added" },
         {
           filename: "test/new-name.test.js",
           previous_filename: "test/old-name.test.js",

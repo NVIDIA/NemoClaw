@@ -3,11 +3,8 @@
 
 name: Automation / PR Limit
 
-# pull_request_target runs in the base repo context, giving the token write
-# access even for fork PRs. This is safe here because this workflow never
-# checks out or executes code from the PR — it only counts open PRs and
-# closes excess ones. Do NOT add a checkout step or run PR-sourced code
-# in this workflow to prevent injection attacks.
+# pull_request_target runs in the base repository context. This workflow never
+# checks out or executes pull request code.
 on:
   pull_request_target:
     types: [opened, reopened]
@@ -19,33 +16,39 @@ jobs:
   check-pr-limit:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: pr-limit-${{ github.repository }}-${{ github.event.pull_request.user.login }}
+      queue: max
+      cancel-in-progress: false
     steps:
       - name: Check open PR count for author
         env:
           GH_TOKEN: ${{ github.token }}
+          ACTION: ${{ github.event.action }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          LIMIT=5
+          case "${AUTHOR,,}" in
+            apurvvkumaria|chengjiew|cjagwani|cv|dongni-yang|ericksoa|jyaunches|laitingsheng|prekshivyas|rluo8|rsliter|sandl99|senthilr-nv|tedy-y|tonyluo-nv|wscurran|yimoj)
+              LIMIT=10
+              ;;
+            *)
+              LIMIT=5
+              ;;
+          esac
 
-          # Core maintainers are exempt from the PR limit.
-          EXEMPT="ericksoa kjw3 jacobtomlinson cv jyaunches"
-          for user in $EXEMPT; do
-            if [ "$AUTHOR" = "$user" ]; then
-              echo "Author $AUTHOR is a core maintainer — exempt from PR limit"
-              exit 0
-            fi
-          done
+          OPEN_COUNT=$(gh api --paginate \
+            "repos/$REPO/issues?state=open&creator=$AUTHOR&sort=created&direction=asc&per_page=100" \
+            | jq --slurp --arg action "$ACTION" --argjson pr "$PR_NUMBER" \
+              '[.[][] | select(.pull_request and ($action == "reopened" or .number <= $pr))] | length')
 
-          OPEN_COUNT=$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open --json number --jq 'length')
-
-          echo "Author $AUTHOR has $OPEN_COUNT open PR(s)"
+          echo "Author $AUTHOR has $OPEN_COUNT open PR(s); limit is $LIMIT"
 
           if [ "$OPEN_COUNT" -gt "$LIMIT" ]; then
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
-              "This repository limits contributors to $LIMIT open pull requests. Please close or merge existing PRs before opening new ones."
+              "This repository limits you to $LIMIT open pull requests. Please close or merge an existing PR before opening another one."
             gh pr close "$PR_NUMBER" --repo "$REPO"
-            echo "::error::PR closed — author $AUTHOR exceeds the $LIMIT open PR limit"
+            echo "::error::PR closed because $AUTHOR exceeds the $LIMIT-open-PR limit"
             exit 1
           fi
