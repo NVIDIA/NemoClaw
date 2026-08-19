@@ -232,8 +232,7 @@
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/onboard-timeout-contract.test.ts"
+        "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {
@@ -247,7 +246,8 @@
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
     {

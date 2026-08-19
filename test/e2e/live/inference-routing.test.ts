@@ -7,14 +7,14 @@ import path from "node:path";
 
 import { HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN } from "../../../src/lib/inference/https-pin-runtime.ts";
 import { REGISTRY_FILE, type SandboxEntry } from "../../../src/lib/state/registry.ts";
+import {
+  ONBOARD_COMMAND_TIMEOUT_MS,
+  ONBOARD_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import {
-  ONBOARD_COMMAND_TIMEOUT_MS,
-  ONBOARD_TEST_TIMEOUT_MS,
-} from "../fixtures/onboard-timeout-contract.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
 import {

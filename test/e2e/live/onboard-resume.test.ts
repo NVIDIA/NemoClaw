@@ -5,6 +5,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  ONBOARD_COMMAND_TIMEOUT_MS,
+  ONBOARD_TEST_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -29,10 +33,6 @@ import {
   expectSandboxProviderAttachment,
   upsertGenericGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
-import {
-  ONBOARD_COMMAND_TIMEOUT_MS,
-  ONBOARD_TEST_TIMEOUT_MS,
-} from "../fixtures/onboard-timeout-contract.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 // Disruption-recovery contract — regression for #446.
