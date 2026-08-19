@@ -32,7 +32,7 @@ describe("dashboard remote-bind E2E environment", () => {
     expect(env.NEMOCLAW_DASHBOARD_BIND).toBe("0.0.0.0");
   });
 
-  it("accepts recovery proof when connect has no numeric exit code", () => {
+  it("accepts recovery proof while connect remains interactive", () => {
     expect(
       dashboardRemoteBindConnectStarted(
         {
