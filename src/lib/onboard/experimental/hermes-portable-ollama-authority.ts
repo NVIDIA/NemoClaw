@@ -114,7 +114,7 @@ function sortedStringRecord(value: unknown, label: string): Readonly<Record<stri
   const source = requireRecord(value ?? {}, label);
   const result: Record<string, string> = Object.create(null);
   for (const [key, entry] of Object.entries(source).sort(([left], [right]) =>
-    left.localeCompare(right),
+    left < right ? -1 : left > right ? 1 : 0,
   )) {
     if (typeof entry !== "string" || CONTROL_CHARACTERS.test(entry)) {
       throw new Error(`${label} is malformed.`);

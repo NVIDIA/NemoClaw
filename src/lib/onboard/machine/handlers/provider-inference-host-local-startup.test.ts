@@ -163,10 +163,16 @@ function hostLocalPublishedResumeSelection(
   };
 }
 
-function interruptedManagedOllamaSelection(
+function managedOllamaSelection(
   input: HostLocalInferenceStartupSelectionInput,
+  recover: boolean,
 ): HostLocalInferenceStartupSelection {
-  const selected = hostLocalStartupSelection(input, "vllm", false, "interrupted");
+  const selected = hostLocalStartupSelection(
+    input,
+    "vllm",
+    false,
+    recover ? "interrupted" : "fresh",
+  );
   const request = selected.request as Extract<
     HostLocalInferenceStartupSelection["request"],
     { managed: unknown }
@@ -1189,7 +1195,7 @@ describe("provider inference host-local startup selection", () => {
     });
     session.steps.provider_selection.status = "complete";
     const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
-      interruptedManagedOllamaSelection(input),
+      managedOllamaSelection(input, true),
     );
     const { deps, calls } = createDeps({
       isInferenceRouteReady: vi.fn(() => true),
@@ -1235,6 +1241,76 @@ describe("provider inference host-local startup selection", () => {
         .hostLocalInference.request,
     ).not.toHaveProperty("resumeReceipt");
     expect(result.hostLocalInferenceRouteOnly).toBe(true);
+  });
+
+  it("resumes after provider selection commits before inference completion (#9596)", async () => {
+    const model = "qwen3-vl:4b";
+    const session = createSession();
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "ollama-local",
+      model,
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    }));
+    const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+      managedOllamaSelection(input, input.recover),
+    );
+    const completeStep = async (stepName: string, updates: Record<string, unknown>) => {
+      Object.assign(session, updates);
+      session.steps[stepName]!.status = "complete";
+      return session;
+    };
+    const recordStepComplete = vi
+      .fn(completeStep)
+      .mockImplementationOnce(completeStep)
+      .mockImplementationOnce(async () => {
+        throw new Error("simulated inference completion interruption");
+      });
+    const startRecordedStep = vi.fn(async (stepName: string) => {
+      session.steps[stepName]!.status = "in_progress";
+    });
+    const setupInference = vi.fn(async () => ({ ok: true as const }));
+    const { deps } = createDeps({
+      setupNim,
+      setupInference,
+      resolveHostLocalInferenceStartupSelection: resolver,
+      recordStepComplete,
+      startRecordedStep,
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        agent: { name: "hermes" },
+        sandboxName: "portable-hermes",
+      }),
+    ).rejects.toThrow("simulated inference completion interruption");
+
+    expect(session.steps.provider_selection.status).toBe("complete");
+    expect(session.steps.inference.status).toBe("in_progress");
+    const resumed = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      agent: { name: "hermes" },
+      initial: {
+        ...baseOptions(deps, session).initial,
+        endpointSource: "inference-set",
+      },
+      resume: true,
+      sandboxName: "portable-hermes",
+    });
+
+    expect(resumed.hostLocalInferenceRouteOnly).toBe(true);
+    expect(resolver).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        allowPublishedResume: true,
+        recover: true,
+      }),
+    );
+    expect(setupInference).toHaveBeenCalledTimes(2);
+    expect(session.steps.inference.status).toBe("complete");
   });
 
   it("fails closed when canonical resumed state loses its injected runtime resolver", async () => {

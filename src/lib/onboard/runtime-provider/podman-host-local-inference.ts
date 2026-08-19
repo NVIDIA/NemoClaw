@@ -139,6 +139,10 @@ export interface PodmanHostLocalInferenceOperationOptions {
 export type PodmanInferenceRedactor = (value: string) => string;
 
 export interface PodmanExternalInferenceNetworkAuthority {
+  /**
+   * The caller's fresh assertion and the pinned identity, addressing, and listener below replace
+   * provider-owned network labels as the trust anchor, so assertCurrent must prove them exactly.
+   */
   readonly networkId: string;
   readonly name: string;
   readonly subnet: string;
@@ -2224,8 +2228,8 @@ function pullManagedOllamaModel(
     ["exec", runtimeId, "ollama", "pull", normalizeHostLocalOllamaModelRef(model)],
     OLLAMA_MODEL_PULL_TIMEOUT_MS,
   );
-  authority();
   requireSuccess("managed Ollama model acquisition", result);
+  authority();
 }
 
 function probeOpenAiInference(

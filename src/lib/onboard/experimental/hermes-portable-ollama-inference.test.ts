@@ -12,6 +12,10 @@ import type {
   PodmanExecutableStat,
   PodmanSocketAuthority,
 } from "../../adapters/podman";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { createSession } from "../../state/onboard-session";
 import { makeDeps, makeHostState, unexpected } from "../__test-helpers__/setup-nim-flow";
@@ -22,6 +26,7 @@ import {
   prepareHostLocalInferenceStartup,
 } from "../runtime-provider/host-local-inference-routing";
 import { createPortableOnboardEnvironmentScope } from "../session-bootstrap";
+import type { SetupInference } from "../setup-inference";
 import { createSetupNim } from "../setup-nim-flow";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import {
@@ -172,6 +177,7 @@ function createRuntimeFixture() {
     harness,
     homeDir,
     resolverOptions,
+    runtime,
     resolve: (input = freshPortableInput) =>
       createHermesPortableOllamaInferenceResolver(resolverOptions)(input),
     setCdiDevices: (devices: string[]) => {
@@ -265,6 +271,58 @@ describe("Hermes Portable Ollama inference activation", () => {
     ).toThrow("registry authority is missing or ambiguous");
   });
 
+  it("canonicalizes Portable authority labels without locale-dependent ordering (#9596)", () => {
+    const state: PortablePodmanAuthorityState = {
+      networkId: NETWORK_ID,
+      networkLabels: { z: "last", a: "first" },
+    };
+    const capture = createPortablePodmanCapture([], state);
+    const engine = {
+      capture: (args: readonly string[], timeoutMs = 30_000) =>
+        capture(
+          PODMAN_PATH,
+          ["--url", "unix:///run/user/1000/podman/podman.sock", ...args],
+          timeoutMs,
+        ),
+    };
+    const localeCompare = vi.spyOn(String.prototype, "localeCompare").mockReturnValue(-1);
+    try {
+      const first = hermesPortableOllamaAuthorityInternals.capturePortableNetworkAuthority(
+        engine as never,
+      );
+      localeCompare.mockReturnValue(1);
+      const second = hermesPortableOllamaAuthorityInternals.capturePortableNetworkAuthority(
+        engine as never,
+      );
+
+      expect(second.authoritySha256).toBe(first.authoritySha256);
+      expect(localeCompare).not.toHaveBeenCalled();
+    } finally {
+      localeCompare.mockRestore();
+    }
+  });
+
+  it("rejects a malformed gateway provider create command in its test harness (#9596)", () => {
+    const harness = createPortableGatewayProviderHarness([]);
+
+    expect(() =>
+      harness.run(["provider", "create", "--name", "ollama-local"], {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      }),
+    ).toThrow("without a credential value");
+  });
+
+  it("rejects an unknown Podman global command prefix in its test harness (#9596)", () => {
+    const capture = createPortablePodmanCapture([], { networkId: NETWORK_ID });
+
+    expect(() => capture(PODMAN_PATH, ["--connection", "ambient", "version"], 30_000)).toThrow(
+      "Unexpected Podman global arguments",
+    );
+  });
+
   it("fails closed when a fresh Portable selection has no runtime receipt (#9596)", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const resolverOptions = {
@@ -307,14 +365,11 @@ describe("Hermes Portable Ollama inference activation", () => {
         handleInstallOllamaSelection: async () => unexpected("host Ollama installation"),
       }),
     );
-    const setupInference = vi.fn(async (...args: readonly unknown[]) => {
+    const setupInference = vi.fn<SetupInference>(async (...args) => {
       fixture.events.push("setup-inference");
-      const inferenceOptions = args[7] as {
-        reservationSessionId?: string;
-        hostLocalInference?: ReturnType<typeof resolver>;
-      };
-      expect(inferenceOptions.reservationSessionId).toBe(session.sessionId);
-      const selection = inferenceOptions.hostLocalInference!;
+      const inferenceOptions = args[7];
+      expect(inferenceOptions?.reservationSessionId).toBe(session.sessionId);
+      const selection = inferenceOptions!.hostLocalInference!;
       expect(selection.request).toMatchObject({
         application: "hermes",
         service: "ollama",
@@ -359,8 +414,27 @@ describe("Hermes Portable Ollama inference activation", () => {
     expect(fixture.events.indexOf("provider-operation")).toBeLessThan(
       fixture.events.indexOf("complete:provider_selection"),
     );
+    expect(fixture.events.indexOf("complete:provider_selection")).toBeLessThan(
+      fixture.events.indexOf("complete:inference"),
+    );
     expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
-    expect(fixture.events.some((event) => event.startsWith("docker:"))).toBe(false);
+    const podmanEvents = fixture.events.filter((event) => event.startsWith("podman:"));
+    expect(podmanEvents.length).toBeGreaterThan(0);
+    expect(
+      podmanEvents.every((event) =>
+        event.endsWith(`executable=${PODMAN_PATH} socket=unix://${fixture.runtime.socketPath}`),
+      ),
+    ).toBe(true);
+    expect(podmanEvents.some((event) => event.includes("executable=docker"))).toBe(false);
+    expect(
+      fixture.gatewayProvider
+        .calls()
+        .every(({ args, timeout }) =>
+          args[1] === "get"
+            ? timeout === OPENSHELL_PROBE_TIMEOUT_MS
+            : timeout === OPENSHELL_OPERATION_TIMEOUT_MS,
+        ),
+    ).toBe(true);
   });
 
   it("binds an explicit Portable model through runtime and gateway authority (#9596)", async () => {
@@ -412,31 +486,46 @@ describe("Hermes Portable Ollama inference activation", () => {
     [
       "network identity",
       (state: PortablePodmanAuthorityState) => (state.networkId = "8".repeat(64)),
+      "network or registry authority drifted",
     ],
     [
       "registry identity",
       (state: PortablePodmanAuthorityState) => (state.registryId = "9".repeat(64)),
+      "network or registry authority drifted",
     ],
-    ["registry label", (state: PortablePodmanAuthorityState) => (state.registryLabel = "0")],
+    [
+      "registry label",
+      (state: PortablePodmanAuthorityState) => (state.registryLabel = "0"),
+      "registry authority changed after host preparation",
+    ],
     [
       "registry network",
       (state: PortablePodmanAuthorityState) => (state.registryNetworkId = "5".repeat(64)),
+      "registry authority changed after host preparation",
     ],
-  ])("fails before runtime mutation when current %s drifts (#9596)", (_label, mutate) => {
+  ])("fails before runtime mutation when current %s drifts (#9596)", (_label, mutate, error) => {
     const fixture = createRuntimeFixture();
     const initialPulls = fixture.events.filter((event) => event.includes("podman:pull ")).length;
     const selection = fixture.resolve()!;
     mutate(fixture.authorityState);
-    expect(() => selection.resolveRuntimeProvider("portable-hermes")).toThrow();
+    expect(() => selection.resolveRuntimeProvider("portable-hermes")).toThrow(error);
     expect(fixture.events.filter((event) => event.includes("podman:pull "))).toHaveLength(
       initialPulls,
     );
   });
 
   it.each([
-    ["network backend", (state: PortablePodmanAuthorityState) => (state.networkBackend = "cni")],
-    ["subordinate IDs", (state: PortablePodmanAuthorityState) => (state.subordinateIdSize = 1)],
-  ])("rejects changed Portable %s after runtime resolution (#9596)", (_label, mutate) => {
+    [
+      "network backend",
+      (state: PortablePodmanAuthorityState) => (state.networkBackend = "cni"),
+      "network backend must be 'netavark'",
+    ],
+    [
+      "subordinate IDs",
+      (state: PortablePodmanAuthorityState) => (state.subordinateIdSize = 1),
+      "subordinate UID range for the API service user",
+    ],
+  ])("rejects changed Portable %s after runtime resolution (#9596)", (_label, mutate, error) => {
     const fixture = createRuntimeFixture();
     const selection = fixture.resolve()!;
     const runtime = selection.resolveRuntimeProvider("portable-hermes")!;
@@ -451,7 +540,7 @@ describe("Hermes Portable Ollama inference activation", () => {
         env: {},
         acceleration: "nvidia-gpu",
       }),
-    ).toThrow();
+    ).toThrow(error);
   });
 
   it("retains immutable image cache while recovering the exact interrupted runtime (#9596)", async () => {

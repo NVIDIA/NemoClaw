@@ -43,6 +43,14 @@ const PROBE_DIGEST = "2".repeat(64);
 const TRANSACTION_ID = "3".repeat(64);
 const TARGET_SHA256 = "4".repeat(64);
 const GPU_UUID = "GPU-12345678-1234-1234-1234-123456789abc";
+
+export function throwAfterPodmanEvent(
+  events: readonly string[],
+  fragment: string,
+  message: string,
+): void {
+  if (events.some((event) => event.includes(fragment))) throw new Error(message);
+}
 const NETWORK_ID = "6".repeat(64);
 const NETWORK_NAME = "nemoclaw-net";
 const NETWORK_GATEWAY_IP = "10.89.0.1";
@@ -98,6 +106,7 @@ export interface PodmanHostLocalInferenceHarness {
     networkName: string;
     probeFailure: "ready" | "gpu" | "inference" | null;
     probeFailureText: string;
+    ollamaPullFailure: string | null;
     ollamaPsModels: unknown[];
     runLostAcknowledgement: boolean;
     runAcknowledgementText: string | null;
@@ -360,6 +369,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     probeFailure: null as "ready" | "gpu" | "inference" | null,
     probeFailureText:
       "provider\u0001failed\u0002 nvapi-1234567890abcdef Authorization: Bearer bearer-secret-1234 NGC_API_KEY=environment-secret https://user:pass@example.invalid/a?token=query-secret",
+    ollamaPullFailure: null as string | null,
     ollamaPsModels: [
       {
         name: "nemotron:latest",
@@ -571,6 +581,9 @@ export function createPodmanHostLocalInferenceTestHarness(
         return result(0, currentProbe.logsStdout, currentProbe.logsStderr);
       }
       if (args[0] === "exec") {
+        if (args[2] === "ollama" && args[3] === "pull" && state.ollamaPullFailure !== null) {
+          return result(1, "", state.ollamaPullFailure);
+        }
         if (state.parentExitDuringProof === "gpu") {
           if (currentContainer) {
             currentContainer.running = false;

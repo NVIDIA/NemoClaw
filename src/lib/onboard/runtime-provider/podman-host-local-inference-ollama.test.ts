@@ -3,7 +3,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
+import {
+  createPodmanHostLocalInferenceTestHarness,
+  throwAfterPodmanEvent,
+} from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import {
   type HostLocalManagedInferenceInput,
   normalizeHostLocalInferenceReceipt,
@@ -117,6 +120,16 @@ describe("Podman managed Ollama lifecycle", () => {
       "network listener changed after qualification",
     );
     expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(false);
+  });
+
+  it("reports model acquisition failure before trailing authority drift (#9596)", () => {
+    const fixture = managedOllamaFixture();
+    fixture.harness.state.ollamaPullFailure = "model pull failed";
+    fixture.assertCurrent.mockImplementation(() =>
+      throwAfterPodmanEvent(fixture.harness.events, "ollama pull", "trailing authority drift"),
+    );
+
+    expect(() => prepareManagedOllama(fixture)).toThrow("managed Ollama model acquisition");
   });
 
   it("creates and rolls back a receipt-owned runtime for fresh Portable Hermes (#9596)", () => {

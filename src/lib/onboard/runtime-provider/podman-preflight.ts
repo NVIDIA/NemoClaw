@@ -538,7 +538,9 @@ export function revalidatePodmanInferenceAuthority(
   const refreshed =
     options.captureCurrentCdiDevices === undefined &&
     isPodmanVersionSupported(normalized.serverVersion, MINIMUM_PODMAN_INFERENCE_VERSION)
-      ? qualifyPodmanInferenceAuthority(engine)
+      ? qualifyPodmanInferenceAuthority(engine, {
+          assertCurrentAuthority: options.assertCurrentAuthority,
+        })
       : qualifyPodmanInferenceAuthority(engine, {
           expectedVersion: normalized.serverVersion,
           assertCurrentAuthority: options.assertCurrentAuthority,

@@ -22,6 +22,8 @@ const SAFE_CREDENTIAL_ENV = /^[A-Z_][A-Z0-9_]*$/u;
 const MAX_RECEIPT_BYTES = 32 * 1024;
 const PRIVATE_FILE_MODE = 0o600;
 const MAX_GATEWAY_PROVIDER_OUTPUT_BYTES = 16 * 1024;
+const GATEWAY_PROVIDER_PROBE_TIMEOUT_MS = 15_000;
+const GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS = 30_000;
 const GATEWAY_PROVIDER_JOURNAL_FILE = "portable-gateway-provider.json";
 const TEMPORARY_FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const ANSI_ESCAPE = /\x1b\[[0-9;]*m/g;
@@ -43,6 +45,7 @@ export type HermesPortableOllamaGatewayRunner = (
     suppressOutput: true;
     stdio: ["ignore", "pipe", "pipe"];
     env?: NodeJS.ProcessEnv;
+    timeout: number;
   },
 ) => GatewayCommandResult;
 
@@ -475,6 +478,7 @@ function exactGatewayMutation(
       ignoreError: true,
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: GATEWAY_PROVIDER_PROBE_TIMEOUT_MS,
     });
     const output = commandText(result);
     if (result.status !== 0) {
@@ -533,6 +537,7 @@ function exactGatewayMutation(
       ignoreError: true,
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
     });
     const after = readExact(provider);
     if (after.kind === "absent") {
@@ -615,7 +620,7 @@ function exactGatewayMutation(
         if (current.kind !== "absent") {
           throw new Error("Hermes Portable inference found an unowned existing gateway provider.");
         }
-        journal = journalStore.prepare(journal);
+        journalStore.prepare(journal);
       } else if (journal.phase === "prepared") {
         if (current.kind !== "absent") {
           throw new Error(
@@ -628,7 +633,7 @@ function exactGatewayMutation(
           if (!authority) {
             throw new Error("Hermes Portable inference recorded provider creation is ambiguous.");
           }
-          journal = journalStore.transition(journal, "created", authority);
+          journalStore.transition(journal, "created", authority);
         }
       } else {
         const authority = journal.providerAuthority;
@@ -703,6 +708,7 @@ function exactGatewayMutation(
               suppressOutput: true,
               stdio: ["ignore", "pipe", "pipe"],
               env: { [expectedProviderCredentialEnv]: "ollama" },
+              timeout: GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
             },
           );
           const after = readExact(input.provider);

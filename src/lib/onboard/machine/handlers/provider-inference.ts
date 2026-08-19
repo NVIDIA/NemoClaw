@@ -1707,22 +1707,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     endpointSource = hostLocalRoute.endpointSource;
     onboardEndpointUrl = hostLocalRoute.onboardEndpointUrl;
     if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
-    session = await deps.recordStepComplete(
-      "inference",
-      deps.toSessionUpdates({
-        provider,
-        model,
-        hermesAuthMethod,
-        compatibleEndpointReasoning,
-        compatibleEndpointReasoningEffort,
-        nimContainer,
-        hermesToolGateways,
-        ...hostLocalInferenceSessionRoute(hostLocalInferenceRouteOnly, endpointUrl, endpointSource),
-        // The forced #6294/#6289 heal succeeded: the gateway registration now
-        // matches the adjusted route, so the stale session seed can be replaced.
-        ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
-      }),
-    );
     if (deferProviderSelectionUntilInference) {
       // Provider selection remains in progress until its inference route has
       // configured successfully. This retains the selected provider/model for
@@ -1746,6 +1730,22 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }),
       );
     }
+    session = await deps.recordStepComplete(
+      "inference",
+      deps.toSessionUpdates({
+        provider,
+        model,
+        hermesAuthMethod,
+        compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort,
+        nimContainer,
+        hermesToolGateways,
+        ...hostLocalInferenceSessionRoute(hostLocalInferenceRouteOnly, endpointUrl, endpointSource),
+        // The forced #6294/#6289 heal succeeded: the gateway registration now
+        // matches the adjusted route, so the stale session seed can be replaced.
+        ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
+      }),
+    );
     break;
   }
 

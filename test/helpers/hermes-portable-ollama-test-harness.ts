@@ -10,6 +10,7 @@ const REGISTRY_ID = "7".repeat(64);
 
 export interface PortablePodmanAuthorityState {
   networkId: string;
+  networkLabels?: Record<string, string>;
   networkBackend?: string;
   subordinateIdSize?: number;
   registryCopies?: number;
@@ -29,9 +30,13 @@ export function createPortablePodmanCapture(
     input?: Buffer,
   ) => ContainerEngineCommandResult,
 ): ContainerEngineCommandCapture {
-  return (_executable, args, timeoutMs, input) => {
+  return (executable, args, timeoutMs, input) => {
+    const socketUrl = args[1];
+    if (args[0] !== "--url" || typeof socketUrl !== "string" || socketUrl.length === 0) {
+      throw new Error(`Unexpected Podman global arguments: ${args.join(" ")}`);
+    }
     const command = args.slice(2);
-    events.push(`podman:${command.join(" ")}`);
+    events.push(`podman:${command.join(" ")} executable=${executable} socket=${socketUrl}`);
     if (command[0] === "version") {
       return {
         status: 0,
@@ -85,7 +90,7 @@ export function createPortablePodmanCapture(
             dns_enabled: true,
             network_interface: "podman9",
             subnets: [{ subnet: "169.254.1.0/24", gateway: "169.254.1.1" }],
-            labels: {},
+            labels: authorityState.networkLabels ?? {},
             ipam_options: {},
             options: {},
           },
@@ -148,8 +153,14 @@ export interface PortableGatewayProviderHarness {
       ignoreError: true;
       suppressOutput: true;
       stdio: ["ignore", "pipe", "pipe"];
+      env?: NodeJS.ProcessEnv;
+      timeout: number;
     },
   ) => ContainerEngineCommandResult;
+  readonly calls: () => ReadonlyArray<{
+    readonly args: readonly string[];
+    readonly timeout: number;
+  }>;
   readonly credentialEnv: () => string;
   readonly isPresent: () => boolean;
   readonly bumpResourceVersion: () => void;
@@ -173,7 +184,9 @@ export function createPortableGatewayProviderHarness(
   let lookupFailure = false;
   let resourceVersion = 1;
   let credentialEnv = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
+  const calls: Array<{ readonly args: readonly string[]; readonly timeout: number }> = [];
   return Object.freeze({
+    calls: () => calls,
     credentialEnv: () => credentialEnv,
     isPresent: () => present,
     bumpResourceVersion: () => {
@@ -200,7 +213,8 @@ export function createPortableGatewayProviderHarness(
     setPresent: (value: boolean) => {
       present = value;
     },
-    run(args: string[]) {
+    run(args: string[], options: Parameters<PortableGatewayProviderHarness["run"]>[1]) {
+      calls.push(Object.freeze({ args: Object.freeze([...args]), timeout: options.timeout }));
       events.push(`openshell:${args.join(" ")}`);
       if (args[0] === "provider" && args[1] === "get") {
         if (lookupFailure) {
@@ -238,7 +252,10 @@ export function createPortableGatewayProviderHarness(
           return { status: 1, stdout: "", stderr: "provider already exists" };
         }
         const credentialIndex = args.indexOf("--credential");
-        credentialEnv = credentialIndex >= 0 ? String(args[credentialIndex + 1]) : "";
+        if (credentialIndex < 0 || typeof args[credentialIndex + 1] !== "string") {
+          throw new Error("Unexpected OpenShell provider create without a credential value.");
+        }
+        credentialEnv = args[credentialIndex + 1];
         present = true;
         resourceVersion = 1;
         return createTransportAmbiguity

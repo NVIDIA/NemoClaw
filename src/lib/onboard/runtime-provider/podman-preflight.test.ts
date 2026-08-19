@@ -400,6 +400,21 @@ describe("Podman host-local-inference authority", () => {
     );
   });
 
+  it("revalidates current authority when it is the only Podman 6 option (#9596)", () => {
+    const runtime = engine({
+      operation: "host-local-inference",
+      version: "6.0.1",
+      serverVersion: "6.0.1",
+    });
+    const receipt = qualifyPodmanInferenceAuthority(runtime);
+    const assertCurrentAuthority = vi.fn();
+
+    expect(
+      revalidatePodmanInferenceAuthority(runtime, receipt, { assertCurrentAuthority }),
+    ).toEqual(receipt);
+    expect(assertCurrentAuthority).toHaveBeenCalledTimes(2);
+  });
+
   it("treats Podman's omitted lowercase host.discoveredDevices field as exact empty authority", () => {
     const nestedOnly = JSON.stringify({
       ...JSON.parse(INFO),

@@ -540,6 +540,7 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
     return null;
   }
   if (!input.requestedModel) {
+    if (!input.deps.isNonInteractive()) return null;
     input.deps.abortNonInteractive(
       "Hermes Portable Ollama requires an explicit local model selection.",
     );
