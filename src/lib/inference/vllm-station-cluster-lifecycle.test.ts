@@ -26,6 +26,7 @@ import {
   DUAL_STATION_VLLM_GPU_SMOKE_LABEL,
   DUAL_STATION_VLLM_HEAD_CONTAINER_NAME,
   DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL,
+  DUAL_STATION_VLLM_LAUNCH_SCHEMA,
   DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL,
   DUAL_STATION_VLLM_MANAGED_LABEL,
   DUAL_STATION_VLLM_ROLE_LABEL,
@@ -160,7 +161,7 @@ function fakeContainer(
       [DUAL_STATION_VLLM_CLUSTER_LABEL]: dualStationVllmClusterId(fixturePlan()),
       [DUAL_STATION_VLLM_GPU_LABEL]:
         role === "head" ? fixturePlan().local.gpu.uuid : fixturePlan().peer.gpu.uuid,
-      [DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL]: "2",
+      [DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL]: DUAL_STATION_VLLM_LAUNCH_SCHEMA,
       [DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL]: dualStationVllmLaunchContract(fixturePlan(), role),
       [DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL]: API_KEY_FINGERPRINT,
       [DUAL_STATION_VLLM_TRANSACTION_LABEL]: TRANSACTION_ID,
@@ -304,7 +305,7 @@ describe("dual-Station managed vLLM run argv", () => {
     expect(args).toContain(plan.runtime.image);
     expect(dockerValues(args, "--label")).toEqual(
       expect.arrayContaining([
-        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=2`,
+        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=${DUAL_STATION_VLLM_LAUNCH_SCHEMA}`,
         `${DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL}=${dualStationVllmLaunchContract(plan, role)}`,
         `${DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL}=${API_KEY_FINGERPRINT}`,
         `${DUAL_STATION_VLLM_TRANSACTION_LABEL}=${TRANSACTION_ID}`,

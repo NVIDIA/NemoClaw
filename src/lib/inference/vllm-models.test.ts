@@ -145,6 +145,7 @@ describe("vllm model registry", () => {
       nodeRank: 0,
       masterAddr: "192.168.240.1",
       masterPort: 6379,
+      apiPort: 19000,
     });
 
     expect(cmd).toContain('python3 -m pip install --user --no-cache-dir "ray==2.56.0"');
@@ -160,6 +161,7 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--distributed-timeout-seconds 7200");
     expect(cmd).toContain("--served-model-name nemotron-ultra");
     expect(cmd).toContain("--host 192.168.240.1");
+    expect(cmd).toContain("--port 19000");
     expect(cmd).toContain("--max-num-seqs 256");
     expect(cmd).toContain("--gpu-memory-utilization 0.9");
     expect(cmd).not.toContain("--kernel_config");
@@ -172,12 +174,14 @@ describe("vllm model registry", () => {
       nodeRank: 0,
       masterAddr: "192.168.240.1",
       masterPort: 6379,
+      apiPort: 8000,
     });
     const worker = buildNemotronUltraDistributedServeCommand({
       nodeRank: 1,
       masterAddr: "192.168.240.1",
       masterPort: 6379,
       nodeAddr: "192.168.240.2",
+      apiPort: 8000,
     });
 
     expect(worker).toContain(
@@ -193,6 +197,7 @@ describe("vllm model registry", () => {
         nodeRank: 0,
         masterAddr: "station a",
         masterPort: 6379,
+        apiPort: 8000,
       }),
     ).toThrow(/masterAddr/);
     expect(() =>
@@ -200,6 +205,7 @@ describe("vllm model registry", () => {
         nodeRank: 1,
         masterAddr: "192.168.240.1",
         masterPort: 70000,
+        apiPort: 8000,
       }),
     ).toThrow(/masterPort/);
     expect(() =>
@@ -208,8 +214,25 @@ describe("vllm model registry", () => {
         masterAddr: "192.168.240.1",
         masterPort: 6379,
         nodeAddr: "worker.example.com",
+        apiPort: 8000,
       }),
     ).toThrow(/nodeAddr/);
+    expect(() =>
+      buildNemotronUltraDistributedServeCommand({
+        nodeRank: 0,
+        masterAddr: "192.168.240.1",
+        masterPort: 6379,
+        apiPort: 70_000,
+      }),
+    ).toThrow(/apiPort/);
+    expect(() =>
+      buildNemotronUltraDistributedServeCommand({
+        nodeRank: 0,
+        masterAddr: "192.168.240.1",
+        masterPort: 6379,
+        apiPort: 80,
+      }),
+    ).toThrow(/apiPort/);
   });
 
   it("rejects an unknown NEMOCLAW_VLLM_MODEL with a helpful message", () => {
