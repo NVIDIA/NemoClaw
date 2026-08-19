@@ -24,14 +24,12 @@ import {
   clearDualStationResumeState,
   inspectPretrustedSshTarget,
   readDualStationResumeState,
-  strictStationPrepSshTransportArgs,
+  stationPrepSshArgs,
   writeDualStationResumeState,
 } from "../scripts/prepare-dual-dgx-station.mts";
 import { DUAL_STATION_VLLM_LAUNCH_SCHEMA } from "../src/lib/inference/vllm-station-cluster-lifecycle.ts";
-import {
-  stationKnownHostsDigest,
-  strictStationSshTransportArgs,
-} from "../src/lib/inference/vllm-station-ssh-binding.ts";
+import { stationKnownHostsDigest } from "../src/lib/inference/vllm-station-ssh-binding.ts";
+import { strictVllmSshTransportArgs } from "../src/lib/inference/serving/vllm-ssh-transport-policy.ts";
 import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
 import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
@@ -794,16 +792,23 @@ describe.sequential("dual-DGX Station trust and resume-state boundaries", () => 
     }
   });
 
-  it("uses a strict noninteractive SSH argument boundary and exact-byte helper command", () => {
-    const args = strictStationPrepSshTransportArgs();
-    expect(args).toEqual(strictStationSshTransportArgs());
-    expect(args).toContain("BatchMode=yes");
-    expect(args).toContain("StrictHostKeyChecking=yes");
-    expect(args).toContain("VerifyHostKeyDNS=no");
-    expect(args).toContain("NoHostAuthenticationForLocalhost=no");
-    expect(args).toContain("ClearAllForwardings=yes");
-    expect(args).toContain("ProxyCommand=none");
-    expect(args).toContain("ProxyJump=none");
+  it("pins the Station preparation endpoint after the strict SSH policy (#9519)", () => {
+    const args = stationPrepSshArgs(sshBinding(), "/tmp/nemoclaw-known-hosts", "python3 -");
+    expect(args).toEqual([
+      ...strictVllmSshTransportArgs(),
+      "-o",
+      "UserKnownHostsFile=/tmp/nemoclaw-known-hosts",
+      "-o",
+      "GlobalKnownHostsFile=/dev/null",
+      "-o",
+      "HostKeyAlias=10.10.0.2",
+      "--",
+      "10.10.0.2",
+      "python3 -",
+    ]);
+  });
+
+  it("builds the exact-byte noninteractive helper command", () => {
     const command = buildRemoteHelperCommand(HELPER_SHA256, "--apply");
     expect(command).toContain(HELPER_SHA256);
     expect(command).toContain("sudo -n true");
@@ -947,9 +952,7 @@ fi
     }
   });
 
-  it.each(
-    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
-  )(
+  it.each(["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"])(
     "uses only deterministic rail candidates without trust enrollment or network discovery [%s]",
     (command) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-command-boundary-"));
@@ -1010,9 +1013,7 @@ fi
     },
   );
 
-  it.each(
-    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
-  )(
+  it.each(["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"])(
     "keeps forbidden discovery and trust enrollment unreachable through pair qualification [%s]",
     (command) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-ready-boundary-"));
