@@ -55,25 +55,37 @@ test("accepts a normally completed connect when the forward is already healthy",
 });
 
 test("rejects invalid handoff budgets before spawning connect", async ({ artifacts, progress }) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-handoff-budget-"));
+  const marker = path.join(directory, "spawned");
   const base = {
     artifacts,
-    command: [process.execPath, "-e", "process.exit(0)"] as const,
+    command: [
+      process.execPath,
+      "-e",
+      'require("node:fs").writeFileSync(process.argv[1], "1")',
+      marker,
+    ] as const,
     dashboardPort: DASHBOARD_PORT,
     env: process.env,
     progress,
     sandboxName: SANDBOX_NAME,
   };
 
-  await expect(runDashboardConnectUntilForwardHandoff({ ...base, timeoutMs: 0 })).rejects.toThrow(
-    /timeout must be a positive finite value/,
-  );
-  await expect(
-    runDashboardConnectUntilForwardHandoff({
-      ...base,
-      stopGraceMs: Number.POSITIVE_INFINITY,
-      timeoutMs: 2_000,
-    }),
-  ).rejects.toThrow(/stop grace must be a positive finite value/);
+  try {
+    await expect(runDashboardConnectUntilForwardHandoff({ ...base, timeoutMs: 0 })).rejects.toThrow(
+      /timeout must be a positive finite value/,
+    );
+    await expect(
+      runDashboardConnectUntilForwardHandoff({
+        ...base,
+        stopGraceMs: Number.POSITIVE_INFINITY,
+        timeoutMs: 2_000,
+      }),
+    ).rejects.toThrow(/stop grace must be a positive finite value/);
+    expect(fs.existsSync(marker)).toBe(false);
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
 });
 
 test("reaps interactive connect after missing-forward proof while its detached forward survives", async ({
@@ -89,7 +101,7 @@ test("reaps interactive connect after missing-forward proof while its detached f
       'const { spawn } = require("node:child_process");',
       'const forward = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { detached: true, stdio: "ignore" });',
       "forward.unref();",
-      "fs.writeFileSync(process.argv[1], String(forward.pid));",
+      "try { fs.writeFileSync(process.argv[1], String(forward.pid)); } catch (error) { forward.kill('SIGTERM'); throw error; }",
       `process.stdout.write(${JSON.stringify(
         `Dashboard port forward to '${SANDBOX_NAME}' is missing or dead.\nRe-establishing...\n\u001B[32m✓\u001B[0m Dashboard port forward re-established.\n`,
       )});`,
@@ -114,10 +126,15 @@ test("reaps interactive connect after missing-forward proof while its detached f
     const cleanupPid = Number.isInteger(forwardPid)
       ? forwardPid
       : Number(fs.existsSync(pidFile) ? fs.readFileSync(pidFile, "utf8") : Number.NaN);
-    await (Number.isInteger(cleanupPid) && cleanupPid > 0
-      ? stopFixtureProcess(cleanupPid)
-      : Promise.resolve());
-    fs.rmSync(directory, { force: true, recursive: true });
+    try {
+      expect(
+        Number.isInteger(cleanupPid) && cleanupPid > 0,
+        "fixture forward PID is unavailable; detached cleanup cannot be proven",
+      ).toBe(true);
+      await stopFixtureProcess(cleanupPid);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   }
 });
 

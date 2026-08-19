@@ -195,7 +195,7 @@ runDashboardRemoteBindTest(
     });
     expect(
       connect.proof,
-      `nemoclaw connect did not complete or print background-forward proof\nstdout:\n${connect.stdout}\nstderr:\n${connect.stderr}`,
+      "nemoclaw connect did not complete or print background-forward proof; see the dashboard-connect-handoff.stdout.txt and dashboard-connect-handoff.stderr.txt artifacts",
     ).toBe("forward-started");
 
     progress.phase("verify all-interface dashboard forward");
