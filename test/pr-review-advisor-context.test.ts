@@ -145,7 +145,10 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(investigate?.prompt).toContain("account for source and tests together");
     expect(investigate?.prompt).toContain("Prefer a negative total line delta");
     expect(investigate?.prompt).toContain(
-      "If the proposed remedy adds net lines or another mechanism, do not call it simplification",
+      "If the proposed remedy increases net complexity or merely introduces another mechanism without consolidating current structure, do not call it simplification",
+    );
+    expect(investigate?.prompt).toContain(
+      "Accept a new helper or abstraction only when current consumers adopt it in this change and the combined source-and-test structure materially decreases",
     );
     expect(investigate?.prompt).toContain("new pattern applied to current related code");
     expect(investigate?.prompt).toContain(
@@ -198,7 +201,10 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "Require every unnecessary-complexity finding to carry a reduction case",
     );
     expect(challenge?.prompt).toContain(
-      "Reject a proposed simplification that adds net lines",
+      "Reject a proposed simplification that increases net complexity",
+    );
+    expect(challenge?.prompt).toContain(
+      "Allow a helper or abstraction only when current consumers adopt it now and the combined source-and-test structure materially decreases",
     );
     expect(challenge?.prompt).toContain(
       "hypothetical future failures without a present defect",

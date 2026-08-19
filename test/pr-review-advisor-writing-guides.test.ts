@@ -142,6 +142,9 @@ describe("PR review advisor writing guides", () => {
     expect(prompt).toContain(
       "This ownership requirement does not apply to independently supported correctness, security, scope, or other design defects",
     );
+    expect(prompt).not.toContain(
+      "A finding is eligible when checked-out evidence shows that the current PR introduces or retains duplicate or conflicting ownership",
+    );
     expect(prompt).toContain(
       "If a refreshed base only makes the PR unnecessary without leaving duplicate or conflicting code",
     );

@@ -221,9 +221,11 @@ These recommendations describe advisor findings only.
 They never approve a PR, replace required human review, or change the repository's merge gates.
 Warnings identify concerns that maintainers can accept without author action. Suggestions identify
 optional improvements. Required design work must be a blocker instead of a warning.
-An unnecessary-complexity blocker must remove or consolidate current structure. Recommendations that
-add net lines or another helper, registry, configuration surface, compatibility layer, fallback,
-migration path, test framework, or fixture owner require an independent correctness, security, or
-accepted-scope defect; they are not presented as simplification. This keeps architecture feedback
-strong while preventing review-driven growth and serial refactoring layers.
+An unnecessary-complexity blocker must remove or consolidate current structure. A helper or
+abstraction is eligible only when current consumers adopt it and the combined source-and-test
+structure materially decreases. Other recommendations that increase net complexity or merely add a
+registry, configuration surface, compatibility layer, fallback, migration path, test framework, or
+fixture owner require an independent correctness, security, or accepted-scope defect; they are not
+presented as simplification. This keeps architecture feedback strong while preventing review-driven
+growth and serial refactoring layers.
 Every result includes limitations and requires maintainer review.
