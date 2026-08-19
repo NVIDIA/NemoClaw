@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -41,6 +42,10 @@ import {
 
 const REGISTRY_CONTAINER = "nemoclaw-portable-registry";
 const REGISTRY_LABEL = "com.nvidia.nemoclaw.portable=1";
+// Portable onboarding assigned this address to loopback before #9587 moved the
+// host gateway outside the sandbox subnet. Keep the retired value here so an
+// upgraded host cannot silently retain a route that captures sandbox traffic.
+const RETIRED_PORTABLE_HOST_GATEWAY_IP = "169.254.1.2";
 const REGISTRY_IMAGE =
   "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
@@ -106,6 +111,10 @@ function requireCommand(result: SpawnResult, description: string): void {
   throw new Error(`${description} failed: ${commandDetail(result)}`);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * The portable profile points DOCKER_HOST at the rootless Podman socket but still
  * drives the managed registry — and the rest of onboarding's runtime preflight —
@@ -128,8 +137,11 @@ function requireDockerCompatibleCli(
   );
 }
 
-function portableHostGatewayAliasState(output: string): "absent" | "configured" {
-  const escapedGatewayIp = PORTABLE_HOST_GATEWAY_IP.replaceAll(".", "\\.");
+function portableHostGatewayAliasState(
+  output: string,
+  gatewayIp = PORTABLE_HOST_GATEWAY_IP,
+): "absent" | "configured" {
+  const escapedGatewayIp = gatewayIp.replaceAll(".", "\\.");
   const addressPattern = new RegExp(`\\binet\\s+${escapedGatewayIp}/(\\d+)\\b`, "u");
   const assignments = output
     .split("\n")
@@ -143,7 +155,83 @@ function portableHostGatewayAliasState(output: string): "absent" | "configured" 
     return "configured";
   }
   throw new Error(
-    `Refusing to configure ${PORTABLE_HOST_GATEWAY_IP}/32 because the address already has a conflicting host assignment.`,
+    `Refusing to configure ${gatewayIp}/32 because the address already has a conflicting host assignment.`,
+  );
+}
+
+function retiredPortableHostGatewayAliasState(
+  output: string,
+): "absent" | "configured" | "conflicting" {
+  const parsed: unknown = JSON.parse(output);
+  if (!Array.isArray(parsed)) throw new Error("invalid address evidence");
+  const assignments: Array<{ interfaceName: string; prefix: number }> = [];
+  for (const interfaceEntry of parsed) {
+    if (
+      !isRecord(interfaceEntry) ||
+      typeof interfaceEntry.ifname !== "string" ||
+      interfaceEntry.ifname.length === 0 ||
+      !Array.isArray(interfaceEntry.addr_info)
+    ) {
+      throw new Error("invalid address evidence");
+    }
+    for (const addressEntry of interfaceEntry.addr_info) {
+      if (
+        !isRecord(addressEntry) ||
+        addressEntry.family !== "inet" ||
+        typeof addressEntry.local !== "string" ||
+        isIP(addressEntry.local) !== 4 ||
+        !Number.isInteger(addressEntry.prefixlen) ||
+        Number(addressEntry.prefixlen) < 0 ||
+        Number(addressEntry.prefixlen) > 32
+      ) {
+        throw new Error("invalid address evidence");
+      }
+      if (addressEntry.local === RETIRED_PORTABLE_HOST_GATEWAY_IP) {
+        assignments.push({
+          interfaceName: interfaceEntry.ifname,
+          prefix: Number(addressEntry.prefixlen),
+        });
+      }
+    }
+  }
+  if (assignments.length === 0) return "absent";
+  if (
+    assignments.length === 1 &&
+    assignments[0]?.interfaceName === "lo" &&
+    assignments[0].prefix === 32
+  ) {
+    return "configured";
+  }
+  return "conflicting";
+}
+
+function rejectRetiredPortableHostGatewayAlias(
+  env: NodeJS.ProcessEnv,
+  ip: NonNullable<PortableHostPreparationDeps["ip"]>,
+): void {
+  const result = ip(["-j", "-4", "address", "show"], env);
+  requireCommand(result, "Inspecting the retired portable host gateway address");
+  let state: "absent" | "configured" | "conflicting";
+  try {
+    state = retiredPortableHostGatewayAliasState(String(result.stdout ?? ""));
+  } catch {
+    throw new Error(
+      "The retired portable host gateway address inspection returned invalid or ambiguous output. " +
+        "Refusing to change Portable networking; investigate the host address assignments, then rerun " +
+        "`nemoclaw onboard --experimental-profile portable`.",
+    );
+  }
+  if (state === "absent") return;
+  if (state === "conflicting") {
+    throw new Error(
+      `The retired portable host gateway address ${RETIRED_PORTABLE_HOST_GATEWAY_IP} has a conflicting host assignment. ` +
+        "Resolve that assignment, then rerun `nemoclaw onboard --experimental-profile portable`.",
+    );
+  }
+  throw new Error(
+    `The retired portable host gateway address ${RETIRED_PORTABLE_HOST_GATEWAY_IP}/32 is still assigned to loopback. ` +
+      `Remove it with \`sudo ip address delete ${RETIRED_PORTABLE_HOST_GATEWAY_IP}/32 dev lo\`, then rerun ` +
+      "`nemoclaw onboard --experimental-profile portable`.",
   );
 }
 
@@ -643,6 +731,7 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: HOST_COMMAND_TIMEOUT_MS,
       }));
+  rejectRetiredPortableHostGatewayAlias(podmanEnv, ip);
   ensurePortableSandboxNetwork(podmanEnv, docker, dockerNetworkName);
   ensurePortableHostGatewayAlias(podmanEnv, ip, sudo);
   ensureRegistryContainer(podmanEnv, docker, dockerNetworkName);

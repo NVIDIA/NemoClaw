@@ -19,7 +19,12 @@ It complements the existing PR surfaces by keeping a NemoClaw maintainer code-re
 - source-of-truth review for fallback, recovery, tolerant parsing, monkeypatching, and other localized workaround behavior;
 - static test-inventory context from changed test files and nearby test names;
 - a complete simplicity sweep that considers the changed code and its surrounding area, including
-  safe deletion, consolidation, existing or new patterns, and neutral or negative net-line outcomes;
+  safe deletion, consolidation, existing or new patterns, and neutral or negative net-line outcomes.
+  Present design defects can block when checked-in evidence shows duplicated ownership, unnecessary
+  machinery, substantial repeated setup, widened dependencies, or unrelated churn and the review
+  provides a concrete behavior-preserving reduction. The reduction case covers source and tests
+  together, defaults to a negative total line outcome, and may be line-neutral only when it
+  materially reduces owners, concepts, invalid combinations, or dependency width;
 - semantic terminology review for terms that changed explanatory text introduces, expands, or
   redefines, with repository evidence for each model-selected candidate;
 - E2E coverage, job, target, and fan-out selections normalized against the checked-in
@@ -38,7 +43,13 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 4. Opens one Pi session per model lane and performs exactly two normal turns.
 5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, prior findings, positives, and limitations in one coherent pass.
 6. The `challenge-and-record` turn keeps repository reads and adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The first three replace complete in-memory draft sections. They do not update canonical state.
-7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema. A successful call validates and assembles pending state, then ends the turn. The session runner atomically commits that state only after accepting the complete terminal flow. Failed validation does not mutate canonical state. A settled invalid call permits one bounded repair; omission, provider failure, unsettled calls, or activity after success fail closed and discard pending state.
+7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema.
+   A successful call validates and assembles pending state, then ends the turn.
+   The session runner atomically commits that state only after accepting the complete terminal flow.
+   Failed validation does not mutate canonical state.
+   The `challenge-and-record` turn accepts one failed call followed by one successful call in one SDK response.
+   If the first response settles after the failed call, the controller can request one tool-only continuation.
+   Omission, provider failure, unsettled calls, extra attempts, or activity after success fail closed and discard pending state.
 8. Trusted code writes the session transcript, finding, terminology, result, summary, and detailed-review artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
 9. The primary GPT-5.6 Terra lane publishes the sticky comment. The Nemotron Ultra lane remains an artifact-only evaluation lane.
     The evaluation lane does not publish another review.
@@ -214,5 +225,13 @@ It reserves `info_only` for skipped, unavailable, incomplete, or low-confidence 
 `superseded` when competing work replaces the PR.
 These recommendations describe advisor findings only.
 They never approve a PR, replace required human review, or change the repository's merge gates.
-Maintainers still decide whether a warning blocks, and suggestions do not require a response.
+Warnings identify concerns that maintainers can accept without author action. Suggestions identify
+optional improvements. Required design work must be a blocker instead of a warning.
+An unnecessary-complexity blocker must remove or consolidate current structure. A helper or
+abstraction is eligible only when current consumers adopt it and the combined source-and-test
+structure materially decreases. Other recommendations that increase net complexity or merely add a
+registry, configuration surface, compatibility layer, fallback, migration path, test framework, or
+fixture owner require an independent correctness, security, or accepted-scope defect; they are not
+presented as simplification. This keeps architecture feedback strong while preventing review-driven
+growth and serial refactoring layers.
 Every result includes limitations and requires maintainer review.

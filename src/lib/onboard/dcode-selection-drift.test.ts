@@ -6,12 +6,24 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeManagedDcodeModelName } from "../inference/managed-dcode/identity";
 import {
   createDcodeSelectionDriftReader,
+  type DcodeSelectionDriftDeps,
   getDcodeSelectionDrift,
   getExpectedDcodeInferenceIdentity,
   parseDcodeInferenceIdentity,
   requiresSelectionRecreate,
   usesManagedDcodeIdentity,
 } from "./dcode-selection-drift";
+
+function driftDeps(
+  runCaptureOpenshell: DcodeSelectionDriftDeps["runCaptureOpenshell"],
+  requestedEndpointUrl?: string | null,
+): DcodeSelectionDriftDeps {
+  return {
+    getGatewayName: () => "nemoclaw-18081",
+    requestedEndpointUrl,
+    runCaptureOpenshell,
+  };
+}
 
 function identity(
   overrides: Partial<Record<"Route" | "Provider" | "Model" | "Endpoint", string>> = {},
@@ -76,9 +88,13 @@ describe("live DCode selection drift", () => {
     });
 
     expect(
-      getDcodeSelectionDrift("alpha", "openrouter-api", "nvidia/nemotron-3-ultra-550b-a55b", null, {
-        runCaptureOpenshell: () => output,
-      }),
+      getDcodeSelectionDrift(
+        "alpha",
+        "openrouter-api",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        null,
+        driftDeps(() => output),
+      ),
     ).toEqual({
       changed: false,
       providerChanged: false,
@@ -94,7 +110,10 @@ describe("live DCode selection drift", () => {
       Provider: "openrouter",
       Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
     });
-    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(() => output);
+    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(
+      () => output,
+      () => "nemoclaw-18081",
+    );
 
     expect(
       readDcodeSelectionDrift(
@@ -122,7 +141,10 @@ describe("live DCode selection drift", () => {
       Provider: "openrouter",
       Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
     });
-    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(() => output);
+    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(
+      () => output,
+      () => "nemoclaw-18081",
+    );
 
     expect(
       readDcodeSelectionDrift(
@@ -145,7 +167,10 @@ describe("live DCode selection drift", () => {
       Provider: "compatible-endpoint",
       Model: "openai:model-a",
     });
-    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(() => output);
+    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(
+      () => output,
+      () => "nemoclaw-18081",
+    );
 
     expect(
       readDcodeSelectionDrift(
@@ -165,9 +190,13 @@ describe("live DCode selection drift", () => {
 
   it("rejects an OpenAI identity for an OpenRouter selection (#9555)", () => {
     expect(
-      getDcodeSelectionDrift("alpha", "openrouter-api", "nvidia/nemotron-3-ultra-550b-a55b", null, {
-        runCaptureOpenshell: () => identity(),
-      }),
+      getDcodeSelectionDrift(
+        "alpha",
+        "openrouter-api",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        null,
+        driftDeps(() => identity()),
+      ),
     ).toMatchObject({
       changed: true,
       providerChanged: true,
@@ -189,9 +218,13 @@ describe("live DCode selection drift", () => {
     const runCaptureOpenshell = vi.fn(() => identity());
 
     expect(
-      getDcodeSelectionDrift("alpha", "nvidia-prod", "nvidia/nemotron-3-super-120b-a12b", null, {
-        runCaptureOpenshell,
-      }),
+      getDcodeSelectionDrift(
+        "alpha",
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        null,
+        driftDeps(runCaptureOpenshell),
+      ),
     ).toEqual({
       changed: false,
       providerChanged: false,
@@ -201,7 +234,17 @@ describe("live DCode selection drift", () => {
       unknown: false,
     });
     expect(runCaptureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "exec", "-n", "alpha", "--", "dcode", "identity"],
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        "alpha",
+        "--gateway",
+        "nemoclaw-18081",
+        "--",
+        "/usr/local/bin/dcode",
+        "identity",
+      ],
       { ignoreError: true },
     );
   });
@@ -214,9 +257,13 @@ describe("live DCode selection drift", () => {
     "reports provider drift for upstream, route, or endpoint changes [case %#] (#6311)",
     (output) => {
       expect(
-        getDcodeSelectionDrift("alpha", "nvidia-prod", "nvidia/nemotron-3-super-120b-a12b", null, {
-          runCaptureOpenshell: () => output,
-        }),
+        getDcodeSelectionDrift(
+          "alpha",
+          "nvidia-prod",
+          "nvidia/nemotron-3-super-120b-a12b",
+          null,
+          driftDeps(() => output),
+        ),
       ).toMatchObject({
         changed: true,
         providerChanged: true,
@@ -228,9 +275,13 @@ describe("live DCode selection drift", () => {
 
   it("reports model drift from the live DCode config (#6311)", () => {
     expect(
-      getDcodeSelectionDrift("alpha", "nvidia-prod", "new-model", null, {
-        runCaptureOpenshell: () => identity({ Model: "openai:old-model" }),
-      }),
+      getDcodeSelectionDrift(
+        "alpha",
+        "nvidia-prod",
+        "new-model",
+        null,
+        driftDeps(() => identity({ Model: "openai:old-model" })),
+      ),
     ).toMatchObject({
       changed: true,
       providerChanged: false,
@@ -251,9 +302,13 @@ describe("live DCode selection drift", () => {
     ],
   ])("fails closed for %s (#6311)", (_name, runCaptureOpenshell) => {
     expect(
-      getDcodeSelectionDrift("alpha", "nvidia-prod", "model-a", null, {
-        runCaptureOpenshell,
-      }),
+      getDcodeSelectionDrift(
+        "alpha",
+        "nvidia-prod",
+        "model-a",
+        null,
+        driftDeps(runCaptureOpenshell),
+      ),
     ).toEqual({
       changed: true,
       providerChanged: false,
