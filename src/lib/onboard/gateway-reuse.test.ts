@@ -232,7 +232,7 @@ describe("Docker-driver gateway reuse application", () => {
     );
   });
 
-  it("recreates a reused managed gateway when its Docker network is absent (#9594)", async () => {
+  it("marks a reused NemoClaw-managed gateway stale when its Docker network is absent (#9594)", async () => {
     const log = vi.fn();
     const application = createDockerDriverReuseApplication({
       inspectDockerDriverNetwork: vi.fn(() => ({ kind: "absent" as const })),
@@ -243,7 +243,7 @@ describe("Docker-driver gateway reuse application", () => {
       "stale",
     );
     expect(log).toHaveBeenCalledWith(
-      '  Existing OpenShell Docker-driver gateway network "openshell-docker" is absent; the gateway will be recreated.',
+      '  Existing NemoClaw-managed OpenShell gateway network "openshell-docker" is absent; the gateway will be recreated.',
     );
   });
 
@@ -253,7 +253,7 @@ describe("Docker-driver gateway reuse application", () => {
     });
 
     await expect(application.refreshDockerDriverGatewayReuseState("healthy")).rejects.toThrow(
-      'NemoClaw could not verify Docker network "openshell-docker" before reusing the managed gateway. Restart Docker, then rerun `nemoclaw onboard`.',
+      'NemoClaw could not verify Docker network "openshell-docker" before reusing the NemoClaw-managed OpenShell gateway. Check Docker daemon access and the configured network, then rerun `nemoclaw onboard`.',
     );
   });
 

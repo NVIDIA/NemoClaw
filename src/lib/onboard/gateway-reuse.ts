@@ -159,7 +159,7 @@ export function createDockerDriverGatewayReuseApplication(
     const networkName = desiredEnv.OPENSHELL_DOCKER_NETWORK_NAME;
     if (!networkName) {
       throw new Error(
-        "NemoClaw cannot verify the OpenShell Docker network because the managed gateway configuration has no network name.",
+        "NemoClaw cannot verify the OpenShell Docker network because the NemoClaw-managed OpenShell gateway configuration has no network name.",
       );
     }
 
@@ -168,12 +168,12 @@ export function createDockerDriverGatewayReuseApplication(
       if (network.kind === "present") return state;
       if (network.kind === "absent") {
         log(
-          `  Existing OpenShell Docker-driver gateway network ${JSON.stringify(networkName)} is absent; the gateway will be recreated.`,
+          `  Existing NemoClaw-managed OpenShell gateway network ${JSON.stringify(networkName)} is absent; the gateway will be recreated.`,
         );
         return "stale";
       }
       throw new Error(
-        `NemoClaw could not verify Docker network ${JSON.stringify(networkName)} before reusing the managed gateway. Restart Docker, then rerun \`nemoclaw onboard\`.`,
+        `NemoClaw could not verify Docker network ${JSON.stringify(networkName)} before reusing the NemoClaw-managed OpenShell gateway. Check Docker daemon access and the configured network, then rerun \`nemoclaw onboard\`.`,
       );
     }
 
@@ -186,7 +186,7 @@ export function createDockerDriverGatewayReuseApplication(
         );
       }
       throw new Error(
-        `NemoClaw could not verify Docker network ${JSON.stringify(networkName)} before reusing the managed gateway. Restart Docker, then rerun \`nemoclaw onboard\`.`,
+        `NemoClaw could not verify Docker network ${JSON.stringify(networkName)} before reusing the running OpenShell gateway. Check Docker daemon access and the configured network, then rerun \`nemoclaw onboard\`.`,
       );
     }
 

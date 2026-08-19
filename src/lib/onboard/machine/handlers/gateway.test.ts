@@ -298,7 +298,7 @@ describe("handleGatewayState", () => {
     expect(calls.complete).not.toHaveBeenCalled();
   });
 
-  it("recreates the managed gateway before completion when its Docker network is absent (#9594)", async () => {
+  it("recreates the NemoClaw-managed OpenShell gateway before completion when its Docker network is absent (#9594)", async () => {
     const order: string[] = [];
     const { deps, calls } = createDeps({
       refreshDockerDriverGatewayReuseState: vi.fn(async () => {
