@@ -3,7 +3,10 @@
 
 import fs from "node:fs";
 
-import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/label-codec.ts";
+import {
+  hasDcodeSourceRevision,
+  readDcodeSandboxBaseImageResolutionMetadata,
+} from "../../../src/lib/sandbox-base-image/label-codec.ts";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
 import {
   DCODE_BASE_IMAGE_TARGET_PLATFORM,
@@ -51,6 +54,15 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[], 
   if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...expected].sort())) {
     throw new Error(`${label} has unexpected fields`);
   }
+}
+
+function requireImmutableSourceRevision(metadata: SandboxBaseImageResolutionMetadata): string {
+  if (!hasDcodeSourceRevision(metadata)) {
+    throw new Error(
+      `Deep Agents Code sandbox image does not match the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base-image contract (mismatched fields: source revision)`,
+    );
+  }
+  return metadata.sourceRevision;
 }
 
 export function parseDcodeBaseImagePublicationEvidence(
@@ -126,6 +138,7 @@ export function verifyDcodeBaseImageRuntimeEvidence(
       `Deep Agents Code sandbox image did not use the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base digest`,
     );
   }
+  const sourceRevision = requireImmutableSourceRevision(metadata);
   const expectedDigest = contract.platformDigests[DCODE_BASE_IMAGE_TARGET_PLATFORM];
   const expectedReference = dcodeBaseImageReferenceForContract(contract);
   const mismatchedFields = [
@@ -136,6 +149,7 @@ export function verifyDcodeBaseImageRuntimeEvidence(
     metadata.digest !== expectedDigest ? "digest" : null,
     metadata.ref !== expectedReference ? "reference" : null,
     metadata.ref !== `${metadata.imageName}@${metadata.digest}` ? "reference binding" : null,
+    sourceRevision !== contract.sourceRevision ? "source revision" : null,
   ].filter((field): field is string => field !== null);
   if (mismatchedFields.length > 0) {
     throw new Error(
@@ -151,7 +165,7 @@ export function verifyDcodeBaseImageRuntimeEvidence(
     reference: expectedReference,
     sandboxImage,
     source: "override",
-    sourceRevision: contract.sourceRevision,
+    sourceRevision,
   };
 }
 
@@ -164,6 +178,6 @@ export function captureDcodeBaseImageRuntimeEvidence(
   return verifyDcodeBaseImageRuntimeEvidence(
     contract,
     sandboxImage,
-    readSandboxBaseImageResolutionMetadata(sandboxImage),
+    readDcodeSandboxBaseImageResolutionMetadata(sandboxImage),
   );
 }

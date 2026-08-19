@@ -36,6 +36,10 @@ export type SandboxBaseImageResolutionMetadata = {
   minGlibcVersion: string;
 };
 
+export type DcodeSandboxBaseImageResolutionMetadata = SandboxBaseImageResolutionMetadata & {
+  sourceRevision: string;
+};
+
 export type ResolveBaseImageOptions = {
   imageName: string;
   dockerfilePath: string;

@@ -444,6 +444,8 @@ jobs:
               --sbom=false \
               --file "$BASE_DOCKERFILE" \
               --tag "$LOCAL_BASE_REFERENCE" \
+              --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+              --label "org.opencontainers.image.revision=${CANDIDATE_SHA}" \
               --output "type=docker,dest=${local_base_archive}" \
               --output "type=oci,dest=${local_base_oci_archive}" \
               .
@@ -461,6 +463,8 @@ jobs:
               exit 1
             fi
             printf 'ref=%s\n' "$LOCAL_BASE_REFERENCE" >> "$GITHUB_OUTPUT"
+            printf 'identity_ref=%s@%s\n' "$BASE_REPOSITORY" "$local_base_oci_digest" >> "$GITHUB_OUTPUT"
+            printf 'source_revision=%s\n' "$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
             printf 'local=true\n' >> "$GITHUB_OUTPUT"
             printf 'oci=%s@%s\n' "$local_base_oci" "$local_base_oci_digest" >> "$GITHUB_OUTPUT"
             printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
@@ -505,9 +509,37 @@ jobs:
             exit 1
           fi
           printf 'ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+          printf 'identity_ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
           printf 'local=false\n' >> "$GITHUB_OUTPUT"
           printf '### %s PR base\n\n`%s`\n' "$DISPLAY_NAME" "$reference" \
             >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Export immutable Deep Agents Code base resolution labels
+        id: dcode-base-resolution
+        if: matrix.agent == 'langchain-deepagents-code'
+        shell: bash
+        env:
+          BASE_IDENTITY_REFERENCE: ${{ steps.base.outputs.identity_ref }}
+          BASE_INSPECT_REFERENCE: ${{ steps.base.outputs.ref }}
+          BASE_IS_LOCAL: ${{ steps.base.outputs.local }}
+          BASE_LOCAL_OCI_RECEIPT: ${{ steps.base.outputs.oci }}
+          BASE_SOURCE_REVISION: ${{ steps.base.outputs.source_revision }}
+        run: |
+          set -euo pipefail
+          local_receipt_args=()
+          expected_revision_args=()
+          if [ "$BASE_IS_LOCAL" = "true" ]; then
+            local_receipt_args+=(--local-oci-receipt "$BASE_LOCAL_OCI_RECEIPT")
+            expected_revision_args+=(--expected-source-revision "$BASE_SOURCE_REVISION")
+          fi
+          node --experimental-strip-types --no-warnings \
+            scripts/checks/export-dcode-base-resolution-label.mts \
+            --reference "$BASE_IDENTITY_REFERENCE" \
+            --inspect-reference "$BASE_INSPECT_REFERENCE" \
+            --platform linux/amd64 \
+            --output "$GITHUB_OUTPUT" \
+            "${local_receipt_args[@]}" \
+            "${expected_revision_args[@]}"
 
       - name: Validate PR managed-image build args
         shell: bash
@@ -526,15 +558,25 @@ jobs:
         if: steps.base.outputs.local == 'true'
         shell: bash
         env:
+          AGENT: ${{ matrix.agent }}
           BASE_IMAGE: ${{ steps.base.outputs.ref }}
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DOCKERFILE: ${{ matrix.dockerfile }}
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
+          RESOLUTION_KEY: ${{ steps.dcode-base-resolution.outputs.resolution_key }}
+          RESOLUTION_LABEL: ${{ steps.dcode-base-resolution.outputs.resolution_label }}
         run: |
           set -euo pipefail
           # The base resolver loads a changed base into Docker's local image
           # store. Keep this consumer on that same store: a Buildx container
           # builder otherwise treats the local-only reference as Docker Hub.
+          resolution_labels=()
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            resolution_labels+=(
+              --label "com.nvidia.nemoclaw.base-resolution-key=${RESOLUTION_KEY}"
+              --label "com.nvidia.nemoclaw.base-resolution=${RESOLUTION_LABEL}"
+            )
+          fi
           docker build \
             --platform linux/amd64 \
             --file "$DOCKERFILE" \
@@ -547,6 +589,7 @@ jobs:
             --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
             --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
             --label "io.nvidia.nemoclaw.managed-image.cohort=ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            "${resolution_labels[@]}" \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
@@ -571,6 +614,8 @@ jobs:
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.dcode-base-resolution.outputs.resolution_key) || '' }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.dcode-base-resolution.outputs.resolution_label) || '' }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -587,6 +632,8 @@ jobs:
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
           PLATFORM: linux/amd64
           PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          RESOLUTION_KEY: ${{ steps.dcode-base-resolution.outputs.resolution_key }}
+          RESOLUTION_LABEL: ${{ steps.dcode-base-resolution.outputs.resolution_label }}
         run: |
           set -euo pipefail
           image_json="$(docker image inspect "$IMAGE_REFERENCE")"
@@ -627,6 +674,17 @@ jobs:
                  .[0].Config.Labels["org.opencontainers.image.revision"] == $revision
                ' <<< "$image_json" >/dev/null; then
             echo "ERROR: PR managed image contract does not match the exact build identity." >&2
+            exit 1
+          fi
+          if [ "$AGENT" = "langchain-deepagents-code" ] &&
+             ! jq -e \
+               --arg key "$RESOLUTION_KEY" \
+               --arg metadata "$RESOLUTION_LABEL" '
+                 length == 1 and
+                 .[0].Config.Labels["com.nvidia.nemoclaw.base-resolution-key"] == $key and
+                 .[0].Config.Labels["com.nvidia.nemoclaw.base-resolution"] == $metadata
+               ' <<< "$image_json" >/dev/null; then
+            echo "ERROR: Deep Agents Code managed image lost immutable base resolution metadata." >&2
             exit 1
           fi
 
@@ -755,6 +813,8 @@ jobs:
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.dcode-base-resolution.outputs.resolution_key) || '' }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.dcode-base-resolution.outputs.resolution_label) || '' }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -776,6 +836,8 @@ jobs:
           COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
           DIGEST: ${{ steps.publish.outputs.digest }}
           IMAGE: ${{ matrix.repository }}
+          RESOLUTION_KEY: ${{ steps.dcode-base-resolution.outputs.resolution_key }}
+          RESOLUTION_LABEL: ${{ steps.dcode-base-resolution.outputs.resolution_label }}
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
@@ -794,6 +856,23 @@ jobs:
             exit 1
           }
           scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            published_resolution_key="$(
+              docker image inspect \
+                --format '{{index .Config.Labels "com.nvidia.nemoclaw.base-resolution-key"}}' \
+                "$reference"
+            )"
+            published_resolution="$(
+              docker image inspect \
+                --format '{{index .Config.Labels "com.nvidia.nemoclaw.base-resolution"}}' \
+                "$reference"
+            )"
+            if [ "$published_resolution_key" != "$RESOLUTION_KEY" ] ||
+               [ "$published_resolution" != "$RESOLUTION_LABEL" ]; then
+              echo "ERROR: published Deep Agents Code image lost immutable base resolution metadata." >&2
+              exit 1
+            fi
+          fi
           release="$(git describe --tags --match 'v*' "$CANDIDATE_SHA")"
           contract_dir="$RUNNER_TEMP/managed-pr-contract"
           mkdir -p "$contract_dir"
@@ -1563,6 +1642,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
       - name: Restore exact base image contract
         shell: bash
         env:
@@ -1657,6 +1741,26 @@ jobs:
           )"
           docker buildx imagetools inspect "$platform_reference" >/dev/null
           printf 'ref=%s\n' "$platform_reference" >> "$GITHUB_OUTPUT"
+          jq -er '.sourceRevision' "$CONTRACT" |
+            sed 's/^/source_revision=/' >> "$GITHUB_OUTPUT"
+
+      - name: Export immutable Deep Agents Code base resolution labels
+        id: dcode-base-resolution
+        if: matrix.agent == 'langchain-deepagents-code'
+        shell: bash
+        env:
+          BASE_REFERENCE: ${{ steps.base.outputs.ref }}
+          BASE_SOURCE_REVISION: ${{ steps.base.outputs.source_revision }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --no-warnings \
+            scripts/checks/export-dcode-base-resolution-label.mts \
+            --reference "$BASE_REFERENCE" \
+            --inspect-reference "$BASE_REFERENCE" \
+            --expected-source-revision "$BASE_SOURCE_REVISION" \
+            --platform "$PLATFORM" \
+            --output "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -1698,6 +1802,8 @@ jobs:
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.dcode-base-resolution.outputs.resolution_key) || '' }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.dcode-base-resolution.outputs.resolution_label) || '' }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -1722,6 +1828,8 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           REQUIRED_BINARY: ${{ matrix.required_binary }}
+          RESOLUTION_KEY: ${{ steps.dcode-base-resolution.outputs.resolution_key }}
+          RESOLUTION_LABEL: ${{ steps.dcode-base-resolution.outputs.resolution_label }}
         run: |
           set -euo pipefail
           if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -1748,6 +1856,23 @@ jobs:
           if [ -n "$image_user" ] && [ "$image_user" != "root" ] && [ "$image_user" != "0" ]; then
             echo "ERROR: managed image OCI user must be uid 0 for OpenShell supervisor initialization: $image_user" >&2
             exit 1
+          fi
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            resolution_key_label="$(
+              docker image inspect \
+                --format '{{index .Config.Labels "com.nvidia.nemoclaw.base-resolution-key"}}' \
+                "$reference"
+            )"
+            resolution_label="$(
+              docker image inspect \
+                --format '{{index .Config.Labels "com.nvidia.nemoclaw.base-resolution"}}' \
+                "$reference"
+            )"
+            if [ "$resolution_key_label" != "$RESOLUTION_KEY" ] ||
+               [ "$resolution_label" != "$RESOLUTION_LABEL" ]; then
+              echo "ERROR: Deep Agents Code image lost immutable base resolution metadata." >&2
+              exit 1
+            fi
           fi
 
           agent_label="$(
