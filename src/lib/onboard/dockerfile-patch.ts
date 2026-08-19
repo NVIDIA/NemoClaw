@@ -556,6 +556,11 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=.*$/m,
     `ARG NEMOCLAW_WEB_SEARCH_PROVIDER=${sanitizeDockerArg(webSearchProviderForConfig(webSearchConfig))}`,
   );
+  // These four ARGs configure OpenClaw's own diagnostics exporter and are
+  // declared only by the OpenClaw Dockerfile. Another agent's staged Dockerfile
+  // is not missing them, so report the agent mismatch the way the managed
+  // startup path already does instead of an internal Dockerfile-authoring error.
+  const otelAgentName = options.agentName ?? "openclaw";
   for (const envKey of [
     "NEMOCLAW_OPENCLAW_OTEL",
     "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
@@ -563,13 +568,16 @@ export function patchStagedDockerfile(
     "NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE",
   ]) {
     const rawValue = process.env[envKey];
-    if (rawValue !== undefined && rawValue.trim() !== "") {
-      const argPattern = new RegExp(`^ARG ${envKey}=.*$`, "m");
-      if (!argPattern.test(dockerfile)) {
-        throw new Error(`Dockerfile is missing ARG ${envKey}; cannot apply value ${rawValue}`);
-      }
-      dockerfile = dockerfile.replace(argPattern, `ARG ${envKey}=${sanitizeDockerArg(rawValue)}`);
+    if (rawValue === undefined || rawValue.trim() === "") continue;
+    const argPattern = new RegExp(`^ARG ${envKey}=.*$`, "m");
+    if (!argPattern.test(dockerfile)) {
+      throw new Error(
+        otelAgentName === "openclaw"
+          ? `Dockerfile is missing ARG ${envKey}; cannot apply value ${rawValue}`
+          : `${envKey} is not supported by ${otelAgentName}`,
+      );
     }
+    dockerfile = dockerfile.replace(argPattern, `ARG ${envKey}=${sanitizeDockerArg(rawValue)}`);
   }
   // Keep the managed pairing opt-out distinct from an operator's choice.
   dockerfile = remoteDashboardBindContract.patchManagedDeviceAuthOptOutContract(dockerfile);
