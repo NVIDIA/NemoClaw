@@ -138,6 +138,23 @@ It carries authenticated mTLS plus sandbox-JWT callbacks to OpenShell on port `8
 The managed local registry uses the distinct address `169.254.1.3` on port `5000`.
 Keeping the host-gateway address outside the sandbox subnet prevents a Portable workload from receiving that address.
 
+<Warning>
+If Portable onboarding reports that the retired `169.254.1.2/32` address is still assigned to the loopback interface, remove only that exact assignment:
+
+```bash
+sudo ip address delete 169.254.1.2/32 dev lo
+```
+
+Rerun Portable onboarding:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable
+```
+
+Do not run the loopback deletion command when onboarding reports another interface or prefix.
+Investigate and resolve the conflicting assignment before you rerun onboarding.
+</Warning>
+
 The portable profile handles the descriptor as follows:
 
 | Descriptor state | Onboarding result |
