@@ -471,8 +471,11 @@ describe("complete managed-image publication workflow", () => {
     expect(prBuilder["runs-on"]).toBe("ubuntu-24.04");
     expect(prBuilder["timeout-minutes"]).toBe(90);
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
-    expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
-    expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(step(prBuilder, "Checkout").with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    });
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
@@ -676,6 +679,12 @@ describe("complete managed-image publication workflow", () => {
     expect(uploadContract.if).toBe(sameRepository);
     expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(exportContract));
     expect(exportContract.run).toContain('DOCKER_CONFIG="$anonymous_config" docker pull');
+    expect(exportContract.run).toContain("resolveSourceBuildIdentity");
+    expect(exportContract.run).toContain(
+      "identity.sourceRevision !== process.env.CANDIDATE_SHA",
+    );
+    expect(exportContract.run).toContain("`v${identity.nemoclawVersion}`");
+    expect(exportContract.run).not.toContain('require("./package.json").version');
     expect(exportContract.run).toContain("revision: $revision");
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
@@ -792,9 +801,11 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(JSON.stringify(activation)).not.toContain("secrets.");
     expect(JSON.stringify(activation)).not.toContain("github.token");
-    expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
-      "${{ github.event.pull_request.head.sha }}",
-    );
+    expect(step(activation, "Checkout exact PR head").with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    });
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(/npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u);
     expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
     expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
@@ -826,9 +837,11 @@ describe("complete managed-image publication workflow", () => {
     expect(discovery.env).not.toHaveProperty("E2E_MANAGED_IMAGE_REVISION");
     expect(JSON.stringify(discovery)).not.toContain("secrets.");
     expect(JSON.stringify(discovery)).not.toContain("github.token");
-    expect(step(discovery, "Checkout exact PR head").with?.ref).toBe(
-      "${{ github.event.pull_request.head.sha }}",
-    );
+    expect(step(discovery, "Checkout exact PR head").with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    });
     expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
     expect(assemble).toMatch(/npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u);

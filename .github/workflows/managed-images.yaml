@@ -367,6 +367,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Reproduce reviewed discovery permission drift
@@ -785,7 +786,16 @@ jobs:
           anonymous_config="$(mktemp -d "$RUNNER_TEMP/managed-pr-anonymous.XXXXXX")"
           trap 'rm -rf -- "$anonymous_config"' EXIT
           DOCKER_CONFIG="$anonymous_config" docker pull --platform linux/amd64 "$reference"
-          release="v$(node -p 'require("./package.json").version')"
+          release="$(
+            node --experimental-strip-types --no-warnings --input-type=module -e '
+              import { resolveSourceBuildIdentity } from "./src/lib/core/version.ts";
+              const identity = resolveSourceBuildIdentity({ rootDir: process.cwd() });
+              if (identity.sourceRevision !== process.env.CANDIDATE_SHA) {
+                throw new Error("managed image contract build identity does not match the candidate commit");
+              }
+              process.stdout.write(`v${identity.nemoclawVersion}`);
+            '
+          )"
           contract_dir="$RUNNER_TEMP/managed-pr-contract"
           mkdir -p "$contract_dir"
           jq -n \
@@ -845,6 +855,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
@@ -936,6 +947,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
