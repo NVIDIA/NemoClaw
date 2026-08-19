@@ -227,7 +227,9 @@
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -240,8 +242,10 @@
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -301,6 +305,8 @@
     {
       "live": "test/e2e/live/cloud-onboard.test.ts",
       "fast": [
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
+        "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

@@ -14,6 +14,7 @@ import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
   createCorporateCaFixture,
+  registeredCorporateCaWorkloadKind,
 } from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
@@ -538,11 +539,15 @@ test(
     });
     expect(sandboxStatus.exitCode, sandboxStatus.stderr).toBe(0);
 
-    const corporateCaProbe = await sandbox.execShell(SANDBOX_NAME, corporateCaMergeProbeScript(), {
-      artifactName: "phase-3-corporate-ca-merge-probe",
-      env: probeEnv,
-      timeoutMs: 60_000,
-    });
+    const corporateCaProbe = await sandbox.execShell(
+      SANDBOX_NAME,
+      corporateCaMergeProbeScript(registeredCorporateCaWorkloadKind(SANDBOX_NAME)),
+      {
+        artifactName: "phase-3-corporate-ca-merge-probe",
+        env: probeEnv,
+        timeoutMs: 60_000,
+      },
+    );
     expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
     // Assertion: session-file-complete-state.
