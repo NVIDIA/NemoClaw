@@ -962,6 +962,7 @@ function privateBridgeAuthority(
   }
   return Object.freeze({
     transactionId: journal.transactionId,
+    apiKeyPath: options.bindings.apiKeyHostPath,
     targetHost: container.containerIp,
     targetPort: options.contract.serve.port,
     listenPort: options.bindings.hostPort,

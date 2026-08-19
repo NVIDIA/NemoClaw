@@ -2,17 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChildProcess, spawn } from "node:child_process";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { describe, expect, it, vi } from "vitest";
 import {
   createDockerLlamaCppPrivateBridgeController,
   type DockerLlamaCppPrivateBridgeAuthority,
 } from "./docker-llama-cpp-private-bridge";
-import { parseLlamaCppPrivateBridgeArguments } from "./docker-llama-cpp-private-bridge-process";
+import {
+  createLlamaCppPrivateBridgeRequestHandler,
+  parseLlamaCppPrivateBridgeArguments,
+} from "./docker-llama-cpp-private-bridge-process";
 
 const TRANSACTION = "9".repeat(64);
+const API_KEY = "a".repeat(64);
 const authority: DockerLlamaCppPrivateBridgeAuthority = {
   transactionId: TRANSACTION,
+  apiKeyPath: "/private/api-key",
   targetHost: "172.30.0.2",
   targetPort: 8081,
   listenPort: 8081,
@@ -23,6 +30,8 @@ function fixture() {
   let nextPid = 40_001;
   const processes = new Map<number, readonly string[]>();
   const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+  const openApiKeyDescriptor = vi.fn(() => 17);
+  const closeApiKeyDescriptor = vi.fn();
   const spawnProcess = vi.fn((file: string, args: readonly string[]) => {
     const pid = nextPid++;
     processes.set(pid, [file, ...args]);
@@ -37,14 +46,30 @@ function fixture() {
     },
     listProcessIds: () => [...processes.keys()],
     readProcessArgv: (pid) => processes.get(pid) ?? null,
+    openApiKeyDescriptor,
+    closeApiKeyDescriptor,
     sleep: vi.fn(),
   });
-  return { controller, processes, signals, spawnProcess };
+  return {
+    closeApiKeyDescriptor,
+    controller,
+    openApiKeyDescriptor,
+    processes,
+    signals,
+    spawnProcess,
+  };
 }
 
 describe("Docker llama.cpp private bridge controller", () => {
   it("owns one exact transaction-scoped bridge and stops only that process", () => {
-    const { controller, processes, signals, spawnProcess } = fixture();
+    const {
+      closeApiKeyDescriptor,
+      controller,
+      openApiKeyDescriptor,
+      processes,
+      signals,
+      spawnProcess,
+    } = fixture();
     controller.start(authority);
     controller.assertRunning(authority);
     expect(spawnProcess).toHaveBeenCalledOnce();
@@ -55,12 +80,21 @@ describe("Docker llama.cpp private bridge controller", () => {
         "--transaction",
         TRANSACTION,
       ]),
-      expect.objectContaining({ detached: true, env: {}, shell: false, stdio: "ignore" }),
+      expect.objectContaining({
+        detached: true,
+        env: {},
+        shell: false,
+        stdio: ["ignore", "ignore", "ignore", 17],
+      }),
     );
+    expect(openApiKeyDescriptor).toHaveBeenCalledExactlyOnceWith(authority.apiKeyPath);
+    expect(closeApiKeyDescriptor).toHaveBeenCalledExactlyOnceWith(17);
     expect([...processes.values()][0]).toEqual(
       expect.arrayContaining([
         "--transaction",
         TRANSACTION,
+        "--auth-mode",
+        "api-key-fd3",
         "--target-host",
         "172.30.0.2",
         "--bind-address",
@@ -86,6 +120,22 @@ describe("Docker llama.cpp private bridge controller", () => {
     controller.assertRunning({ ...authority, targetHost: "172.30.0.3" });
   });
 
+  it("replaces a pre-authentication bridge process for the same transaction (#9591)", () => {
+    const { controller, processes, signals } = fixture();
+    controller.start(authority);
+    const [pid, authenticatedArgv] = [...processes.entries()][0]!;
+    const authModeIndex = authenticatedArgv.indexOf("--auth-mode");
+    processes.set(pid, [
+      ...authenticatedArgv.slice(0, authModeIndex),
+      ...authenticatedArgv.slice(authModeIndex + 2),
+    ]);
+
+    controller.start(authority);
+
+    expect(signals).toEqual([{ pid, signal: "SIGTERM" }]);
+    controller.assertRunning(authority);
+  });
+
   it("fails closed when exact bridge ownership is ambiguous", () => {
     const { controller, processes } = fixture();
     controller.start(authority);
@@ -98,6 +148,8 @@ describe("llama.cpp private bridge argument boundary", () => {
   const argv = [
     "--transaction",
     TRANSACTION,
+    "--auth-mode",
+    "api-key-fd3",
     "--target-host",
     "172.30.0.2",
     "--target-port",
@@ -111,14 +163,160 @@ describe("llama.cpp private bridge argument boundary", () => {
   ];
 
   it("accepts only the exact private loopback and OpenShell bridge topology", () => {
-    expect(parseLlamaCppPrivateBridgeArguments(argv)).toEqual(authority);
+    expect(parseLlamaCppPrivateBridgeArguments(argv)).toEqual({
+      transactionId: TRANSACTION,
+      targetHost: authority.targetHost,
+      targetPort: authority.targetPort,
+      listenPort: authority.listenPort,
+      bindAddresses: authority.bindAddresses,
+    });
     const publicTarget = argv.slice();
-    publicTarget[3] = "8.8.8.8";
+    publicTarget[publicTarget.indexOf("--target-host") + 1] = "8.8.8.8";
     expect(() => parseLlamaCppPrivateBridgeArguments(publicTarget)).toThrow("authority is invalid");
     const broadListener = argv.slice();
-    broadListener[11] = "0.0.0.0";
+    broadListener[broadListener.lastIndexOf("--bind-address") + 1] = "0.0.0.0";
     expect(() => parseLlamaCppPrivateBridgeArguments(broadListener)).toThrow(
       "authority is invalid",
     );
+    const unauthenticated = argv.slice();
+    unauthenticated[unauthenticated.indexOf("--auth-mode") + 1] = "none";
+    expect(() => parseLlamaCppPrivateBridgeArguments(unauthenticated)).toThrow(
+      "authority is invalid",
+    );
+  });
+});
+
+async function listen(server: http.Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  return (server.address() as AddressInfo).port;
+}
+
+async function close(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+async function request(
+  port: number,
+  input: {
+    readonly path?: string;
+    readonly method?: string;
+    readonly authorization?: string | readonly string[];
+  } = {},
+): Promise<{ readonly status: number; readonly headers: http.IncomingHttpHeaders }> {
+  return new Promise((resolve, reject) => {
+    const outgoing = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        method: input.method ?? "GET",
+        path: input.path ?? "/v1/models",
+        headers:
+          input.authorization === undefined
+            ? undefined
+            : { Authorization: input.authorization as string | string[] },
+      },
+      (response) => {
+        response.resume();
+        response.once("end", () =>
+          resolve({ status: response.statusCode ?? 0, headers: response.headers }),
+        );
+      },
+    );
+    outgoing.once("error", reject);
+    outgoing.end();
+  });
+}
+
+async function requestBridgeFixture() {
+  const receivedAuthorization: Array<string | undefined> = [];
+  const upstream = http.createServer((incoming, response) => {
+    receivedAuthorization.push(incoming.headers.authorization);
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end("{}\n");
+  });
+  const upstreamPort = await listen(upstream);
+  const bridge = http.createServer(
+    createLlamaCppPrivateBridgeRequestHandler(
+      { targetHost: "127.0.0.1", targetPort: upstreamPort },
+      API_KEY,
+    ),
+  );
+  const bridgePort = await listen(bridge);
+  return {
+    bridge,
+    bridgePort,
+    receivedAuthorization,
+    upstream,
+  };
+}
+
+describe("llama.cpp private bridge request authentication", () => {
+  it("rejects missing, invalid, and duplicate credentials before forwarding (#9591)", async () => {
+    const runtime = await requestBridgeFixture();
+    try {
+      const missing = await request(runtime.bridgePort);
+      const invalid = await request(runtime.bridgePort, {
+        authorization: `Bearer ${"b".repeat(64)}`,
+      });
+      const duplicate = await request(runtime.bridgePort, {
+        authorization: [`Bearer ${API_KEY}`, `Bearer ${API_KEY}`],
+      });
+
+      expect([missing.status, invalid.status, duplicate.status]).toEqual([401, 401, 401]);
+      expect(missing.headers["www-authenticate"]).toBe("Bearer");
+      expect(runtime.receivedAuthorization).toEqual([]);
+    } finally {
+      await close(runtime.bridge);
+      await close(runtime.upstream);
+    }
+  });
+
+  it("forwards one canonical valid Bearer credential (#9591)", async () => {
+    const runtime = await requestBridgeFixture();
+    try {
+      const result = await request(runtime.bridgePort, {
+        authorization: `bearer ${API_KEY}`,
+      });
+
+      expect(result.status).toBe(200);
+      expect(runtime.receivedAuthorization).toEqual([`Bearer ${API_KEY}`]);
+    } finally {
+      await close(runtime.bridge);
+      await close(runtime.upstream);
+    }
+  });
+
+  it("keeps only the exact GET health probe credential-free (#9591)", async () => {
+    const runtime = await requestBridgeFixture();
+    try {
+      const health = await request(runtime.bridgePort, { path: "/health" });
+      const healthQuery = await request(runtime.bridgePort, { path: "/health?details=1" });
+      const healthPost = await request(runtime.bridgePort, { path: "/health", method: "POST" });
+
+      expect([health.status, healthQuery.status, healthPost.status]).toEqual([200, 401, 401]);
+      expect(runtime.receivedAuthorization).toEqual([undefined]);
+    } finally {
+      await close(runtime.bridge);
+      await close(runtime.upstream);
+    }
+  });
+
+  it("returns HTTP 502 when an authenticated request cannot reach the server (#9591)", async () => {
+    const runtime = await requestBridgeFixture();
+    await close(runtime.upstream);
+    try {
+      const result = await request(runtime.bridgePort, {
+        authorization: `Bearer ${API_KEY}`,
+      });
+
+      expect(result.status).toBe(502);
+    } finally {
+      await close(runtime.bridge);
+    }
   });
 });
