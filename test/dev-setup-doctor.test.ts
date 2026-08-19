@@ -174,9 +174,18 @@ fi`,
     if [ "\${FAKE_GIT_IDENTITY_MISSING:-}" = "1" ]; then exit 1; fi
     echo "contributor@example.com"
     ;;
+  *" config --get --type=bool commit.gpgsign "*)
+    if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
+    if [ "\${FAKE_GIT_SIGNING_UNSET:-}" = "1" ]; then exit 1; fi
+    if [ "\${FAKE_GIT_SIGNING_INVALID:-}" = "1" ]; then
+      echo "fatal: bad boolean config value" >&2
+      exit 128
+    fi
+    echo "\${FAKE_GIT_SIGNING_BOOL-true}"
+    ;;
   *" config --get commit.gpgsign "*)
     if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
-    echo "true"
+    echo "1"
     ;;
   *" config --get gpg.format "*)
     if [ "\${FAKE_GIT_SIGN_FORMAT_UNSET:-}" = "1" ]; then exit 1; fi
@@ -442,6 +451,39 @@ describe("contributor environment doctor", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Git commit signing is incomplete");
     expect(result.output).toContain("Git pre-push hook is missing");
+  });
+
+  it.each([
+    ["disabled", { FAKE_GIT_SIGNING_BOOL: "false" }],
+    ["unset", { FAKE_GIT_SIGNING_UNSET: "1" }],
+    ["invalid", { FAKE_GIT_SIGNING_INVALID: "1" }],
+  ])("rejects %s commit signing", (_scenario, env) => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, env);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Git commit signing is incomplete");
+    expect(result.output).not.toContain("Git commit signing configured");
+    expect(result.output).not.toContain("Ready to create a feature branch.");
+  });
+
+  it.each([
+    ["true", "commit.gpgsign=true"],
+    ["yes", "commit.gpgsign=yes"],
+    ["on", "commit.gpgsign=on"],
+    ["1", "commit.gpgsign=1"],
+    ["uppercase", "commit.gpgsign=TRUE"],
+    ["valueless", "commit.gpgsign"],
+  ])("lets Git normalize the %s commit-signing spelling", (_scenario, configArg) => {
+    const result = spawnSync(
+      "git",
+      ["-c", configArg, "config", "--get", "--type=bool", "commit.gpgsign"],
+      { encoding: "utf-8" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("true");
   });
 
   it("rejects an unsupported git signing format with a precise remediation", () => {

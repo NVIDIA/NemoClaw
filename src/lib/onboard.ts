@@ -111,7 +111,7 @@ const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const {
-  getDcodeSelectionDrift,
+  createDcodeSelectionDriftReader,
   requiresSelectionRecreate,
   usesManagedDcodeIdentity,
 }: typeof import("./onboard/dcode-selection-drift") = require("./onboard/dcode-selection-drift");
@@ -1582,7 +1582,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  getDcodeSelectionDrift,
+  readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
   getHermesToolGatewayBroker,
@@ -1667,6 +1667,7 @@ const createSandboxWithBaseImageResolution =
   sandboxCreateOrchestration.createSandboxWithBaseImageResolution(
     sandboxCreateOrchestrationRuntime,
   );
+
 
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
@@ -3231,6 +3232,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             },
           },
         },
+
         sandbox: {
           gatewayName: GATEWAY_NAME,
           hermesPortableLifecycle:
@@ -3263,10 +3265,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             messagingChannelConfigsEqual,
             getSandboxReuseState,
             getSandboxRecreateObservation,
-            getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
-              getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
-                runCaptureOpenshell,
-              }),
+            getDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
             hasSandboxGpuDrift,
             getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
             getSandboxRegistryEntry: registry.getSandbox,
@@ -3315,6 +3314,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   hermesApiPortReservationScope,
                   ...createArgs,
                 ),
+
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
