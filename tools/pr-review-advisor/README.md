@@ -44,7 +44,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
     The evaluation lane does not publish another review.
     Previous sticky-comment ingestion is disabled for both lanes.
 
-The two entries returned by `buildPromptTurns` are the source of truth for turn order, evidence, and prompt text. Runtime numbering and artifact names derive from those entries.
+`investigate-turn.mts` and `challenge-and-record-turn.mts` own the two normal turn contracts, including their prompts and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `artifacts.mts` owns prompt and turn artifacts, and `render-result.mts` owns human-readable result output. `analyze.mts` composes these modules and runs the session.
 
 `tools/pr-review-advisor/openshell.mts` owns the advisor-specific prepare, create, run, download, and
 cleanup sequence. It uses the shared lifecycle and credential-boundary helpers in

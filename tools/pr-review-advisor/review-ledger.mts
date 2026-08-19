@@ -317,7 +317,9 @@ export function validateReviewFindingSubmission(
         const admissible = Object.values(ADDITION_POLICIES)
           .flatMap((policy) =>
             policy.categories.flatMap((category) =>
-              policy.basisKinds.map((basisKind) => `category=${category} with basis.kind=${basisKind}`),
+              policy.basisKinds.map(
+                (basisKind) => `category=${category} with basis.kind=${basisKind}`,
+              ),
             ),
           )
           .join("; ");
