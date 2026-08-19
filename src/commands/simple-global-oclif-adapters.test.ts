@@ -44,7 +44,10 @@ const mocks = vi.hoisted(() => {
     runStartCommand: vi.fn().mockResolvedValue(undefined),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
-    resolveDefaultSandboxName: vi.fn((_listSandboxes: () => unknown) => "resolved-sandbox"),
+    resolveDefaultSandboxName: vi.fn((listSandboxes: () => unknown) => {
+      listSandboxes();
+      return "resolved-sandbox";
+    }),
     assertHermesPortableCommandUnavailable: vi.fn(),
     withMcpLifecycleLock: vi.fn(async (_sandboxName: string, operation: () => unknown) =>
       operation(),
@@ -342,8 +345,6 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
     );
     expect(mocks.resolveDefaultSandboxName).toHaveBeenCalledTimes(1);
-    const [[listSandboxes]] = mocks.resolveDefaultSandboxName.mock.calls;
-    listSandboxes();
     expect(mocks.listSandboxes).toHaveBeenCalledTimes(1);
     expect(mocks.showStatus).toHaveBeenCalledWith({ sandboxName: "resolved-sandbox" });
     expect(mocks.runStopCommand).toHaveBeenCalledWith(
