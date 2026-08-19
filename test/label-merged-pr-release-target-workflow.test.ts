@@ -528,16 +528,45 @@ describe("merged PR release target workflow", () => {
     harness.listTags
       .mockResolvedValueOnce({ data: [{ name: v10.name }] })
       .mockResolvedValue({ data: [] });
+    harness.compareCommitsWithBasehead.mockImplementation(
+      async ({ basehead }: { basehead: string }) => {
+        expect(basehead).toBe(`${v10.commitSha}...${MERGE_SHA}`);
+        return {
+          data: {
+            status: "ahead",
+            ahead_by: 1,
+            behind_by: 0,
+            total_commits: 1,
+            commits: [{ sha: MERGE_SHA }],
+          },
+        };
+      },
+    );
+    harness.listPullRequestsAssociatedWithCommit.mockResolvedValueOnce({
+      data: [
+        {
+          base: { ref: "main" },
+          labels: [],
+          merge_commit_sha: MERGE_SHA,
+          merged_at: "2026-07-04T00:00:00Z",
+          number: 123,
+        },
+      ],
+    });
 
     await runScript(harness);
 
+    expect(harness.listPullRequestsAssociatedWithCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ commit_sha: MERGE_SHA }),
+    );
     expect(harness.warning).toHaveBeenCalledWith(
       "Newest release tag changed; restarting reconciliation",
     );
     expect(harness.info).toHaveBeenCalledWith(
       "No strict semver release tags were found; no release target labels reconciled",
     );
-    expect(harness.listTags).toHaveBeenCalledTimes(3);
+    expect(harness.getLabel).not.toHaveBeenCalled();
+    expect(harness.createLabel).not.toHaveBeenCalled();
     expect(harness.addLabels).not.toHaveBeenCalled();
   });
 
