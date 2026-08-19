@@ -1,0 +1,74 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createValidationRecoveryPromptHelpers } from "./validation-recovery-prompt";
+
+const CREDENTIAL_RECOVERY = { kind: "credential", retry: "credential" } as const;
+
+function createRecoveryPrompt(answers: string[]) {
+  const prompt = vi.fn(async () => answers.shift() ?? "");
+  const exitError = Object.assign(new Error("onboard exit"), { exitCode: 0 });
+  const helpers = createValidationRecoveryPromptHelpers({
+    isNonInteractive: () => false,
+    prompt,
+    validateNvidiaApiKeyValue: () => null,
+    getTransportRecoveryMessage: () => "  Transport failed.",
+    exitOnboardFromPrompt(): never {
+      throw exitError;
+    },
+  });
+
+  return { exitError, helpers, prompt };
+}
+
+describe("validation recovery credential prompt", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("returns to provider selection when the re-entry prompt receives back (#9557)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, prompt } = createRecoveryPrompt(["retry", "back"]);
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).resolves.toBe("selection");
+
+    expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith("  Returning to provider selection.");
+  });
+
+  it("exits onboarding when the re-entry prompt receives exit (#9557)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { exitError, helpers, prompt } = createRecoveryPrompt(["retry", "exit"]);
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).rejects.toBe(exitError);
+
+    expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
+    expect(prompt).toHaveBeenCalledTimes(2);
+  });
+
+  it("prints credential prompt help before accepting back at re-entry (#9557)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, prompt } = createRecoveryPrompt(["retry", "?", "back"]);
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).resolves.toBe("selection");
+
+    expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
+    expect(prompt).toHaveBeenCalledTimes(3);
+    expect(log).toHaveBeenCalledWith(
+      "  Type back to choose a different provider, or exit to quit.",
+    );
+  });
+});
