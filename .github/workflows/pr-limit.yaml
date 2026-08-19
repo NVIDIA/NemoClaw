@@ -22,33 +22,56 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Check open PR count for author
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ACTION: ${{ github.event.action }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          case "${AUTHOR,,}" in
-            apurvvkumaria|chengjiew|cjagwani|cv|dongni-yang|ericksoa|jyaunches|laitingsheng|prekshivyas|rluo8|rsliter|sandl99|senthilr-nv|tedy-y|tonyluo-nv|wscurran|yimoj)
-              LIMIT=10
-              ;;
-            *)
-              LIMIT=5
-              ;;
-          esac
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const pull = context.payload.pull_request;
+            const author = pull.user.login;
+            const elevatedAccounts = new Set([
+              "apurvvkumaria",
+              "chengjiew",
+              "cjagwani",
+              "cv",
+              "dongni-yang",
+              "ericksoa",
+              "jyaunches",
+              "laitingsheng",
+              "prekshivyas",
+              "rluo8",
+              "rsliter",
+              "sandl99",
+              "senthilr-nv",
+              "tedy-y",
+              "tonyluo-nv",
+              "wscurran",
+              "yimoj",
+            ]);
+            const limit = elevatedAccounts.has(author.toLowerCase()) ? 10 : 5;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,
+              state: "open",
+              creator: author,
+              sort: "created",
+              direction: "asc",
+              per_page: 100,
+            });
+            const openCount = issues.filter(
+              (issue) =>
+                issue.pull_request &&
+                (context.payload.action === "reopened" || issue.number <= pull.number),
+            ).length;
 
-          OPEN_COUNT=$(gh api --paginate \
-            "repos/$REPO/issues?state=open&creator=$AUTHOR&sort=created&direction=asc&per_page=100" \
-            | jq --slurp --arg action "$ACTION" --argjson pr "$PR_NUMBER" \
-              '[.[][] | select(.pull_request and ($action == "reopened" or .number <= $pr))] | length')
+            core.info(`Author ${author} has ${openCount} open PR(s); limit is ${limit}`);
+            if (openCount <= limit) return;
 
-          echo "Author $AUTHOR has $OPEN_COUNT open PR(s); limit is $LIMIT"
-
-          if [ "$OPEN_COUNT" -gt "$LIMIT" ]; then
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
-              "This repository limits you to $LIMIT open pull requests. Please close or merge an existing PR before opening another one."
-            gh pr close "$PR_NUMBER" --repo "$REPO"
-            echo "::error::PR closed because $AUTHOR exceeds the $LIMIT-open-PR limit"
-            exit 1
-          fi
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pull.number,
+              body: `This repository limits you to ${limit} open pull requests. Please close or merge an existing PR before opening another one.`,
+            });
+            await github.rest.pulls.update({
+              ...context.repo,
+              pull_number: pull.number,
+              state: "closed",
+            });
+            core.setFailed(`PR closed because ${author} exceeds the ${limit}-open-PR limit`);
