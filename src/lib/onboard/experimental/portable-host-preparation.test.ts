@@ -590,6 +590,22 @@ describe("preparePortableExperimentalHost", () => {
       result(0, '[{"ifname":"lo","addr_info":[{"family":"inet","local":"169.254.1.2"}]}]'),
       /inspection returned invalid or ambiguous output/u,
     ],
+    [
+      "malformed non-target assignment beside target evidence",
+      result(
+        0,
+        JSON.stringify([
+          {
+            ifname: "lo",
+            addr_info: [
+              { family: "inet", local: "169.254.1.2", prefixlen: 32 },
+              { family: "inet", local: "127.0.0.1" },
+            ],
+          },
+        ]),
+      ),
+      /inspection returned invalid or ambiguous output/u,
+    ],
     ["wholly invalid successful output", result(0, "not-json"), /invalid or ambiguous output/u],
     [
       "multiple target assignments",
