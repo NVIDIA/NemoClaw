@@ -293,17 +293,13 @@ describe("blueprint identity wrapper", () => {
       commands.indexOf(
         "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
       ),
-    ).toBeLessThan(
-      commands.indexOf(
-        "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
-      ),
-    );
+    ).toBeLessThan(commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"));
     expect(
+      commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"),
+    ).toBeLessThan(
       commands.indexOf(
         "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
       ),
-    ).toBeLessThan(
-      commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"),
     );
   });
 
@@ -1098,7 +1094,7 @@ describe("blueprint identity wrapper", () => {
     ).toBeDefined();
   });
 
-  it("persists provider ownership before the initial credential mint", async () => {
+  it("persists attachment ownership before the initial credential mint", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
@@ -1107,7 +1103,7 @@ describe("blueprint identity wrapper", () => {
         "provider get acme-okta-runtime",
         [
           failureResult("provider not found"),
-          ...Array.from({ length: 3 }, () => ({
+          ...Array.from({ length: 5 }, () => ({
             exitCode: 0,
             stdout: matchingProvider,
             stderr: "",
@@ -1120,16 +1116,12 @@ describe("blueprint identity wrapper", () => {
       ],
       [
         "provider delete acme-okta-runtime",
-        [
-          failureResult("first delete denied"),
-          failureResult("second delete denied"),
-          { exitCode: 0, stdout: "", stderr: "" },
-        ],
+        [failureResult("first delete denied"), { exitCode: 0, stdout: "", stderr: "" }],
       ],
     ]);
 
     await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
-      /rotate failed.*cleanup failed:.*first delete denied.*cleanup failed:.*second delete denied/s,
+      /rotate failed.*cleanup failed:.*first delete denied/s,
     );
 
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
@@ -1137,7 +1129,7 @@ describe("blueprint identity wrapper", () => {
     const plan = JSON.parse(planEntry!.content!);
     expect(plan.identity).toMatchObject({
       provider_created: true,
-      attachment_created: false,
+      attachment_created: true,
     });
 
     await actionRollback(plan.run_id);

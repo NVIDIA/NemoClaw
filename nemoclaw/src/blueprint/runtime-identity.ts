@@ -1016,10 +1016,6 @@ export async function prepareRuntimeIdentity(
         `Failed to configure runtime identity credential refresh: ${deps.formatError(commandOutput(refreshResult), [clientId, refreshToken, clientSecret ?? ""])}`,
       );
     }
-    // OpenShell 0.0.106 publishes provider-environment revisions asynchronously.
-    // Mint first so attachment publishes one complete revision instead of an
-    // intermediate configured-without-a-credential state to the supervisor.
-    await mintRuntimeIdentityCredential(receipt, deps);
   } catch (error) {
     if (providerAcquired) {
       return compensatePreparationFailure(receipt, error, deps);
