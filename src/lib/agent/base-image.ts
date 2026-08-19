@@ -27,7 +27,7 @@ import { ROOT } from "../runner";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
   buildLocalBaseTag,
-  createSandboxBaseImageBuildProvenance,
+  createSandboxBaseImageBuildLabels,
   createSandboxBaseImageBuildProvenanceKey,
   createSandboxBaseImageResolutionKey,
   createSandboxBaseImageResolutionMetadata,
@@ -527,11 +527,7 @@ function localBaseImageBuildProvenance(options: ResolveBaseImageOptions): {
   labels: Record<string, string>;
   provenance: string;
 } {
-  const provenance = createSandboxBaseImageBuildProvenance(options);
-  return {
-    labels: { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance },
-    provenance,
-  };
+  return createSandboxBaseImageBuildLabels(options);
 }
 
 /**
