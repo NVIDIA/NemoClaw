@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { MockInstance } from "vitest";
 
 import { createValidationRecoveryPromptHelpers } from "./validation-recovery-prompt";
 
@@ -27,6 +28,19 @@ function createRecoveryPrompt(answers: string[]) {
   return { exitError, helpers, prompt };
 }
 
+function expectCredentialPromptWasSecret(
+  prompt: ReturnType<typeof createRecoveryPrompt>["prompt"],
+) {
+  expect(prompt).toHaveBeenCalledWith("  OpenAI API key: ", { secret: true });
+}
+
+function expectHelpBeforeSelectionReturn(log: MockInstance<typeof console.log>) {
+  const messages = log.mock.calls.map(([message]) => message);
+  expect(
+    messages.indexOf("  Type back to choose a different provider, or exit to quit."),
+  ).toBeLessThan(messages.indexOf("  Returning to provider selection."));
+}
+
 describe("validation recovery credential prompt", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -43,7 +57,7 @@ describe("validation recovery credential prompt", () => {
     ).resolves.toBe("selection");
 
     expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
-    expect(prompt).toHaveBeenCalledTimes(2);
+    expectCredentialPromptWasSecret(prompt);
     expect(log).toHaveBeenCalledWith("  Returning to provider selection.");
   });
 
@@ -57,7 +71,7 @@ describe("validation recovery credential prompt", () => {
     ).resolves.toBe("credential");
 
     expect(process.env.OPENAI_API_KEY).toBe("selection");
-    expect(prompt).toHaveBeenCalledTimes(2);
+    expectCredentialPromptWasSecret(prompt);
   });
 
   it("returns to provider selection from the paste-guard re-entry path (#9557)", async () => {
@@ -70,7 +84,7 @@ describe("validation recovery credential prompt", () => {
     ).resolves.toBe("selection");
 
     expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
-    expect(prompt).toHaveBeenCalledTimes(2);
+    expectCredentialPromptWasSecret(prompt);
     expect(log).toHaveBeenCalledWith("  Returning to provider selection.");
   });
 
@@ -84,7 +98,7 @@ describe("validation recovery credential prompt", () => {
     ).rejects.toBe(exitError);
 
     expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
-    expect(prompt).toHaveBeenCalledTimes(2);
+    expectCredentialPromptWasSecret(prompt);
   });
 
   it("exits onboarding when the re-entry prompt receives quit (#9557)", async () => {
@@ -97,7 +111,7 @@ describe("validation recovery credential prompt", () => {
     ).rejects.toBe(exitError);
 
     expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
-    expect(prompt).toHaveBeenCalledTimes(2);
+    expectCredentialPromptWasSecret(prompt);
   });
 
   it("prints credential prompt help before accepting back at re-entry (#9557)", async () => {
@@ -110,10 +124,11 @@ describe("validation recovery credential prompt", () => {
     ).resolves.toBe("selection");
 
     expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
-    expect(prompt).toHaveBeenCalledTimes(3);
+    expectCredentialPromptWasSecret(prompt);
     expect(log).toHaveBeenCalledWith(
       "  Type back to choose a different provider, or exit to quit.",
     );
+    expectHelpBeforeSelectionReturn(log);
   });
 
   it("prints credential prompt help for the help alias before accepting back (#9557)", async () => {
@@ -126,9 +141,10 @@ describe("validation recovery credential prompt", () => {
     ).resolves.toBe("selection");
 
     expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
-    expect(prompt).toHaveBeenCalledTimes(3);
+    expectCredentialPromptWasSecret(prompt);
     expect(log).toHaveBeenCalledWith(
       "  Type back to choose a different provider, or exit to quit.",
     );
+    expectHelpBeforeSelectionReturn(log);
   });
 });
