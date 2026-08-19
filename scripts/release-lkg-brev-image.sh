@@ -131,7 +131,12 @@ prepare_request() {
   validate_source_context
   resolve_release
 
-  local request_path="${LKG_REQUEST_PATH:-${RUNNER_TEMP:-}/nemoclaw-lkg-image-request/$REQUEST_FILENAME}"
+  local request_path="${LKG_REQUEST_PATH:-}"
+  if [[ -z "$request_path" ]]; then
+    [[ -n "${RUNNER_TEMP:-}" ]] \
+      || fail "RUNNER_TEMP or LKG_REQUEST_PATH is required to locate the LKG image request"
+    request_path="$RUNNER_TEMP/nemoclaw-lkg-image-request/$REQUEST_FILENAME"
+  fi
   [[ -n "$request_path" && "${request_path##*/}" == "$REQUEST_FILENAME" ]] \
     || fail "LKG_REQUEST_PATH must end with $REQUEST_FILENAME"
   [[ ! -e "$request_path" ]] || fail "Refusing to overwrite existing LKG image request"

@@ -400,6 +400,23 @@ describe("LKG Brev image request", () => {
     expect(callCount(fixture)).toBe(0);
   });
 
+  it("requires a request location before creating the request (#9661)", () => {
+    const fixture = createFixture();
+    tag(fixture, "v0.0.109");
+
+    const result = runScript(fixture, "prepare-request", {
+      LKG_REQUEST_PATH: "",
+      RUNNER_TEMP: "",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "RUNNER_TEMP or LKG_REQUEST_PATH is required to locate the LKG image request",
+    );
+    expect(fs.existsSync(fixture.requestPath)).toBe(false);
+    expect(callCount(fixture)).toBe(0);
+  });
+
   it("refuses to overwrite an existing request (#9661)", () => {
     const fixture = createFixture();
     tag(fixture, "v0.0.109");
