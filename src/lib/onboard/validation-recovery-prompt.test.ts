@@ -8,7 +8,11 @@ import { createValidationRecoveryPromptHelpers } from "./validation-recovery-pro
 const CREDENTIAL_RECOVERY = { kind: "credential", retry: "credential" } as const;
 
 function createRecoveryPrompt(answers: string[]) {
-  const prompt = vi.fn(async () => answers.shift() ?? "");
+  const prompt = vi.fn(async () => {
+    const answer = answers.shift();
+    expect(answer, "Unexpected prompt call").toBeDefined();
+    return answer ?? "";
+  });
   const exitError = Object.assign(new Error("onboard exit"), { exitCode: 0 });
   const helpers = createValidationRecoveryPromptHelpers({
     isNonInteractive: () => false,
@@ -83,10 +87,39 @@ describe("validation recovery credential prompt", () => {
     expect(prompt).toHaveBeenCalledTimes(2);
   });
 
+  it("exits onboarding when the re-entry prompt receives quit (#9557)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { exitError, helpers, prompt } = createRecoveryPrompt(["retry", "quit"]);
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).rejects.toBe(exitError);
+
+    expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
+    expect(prompt).toHaveBeenCalledTimes(2);
+  });
+
   it("prints credential prompt help before accepting back at re-entry (#9557)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "sk-bad");
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const { helpers, prompt } = createRecoveryPrompt(["retry", "?", "back"]);
+
+    await expect(
+      helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
+    ).resolves.toBe("selection");
+
+    expect(process.env.OPENAI_API_KEY).toBe("sk-bad");
+    expect(prompt).toHaveBeenCalledTimes(3);
+    expect(log).toHaveBeenCalledWith(
+      "  Type back to choose a different provider, or exit to quit.",
+    );
+  });
+
+  it("prints credential prompt help for the help alias before accepting back (#9557)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, prompt } = createRecoveryPrompt(["retry", "help", "back"]);
 
     await expect(
       helpers.promptValidationRecovery("OpenAI", CREDENTIAL_RECOVERY, "OPENAI_API_KEY"),
