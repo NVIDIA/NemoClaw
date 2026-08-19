@@ -143,8 +143,13 @@ describe("preparePortableExperimentalHost", () => {
     const portableSandboxAddresses = new BlockList();
     portableSandboxAddresses.addSubnet(networkAddress!, Number(prefixText), "ipv4");
 
+    expect(PORTABLE_DOCKER_NETWORK_SUBNET).toBe("169.254.1.0/24");
+    expect(PORTABLE_REGISTRY_IP).toBe("169.254.1.3");
+    expect(PORTABLE_HOST_GATEWAY_IP).toBe("169.254.2.2");
     expect(portableSandboxAddresses.check("169.254.1.2", "ipv4")).toBe(true);
+    expect(portableSandboxAddresses.check(PORTABLE_REGISTRY_IP, "ipv4")).toBe(true);
     expect(portableSandboxAddresses.check(PORTABLE_HOST_GATEWAY_IP, "ipv4")).toBe(false);
+    expect(PORTABLE_HOST_GATEWAY_IP).not.toBe(PORTABLE_REGISTRY_IP);
   });
 
   it("does nothing unless the portable profile is explicit", () => {
