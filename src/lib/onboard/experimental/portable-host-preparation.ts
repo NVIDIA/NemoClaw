@@ -16,7 +16,16 @@ import {
 } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
-import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "../docker-driver-platform";
+import {
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  isPortableExperimentalProfile,
+  parseDockerNetworkIpamEntries,
+  PORTABLE_DOCKER_NETWORK_SUBNET,
+  PORTABLE_HOST_GATEWAY_IP,
+  PORTABLE_LOCAL_REGISTRY,
+  PORTABLE_REGISTRY_IP,
+  resolveDockerDriverNetworkName,
+} from "../docker-driver-platform";
 import {
   inspectPortablePodmanReadiness,
   portablePodmanCommandEnvironment,
@@ -62,6 +71,8 @@ export interface PortableHostPreparationDeps {
   systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
   podman?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  ip?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  sudo?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   hardenSocketDirectory?: (socketPath: string, uid: number) => void;
   captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
   assertSocketAuthority?: (authority: PodmanSocketAuthority) => void;
@@ -91,7 +102,7 @@ function commandDetail(result: SpawnResult): string {
 }
 
 function requireCommand(result: SpawnResult, description: string): void {
-  if (result.status === 0) return;
+  if (result.status === 0 && !result.error) return;
   throw new Error(`${description} failed: ${commandDetail(result)}`);
 }
 
@@ -115,6 +126,47 @@ function requireDockerCompatibleCli(
       "(Debian/Ubuntu: `sudo apt install podman-docker`; Fedora: `sudo dnf install podman-docker`), " +
       "then rerun `nemoclaw onboard --experimental-profile portable`.",
   );
+}
+
+function portableHostGatewayAliasState(output: string): "absent" | "configured" {
+  const escapedGatewayIp = PORTABLE_HOST_GATEWAY_IP.replaceAll(".", "\\.");
+  const addressPattern = new RegExp(`\\binet\\s+${escapedGatewayIp}/(\\d+)\\b`, "u");
+  const assignments = output
+    .split("\n")
+    .map((line) => ({
+      interfaceName: /^\d+:\s+([^ :]+)/u.exec(line)?.[1],
+      prefix: addressPattern.exec(line)?.[1],
+    }))
+    .filter((entry) => entry.prefix !== undefined);
+  if (assignments.length === 0) return "absent";
+  if (assignments.every((entry) => entry.interfaceName === "lo" && entry.prefix === "32")) {
+    return "configured";
+  }
+  throw new Error(
+    `Refusing to configure ${PORTABLE_HOST_GATEWAY_IP}/32 because the address already has a conflicting host assignment.`,
+  );
+}
+
+function ensurePortableHostGatewayAlias(
+  env: NodeJS.ProcessEnv,
+  ip: NonNullable<PortableHostPreparationDeps["ip"]>,
+  sudo: NonNullable<PortableHostPreparationDeps["sudo"]>,
+): void {
+  const inspect = (): "absent" | "configured" => {
+    const result = ip(["-o", "-4", "address", "show"], env);
+    requireCommand(result, "Inspecting the portable host gateway address");
+    return portableHostGatewayAliasState(String(result.stdout ?? ""));
+  };
+  if (inspect() === "configured") return;
+  requireCommand(
+    sudo(["--", "ip", "address", "replace", `${PORTABLE_HOST_GATEWAY_IP}/32`, "dev", "lo"], env),
+    "Configuring the portable host gateway address",
+  );
+  if (inspect() !== "configured") {
+    throw new Error(
+      `Verifying the portable host gateway address failed: ${PORTABLE_HOST_GATEWAY_IP}/32 is not assigned to loopback.`,
+    );
+  }
 }
 
 function resolvePodmanDockerHost(result: SpawnResult): string {
@@ -291,12 +343,36 @@ function validateOwnedConfigAuthority(input: {
 function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  networkName: string,
 ): void {
+  const networkInspection = docker(
+    ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
+    env,
+  );
+  if (networkInspection.error) {
+    requireCommand(networkInspection, "Inspecting the portable sandbox network");
+  }
+  if (networkInspection.status === 0) {
+    const subnets = (parseDockerNetworkIpamEntries(String(networkInspection.stdout ?? "")) ?? [])
+      .map((entry) => entry.subnet)
+      .filter((subnet): subnet is string => Boolean(subnet));
+    if (subnets.length !== 1 || subnets[0] !== PORTABLE_DOCKER_NETWORK_SUBNET) {
+      throw new Error(
+        `Refusing to reuse network '${networkName}' with unexpected subnet '${subnets.join(", ") || "none"}'. Expected ${PORTABLE_DOCKER_NETWORK_SUBNET}.`,
+      );
+    }
+  } else {
+    requireCommand(
+      docker(["network", "create", "--subnet", PORTABLE_DOCKER_NETWORK_SUBNET, networkName], env),
+      "Creating the portable sandbox network",
+    );
+  }
+
   const inspection = docker(
     [
       "inspect",
       "--format",
-      '{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}}',
+      `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
       REGISTRY_CONTAINER,
     ],
     env,
@@ -305,7 +381,7 @@ function ensureRegistryContainer(
     requireCommand(inspection, "Inspecting the managed portable registry");
   }
   const exists = inspection.status === 0;
-  const [owner, running] = String(inspection.stdout ?? "")
+  const [owner, running, networkIp] = String(inspection.stdout ?? "")
     .trim()
     .split(/\s+/u);
   if (exists && owner !== "1") {
@@ -313,7 +389,22 @@ function ensureRegistryContainer(
       `Refusing to replace existing unmanaged container '${REGISTRY_CONTAINER}'. Rename or remove it and retry.`,
     );
   }
-  if (exists && running === "true") return;
+  if (exists && networkIp && networkIp !== PORTABLE_REGISTRY_IP) {
+    throw new Error(
+      `Refusing to move managed container '${REGISTRY_CONTAINER}' from unexpected network address '${networkIp}'. Expected ${PORTABLE_REGISTRY_IP}.`,
+    );
+  }
+  if (exists && running === "true" && networkIp === PORTABLE_REGISTRY_IP) return;
+  if (exists && running === "true") {
+    requireCommand(
+      docker(
+        ["network", "connect", "--ip", PORTABLE_REGISTRY_IP, networkName, REGISTRY_CONTAINER],
+        env,
+      ),
+      "Connecting the managed portable registry to the sandbox network",
+    );
+    return;
+  }
   if (exists) {
     requireCommand(
       docker(["rm", "-f", REGISTRY_CONTAINER], env),
@@ -329,6 +420,10 @@ function ensureRegistryContainer(
         REGISTRY_CONTAINER,
         "--label",
         REGISTRY_LABEL,
+        "--network",
+        networkName,
+        "--ip",
+        PORTABLE_REGISTRY_IP,
         "-p",
         "127.0.0.1:5000:5000",
         "--restart=always",
@@ -347,6 +442,7 @@ export function preparePortableExperimentalHost(
   expectedAuthority?: CheckpointPortableRuntimeAuthority | null,
 ): PortableHostPreparationResult | null {
   if (!isPortableExperimentalProfile(env)) return null;
+  const dockerNetworkName = resolveDockerDriverNetworkName(env);
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("The portable experimental profile requires Linux.");
   }
@@ -525,7 +621,24 @@ export function preparePortableExperimentalHost(
         timeout: REGISTRY_COMMAND_TIMEOUT_MS,
       }));
   requireDockerCompatibleCli(docker, podmanEnv);
-  ensureRegistryContainer(podmanEnv, docker);
+  const ip =
+    deps.ip ??
+    ((args, childEnv) =>
+      spawnSync("ip", [...args], {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: HOST_COMMAND_TIMEOUT_MS,
+      }));
+  const sudo =
+    deps.sudo ??
+    ((args, childEnv) =>
+      spawnSync("sudo", [...args], {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: HOST_COMMAND_TIMEOUT_MS,
+      }));
+  ensurePortableHostGatewayAlias(podmanEnv, ip, sudo);
+  ensureRegistryContainer(podmanEnv, docker, dockerNetworkName);
   if (socketAuthority) {
     (
       deps.assertSocketAuthority ??
@@ -545,6 +658,8 @@ export const portableHostPreparationInternals = {
   REGISTRY_IMAGE,
   REGISTRY_FRAGMENT,
   PORTABLE_CONTAINERS_CONF,
+  ensurePortableHostGatewayAlias,
+  portableHostGatewayAliasState,
   validateOwnedConfigAuthority,
   resolvePodmanDockerHost,
 };

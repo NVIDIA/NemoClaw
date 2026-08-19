@@ -267,14 +267,20 @@ function exitOnGatewayRecoveryFailure(
   sandboxName: string,
   agentName: string,
   detail: string,
+  operation: "Probe" | "Recovery" = "Probe",
+  showWedgeDiagnostics = false,
 ): never {
   const safeDetail = sanitizeSandboxStartupRecoveryDetail(detail);
   const terminalPunctuation = /[.!?]$/u.test(safeDetail) ? "" : ".";
   console.error("");
   console.error(
-    `  Probe failed: NemoClaw could not recover the ${agentName} gateway in '${sandboxName}'.`,
+    `  ${operation} failed: NemoClaw could not recover the ${agentName} gateway in '${sandboxName}'.`,
   );
   console.error(`  Recovery detail: ${safeDetail}${terminalPunctuation}`);
+  if (showWedgeDiagnostics) {
+    printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
+    console.error("  Check /tmp/gateway.log inside the sandbox for details.");
+  }
   process.exit(1);
 }
 
@@ -341,6 +347,8 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
       sandboxName,
       agentName,
       String(processCheck.recoveryFailureDetail),
+      "Probe",
+      true,
     );
   }
   if (processCheck.wasRunning) {
@@ -1294,6 +1302,16 @@ export async function prepareInteractiveSession(
   if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
     exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
+  }
+  const recoveryFailureDetail =
+    "recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail
+      ? String(processCheck.recoveryFailureDetail)
+      : processCheck.checked && processCheck.wasRunning === false && processCheck.recovered === false
+        ? "the gateway recovery attempt did not complete"
+        : null;
+  if (recoveryFailureDetail) {
+    const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
+    exitOnGatewayRecoveryFailure(sandboxName, agentName, recoveryFailureDetail, "Recovery");
   }
   // Ensure Ollama auth proxy is running (recovers from host reboots)
   ensureOllamaAuthProxy();

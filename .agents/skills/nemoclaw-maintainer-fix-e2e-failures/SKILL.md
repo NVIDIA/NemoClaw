@@ -16,7 +16,7 @@ Continuously inspect automatic E2E results for `main`. Coordinate ownership and 
 2. Keep release operations out of scope. Never change, retag, publish, or otherwise touch a release, tag, or release artifact during this workflow. Route release work to the existing release workflow.
 3. Confirm maintainer authorization. Merge only when the request grants it. Otherwise, leave the PR `approval-ready` and continue the loop.
 4. Check Git and GitHub access. Follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) on access failure.
-5. Fetch trusted `origin/main`. Read its PR-limit policy with `git show origin/main:.github/workflows/pr-limit.yaml`. For a non-exempt author, do not create a claim that would exceed the 10-open-PR limit.
+5. Fetch trusted `origin/main`. Read its PR-limit policy with `git show origin/main:.github/workflows/pr-limit.yaml`. For a non-exempt author, do not create a claim that would exceed that limit.
 
 Do not declare success or end the loop because the queue is empty or the newest run passes. Wait for the next automatic `main` result.
 
