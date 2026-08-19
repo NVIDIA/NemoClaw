@@ -9,10 +9,8 @@ import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import {
-  buildDashboardRemoteBindEnv,
-  dashboardRemoteBindConnectStarted,
-} from "./dashboard-remote-bind-env.ts";
+import { runDashboardConnectUntilForwardHandoff } from "./dashboard-connect-handoff.ts";
+import { buildDashboardRemoteBindEnv } from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
 const runDashboardRemoteBindTest =
@@ -183,15 +181,19 @@ runDashboardRemoteBindTest(
       timeoutMs: 30_000,
     });
 
-    const connect = await host.nemoclaw([sandboxName, "connect"], {
-      artifactName: "dashboard-remote-bind-connect",
+    const connect = await runDashboardConnectUntilForwardHandoff({
+      artifacts,
+      dashboardPort,
       env: testEnv(),
+      progress,
+      sandboxName,
+      signal: cleanup.currentSignal(),
       timeoutMs: 120_000,
     });
     expect(
-      dashboardRemoteBindConnectStarted(connect, sandboxName, dashboardPort),
+      connect.proof,
       `nemoclaw connect did not complete or print background-forward proof\nstdout:\n${connect.stdout}\nstderr:\n${connect.stderr}`,
-    ).toBe(true);
+    ).toBe("forward-started");
 
     progress.phase("verify all-interface dashboard forward");
     const forwardList = await sandbox.openshell(["forward", "list"], {
