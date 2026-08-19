@@ -240,6 +240,10 @@ def _sandbox_adapter_class():
                                 await asyncio.sleep(3)
                                 continue
                             payload = await resp.json()
+                            # Read and materialise the envelope here, so a body that is
+                            # not an object and a receivedMessages that is not iterable
+                            # are both failed pulls rather than escaping exceptions.
+                            received = list(payload.get("receivedMessages") or [])
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:  # noqa: BLE001 - transient pull errors are retried
@@ -247,21 +251,36 @@ def _sandbox_adapter_class():
                         await asyncio.sleep(3)
                         continue
 
-                    received = payload.get("receivedMessages") or []
                     if not received:
                         await asyncio.sleep(0.2)  # guard against fast-empty long-poll returns
                         continue
 
                     acks: list = []
                     for received_message in received:
-                        shim = _RestPubsubMessage(
-                            received_message.get("message") or {},
-                            acks,
-                            received_message.get("ackId"),
-                        )
+                        ack_id = None
+                        try:
+                            ack_id = received_message.get("ackId")
+                            shim = _RestPubsubMessage(
+                                received_message.get("message") or {}, acks, ack_id
+                            )
+                        except Exception:  # noqa: BLE001 - a corrupt delivery ends nothing
+                            # Redelivery cannot repair the same undecodable bytes, so
+                            # retire it the way the bundled handler retires an
+                            # unparseable envelope. Otherwise it may be redelivered
+                            # repeatedly, and GOOGLE_CHAT_MAX_MESSAGES defaults to 1,
+                            # so each redelivery costs a whole pull response.
+                            _GC_LOG.exception(
+                                "[GoogleChat][NemoClaw] retiring an unreadable delivery"
+                            )
+                            if ack_id:
+                                acks.append(ack_id)
+                            continue
                         try:
                             await asyncio.to_thread(self._on_pubsub_message, shim)
                         except Exception:  # noqa: BLE001 - one bad message must not kill the loop
+                            # Nothing is added to acks here: the handler acknowledges
+                            # for itself, and unlike an unreadable payload its failure
+                            # can be transient, so redelivery stays the default.
                             _GC_LOG.exception("[GoogleChat][NemoClaw] message handler raised")
 
                     if acks:

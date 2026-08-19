@@ -69,10 +69,15 @@ class ClientSession:
         REQUESTS.append(
             {"url": url, "method": "POST", "authorization": (headers or {}).get("Authorization"), "body": json}
         )
-        assert SCRIPT, "aiohttp double ran out of scripted responses: " + url
+        # Raise rather than assert: python -O strips assert statements, and an
+        # inherited PYTHONOPTIMIZE would silently turn the refusal below into an
+        # ordinary non-200 response, passing the test without its claim.
+        if not SCRIPT:
+            raise AssertionError("aiohttp double ran out of scripted responses: " + url)
         status, payload, on_send = SCRIPT.pop(0)
         on_send and on_send()
-        assert status != "transport-error", "proxy refused the acknowledge"
+        if status == "transport-error":
+            raise ConnectionError("proxy refused the acknowledge")
         return _Response(status, payload)
 `;
 
@@ -119,6 +124,14 @@ def _handler(message):
 adapter._on_pubsub_message = _handler
 delivery, redelivery = _received("ack-1", "hello"), _received("ack-1", "hello")
 
+# Two corrupted deliveries: an entry that is not a mapping at all, and one whose
+# base64 cannot be decoded. Both raise while the message is shaped, and only the
+# second carries an ack id to retire it with. The scenario also opens with a pull
+# body whose receivedMessages is not iterable, which fails both on the read and on
+# the loop over it; an empty container would be coerced to {} by the double and
+# prove nothing.
+malformed = {"receivedMessages": [None, {"ackId": "ack-bad", "message": {"data": "abcde"}}]}
+
 # Each entry is (pull or acknowledge response status, payload, side effect).
 # A rejected acknowledge means Pub/Sub redelivers the same ackId on the next pull.
 aiohttp.SCRIPT.extend(
@@ -132,6 +145,10 @@ aiohttp.SCRIPT.extend(
             ("transport-error", None, None),
             (200, redelivery, None),
             (200, {}, _stop),
+        ],
+        "malformed-payload": [
+            (200, {"receivedMessages": 1}, None), (200, malformed, None), (200, {}, None),
+            (200, delivery, None), (200, {}, _stop),
         ],
         "nack": [(200, delivery, _stop)],
     }[SCENARIO]
@@ -216,6 +233,23 @@ describe("Hermes Google Chat keyless REST pull", () => {
     // would stop inbound delivery for the whole session, not just this message.
     expect(handled).toEqual(["hello", "hello"]);
     expect(requests.filter((request) => request.url.endsWith(":pull"))).toHaveLength(2);
+  });
+
+  it("retires an undecodable delivery and survives a malformed pull response", () => {
+    const { requests, handled } = runScenario("malformed-payload");
+
+    // Reading the response envelope and shaping each message both raise here:
+    // receivedMessages is not iterable, one entry is not a mapping, and one payload
+    // is not decodable. Any of them ending the pull would silence inbound for the
+    // rest of the session, and leaving the entry that has an ack id unacknowledged
+    // would permit repeated poison-message redelivery.
+    expect(handled).toEqual(["hello"]);
+    expect(requests.filter((request) => request.url.endsWith(":pull"))).toHaveLength(3);
+    expect(
+      requests
+        .filter((request) => request.url.endsWith(":acknowledge"))
+        .map((request) => request.body),
+    ).toEqual([{ ackIds: ["ack-bad"] }, { ackIds: ["ack-1"] }]);
   });
 
   it("acknowledges nothing for a message the handler nacks", () => {
