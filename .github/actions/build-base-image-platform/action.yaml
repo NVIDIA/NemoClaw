@@ -5,6 +5,9 @@ name: build-base-image-platform
 description: Build and publish one immutable base image digest for a platform.
 
 outputs:
+  digest:
+    description: Exact digest for the requested platform.
+    value: ${{ steps.build.outputs.digest }}
   amd64-digest:
     description: Exact amd64 digest when this action built the amd64 lane.
     value: ${{ steps.job-output.outputs.amd64_digest }}

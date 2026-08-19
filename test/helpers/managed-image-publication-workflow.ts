@@ -10,6 +10,69 @@ import type { Action, Job, Step, Workflow } from "./managed-image-publication-wo
 
 export const repoRoot = path.resolve(import.meta.dirname, "../..");
 
+export const baseImagePublishers = [
+  {
+    agent: "hermes",
+    displayName: "Hermes",
+    dockerfile: "agents/hermes/Dockerfile.base",
+    image: "nvidia/nemoclaw/hermes-sandbox-base",
+    job: "build-and-push-hermes",
+    amd64Job: "build-hermes-amd64",
+    arm64Job: "build-hermes-arm64",
+  },
+  {
+    agent: "langchain-deepagents-code",
+    displayName: "Deep Agents Code",
+    dockerfile: "agents/langchain-deepagents-code/Dockerfile.base",
+    image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+    job: "build-and-push-dcode",
+    amd64Job: "build-dcode-amd64",
+    arm64Job: "build-dcode-arm64",
+  },
+  {
+    agent: "openclaw",
+    displayName: "OpenClaw",
+    dockerfile: "Dockerfile.base",
+    image: "nvidia/nemoclaw/sandbox-base",
+    job: "build-and-push-openclaw",
+    amd64Job: "build-openclaw-amd64",
+    arm64Job: "build-openclaw-arm64",
+  },
+  {
+    agent: "pi",
+    displayName: "Pi",
+    dockerfile: "agents/pi/Dockerfile.base",
+    image: "nvidia/nemoclaw/pi-sandbox-base",
+    job: "build-and-push-pi",
+    amd64Job: "build-pi-amd64",
+    arm64Job: "build-pi-arm64",
+  },
+] as const;
+
+export const baseImagePlatformCallers = baseImagePublishers.flatMap(
+  (publisher) =>
+    [
+      {
+        ...publisher,
+        arch: "amd64",
+        job: publisher.amd64Job,
+        openclawVersion:
+          publisher.agent === "openclaw" ? "${{ inputs.openclaw_version }}" : undefined,
+        platform: "linux/amd64",
+        runner: "ubuntu-24.04",
+      },
+      {
+        ...publisher,
+        arch: "arm64",
+        job: publisher.arm64Job,
+        openclawVersion:
+          publisher.agent === "openclaw" ? "${{ inputs.openclaw_version }}" : undefined,
+        platform: "linux/arm64",
+        runner: "ubuntu-24.04-arm",
+      },
+    ] as const,
+);
+
 export function readWorkflow(file: string): Workflow {
   return YAML.parse(
     fs.readFileSync(path.join(repoRoot, ".github", "workflows", file), "utf8"),

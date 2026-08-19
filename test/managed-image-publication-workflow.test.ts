@@ -19,6 +19,8 @@ import {
 } from "./helpers/managed-image-publication-barrier";
 import { publicationBoundaryErrors } from "./helpers/managed-image-publication-workflow-boundary";
 import {
+  baseImagePlatformCallers,
+  baseImagePublishers,
   managedPromoter,
   managedPublisher,
   readAction,
@@ -107,126 +109,107 @@ describe("complete managed-image publication workflow", () => {
     }
   });
 
-  it.each([
-    {
-      agent: "hermes",
-      contractInput: "hermes-base-contract-base64",
-      displayName: "Hermes",
-      image: "nvidia/nemoclaw/hermes-sandbox-base",
-      job: "build-and-push-hermes",
-      amd64Job: "build-hermes-amd64",
-      arm64Job: "build-hermes-arm64",
-    },
-    {
-      agent: "langchain-deepagents-code",
-      contractInput: "dcode-base-contract-base64",
-      displayName: "Deep Agents Code",
-      image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
-      job: "build-and-push-dcode",
-      amd64Job: "build-dcode-amd64",
-      arm64Job: "build-dcode-arm64",
-    },
-    {
-      agent: "openclaw",
-      contractInput: "openclaw-base-contract-base64",
-      displayName: "OpenClaw",
-      image: "nvidia/nemoclaw/sandbox-base",
-      job: "build-and-push-openclaw",
-      amd64Job: "build-openclaw-amd64",
-      arm64Job: "build-openclaw-arm64",
-    },
-  ] as const)(
-    "starts the $agent publisher after exact base contracts without canceling release tags (#7744)",
-    (expectedPublisher) => {
-      const baseWorkflow = readWorkflow("base-image.yaml");
-      const managedWorkflow = readWorkflow("managed-images.yaml");
-      const publisher = required(
-        baseWorkflow.jobs?.["publish-managed-images"],
-        "base-image workflow is missing the managed-image publisher",
-      );
-      expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
-      expect(JSON.stringify(managedWorkflow)).not.toContain("config.plugins?.installs?.[id]");
-      const validationRun =
-        step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
-          .run ?? "";
-      expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
-      const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
-      const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
-      expect(channelGuardStart).toBeGreaterThan(-1);
-      expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
-      const weakenedWorkflow = structuredClone(managedWorkflow);
-      const weakenedValidation = step(
-        managedPublisher(weakenedWorkflow),
-        "Validate exact managed image before promotion",
-      );
-      weakenedValidation.run = weakenedValidation.run?.replace(
-        "!fs.lstatSync(manifestPath).isFile()",
-        "false",
-      );
-      expect(publicationBoundaryErrors(baseWorkflow, weakenedWorkflow)).toContain(
-        "exact managed image validation is missing lstatSync(manifestPath).isFile()",
-      );
-      const projectRootWeakenedWorkflow = structuredClone(managedWorkflow);
-      const projectRootWeakenedValidation = step(
-        managedPublisher(projectRootWeakenedWorkflow),
-        "Validate exact managed image before promotion",
-      );
-      projectRootWeakenedValidation.run = projectRootWeakenedValidation.run?.replace(
-        'path.join(nodeModulesRoot, ...name.split("/"))',
-        "",
-      );
-      expect(publicationBoundaryErrors(baseWorkflow, projectRootWeakenedWorkflow)).toContain(
-        'exact managed image validation is missing path.join(nodeModulesRoot, ...name.split("/"))',
-      );
-      expect(publisher).toMatchObject({
-        needs: [
-          "build-and-push-hermes",
-          "build-and-push-dcode",
-          "build-and-push-openclaw",
-          "reviewed-npm-audit",
-        ],
-        permissions: {
-          contents: "read",
-          packages: "write",
-        },
-        uses: "./.github/workflows/managed-images.yaml",
-      });
+  it("starts managed publication after exact base contracts without canceling release tags (#7744)", () => {
+    const baseWorkflow = readWorkflow("base-image.yaml");
+    const managedWorkflow = readWorkflow("managed-images.yaml");
+    const publisher = required(
+      baseWorkflow.jobs?.["publish-managed-images"],
+      "base-image workflow is missing the managed-image publisher",
+    );
+    expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
+    expect(JSON.stringify(managedWorkflow)).not.toContain("config.plugins?.installs?.[id]");
+    const validationRun =
+      step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
+        .run ?? "";
+    expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
+    const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
+    const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
+    expect(channelGuardStart).toBeGreaterThan(-1);
+    expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
+    const weakenedWorkflow = structuredClone(managedWorkflow);
+    const weakenedValidation = step(
+      managedPublisher(weakenedWorkflow),
+      "Validate exact managed image before promotion",
+    );
+    weakenedValidation.run = weakenedValidation.run?.replace(
+      "!fs.lstatSync(manifestPath).isFile()",
+      "false",
+    );
+    expect(publicationBoundaryErrors(baseWorkflow, weakenedWorkflow)).toContain(
+      "exact managed image validation is missing lstatSync(manifestPath).isFile()",
+    );
+    const projectRootWeakenedWorkflow = structuredClone(managedWorkflow);
+    const projectRootWeakenedValidation = step(
+      managedPublisher(projectRootWeakenedWorkflow),
+      "Validate exact managed image before promotion",
+    );
+    projectRootWeakenedValidation.run = projectRootWeakenedValidation.run?.replace(
+      'path.join(nodeModulesRoot, ...name.split("/"))',
+      "",
+    );
+    expect(publicationBoundaryErrors(baseWorkflow, projectRootWeakenedWorkflow)).toContain(
+      'exact managed image validation is missing path.join(nodeModulesRoot, ...name.split("/"))',
+    );
+    expect(publisher).toMatchObject({
+      needs: [
+        "build-and-push-hermes",
+        "build-and-push-dcode",
+        "build-and-push-openclaw",
+        "reviewed-npm-audit",
+      ],
+      permissions: {
+        contents: "read",
+        packages: "write",
+      },
+      uses: "./.github/workflows/managed-images.yaml",
+    });
       expect(publisher.if).toContain("github.repository == 'NVIDIA/NemoClaw'");
       expect(publisher.if).toContain("github.ref == 'refs/heads/main'");
       expect(publisher.if).toContain("startsWith(github.ref, 'refs/tags/v')");
-      const reviewedAudit = required(
-        baseWorkflow.jobs?.["reviewed-npm-audit"],
-        "base-image workflow is missing the reviewed npm audit",
-      );
-      expect(reviewedAudit).toMatchObject({
-        if: "github.repository == 'NVIDIA/NemoClaw'",
-        permissions: { contents: "read" },
-        "runs-on": "ubuntu-latest",
-        "timeout-minutes": 15,
+      expect(publisher.with).toMatchObject({
+        "dcode-base-contract-base64": needsOutput("build-and-push-dcode", "contract-base64"),
+        "hermes-base-contract-base64": needsOutput("build-and-push-hermes", "contract-base64"),
+        "openclaw-base-contract-base64": needsOutput(
+          "build-and-push-openclaw",
+          "contract-base64",
+        ),
       });
-      expect(step(reviewedAudit, "Checkout").with?.["persist-credentials"]).toBe(false);
-      expect(step(reviewedAudit, "Audit reviewed production npm graphs")).toMatchObject({
-        uses: "./.github/actions/ci-reviewed-npm-audit",
-        with: {
-          "report-dir": "artifacts/reviewed-npm-audit",
-          "target-root": "${{ github.workspace }}",
-        },
-      });
-      const basePublisher = required(
+    const reviewedAudit = required(
+      baseWorkflow.jobs?.["reviewed-npm-audit"],
+      "base-image workflow is missing the reviewed npm audit",
+    );
+    expect(reviewedAudit).toMatchObject({
+      if: "github.repository == 'NVIDIA/NemoClaw'",
+      permissions: { contents: "read" },
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 15,
+    });
+    expect(step(reviewedAudit, "Checkout").with?.["persist-credentials"]).toBe(false);
+    expect(step(reviewedAudit, "Audit reviewed production npm graphs")).toMatchObject({
+      uses: "./.github/actions/ci-reviewed-npm-audit",
+      with: {
+        "report-dir": "artifacts/reviewed-npm-audit",
+        "target-root": "${{ github.workspace }}",
+      },
+    });
+  });
+
+  it.each(baseImagePublishers)(
+    "binds the $agent manifest to reusable architecture callers (#9529)",
+    (expectedPublisher) => {
+      const baseWorkflow = readWorkflow("base-image.yaml");
+      const publisher = required(
         baseWorkflow.jobs?.[expectedPublisher.job],
         `base-image workflow is missing ${expectedPublisher.agent} manifest publisher`,
       );
-      expect(basePublisher.needs).toEqual([
+      expect(publisher.needs).toEqual([
         expectedPublisher.amd64Job,
         expectedPublisher.arm64Job,
         "reviewed-npm-audit",
       ]);
-      const manifest = step(
-        basePublisher,
-        "Publish validated multi-platform manifest",
-        "base-image workflow",
-      );
-      expect(manifest).toMatchObject({
+      expect(
+        step(publisher, "Publish validated multi-platform manifest", "base-image workflow"),
+      ).toMatchObject({
         uses: "./.github/actions/publish-base-image-manifest",
         with: {
           agent: expectedPublisher.agent,
@@ -235,75 +218,106 @@ describe("complete managed-image publication workflow", () => {
           "display-name": expectedPublisher.displayName,
           image: expectedPublisher.image,
           registry: "${{ env.REGISTRY }}",
-          "registry-username": "${{ github.actor }}",
           "registry-password": "${{ secrets.GITHUB_TOKEN }}",
+          "registry-username": "${{ github.actor }}",
         },
       });
-      expect(basePublisher.outputs?.["contract-base64"]).toBe(
+      expect(publisher.outputs?.["contract-base64"]).toBe(
         "${{ steps.publish.outputs.contract-base64 }}",
       );
-      expect(publisher.with?.[expectedPublisher.contractInput]).toBe(
-        needsOutput(expectedPublisher.job, "contract-base64"),
-      );
-      expect(
-        step(basePublisher, "Checkout", "base-image workflow").with?.["persist-credentials"],
-      ).toBe(false);
-      const amd64Job = required(
-        baseWorkflow.jobs?.[expectedPublisher.amd64Job],
-        `base-image workflow is missing native ${expectedPublisher.agent} amd64`,
-      );
-      expect(amd64Job).toMatchObject({
-        needs: ["reviewed-npm-audit"],
-        outputs: { digest: "${{ steps.platform.outputs.amd64-digest }}" },
-        "runs-on": "ubuntu-24.04",
-      });
-      expect(amd64Job.strategy).toBeUndefined();
-      expect(
-        step(amd64Job, "Build and publish platform digest", "base-image workflow").with,
-      ).toMatchObject({
-        agent: expectedPublisher.agent,
-        arch: "amd64",
-        platform: "linux/amd64",
-      });
-      const arm64Job = required(
-        baseWorkflow.jobs?.[expectedPublisher.arm64Job],
-        `base-image workflow is missing native ${expectedPublisher.agent} arm64`,
-      );
-      expect(arm64Job).toMatchObject({
-        needs: ["reviewed-npm-audit"],
-        outputs: { digest: "${{ steps.platform.outputs.arm64-digest }}" },
-        "runs-on": "ubuntu-24.04-arm",
-      });
-      expect(arm64Job.strategy).toBeUndefined();
-      expect(
-        step(arm64Job, "Build and publish platform digest", "base-image workflow").with,
-      ).toMatchObject({
-        agent: expectedPublisher.agent,
-        arch: "arm64",
-        platform: "linux/arm64",
+      expect(step(publisher, "Checkout", "base-image workflow").with).toMatchObject({
+        "persist-credentials": false,
       });
     },
   );
+
+  it.each(baseImagePlatformCallers)(
+    "calls one reusable builder for $agent $arch while retaining its digest output (#9529)",
+    (expectedCaller) => {
+      const caller = required(
+        readWorkflow("base-image.yaml").jobs?.[expectedCaller.job],
+        `base-image workflow is missing ${expectedCaller.agent} ${expectedCaller.arch}`,
+      );
+      expect(caller).toMatchObject({
+        if: "github.repository == 'NVIDIA/NemoClaw'",
+        needs: ["reviewed-npm-audit"],
+        permissions: { contents: "read", packages: "write" },
+        secrets: { registry_password: "${{ secrets.GITHUB_TOKEN }}" },
+        uses: "./.github/workflows/base-image-platform.yaml",
+        with: {
+          agent: expectedCaller.agent,
+          arch: expectedCaller.arch,
+          dockerfile: expectedCaller.dockerfile,
+          image: expectedCaller.image,
+          platform: expectedCaller.platform,
+          runner: expectedCaller.runner,
+        },
+      });
+      expect(caller.strategy).toBeUndefined();
+      expect(caller.steps).toBeUndefined();
+      expect(caller["runs-on"]).toBeUndefined();
+      expect(caller.with?.["openclaw-version"]).toBe(expectedCaller.openclawVersion);
+    },
+  );
+
+  it("owns the platform build body in one reusable workflow (#9529)", () => {
+    const workflow = readWorkflow("base-image-platform.yaml");
+    const call = required(workflow.on?.workflow_call, "platform workflow is not reusable");
+    const builder = required(workflow.jobs?.build, "platform workflow is missing its builder");
+    expect(Object.keys(call.inputs ?? {}).sort()).toEqual([
+      "agent",
+      "arch",
+      "dockerfile",
+      "image",
+      "openclaw-version",
+      "platform",
+      "runner",
+    ]);
+    expect(call.outputs?.digest?.value).toBe("${{ jobs.build.outputs.digest }}");
+    expect(call.secrets?.registry_password?.required).toBe(true);
+    expect(builder).toMatchObject({
+      permissions: { contents: "read", packages: "write" },
+      "runs-on": "${{ inputs.runner }}",
+      "timeout-minutes": 60,
+    });
+    expect(builder.outputs?.digest).toContain("steps.platform.outputs");
+    expect(step(builder, "Checkout", "base-image platform workflow").with).toMatchObject({
+      "persist-credentials": false,
+    });
+    expect(
+      step(builder, "Build and publish platform digest", "base-image platform workflow"),
+    ).toMatchObject({
+      id: "platform",
+      uses: "./.github/actions/build-base-image-platform",
+      with: {
+        agent: "${{ inputs.agent }}",
+        arch: "${{ inputs.arch }}",
+        dockerfile: "${{ inputs.dockerfile }}",
+        image: "${{ inputs.image }}",
+        "openclaw-version": "${{ inputs.openclaw-version }}",
+        platform: "${{ inputs.platform }}",
+        registry: "ghcr.io",
+        "registry-password": "${{ secrets.registry_password }}",
+        "registry-username": "${{ github.actor }}",
+      },
+    });
+  });
   it("exports one architecture-specific digest from every native platform action (#9529)", () => {
     const action = readAction("build-base-image-platform");
     expect(action.outputs).toMatchObject({
+      digest: { value: "${{ steps.build.outputs.digest }}" },
       "amd64-digest": { value: "${{ steps.job-output.outputs.amd64_digest }}" },
       "arm64-digest": { value: "${{ steps.job-output.outputs.arm64_digest }}" },
     });
-    expect(new Set(Object.values(action.outputs ?? {}).map(({ value }) => value)).size).toBe(2);
-    const exportDigest = step({ steps: action.runs?.steps }, "Export platform digest", "build-base-image-platform action");
-    expect(exportDigest.run).toContain('printf \'%s_digest=%s\\n\' "$ARCH" "$DIGEST"');
-  });
-  it("binds each Pi digest to its non-matrix producer (#9529)", () => {
-    const publisher = required(
-      readWorkflow("base-image.yaml").jobs?.["build-and-push-pi"],
-      "base-image workflow is missing the Pi manifest publisher",
+    expect(action.outputs?.["amd64-digest"]?.value).not.toBe(
+      action.outputs?.["arm64-digest"]?.value,
     );
-    expect(publisher.needs).toEqual(["build-pi-amd64", "build-pi-arm64", "reviewed-npm-audit"]);
-    expect(step(publisher, "Publish validated multi-platform manifest").with).toMatchObject({
-      "amd64-digest": needsOutput("build-pi-amd64", "digest"),
-      "arm64-digest": needsOutput("build-pi-arm64", "digest"),
-    });
+    const exportDigest = step(
+      { steps: action.runs?.steps },
+      "Export platform digest",
+      "build-base-image-platform action",
+    );
+    expect(exportDigest.run).toContain('printf \'%s_digest=%s\\n\' "$ARCH" "$DIGEST"');
   });
   it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");

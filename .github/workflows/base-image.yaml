@@ -21,6 +21,7 @@ on:
       # Re-run when this workflow gains or changes a publisher so the new path
       # takes effect immediately after merge instead of waiting for another tag.
       - ".github/workflows/base-image.yaml"
+      - ".github/workflows/base-image-platform.yaml"
       - ".github/workflows/managed-images.yaml"
       - "test/e2e/live/managed-image-activation-e2e.test.ts"
       - "test/e2e/live/managed-image-activation-e2e-helpers.ts"
@@ -125,66 +126,40 @@ jobs:
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      digest: ${{ steps.platform.outputs.amd64-digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build and publish platform digest
-        id: platform
-        uses: ./.github/actions/build-base-image-platform
-        with:
-          agent: openclaw
-          arch: amd64
-          platform: linux/amd64
-          dockerfile: Dockerfile.base
-          image: nvidia/nemoclaw/sandbox-base
-          registry: ${{ env.REGISTRY }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
-          openclaw-version: ${{ inputs.openclaw_version }}
-          metadata-tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
-            type=sha,prefix=,format=short
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base-image-platform.yaml
+    with:
+      agent: openclaw
+      arch: amd64
+      platform: linux/amd64
+      runner: ubuntu-24.04
+      dockerfile: Dockerfile.base
+      image: nvidia/nemoclaw/sandbox-base
+      openclaw-version: ${{ inputs.openclaw_version }}
+    secrets:
+      registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-openclaw-arm64:
     name: Build OpenClaw base image (arm64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    outputs:
-      digest: ${{ steps.platform.outputs.arm64-digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build and publish platform digest
-        id: platform
-        uses: ./.github/actions/build-base-image-platform
-        with:
-          agent: openclaw
-          arch: arm64
-          platform: linux/arm64
-          dockerfile: Dockerfile.base
-          image: nvidia/nemoclaw/sandbox-base
-          registry: ${{ env.REGISTRY }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
-          openclaw-version: ${{ inputs.openclaw_version }}
-          metadata-tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
-            type=sha,prefix=,format=short
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base-image-platform.yaml
+    with:
+      agent: openclaw
+      arch: arm64
+      platform: linux/arm64
+      runner: ubuntu-24.04-arm
+      dockerfile: Dockerfile.base
+      image: nvidia/nemoclaw/sandbox-base
+      openclaw-version: ${{ inputs.openclaw_version }}
+    secrets:
+      registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   # The complete Perl suite approaches the image-job timeout under QEMU arm64 emulation.
   # Build each sibling image on native architecture runners and publish only immutable platform digests.
@@ -194,112 +169,76 @@ jobs:
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      digest: ${{ steps.platform.outputs.amd64-digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build and publish platform digest
-        id: platform
-        uses: ./.github/actions/build-base-image-platform
-        with:
-          agent: hermes
-          arch: amd64
-          platform: linux/amd64
-          dockerfile: agents/hermes/Dockerfile.base
-          image: nvidia/nemoclaw/hermes-sandbox-base
-          registry: ${{ env.REGISTRY }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base-image-platform.yaml
+    with:
+      agent: hermes
+      arch: amd64
+      platform: linux/amd64
+      runner: ubuntu-24.04
+      dockerfile: agents/hermes/Dockerfile.base
+      image: nvidia/nemoclaw/hermes-sandbox-base
+    secrets:
+      registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-hermes-arm64:
     name: Build Hermes base image (arm64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    outputs:
-      digest: ${{ steps.platform.outputs.arm64-digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build and publish platform digest
-        id: platform
-        uses: ./.github/actions/build-base-image-platform
-        with:
-          agent: hermes
-          arch: arm64
-          platform: linux/arm64
-          dockerfile: agents/hermes/Dockerfile.base
-          image: nvidia/nemoclaw/hermes-sandbox-base
-          registry: ${{ env.REGISTRY }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base-image-platform.yaml
+    with:
+      agent: hermes
+      arch: arm64
+      platform: linux/arm64
+      runner: ubuntu-24.04-arm
+      dockerfile: agents/hermes/Dockerfile.base
+      image: nvidia/nemoclaw/hermes-sandbox-base
+    secrets:
+      registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-dcode-amd64:
     name: Build Deep Agents Code base image (amd64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      digest: ${{ steps.platform.outputs.amd64-digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build and publish platform digest
-        id: platform
-        uses: ./.github/actions/build-base-image-platform
-        with:
-          agent: langchain-deepagents-code
-          arch: amd64
-          platform: linux/amd64
-          dockerfile: agents/langchain-deepagents-code/Dockerfile.base
-          image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
-          registry: ${{ env.REGISTRY }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base-image-platform.yaml
+    with:
+      agent: langchain-deepagents-code
+      arch: amd64
+      platform: linux/amd64
+      runner: ubuntu-24.04
+      dockerfile: agents/langchain-deepagents-code/Dockerfile.base
+      image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
+    secrets:
+      registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-dcode-arm64:
     name: Build Deep Agents Code base image (arm64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    outputs:
-      digest: ${{ steps.platform.outputs.arm64-digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build and publish platform digest
-        id: platform
-        uses: ./.github/actions/build-base-image-platform
-        with:
-          agent: langchain-deepagents-code
-          arch: arm64
-          platform: linux/arm64
-          dockerfile: agents/langchain-deepagents-code/Dockerfile.base
-          image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
-          registry: ${{ env.REGISTRY }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base-image-platform.yaml
+    with:
+      agent: langchain-deepagents-code
+      arch: arm64
+      platform: linux/arm64
+      runner: ubuntu-24.04-arm
+      dockerfile: agents/langchain-deepagents-code/Dockerfile.base
+      image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
+    secrets:
+      registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   # Pi is a candidate agent runtime: this workflow publishes its base image so
   # CI can validate exact digests, while Pi stays out of the shipped
@@ -309,56 +248,38 @@ jobs:
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      digest: ${{ steps.platform.outputs.amd64-digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build and publish platform digest
-        id: platform
-        uses: ./.github/actions/build-base-image-platform
-        with:
-          agent: pi
-          arch: amd64
-          platform: linux/amd64
-          dockerfile: agents/pi/Dockerfile.base
-          image: nvidia/nemoclaw/pi-sandbox-base
-          registry: ${{ env.REGISTRY }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base-image-platform.yaml
+    with:
+      agent: pi
+      arch: amd64
+      platform: linux/amd64
+      runner: ubuntu-24.04
+      dockerfile: agents/pi/Dockerfile.base
+      image: nvidia/nemoclaw/pi-sandbox-base
+    secrets:
+      registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-pi-arm64:
     name: Build Pi base image (arm64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    outputs:
-      digest: ${{ steps.platform.outputs.arm64-digest }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build and publish platform digest
-        id: platform
-        uses: ./.github/actions/build-base-image-platform
-        with:
-          agent: pi
-          arch: arm64
-          platform: linux/arm64
-          dockerfile: agents/pi/Dockerfile.base
-          image: nvidia/nemoclaw/pi-sandbox-base
-          registry: ${{ env.REGISTRY }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/base-image-platform.yaml
+    with:
+      agent: pi
+      arch: arm64
+      platform: linux/arm64
+      runner: ubuntu-24.04-arm
+      dockerfile: agents/pi/Dockerfile.base
+      image: nvidia/nemoclaw/pi-sandbox-base
+    secrets:
+      registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-and-push-pi:
     name: Build and push Pi base image

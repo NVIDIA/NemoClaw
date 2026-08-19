@@ -41,6 +41,7 @@ export type Job = {
   outputs?: Record<string, string>;
   permissions?: Record<string, string>;
   "runs-on"?: string;
+  secrets?: Record<string, string> | "inherit";
   steps?: Step[];
   strategy?: {
     "fail-fast"?: boolean;
@@ -67,7 +68,17 @@ export type Workflow = {
       paths?: string[];
     };
     workflow_call?: {
-      inputs?: Record<string, { required?: boolean; type?: string }>;
+      inputs?: Record<
+        string,
+        {
+          default?: string | number | boolean;
+          description?: string;
+          required?: boolean;
+          type?: string;
+        }
+      >;
+      outputs?: Record<string, { description?: string; value?: string }>;
+      secrets?: Record<string, { description?: string; required?: boolean }>;
     };
   };
   permissions?: Record<string, string>;
