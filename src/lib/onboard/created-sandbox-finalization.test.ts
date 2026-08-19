@@ -1025,6 +1025,7 @@ describe("created sandbox completion actions", () => {
           dashboardPort: manageDashboard ? 8644 : 0,
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
         }),
       );
     },

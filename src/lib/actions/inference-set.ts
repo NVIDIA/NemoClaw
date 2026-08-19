@@ -1166,6 +1166,8 @@ async function runInferenceSetWithoutHostLock(
               model,
               preferredInferenceApi: preMutationInferenceApi,
             },
+            previousProvider,
+            previousModel,
             previousInferenceApi,
             targetInferenceApi: preMutationInferenceApi,
           },
