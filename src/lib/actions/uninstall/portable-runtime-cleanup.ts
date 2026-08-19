@@ -11,6 +11,8 @@ import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-che
 import { hasPortableUninstallAuthority } from "../../onboard/portable-retirement-authority";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
+  assertNoHermesPortableHostAuthority,
+  defaultPortableStateDir,
   inspectPortableRetirementRecovery,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   preparePortableRetirement,
@@ -52,6 +54,11 @@ const PORTABLE_SELECTOR_NAMES = [
   "CONTAINER_SSHKEY",
 ] as const;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+/** Refuse legacy uninstall while the host fence keeps schema-5 authority stable. */
+export function assertHermesPortableUninstallAvailable(env: NodeJS.ProcessEnv): void {
+  assertNoHermesPortableHostAuthority(defaultPortableStateDir(env), "uninstall");
+}
 
 interface PortableRegistryRemoval {
   readonly present: boolean;

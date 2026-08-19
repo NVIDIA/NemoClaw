@@ -39,6 +39,7 @@ import { normalizeReasoningEffort, type ReasoningEffort } from "../onboard/reaso
 import {
   assertStationExpressInstallerResumeMatches,
   bindStationExpressProviderSelection,
+  isValidStationExpressProviderState,
   isValidStationExpressReceiptGeneration,
   parseStationExpressResumeIntent,
   reconcileStationExpressInstallerResumeRetirement,
@@ -901,23 +902,13 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 
   if (normalized.stationExpressIntent) {
     const intent = normalized.stationExpressIntent;
-    const providerComplete = normalized.steps.provider_selection?.status === "complete";
-    const providerBound = Boolean(
-      intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
-    );
-    const incompleteProviderStateValid =
-      (normalized.provider === null && normalized.model === null) ||
-      (intent.kind === "spark" &&
-        normalized.provider === "vllm-local" &&
-        normalized.model !== null &&
-        normalized.model.trim().length > 0);
     if (
-      providerComplete !== providerBound ||
-      (providerComplete &&
-        (intent.kind === "spark" ||
-          normalized.provider !== "vllm-local" ||
-          normalized.model !== intent.servedModel)) ||
-      (!providerComplete && !incompleteProviderStateValid)
+      !isValidStationExpressProviderState(
+        intent,
+        normalized.steps.provider_selection?.status,
+        normalized.provider,
+        normalized.model,
+      )
     ) {
       return null;
     }

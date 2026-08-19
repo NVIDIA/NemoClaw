@@ -13,12 +13,24 @@ import * as importedGatewayLocalTls from "../../../src/lib/onboard/docker-driver
 import * as importedPortableHostPreparation from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
+import {
+  PORTABLE_DOCKER_NETWORK_NAME,
+  PORTABLE_DOCKER_NETWORK_SUBNET,
+  PORTABLE_HOST_GATEWAY_IP,
+  PORTABLE_REGISTRY_IP,
+} from "../../../src/lib/onboard/experimental/portable-profile.ts";
 import { test } from "../fixtures/e2e-test.ts";
 import {
+  cleanupPortableHostGatewayAlias,
   cleanupPortableProfileRootlessFixture,
   installPortableProfileSystemctlShim,
 } from "../fixtures/portable-profile-systemctl.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import {
+  getSandboxConfigRequest,
+  mintSandboxJwt,
+  runSandboxTokenContainerProbe,
+} from "./openshell-gateway-auth-probe.ts";
 import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
 
 const gatewayEnvModule = (
@@ -60,7 +72,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "prepare the rootless container runtime",
   "build and publish the sandbox image",
   "start the pinned Podman gateway",
-  "verify the fixed host route",
+  "verify distinct same-network routes",
   "record portable environment completion",
 ] as const;
 
@@ -121,6 +133,9 @@ async function main(progress: TestProgress): Promise<void> {
   const stateDir = path.join(root, "gateway-state");
   const configHome = path.join(home, ".config");
   const runtimeDir = `/run/user/${String(process.getuid?.())}`;
+  const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
+    .split("\n")
+    .some((line) => line.includes(`inet ${PORTABLE_HOST_GATEWAY_IP}/32`));
   fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
   installPortableProfileSystemctlShim(binDir);
 
@@ -147,6 +162,10 @@ async function main(progress: TestProgress): Promise<void> {
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
       /default_rootless_network_cmd = "pasta"/,
     );
+    assert.match(
+      run("ip", ["-o", "-4", "address", "show", "dev", "lo"]),
+      new RegExp(`\\binet ${PORTABLE_HOST_GATEWAY_IP.replaceAll(".", "\\.")}/32\\b`),
+    );
 
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
@@ -172,26 +191,34 @@ async function main(progress: TestProgress): Promise<void> {
       origin: "generated",
       log: console.log,
     });
-    assert.equal(
-      prebuild.imageRef,
-      "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e",
-    );
+    const imageRef = prebuild.imageRef;
+    assert.equal(imageRef, "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e");
 
-    run("podman", ["image", "rm", "--force", prebuild.imageRef]);
-    run("podman", ["pull", prebuild.imageRef]);
+    run("podman", ["image", "rm", "--force", imageRef]);
+    run("podman", ["pull", imageRef]);
     assert.match(
-      run("podman", ["image", "inspect", "--format", "{{.Id}}", prebuild.imageRef]),
+      run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
-    run("podman", ["network", "create", "--subnet", "169.254.1.0/24", "openshell-docker"]);
-    run("podman", [
-      "network",
-      "connect",
-      "--ip",
-      "169.254.1.2",
-      "openshell-docker",
-      "nemoclaw-portable-registry",
-    ]);
+    assert.equal(
+      run("podman", [
+        "network",
+        "inspect",
+        "--format",
+        "{{range .Subnets}}{{println .Subnet}}{{end}}",
+        PORTABLE_DOCKER_NETWORK_NAME,
+      ]),
+      PORTABLE_DOCKER_NETWORK_SUBNET,
+    );
+    assert.equal(
+      run("podman", [
+        "inspect",
+        "--format",
+        `{{with index .NetworkSettings.Networks ${JSON.stringify(PORTABLE_DOCKER_NETWORK_NAME)}}}{{.IPAddress}}{{end}}`,
+        "nemoclaw-portable-registry",
+      ]),
+      PORTABLE_REGISTRY_IP,
+    );
 
     const gatewayBin = run("bash", ["-lc", "command -v openshell-gateway"]);
     const sandboxBin = run("bash", ["-lc", "command -v openshell-sandbox"]);
@@ -205,10 +232,10 @@ async function main(progress: TestProgress): Promise<void> {
     });
     assert.equal(gatewayEnv.OPENSHELL_DRIVERS, "podman");
     assert.equal(gatewayEnv.OPENSHELL_BIND_ADDRESS, "0.0.0.0");
-    assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, "https://169.254.1.2:8080");
+    assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, `https://${PORTABLE_HOST_GATEWAY_IP}:8080`);
     assert.match(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
-      /host_gateway_ip = "169\.254\.1\.2"/,
+      new RegExp(`host_gateway_ip = "${PORTABLE_HOST_GATEWAY_IP.replaceAll(".", "\\.")}"`),
     );
     assert.match(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
@@ -221,31 +248,53 @@ async function main(progress: TestProgress): Promise<void> {
 
     progress.phase("start the pinned Podman gateway");
     ensureDockerDriverGatewayLocalTlsBundle({ gatewayBin, stateDir });
-    await verifyPinnedPodmanGatewayStarts(gatewayBin, gatewayEnv, progress);
+    await verifyPinnedPodmanGatewayStarts(gatewayBin, gatewayEnv, progress, async () => {
+      progress.phase("verify distinct same-network routes");
+      const sandboxId = "portable-e2e";
+      const sandboxToken = mintSandboxJwt({
+        configPath: gatewayEnv.OPENSHELL_GATEWAY_CONFIG,
+        sandboxId,
+      });
+      const gatewayProbe = runSandboxTokenContainerProbe({
+        authorization: `Bearer ${sandboxToken}`,
+        dockerBin: "podman",
+        hostGatewayIp: PORTABLE_HOST_GATEWAY_IP,
+        networkName: PORTABLE_DOCKER_NETWORK_NAME,
+        payload: getSandboxConfigRequest(sandboxId),
+        port: 8080,
+        stateDir,
+      });
+      assert.equal(gatewayProbe.status, 0, "The authenticated same-network gateway probe failed.");
+      const gatewayResult = JSON.parse(gatewayProbe.stdout) as {
+        grpcStatus?: string;
+        httpStatus?: number;
+      };
+      assert.equal(gatewayResult.httpStatus, 200);
+      assert.ok(gatewayResult.grpcStatus);
+      assert.ok(!["7", "16"].includes(gatewayResult.grpcStatus));
 
-    progress.phase("verify the fixed host route");
-
-    const routeProof = [
-      "exec 3<>/dev/tcp/169.254.1.2/5000",
-      "printf 'GET /v2/ HTTP/1.1\\r\\nHost: portable-profile\\r\\nConnection: close\\r\\n\\r\\n' >&3",
-      "response=$(cat <&3)",
-      'grep -F "200 OK" <<<"$response"',
-    ].join("; ");
-    assert.equal(
-      run("podman", [
-        "run",
-        "--rm",
-        "--network",
-        "openshell-docker",
-        prebuild.imageRef,
-        "timeout",
-        "15",
-        "bash",
-        "-lc",
-        routeProof,
-      ]),
-      "HTTP/1.1 200 OK",
-    );
+      const registryRouteProof = [
+        `exec 3<>/dev/tcp/${PORTABLE_REGISTRY_IP}/5000`,
+        "printf 'GET /v2/ HTTP/1.1\\r\\nHost: portable-profile\\r\\nConnection: close\\r\\n\\r\\n' >&3",
+        "response=$(cat <&3)",
+        'grep -F "200 OK" <<<"$response"',
+      ].join("; ");
+      assert.equal(
+        run("podman", [
+          "run",
+          "--rm",
+          "--network",
+          PORTABLE_DOCKER_NETWORK_NAME,
+          imageRef,
+          "timeout",
+          "15",
+          "bash",
+          "-lc",
+          registryRouteProof,
+        ]),
+        "HTTP/1.1 200 OK",
+      );
+    });
 
     progress.phase("record portable environment completion");
     console.log("Portable profile rootless environment E2E passed.");
@@ -262,12 +311,17 @@ async function main(progress: TestProgress): Promise<void> {
       stdio: "ignore",
       timeout: 15_000,
     });
+    cleanupPortableHostGatewayAlias(
+      PORTABLE_HOST_GATEWAY_IP,
+      gatewayAliasPresentBefore,
+      process.env,
+    );
     await cleanupPortableProfileRootlessFixture(runtimeDir, root);
   }
 }
 
 test(
-  "portable profile rootless environment completes the local image and fixed-host route contracts",
+  "portable profile rootless environment completes distinct authenticated gateway and registry routes",
   {
     meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
     timeout: 120_000,

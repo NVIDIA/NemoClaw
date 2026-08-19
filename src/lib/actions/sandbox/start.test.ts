@@ -46,9 +46,9 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const hasPortableLifecycleReceipt = vi.fn<
     DockerRuntimeProviderDependencies["hasPortableLifecycleReceipt"]
   >(() => false);
-  const recoverPortableSandbox = vi.fn<
-    DockerRuntimeProviderDependencies["recoverPortableSandbox"]
-  >(() => ({ kind: "not-installed" }));
+  const recoverPortableSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverPortableSandbox"]>(
+    () => ({ kind: "not-installed" }),
+  );
   const recoverDockerDriverSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverSandbox"]>(
     () => ({
       recovered: true,
@@ -91,6 +91,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     waitForManagedGatewaySupervisor,
     verifyGateway,
     log,
+    withLifecycleLock: async (_sandboxName, operation) => operation(),
     ...overrides,
   };
   return {
@@ -409,6 +410,22 @@ describe("startSandbox", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
+  it("does not claim preservation when startup recovery reports a failed rollback (#9364)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockReturnValue({
+      ...FAILED_RECOVERY,
+      recoveryFailureDetail:
+        "NemoClaw could not confirm rollback to the previous sandbox container. Inspect Docker state before retrying. Recovery failure before rollback: the sandbox did not become ready in OpenShell",
+    });
+
+    const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
+
+    expect(failure).toContain("could not confirm rollback");
+    expect(failure).toContain("Inspect the current sandbox state before retrying");
+    expect(failure).not.toContain("The existing sandbox was preserved");
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+  });
+
   it("reports the started container by name (#6026)", async () => {
     const h = harness();
 
@@ -441,6 +458,32 @@ describe("startSandbox", () => {
     );
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+  });
+
+  it("keeps active Hermes start out of every Docker path (#9203)", async () => {
+    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-alpha",
+        lifecycleLiveIdentityFingerprint: "identity-alpha",
+        openshellDriver: "docker",
+      }),
+    );
+    h.hasPortableLifecycleReceipt.mockReturnValue(true);
+    h.recoverPortableSandbox.mockReturnValue({ kind: "recovered" });
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.isDockerRuntimeDown).not.toHaveBeenCalled();
+    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.dockerUnpause).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
   it("still probes when the container was already running (#6026)", async () => {

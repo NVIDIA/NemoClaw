@@ -9,6 +9,7 @@ import {
   isPodmanVersionSupported,
   normalizePodmanInferenceAuthorityReceipt,
   PodmanHostPreflightError,
+  qualifyPodmanEndpointHost,
   qualifyPodmanHost,
   qualifyPodmanInferenceAuthority,
   revalidatePodmanInferenceAuthority,
@@ -105,6 +106,43 @@ describe("Podman host preflight", () => {
     expect(runtime.capture).toHaveBeenCalledWith(["version", "--format", "json"], 10_000);
     expect(runtime.captureHost).toHaveBeenCalledWith(["--version"], 10_000);
     expect(runtime.captureHost).toHaveBeenCalledTimes(1);
+  });
+
+  it("qualifies the exact socket-bound Hermes portable Podman matrix", () => {
+    const runtime = engine({ operation: "state-mutation", version: "5.7.0" });
+
+    expect(
+      qualifyPodmanEndpointHost(runtime, {
+        expectedVersion: "5.7.0",
+        expectedNetworkBackend: "netavark",
+        platform: "linux",
+        architecture: "x64",
+      }),
+    ).toEqual({
+      providerId: "podman",
+      clientVersion: "5.7.0",
+      serverVersion: "5.7.0",
+      rootless: true,
+      cgroupVersion: "v2",
+      os: "linux",
+      architecture: "amd64",
+      networkBackend: "netavark",
+    });
+    expect(runtime.captureHost).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["client mismatch", { version: "5.6.2", serverVersion: "5.7.0" }, "client version"],
+    ["server mismatch", { version: "5.7.0", serverVersion: "5.6.2" }, "server version"],
+  ])("rejects exact endpoint $0", (_label, versions, message) => {
+    expect(() =>
+      qualifyPodmanEndpointHost(engine({ operation: "state-mutation", ...versions }), {
+        expectedVersion: "5.7.0",
+        expectedNetworkBackend: "netavark",
+        platform: "linux",
+        architecture: "x64",
+      }),
+    ).toThrow(message);
   });
 
   it("keeps the CPU receipt server version canonical while preserving exact inference authority", () => {

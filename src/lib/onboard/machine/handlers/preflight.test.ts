@@ -245,7 +245,7 @@ describe("handlePreflightState", () => {
     expect(assertDockerBridgeAndContainerDnsHealthy).not.toHaveBeenCalled();
   });
 
-  it("admits live host and gateway facts before resolving a cached resume GPU proof (#7411)", async () => {
+  it("admits live host and gateway facts and presents advisories before a cached resume GPU proof (#7411)", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
     const calls: string[] = [];
@@ -258,8 +258,11 @@ describe("handlePreflightState", () => {
         calls.push("gpu-observation");
         return null;
       },
-      assertOnboardHostReadiness: () => {
+      assertOnboardHostReadiness: (_host, _gpu, options) => {
         calls.push("host-admission");
+        calls.push(
+          options.presentAdvisories === false ? "host-advisories-suppressed" : "host-advisories",
+        );
       },
       assertGatewayReadiness: async () => {
         calls.push("gateway-admission");
@@ -286,10 +289,12 @@ describe("handlePreflightState", () => {
       "gpu-observation",
       "gateway-admission",
       "host-admission",
+      "host-advisories",
       "gpu-runtime-proof",
       "host-observation",
       "gateway-admission",
       "host-admission",
+      "host-advisories-suppressed",
       "gpu-validation",
       "bridge-dns",
     ]);

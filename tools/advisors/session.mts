@@ -35,7 +35,10 @@ import {
   promptWithRequiredContextTools,
   READ_ONLY_TOOLS,
   repairableAtomicTerminalToolName,
+  repairableTerminalSubmitToolName,
   resolveAdvisorTurnTools,
+  terminalSubmitRepairErrors,
+  terminalSubmitRepairPrompt,
   sanitizeToolName,
 } from "./turn-protocol.mts";
 
@@ -601,11 +604,50 @@ export async function runReadOnlyAdvisor(
               `[${options.logPrefix}] atomic_terminal_repair_end ${turn.name} ${repairToolName} ok\n`,
             );
           }
+          let terminalSubmitRepaired = false;
+          const submitRepairToolName = repairableTerminalSubmitToolName(
+            turn,
+            currentTurnFlow,
+            tools,
+            successfulToolNames,
+            currentTurnError,
+          );
+          if (submitRepairToolName) {
+            const originalSubmitFlow = currentTurnFlow;
+            contextTools.deactivate();
+            session.setActiveToolsByName([
+              ...(tools.terminalSubmitRepairToolNames ?? []),
+              submitRepairToolName,
+            ]);
+            currentTurnFlow = [];
+            raw.append(
+              `\n[${options.logPrefix}] terminal_submit_repair_start ${turn.name} ${submitRepairToolName}\n`,
+            );
+            await promptAndWait(terminalSubmitRepairPrompt(turn, submitRepairToolName));
+            const repairFlow = currentTurnFlow;
+            const repairErrors = terminalSubmitRepairErrors(
+              turn.name,
+              repairFlow,
+              submitRepairToolName,
+              tools.terminalSubmitRepairToolNames ?? [],
+            );
+            if (repairErrors.length > 0) throw new Error(repairErrors.join("; "));
+            terminalSubmitRepaired = true;
+            currentTurnFlow = [...originalSubmitFlow, ...repairFlow];
+            raw.append(
+              `[${options.logPrefix}] terminal_submit_repair_end ${turn.name} ${submitRepairToolName} ok\n`,
+            );
+          }
           const missing = missingRequiredAdvisorToolNames(
             tools.requiredToolNames,
             successfulToolNames,
           );
-          const flowErrors = advisorTurnFlowErrors(turn.name, currentTurnFlow, tools);
+          const flowErrors = advisorTurnFlowErrors(
+            turn.name,
+            currentTurnFlow,
+            tools,
+            terminalSubmitRepaired,
+          );
           if (missing.length > 0)
             flowErrors.unshift(`omitted required tool result(s): ${missing.join(", ")}`);
           if (flowErrors.length > 0) throw new Error(flowErrors.join("; "));
@@ -724,6 +766,14 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
       typeof turn.atomicTerminalRepairPrompt === "string" && turn.atomicTerminalRepairPrompt.trim()
         ? turn.atomicTerminalRepairPrompt.trim()
         : undefined,
+    terminalSubmitToolName: normalizedToolNames(
+      turn.terminalSubmitToolName ? [turn.terminalSubmitToolName] : undefined,
+    )[0],
+    terminalSubmitRepairPrompt:
+      typeof turn.terminalSubmitRepairPrompt === "string" && turn.terminalSubmitRepairPrompt.trim()
+        ? turn.terminalSubmitRepairPrompt.trim()
+        : undefined,
+    terminalSubmitRepairToolNames: normalizedToolNames(turn.terminalSubmitRepairToolNames),
   }));
 }
 
