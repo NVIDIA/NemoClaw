@@ -37,6 +37,7 @@ function loadSchemas(rootDir: string): ServingCatalogSchemas {
   const schemaRoot = join(rootDir, "managed-inference", "schemas");
   return {
     catalog: readJson(join(schemaRoot, "catalog.schema.json")),
+    model: readJson(join(schemaRoot, "model.schema.json")),
     preset: readJson(join(schemaRoot, "preset.schema.json")),
     recipe: readJson(join(schemaRoot, "recipe.schema.json")),
   };
@@ -115,11 +116,19 @@ export function managedInferenceCatalogFromServingCatalog(
 ): CompiledManagedInferenceCatalog {
   const recipes = catalog.recipes.filter(isManagedInferenceRecipeCandidate);
   const recipeIds = new Set(recipes.map(({ metadata }) => metadata.id));
+  const modelIds = new Set(
+    recipes.flatMap((recipe) => (recipe.spec.modelRef ? [recipe.spec.modelRef] : [])),
+  );
+  const models = catalog.models.filter(({ metadata }) => modelIds.has(metadata.id));
   const presets = catalog.presets.filter((preset) => recipeIds.has(preset.spec.plan.recipeRef));
-  const definitionIds = new Set([...recipeIds, ...presets.map(({ metadata }) => metadata.id)]);
+  const definitionIds = new Set([
+    ...modelIds,
+    ...recipeIds,
+    ...presets.map(({ metadata }) => metadata.id),
+  ]);
   const sources = catalog.sources.filter(({ id }) => definitionIds.has(id));
   const { catalogDigest: _catalogDigest, ...catalogContents } = catalog;
-  const payload = { ...catalogContents, recipes, presets, sources };
+  const payload = { ...catalogContents, models, recipes, presets, sources };
   const managedCatalog = { ...payload, catalogDigest: servingCatalogDigest(payload) };
   assertManagedInferenceCatalog(managedCatalog);
   return managedCatalog;

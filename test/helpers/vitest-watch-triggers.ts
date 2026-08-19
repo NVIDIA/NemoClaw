@@ -41,7 +41,7 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
-    pattern: /(?:^|\/)managed-inference\/(?:presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,
+    pattern: /(?:^|\/)managed-inference\/(?:models|presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,
     testsToRun: runTests(
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",

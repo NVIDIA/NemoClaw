@@ -168,6 +168,7 @@ const recipePath = path.join(
   "recipes",
   "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
 );
+const modelSchemaPath = path.join(repoRoot, "managed-inference", "schemas", "model.schema.json");
 const recipeSchemaPath = path.join(repoRoot, "managed-inference", "schemas", "recipe.schema.json");
 
 const nvidiaCudaDigestReference = /^docker\.io\/nvidia\/cuda@sha256:[0-9a-f]{64}$/u;
@@ -243,7 +244,9 @@ function parseQualificationRecipe(
   }
   const value = document.toJS({ maxAliasCount: 0 }) as unknown;
   const schema = JSON.parse(schemaSource) as object;
-  const validate = new Ajv2020({ allErrors: true, strict: true }).compile(schema);
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  ajv.addSchema(JSON.parse(fs.readFileSync(modelSchemaPath, "utf8")) as object);
+  const validate = ajv.compile(schema);
   if (!validate(value)) {
     const details = (validate.errors ?? [])
       .map((error) => `${error.instancePath || "/"} ${error.message ?? "is invalid"}`)
