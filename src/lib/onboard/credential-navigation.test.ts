@@ -105,10 +105,11 @@ describe("credential prompt navigation helpers", () => {
       expect(answers).toEqual([]);
       expect(exitOnboardFromPrompt).not.toHaveBeenCalled();
       // The escape route is the contract here, so a bare required-field notice is not enough:
-      // the re-prompt has to name both ways out of the loop.
-      expect(consoleError).toHaveBeenCalledWith(
-        expect.stringMatching(/is required\..*\bback\b.*\bexit\b/),
-      );
+      // the re-prompt has to name both ways out of the loop, in either order.
+      const [[requiredMessage]] = consoleError.mock.calls;
+      expect(requiredMessage).toContain("is required.");
+      expect(requiredMessage).toContain("back");
+      expect(requiredMessage).toContain("exit");
     } finally {
       delete process.env.OPENAI_API_KEY;
       vi.restoreAllMocks();
