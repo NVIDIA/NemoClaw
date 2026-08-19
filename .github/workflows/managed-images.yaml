@@ -1791,7 +1791,13 @@ jobs:
               --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
               "$reference"
           )"
-          if [[ ! "$PUBLICATION_COHORT" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
+          cohort_prefix="ghrun-${GITHUB_RUN_ID}-"
+          cohort_attempt="${PUBLICATION_COHORT#"$cohort_prefix"}"
+          if [[ ! "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] ||
+             [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]] ||
+             [[ "$PUBLICATION_COHORT" != "${cohort_prefix}"* ]] ||
+             [[ ! "$cohort_attempt" =~ ^[1-9][0-9]{0,9}$ ]] ||
+             [ "$cohort_attempt" -gt "$GITHUB_RUN_ATTEMPT" ] ||
              [ "$agent_label" != "$AGENT" ] ||
              [ "$contract_label" != "1" ] ||
              [ "$startup_profile_label" != "1" ] ||
@@ -2118,7 +2124,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Export validated managed image candidate
+      - name: Export validated managed image candidate output
         id: candidate-output
         shell: bash
         env:
@@ -2175,7 +2181,9 @@ jobs:
             local platform="$2"
             local producer_attempt="$3"
             local contract_base64="$4"
-            if [[ ! "$producer_attempt" =~ ^[1-9][0-9]{0,9}$ ]]; then
+            if [[ ! "$producer_attempt" =~ ^[1-9][0-9]{0,9}$ ]] ||
+               [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]] ||
+               [ "$producer_attempt" -gt "$GITHUB_RUN_ATTEMPT" ]; then
               echo "ERROR: managed image candidate producer attempt is invalid." >&2
               exit 1
             fi
@@ -2221,7 +2229,13 @@ jobs:
             exit 1
           fi
           expected_cohort="$PUBLICATION_COHORT"
-          if [[ ! "$expected_cohort" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]]; then
+          expected_cohort_prefix="ghrun-${GITHUB_RUN_ID}-"
+          cohort_attempt="${expected_cohort#"$expected_cohort_prefix"}"
+          if [[ ! "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] ||
+             [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]] ||
+             [[ "$expected_cohort" != "${expected_cohort_prefix}"* ]] ||
+             [[ ! "$cohort_attempt" =~ ^[1-9][0-9]{0,9}$ ]] ||
+             [ "$cohort_attempt" -gt "$GITHUB_RUN_ATTEMPT" ]; then
             echo "ERROR: publication cohort is invalid: $expected_cohort" >&2
             exit 1
           fi
@@ -2851,6 +2865,7 @@ jobs:
           while IFS= read -r candidate; do
             agent="$(jq -r '.agent' <<<"$candidate")"
             platform="$(jq -r '.platform' <<<"$candidate")"
+            candidate_run="$(jq -ce '.run' <<<"$candidate")"
             artifact_platform="${platform//\//-}"
             cohort_manifest="$(jq -ce --arg agent "$agent" '.[] | select(.agent == $agent)' "$cohort_manifests")"
             cohort_alias="$(jq -r '.alias' <<<"$cohort_manifest")"
@@ -2891,6 +2906,7 @@ jobs:
               --arg platform "$platform" \
               --arg cohort "$cohort" \
               --argjson aliases "$aliases_json" \
+              --argjson candidateRun "$candidate_run" \
               '(keys | sort) == [
                  "agent",
                  "aliases",
@@ -2927,10 +2943,7 @@ jobs:
                and .stagedCohort.descriptor.size > 0
                and .source.revision == $ENV.GITHUB_SHA
                and .source.cohort == $cohort
-               and .run == {
-                 id: ($ENV.GITHUB_RUN_ID | tonumber),
-                 attempt: ($ENV.GITHUB_RUN_ATTEMPT | tonumber)
-               }
+               and .run == $candidateRun
                and .aliases == $aliases
                and (
                  (.image + ":cohort-" + $cohort) as $cohortAlias

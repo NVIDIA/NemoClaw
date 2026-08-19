@@ -162,7 +162,8 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     "io.nvidia.nemoclaw.managed-image.startup-profile",
     "io.nvidia.nemoclaw.managed-image.capabilities",
     "io.nvidia.nemoclaw.managed-image.cohort",
-    "^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$",
+    'cohort_prefix="ghrun-${GITHUB_RUN_ID}-"',
+    '[ "$cohort_attempt" -gt "$GITHUB_RUN_ATTEMPT" ]',
     "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
     "@openclaw/diagnostics-otel",
     "@openclaw/brave-plugin",
@@ -1110,24 +1111,22 @@ fi
     expect(base.run).toContain('imagetools inspect "$platform_reference"');
 
     const contract = step(publisher, "Export validated managed image candidate");
-    expect(
-      [
-        "--arg baseReference",
-        "--arg digest",
-        "--arg platform",
-        "--arg cohort",
-        "--arg revision",
-        "--arg cohort",
-        "--argjson runAttempt",
-        "--argjson runId",
-        "contractVersion: 2",
-        'phase: "candidate"',
-        "--slurpfile publicationEvidence",
-        "publicationEvidence: $publicationEvidence[0]",
-        "https://slsa.dev/provenance/v1",
-        "https://spdx.dev/Document",
-      ].every((marker) => contract.run?.includes(marker) === true),
-    ).toBe(true);
+    const contractMarkers = [
+      "--arg baseReference",
+      "--arg digest",
+      "--arg platform",
+      "--arg cohort",
+      "--arg revision",
+      "--argjson runAttempt",
+      "--argjson runId",
+      "contractVersion: 2",
+      'phase: "candidate"',
+      "--slurpfile publicationEvidence",
+      "publicationEvidence: $publicationEvidence[0]",
+      "https://slsa.dev/provenance/v1",
+      "https://spdx.dev/Document",
+    ];
+    expect(contractMarkers.filter((marker) => contract.run?.includes(marker) !== true)).toEqual([]);
     expect(step(publisher, "Upload validated managed image candidate").with).toMatchObject({
       name: "managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}",
       path: "${{ runner.temp }}/managed-image-candidate/contract.json",

@@ -10,31 +10,13 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
+  type CandidateMutation,
   publicationAgents,
   publicationPlatforms,
   runPublicationBarrier,
+  runManagedImagePromotion,
 } from "./helpers/managed-image-publication-barrier";
-
-type Step = {
-  env?: Record<string, unknown>;
-  id?: string;
-  name?: string;
-  run?: string;
-  uses?: string;
-  with?: Record<string, unknown>;
-};
-
-type Workflow = {
-  jobs?: Record<
-    string,
-    {
-      needs?: string | string[];
-      outputs?: Record<string, unknown>;
-      steps?: Step[];
-      with?: Record<string, unknown>;
-    }
-  >;
-};
+import type { Job, Step, Workflow } from "./helpers/managed-image-publication-workflow-types";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -50,6 +32,28 @@ function requiredStep(steps: Step[] | undefined, name: string): Step {
     })()
   );
 }
+
+const reuseOpenclawAmd64FromAttemptOne: CandidateMutation = (candidateSet) =>
+  candidateSet.map((candidate) => {
+    const contract = structuredClone(candidate.contract);
+    const producerAttempt =
+      `${candidate.agent}|${candidate.platform}` === "openclaw|linux/amd64" ? 1 : 2;
+    (contract.source as Record<string, unknown>).cohort = "ghrun-7744-1";
+    (contract.run as Record<string, unknown>).attempt = producerAttempt;
+    const evidence = contract.publicationEvidence as Record<string, unknown>;
+    const attestations = evidence.attestations as Record<string, unknown>;
+    const statement = (attestations.slsa as Record<string, unknown>).statement as Record<
+      string,
+      unknown
+    >;
+    statement.builderId = `https://github.com/NVIDIA/NemoClaw/actions/runs/7744/attempts/${producerAttempt}`;
+    (statement.bindings as Record<string, unknown>).cohort = "ghrun-7744-1";
+    return {
+      ...candidate,
+      artifact: candidate.artifact.replace("-7744-2-", `-7744-${producerAttempt}-`),
+      contract,
+    };
+  });
 
 function runCandidateRestore(
   script: string,
@@ -67,6 +71,7 @@ function runCandidateRestore(
         DCODE_ARM64: contract,
         DCODE_ARM64_ATTEMPT: "2",
         GITHUB_RUN_ID: "7744",
+        GITHUB_RUN_ATTEMPT: "2",
         HERMES_AMD64: contract,
         HERMES_AMD64_ATTEMPT: "1",
         HERMES_ARM64: contract,
@@ -101,8 +106,8 @@ describe("managed-image failed-job rerun artifacts", () => {
     const baseProducer = baseWorkflow.jobs?.["build-and-push-openclaw"];
     const managedCaller = baseWorkflow.jobs?.["publish-managed-images"];
     const identity = managedWorkflow.jobs?.["publication-identity"];
-    const publisher = managedWorkflow.jobs?.["build-and-validate"];
-    const promoter = managedWorkflow.jobs?.promote;
+    const publisher = managedWorkflow.jobs?.["build-and-validate"] as Job | undefined;
+    const promoter = managedWorkflow.jobs?.promote as Job | undefined;
 
     expect(platformProducer?.outputs).toEqual({
       "amd64-digest": "${{ steps.platform.outputs.amd64-digest }}",
@@ -158,6 +163,11 @@ describe("managed-image failed-job rerun artifacts", () => {
     });
     expect(invalidAttempt.status).not.toBe(0);
     expect(invalidAttempt.stderr).toContain("producer attempt is invalid");
+    const futureAttempt = runCandidateRestore(restoreCandidates.run ?? "", {
+      OPENCLAW_AMD64_ATTEMPT: "3",
+    });
+    expect(futureAttempt.status).not.toBe(0);
+    expect(futureAttempt.stderr).toContain("producer attempt is invalid");
     const malformedContract = runCandidateRestore(restoreCandidates.run ?? "", {
       OPENCLAW_AMD64: "not-base64",
     });
@@ -168,26 +178,7 @@ describe("managed-image failed-job rerun artifacts", () => {
     const reusedKey = "openclaw|linux/amd64";
     const mixedAttempts = runPublicationBarrier(
       barrier.run ?? "",
-      (candidateSet) =>
-        candidateSet.map((candidate) => {
-          const contract = structuredClone(candidate.contract);
-          const producerAttempt = `${candidate.agent}|${candidate.platform}` === reusedKey ? 1 : 2;
-          (contract.source as Record<string, unknown>).cohort = "ghrun-7744-1";
-          (contract.run as Record<string, unknown>).attempt = producerAttempt;
-          const evidence = contract.publicationEvidence as Record<string, unknown>;
-          const attestations = evidence.attestations as Record<string, unknown>;
-          const statement = (attestations.slsa as Record<string, unknown>).statement as Record<
-            string,
-            unknown
-          >;
-          statement.builderId = `https://github.com/NVIDIA/NemoClaw/actions/runs/7744/attempts/${producerAttempt}`;
-          (statement.bindings as Record<string, unknown>).cohort = "ghrun-7744-1";
-          return {
-            ...candidate,
-            artifact: candidate.artifact.replace("-7744-2-", `-7744-${producerAttempt}-`),
-            contract,
-          };
-        }),
+      reuseOpenclawAmd64FromAttemptOne,
       "",
       {
         expectedAttempts: { [reusedKey]: "1" },
@@ -195,6 +186,30 @@ describe("managed-image failed-job rerun artifacts", () => {
       },
     );
     expect(mixedAttempts.status).toBe(0);
+
+    const promotion = requiredStep(
+      promoter?.steps,
+      "Stage validated multi-platform managed image cohort and contracts",
+    );
+    const mixedPromotion = runManagedImagePromotion(promotion.run ?? "", "", "", {
+      mutate: reuseOpenclawAmd64FromAttemptOne,
+      publicationCohort: "ghrun-7744-1",
+    });
+    expect(mixedPromotion.status, mixedPromotion.stderr).toBe(0);
+    expect(mixedPromotion.platformContracts[reusedKey]?.run).toEqual({ id: 7744, attempt: 1 });
+
+    const futureCohort = runPublicationBarrier(barrier.run ?? "", (value) => value, "", {
+      publicationCohort: "ghrun-7744-3",
+    });
+    expect(futureCohort.status).not.toBe(0);
+    expect(futureCohort.stderr).toContain("publication cohort is invalid");
+    expect(futureCohort.dockerCalls).toEqual([]);
+    const wrongRunCohort = runPublicationBarrier(barrier.run ?? "", (value) => value, "", {
+      publicationCohort: "ghrun-8877-1",
+    });
+    expect(wrongRunCohort.status).not.toBe(0);
+    expect(wrongRunCohort.stderr).toContain("publication cohort is invalid");
+    expect(wrongRunCohort.dockerCalls).toEqual([]);
 
     const durableUploads = (promoter?.steps ?? [])
       .filter((candidate) => candidate.uses?.startsWith("actions/upload-artifact@"))

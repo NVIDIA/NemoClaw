@@ -37,6 +37,11 @@ type PromotionResult = {
   stderr: string;
 };
 
+type PromotionOptions = {
+  mutate?: CandidateMutation;
+  publicationCohort?: string;
+};
+
 function imageFor(agent: (typeof publicationAgents)[number]): string {
   return `ghcr.io/nvidia/nemoclaw/${agent}-sandbox`;
 }
@@ -234,6 +239,7 @@ export function runManagedImagePromotion(
   script: string,
   failCohortAgent = "",
   pointerScript = "",
+  options: PromotionOptions = {},
 ): PromotionResult {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-promotion-"));
   const bin = path.join(root, "bin");
@@ -298,9 +304,10 @@ fi
 `,
   );
   fs.chmodSync(path.join(bin, "docker"), 0o755);
+  const candidateValues = options.mutate ? options.mutate(candidates()) : candidates();
   fs.writeFileSync(
     candidateSet,
-    `${JSON.stringify(candidates().map(({ contract }) => contract))}\n`,
+    `${JSON.stringify(candidateValues.map(({ contract }) => contract))}\n`,
   );
 
   try {
@@ -317,7 +324,7 @@ fi
         GITHUB_RUN_ID: runId,
         GITHUB_SHA: revision,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
-        PUBLICATION_COHORT: cohort,
+        PUBLICATION_COHORT: options.publicationCohort ?? cohort,
         RUNNER_TEMP: root,
         STATE_ROOT: root,
       },
