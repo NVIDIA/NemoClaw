@@ -9,10 +9,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { INSTALLER_PAYLOAD } from "./helpers/installer-sourced-env";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 
-describe("installer git checkout", () => {
+describe("installer git checkout", testTimeoutOptions(15_000), () => {
   it("fetches fully-qualified refs into a detached checkout without group- or other-writable source entries", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-ref-"));
     const origin = path.join(tmp, "origin");
@@ -28,18 +29,22 @@ describe("installer git checkout", () => {
       expect(git(["-c", "commit.gpgsign=false", "commit", "-m", "fixture"]).status).toBe(0);
       const expectedHead = git(["rev-parse", "HEAD"]).stdout.trim();
 
-      [...[INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].entries()].forEach(([index, installer]) => {
+      const cases = [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER].flatMap((installer) =>
+        ["0022", "0077", "0002"].map((callerUmask) => ({ callerUmask, installer })),
+      );
+      cases.forEach(({ callerUmask, installer }, index) => {
         const destination = path.join(tmp, `checkout-${index}`);
         const result = spawnSync(
           "bash",
           [
             "-c",
-            'umask 0002\nsource "$INSTALLER_UNDER_TEST"\nclone_nemoclaw_ref refs/heads/topic "$DESTINATION"\nprintf "CALLER_UMASK=%s\\n" "$(umask)"',
+            'umask "$CALLER_UMASK"\nsource "$INSTALLER_UNDER_TEST"\nclone_nemoclaw_ref refs/heads/topic "$DESTINATION"\nprintf "CALLER_UMASK=%s\\n" "$(umask)"',
           ],
           {
             encoding: "utf8",
             env: {
               ...process.env,
+              CALLER_UMASK: callerUmask,
               DESTINATION: destination,
               GIT_CONFIG_COUNT: "1",
               GIT_CONFIG_KEY_0: `url.file://${origin}.insteadOf`,
@@ -51,7 +56,7 @@ describe("installer git checkout", () => {
         expect(result.status, result.stderr).toBe(0);
         expect(git(["-C", destination, "rev-parse", "HEAD"], tmp).stdout.trim()).toBe(expectedHead);
         expect(git(["-C", destination, "symbolic-ref", "-q", "HEAD"], tmp).status).not.toBe(0);
-        expect(result.stdout).toContain("CALLER_UMASK=0002");
+        expect(result.stdout).toContain(`CALLER_UMASK=${callerUmask}`);
         expect([
           fs.lstatSync(destination).mode & 0o22,
           fs.lstatSync(path.join(destination, ".git")).mode & 0o22,
@@ -113,7 +118,7 @@ describe("installer git checkout", () => {
   });
 });
 
-describe("installer version stamping", () => {
+describe("installer version stamping", testTimeoutOptions(15_000), () => {
   const extract = (stdout: string) => stdout.match(/START([\s\S]*?)STOP/)?.[1] ?? null;
 
   it.each([INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER])(

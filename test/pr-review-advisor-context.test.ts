@@ -106,7 +106,7 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     const synthesisTurn = turns.find((turn) => turn.name === "synthesize-json");
     const validationTurn = turns.find((turn) => turn.name === "validate-synthesis-json");
     const expectedAnalysis = [
-      ["scope-risk-map-analysis", 8, ["pr_review_scope_risk_context", "pr_review_git_diff"]],
+      ["scope-risk-map-analysis", 12, ["pr_review_scope_risk_context", "pr_review_git_diff"]],
       [
         "terminology-review-analysis",
         8,
@@ -143,6 +143,14 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(analysisTurns[1]?.prompt).toContain("what concrete contrasting case");
     expect(analysisTurns[1]?.prompt).toContain("pr_review_trace_term");
     expect(analysisTurns[2]?.prompt).toContain("trusted code change considerations");
+    expect(analysisTurns[0]?.prompt).toContain("direct change in the current design");
+    expect(analysisTurns[0]?.prompt).toContain("neutral or negative net lines");
+    expect(analysisTurns[0]?.prompt).toContain("new pattern applied to current related code");
+    expect(analysisTurns[0]?.prompt).toContain(
+      "Report all currently visible, evidence-backed recommendations",
+    );
+    expect(analysisTurns[0]?.prompt).toContain("rescan the resulting design");
+    expect(analysisTurns[0]?.prompt).toContain("single ledger batch");
     expect(analysisTurns[3]?.prompt).toContain("sandbox escape");
     expect(analysisTurns[4]?.prompt).toContain("every riskPlan invariant");
     expect(analysisTurns[4]?.prompt).toContain("inputs for e2e.coverage");

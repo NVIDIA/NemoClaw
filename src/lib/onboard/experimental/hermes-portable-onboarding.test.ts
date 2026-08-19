@@ -7,16 +7,8 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PodmanSocketAuthority, PodmanSocketAuthorityDeps } from "../../adapters/podman";
-import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/openshell/resolve-shared";
-import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-podman-authority";
 import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
-import type { SandboxEntry } from "../../state/registry";
-import {
-  isCurrentSandboxInferenceRouteReservation,
-  normalizeSandboxInferenceRouteSelection,
-} from "../../state/registry/route-reservation";
 import {
   captureHermesPortablePolicySource,
   createHermesPortableTransactionId,
@@ -35,69 +27,21 @@ import {
   runHermesPortableOnboardingTransaction,
   scopeHermesPortableCreateGatewayArgv,
   shouldManageHermesPortableDashboard,
-  type HermesPortableOnboardingDeps,
 } from "./hermes-portable-onboarding";
-
-const ID = "a".repeat(64);
-const IMAGE = "b".repeat(64);
-const SANDBOX_ID = "sandbox-id-1";
-const LIVE_IDENTITY_FINGERPRINT = "live-identity-1";
-const ROUTE_SESSION_ID = "session-alpha";
-const POLICY = "version: 1\nnetwork_policies: {}\n";
-const LABELS = {
-  "openshell.managed": "true",
-  "openshell.ai/sandbox-id": SANDBOX_ID,
-  "openshell.ai/sandbox-name": "alpha",
-  "openshell.ai/sandbox-namespace": "",
-  "openshell.ai/sandbox-workspace": "default",
-};
+import {
+  createHermesPortableTestInput,
+  createHermesPortableTransactionFixture,
+  HERMES_PORTABLE_TEST_POLICY as POLICY,
+  hermesPortableReservationForOnboarding,
+  hermesPortableTestOpenShellAuthority as openshellExecutableAuthority,
+  hermesPortableTestPodmanAuthority as podmanExecutableAuthority,
+  createHermesPortableContainerInspectResult,
+  unexpectedHermesPortablePodmanArgs as unexpectedPodmanArgs,
+  type HermesPortableTransactionFixtureOptions,
+} from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 
 let stateDir: string;
 let policyPath: string;
-
-function result(stdout: string, status = 0) {
-  return { status, stdout: Buffer.from(stdout), stderr: Buffer.alloc(0) };
-}
-
-function inspect(restartPolicy: string) {
-  return {
-    status: 0,
-    stdout: JSON.stringify([
-      {
-        Id: ID,
-        Image: IMAGE,
-        Name: `openshell-default--alpha-${SANDBOX_ID}`,
-        Config: { Labels: LABELS },
-        State: { Running: true, Paused: false, Status: "running" },
-        HostConfig: { RestartPolicy: { Name: restartPolicy } },
-      },
-    ]),
-    stderr: "",
-  };
-}
-
-function startupArgv() {
-  return [
-    "env",
-    "NEMOCLAW_HERMES_API_PORT=8642",
-    "NEMOCLAW_SANDBOX_NAME=alpha",
-    "/usr/local/bin/nemoclaw-start",
-  ];
-}
-
-function directoryChain(directory: string): string[] {
-  const parent = path.dirname(directory);
-  return parent === directory ? [directory] : [directory, ...directoryChain(parent)];
-}
-
-function unexpectedPodmanArgs(args: readonly string[]): never {
-  throw new Error(`unexpected podman args: ${args.join(" ")}`);
-}
-
-function removePolicySource(): true {
-  fs.unlinkSync(policyPath);
-  return true;
-}
 
 function interruptReceiptWrite(
   marker: Buffer,
@@ -144,308 +88,16 @@ function interruptCanonicalReceiptLink(phase: "configuring" | "active"): void {
   });
 }
 
-function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
-  return {
-    version: "0.0.101",
-    executable: {
-      executablePath: "/usr/bin/openshell",
-      device: "1",
-      inode: "10",
-      mode: String(0o100755),
-      ownerUid: "0",
-      size: "1024",
-      modifiedTimeNanoseconds: "11",
-      changedTimeNanoseconds: "12",
-      sha256: "f".repeat(64),
-      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
-        device: "1",
-        inode: String(index + 20),
-        mode: String(0o40755),
-        ownerUid: "0",
-        path: directory,
-      })),
-    },
-  };
-}
-
-function podmanExecutableAuthority(): HermesPortablePodmanExecutableAuthority {
-  return {
-    version: "5.7.0",
-    executable: {
-      executablePath: "/usr/bin/podman",
-      device: "1",
-      inode: "30",
-      mode: String(0o100755),
-      ownerUid: "0",
-      size: "2048",
-      modifiedTimeNanoseconds: "31",
-      changedTimeNanoseconds: "32",
-      sha256: "9".repeat(64),
-      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
-        device: "1",
-        inode: String(index + 40),
-        mode: String(0o40755),
-        ownerUid: "0",
-        path: directory,
-      })),
-    },
-  };
-}
-
-function routeSelection() {
-  return {
-    provider: "ollama-local",
-    model: "qwen3-vl:4b",
-    endpointUrl: null,
-    endpointSource: null,
-    credentialEnv: null,
-    preferredInferenceApi: null,
-    compatibleEndpointReasoning: null,
-    compatibleEndpointReasoningEffort: null,
-    nimContainer: null,
-  } as const;
-}
-
-function matchingRegistryEntry(
-  options: { openshellVersion?: string | null; liveFingerprint?: string } = {},
-): SandboxEntry {
-  return {
-    name: "alpha",
-    agent: "hermes",
-    gatewayName: "nemoclaw",
-    lifecycleGeneration: "generation-1",
-    openshellDriver: "docker",
-    lifecycleLiveIdentityFingerprint: options.liveFingerprint ?? LIVE_IDENTITY_FINGERPRINT,
-    openshellVersion: "openshellVersion" in options ? options.openshellVersion : "0.0.101",
-  };
-}
-
 function input() {
-  const uid = process.getuid!();
-  const sourceDockerfilePath = `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`;
-  return {
-    sandboxName: "alpha",
-    gatewayName: "nemoclaw",
-    lifecycleGeneration: "generation-1",
-    stateDir,
-    createPolicyPath: policyPath,
-    createArgv: [
-      "/usr/bin/openshell",
-      "sandbox",
-      "create",
-      "-g",
-      "nemoclaw",
-      "--from",
-      sourceDockerfilePath,
-      "--name",
-      "alpha",
-      "--policy",
-      policyPath,
-      "--",
-      ...startupArgv(),
-    ],
-    runtimeAuthority: {
-      schemaVersion: 1 as const,
-      kind: "podman" as const,
-      ownership: "current-user" as const,
-      uid,
-      homeDir: "/home/test",
-      configHome: "/home/test/.config",
-      runtimeDir: `/run/user/${String(uid)}`,
-      socketPath: `/run/user/${String(uid)}/podman/podman.sock`,
-    },
-    openshellExecutableAuthority: openshellExecutableAuthority(),
-    buildContext: {
-      authority: {
-        schemaVersion: 1 as const,
-        sourceRevision: "1".repeat(40),
-        dockerfileRelativePath: "agents/hermes/Dockerfile" as const,
-        sourceManifestSha256: "2".repeat(64),
-        contextManifestSha256: "3".repeat(64),
-      },
-      sourceDockerfilePath,
-      assertCurrentSource: vi.fn(),
-      materialize: vi.fn(() => ({
-        buildContextPath: "/private/staged-hermes",
-        dockerfilePath: "/private/staged-hermes/agents/hermes/Dockerfile",
-        assertCurrent: vi.fn(),
-      })),
-      retire: vi.fn(() => true),
-    },
-    startup: {
-      agent: loadAgent("hermes"),
-      sandboxName: "alpha",
-      startupArgv: startupArgv(),
-    },
-    inferenceRouteReservation: {
-      sessionId: ROUTE_SESSION_ID,
-      selection: routeSelection(),
-    },
-  };
+  return createHermesPortableTestInput(stateDir, policyPath);
 }
 
-function reservationForOnboarding(current: ReturnType<typeof input> = input()): SandboxEntry {
-  return {
-    name: current.sandboxName,
-    pendingRouteReservation: true,
-    reservationSessionId: current.inferenceRouteReservation.sessionId,
-    ...normalizeSandboxInferenceRouteSelection(current.inferenceRouteReservation.selection),
-    gatewayName: current.gatewayName,
-    hostLocalInferenceReceipt: "receipt-1",
-  };
+function reservationForOnboarding(current: ReturnType<typeof input> = input()) {
+  return hermesPortableReservationForOnboarding(current);
 }
 
-function deps(
-  options: {
-    existingSandbox?: boolean;
-    updateFails?: boolean;
-    failAfterRegistry?: boolean;
-    cleanupFails?: boolean;
-    assertSocketAuthority?: (
-      expected: PodmanSocketAuthority,
-      deps?: PodmanSocketAuthorityDeps,
-    ) => void;
-    assertOpenShellExecutableAuthority?: () => void;
-    afterRegistryCommit?: () => void | Promise<void>;
-    observeSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["observeSandbox"];
-    registryOpenShellVersion?: string | null;
-    registryLiveFingerprint?: string;
-    existingRegistry?: boolean;
-    registryEntry?: SandboxEntry | null;
-    replaceRegistryBeforeRegistration?: SandboxEntry | null;
-    podmanAuthority?: HermesPortablePodmanExecutableAuthority;
-  } = {},
-) {
-  let present = options.existingSandbox === true;
-  let restartPolicy = "no";
-  let registryEntry =
-    "registryEntry" in options
-      ? (options.registryEntry ?? null)
-      : options.existingRegistry === true
-        ? matchingRegistryEntry({
-            ...("registryOpenShellVersion" in options
-              ? { openshellVersion: options.registryOpenShellVersion }
-              : {}),
-            liveFingerprint: options.registryLiveFingerprint,
-          })
-        : reservationForOnboarding();
-  const registryFailures = options.failAfterRegistry
-    ? [new Error("simulated registry-to-active exit")]
-    : [];
-  const events: string[] = [];
-  const podman = vi.fn((args: readonly string[]) => {
-    const operation = args[0] === "ps" ? "ps" : args.slice(0, 2).join(" ");
-    const handlers = new Map<
-      string,
-      () => { status: number | null; stdout: string; stderr: string }
-    >([
-      ["ps", () => ({ status: 0, stdout: `${ID}\n`, stderr: "" })],
-      ["container inspect", () => inspect(restartPolicy)],
-      ["container exec", () => ({ status: 0, stdout: "200\n", stderr: "" })],
-      [
-        "container update",
-        () => {
-          restartPolicy = options.updateFails ? restartPolicy : "unless-stopped";
-          return options.updateFails
-            ? { status: null, stdout: "", stderr: "timed out" }
-            : { status: 0, stdout: "", stderr: "" };
-        },
-      ],
-    ]);
-    return handlers.get(operation)?.() ?? unexpectedPodmanArgs(args);
-  });
-  const value: HermesPortableOnboardingDeps<{ ready: true }> = {
-    withLifecycleLock: async (_sandboxName, operation) => {
-      events.push("lock-enter");
-      try {
-        return await withMcpLifecycleLock("alpha", operation, {
-          stateDir: path.join(stateDir, "state"),
-        });
-      } finally {
-        events.push("lock-exit");
-      }
-    },
-    captureSocketAuthority: (socketPath) => {
-      const directories = directoryChain(path.dirname(socketPath));
-      return {
-        device: "1",
-        inode: "2",
-        mode: "49536",
-        ownerUid: String(process.getuid!()),
-        socketPath,
-        directoryChain: directories.map((directory, index) => ({
-          device: "1",
-          inode: String(index + 3),
-          mode: String(index === 0 ? 0o40700 : 0o40755),
-          ownerUid: String(index === 0 ? process.getuid!() : 0),
-          path: directory,
-        })),
-      };
-    },
-    capturePodmanExecutableAuthority: () => options.podmanAuthority ?? podmanExecutableAuthority(),
-    container: {
-      podman,
-      assertSocketAuthority: options.assertSocketAuthority ?? vi.fn(),
-    },
-    assertOpenShellExecutableAuthority: options.assertOpenShellExecutableAuthority ?? vi.fn(),
-    capturePolicy: (args) => {
-      events.push(args.includes("--base") ? "policy-base" : "policy-full");
-      return result(POLICY);
-    },
-    observeSandbox:
-      options.observeSandbox ??
-      (() =>
-        present
-          ? {
-              kind: "present",
-              sandboxId: SANDBOX_ID,
-              liveIdentityFingerprint: LIVE_IDENTITY_FINGERPRINT,
-            }
-          : { kind: "absent" }),
-    createSandbox: async (argv, buildContextPath) => {
-      events.push("create");
-      const policyIndex = argv.indexOf("--policy");
-      expect(argv[policyIndex + 1]).toContain("policy.");
-      expect(argv[argv.indexOf("--from") + 1]).toBe(
-        "/private/staged-hermes/agents/hermes/Dockerfile",
-      );
-      expect(buildContextPath).toBe("/private/staged-hermes");
-      present = true;
-      return { ready: true };
-    },
-    readRegistry: () => registryEntry,
-    registerSandbox: (
-      _result,
-      _receipt,
-      _liveIdentityFingerprint,
-      revalidate,
-      routeReservation,
-    ) => {
-      registryEntry =
-        "replaceRegistryBeforeRegistration" in options
-          ? (options.replaceRegistryBeforeRegistration ?? null)
-          : registryEntry;
-      isCurrentSandboxInferenceRouteReservation(routeReservation, registryEntry) ||
-        (() => {
-          throw new Error(
-            "Cannot register a sandbox after its inference route reservation changed",
-          );
-        })();
-      revalidate();
-      events.push("registry");
-      registryEntry = matchingRegistryEntry();
-      return registryEntry;
-    },
-    afterRegistryCommit: async () => {
-      const failure = registryFailures.shift();
-      await (failure ? Promise.reject(failure) : options.afterRegistryCommit?.());
-    },
-    cleanupTemporaryPolicy: () => {
-      events.push("temp-cleanup");
-      return options.cleanupFails ? false : removePolicySource();
-    },
-  };
-  return { value, events, podman };
+function deps(options: HermesPortableTransactionFixtureOptions = {}) {
+  return createHermesPortableTransactionFixture(input(), options);
 }
 
 beforeEach(() => {
@@ -946,7 +598,9 @@ describe("Hermes portable onboarding transaction", () => {
     await runHermesPortableOnboardingTransaction(input(), fixture.value);
     fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
     fixture.podman.mockImplementation((args: readonly string[]) =>
-      args[0] === "container" && args[1] === "inspect" ? inspect("no") : unexpectedPodmanArgs(args),
+      args[0] === "container" && args[1] === "inspect"
+        ? createHermesPortableContainerInspectResult("no")
+        : unexpectedPodmanArgs(args),
     );
 
     await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
