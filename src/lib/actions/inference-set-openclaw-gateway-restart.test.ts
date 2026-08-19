@@ -92,14 +92,20 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     });
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      openclawVersion: "",
+      stateDirectory: "/sandbox/.openclaw",
+    });
     const auditReasons = deps.calls.appendAuditEntry.mock.calls.map(([entry]) =>
       String(entry.reason),
     );
     expect(auditReasons).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart pending)",
+      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart and pairing convergence pending)",
     );
     expect(auditReasons).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart completed)",
+      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart and pairing convergence completed)",
     );
     expect(deps.calls.log).toHaveBeenCalledWith(
       "  Inference route synced for 'alpha': anthropic/claude-sonnet-proxy",
@@ -108,10 +114,12 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       "  Warning: could not record the post-commit inference audit entry for 'alpha'.",
     );
     const restartOrder = deps.calls.restartSandboxGateway.mock.invocationCallOrder[0] ?? 0;
+    const pairingOrder = deps.calls.settleOpenClawPairing.mock.invocationCallOrder[0] ?? 0;
     expect(deps.calls.writeSandboxConfig.mock.invocationCallOrder[0]).toBeLessThan(restartOrder);
     expect(deps.calls.recomputeSandboxConfigHash.mock.invocationCallOrder[0]).toBeLessThan(
       restartOrder,
     );
+    expect(restartOrder).toBeLessThan(pairingOrder);
   });
 
   it("does not restart OpenClaw when the requested route is already current (#4504)", async () => {
@@ -146,6 +154,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     expect(result.configChanged).toBe(false);
     expect(result.inSandboxConfigSynced).toBe(true);
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.calls.settleOpenClawPairing).not.toHaveBeenCalled();
   });
 
   it("reports a post-commit restart failure without rolling state back (#4504)", async () => {
@@ -191,6 +200,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     );
 
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
+    expect(deps.calls.settleOpenClawPairing).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledOnce();
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
@@ -205,7 +215,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       String(entry.reason),
     );
     expect(auditReasons).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart pending)",
+      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart and pairing convergence pending)",
     );
     expect(auditReasons).toContain(
       "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (config committed; gateway restart failed: health timeout)",
@@ -214,6 +224,113 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
     expect(deps.calls.log.mock.calls.map(([line]) => String(line)).join("\n")).not.toContain(
       "Inference route synced",
     );
+  });
+
+  it("fails a committed cross-family switch when pairing does not converge (#9527)", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "openai/nvidia/model-a" } } },
+      models: {
+        providers: {
+          openai: {
+            baseUrl: "https://inference.local/v1",
+            api: "openai-completions",
+            models: [{ id: "nvidia/model-a", name: "openai/nvidia/model-a" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      session: baseSession({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+      settleOpenClawPairing: () => ({
+        ok: false,
+        failureLayer: "approval-rejected",
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "claude-sonnet-proxy",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(
+      "OpenClaw gateway pairing did not converge (approval-rejected). The committed route was not rolled back.",
+    );
+
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledOnce();
+    expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledOnce();
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
+    expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledOnce();
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+      }),
+    ]);
+    expect(deps.calls.log.mock.calls.map(([line]) => String(line)).join("\n")).not.toContain(
+      "Inference route synced",
+    );
+    expect(deps.calls.appendAuditEntry.mock.calls.map(([entry]) => String(entry.reason))).toContain(
+      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (config committed; gateway restart completed; pairing convergence failed: approval-rejected)",
+    );
+  });
+
+  it("does not expose pairing command output from a post-commit failure (#9527)", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "openai/nvidia/model-a" } } },
+      models: {
+        providers: {
+          openai: {
+            baseUrl: "https://inference.local/v1",
+            api: "openai-completions",
+            models: [{ id: "nvidia/model-a", name: "openai/nvidia/model-a" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      session: baseSession({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+      settleOpenClawPairing: () => {
+        throw new Error("token=do-not-report");
+      },
+    });
+
+    const failure = await runInferenceSet(
+      {
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        noVerify: true,
+      },
+      deps,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("pairing-operation-failed");
+    expect((failure as Error).message).not.toContain("do-not-report");
+    expect(
+      deps.calls.appendAuditEntry.mock.calls.map(([entry]) => String(entry.reason)).join("\n"),
+    ).toContain("pairing convergence failed: pairing-operation-failed");
+    expect(
+      deps.calls.appendAuditEntry.mock.calls.map(([entry]) => String(entry.reason)).join("\n"),
+    ).not.toContain("do-not-report");
   });
 
   it("restarts when leaving a legacy Anthropic route without provider.api (#4504)", async () => {

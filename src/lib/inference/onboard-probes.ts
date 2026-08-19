@@ -1075,7 +1075,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   }
 }
 
-async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKey, options = {}) {
+export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKey, options = {}) {
   if (options.probeFromDocker) {
     return probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options);
   }
