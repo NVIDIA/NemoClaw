@@ -395,6 +395,35 @@ describe("advisor session runner", () => {
     expect(sdk.state.prompts).toHaveLength(2);
   });
 
+  it.each([
+    ["two failed initial attempts", ["fail-twice", "success"]],
+    ["a failed then successful initial attempt", ["fail-then-success"]],
+  ] as const)("rejects %s without terminal-submit repair", async (_case, responses) => {
+    sdk.state.terminalResponses = [...responses];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toContain("exactly 1 turn_action submit attempt");
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("allows one failed initial submit followed by one repair success", async () => {
+    sdk.state.terminalResponses = ["fail-once", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("rejects multiple submit attempts during terminal-submit repair", async () => {
+    sdk.state.terminalResponses = ["fail-once", "fail-then-success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toContain("terminal-submit repair must make exactly 1");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
   it("rejects prose during preparatory terminal-submit repair", async () => {
     sdk.state.emitRepairProse = true;
     sdk.state.terminalResponses = ["fail-once", "success"];
@@ -410,7 +439,7 @@ describe("advisor session runner", () => {
     sdk.state.terminalResponses = ["omit", "success"];
     const result = await run([submitTurn("prepare-and-submit")]);
 
-    expect(result.fatalError).toContain("must submit turn_action successfully once");
+    expect(result.fatalError).toContain("must make exactly 1 turn_action submit attempt");
     expect(result.raw).not.toContain("terminal_submit_repair_start");
     expect(sdk.state.prompts).toHaveLength(1);
   });

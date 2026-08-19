@@ -218,6 +218,17 @@ describe("advisor session context tool flow", () => {
   it.each([
     ["omission", [], undefined, new Set<string>()],
     ["prose only", [analysisEvent], undefined, new Set<string>()],
+    [
+      "an unexpected tool with a failed submit",
+      [
+        { type: "tool_start", toolName: "unexpected" },
+        { type: "tool_end", toolName: "unexpected", isError: false },
+        ledgerStart,
+        ledgerFailure,
+      ],
+      undefined,
+      new Set<string>(),
+    ],
     ["provider error", [ledgerStart, ledgerFailure], "provider failed", new Set<string>()],
     ["unsettled call", [ledgerStart], undefined, new Set<string>()],
     ["prior success", [ledgerStart, ledgerSuccess], undefined, new Set([ledgerToolName])],
@@ -242,7 +253,7 @@ describe("advisor session context tool flow", () => {
     },
   );
 
-  it("repairs terminal submit after at least one settled failed submit", () => {
+  it("repairs terminal submit after exactly one settled failed submit", () => {
     const turn: AdvisorPromptTurn = {
       name: "prepare",
       prompt: "prepare",
@@ -264,9 +275,18 @@ describe("advisor session context tool flow", () => {
         undefined,
       ),
     ).toBe(ledgerToolName);
+    expect(
+      repairableTerminalSubmitToolName(
+        turn,
+        [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure],
+        tools,
+        new Set(),
+        undefined,
+      ),
+    ).toBeUndefined();
   });
 
-  it("rejects prose and unconfigured tools during terminal-submit repair", () => {
+  it("rejects prose, unconfigured tools, and multiple submits during terminal-submit repair", () => {
     const successfulSubmit = [ledgerStart, ledgerSuccess];
     expect(
       terminalSubmitRepairErrors("prepare", [analysisEvent, ...successfulSubmit], ledgerToolName, [
@@ -297,10 +317,26 @@ describe("advisor session context tool flow", () => {
         ["repair_draft"],
       ),
     ).toEqual([]);
+    expect(
+      terminalSubmitRepairErrors(
+        "prepare",
+        [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+        ledgerToolName,
+        ["repair_draft"],
+      ).join("; "),
+    ).toContain("exactly 1");
   });
 
   it.each([
     ["duplicate success", [ledgerStart, ledgerSuccess, ledgerStart, ledgerSuccess]],
+    [
+      "failed then successful initial attempts",
+      [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+    ],
+    [
+      "failed twice then successful initial attempts",
+      [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+    ],
     ["activity after success", [ledgerStart, ledgerSuccess, analysisEvent]],
   ])("rejects terminal submit %s", (_case, events) => {
     const tools = {
@@ -310,7 +346,7 @@ describe("advisor session context tool flow", () => {
       terminalSubmitRepairToolNames: [],
     };
     expect(advisorTurnFlowErrors("prepare", events, tools).join("; ")).toMatch(
-      /successfully once|activity after successful/,
+      /exactly 1|activity after successful/,
     );
   });
 });

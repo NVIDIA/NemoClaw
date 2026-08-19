@@ -9,6 +9,7 @@ export type ArtifactPaths = {
   findingLedger: string;
   terminologyLedger: string;
   summary: string;
+  detailedReview: string;
   sessionHtml: string;
 };
 
@@ -19,6 +20,7 @@ export function artifactPaths(outDir: string): ArtifactPaths {
     findingLedger: path.join(outDir, "pr-review-advisor-finding-ledger.json"),
     terminologyLedger: path.join(outDir, "pr-review-advisor-terminology-ledger.json"),
     summary: path.join(outDir, "pr-review-advisor-summary.md"),
+    detailedReview: path.join(outDir, "pr-review-advisor-detailed-review.md"),
     sessionHtml: path.join(outDir, "pr-review-advisor-session.html"),
   };
 }

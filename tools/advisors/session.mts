@@ -604,6 +604,7 @@ export async function runReadOnlyAdvisor(
               `[${options.logPrefix}] atomic_terminal_repair_end ${turn.name} ${repairToolName} ok\n`,
             );
           }
+          let terminalSubmitRepaired = false;
           const submitRepairToolName = repairableTerminalSubmitToolName(
             turn,
             currentTurnFlow,
@@ -631,6 +632,7 @@ export async function runReadOnlyAdvisor(
               tools.terminalSubmitRepairToolNames ?? [],
             );
             if (repairErrors.length > 0) throw new Error(repairErrors.join("; "));
+            terminalSubmitRepaired = true;
             currentTurnFlow = [...originalSubmitFlow, ...repairFlow];
             raw.append(
               `[${options.logPrefix}] terminal_submit_repair_end ${turn.name} ${submitRepairToolName} ok\n`,
@@ -640,7 +642,12 @@ export async function runReadOnlyAdvisor(
             tools.requiredToolNames,
             successfulToolNames,
           );
-          const flowErrors = advisorTurnFlowErrors(turn.name, currentTurnFlow, tools);
+          const flowErrors = advisorTurnFlowErrors(
+            turn.name,
+            currentTurnFlow,
+            tools,
+            terminalSubmitRepaired,
+          );
           if (missing.length > 0)
             flowErrors.unshift(`omitted required tool result(s): ${missing.join(", ")}`);
           if (flowErrors.length > 0) throw new Error(flowErrors.join("; "));

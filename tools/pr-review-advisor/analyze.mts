@@ -57,6 +57,7 @@ export {
 import { buildInvestigateTurn } from "./investigate-turn.mts";
 import { renderDetailedReview, renderSummary } from "./render-result.mts";
 export { renderDetailedReview, renderSummary } from "./render-result.mts";
+export { reviewQualityIssues } from "./review-quality.mts";
 import {
   buildCorrectnessTurnContext,
   buildOperationsTurnContext,
@@ -141,9 +142,14 @@ const TEST_DEPTH_VERDICTS = [
   "mocks_recommended",
   "runtime_validation_recommended",
 ] as const;
-const ACCEPTANCE_STATUSES = ["satisfied", "partial", "missing", "unknown"] as const;
-const SECURITY_VERDICTS = ["pass", "warning", "fail", "not_applicable"] as const;
-const SOURCE_OF_TRUTH_STATUSES = ["sound", "needs_followup", "missing", "not_applicable"] as const;
+const ACCEPTANCE_STATUSES = ["met", "partial", "missing", "unknown"] as const;
+const SECURITY_VERDICTS = ["pass", "warning", "fail"] as const;
+const SOURCE_OF_TRUTH_STATUSES = [
+  "not_applicable",
+  "satisfied",
+  "needs_followup",
+  "missing",
+] as const;
 const TERMINOLOGY_STATUSES = ["clear", "candidates", "limited"] as const;
 const FINDING_CATEGORIES = REVIEW_FINDING_CATEGORIES;
 const SIMPLIFICATION_TAGS = REVIEW_FINDING_SIMPLIFICATION_TAGS;
@@ -400,6 +406,7 @@ async function main(): Promise<void> {
       heartbeatMs,
       maxCaptureBytes,
       logPrefix: "pr-review-advisor",
+      resultPath: artifacts.result,
       findingLedgerPath: artifacts.findingLedger,
       terminologyLedgerPath: artifacts.terminologyLedger,
       baseRef,
@@ -435,10 +442,7 @@ async function main(): Promise<void> {
   writeJson(artifacts.finalResult, result);
   const summary = renderSummary(result);
   fs.writeFileSync(artifacts.summary, summary);
-  fs.writeFileSync(
-    path.join(outDir, "pr-review-advisor-detailed-review.md"),
-    renderDetailedReview(result),
-  );
+  fs.writeFileSync(artifacts.detailedReview, renderDetailedReview(result));
   console.log(summary);
 }
 
@@ -515,6 +519,7 @@ type AdvisorConversationOptions = {
   heartbeatMs: number;
   maxCaptureBytes: number;
   logPrefix: string;
+  resultPath: string;
   findingLedgerPath: string;
   terminologyLedgerPath: string;
   baseRef: string;
@@ -541,8 +546,10 @@ async function runAdvisorConversation(
       headRef: options.metadata.headRef,
       headSha: options.metadata.headSha,
       changedFiles: options.metadata.changedFiles,
+      deterministic: { testDepth: options.metadata.deterministic.testDepth },
     },
     schema: options.schema,
+    repositoryRoot: root,
     terminologyTraces: () => terminologyTools.traces(),
     normalizeE2e: (value) => normalizeCombinedE2eResult(value, options.metadata),
   });
@@ -561,51 +568,41 @@ async function runAdvisorConversation(
     logPrefix: options.logPrefix,
     logProgress,
     customTools: [...submission.tools, ...terminologyTools.tools],
-    onTurnComplete: (turn) => {
-      writeJson(options.findingLedgerPath, submission.findingSnapshot());
-      writeJson(options.terminologyLedgerPath, submission.terminologySnapshot());
-    },
+    onTurnComplete: (turn) =>
+      persistReviewSubmissionTurn(submission, turn, {
+        result: options.resultPath,
+        findingLedger: options.findingLedgerPath,
+        terminologyLedger: options.terminologyLedgerPath,
+      }),
   });
   return { run: result, submission };
 }
 
-export function advisorExecutionErrors(result: RunAdvisorResult): string[] {
-  return advisorRunErrors(result);
+export function persistReviewSubmissionTurn(
+  submission: ReviewSubmissionController,
+  turn: AdvisorCompletedTurn,
+  paths: Pick<ArtifactPaths, "result" | "findingLedger" | "terminologyLedger">,
+): void {
+  try {
+    if (turn.status === "completed" && turn.name === "challenge-and-record") {
+      submission.finalize();
+    } else if (turn.status !== "completed") {
+      submission.discard();
+    }
+    writeJson(paths.result, submission.result());
+    writeJson(paths.findingLedger, submission.findingSnapshot());
+    writeJson(paths.terminologyLedger, submission.terminologySnapshot());
+  } catch (error) {
+    submission.discard();
+    writeJson(paths.result, null);
+    writeJson(paths.findingLedger, submission.findingSnapshot());
+    writeJson(paths.terminologyLedger, submission.terminologySnapshot());
+    throw error;
+  }
 }
 
-export function reviewQualityIssues(result: ReviewAdvisorResult): string[] {
-  const issues: string[] = [];
-  const placeholderValues = new Set([
-    "No description provided.",
-    "Review manually.",
-    "No evidence provided.",
-    "No impact provided.",
-    "No verification hint provided.",
-    "No regression test recommendation provided.",
-  ]);
-  for (const [index, finding] of result.findings.entries()) {
-    const prefix = `findings[${index + 1}] ${finding.title}`;
-    for (const field of [
-      "description",
-      "impact",
-      "recommendation",
-      "verificationHint",
-      "missingRegressionTest",
-      "evidence",
-    ] as const) {
-      if (!finding[field].trim() || placeholderValues.has(finding[field])) {
-        issues.push(`${prefix} has placeholder ${field}`);
-      }
-    }
-  }
-  if (
-    result.securityCategories.some((category) =>
-      category.justification.startsWith("Advisor did not provide a category-specific verdict"),
-    )
-  ) {
-    issues.push("securityCategories were defaulted because the advisor omitted verdicts");
-  }
-  return issues.slice(0, 20);
+export function advisorExecutionErrors(result: RunAdvisorResult): string[] {
+  return advisorRunErrors(result);
 }
 
 export async function collectGitHubContext(

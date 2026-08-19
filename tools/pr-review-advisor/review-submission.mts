@@ -6,8 +6,14 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { Type } from "typebox";
 
 import {
+  enforceDeterministicTestDepthFloor,
+  reviewQualityIssues,
+  type ReviewTestDepth,
+} from "./review-quality.mts";
+import {
   REVIEW_FINDING_BASIS_KINDS,
   REVIEW_FINDING_CATEGORIES,
+  REVIEW_FINDING_LIMIT,
   REVIEW_FINDING_SEVERITIES,
   REVIEW_FINDING_SIMPLIFICATION_TAGS,
   validateReviewFindingSubmission,
@@ -133,6 +139,7 @@ const reviewReceiptSchema = Type.Object(
             ["met", "partial", "missing", "unknown"].map((value) => Type.Literal(value)),
           ),
           evidence: text,
+          findingId: Type.Union([text, Type.Null()]),
         },
         { additionalProperties: false },
       ),
@@ -143,6 +150,7 @@ const reviewReceiptSchema = Type.Object(
           category: text,
           verdict: Type.Union(["pass", "warning", "fail"].map((value) => Type.Literal(value))),
           justification: text,
+          findingId: Type.Union([text, Type.Null()]),
         },
         { additionalProperties: false },
       ),
@@ -243,6 +251,7 @@ export type ReviewSubmissionMetadata = Readonly<{
   headRef: string;
   headSha: string;
   changedFiles: readonly string[];
+  deterministic: Readonly<{ testDepth: ReviewTestDepth }>;
 }>;
 export type NormalizeReviewE2e = (
   draft: Record<string, unknown>,
@@ -266,6 +275,8 @@ export type ReviewSubmissionController = Readonly<{
   result(): unknown | null;
   findingSnapshot(): ReviewFindingLedgerSnapshot;
   terminologySnapshot(): TerminologyLedgerSnapshot;
+  finalize(): void;
+  discard(): void;
 }>;
 
 type ModelFindingInput = CandidateFindingInput;
@@ -274,10 +285,15 @@ type RecordFindingsInput = Readonly<{ findings: readonly ModelFindingInput[] }>;
 type DraftReceipt = {
   summary: Record<string, unknown>;
   terminologyReview: TerminologyCommitInput;
-  acceptanceCoverage: unknown[];
-  securityCategories: unknown[];
-  sourceOfTruthReview: unknown[];
-  testDepth: Record<string, unknown>;
+  acceptanceCoverage: Array<Record<string, unknown> & { findingId: string | null }>;
+  securityCategories: Array<{
+    category: string;
+    verdict: "pass" | "warning" | "fail";
+    justification: string;
+    findingId: string | null;
+  }>;
+  sourceOfTruthReview: Array<Record<string, unknown> & { findingId: string | null }>;
+  testDepth: ReviewTestDepth;
   positives: string[];
   reviewCompleteness: Record<string, unknown>;
 };
@@ -287,6 +303,7 @@ export function createReviewSubmissionController({
   schema,
   terminologyTraces = new Map(),
   normalizeE2e,
+  repositoryRoot,
 }: {
   metadata: ReviewSubmissionMetadata;
   schema: Record<string, unknown>;
@@ -294,12 +311,20 @@ export function createReviewSubmissionController({
     | ReadonlyMap<string, TerminologyTrace>
     | (() => ReadonlyMap<string, TerminologyTrace>);
   normalizeE2e: NormalizeReviewE2e;
+  repositoryRoot: string;
 }): ReviewSubmissionController {
   let findingsDraft: ModelFindingInput[] | null = null;
+  let findingsRevision = 0;
   let receiptDraft: DraftReceipt | null = null;
+  let receiptFindingsRevision: number | null = null;
   let e2eDraft: Record<string, unknown> | null = null;
+  let pending: Readonly<{
+    result: unknown;
+    findingSnapshot: ReviewFindingLedgerSnapshot;
+    terminologySnapshot: TerminologyLedgerSnapshot;
+  }> | null = null;
   let submitted: unknown | null = null;
-  let findingSnapshot = validateReviewFindingSubmission([]);
+  let findingSnapshot = validateReviewFindingSubmission([], repositoryRoot);
   let terminologySnapshot = createTerminologyLedger(metadata.headSha).snapshot();
   const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
 
@@ -307,30 +332,43 @@ export function createReviewSubmissionController({
     name: RECORD_FINDINGS_TOOL,
     label: "Record review findings draft",
     description:
-      "Replace the complete in-memory findings draft. Canonical state changes only after submit_review succeeds.",
+      "Replace the complete in-memory findings draft, advance its revision, and return that revision with the ordered stable draft IDs. This invalidates any earlier review receipt. Use the returned IDs in a subsequent review receipt. Canonical state changes only after the session runner accepts the successful terminal submission.",
     parameters: Type.Object(
-      { findings: Type.Array(findingSchema) },
+      { findings: Type.Array(findingSchema, { maxItems: REVIEW_FINDING_LIMIT }) },
       { additionalProperties: false },
     ),
     executionMode: "sequential",
     execute: async (_id, input) => {
-      ensureOpen(submitted);
+      ensureOpen(pending ?? submitted);
       const draft = input as RecordFindingsInput;
       findingsDraft = draft.findings.map((finding) => structuredClone(finding));
-      return toolResult({ recorded: "findings", count: findingsDraft.length });
+      findingsRevision += 1;
+      return toolResult({
+        findingsRevision,
+        findings: findingsDraft.map((finding, index) => ({
+          id: draftFindingId(index),
+          title: finding.title,
+          category: finding.category,
+          basisKind: finding.basis.kind,
+        })),
+      });
     },
   });
   const recordReceipt = defineTool({
     name: RECORD_REVIEW_RECEIPT_TOOL,
     label: "Record review receipt draft",
     description:
-      "Replace the complete in-memory review receipt draft without changing canonical state.",
+      "After record_findings, replace the complete in-memory review receipt draft and bind it to the current findings revision without changing canonical state. Recording findings again makes this receipt stale until it is rerecorded.",
     parameters: reviewReceiptSchema,
     executionMode: "sequential",
     execute: async (_id, input) => {
-      ensureOpen(submitted);
+      ensureOpen(pending ?? submitted);
+      if (findingsDraft === null) {
+        throw new Error("record_review_receipt requires record_findings first");
+      }
       receiptDraft = structuredClone(input as DraftReceipt);
-      return toolResult({ recorded: "review_receipt" });
+      receiptFindingsRevision = findingsRevision;
+      return toolResult({ recorded: "review_receipt", findingsRevision });
     },
   });
   const recommendE2e = defineTool({
@@ -341,7 +379,7 @@ export function createReviewSubmissionController({
     parameters: e2eSchema,
     executionMode: "sequential",
     execute: async (_id, input) => {
-      ensureOpen(submitted);
+      ensureOpen(pending ?? submitted);
       e2eDraft = structuredClone(input as Record<string, unknown>);
       return toolResult({ recorded: "e2e" });
     },
@@ -350,60 +388,71 @@ export function createReviewSubmissionController({
     name: SUBMIT_REVIEW_TOOL,
     label: "Submit complete PR review",
     description:
-      "Validate every draft section, atomically create canonical snapshots and the public review result, and end the turn.",
+      "Validate every draft section, assemble pending canonical state, and end the turn. The session runner commits that state only after accepting the complete terminal flow.",
     parameters: Type.Object({}, { additionalProperties: false }),
     executionMode: "sequential",
     execute: async () => {
-      ensureOpen(submitted);
+      ensureOpen(pending ?? submitted);
       const missing = [
         findingsDraft === null ? "findings" : null,
-        receiptDraft === null ? "review receipt" : null,
+        receiptDraft === null
+          ? "review receipt"
+          : receiptFindingsRevision !== findingsRevision
+            ? "review receipt (missing or stale for current findings revision)"
+            : null,
         e2eDraft === null ? "E2E recommendations" : null,
       ].filter(Boolean);
       if (missing.length > 0) throw new Error(`submit_review requires: ${missing.join(", ")}`);
 
-      const candidateFindingSnapshot = validateReviewFindingSubmission(findingsDraft!);
+      validateReceiptFindingReferences(receiptDraft!, findingsDraft!);
+      const candidateFindingSnapshot = validateReviewFindingSubmission(
+        findingsDraft!,
+        repositoryRoot,
+      );
       const openFindings = candidateFindingSnapshot.findings.filter(
         (finding) => finding.status === "open",
       );
       validateSecurityCategories(receiptDraft!.securityCategories);
-      validateReceiptFindingCoverage(receiptDraft!, openFindings);
-      validateSourceOfTruthReferences(receiptDraft!.sourceOfTruthReview, openFindings);
       const summary = canonicalSummary(receiptDraft!.summary, openFindings);
       const normalizedE2e = await normalizeE2e(structuredClone(e2eDraft!), metadata);
       const candidateTerminology = createTerminologyLedger(metadata.headSha);
       const traces =
         typeof terminologyTraces === "function" ? terminologyTraces() : terminologyTraces;
       candidateTerminology.commit(receiptDraft!.terminologyReview, traces);
+      const publicReceipt = publicReceiptDraft(receiptDraft!, metadata.deterministic.testDepth);
       const result = {
         version: 1,
         baseRef: metadata.baseRef,
         headRef: metadata.headRef,
         headSha: metadata.headSha,
         changedFiles: [...metadata.changedFiles],
-        ...receiptDraft,
+        ...publicReceipt,
         summary,
         findings: openFindings.map(publicFinding),
         terminologyReview: candidateTerminology.snapshot().review,
         e2e: normalizedE2e,
       };
+      const qualityIssues = reviewQualityIssues({
+        findings: openFindings,
+        securityCategories: receiptDraft!.securityCategories,
+      });
+      if (qualityIssues.length > 0) {
+        throw new Error(
+          `submit_review result failed review quality validation: ${qualityIssues.join("; ")}`,
+        );
+      }
       if (!validate(result)) {
         const reason = (validate.errors ?? [])
           .map((error) => `${error.instancePath || "/"} ${error.message}`)
           .join("; ");
         throw new Error(`submit_review result does not match the public schema: ${reason}`);
       }
-      findingSnapshot = candidateFindingSnapshot;
-      terminologySnapshot = candidateTerminology.snapshot();
-      submitted = structuredClone(result);
-      return toolResult(
-        {
-          result: submitted,
-          findingLedger: findingSnapshot,
-          terminologyLedger: terminologySnapshot,
-        },
-        true,
-      );
+      pending = Object.freeze({
+        result: structuredClone(result),
+        findingSnapshot: candidateFindingSnapshot,
+        terminologySnapshot: candidateTerminology.snapshot(),
+      });
+      return toolResult({ validated: true, pending: true }, true);
     },
   });
 
@@ -412,6 +461,20 @@ export function createReviewSubmissionController({
     result: () => structuredClone(submitted),
     findingSnapshot: () => findingSnapshot,
     terminologySnapshot: () => terminologySnapshot,
+    finalize: () => {
+      if (!pending) throw new Error("submit_review has no validated pending state to finalize");
+      if (submitted !== null) throw new Error("submit_review pending state was already finalized");
+      submitted = structuredClone(pending.result);
+      findingSnapshot = pending.findingSnapshot;
+      terminologySnapshot = pending.terminologySnapshot;
+      pending = null;
+    },
+    discard: () => {
+      pending = null;
+      submitted = null;
+      findingSnapshot = validateReviewFindingSubmission([], repositoryRoot);
+      terminologySnapshot = createTerminologyLedger(metadata.headSha).snapshot();
+    },
   };
 }
 
@@ -431,51 +494,109 @@ function validateSecurityCategories(categories: unknown[]): void {
   }
 }
 
-function validateReceiptFindingCoverage(
+export const ACCEPTANCE_FINDING_REFERENCE_PAIRS = [
+  ["acceptance", "unmet_acceptance"],
+  ["correctness", "behavior_mismatch"],
+  ["tests", "missing_regression"],
+  ["architecture", "behavior_mismatch"],
+  ["scope", "unmet_acceptance"],
+] as const;
+
+export const SECURITY_FINDING_REFERENCE_PAIRS = [
+  ["security", "security_violation"],
+  ["security", "semantic_ambiguity"],
+] as const;
+
+const ACCEPTANCE_FINDING_PAIRS: ReadonlySet<string> = new Set(
+  ACCEPTANCE_FINDING_REFERENCE_PAIRS.map(([category, basisKind]) => `${category}:${basisKind}`),
+);
+const SECURITY_FINDING_PAIRS: ReadonlySet<string> = new Set(
+  SECURITY_FINDING_REFERENCE_PAIRS.map(([category, basisKind]) => `${category}:${basisKind}`),
+);
+
+const SOURCE_OF_TRUTH_FINDING_CATEGORIES = new Set([
+  "correctness",
+  "security",
+  "architecture",
+  "scope",
+  "tests",
+]);
+
+function findingPair(finding: CandidateFindingInput): string {
+  return `${finding.category}:${finding.basis.kind}`;
+}
+
+function validateReceiptFindingReferences(
   receipt: DraftReceipt,
-  findings: readonly ReviewFinding[],
+  findings: readonly CandidateFindingInput[],
 ): void {
-  const hasFinding = findings.length > 0;
-  const unmetAcceptance = receipt.acceptanceCoverage.some((value) => {
-    const status = (value as { status?: unknown }).status;
-    return status === "partial" || status === "missing";
-  });
-  const securityConcern = receipt.securityCategories.some((value) => {
-    const verdict = (value as { verdict?: unknown }).verdict;
-    return verdict === "warning" || verdict === "fail";
-  });
-  const unresolvedSource = receipt.sourceOfTruthReview.some((value) => {
-    const status = (value as { status?: unknown }).status;
-    return status === "needs_followup" || status === "missing";
-  });
-  if (!hasFinding && (unmetAcceptance || securityConcern || unresolvedSource)) {
-    throw new Error(
-      "review receipt reports an unresolved acceptance, security, or source-of-truth concern without a canonical finding",
-    );
-  }
+  const findingsById = new Map(findings.map((finding, index) => [draftFindingId(index), finding]));
+  validateConcernEntries(
+    "acceptanceCoverage",
+    receipt.acceptanceCoverage,
+    findingsById,
+    (entry) => entry.status === "partial" || entry.status === "missing",
+    (finding) => ACCEPTANCE_FINDING_PAIRS.has(findingPair(finding)),
+  );
+  validateConcernEntries(
+    "securityCategories",
+    receipt.securityCategories,
+    findingsById,
+    (entry) => entry.verdict === "warning" || entry.verdict === "fail",
+    (finding) => SECURITY_FINDING_PAIRS.has(findingPair(finding)),
+  );
+  validateConcernEntries(
+    "sourceOfTruthReview",
+    receipt.sourceOfTruthReview,
+    findingsById,
+    (entry) => entry.status === "needs_followup" || entry.status === "missing",
+    (finding) => SOURCE_OF_TRUTH_FINDING_CATEGORIES.has(finding.category),
+  );
 }
 
-function validateSourceOfTruthReferences(
-  entries: unknown[],
-  findings: readonly ReviewFinding[],
+function validateConcernEntries(
+  section: string,
+  entries: readonly unknown[],
+  findingsById: ReadonlyMap<string, CandidateFindingInput>,
+  requiresFinding: (entry: Record<string, unknown>) => boolean,
+  fitsConcern: (finding: CandidateFindingInput) => boolean,
 ): void {
-  const ids = new Set(findings.map((finding) => finding.id));
-  for (const entry of entries as { status: string; findingId: string | null }[]) {
-    const unresolved = entry.status === "needs_followup" || entry.status === "missing";
-    if (unresolved && entry.findingId === null) {
-      throw new Error("unresolved sourceOfTruthReview entry must reference a canonical finding");
-    }
-    if (!unresolved && entry.findingId !== null) {
-      throw new Error("resolved sourceOfTruthReview entry must use findingId=null");
-    }
-    if (entry.findingId !== null && !ids.has(entry.findingId)) {
+  for (const [index, rawEntry] of entries.entries()) {
+    const entry = rawEntry as Record<string, unknown>;
+    const required = requiresFinding(entry);
+    const findingId = entry.findingId;
+    if (!required && findingId !== null)
+      throw new Error(`${section}[${index + 1}] must use findingId=null`);
+    if (required && typeof findingId !== "string")
+      throw new Error(`${section}[${index + 1}] must reference a fitting finding ID`);
+    if (typeof findingId !== "string") continue;
+    const finding = findingsById.get(findingId);
+    if (!finding)
+      throw new Error(`${section}[${index + 1}] references unknown finding ${findingId}`);
+    if (!fitsConcern(finding))
       throw new Error(
-        `sourceOfTruthReview references unknown canonical finding ${entry.findingId}`,
+        `${section}[${index + 1}] references finding ${findingId}, which does not fit this concern`,
       );
-    }
   }
 }
 
+function draftFindingId(index: number): string {
+  return `F-${String(index + 1).padStart(3, "0")}`;
+}
+
+function publicReceiptDraft(receipt: DraftReceipt, deterministicTestDepth: ReviewTestDepth) {
+  return {
+    ...receipt,
+    acceptanceCoverage: receipt.acceptanceCoverage.map(stripDraftFindingId),
+    securityCategories: receipt.securityCategories.map(stripDraftFindingId),
+    testDepth: enforceDeterministicTestDepthFloor(receipt.testDepth, deterministicTestDepth),
+  };
+}
+
+function stripDraftFindingId(value: unknown): Record<string, unknown> {
+  const { findingId: _findingId, ...publicValue } = value as Record<string, unknown>;
+  return publicValue;
+}
 function canonicalSummary(
   input: Record<string, unknown>,
   findings: readonly ReviewFinding[],
@@ -509,7 +630,10 @@ function canonicalSummary(
 
 function publicFinding(finding: ReviewFinding): Record<string, unknown> {
   const { id: _id, status: _status, supersededBy: _supersededBy, evidence, ...rest } = finding;
-  return { ...rest, evidence: evidence.join("\n") };
+  return {
+    ...rest,
+    evidence: evidence.join("\n"),
+  };
 }
 
 function ensureOpen(submitted: unknown | null): void {

@@ -49,7 +49,7 @@ export type AdvisorPromptTurn = {
   atomicTerminalRepairPrompt?: string;
   /**
    * Terminal submit tool that may follow context, reads, prose, and other active draft tools.
-   * Exactly one successful submit is required, and nothing may follow it.
+   * The initial turn permits exactly one submit attempt, and nothing may follow a success.
    */
   terminalSubmitToolName?: string;
   /** Opt into one repair continuation after a settled failed terminal submit. */
@@ -190,8 +190,11 @@ function terminalSubmitToolErrors(
   turnName: string,
   events: AdvisorTurnFlowEvent[],
   toolName: string,
+  repaired = false,
 ): string[] {
   const counts = terminalToolEventCounts(events, toolName);
+  const expectedAttempts = repaired ? 2 : 1;
+  const expectedFailures = repaired ? 1 : 0;
   const errors: string[] = [];
   if (counts.starts !== counts.completions) {
     errors.push(
@@ -199,10 +202,16 @@ function terminalSubmitToolErrors(
         `(observed ${counts.starts} starts and ${counts.completions} completions)`,
     );
   }
-  if (counts.successfulCompletions !== 1) {
+  if (
+    counts.starts !== expectedAttempts ||
+    counts.completions !== expectedAttempts ||
+    counts.successfulCompletions !== 1 ||
+    counts.failedCompletions !== expectedFailures
+  ) {
     errors.push(
-      `${turnName} must submit ${toolName} successfully once ` +
-        `(observed ${counts.successfulCompletions} successful and ${counts.failedCompletions} failed completions)`,
+      `${turnName} must make exactly ${expectedAttempts} ${toolName} submit attempt(s), ` +
+        `with ${expectedFailures} failed and 1 successful completion ` +
+        `(observed ${counts.starts} starts, ${counts.successfulCompletions} successful, and ${counts.failedCompletions} failed completions)`,
     );
   }
   const successIndex = events.findIndex(
@@ -252,6 +261,7 @@ export function advisorTurnFlowErrors(
   turnName: string,
   events: AdvisorTurnFlowEvent[],
   tools: AdvisorTurnTools,
+  terminalSubmitRepaired = false,
 ): string[] {
   const errors: string[] = [];
   const textIndexes = events.flatMap((event, index) =>
@@ -276,7 +286,14 @@ export function advisorTurnFlowErrors(
     errors.push(...atomicTerminalToolErrors(turnName, events, tools.atomicTerminalToolName));
   }
   if (tools.terminalSubmitToolName) {
-    errors.push(...terminalSubmitToolErrors(turnName, events, tools.terminalSubmitToolName));
+    errors.push(
+      ...terminalSubmitToolErrors(
+        turnName,
+        events,
+        tools.terminalSubmitToolName,
+        terminalSubmitRepaired,
+      ),
+    );
   }
   return errors;
 }
@@ -309,9 +326,13 @@ export function repairableTerminalSubmitToolName(
   if (!turn.terminalSubmitRepairPrompt?.trim() || turnError) return undefined;
   const toolName = tools.terminalSubmitToolName;
   if (!toolName || successfulToolNames.has(toolName)) return undefined;
+  const expectedTools = new Set([...READ_ONLY_TOOLS, ...tools.activeToolNames]);
+  if (events.some((event) => event.type !== "text" && !expectedTools.has(event.toolName))) {
+    return undefined;
+  }
   const counts = terminalToolEventCounts(events, toolName);
-  if (counts.starts !== counts.completions) return undefined;
-  if (counts.successfulCompletions > 0 || counts.failedCompletions < 1) return undefined;
+  if (counts.starts !== 1 || counts.completions !== 1) return undefined;
+  if (counts.successfulCompletions !== 0 || counts.failedCompletions !== 1) return undefined;
   return toolName;
 }
 

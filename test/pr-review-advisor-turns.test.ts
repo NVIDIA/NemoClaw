@@ -71,6 +71,10 @@ describe("PR review advisor turn trace", () => {
         "pr-review-advisor-terminology-ledger.json",
       ),
       summary: path.join("artifacts/pr-review-advisor", "pr-review-advisor-summary.md"),
+      detailedReview: path.join(
+        "artifacts/pr-review-advisor",
+        "pr-review-advisor-detailed-review.md",
+      ),
       sessionHtml: path.join("artifacts/pr-review-advisor", "pr-review-advisor-session.html"),
     });
   });
