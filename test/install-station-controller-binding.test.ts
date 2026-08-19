@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { DUAL_STATION_VLLM_LAUNCH_SCHEMA } from "../src/lib/inference/vllm-station-cluster-lifecycle.ts";
 import { runInstallerSourcedBody } from "./helpers/installer-run-fixture";
 import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
@@ -321,7 +322,7 @@ printf 'MIGRATE=%s REUSE=%s\\n' "$_STATION_EXPRESS_MIGRATING_LEGACY_HEAD" "$_STA
         "true",
         "true",
         "head",
-        "2",
+        DUAL_STATION_VLLM_LAUNCH_SCHEMA,
         "c".repeat(64),
         "d".repeat(64),
         "e".repeat(64),
