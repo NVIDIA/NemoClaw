@@ -290,7 +290,7 @@ nemoclaw onboard --agent hermes [options]
 The experimental Portable Hermes path records `pending`, `configuring`, and `active` lifecycle phases under the current user's rootless Podman authority.
 If onboarding stops in `pending` or `configuring`, correct the reported condition and run `nemohermes onboard --experimental-profile portable --resume`.
 Mutation, connection, and recovery commands do not act on an incomplete receipt; `status` and `doctor` report its phase.
-After the receipt reaches `active`, the supported sandbox lifecycle commands are `launch`, `connect`, `recover`, `start`, `stop`, `status`, and `doctor` without `--fix`.
+After the receipt reaches `active`, the supported sandbox lifecycle commands are `launch`, `connect`, `recover`, `start`, `stop`, `status`, and `doctor` in read-only mode.
 Other sandbox commands fail before their action runs while the Portable Hermes receipt exists.
 The supported commands revalidate the receipt-owned Podman container and do not fall back to Docker.
 
