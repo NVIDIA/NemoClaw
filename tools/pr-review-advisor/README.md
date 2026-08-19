@@ -39,20 +39,18 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, prior findings, positives, and limitations in one coherent pass.
 6. The `challenge-and-record` turn keeps repository reads and adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The first three replace complete in-memory draft sections. They do not update canonical state.
 7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema. A successful call atomically commits the result and ends the turn. A settled invalid call permits one bounded repair; omission, provider failure, unsettled calls, or activity after success fail closed.
-8. Trusted code writes the existing prompt, turn, transcript, finding, terminology, result, summary, and detailed-review artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
+8. Trusted code writes the session transcript, finding, terminology, result, summary, and detailed-review artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
 9. The primary GPT-5.6 Terra lane publishes the sticky comment. The Nemotron Ultra lane remains an artifact-only evaluation lane.
     The evaluation lane does not publish another review.
     Previous sticky-comment ingestion is disabled for both lanes.
 
-`investigate-turn.mts` and `challenge-and-record-turn.mts` own the two normal turn contracts, including their prompts and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `artifacts.mts` owns prompt and turn artifacts, and `render-result.mts` owns human-readable result output. `analyze.mts` composes these modules and runs the session.
+`investigate-turn.mts` and `challenge-and-record-turn.mts` own the two normal turn contracts, including their prompts and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `artifacts.mts` owns artifact paths, and `render-result.mts` owns human-readable result output. `analyze.mts` composes these modules and runs the session.
 
 `tools/pr-review-advisor/openshell.mts` owns the advisor-specific prepare, create, run, download, and
 cleanup sequence. It uses the shared lifecycle and credential-boundary helpers in
 `tools/openshell-agent/runtime.mts`, which are also used by the merge-conflict fixer.
 
-Provider failures and timeouts settle the active turn before the analysis fails, so its status and
-partial response remain available beside the raw transcript. Turn-artifact persistence failures are
-also fatal. Invalid or missing atomic submission fails closed and leaves canonical state unchanged.
+Provider failures, timeouts, and invalid or missing atomic submission fail closed and leave canonical state unchanged. Failure results retain the reason, and workflow logs retain orchestration diagnostics.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its combined
 comment lists trusted E2E recommendations, but does not dispatch or report pass/fail for E2E jobs.
@@ -144,25 +142,13 @@ instead of failing closed without artifacts.
 
 ## Artifacts
 
-- `prompts/00-system.md` — system prompt sent to the advisor.
-- `prompts/01-investigate.md` and `prompts/02-challenge-and-record.md` — the two normal turns in execution order.
-- `prompts/*.tool-results/` — deterministic, domain-specific context payloads exposed as real tools after the matching user turn. The complete untrusted diff appears only in the first turn, and repeated risk-plan projections use capped path samples.
-- `turns/01-investigate.txt` and `turns/02-challenge-and-record.txt` — assistant output and completed, failed, or timed-out status written as each turn settles.
-- `context/drift-context.json` — deterministic drift and overlap context.
-- `context/security-context.json` — deterministic security-risk context and the risk plan for the
-  PR SHA.
-- `context/validation-context.json` — deterministic acceptance, source-of-truth, static
-  test-inventory, simplification-signal, and risk plan for the PR SHA, including the
-  regression invariants reviewed for the PR.
-- `context/pr.diff` — complete PR diff used by the advisor.
-- `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.
 - `pr-review-advisor-result.json` — normalized advisor result with findings projected from the canonical open ledger records, or execution metadata when analysis is unavailable.
 - `pr-review-advisor-final-result.json` — normalized canonical result used for comments.
 - `pr-review-advisor-finding-ledger.json` — all open, resolved, and superseded finding records with stable IDs and reasoned transition history, refreshed after every settled turn.
 - `pr-review-advisor-terminology-ledger.json` — the canonical terminology receipt for the head commit, including decisions that reference a trusted trace, refreshed after every settled turn.
 - `pr-review-advisor-summary.md` — markdown summary used in the job summary.
 - `pr-review-advisor-detailed-review.md` — expanded acceptance, security, and source-of-truth review details.
-- `pr-review-advisor-session.html` — exported two-turn session transcript, including context reads, draft tools, validation, and bounded repair when used.
+- `pr-review-advisor-session.html` — complete two-turn session transcript for debugging, including embedded session JSON, prompts, context reads, draft tools, validation, and bounded repair when used.
 
 The parallel Nemotron Ultra lane writes the same filenames under
 `artifacts/pr-review-advisor-nemotron-ultra/` and uploads them as the

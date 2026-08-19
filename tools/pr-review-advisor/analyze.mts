@@ -38,13 +38,8 @@ import {
   type RunAdvisorResult,
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
-import {
-  artifactPaths,
-  type ArtifactPaths,
-  writePromptArtifacts,
-  writeTurnArtifact,
-} from "./artifacts.mts";
-export { artifactPaths, writePromptArtifacts, writeTurnArtifact } from "./artifacts.mts";
+import { artifactPaths, type ArtifactPaths } from "./artifacts.mts";
+export { artifactPaths } from "./artifacts.mts";
 import { buildChallengeAndRecordTurn } from "./challenge-and-record-turn.mts";
 import {
   collectDeterministicContext,
@@ -64,13 +59,11 @@ import { renderDetailedReview, renderSummary } from "./render-result.mts";
 export { renderDetailedReview, renderSummary } from "./render-result.mts";
 import {
   buildCorrectnessTurnContext,
-  buildDriftTurnContext,
   buildOperationsTurnContext,
   buildReconciliationTurnContext,
   buildScopeRiskTurnContext,
   buildSecurityTurnContext,
   buildTestsTurnContext,
-  buildValidationTurnContext,
 } from "./turn-context.mts";
 export { buildRiskPlanReviewContext } from "./turn-context.mts";
 import {
@@ -374,7 +367,6 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  writeDeterministicContextArtifacts(artifacts, deterministic, diff);
   const { systemPrompt, promptTurns } = preparePromptArtifacts({
     artifacts,
     metadata,
@@ -404,7 +396,6 @@ async function main(): Promise<void> {
       systemPrompt,
       configDir,
       htmlExportPath: artifacts.sessionHtml,
-      turnDir: artifacts.turnDir,
       timeoutMs,
       heartbeatMs,
       maxCaptureBytes,
@@ -418,13 +409,9 @@ async function main(): Promise<void> {
     });
     sdkResult = conversation.run;
     submission = conversation.submission;
-    fs.writeFileSync(artifacts.raw, sdkResult.raw);
     logProgress(`PR review advisor conversation finished: turns=${sdkResult.turnTexts.length}`);
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
-    if (!sdkResult) {
-      fs.writeFileSync(artifacts.raw, `PR review advisor SDK execution failed: ${reason}\n`);
-    }
     writeFailure(reason);
     process.exit(1);
   }
@@ -484,37 +471,11 @@ export function preparePromptArtifacts({
   try {
     const systemPrompt = buildSystemPrompt();
     const promptTurns = buildPromptTurns({ metadata, diff, schema });
-    writePromptArtifacts({ promptDir: artifacts.promptDir, systemPrompt, promptTurns });
     return { systemPrompt, promptTurns };
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     writeFailureArtifacts(artifacts, metadata, reason);
     throw error;
-  }
-}
-
-export function writeDeterministicContextArtifacts(
-  paths: { contextDir: string },
-  context: DeterministicReviewContext,
-  diff: string,
-): void {
-  fs.rmSync(paths.contextDir, { recursive: true, force: true });
-  fs.mkdirSync(paths.contextDir, { recursive: true });
-  writeJson(path.join(paths.contextDir, "drift-context.json"), buildDriftTurnContext(context));
-  writeJson(
-    path.join(paths.contextDir, "security-context.json"),
-    buildSecurityTurnContext(context),
-  );
-  writeJson(
-    path.join(paths.contextDir, "validation-context.json"),
-    buildValidationTurnContext(context),
-  );
-  fs.writeFileSync(path.join(paths.contextDir, "pr.diff"), diff || "");
-  if (context.previousAdvisorReview?.body) {
-    fs.writeFileSync(
-      path.join(paths.contextDir, "previous-advisor-review.md"),
-      context.previousAdvisorReview.body,
-    );
   }
 }
 
@@ -525,12 +486,7 @@ function writeUnavailableArtifacts(
   failed: boolean,
 ): void {
   const result = unavailableResult(metadata, reason, failed);
-  writeJson(
-    paths.result,
-    failed
-      ? { failed: true, reason, promptPath: paths.promptDir, rawPath: paths.raw }
-      : { skipped: true, reason, promptPath: paths.promptDir },
-  );
+  writeJson(paths.result, failed ? { failed: true, reason } : { skipped: true, reason });
   writeJson(paths.finalResult, result);
   fs.writeFileSync(paths.summary, renderSummary(result));
   if (failed) {
@@ -555,7 +511,6 @@ type AdvisorConversationOptions = {
   systemPrompt: string;
   configDir: string;
   htmlExportPath: string;
-  turnDir: string;
   timeoutMs: number;
   heartbeatMs: number;
   maxCaptureBytes: number;
@@ -576,8 +531,6 @@ type AdvisorConversationResult = {
 async function runAdvisorConversation(
   options: AdvisorConversationOptions,
 ): Promise<AdvisorConversationResult> {
-  fs.rmSync(options.turnDir, { recursive: true, force: true });
-  fs.mkdirSync(options.turnDir, { recursive: true });
   const terminologyTools = createTerminologyToolController({
     baseRef: options.baseRef,
     headRef: options.headRef,
@@ -609,7 +562,6 @@ async function runAdvisorConversation(
     logProgress,
     customTools: [...submission.tools, ...terminologyTools.tools],
     onTurnComplete: (turn) => {
-      writeTurnArtifact(options.turnDir, turn);
       writeJson(options.findingLedgerPath, submission.findingSnapshot());
       writeJson(options.terminologyLedgerPath, submission.terminologySnapshot());
     },

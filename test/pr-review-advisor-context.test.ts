@@ -16,7 +16,6 @@ import {
   detectSimplificationSignals,
   extractIssueRefs,
   extractPreviousAdvisorReview,
-  writeDeterministicContextArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
 import { loadAdvisorSchema, metadata, ROOT } from "./helpers/pr-review-advisor-test-fixtures.ts";
 
@@ -223,30 +222,6 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     ["Oxford-comma list", "References #4, #5, and #6.", [4, 5, 6]],
   ] as const)("recognizes every issue in a %s relation (#6446)", (_case, text, expected) => {
     expect(extractIssueRefs(text, 6566)).toEqual(expected);
-  });
-
-  it("writes auditable deterministic context artifacts", () => {
-    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-context-"));
-    try {
-      writeDeterministicContextArtifacts(
-        { contextDir: path.join(tmp, "context") },
-        metadata().deterministic,
-        "diff --git a/x b/x",
-      );
-
-      expect(fs.existsSync(path.join(tmp, "context", "drift-context.json"))).toBe(true);
-      expect(fs.existsSync(path.join(tmp, "context", "security-context.json"))).toBe(true);
-      expect(fs.existsSync(path.join(tmp, "context", "validation-context.json"))).toBe(true);
-      expect(fs.readFileSync(path.join(tmp, "context", "pr.diff"), "utf8")).toContain("diff --git");
-      expect(
-        fs.readFileSync(path.join(tmp, "context", "validation-context.json"), "utf8"),
-      ).toContain("staticTestInventory");
-      expect(
-        fs.readFileSync(path.join(tmp, "context", "validation-context.json"), "utf8"),
-      ).toContain("riskPlan");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
   });
 
   it("skips symlinked changed test files in static test inventory", () => {

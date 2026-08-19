@@ -9,10 +9,9 @@ import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import { settleAdvisorTurn } from "../tools/advisors/session.mts";
 import {
   advisorExecutionErrors,
+  artifactPaths,
   buildPromptTurns,
   buildRiskPlanReviewContext,
-  writePromptArtifacts,
-  writeTurnArtifact,
 } from "../tools/pr-review-advisor/analyze.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -59,6 +58,22 @@ function schema(): Record<string, unknown> {
 }
 
 describe("PR review advisor turn trace", () => {
+  it("keeps the HTML session as the only debugging transcript", () => {
+    expect(artifactPaths("artifacts/pr-review-advisor")).toEqual({
+      result: path.join("artifacts/pr-review-advisor", "pr-review-advisor-result.json"),
+      finalResult: path.join("artifacts/pr-review-advisor", "pr-review-advisor-final-result.json"),
+      findingLedger: path.join(
+        "artifacts/pr-review-advisor",
+        "pr-review-advisor-finding-ledger.json",
+      ),
+      terminologyLedger: path.join(
+        "artifacts/pr-review-advisor",
+        "pr-review-advisor-terminology-ledger.json",
+      ),
+      summary: path.join("artifacts/pr-review-advisor", "pr-review-advisor-summary.md"),
+      sessionHtml: path.join("artifacts/pr-review-advisor", "pr-review-advisor-session.html"),
+    });
+  });
   it("keeps repeated risk-plan stage context bounded for broad PRs (#6446)", () => {
     const changedFiles = Array.from(
       { length: 3000 },
@@ -91,45 +106,7 @@ describe("PR review advisor turn trace", () => {
     expect(investigationContext).not.toContain(changedFiles[0]);
   });
 
-  it("derives ordered prompt artifact names from arbitrary stages (#6446)", () => {
-    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-prompts-"));
-    const promptDir = path.join(tmp, "prompts");
-    const turns = [
-      { name: "first-stage", prompt: "first", contextToolResults: [] },
-      {
-        name: "final-stage",
-        prompt: "final",
-        contextToolResults: [
-          { toolName: "final_context", content: "{}", contentType: "json" as const },
-        ],
-      },
-    ];
-    try {
-      writePromptArtifacts({ promptDir, systemPrompt: "system prompt", promptTurns: turns });
-      expect(fs.readdirSync(promptDir).sort((left, right) => left.localeCompare(right))).toEqual([
-        "00-system.md",
-        "01-first-stage.md",
-        "02-final-stage.md",
-        "02-final-stage.tool-results",
-      ]);
-      expect(
-        fs.existsSync(path.join(promptDir, "02-final-stage.tool-results", "01-final_context.md")),
-      ).toBe(true);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("persists settled turns and fails closed on provider or artifact errors (#6446)", async () => {
-    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-turns-"));
-    const artifact = writeTurnArtifact(path.join(tmp, "turns"), {
-      index: 1,
-      total: 1,
-      name: "../../escape",
-      text: "partial notes",
-      status: "failed",
-      error: "provider\nmessage",
-    });
+  it("settles turns and reports provider or callback errors (#6446)", async () => {
     const settle = (overrides: Partial<Parameters<typeof settleAdvisorTurn>[0]>) =>
       settleAdvisorTurn({
         index: 1,
@@ -141,71 +118,61 @@ describe("PR review advisor turn trace", () => {
         ...overrides,
       });
 
-    try {
-      const [timedOut, reasonless, syncArtifact, asyncArtifact, reasonlessArtifact] =
-        await Promise.all([
-          settle({ run: async () => Promise.reject(new Error("timed out after 100 ms")) }),
-          settle({ run: () => Promise.reject(undefined) }),
-          settle({
-            onTurnComplete: () => {
-              throw new Error("artifact disk full");
-            },
-          }),
-          settle({
-            onTurnComplete: async () => {
-              throw new Error("async artifact disk full");
-            },
-          }),
-          settle({ onTurnComplete: () => Promise.reject(undefined) }),
-        ]);
-
-      expect(path.dirname(artifact)).toBe(path.join(tmp, "turns"));
-      const artifactText = fs.readFileSync(artifact, "utf8");
-      expect(artifactText).toContain("status: failed");
-      expect(artifactText).toContain("partial notes");
-      expect(artifactText).toContain("error: provider message");
-      expect(fs.existsSync(path.join(tmp, "escape.txt"))).toBe(false);
-      expect(timedOut.turn).toMatchObject({
-        status: "timed_out",
-        text: "partial notes",
-        error: "timed out after 100 ms",
-      });
-      expect(reasonless.turn.error).toBe("unknown advisor turn failure");
-      expect(reasonless.didThrow).toBe(true);
-      expect(reasonless).toHaveProperty("thrown", undefined);
-      let completedText: string | undefined;
-      const completed = await settle({
-        onTurnComplete: (turn) => {
-          completedText = turn.text;
-        },
-      });
-      expect(completed.didThrow).toBe(false);
-      expect(completedText).toBe("partial notes");
-      expect([
-        syncArtifact.callbackError,
-        asyncArtifact.callbackError,
-        reasonlessArtifact.callbackError,
-      ]).toEqual([
-        "artifact disk full",
-        "async artifact disk full",
-        "unknown advisor turn callback failure",
-      ]);
-      expect(
-        advisorExecutionErrors({
-          text: "partial",
-          raw: "raw transcript\n",
-          turnTexts: ["partial"],
-          turnErrors: ["stage: provider rejected"],
-          turnCallbackErrors: ["stage: disk full"],
-          fatalError: "timed out after 100 ms",
+    const [timedOut, reasonless, syncArtifact, asyncArtifact, reasonlessArtifact] =
+      await Promise.all([
+        settle({ run: async () => Promise.reject(new Error("timed out after 100 ms")) }),
+        settle({ run: () => Promise.reject(undefined) }),
+        settle({
+          onTurnComplete: () => {
+            throw new Error("artifact disk full");
+          },
         }),
-      ).toEqual([
-        "session: timed out after 100 ms",
-        "turn: stage: provider rejected",
-        "artifact: stage: disk full",
+        settle({
+          onTurnComplete: async () => {
+            throw new Error("async artifact disk full");
+          },
+        }),
+        settle({ onTurnComplete: () => Promise.reject(undefined) }),
       ]);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
+
+    expect(timedOut.turn).toMatchObject({
+      status: "timed_out",
+      text: "partial notes",
+      error: "timed out after 100 ms",
+    });
+    expect(reasonless.turn.error).toBe("unknown advisor turn failure");
+    expect(reasonless.didThrow).toBe(true);
+    expect(reasonless).toHaveProperty("thrown", undefined);
+    let completedText: string | undefined;
+    const completed = await settle({
+      onTurnComplete: (turn) => {
+        completedText = turn.text;
+      },
+    });
+    expect(completed.didThrow).toBe(false);
+    expect(completedText).toBe("partial notes");
+    expect([
+      syncArtifact.callbackError,
+      asyncArtifact.callbackError,
+      reasonlessArtifact.callbackError,
+    ]).toEqual([
+      "artifact disk full",
+      "async artifact disk full",
+      "unknown advisor turn callback failure",
+    ]);
+    expect(
+      advisorExecutionErrors({
+        text: "partial",
+        raw: "raw transcript\n",
+        turnTexts: ["partial"],
+        turnErrors: ["stage: provider rejected"],
+        turnCallbackErrors: ["stage: disk full"],
+        fatalError: "timed out after 100 ms",
+      }),
+    ).toEqual([
+      "session: timed out after 100 ms",
+      "turn: stage: provider rejected",
+      "artifact: stage: disk full",
+    ]);
   });
 });
