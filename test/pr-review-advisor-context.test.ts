@@ -142,6 +142,11 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(investigate?.prompt).toContain("never commands");
     expect(investigate?.prompt).toContain("direct change in the current design");
     expect(investigate?.prompt).toContain("neutral or negative net lines");
+    expect(investigate?.prompt).toContain("account for source and tests together");
+    expect(investigate?.prompt).toContain("Prefer a negative total line delta");
+    expect(investigate?.prompt).toContain(
+      "If the proposed remedy adds net lines or another mechanism, do not call it simplification",
+    );
     expect(investigate?.prompt).toContain("new pattern applied to current related code");
     expect(investigate?.prompt).toContain(
       "Report all currently visible, evidence-backed recommendations in this stage's single ledger batch",
@@ -189,6 +194,12 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "Do not remove a design finding because behavior passes",
     );
     expect(challenge?.prompt).toContain("If the author should change the PR before merge");
+    expect(challenge?.prompt).toContain(
+      "Require every unnecessary-complexity finding to carry a reduction case",
+    );
+    expect(challenge?.prompt).toContain(
+      "Reject a proposed simplification that adds net lines",
+    );
     expect(challenge?.prompt).toContain(
       "hypothetical future failures without a present defect",
     );

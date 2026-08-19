@@ -22,7 +22,9 @@ It complements the existing PR surfaces by keeping a NemoClaw maintainer code-re
   safe deletion, consolidation, existing or new patterns, and neutral or negative net-line outcomes.
   Present design defects can block when checked-in evidence shows duplicated ownership, unnecessary
   machinery, substantial repeated setup, widened dependencies, or unrelated churn and the review
-  provides a concrete behavior-preserving reduction;
+  provides a concrete behavior-preserving reduction. The reduction case covers source and tests
+  together, defaults to a negative total line outcome, and may be line-neutral only when it
+  materially reduces owners, concepts, invalid combinations, or dependency width;
 - semantic terminology review for terms that changed explanatory text introduces, expands, or
   redefines, with repository evidence for each model-selected candidate;
 - E2E coverage, job, target, and fan-out selections normalized against the checked-in
@@ -219,4 +221,9 @@ These recommendations describe advisor findings only.
 They never approve a PR, replace required human review, or change the repository's merge gates.
 Warnings identify concerns that maintainers can accept without author action. Suggestions identify
 optional improvements. Required design work must be a blocker instead of a warning.
+An unnecessary-complexity blocker must remove or consolidate current structure. Recommendations that
+add net lines or another helper, registry, configuration surface, compatibility layer, fallback,
+migration path, test framework, or fixture owner require an independent correctness, security, or
+accepted-scope defect; they are not presented as simplification. This keeps architecture feedback
+strong while preventing review-driven growth and serial refactoring layers.
 Every result includes limitations and requires maintainer review.

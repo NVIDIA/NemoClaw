@@ -133,11 +133,15 @@ describe("PR review advisor writing guides", () => {
     expect(prompt).toContain("a raw line count by itself");
     expect(prompt).toContain("mere open-PR overlap or merge coordination");
     expect(prompt).toContain(
-      "checked-out evidence shows that the current PR introduces or retains duplicate or conflicting ownership",
+      "For redundancy or ownership findings, checked-out evidence must show that the current PR introduces or retains duplicate or conflicting ownership",
+    );
+    expect(prompt).toContain(
+      "This ownership requirement does not apply to independently supported correctness, security, scope, or other design defects",
     );
     expect(prompt).toContain(
       "If a refreshed base only makes the PR unnecessary without leaving duplicate or conflicting code",
     );
+    expect(prompt).not.toContain("refreshed base already contains equivalent behavior");
     expect(prompt).toContain("use recommendation=superseded");
     expect(prompt).toContain(
       "missing that authorization is a current scope defect, not template noncompliance",
@@ -145,6 +149,17 @@ describe("PR review advisor writing guides", () => {
     expect(prompt).toContain("Duplicated test setup, parallel test owners");
     expect(prompt).toContain(
       "Preserve semantic regression coverage and necessary boundary evidence",
+    );
+    expect(prompt).toContain(
+      "produce a reduction case that names the current code, owners, concepts, branches, parameters, fixtures, or files",
+    );
+    expect(prompt).toContain("Prefer a negative total line delta");
+    expect(prompt).toContain(
+      "A positive line result is not a simplification finding",
+    );
+    expect(prompt).toContain("Future reuse, aesthetic symmetry");
+    expect(prompt).toContain(
+      "Do not create a serial chain of new architecture findings",
     );
   });
 
