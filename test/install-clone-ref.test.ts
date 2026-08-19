@@ -13,7 +13,7 @@ import { INSTALLER_PAYLOAD } from "./helpers/installer-sourced-env";
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 
 describe("installer git checkout", () => {
-  it("fetches fully-qualified refs into a detached checkout", () => {
+  it("fetches fully-qualified refs into a detached checkout without group- or other-writable source entries", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clone-ref-"));
     const origin = path.join(tmp, "origin");
     fs.mkdirSync(origin);
@@ -34,7 +34,7 @@ describe("installer git checkout", () => {
           "bash",
           [
             "-c",
-            'source "$INSTALLER_UNDER_TEST"\nclone_nemoclaw_ref refs/heads/topic "$DESTINATION"',
+            'umask 0002\nsource "$INSTALLER_UNDER_TEST"\nclone_nemoclaw_ref refs/heads/topic "$DESTINATION"\nprintf "CALLER_UMASK=%s\\n" "$(umask)"',
           ],
           {
             encoding: "utf8",
@@ -51,6 +51,15 @@ describe("installer git checkout", () => {
         expect(result.status, result.stderr).toBe(0);
         expect(git(["-C", destination, "rev-parse", "HEAD"], tmp).stdout.trim()).toBe(expectedHead);
         expect(git(["-C", destination, "symbolic-ref", "-q", "HEAD"], tmp).status).not.toBe(0);
+        expect(result.stdout).toContain("CALLER_UMASK=0002");
+        expect([
+          fs.lstatSync(destination).mode & 0o22,
+          fs.lstatSync(path.join(destination, ".git")).mode & 0o22,
+          fs.lstatSync(path.join(destination, ".git", "HEAD")).mode & 0o22,
+          fs.lstatSync(path.join(destination, ".git", "config")).mode & 0o22,
+          fs.lstatSync(path.join(destination, ".git", "objects")).mode & 0o22,
+          fs.lstatSync(path.join(destination, "README.md")).mode & 0o22,
+        ]).toEqual([0, 0, 0, 0, 0, 0]);
       });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

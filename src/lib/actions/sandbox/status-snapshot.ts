@@ -169,6 +169,8 @@ export interface SandboxStatusReport {
   liveRoute: GatewayInference | null;
   routeDrift: SandboxStatusRouteDrift | null;
   phase: string | null;
+  /** Receipt-owned Hermes portable lifecycle phase when schema-5 authority is present. */
+  portableLifecyclePhase?: "pending" | "configuring" | "active";
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
   rpcIssue: { kind: "image_drift" | "host_process_drift" | "protobuf_mismatch" } | null;

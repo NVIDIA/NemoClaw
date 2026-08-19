@@ -215,6 +215,7 @@ describe("resolveAgentCreateInput", () => {
       {
         persistStartupCommand: false,
         portableLifecycle: false,
+        hermesPortableLifecycle: true,
       },
     );
     expect(resolvePortableLifecycleMode(null, env)).toBe(true);
@@ -1137,20 +1138,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
     expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
     expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
-  });
-
-  it("keeps non-OpenClaw portable creation on the existing runtime patch (#9068)", async () => {
-    const input = createInput();
-    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
-    input.portableLifecycle = false;
-    input.persistStartupCommand = true;
-    const deps = createDeps();
-    deps.installPortableDemoLifecycle = vi.fn(() => null);
-
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
-
-    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledOnce();
-    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
   });
 
   it("rejects Docker compatibility before portable sandbox creation (#9068)", async () => {

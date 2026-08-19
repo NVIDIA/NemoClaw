@@ -12,6 +12,7 @@ export async function verifyPinnedPodmanGatewayStarts(
   gatewayBin: string,
   gatewayEnv: Record<string, string>,
   progress: TestProgress,
+  whileRunning?: () => Promise<void>,
 ): Promise<void> {
   const child = spawnObservedChild(gatewayBin, [], {
     activityLabel: "command: pinned OpenShell Podman gateway",
@@ -43,7 +44,10 @@ export async function verifyPinnedPodmanGatewayStarts(
       }
       if (/Using compute driver\s+driver=podman/.test(plainOutput)) {
         if (driverSeenAt === 0) driverSeenAt = Date.now();
-        if (Date.now() - driverSeenAt >= 2_000) return;
+        if (Date.now() - driverSeenAt >= 2_000) {
+          await whileRunning?.();
+          return;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }

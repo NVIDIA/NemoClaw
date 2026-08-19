@@ -17,11 +17,18 @@ import { help, version } from "./root-help";
 
 type GatewayRecovery = { recovered: boolean };
 
+export type ManagedMcpCredentialReservation = {
+  sandboxName: string;
+  server: string;
+  credentialKeys: readonly string[];
+};
+
 type GlobalCliActionRuntimeHooks = {
   recoverNamedGatewayRuntime?: () => Promise<GatewayRecovery>;
   upgradeSandboxes?: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
   recordExtraProvider?: (name: string) => boolean;
   forgetExtraProvider?: (name: string) => boolean;
+  listManagedMcpCredentialReservations?: () => readonly ManagedMcpCredentialReservation[];
 };
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
@@ -83,7 +90,7 @@ export function recordExtraProvider(name: string): boolean {
   if (typeof runtimeHooks.recordExtraProvider === "function") {
     return runtimeHooks.recordExtraProvider(name);
   }
-  const { addExtraProvider } = require("../state/registry") as {
+  const { addExtraProvider } = require("../state/registry/extra-providers") as {
     addExtraProvider: (name: string) => boolean;
   };
   return addExtraProvider(name);
@@ -93,8 +100,19 @@ export function forgetExtraProvider(name: string): boolean {
   if (typeof runtimeHooks.forgetExtraProvider === "function") {
     return runtimeHooks.forgetExtraProvider(name);
   }
-  const { removeExtraProvider } = require("../state/registry") as {
+  const { removeExtraProvider } = require("../state/registry/extra-providers") as {
     removeExtraProvider: (name: string) => boolean;
   };
   return removeExtraProvider(name);
+}
+
+export function listManagedMcpCredentialReservations(): readonly ManagedMcpCredentialReservation[] {
+  if (typeof runtimeHooks.listManagedMcpCredentialReservations === "function") {
+    return runtimeHooks.listManagedMcpCredentialReservations();
+  }
+  const { listManagedMcpCredentialReservations: queryReservations } =
+    require("../state/registry/mcp-credential-reservations") as {
+      listManagedMcpCredentialReservations: () => readonly ManagedMcpCredentialReservation[];
+    };
+  return queryReservations();
 }
