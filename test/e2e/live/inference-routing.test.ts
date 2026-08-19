@@ -334,9 +334,6 @@ async function runRuntimeIdentityE2EScenario(
   const { artifacts, cleanup, host, progress, sandbox, skip } = context;
   const artifactPrefix = scenario.testId.toLowerCase();
   progress.phase("confirm live runtime identity prerequisites");
-  if (!OPENSHELL_V0106_QUALIFICATION.supportsRuntimeIdentityRefreshProjection) {
-    skip("OpenShell 0.0.106 does not project provider-refresh credentials into Docker sandboxes");
-  }
   await requireLivePrerequisites(host, skip);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-identity-e2e-"));
   const workdir = path.join(root, "blueprint");
@@ -985,7 +982,10 @@ async function runRuntimeIdentityE2EScenario(
   expect(deleteProfile.exitCode, resultText(deleteProfile)).toBe(0);
 }
 
-test.for(RUNTIME_IDENTITY_E2E_SCENARIOS)(
+// OpenShell 0.0.106 does not project provider-refresh credentials into Docker sandboxes.
+test.skipIf(!OPENSHELL_V0106_QUALIFICATION.supportsRuntimeIdentityRefreshProjection).for(
+  RUNTIME_IDENTITY_E2E_SCENARIOS,
+)(
   "TC-INF-%s %sruntime identity refreshes and injects a delegated bearer through real OpenShell",
   RUNTIME_IDENTITY_E2E_OPTIONS,
   async (
