@@ -210,6 +210,10 @@ runDashboardRemoteBindTest(
       `No OpenShell forward found for ${sandboxName} on ${dashboardPort}`,
     ).not.toBe("");
     expect(
+      /\brunning\b/iu.test(forwardLine),
+      `Dashboard forward is not running after connect handoff: ${forwardLine}`,
+    ).toBe(true);
+    expect(
       bindsLoopback(forwardLine, dashboardPort),
       `Dashboard forward is still localhost-only; expected an all-interface bind: ${forwardLine}`,
     ).toBe(false);
@@ -217,6 +221,30 @@ runDashboardRemoteBindTest(
       bindsAllInterfaces(forwardLine, dashboardPort),
       `Could not prove dashboard forward uses 0.0.0.0:${dashboardPort}: ${forwardLine}`,
     ).toBe(true);
+
+    const forwardReachable = await host.command(
+      process.execPath,
+      [
+        "-e",
+        [
+          'const net = require("node:net");',
+          "const socket = net.connect({ host: '127.0.0.1', port: Number(process.argv[1]) });",
+          "const deadline = setTimeout(() => { socket.destroy(); process.exit(1); }, 5000);",
+          "socket.once('connect', () => { clearTimeout(deadline); socket.destroy(); process.exit(0); });",
+          "socket.once('error', () => { clearTimeout(deadline); process.exit(1); });",
+        ].join("\n"),
+        dashboardPort,
+      ],
+      {
+        artifactName: "dashboard-remote-bind-post-handoff-reachability",
+        env: testEnv(),
+        timeoutMs: 10_000,
+      },
+    );
+    expect(
+      forwardReachable.exitCode,
+      `Dashboard forward is unreachable after connect handoff\n${resultText(forwardReachable)}`,
+    ).toBe(0);
 
     progress.phase("audit exposed dashboard controls");
     const audit = await sandbox.execShell(
