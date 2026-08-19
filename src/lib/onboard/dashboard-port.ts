@@ -610,9 +610,9 @@ export async function withDashboardPortReservationScope<T>(
 ): Promise<T> {
   const scope: DashboardPortReservationScope = {
     current: null,
-    async release() {
-      const reservation = this.current;
-      this.current = null;
+    release: async () => {
+      const reservation = scope.current;
+      scope.current = null;
       await reservation?.release();
     },
   };
