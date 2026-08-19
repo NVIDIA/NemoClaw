@@ -6,12 +6,113 @@ import type { ConfigObject } from "../security/credential-filter";
 import type { ShieldsAuditEntry } from "../shields/audit";
 import { type InferenceApi, readOpenClawPrimaryRouteApi } from "./inference-route-api";
 import { InferenceSetError } from "./inference-set-error";
+import {
+  runPortableOpenClawPairingApproval,
+  runPortableOpenClawPairingRequestProducer,
+  type PortableOpenClawPairingApprovalReceipt,
+} from "./sandbox/auto-pair-approval";
 import type { GatewayRestartResult } from "./sandbox/gateway-restart";
+import {
+  observeOpenClawPairingSettlement,
+  type OpenClawPairingSettlementObservation,
+} from "./sandbox/launch-readiness/openclaw-pairing-qualification";
+
+export type InferenceSetOpenClawPairingTarget = {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly openclawVersion: string;
+  readonly stateDirectory: string;
+};
+
+export type InferenceSetOpenClawPairingFailureLayer =
+  | "initial-state-unavailable"
+  | "final-state-unavailable"
+  | "final-state-unsettled"
+  | "pairing-operation-failed"
+  | "pairing-target-unavailable"
+  | `approval-${Exclude<PortableOpenClawPairingApprovalReceipt, "approved">}`;
+
+export type InferenceSetOpenClawPairingResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly failureLayer: InferenceSetOpenClawPairingFailureLayer };
+
+export type InferenceSetOpenClawPairingDeps = {
+  observePairing: (
+    target: InferenceSetOpenClawPairingTarget,
+  ) => OpenClawPairingSettlementObservation;
+  publishScopeRequest: (target: InferenceSetOpenClawPairingTarget) => void;
+  approveScopeRequest: (
+    target: InferenceSetOpenClawPairingTarget,
+    deviceIdentitySha256: string,
+  ) => PortableOpenClawPairingApprovalReceipt;
+};
+
+const defaultOpenClawPairingDeps: InferenceSetOpenClawPairingDeps = {
+  observePairing: (target) =>
+    observeOpenClawPairingSettlement(
+      target.sandboxName,
+      target.gatewayName,
+      target.openclawVersion,
+      target.stateDirectory,
+    ),
+  publishScopeRequest: (target) =>
+    runPortableOpenClawPairingRequestProducer(target.sandboxName, target.gatewayName),
+  approveScopeRequest: (target, deviceIdentitySha256) =>
+    runPortableOpenClawPairingApproval(
+      target.sandboxName,
+      target.gatewayName,
+      deviceIdentitySha256,
+    ),
+};
+
+/**
+ * Reconcile the local OpenClaw CLI device after an inference route change.
+ *
+ * The state observer accepts only the exact operator pairing/read/write projection.
+ * The request producer runs only for a pairing-only device. The approval helper then
+ * binds one allowlisted request to the observed device identity. A final state read,
+ * not command output, decides whether the inference switch can report success.
+ */
+export function settleInferenceSetOpenClawPairing(
+  target: InferenceSetOpenClawPairingTarget,
+  deps: InferenceSetOpenClawPairingDeps = defaultOpenClawPairingDeps,
+): InferenceSetOpenClawPairingResult {
+  let initial: OpenClawPairingSettlementObservation;
+  try {
+    initial = deps.observePairing(target);
+  } catch {
+    return { ok: false, failureLayer: "initial-state-unavailable" };
+  }
+  if (initial.state === "settled") return { ok: true };
+
+  let approval: PortableOpenClawPairingApprovalReceipt;
+  try {
+    deps.publishScopeRequest(target);
+    approval = deps.approveScopeRequest(target, initial.deviceIdentitySha256);
+  } catch {
+    return { ok: false, failureLayer: "pairing-operation-failed" };
+  }
+
+  let final: OpenClawPairingSettlementObservation;
+  try {
+    final = deps.observePairing(target);
+  } catch {
+    return { ok: false, failureLayer: "final-state-unavailable" };
+  }
+  if (final.state === "settled") return { ok: true };
+  return {
+    ok: false,
+    failureLayer: approval === "approved" ? "final-state-unsettled" : `approval-${approval}`,
+  };
+}
 
 export interface InferenceGatewayRestartDeps {
   appendAuditEntry: (entry: ShieldsAuditEntry) => void;
   log: (message: string) => void;
   restartSandboxGateway: (sandboxName: string) => GatewayRestartResult;
+  settleOpenClawPairing: (
+    target: InferenceSetOpenClawPairingTarget,
+  ) => InferenceSetOpenClawPairingResult;
 }
 
 interface InferenceResultForGateway {
@@ -33,17 +134,25 @@ interface InferenceResultForGateway {
 export interface InferenceMutation<T extends InferenceResultForGateway> {
   result: T;
   openClawGatewayRestartRequired: boolean;
+  openClawPairing:
+    | { readonly state: "not-required" }
+    | { readonly state: "required"; readonly target: InferenceSetOpenClawPairingTarget }
+    | { readonly state: "target-unavailable" };
 }
 
-// SOURCE_OF_TRUTH_REVIEW (cross-family OpenClaw restart; gateway regression
-// #4504, OpenClaw 2026.6.10 adopted in #5595): that version hot-reloads model
+// SOURCE_OF_TRUTH_REVIEW (OpenClaw post-switch convergence; gateway regressions
+// #4504 and #9527): OpenClaw 2026.6.10 adopted in #5595 hot-reloads model
 // identity but retains request shaping when the API family changes. NemoClaw
-// therefore restarts only after the route, config, and integrity hash commit,
-// and outside the config transition lock. Unit coverage proves restart,
-// no-restart, redaction, audit-failure, and post-commit recovery behavior;
-// openclaw-inference-switch live coverage proves gateway health and forwarding.
-// Remove this coordination when the minimum supported OpenClaw hot-reloads
-// request shaping across API-family changes, keeping the tests until then.
+// restarts only after the route, config, and integrity hash commit. Every
+// changed OpenClaw route then requires exact local device-scope convergence
+// before the command reports success. Both operations run outside the config
+// transition lock and inside the sandbox lifecycle lock. Unit coverage proves
+// restart, no-restart, scope convergence, redaction, audit-failure, and
+// post-commit recovery behavior. The openclaw-inference-switch live target
+// proves gateway health and forwarding. Remove the restart when the minimum
+// supported OpenClaw hot-reloads request shaping across API-family changes.
+// Remove pairing settlement when OpenClaw no longer requires a separate
+// allowlisted device-scope upgrade after a route change.
 
 export function defaultInferenceGatewayRestart(sandboxName: string): GatewayRestartResult {
   const recovery: typeof import("./sandbox/process-recovery") = require("./sandbox/process-recovery");
@@ -78,18 +187,21 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
     agentName: string;
     configChanged: boolean;
     nextApi: string;
+    openClawPairingTarget?: InferenceSetOpenClawPairingTarget;
     previousApi: InferenceApi | null;
     result: T;
   },
   deps: Pick<InferenceGatewayRestartDeps, "appendAuditEntry" | "log">,
 ): InferenceMutation<T> {
-  const { agentName, configChanged, nextApi, previousApi, result } = options;
+  const { agentName, configChanged, nextApi, openClawPairingTarget, previousApi, result } = options;
   const openClawGatewayRestartRequired =
     agentName === "openclaw" &&
     configChanged &&
     result.inSandboxConfigSynced &&
     previousApi !== null &&
     previousApi !== nextApi;
+  const openClawPairingConvergenceRequired =
+    agentName === "openclaw" && configChanged && result.inSandboxConfigSynced;
 
   const auditEntry: ShieldsAuditEntry = {
     action: "inference_set",
@@ -99,11 +211,13 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
       !result.inSandboxConfigSynced
         ? " (in-sandbox sync incomplete)"
         : openClawGatewayRestartRequired
-          ? " (gateway restart pending)"
-          : ""
+          ? " (gateway restart and pairing convergence pending)"
+          : openClawPairingConvergenceRequired
+            ? " (pairing convergence pending)"
+            : ""
     }`,
   };
-  if (openClawGatewayRestartRequired) {
+  if (openClawGatewayRestartRequired || openClawPairingConvergenceRequired) {
     appendPostCommitInferenceAudit(deps, auditEntry);
   } else {
     deps.appendAuditEntry(auditEntry);
@@ -112,7 +226,12 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
   // A Hermes switch whose Web Dashboard profile did not converge is not fully
   // applied, so withhold the success line (the caller already warned) (#6893).
   const hermesDashboardStale = agentName === "hermes" && result.dashboardConverged === false;
-  if (result.inSandboxConfigSynced && !openClawGatewayRestartRequired && !hermesDashboardStale) {
+  if (
+    result.inSandboxConfigSynced &&
+    !openClawGatewayRestartRequired &&
+    !openClawPairingConvergenceRequired &&
+    !hermesDashboardStale
+  ) {
     deps.log(
       agentName === "hermes"
         ? `  Inference route synced for '${result.sandboxName}': ${result.model}`
@@ -120,43 +239,79 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
     );
   }
 
-  return { result, openClawGatewayRestartRequired };
+  return {
+    result,
+    openClawGatewayRestartRequired,
+    openClawPairing: !openClawPairingConvergenceRequired
+      ? { state: "not-required" }
+      : openClawPairingTarget
+        ? { state: "required", target: openClawPairingTarget }
+        : { state: "target-unavailable" },
+  };
 }
 
-export function completeInferenceGatewayRestart<T extends InferenceResultForGateway>(
+export function completeInferencePostCommit<T extends InferenceResultForGateway>(
   mutation: InferenceMutation<T>,
   deps: InferenceGatewayRestartDeps,
 ): void {
-  if (!mutation.openClawGatewayRestartRequired) return;
-
   const { result } = mutation;
-  deps.log(
-    `  Restarting the OpenClaw gateway in '${result.sandboxName}' to apply the new inference API family...`,
-  );
-  let restartFailure: string | null = null;
-  try {
-    const restart = deps.restartSandboxGateway(result.sandboxName);
-    if (!restart.ok) restartFailure = restart.failureLayer;
-  } catch {
-    restartFailure = "restart exception";
+  if (mutation.openClawGatewayRestartRequired) {
+    deps.log(
+      `  Restarting the OpenClaw gateway in '${result.sandboxName}' to apply the new inference API family...`,
+    );
+    let restartFailure: string | null = null;
+    try {
+      const restart = deps.restartSandboxGateway(result.sandboxName);
+      if (!restart.ok) restartFailure = restart.failureLayer;
+    } catch {
+      restartFailure = "restart exception";
+    }
+    if (restartFailure) {
+      appendPostCommitInferenceAudit(deps, {
+        action: "inference_set",
+        sandbox: result.sandboxName,
+        timestamp: new Date().toISOString(),
+        reason: `inference set openclaw:${result.provider}:${result.model} (config committed; gateway restart failed: ${restartFailure})`,
+      });
+      throw new InferenceSetError(
+        `Inference route and config were updated for '${result.sandboxName}', but the managed OpenClaw gateway restart/recovery did not complete successfully. ` +
+          `The committed route was not rolled back. Retry with '${CLI_NAME} ${result.sandboxName} gateway restart'.`,
+      );
+    }
   }
-  if (restartFailure) {
+  const pairingMutation = mutation.openClawPairing;
+  if (pairingMutation.state === "not-required") return;
+  let pairing: InferenceSetOpenClawPairingResult;
+  if (pairingMutation.state === "target-unavailable") {
+    pairing = { ok: false, failureLayer: "pairing-target-unavailable" };
+  } else {
+    try {
+      pairing = deps.settleOpenClawPairing(pairingMutation.target);
+    } catch {
+      pairing = { ok: false, failureLayer: "pairing-operation-failed" };
+    }
+  }
+  if (!pairing.ok) {
     appendPostCommitInferenceAudit(deps, {
       action: "inference_set",
       sandbox: result.sandboxName,
       timestamp: new Date().toISOString(),
-      reason: `inference set openclaw:${result.provider}:${result.model} (config committed; gateway restart failed: ${restartFailure})`,
+      reason: `inference set openclaw:${result.provider}:${result.model} (config committed; ${
+        mutation.openClawGatewayRestartRequired ? "gateway restart completed; " : ""
+      }pairing convergence failed: ${pairing.failureLayer})`,
     });
     throw new InferenceSetError(
-      `Inference route and config were updated for '${result.sandboxName}', but the managed OpenClaw gateway restart/recovery did not complete successfully. ` +
-        `The committed route was not rolled back. Retry with '${CLI_NAME} ${result.sandboxName} gateway restart'.`,
+      `Inference route and config were updated for '${result.sandboxName}', but OpenClaw gateway pairing did not converge (${pairing.failureLayer}). ` +
+        `The committed route was not rolled back. Run '${CLI_NAME} ${result.sandboxName} doctor --fix', then retry the agent turn.`,
     );
   }
   appendPostCommitInferenceAudit(deps, {
     action: "inference_set",
     sandbox: result.sandboxName,
     timestamp: new Date().toISOString(),
-    reason: `inference set openclaw:${result.provider}:${result.model} (gateway restart completed)`,
+    reason: `inference set openclaw:${result.provider}:${result.model} (${
+      mutation.openClawGatewayRestartRequired ? "gateway restart and " : ""
+    }pairing convergence completed)`,
   });
   deps.log(`  Inference route synced for '${result.sandboxName}': ${result.primaryModelRef}`);
 }
