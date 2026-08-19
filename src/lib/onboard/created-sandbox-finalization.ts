@@ -359,6 +359,9 @@ export function createCreatedSandboxCompletionActions(
             ...options.registration,
             runtimeFields: {
               ...options.registration.runtimeFields,
+              ...(options.gpu.config.sandboxGpuProof
+                ? { sandboxGpuProof: options.gpu.config.sandboxGpuProof }
+                : {}),
               openshellVersion:
                 configuredReceipt?.openshellExecutableAuthority.version ??
                 options.registration.runtimeFields.openshellVersion,

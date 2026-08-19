@@ -1023,6 +1023,7 @@ describe("created sandbox completion actions", () => {
           imageTag: "hermes:test",
           appliedPolicies: ["personal-open-internet"],
           dashboardPort: manageDashboard ? 8644 : 0,
+          runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
         }),
