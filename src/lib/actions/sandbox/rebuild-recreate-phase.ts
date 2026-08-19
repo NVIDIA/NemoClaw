@@ -14,6 +14,7 @@ import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migr
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
+import { cloneSandboxHostMounts } from "../../state/registry/host-mount";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
@@ -166,9 +167,17 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         routerPid: resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
         routerCredentialHash:
           resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerCredentialHash : null,
+        // The inner resume compares its requested host mounts against this
+        // recorded metadata, so the reset must carry the same mounts the
+        // recreate options hand to onboard. Omitting them recorded an empty
+        // mount set and aborted the resume after the old sandbox was already
+        // deleted (#9451).
         metadata: {
           gatewayName: recreateOptions.targetGatewayName,
           fromDockerfile: storedFromDockerfile,
+          ...(recreateOptions.hostMounts && recreateOptions.hostMounts.length > 0
+            ? { hostMounts: cloneSandboxHostMounts(recreateOptions.hostMounts) }
+            : {}),
         },
       }),
     );

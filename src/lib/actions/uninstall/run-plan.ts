@@ -757,6 +757,28 @@ function runOptional(
   return false;
 }
 
+// Homebrew owns its formula and executable links. NemoClaw can report the
+// removal command, but it must not infer that it installed the formula. (#8882)
+const OPENSHELL_HOMEBREW_FORMULA = "nvidia/openshell/openshell";
+
+function reportRetainedMacOsOpenShell(runtime: UninstallRuntime): void {
+  if (!runtime.commandExists("brew")) {
+    runtime.log(
+      `Kept OpenShell executables because Homebrew is unavailable. If Homebrew manages OpenShell, make brew available through PATH, then run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`,
+    );
+    return;
+  }
+  const installed = runtime.run("brew", ["list", "--formula", OPENSHELL_HOMEBREW_FORMULA], {
+    env: runtime.env,
+    stdio: "ignore",
+  });
+  runtime.log(
+    installed.status === 0
+      ? `Kept Homebrew-managed OpenShell. To remove it, run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`
+      : `Kept OpenShell executables because Homebrew did not confirm ${OPENSHELL_HOMEBREW_FORMULA}. Check the formula before removing OpenShell.`,
+  );
+}
+
 function deleteSelectedGatewaySandbox(
   runtime: UninstallRuntime,
   gatewayName: string,
@@ -810,12 +832,12 @@ function deletePortableOpenShellSandbox(
   const result = runtime.run("openshell", ["sandbox", "delete", "-g", gatewayName, sandboxName], {
     env: runtime.env,
   });
-  if (result.status !== 0 && !isExplicitPortableSandboxAbsence(result, sandboxName)) {
+  const deleteReportedAbsence = isExplicitPortableSandboxAbsence(result, sandboxName);
+  if (result.status !== 0 && !deleteReportedAbsence) {
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
-    return false;
   }
   if (result.status === 0) runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
-  else {
+  else if (deleteReportedAbsence) {
     runtime.warn(sandboxDeleteAbsentMessage(sandboxName));
   }
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -2791,6 +2813,17 @@ function executePlan(
         return { ok: false };
       }
     } else if (step.name === "NemoClaw CLI") {
+      const completion = completePortablePlan(
+        ok,
+        portableRuntimeCleanup,
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        sandboxNames,
+        teardownAuthority,
+      );
+      if (!completion.ok) return completion;
       runNemoclawCliUninstallStep(
         paths,
         options,
@@ -2830,6 +2863,8 @@ function executePlan(
           runtime.log(binaryKeepMessage);
         } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
           runtime.log("Keeping OpenShell binaries used by the default gateway service.");
+        } else if (runtime.platform === "darwin") {
+          reportRetainedMacOsOpenShell(runtime);
         } else {
           for (const target of paths.openshellInstallPaths)
             removeFileWithOptionalSudo(target, runtime);
@@ -2915,16 +2950,7 @@ function executePlan(
       }
     }
   }
-  return completePortablePlan(
-    ok,
-    portableRuntimeCleanup,
-    paths,
-    options,
-    runtime,
-    scopedToSelectedGateway,
-    sandboxNames,
-    teardownAuthority,
-  );
+  return { ok };
 }
 
 function completePortablePlan(
@@ -2937,7 +2963,8 @@ function completePortablePlan(
   sandboxNames: readonly string[],
   authority: GatewayOwner,
 ): { ok: boolean } {
-  if (!ok || !portable) return { ok };
+  if (!portable) return { ok: true };
+  if (!ok) return { ok };
   if (
     !executeOpenShellResourceCleanup(paths, options, runtime, scoped, sandboxNames, authority, true)
   )

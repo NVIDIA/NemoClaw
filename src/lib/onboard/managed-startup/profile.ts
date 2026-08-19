@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
@@ -59,6 +60,11 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
   /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
+const MESSAGING_CREDENTIAL_ENV_ALIASES = new Set(
+  listMessagingCredentialEnvAssignments()
+    .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+    .map(({ agent, sourceEnvKey, targetEnvKey }) => `${agent}\0${sourceEnvKey}\0${targetEnvKey}`),
+);
 const JSON_ARRAY_INDEX_SEGMENT_RE = /^\[(?:0|[1-9][0-9]*)\]$/u;
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /nvapi-[A-Za-z0-9_-]{10,}/u,
@@ -1028,6 +1034,7 @@ function containsMessagingCredentialPlaceholder(value: string): boolean {
 }
 
 function isMessagingCredentialPlaceholderAssignment(
+  selectedAgent: unknown,
   path: readonly string[],
   value: string,
 ): boolean {
@@ -1045,8 +1052,65 @@ function isMessagingCredentialPlaceholderAssignment(
   const separator = value.indexOf("=");
   if (separator <= 0 || value.indexOf("=", separator + 1) !== -1) return false;
   const envKey = value.slice(0, separator);
-  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(value.slice(separator + 1));
-  return CREDENTIAL_ENV_NAME_PATTERN.test(envKey) && envKey === placeholderEnvKey;
+  const placeholder = value.slice(separator + 1);
+  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(placeholder);
+  return (
+    CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&
+    placeholderEnvKey !== null &&
+    (envKey === placeholderEnvKey ||
+      (typeof selectedAgent === "string" &&
+        MESSAGING_CREDENTIAL_ENV_ALIASES.has(
+          `${selectedAgent}\0${placeholderEnvKey}\0${envKey}`,
+        )))
+  );
+}
+
+function isMessagingRuntimeEnvAliasPath(path: readonly string[]): boolean {
+  return (
+    path.length === 5 &&
+    path[0] === "messaging" &&
+    path[1] === "plan" &&
+    path[2] === "runtimeSetup" &&
+    path[3] === "envAliases" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[4] ?? "")
+  );
+}
+
+function ownDataPropertyValue(value: Record<string, unknown>, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function isCanonicalMessagingRuntimeEnvAlias(
+  path: readonly string[],
+  value: Record<string, unknown>,
+): boolean {
+  if (!isMessagingRuntimeEnvAliasPath(path)) return false;
+  const envKey = ownDataPropertyValue(value, "envKey");
+  const match = ownDataPropertyValue(value, "match");
+  const placeholder = ownDataPropertyValue(value, "value");
+  return (
+    typeof envKey === "string" &&
+    CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&
+    match === `^openshell:resolve:env:(v[0-9]+_)?${envKey}$` &&
+    typeof placeholder === "string" &&
+    messagingCredentialPlaceholderEnvKey(placeholder) === envKey
+  );
+}
+
+function isAllowedMessagingRuntimeAliasStringPath(
+  path: readonly string[],
+  allowedAliasIndexes: ReadonlySet<string>,
+): boolean {
+  return (
+    path.length === 6 &&
+    path[0] === "messaging" &&
+    path[1] === "plan" &&
+    path[2] === "runtimeSetup" &&
+    path[3] === "envAliases" &&
+    allowedAliasIndexes.has(path[4] ?? "") &&
+    (path[5] === "match" || path[5] === "value")
+  );
 }
 
 function isMessagingPackagePin(path: readonly string[], value: unknown): boolean {
@@ -1399,6 +1463,8 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
     depth: number;
     path: readonly string[];
   }> = [{ value: root, depth: 0, path: [] }];
+  const allowedRuntimeAliasIndexes = new Set<string>();
+  const selectedAgent = isPlainObject(root) ? ownDataPropertyValue(root, "agent") : undefined;
   let discoveredNodes = 1;
   let observedBytes = 0;
 
@@ -1426,8 +1492,13 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
     if (typeof current.value === "string") {
       observeText(current.value);
       if (
+        !isAllowedMessagingRuntimeAliasStringPath(current.path, allowedRuntimeAliasIndexes) &&
         !isMessagingCredentialPlaceholder(current.path, current.value) &&
-        !isMessagingCredentialPlaceholderAssignment(current.path, current.value) &&
+        !isMessagingCredentialPlaceholderAssignment(
+          selectedAgent,
+          current.path,
+          current.value,
+        ) &&
         (valueLooksLikeSecret(current.value) ||
           containsMessagingCredentialPlaceholder(current.value))
       ) {
@@ -1484,6 +1555,9 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       if (!isPlainObject(current.value)) invalid("payload must contain only plain JSON objects");
       if ("toJSON" in current.value) {
         invalid("payload must not define a custom JSON serializer");
+      }
+      if (isCanonicalMessagingRuntimeEnvAlias(current.path, current.value)) {
+        allowedRuntimeAliasIndexes.add(current.path[4] as string);
       }
       const keys = Object.getOwnPropertyNames(current.value);
       if (
@@ -1986,7 +2060,6 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
   ) {
     invalid("messaging.plan must be a version 1 plan for the selected agent");
   }
-
   const corporateCa = requireRecord(profile.corporateCa, "corporateCa");
   rejectUnknownKeys(corporateCa, CORPORATE_CA_KEYS, "corporateCa");
   const bundleSha256 = corporateCa.bundleSha256;

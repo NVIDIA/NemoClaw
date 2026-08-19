@@ -4,6 +4,7 @@
 import { createRequire } from "node:module";
 
 import { expect, type MockInstance, vi } from "vitest";
+import type { ManagedHermesStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
 import type { Session } from "../../src/lib/state/onboard-session";
 import type { SandboxWorkloadReceipt } from "../../src/lib/state/registry";
 
@@ -32,6 +33,7 @@ export type DestroyHarness = {
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
   promptSpy: MockInstance;
+  removeManagedHermesStateVolumeSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
   revokeHttpsPinRuntimeAdapterRouteSpy: MockInstance;
@@ -73,6 +75,7 @@ type DestroyHarnessOptions = {
   finalizeMcpError?: string;
   imageTag?: string | null;
   liveListOutput?: string;
+  managedHermesStateVolumeCleanupResult?: ManagedHermesStateVolumeCleanupResult;
   mcpAddState?: "prepared";
   mcpServers?: string[];
   openshellDriver?: string;
@@ -399,6 +402,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );
+  const removeManagedHermesStateVolumeSpy = vi
+    .spyOn(sandboxProviderCleanup, "removeManagedHermesStateVolume")
+    .mockReturnValue(options.managedHermesStateVolumeCleanupResult ?? { status: "not-applicable" });
   const stopNimByNameSpy = vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => {
     if (options.stopInferenceError !== undefined) {
       throw new Error(options.stopInferenceError);
@@ -505,6 +511,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
     promptSpy,
+    removeManagedHermesStateVolumeSpy,
     removeSandboxSpy,
     retirePortableLifecycleReceiptSpy,
     revokeHttpsPinRuntimeAdapterRouteSpy,

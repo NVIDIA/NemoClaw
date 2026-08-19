@@ -6,9 +6,8 @@ import fs from "node:fs";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/label-codec.ts";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
 import {
-  DCODE_BASE_IMAGE_ONBOARD_PLATFORM,
+  DCODE_BASE_IMAGE_TARGET_PLATFORM,
   type DcodeBaseImageContract,
-  type DcodePlatform,
   parseDcodeBaseImageContract,
 } from "../../../tools/e2e/dcode-base-image-contract.mts";
 import { requireDcodeBaseImageReference } from "../fixtures/dcode-base-image.ts";
@@ -23,7 +22,7 @@ export interface DcodeBaseImageRuntimeEvidence {
   digest: string;
   image: string;
   imageId: string;
-  platform: DcodePlatform;
+  platform: typeof DCODE_BASE_IMAGE_TARGET_PLATFORM;
   reference: string;
   sandboxImage: string;
   source: "override";
@@ -79,13 +78,17 @@ export function parseDcodeBaseImagePublicationEvidence(
   const contract = parseDcodeBaseImageContract(evidence.base);
   if (
     requireDcodeBaseImageReference(environment) !==
-    contract.platformReferences[DCODE_BASE_IMAGE_ONBOARD_PLATFORM]
+    contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM]
   ) {
     throw new Error(
-      `Deep Agents Code onboarding reference does not match the published ${DCODE_BASE_IMAGE_ONBOARD_PLATFORM} base contract`,
+      `Deep Agents Code onboarding reference does not match the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base contract`,
     );
   }
   return contract;
+}
+
+export function dcodeBaseImageReferenceForContract(contract: DcodeBaseImageContract): string {
+  return contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
 }
 
 export function loadDcodeBaseImagePublicationEvidence(
@@ -94,8 +97,8 @@ export function loadDcodeBaseImagePublicationEvidence(
   environment: NodeJS.ProcessEnv = process.env,
 ): DcodeBaseImageContract | undefined {
   if (targetId !== DCODE_BASE_IMAGE_TARGET_ID) return undefined;
-  requireDcodeBaseImageReference(environment);
   if (!fs.existsSync(evidencePath)) {
+    requireDcodeBaseImageReference(environment);
     if (environment.GITHUB_ACTIONS === "true") {
       throw new Error("Deep Agents Code GitHub Actions run is missing published base evidence");
     }
@@ -105,14 +108,6 @@ export function loadDcodeBaseImagePublicationEvidence(
     JSON.parse(fs.readFileSync(evidencePath, "utf8")) as unknown,
     environment,
   );
-}
-
-function platformFor(metadata: SandboxBaseImageResolutionMetadata): DcodePlatform {
-  const platform = `${metadata.os}/${metadata.architecture}`;
-  if (platform !== "linux/amd64" && platform !== "linux/arm64") {
-    throw new Error(`Deep Agents Code base resolution used unsupported platform '${platform}'`);
-  }
-  return platform;
 }
 
 export function verifyDcodeBaseImageRuntimeEvidence(
@@ -126,31 +121,36 @@ export function verifyDcodeBaseImageRuntimeEvidence(
   if (!metadata) {
     throw new Error("Deep Agents Code sandbox image is missing base resolution metadata");
   }
-  const platform = platformFor(metadata);
-  const expectedDigest = contract.platformDigests[platform];
-  const expectedReference = contract.platformReferences[platform];
-  if (
-    metadata.schema !== 1 ||
-    metadata.imageName !== contract.image ||
-    metadata.source !== "override" ||
-    metadata.pinnedRemoteRef !== undefined ||
-    metadata.digest !== expectedDigest ||
-    metadata.ref !== expectedReference ||
-    metadata.ref !== `${metadata.imageName}@${metadata.digest}`
-  ) {
+  if (`${metadata.os}/${metadata.architecture}` !== DCODE_BASE_IMAGE_TARGET_PLATFORM) {
     throw new Error(
-      `Deep Agents Code sandbox image did not use the published ${platform} base digest`,
+      `Deep Agents Code sandbox image did not use the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base digest`,
+    );
+  }
+  const expectedDigest = contract.platformDigests[DCODE_BASE_IMAGE_TARGET_PLATFORM];
+  const expectedReference = dcodeBaseImageReferenceForContract(contract);
+  const mismatchedFields = [
+    metadata.schema !== 1 ? "schema" : null,
+    metadata.imageName !== contract.image ? "image" : null,
+    metadata.source !== "override" ? "source" : null,
+    metadata.pinnedRemoteRef !== undefined ? "pinned reference" : null,
+    metadata.digest !== expectedDigest ? "digest" : null,
+    metadata.ref !== expectedReference ? "reference" : null,
+    metadata.ref !== `${metadata.imageName}@${metadata.digest}` ? "reference binding" : null,
+  ].filter((field): field is string => field !== null);
+  if (mismatchedFields.length > 0) {
+    throw new Error(
+      `Deep Agents Code sandbox image does not match the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base-image contract (mismatched fields: ${mismatchedFields.join(", ")})`,
     );
   }
   return {
     contractReference: contract.reference,
-    digest: metadata.digest,
-    image: metadata.imageName,
+    digest: expectedDigest,
+    image: contract.image,
     imageId: metadata.imageId,
-    platform,
-    reference: metadata.ref,
+    platform: DCODE_BASE_IMAGE_TARGET_PLATFORM,
+    reference: expectedReference,
     sandboxImage,
-    source: metadata.source,
+    source: "override",
     sourceRevision: contract.sourceRevision,
   };
 }

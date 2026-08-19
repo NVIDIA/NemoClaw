@@ -488,6 +488,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
     journalStore: store,
     dockerCapture,
     dockerRun,
+    dockerLogs: vi.fn(() => ""),
     dockerStop: vi.fn((id) => {
       events.push(`stop:${id}`);
       const target = id === OLD_ID ? original : replacement;

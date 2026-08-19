@@ -84,6 +84,32 @@ describe("managed startup shared-state transaction", () => {
     );
   }
 
+  function simulateMountedStateRoot(root: string, ...nestedMounts: readonly string[]): void {
+    const originalLstatSync = fs.lstatSync.bind(fs);
+    const mountRoots = [root, ...nestedMounts].map((target) => path.resolve(target));
+    vi.spyOn(fs, "lstatSync").mockImplementation(((
+      target: fs.PathLike,
+      statOptions?: { readonly bigint?: boolean },
+    ) => {
+      const stat =
+        statOptions?.bigint === true
+          ? originalLstatSync(target, { bigint: true })
+          : originalLstatSync(target);
+      const resolved = path.resolve(String(target));
+      const deviceOffset = mountRoots.filter(
+        (mountRoot) => resolved === mountRoot || resolved.startsWith(`${mountRoot}${path.sep}`),
+      ).length;
+      Object.defineProperty(stat, "dev", {
+        configurable: true,
+        value:
+          typeof stat.dev === "bigint"
+            ? stat.dev + BigInt(deviceOffset)
+            : stat.dev + deviceOffset,
+      });
+      return stat;
+    }) as typeof fs.lstatSync);
+  }
+
   function rewriteManifest(
     rewrite: (manifest: Record<string, unknown>) => Record<string, unknown> = (manifest) =>
       manifest,
@@ -161,6 +187,100 @@ describe("managed startup shared-state transaction", () => {
       expect(fs.existsSync(transactionDirectory)).toBe(false);
     },
   );
+
+  it("preserves transaction rollback when the exact Hermes root is a named-volume mount", () => {
+    const root = agentRoot("hermes");
+    fs.mkdirSync(root, { mode: 0o770 });
+    const config = path.join(root, "config.yaml");
+    const env = path.join(root, ".env");
+    fs.writeFileSync(config, "before: true\n");
+    fs.writeFileSync(env, "TOKEN=before\n");
+    simulateMountedStateRoot(root);
+
+    expect(
+      beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("hermes"), options),
+    ).toBe(true);
+    fs.writeFileSync(config, "after: true\n");
+    fs.writeFileSync(env, "TOKEN=after\n");
+
+    expect(rollbackManagedStartupSharedStateTransaction("hermes", options)).toBe(true);
+    expect(fs.readFileSync(config, "utf8")).toBe("before: true\n");
+    expect(fs.readFileSync(env, "utf8")).toBe("TOKEN=before\n");
+  });
+
+  it("rejects a nested mount below the exact Hermes named-volume root", () => {
+    const root = agentRoot("hermes");
+    const nestedOutputDirectory = path.join(root, "channels");
+    fs.mkdirSync(nestedOutputDirectory, { recursive: true });
+    const plan: SandboxMessagingPlan = {
+      schemaVersion: 1,
+      sandboxName: "managed",
+      agent: "hermes",
+      workflow: "onboard",
+      channels: [
+        {
+          channelId: "wechat",
+          displayName: "WeChat",
+          authMode: "host-qr",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [
+        {
+          channelId: "wechat",
+          agent: "hermes",
+          target: "~/.hermes/channels/wechat.json",
+          kind: "json-fragment",
+          path: "channels.wechat",
+          value: { enabled: true },
+          templateRefs: [],
+        },
+      ],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+    const profile = {
+      ...managedStartupE2eProfile("hermes"),
+      messaging: { plan: plan as unknown as ManagedStartupProfile["messaging"]["plan"] },
+    };
+
+    simulateMountedStateRoot(root, nestedOutputDirectory);
+    expect(() => beginManagedStartupSharedStateTransaction(profile, options)).toThrow(
+      /crosses a nested filesystem mount/u,
+    );
+    expect(fs.existsSync(transactionDirectory)).toBe(false);
+
+    vi.restoreAllMocks();
+    simulateMountedStateRoot(root);
+    expect(beginManagedStartupSharedStateTransaction(profile, options)).toBe(true);
+
+    vi.restoreAllMocks();
+    simulateMountedStateRoot(root, nestedOutputDirectory);
+    expect(() => rollbackManagedStartupSharedStateTransaction("hermes", options)).toThrow(
+      /crosses a nested filesystem mount/u,
+    );
+  });
+
+  it("retains the no-mounted-state-root boundary for other agents", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "{}\n");
+    simulateMountedStateRoot(root);
+
+    expect(() =>
+      beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options),
+    ).toThrow(/crosses a nested filesystem mount/u);
+    expect(fs.existsSync(transactionDirectory)).toBe(false);
+  });
 
   it("tracks only active post-install messaging outputs and leaves disabled targets alone", () => {
     const root = agentRoot("openclaw");

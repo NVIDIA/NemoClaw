@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 
 import { OPENROUTER_RUNTIME_ADAPTER_PORT } from "../core/ports";
-import { compactText } from "../core/url-utils";
+import { compactText, isLoopbackRemoteAddress } from "../core/url-utils";
 import {
   OPENROUTER_DEFAULT_HEADERS,
   OPENROUTER_ENDPOINT_URL,
@@ -74,6 +74,14 @@ export function createOpenRouterRuntimeAdapterServer(
     const url = new URL(req.url || "/", "http://127.0.0.1");
     try {
       if (req.method === "GET" && url.pathname === "/health") {
+        // Only the host probe needs this route; the 0.0.0.0 bind exists so the
+        // sandbox can reach the completions route, not to publish adapter config.
+        if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
+          sendJson(res, 404, {
+            error: { message: "Not found", type: "not_found", code: "not_found" },
+          });
+          return;
+        }
         sendJson(res, 200, {
           ok: true,
           adapter: ADAPTER_NAME,

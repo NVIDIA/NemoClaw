@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const AGENT = "langchain-deepagents-code";
 const IMAGE = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base";
 const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
-export const DCODE_BASE_IMAGE_ONBOARD_PLATFORM = "linux/amd64" as const;
+export const DCODE_BASE_IMAGE_TARGET_PLATFORM = "linux/amd64" as const;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const IMPORT_MARKER = "nemoclaw-dcode-base-imports-ok";
@@ -142,7 +142,7 @@ export function validateDcodeBaseImageImports(
     "run",
     "--rm",
     "--platform",
-    "linux/amd64",
+    DCODE_BASE_IMAGE_TARGET_PLATFORM,
     "--network",
     "none",
     "--cap-drop",
@@ -188,7 +188,7 @@ export function main(
       headSha: env.PUBLICATION_HEAD_SHA ?? "",
     },
   );
-  const baseReference = contract.platformReferences[DCODE_BASE_IMAGE_ONBOARD_PLATFORM];
+  const baseReference = contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
   validateDcodeBaseImageImports(baseReference, runDocker);
   appendFileSync(
     outputPath,
