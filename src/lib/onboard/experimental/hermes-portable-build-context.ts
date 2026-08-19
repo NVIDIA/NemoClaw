@@ -480,11 +480,14 @@ function captureDirectoryChain(directory: string): readonly DirectoryEvidence[] 
   let current = directory;
   for (;;) {
     const named = fs.lstatSync(current, { bigint: true });
+    const writableByAnotherIdentity = (named.mode & 0o22n) !== 0n;
+    const stickyOwnerBoundary =
+      (named.uid === 0n || named.uid === uid) && (named.mode & 0o1000n) !== 0n;
     if (
       !named.isDirectory() ||
       named.isSymbolicLink() ||
       (named.uid !== 0n && named.uid !== uid) ||
-      (named.mode & 0o22n) !== 0n ||
+      (writableByAnotherIdentity && !stickyOwnerBoundary) ||
       fs.realpathSync(current) !== current
     ) {
       fail("source root directory chain is unsafe");

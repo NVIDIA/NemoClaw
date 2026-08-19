@@ -24,22 +24,6 @@ const BUILD_SETTINGS = {
 
 let stateDir: string;
 
-function emulatePrivateSourceAncestor(): void {
-  const original = fs.lstatSync;
-  const sharedTemporaryRoots = new Set([path.resolve("/tmp"), fs.realpathSync("/tmp")]);
-  vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
-    const stat = original(target, options as never);
-    return sharedTemporaryRoots.has(path.resolve(String(target)))
-      ? new Proxy(stat, {
-          get(value, property) {
-            const mode = BigInt(Reflect.get(value, "mode", value));
-            return property === "mode" ? mode & ~0o22n : Reflect.get(value, property, value);
-          },
-        })
-      : stat;
-  }) as typeof fs.lstatSync);
-}
-
 function contextInput() {
   return {
     sandboxName: "alpha",
@@ -77,8 +61,8 @@ function copyFixtureFile(
   );
 }
 
-function primaryCloneFixture(privateFileModes = false): string {
-  const requested = fs.mkdtempSync(path.join(stateDir, "primary-clone-"));
+function primaryCloneFixture(privateFileModes = false, parent = stateDir): string {
+  const requested = fs.mkdtempSync(path.join(parent, "primary-clone-"));
   const root = fs.realpathSync(requested);
   fs.chmodSync(root, 0o700);
   for (const entry of HERMES_PORTABLE_BUILD_CONTEXT_FILES) {
@@ -100,7 +84,6 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
   beforeEach(() => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-context-test-"));
     fs.chmodSync(stateDir, 0o700);
-    emulatePrivateSourceAncestor();
   });
 
   afterEach(() => {
@@ -282,6 +265,24 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
 
     expect(plan.authority.sourceRevision).toBe("b".repeat(40));
     expect(plan.authority.contextManifestSha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("rejects a private checkout below a writable non-sticky ancestor (#9203)", () => {
+    const writableParent = fs.mkdtempSync(path.join(stateDir, "writable-parent-"));
+    const source = primaryCloneFixture(false, writableParent);
+    fs.chmodSync(writableParent, 0o777);
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).toThrow(
+      "source root directory chain is unsafe",
+    );
+  });
+
+  it("accepts a private checkout below an owner-controlled sticky ancestor", () => {
+    const stickyParent = fs.mkdtempSync(path.join(stateDir, "sticky-parent-"));
+    const source = primaryCloneFixture(false, stickyParent);
+    fs.chmodSync(stickyParent, 0o1777);
+
+    expect(() => createHermesPortableBuildContextPlan(source, BUILD_SETTINGS)).not.toThrow();
   });
 
   it.each([
