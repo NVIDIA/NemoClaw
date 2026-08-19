@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { sleepMs } from "../../core/wait";
 import type { UninstallPaths } from "../../domain/uninstall/paths";
+import { BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER } from "../../inference/bedrock-runtime";
 
 interface RunResult {
   status: number | null;
@@ -26,7 +27,7 @@ interface RuntimeAdapterCleanupRuntime {
 }
 
 type RuntimeAdapterDescriptor = {
-  cmdlineMark: string;
+  cmdlineMatcher: string | RegExp;
   defaultPort: number;
   envPort: string;
   label: string;
@@ -34,7 +35,7 @@ type RuntimeAdapterDescriptor = {
 };
 
 const BEDROCK_RUNTIME_ADAPTER: RuntimeAdapterDescriptor = {
-  cmdlineMark: "bedrock-runtime-adapter",
+  cmdlineMatcher: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
   defaultPort: 11436,
   envPort: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
   label: "Bedrock Runtime adapter",
@@ -42,7 +43,7 @@ const BEDROCK_RUNTIME_ADAPTER: RuntimeAdapterDescriptor = {
 };
 
 const OPENROUTER_RUNTIME_ADAPTER: RuntimeAdapterDescriptor = {
-  cmdlineMark: "openrouter-runtime-adapter",
+  cmdlineMatcher: "openrouter-runtime-adapter",
   defaultPort: 11437,
   envPort: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
   label: "OpenRouter Runtime adapter",
@@ -50,7 +51,7 @@ const OPENROUTER_RUNTIME_ADAPTER: RuntimeAdapterDescriptor = {
 };
 
 const HTTPS_PIN_RUNTIME_ADAPTER: RuntimeAdapterDescriptor = {
-  cmdlineMark: "https-pin-runtime-adapter",
+  cmdlineMatcher: "https-pin-runtime-adapter",
   defaultPort: 11438,
   envPort: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
   label: "HTTPS Pin Runtime adapter",
@@ -84,7 +85,10 @@ function isRuntimeAdapterPid(
 ): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
-  return result.status === 0 && result.stdout.includes(descriptor.cmdlineMark);
+  if (result.status !== 0) return false;
+  return typeof descriptor.cmdlineMatcher === "string"
+    ? result.stdout.includes(descriptor.cmdlineMatcher)
+    : descriptor.cmdlineMatcher.test(result.stdout);
 }
 
 function pidExists(pid: number, runtime: RuntimeAdapterCleanupRuntime): boolean {

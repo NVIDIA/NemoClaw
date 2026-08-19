@@ -16,6 +16,7 @@ import {
   BEDROCK_RUNTIME_ADAPTER_LOOPBACK_HOST,
   BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
   BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+  BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
   BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
   BEDROCK_RUNTIME_AWS_BEARER_TOKEN_ENV,
   BEDROCK_RUNTIME_COMPATIBLE_CREDENTIAL_ENV,
@@ -290,21 +291,14 @@ function loadPersistedPid(): number | null {
   return loadLocalAdapterPid(PID_PATH);
 }
 
-const ADAPTER_LAUNCHER_BASENAMES = ["bedrock-runtime-adapter.mts", "bedrock-runtime-adapter.js"];
-const ADAPTER_PROCESS_NEEDLE = new RegExp(
-  `(?:^|[^A-Za-z0-9_.-])(?:${ADAPTER_LAUNCHER_BASENAMES.map((name) =>
-    name.replaceAll(".", "\\."),
-  ).join("|")})(?:$|[^A-Za-z0-9_.-])`,
-);
-
 function isAdapterProcess(pid: number | null | undefined): boolean {
-  return isLocalAdapterProcess(pid, ADAPTER_PROCESS_NEEDLE, runCapture);
+  return isLocalAdapterProcess(pid, BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER, runCapture);
 }
 
 function killStaleAdapter(): void {
   killLocalAdapterPid({
     pidPath: PID_PATH,
-    processMatcher: ADAPTER_PROCESS_NEEDLE,
+    processMatcher: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
     run,
     runCapture,
   });
@@ -459,6 +453,6 @@ export function getCompatibleAnthropicCredentialForBedrock(): string | null {
 
 export const __test = {
   adapterCredentialHash,
-  adapterProcessNeedle: ADAPTER_PROCESS_NEEDLE,
+  adapterProcessNeedle: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
   getAdapterScriptPath,
 };

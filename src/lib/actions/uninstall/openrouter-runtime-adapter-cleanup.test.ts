@@ -270,4 +270,55 @@ describe("runtime adapter uninstall cleanup", () => {
       expect(logs).toContain(`No ${label} processes found`);
     },
   );
+
+  it("does not signal a Bedrock marker lookalike from persisted state or port discovery (#9552)", () => {
+    const foreignPid = 99995;
+    const killed: number[] = [];
+    const lsofPorts: string[] = [];
+    let commandLineProbeCount = 0;
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bedrock-marker-"));
+    const pidFile = path.join(tmpHome, ".nemoclaw", "bedrock-runtime-adapter.pid");
+    fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+    fs.writeFileSync(pidFile, `${String(foreignPid)}\n`);
+    const stub = psStub(String(foreignPid), {
+      exited: new Set(),
+      cmdline: "/usr/bin/node /tmp/not-bedrock-runtime-adapter.js\n",
+    });
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          kill: (pid) => {
+            killed.push(pid);
+            return true;
+          },
+          log: vi.fn(),
+          rmSync: fs.rmSync,
+          run: runStub({
+            lsof: lsofPortStub(lsofPorts, new Map([[":11436", ok(`${String(foreignPid)}\n`)]])),
+            ps: (args) => {
+              commandLineProbeCount += Number(
+                args.join("\0") === ["-p", String(foreignPid), "-o", "args="].join("\0"),
+              );
+              return stub(args);
+            },
+          }),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(commandLineProbeCount).toBe(2);
+      expect(lsofPorts).toContain(":11436");
+      expect(killed).not.toContain(foreignPid);
+      expect(fs.existsSync(pidFile)).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
 });
