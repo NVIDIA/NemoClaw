@@ -6,21 +6,17 @@
     "runOnboard": 2
   },
   "messaging": {
-    "createSandboxWithBaseImageResolution": 9,
-    "createSandboxWithBaseImageResolution.plan.rebindMessagingTokenDefs": 1,
     "getOpenShellInstallDeps.hasRequiredOpenshellMessagingFeatures": 4,
     "runOnboard": 1,
     "runOnboard.finalizationDeps.verifyDeployment.getMessagingChannels": 1
   },
   "policy": {
     "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
-    "createSandboxWithBaseImageResolution": 7,
     "preflightAuthoritativeRebuildTarget": 1,
     "runOnboard": 6,
     "sandboxCreateIntentResolver.getAgentPolicyPath": 1
   },
   "provider": {
-    "createSandboxWithBaseImageResolution": 20,
     "handleNimLocalSelection": 36,
     "handleRemoteProviderSelection": 84,
     "handleRemoteProviderSelection.providerExistsInGateway": 1,

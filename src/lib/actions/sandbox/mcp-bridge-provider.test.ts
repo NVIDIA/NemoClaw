@@ -4,6 +4,8 @@
 import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as providerCommand from "../../adapters/openshell/provider-command";
+import type { McpBridgeEntry } from "../../state/registry";
 import {
   buildMcpCredentialRevisionObservationCommand,
   parseMcpProviderAttachmentNames,
@@ -11,6 +13,10 @@ import {
   providerDetachChangedState,
 } from "./mcp-bridge";
 import { commandOutput } from "./mcp-bridge-output";
+import {
+  assertNoAttachedProviderCredentialCollisions,
+  assertNoRegisteredProviderCredentialCollisions,
+} from "./mcp-bridge-provider-inspection";
 import {
   observeMcpCredentialRevision,
   waitForAttachedMcpCredential,
@@ -95,6 +101,59 @@ alpha-mcp-slack   generic  1                 0
     );
     expect(() => parseMcpProviderAttachmentNames("unexpected output\n")).toThrow(
       /attachment table header/,
+    );
+  });
+
+  it("rejects a multi-key bridge before provider collision inspection", () => {
+    const providerCommandRun = vi.spyOn(providerCommand, "runOpenshellProviderCommand");
+    const entry: McpBridgeEntry = {
+      server: "example",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://8.8.8.8/mcp",
+      env: ["PRIMARY_TOKEN", "SECONDARY_TOKEN"],
+      providerName: "alpha-mcp-example",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-example",
+      addedAt: "2026-06-01T00:00:00.000Z",
+    };
+
+    expect(() => assertNoAttachedProviderCredentialCollisions("alpha", [entry])).toThrow(
+      "MCP server 'example' has no complete authenticated credential binding",
+    );
+    expect(() =>
+      assertNoRegisteredProviderCredentialCollisions([entry], {
+        listExtraProviders: () => ["foreign-registered"],
+      }),
+    ).toThrow("MCP server 'example' has no complete authenticated credential binding");
+    expect(providerCommandRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects a registered provider that will collide on the next rebuild (#9388)", () => {
+    const entry: McpBridgeEntry = {
+      server: "test-dir1",
+      agent: "hermes",
+      adapter: "hermes-config",
+      url: "https://8.8.8.8/mcp",
+      env: ["TEST_DIR1_TOKEN"],
+      providerName: "hermes-mcp-test-dir1",
+      policyName: "mcp-bridge-test-dir1",
+      addedAt: "2026-08-18T00:00:00.000Z",
+    };
+
+    expect(() =>
+      assertNoRegisteredProviderCredentialCollisions([entry], {
+        listExtraProviders: () => ["test-dir1"],
+        inspectProvider: () => ({
+          exists: true,
+          id: "99999999-8888-4777-8666-555555555555",
+          resourceVersion: 1,
+          type: "generic",
+          credentialKeys: ["TEST_DIR1_TOKEN"],
+        }),
+      }),
+    ).toThrow(
+      "Credential key 'TEST_DIR1_TOKEN' is already supplied by registered provider 'test-dir1'",
     );
   });
 

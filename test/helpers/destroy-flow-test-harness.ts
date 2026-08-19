@@ -16,6 +16,7 @@ const requireDist = createRequire(
 const destroyModulePath = "./destroy.js";
 
 export type DestroyHarness = {
+  assertHermesPortableCommandUnavailableSpy: MockInstance;
   cleanupGatewaySpy: MockInstance;
   captureOpenshellSpy: MockInstance;
   compareAndSwapSessionSpy: MockInstance;
@@ -79,6 +80,7 @@ type DestroyHarnessOptions = {
   mcpAddState?: "prepared";
   mcpServers?: string[];
   openshellDriver?: string;
+  portableCommandError?: string;
   prepareMcpBridgeError?: string;
   promptResponses?: string[];
   provider?: string;
@@ -193,6 +195,15 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const timerControl = requireDist("../../shields/timer-control.js");
   const mcpBridge = requireDist("./mcp-bridge.js");
   const dockerRun = requireDist("../../adapters/docker/run.js");
+  const portableAgentLifecycle = requireDist(
+    "../../onboard/experimental/portable-agent-lifecycle.js",
+  );
+
+  const assertHermesPortableCommandUnavailableSpy = vi
+    .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
+    .mockImplementation(() => {
+      if (options.portableCommandError) throw new Error(options.portableCommandError);
+    });
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
   const promptSpy = vi.spyOn(credentialStore, "prompt").mockResolvedValue("yes");
@@ -494,6 +505,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   logSpy.mockClear();
 
   return {
+    assertHermesPortableCommandUnavailableSpy,
     cleanupGatewaySpy,
     captureOpenshellSpy,
     compareAndSwapSessionSpy,
