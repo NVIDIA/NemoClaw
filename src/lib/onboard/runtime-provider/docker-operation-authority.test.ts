@@ -138,9 +138,9 @@ describe("Docker operation authority", () => {
     expect(second.engine.authorityId).not.toBe(first.engine.authorityId);
   });
 
-  it("keeps authority stable across SSH session metadata and does not forward it", () => {
+  it("keeps authority stable across terminal and SSH session metadata (#9584)", () => {
     const executableRoot = fakeDockerScript(
-      `printf '%s\\n' "\${XDG_SESSION_ID-unset}" "\${XDG_SESSION_CLASS-unset}" "\${XDG_SESSION_TYPE-unset}"`,
+      `printf '%s\\n' "\${TERM-unset}" "\${XDG_SESSION_ID-unset}" "\${XDG_SESSION_CLASS-unset}" "\${XDG_SESSION_TYPE-unset}"`,
     );
     const common = {
       HOME: "/tmp/nemoclaw-home",
@@ -153,19 +153,23 @@ describe("Docker operation authority", () => {
       XDG_SESSION_ID: "101",
       XDG_SESSION_CLASS: "user",
       XDG_SESSION_TYPE: "tty",
+      TERM: "xterm-256color",
     });
     const second = createDockerOperationAuthority("host-local-inference", {
       ...common,
       XDG_SESSION_ID: "102",
       XDG_SESSION_CLASS: "background",
       XDG_SESSION_TYPE: "unspecified",
+      TERM: "dumb",
     });
 
     expect(second.engine.authorityId).toBe(first.engine.authorityId);
     expect(dockerOperationBindingSha256(second.engine)).toBe(
       dockerOperationBindingSha256(first.engine),
     );
-    expect(second.engine.capture(["version"]).stdout).toBe("unset\nunset\nunset\n");
+    expect(second.engine.capture(["version"]).stdout).toBe(
+      "unset\nunset\nunset\nunset\n",
+    );
   });
 
   it("fails closed when an earlier Docker credential helper appears", () => {
