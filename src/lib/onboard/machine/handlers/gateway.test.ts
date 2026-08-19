@@ -298,7 +298,7 @@ describe("handleGatewayState", () => {
     expect(calls.complete).not.toHaveBeenCalled();
   });
 
-  it("does not retire a gateway when an absent network has no lifecycle authority (#9594)", async () => {
+  it("does not retire a gateway with unproven lifecycle authority when its Docker network is absent (#9594)", async () => {
     const { deps, calls } = createDeps({
       refreshDockerDriverGatewayReuseState: vi.fn(async () => {
         throw new Error(

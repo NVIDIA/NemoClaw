@@ -285,7 +285,7 @@ describe("Docker-driver gateway reuse application", () => {
     expect(rememberDockerDriverGatewayPid).not.toHaveBeenCalled();
   });
 
-  it("rejects an absent network before recording a mismatched gateway port listener (#9594)", async () => {
+  it("stops before recording a mismatched gateway port listener when the Docker network is absent (#9594)", async () => {
     const rememberDockerDriverGatewayPid = vi.fn();
     const getDockerDriverGatewayReuseDrift = vi.fn(() => null);
     const application = createDockerDriverReuseApplication({
