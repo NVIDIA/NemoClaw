@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { PEM_CERTIFICATE_RE_GLOBAL } from "../corporate-ca-policy";
 import {
   type ManagedStartupAgentEnvironment,
   type ManagedStartupAgentMaterial,
@@ -51,6 +52,17 @@ export const MANAGED_STARTUP_MERGED_CA_FILE = "/run/nemoclaw/managed-startup-ca-
 export const MANAGED_STARTUP_COMPLETION_FILE = "/run/nemoclaw/managed-startup-complete.json";
 
 const MANAGED_STARTUP_CORPORATE_CA_FILE = "/usr/local/share/nemoclaw/corporate-ca.pem";
+const MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY = "/usr/local/share/ca-certificates";
+const MANAGED_STARTUP_SYSTEM_CA_ANCHOR_RE = /^nemoclaw-corporate-ca-[0-9]{2}\.crt$/u;
+const SYSTEM_CA_BUNDLE_FILE = "/etc/ssl/certs/ca-certificates.crt";
+const UPDATE_CA_CERTIFICATES_EXECUTABLE = "/usr/sbin/update-ca-certificates";
+const MANAGED_STARTUP_TLS_ENV_NAMES = new Set([
+  "CURL_CA_BUNDLE",
+  "GIT_SSL_CAINFO",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "SSL_CERT_FILE",
+]);
 const MESSAGING_RUNTIME_PLAN_FILE = "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
 const ROOT_STATE_PARENT = "/var/lib/nemoclaw";
 const ROOT_RUNTIME_DIRECTORY = "/run/nemoclaw";
@@ -1015,6 +1027,114 @@ function installCorporateCa(corporateCaPath: string | null): void {
   atomicWriteRootFile(MANAGED_STARTUP_CORPORATE_CA_FILE, bytes, 0o444);
 }
 
+function corporateCaCertificateBlocks(corporateCaPath: string): readonly string[] {
+  const corporate = readStableRegularFile(corporateCaPath, 128 * 1024).toString("utf8");
+  const blocks = corporate.match(PEM_CERTIFICATE_RE_GLOBAL);
+  if (!blocks || blocks.length === 0) {
+    fail("corporate CA material contains no certificate");
+  }
+  for (const block of blocks) {
+    try {
+      if (!new X509Certificate(block).ca) {
+        fail("corporate CA material contains a certificate that is not a CA");
+      }
+    } catch (error) {
+      if (error instanceof ManagedStartupImageRuntimeError) throw error;
+      fail("corporate CA material contains an invalid certificate");
+    }
+  }
+  return blocks.map((block) => `${block.trim()}\n`);
+}
+
+function managedSystemCaAnchorNames(): readonly string[] {
+  try {
+    fs.lstatSync(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    fail("could not inspect the managed system CA anchor directory");
+  }
+  requireRootOwnedDirectory(
+    MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY,
+    ROOT_OWNED_DIRECTORY_MODE,
+  );
+  try {
+    return (fs.readdirSync(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY) as string[])
+      .filter((name) => MANAGED_STARTUP_SYSTEM_CA_ANCHOR_RE.test(name))
+      .sort();
+  } catch (error) {
+    fail("could not inspect the managed system CA anchors");
+  }
+}
+
+function refreshSystemCaBundle(): void {
+  if (!trustedExecutable(UPDATE_CA_CERTIFICATES_EXECUTABLE)) {
+    fail(`a trusted ${UPDATE_CA_CERTIFICATES_EXECUTABLE} executable is required`);
+  }
+  const result = spawnSync(UPDATE_CA_CERTIFICATES_EXECUTABLE, [], {
+    encoding: "utf8",
+    env: { PATH: FIXED_PATH },
+    stdio: "inherit",
+  });
+  if (result.error) {
+    fail(`could not execute ${UPDATE_CA_CERTIFICATES_EXECUTABLE}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    fail(
+      `${UPDATE_CA_CERTIFICATES_EXECUTABLE} exited with status ${String(result.status ?? "unknown")}`,
+    );
+  }
+}
+
+function requireSystemCaBundleContains(blocks: readonly string[]): void {
+  const systemBundle = safeTrustBundle(SYSTEM_CA_BUNDLE_FILE);
+  if (systemBundle === null) fail("the refreshed system CA bundle is missing");
+  const systemBlocks = systemBundle.toString("utf8").match(PEM_CERTIFICATE_RE_GLOBAL) ?? [];
+  const systemFingerprints = new Set<string>();
+  for (const block of systemBlocks) {
+    try {
+      systemFingerprints.add(new X509Certificate(block).fingerprint256);
+    } catch {
+      fail("the refreshed system CA bundle contains an invalid certificate");
+    }
+  }
+  for (const block of blocks) {
+    if (!systemFingerprints.has(new X509Certificate(block).fingerprint256)) {
+      fail("the refreshed system CA bundle does not contain the corporate CA");
+    }
+  }
+}
+
+export function installCorporateCaSystemAnchors(corporateCaPath: string | null): void {
+  const existingNames = managedSystemCaAnchorNames();
+  if (corporateCaPath === null) {
+    for (const name of existingNames) {
+      removeSafeRootFile(path.join(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY, name));
+    }
+    refreshSystemCaBundle();
+    return;
+  }
+
+  ensureRootOwnedDirectory(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY);
+  const blocks = corporateCaCertificateBlocks(corporateCaPath);
+  const expectedNames = blocks.map(
+    (_block, index) => `nemoclaw-corporate-ca-${String(index + 1).padStart(2, "0")}.crt`,
+  );
+  for (const name of existingNames) {
+    if (!expectedNames.includes(name)) {
+      removeSafeRootFile(path.join(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY, name));
+    }
+  }
+  for (const [index, name] of expectedNames.entries()) {
+    atomicWriteRootFile(
+      path.join(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY, name),
+      blocks[index] as string,
+      0o444,
+    );
+  }
+  refreshSystemCaBundle();
+  requireSystemCaBundleContains(blocks);
+}
+
 function safeTrustBundle(target: string): Buffer | null {
   try {
     const { bytes, stat } = readStableRegularFileSnapshot(target, MAX_TRUST_BUNDLE_BYTES);
@@ -1104,14 +1224,8 @@ function materializeManagedStartupRuntimeEnvironment(
     NEMOCLAW_MANAGED_STARTUP_APPLIED: "1",
   };
   if (corporateCaMerged) {
-    for (const name of [
-      "CURL_CA_BUNDLE",
-      "GIT_SSL_CAINFO",
-      "NODE_EXTRA_CA_CERTS",
-      "REQUESTS_CA_BUNDLE",
-      "SSL_CERT_FILE",
-    ]) {
-      output[name] = MANAGED_STARTUP_MERGED_CA_FILE;
+    for (const name of MANAGED_STARTUP_TLS_ENV_NAMES) {
+      delete output[name];
     }
     output._NEMOCLAW_CORPORATE_CA_MERGED = "1";
   }
@@ -1121,8 +1235,14 @@ function materializeManagedStartupRuntimeEnvironment(
     }
   }
   const unsetNames = new Set([
-    ...Object.keys(configurationEnvironment).filter((name) => !Object.hasOwn(output, name)),
-    ...validatedApplicationRuntime.unsetEnvironment,
+    ...Object.keys(configurationEnvironment).filter(
+      (name) =>
+        !Object.hasOwn(output, name) &&
+        (!corporateCaMerged || !MANAGED_STARTUP_TLS_ENV_NAMES.has(name)),
+    ),
+    ...validatedApplicationRuntime.unsetEnvironment.filter(
+      (name) => !corporateCaMerged || !MANAGED_STARTUP_TLS_ENV_NAMES.has(name),
+    ),
   ]);
   for (const name of validatedApplicationRuntime.unsetEnvironment) {
     if (Object.hasOwn(output, name)) {
@@ -1331,6 +1451,7 @@ function applyAdapter(
   }
   installRootOwnedMaterials(mapped.materials);
   installCorporateCa(context.corporateCaPath);
+  installCorporateCaSystemAnchors(context.corporateCaPath);
   mergeCorporateCa(context.corporateCaPath);
 }
 
@@ -1400,6 +1521,7 @@ export async function applyManagedStartupImageProfile(
         fail("committed corporate CA material drifted");
       }
     }
+    installCorporateCaSystemAnchors(result.application.corporateCaPath);
     corporateCaMerged = mergeCorporateCa(result.application.corporateCaPath);
   }
   const runtimeEnvironment = serializeManagedStartupRuntimeEnvironment(

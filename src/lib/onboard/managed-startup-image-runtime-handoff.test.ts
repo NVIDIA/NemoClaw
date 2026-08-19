@@ -16,7 +16,6 @@ import {
   applyManagedStartupCommandEnvironmentPlan,
   buildManagedStartupImageActionPlan,
   MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION,
-  MANAGED_STARTUP_MERGED_CA_FILE,
   normalizeHermesManagedConfigDescriptor,
   readStableRegularFile,
   serializeManagedStartupCompletionMarker,
@@ -247,15 +246,17 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
         NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
       },
-      unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP"],
+      unsetEnvironment: ["NEMOCLAW_MINIMAL_BOOTSTRAP", "REQUESTS_CA_BUNDLE"],
     };
     const script = serializeManagedStartupRuntimeEnvironment(
       {
         NEMOCLAW_MODEL: "model-with-'quote",
         NEMOCLAW_OBSERVABILITY: "0",
+        SSL_CERT_FILE: "/pre-resume-ca.pem",
       },
       true,
       {
+        CURL_CA_BUNDLE: "/pre-resume-ca.pem",
         NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
         NEMOCLAW_MODEL: "model-with-'quote",
       },
@@ -268,7 +269,9 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     expect(script).toContain("export NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS='3'");
     expect(script).toContain("export NEMOCLAW_MANAGED_STARTUP_APPLIED='1'");
     expect(script).toContain("export NEMOCLAW_MODEL='model-with-'\"'\"'quote'");
-    expect(script).toContain(`export SSL_CERT_FILE='${MANAGED_STARTUP_MERGED_CA_FILE}'`);
+    expect(script).not.toMatch(
+      /^(?:export|unset) (?:CURL_CA_BUNDLE|GIT_SSL_CAINFO|NODE_EXTRA_CA_CERTS|REQUESTS_CA_BUNDLE|SSL_CERT_FILE)(?:=|$)/mu,
+    );
     expect(script).toContain("export _NEMOCLAW_CORPORATE_CA_MERGED='1'");
     expect(script).not.toContain("NEMOCLAW_STARTUP_PROFILE_B64");
     expect(script).not.toContain("NEMOCLAW_CORPORATE_CA_B64");
@@ -278,9 +281,11 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
         {
           NEMOCLAW_MODEL: "model-with-'quote",
           NEMOCLAW_OBSERVABILITY: "0",
+          SSL_CERT_FILE: "/pre-resume-ca.pem",
         },
         true,
         {
+          CURL_CA_BUNDLE: "/pre-resume-ca.pem",
           NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
           NEMOCLAW_MODEL: "model-with-'quote",
         },

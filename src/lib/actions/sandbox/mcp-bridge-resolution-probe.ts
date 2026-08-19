@@ -67,10 +67,7 @@ import {
   createSandboxExecMarker,
   extractSandboxExecCommandStdoutFromStreams,
 } from "./sandbox-exec-output";
-import {
-  buildTrustedManagedStartupCaEnvShell,
-  buildTrustedProxyEnvSourceShell,
-} from "./trusted-proxy-env";
+import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 
 export const MCP_PROBE_HTTP_MARKER = "NEMOCLAW_MCP_PROBE_HTTP_CODE=";
 export const MCP_PROBE_EXIT_MARKER = "NEMOCLAW_MCP_PROBE_CURL_EXIT=";
@@ -218,7 +215,6 @@ export function buildCredentialResolutionProbeCommand(
       // the cross-user file and suppress source-time output before framing any
       // probe result, so preamble text cannot impersonate result markers.
       buildTrustedProxyEnvSourceShell(),
-      buildTrustedManagedStartupCaEnvShell(),
       // Must stay between the sourcing above and the first child below.
       `unset ${PROBE_SANITIZED_ENV_VARS.join(" ")} || true`,
       buildSandboxExecMarkedCommand(probeBody, resultMarker),

@@ -8,10 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  buildTrustedManagedStartupCaEnvShell,
-  buildTrustedProxyEnvSourceShell,
-} from "./trusted-proxy-env";
+import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 
 const tempRoots = new Set<string>();
 
@@ -85,65 +82,5 @@ describe("trusted proxy env source shell", () => {
     const failureResult = runSource(failureFixture.file);
     expect(failureResult.status).toBe(126);
     expect(failureResult.stderr).toContain("could not be sourced safely");
-  });
-});
-
-describe("trusted managed startup CA env shell", () => {
-  it("exports only the fixed TLS trust variables after root ownership validation", () => {
-    const shell = buildTrustedManagedStartupCaEnvShell();
-
-    expect(shell).toContain("/run/nemoclaw/managed-startup-ca-bundle.pem");
-    expect(shell).toContain('owner" != "root"');
-    expect(shell).toContain('perms" != "444"');
-    expect(shell).toContain('export CURL_CA_BUNDLE="$managed_startup_ca"');
-    expect(shell).toContain('export GIT_SSL_CAINFO="$managed_startup_ca"');
-    expect(shell).toContain('export NODE_EXTRA_CA_CERTS="$managed_startup_ca"');
-    expect(shell).toContain('export REQUESTS_CA_BUNDLE="$managed_startup_ca"');
-    expect(shell).toContain('export SSL_CERT_FILE="$managed_startup_ca"');
-    expect(shell).not.toContain("managed-startup-runtime.env");
-  });
-
-  it("preserves legacy trust when the managed bundle is absent", () => {
-    const { file } = tempPath("missing-managed-ca.pem");
-    const result = spawnSync(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-c",
-        `${buildTrustedManagedStartupCaEnvShell(file)}\nprintf 'CA=[%s]' "$NODE_EXTRA_CA_CERTS"`,
-      ],
-      { encoding: "utf8", env: { ...process.env, NODE_EXTRA_CA_CERTS: "/legacy/ca.pem" } },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("CA=[/legacy/ca.pem]");
-  });
-
-  it("fails closed for a writable or symlinked managed bundle", () => {
-    const writable = tempPath("managed-ca.pem");
-    fs.writeFileSync(writable.file, "test CA\n", { mode: 0o644 });
-    fs.chmodSync(writable.file, 0o644);
-
-    const writableResult = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-c", buildTrustedManagedStartupCaEnvShell(writable.file)],
-      { encoding: "utf8" },
-    );
-    expect(writableResult.status).toBe(126);
-    expect(writableResult.stderr).toContain("unsafe permissions");
-
-    const linked = tempPath("managed-ca.pem");
-    const target = path.join(linked.root, "target.pem");
-    fs.writeFileSync(target, "test CA\n", { mode: 0o444 });
-    fs.symlinkSync(target, linked.file);
-
-    const linkedResult = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-c", buildTrustedManagedStartupCaEnvShell(linked.file)],
-      { encoding: "utf8" },
-    );
-    expect(linkedResult.status).toBe(126);
-    expect(linkedResult.stderr).toContain("expected regular root-owned mode 444 file");
   });
 });

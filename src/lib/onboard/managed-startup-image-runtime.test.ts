@@ -5,6 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const childProcessMock = vi.hoisted(() => ({
+  spawnSync: vi.fn(),
+}));
+vi.mock("node:child_process", () => childProcessMock);
+
 const coordinatorMock = vi.hoisted(() => ({
   coordinateManagedStartupApplication: vi.fn(),
 }));
@@ -341,6 +346,7 @@ describe("managed startup image runtime", () => {
   }
 
   beforeEach(() => {
+    childProcessMock.spawnSync.mockReset().mockReturnValue({ error: undefined, status: 0 });
     coordinatorMock.coordinateManagedStartupApplication.mockReset();
   });
   afterEach(() => {

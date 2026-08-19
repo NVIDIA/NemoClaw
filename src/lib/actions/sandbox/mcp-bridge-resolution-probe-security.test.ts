@@ -58,7 +58,6 @@ describe("MCP credential-resolution probe command security", () => {
     const command = built?.command ?? "";
     const validationIndex = command.indexOf('[ -L "$proxy_env" ]');
     const sourceIndex = command.indexOf('. "$proxy_env"');
-    const managedCaIndex = command.indexOf('export CURL_CA_BUNDLE="$managed_startup_ca"');
     const unsetIndex = command.indexOf(`unset ${PROBE_SANITIZED_ENV_VARS.join(" ")}`);
     const frameIndex = command.indexOf(built?.resultMarker ?? "missing-result-marker");
     const firstChildIndex = command.indexOf("curl");
@@ -67,8 +66,7 @@ describe("MCP credential-resolution probe command security", () => {
     expect(command).toContain('. "$proxy_env" >/dev/null 2>&1');
     expect(validationIndex).toBeGreaterThan(-1);
     expect(sourceIndex).toBeGreaterThan(validationIndex);
-    expect(managedCaIndex).toBeGreaterThan(sourceIndex);
-    expect(unsetIndex).toBeGreaterThan(managedCaIndex);
+    expect(unsetIndex).toBeGreaterThan(sourceIndex);
     expect(frameIndex).toBeGreaterThan(unsetIndex);
     expect(firstChildIndex).toBeGreaterThan(frameIndex);
     expect(command).toContain("nemoclaw-start node -e");

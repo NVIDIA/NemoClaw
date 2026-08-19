@@ -18,10 +18,7 @@ import {
   createSandboxExecMarker,
   extractSandboxExecCommandStdoutFromStreams,
 } from "./sandbox-exec-output";
-import {
-  buildTrustedManagedStartupCaEnvShell,
-  buildTrustedProxyEnvSourceShell,
-} from "./trusted-proxy-env";
+import { buildTrustedProxyEnvSourceShell } from "./trusted-proxy-env";
 
 export const MCP_TOOL_DISCOVERY_RUNTIME_PATH =
   "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs";
@@ -114,7 +111,6 @@ export function buildMcpToolDiscoveryCommand(
     resultMarker,
     command: [
       buildTrustedProxyEnvSourceShell(),
-      buildTrustedManagedStartupCaEnvShell(),
       `unset ${MCP_RUNTIME_SANITIZED_ENV_VARS.join(" ")} || true`,
       buildSandboxExecMarkedCommand(body, resultMarker),
     ].join("\n"),

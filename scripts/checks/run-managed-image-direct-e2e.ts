@@ -629,6 +629,14 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "cat",
       "/usr/local/share/nemoclaw/corporate-ca.pem",
     ]).stdout;
+    const installedSystemCaAnchor = docker([
+      "exec",
+      "--user",
+      "0:0",
+      containerId,
+      "cat",
+      "/usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt",
+    ]).stdout;
     const mergedCa = docker([
       "exec",
       "--user",
@@ -639,6 +647,7 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     ]).stdout;
     if (
       installedCa !== MANAGED_STARTUP_E2E_CORPORATE_CA_PEM ||
+      installedSystemCaAnchor !== MANAGED_STARTUP_E2E_CORPORATE_CA_PEM ||
       !mergedCa.endsWith(MANAGED_STARTUP_E2E_CORPORATE_CA_PEM)
     ) {
       throw new Error("managed corporate CA was not installed and merged exactly");
@@ -655,6 +664,8 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
         'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-runtime.env)" = "0:0:444"',
         'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-complete.json)" = "0:0:444"',
         'test "$(stat -c "%u:%g:%a" /usr/local/share/nemoclaw/corporate-ca.pem)" = "0:0:444"',
+        'test "$(stat -c "%u:%g:%a" /usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt)" = "0:0:444"',
+        "openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /usr/local/share/nemoclaw/corporate-ca.pem >/dev/null",
         'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-ca-bundle.pem)" = "0:0:444"',
         "test -d /var/lib/nemoclaw/managed-startup-shared-state-transaction-v1",
       ].join("\n"),
