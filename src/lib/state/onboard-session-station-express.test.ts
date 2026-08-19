@@ -192,6 +192,79 @@ describe("Station Express onboarding session state (#7048)", () => {
     });
   });
 
+  it("preserves the Station Express runtime while provider setup records its selection (#9522)", async () => {
+    const created = session.saveSession(
+      session.createSession({
+        mode: "non-interactive",
+        stationExpressIntent: {
+          version: 1,
+          model: "nemotron-3-ultra-550b-a55b",
+          sandboxName: "my-assistant",
+        },
+      }),
+    );
+    const { OnboardRuntimeBoundary } = await import("../onboard/runtime-boundary");
+    const { toSessionUpdates } = await import("../onboard/session-updates");
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+    });
+    await boundary.getRuntime().transition("preflight");
+    await boundary.getRuntime().transition("gateway");
+    await boundary.getRuntime().transition("provider_selection");
+    await boundary.startRecordedStep("provider_selection", {
+      provider: "vllm-local",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+    });
+
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      sessionId: created.sessionId,
+      mode: "non-interactive",
+      provider: "vllm-local",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      stationExpressIntent: {
+        version: 1,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+      },
+      machine: { state: "provider_selection", revision: 3 },
+      steps: { provider_selection: { status: "in_progress" } },
+    });
+  });
+
+  it.each([
+    { name: "missing model", provider: "vllm-local", model: null },
+    {
+      name: "missing provider",
+      provider: null,
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+    },
+    {
+      name: "alternate provider",
+      provider: "ollama-local",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+    },
+    { name: "unsafe model", provider: "vllm-local", model: "unsafe model" },
+    { name: "oversized model", provider: "vllm-local", model: "a".repeat(513) },
+  ])(
+    "rejects invalid in-progress Station Express provider state: $name (#9522)",
+    ({ provider, model }) => {
+      const candidate = session.createSession({
+        mode: "non-interactive",
+        stationExpressIntent: {
+          version: 1,
+          model: "nemotron-3-ultra-550b-a55b",
+          sandboxName: "my-assistant",
+        },
+        provider,
+        model,
+      });
+      candidate.steps.provider_selection.status = "in_progress";
+
+      expect(session.normalizeSession(candidate)).toBeNull();
+    },
+  );
+
   it("clears resume intent only after successful completion", () => {
     const receipt = path.join(session.SESSION_DIR, "station-express-resume");
     session.saveSession(

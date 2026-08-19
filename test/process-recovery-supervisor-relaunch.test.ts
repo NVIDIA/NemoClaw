@@ -3,10 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as forwardHealth from "../src/lib/actions/sandbox/forward-health.ts";
-import {
-  checkAndRecoverSandboxProcesses,
-  waitForManagedGatewaySupervisor,
-} from "../src/lib/actions/sandbox/process-recovery.ts";
+import { checkAndRecoverSandboxProcesses } from "../src/lib/actions/sandbox/process-recovery.ts";
 import { relaunchManagedSupervisorSession } from "../src/lib/actions/sandbox/supervisor-relaunch.ts";
 import * as openshellRuntime from "../src/lib/adapters/openshell/runtime.ts";
 import * as agentRuntime from "../src/lib/agent/runtime.ts";
@@ -26,6 +23,13 @@ const MISSING_MANAGED_SUPERVISOR = {
   stdout: "",
   stderr: "SUPERVISOR_NOT_RUNNING",
 } as const;
+function pinnedIdentityRefusal(sandboxName: string) {
+  return {
+    status: 1,
+    stdout: "",
+    stderr: `MANAGED_CONTROL_IDENTITY_CHANGED\nOpenShell container identity changed for sandbox '${sandboxName}'; refusing privileged execution against a different container.`,
+  } as const;
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -160,267 +164,6 @@ function scriptedPinnedGatewayRecovery(
     actions[action](),
   );
 }
-
-describe("waitForManagedGatewaySupervisor", () => {
-  const restartingContainerId = "a".repeat(64);
-  const restartingContainer = {
-    status: 1,
-    stdout: "",
-    stderr: `Error response from daemon: Container ${restartingContainerId} is restarting, wait until the container is running`,
-    managedControlRestartingContainerId: restartingContainerId,
-  } as const;
-
-  it("retries a controller probe after status 137 with no output (#8726)", () => {
-    const sleepImpl = vi.fn();
-    const requestGatewaySupervisorActionImpl = vi
-      .fn()
-      .mockReturnValueOnce({ status: 137, stdout: "", stderr: "" })
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: "GATEWAY_PID=4242",
-        stderr: "",
-      });
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        intervalSeconds: 3,
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(true);
-    expect(sleepImpl).toHaveBeenCalledOnce();
-    expect(sleepImpl).toHaveBeenCalledWith(3);
-  });
-
-  it("stops after two status 137 controller probes with no output (#8726)", () => {
-    const sleepImpl = vi.fn();
-    const requestGatewaySupervisorActionImpl = vi.fn(() => ({
-      status: 137,
-      stdout: "",
-      stderr: "",
-    }));
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        intervalSeconds: 3,
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(false);
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
-    expect(sleepImpl).toHaveBeenCalledOnce();
-    expect(sleepImpl).toHaveBeenCalledWith(3);
-  });
-
-  it("does not retry a status 137 controller probe with diagnostic output (#8726)", () => {
-    const sleepImpl = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl: vi.fn(() => ({
-          status: 137,
-          stdout: "",
-          stderr: "container stopped",
-        })),
-        sleepImpl,
-      }),
-    ).toBe(false);
-    expect(sleepImpl).not.toHaveBeenCalled();
-  });
-
-  it("waits through an exact managed-container restart transition (#8726)", () => {
-    const sleepImpl = vi.fn();
-    const requestGatewaySupervisorActionImpl = vi
-      .fn()
-      .mockReturnValueOnce(restartingContainer)
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: "GATEWAY_PID=4242",
-        stderr: "",
-      });
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        intervalSeconds: 3,
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(true);
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
-    expect(sleepImpl).toHaveBeenCalledOnce();
-    expect(sleepImpl).toHaveBeenCalledWith(3);
-  });
-
-  it("stops after two managed-container restart transitions (#8726)", () => {
-    const sleepImpl = vi.fn();
-    const requestGatewaySupervisorActionImpl = vi.fn(() => restartingContainer);
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        intervalSeconds: 3,
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(false);
-    expect(requestGatewaySupervisorActionImpl).toHaveBeenCalledTimes(2);
-    expect(sleepImpl).toHaveBeenCalledOnce();
-    expect(sleepImpl).toHaveBeenCalledWith(3);
-  });
-
-  it("does not wait through an unbound Docker restart diagnostic (#8726)", () => {
-    const sleepImpl = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl: vi.fn(() => ({
-          status: 1,
-          stdout: "",
-          stderr: restartingContainer.stderr,
-        })),
-        sleepImpl,
-      }),
-    ).toBe(false);
-    expect(sleepImpl).not.toHaveBeenCalled();
-  });
-
-  it("waits through an exact missing-supervisor startup race", () => {
-    const sleepImpl = vi.fn();
-    const requestGatewaySupervisorActionImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        stdout: "",
-        stderr: "SUPERVISOR_NOT_RUNNING",
-      })
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: "GATEWAY_PID=4242",
-        stderr: "",
-      });
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        intervalSeconds: 3,
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(true);
-    expect(sleepImpl).toHaveBeenCalledOnce();
-    expect(sleepImpl).toHaveBeenCalledWith(3);
-  });
-
-  it("waits through exact pending direct control while a clone container appears", () => {
-    const sleepImpl = vi.fn();
-    const requestGatewaySupervisorActionImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        stdout: "",
-        stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
-      })
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: "GATEWAY_PID=4242",
-        stderr: "",
-      });
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        intervalSeconds: 3,
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(true);
-    expect(sleepImpl).toHaveBeenCalledOnce();
-    expect(sleepImpl).toHaveBeenCalledWith(3);
-  });
-
-  it("waits while a new clone gateway is not healthy yet (#7818)", () => {
-    const sleepImpl = vi.fn();
-    const requestGatewaySupervisorActionImpl = vi
-      .fn()
-      .mockReturnValueOnce({
-        status: 1,
-        stdout: "",
-        stderr: "GATEWAY_HEALTH_TIMEOUT",
-      })
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: "GATEWAY_PID=4242",
-        stderr: "",
-      });
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        intervalSeconds: 3,
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl,
-        sleepImpl,
-      }),
-    ).toBe(true);
-    expect(sleepImpl).toHaveBeenCalledOnce();
-    expect(sleepImpl).toHaveBeenCalledWith(3);
-  });
-
-  it("does not wait when a health marker includes unclassified output (#7818)", () => {
-    const sleepImpl = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl: vi.fn(() => ({
-          status: 1,
-          stdout: "",
-          stderr: "GATEWAY_HEALTH_TIMEOUT\nunexpected detail",
-        })),
-        sleepImpl,
-      }),
-    ).toBe(false);
-    expect(sleepImpl).not.toHaveBeenCalled();
-  });
-
-  it("does not wait through an unclassified supervisor refusal", () => {
-    const sleepImpl = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl: vi.fn(() => ({
-          status: 1,
-          stdout: "",
-          stderr: "prefix SUPERVISOR_NOT_RUNNING suffix",
-        })),
-        sleepImpl,
-      }),
-    ).toBe(false);
-    expect(sleepImpl).not.toHaveBeenCalled();
-  });
-
-  it("does not wait through a detailed privileged-control refusal", () => {
-    const sleepImpl = vi.fn();
-
-    expect(
-      waitForManagedGatewaySupervisor("new-clone", {
-        maxAttempts: 2,
-        requestGatewaySupervisorActionImpl: vi.fn(() => ({
-          status: 1,
-          stdout: "",
-          stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: container identity changed",
-        })),
-        sleepImpl,
-      }),
-    ).toBe(false);
-    expect(sleepImpl).not.toHaveBeenCalled();
-  });
-});
 
 describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   it("checks managed recovery and OpenShell readiness before starting host forwards (#8662)", () => {
@@ -565,10 +308,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
   });
 
-  it("rolls back when recreation starts but managed control never accepts it", () => {
+  it("reports an unconfirmed rollback when recreated gateway health never resolves", () => {
     mockOpenClawSandbox("rejected-box");
     setImmediateRecoveryPolling();
-    const finalize = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const finalize = vi.fn(() => ({ backupRemoved: false, rolledBack: false }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
       containerId: "replacement-container-id",
       finalize,
@@ -586,7 +329,18 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       relaunchManagedSupervisorSessionImpl,
     });
 
-    expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: false });
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      recoveryFailureDetail: expect.stringContaining(
+        "NemoClaw could not confirm rollback to the previous sandbox container",
+      ),
+    });
+    expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").toContain(
+      "the recovered gateway did not become responsive before the recovery timeout",
+    );
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledWith(
       "rejected-box",
       "probe",
@@ -878,8 +632,22 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       }),
       expectedDetail: "replacement container identity changed",
       expectedReadinessCalls: 1,
+      finalPinnedAction: () => pinnedIdentityRefusal("failed-handoff-box"),
+      finalReadinessReady: true,
+    },
+    {
+      condition: "the final pinned managed probe throws",
+      finalizeOutcome: () => ({
+        backupRemoved: true,
+        replacementRestarted: true,
+        replacementStoppedForCommit: true,
+        rolledBack: false,
+        stateRestored: true,
+      }),
+      expectedDetail: "pinned managed supervisor probe could not be completed",
+      expectedReadinessCalls: 1,
       finalPinnedAction: () => {
-        throw new Error("replacement identity changed");
+        throw new Error("opaque-pinned-probe-sentinel");
       },
       finalReadinessReady: true,
     },
@@ -942,6 +710,9 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         forwardRecovered: false,
         recoveryFailureDetail: expect.stringContaining(expectedDetail),
       });
+      expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").not.toContain(
+        "opaque-",
+      );
       expect(result).not.toHaveProperty("forwardRecoveryFailed");
       expect(finalize).toHaveBeenCalledOnce();
       expect(finalize).toHaveBeenCalledWith(true);
@@ -1208,7 +979,11 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   it("uses the shared recreate-readiness budget after a longer gateway health wait", () => {
     mockOpenClawSandbox("unready-box", 600);
     setImmediateRecoveryPolling();
-    const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const finalize = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: true,
+      stateRestored: false,
+    }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
       containerId: "replacement-container-id",
       finalize,
@@ -1259,10 +1034,79 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      condition: "the rollback reports failure",
+      finalizeOutcome: () => ({
+        backupRemoved: false,
+        rolledBack: false,
+        stateRestored: false,
+      }),
+    },
+    {
+      condition: "the rollback throws",
+      finalizeOutcome: () => {
+        throw new Error("opaque-finalizer-sentinel");
+      },
+    },
+  ])("reports the readiness failure and unconfirmed rollback when $condition (#9364)", ({
+    finalizeOutcome,
+  }) => {
+    mockOpenClawSandbox("rollback-box");
+    setImmediateRecoveryPolling();
+    const finalize = vi.fn((_supervisorReady: boolean) => finalizeOutcome());
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
+      containerId: "replacement-container-id",
+      finalize,
+    }));
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => ACCEPTED_MANAGED_PROBE);
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(() => false);
+    const captureOpenshell = vi
+      .spyOn(openshellRuntime, "captureOpenshell")
+      .mockReturnValue({ status: 0, output: "" });
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0 } as never);
+
+    const result = checkAndRecoverSandboxProcesses("rollback-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      recoveryFailureDetail: expect.stringContaining(
+        "NemoClaw could not confirm rollback to the previous sandbox container",
+      ),
+    });
+    expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").toContain(
+      "did not become ready in OpenShell",
+    );
+    expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").not.toContain(
+      "opaque-finalizer-sentinel",
+    );
+    expect(finalize).toHaveBeenCalledOnce();
+    expect(finalize).toHaveBeenCalledWith(false);
+    expect(captureOpenshell).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("reports the last structured OpenShell error when readiness times out", () => {
     mockOpenClawSandbox("relay-dropped-box");
     setImmediateRecoveryPolling();
-    const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const finalize = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: true,
+      stateRestored: false,
+    }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
       containerId: "replacement-container-id",
       finalize,
@@ -1320,7 +1164,11 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
   it("reports a definitive managed health failure separately from OpenShell readiness", () => {
     mockOpenClawSandbox("managed-failed-box");
     setImmediateRecoveryPolling();
-    const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const finalize = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: true,
+      stateRestored: false,
+    }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
       containerId: "replacement-container-id",
       finalize,
@@ -1373,9 +1221,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     {
       condition: "the replacement identity changes after readiness",
       expectedDetail: "replacement container identity changed",
-      finalProbe: () => {
-        throw new Error("replacement identity changed");
-      },
+      finalProbe: () => pinnedIdentityRefusal("drifted-box"),
     },
     {
       condition: "the final managed supervisor health check is rejected",
@@ -1385,6 +1231,13 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         stdout: "",
         stderr: "GATEWAY_UNSAFE_CONFIG_PATH",
       }),
+    },
+    {
+      condition: "the final pinned managed probe throws",
+      expectedDetail: "pinned managed supervisor probe could not be completed",
+      finalProbe: () => {
+        throw new Error("opaque-forward-probe-sentinel");
+      },
     },
   ])("rejects a healthy forward when $condition (#9364)", ({ expectedDetail, finalProbe }) => {
     mockOpenClawSandbox("drifted-box");
@@ -1445,6 +1298,9 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       forwardRecovered: false,
       recoveryFailureDetail: expect.stringContaining(expectedDetail),
     });
+    expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").not.toContain(
+      "opaque-",
+    );
     expect(result).not.toHaveProperty("forwardRecoveryFailed");
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(3);
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenLastCalledWith(
@@ -1459,5 +1315,65 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       ignoreError: true,
       stdio: "ignore",
     });
+  });
+
+  it("reports GATEWAY_UNSAFE_CONFIG_PATH after a transient identity refusal clears (#9364)", () => {
+    mockOpenClawSandbox("current-probe-box");
+    setImmediateRecoveryPolling();
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
+    const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
+      containerId: "replacement-container-id",
+      finalize,
+    }));
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
+    const unsafeConfigProbe = {
+      status: 1,
+      stdout: "",
+      stderr: "GATEWAY_UNSAFE_CONFIG_PATH",
+    } as const;
+    const requestPinnedGatewaySupervisorAction = vi
+      .fn()
+      .mockReturnValueOnce(pinnedIdentityRefusal("current-probe-box"))
+      .mockReturnValueOnce(ACCEPTED_MANAGED_PROBE)
+      .mockReturnValueOnce(ACCEPTED_MANAGED_PROBE)
+      .mockReturnValue(unsafeConfigProbe);
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
+      (_name, options) => options.beforeProbe?.(1000) === true,
+    );
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output:
+        "SANDBOX  BIND  PORT  PID  STATUS\ncurrent-probe-box  127.0.0.1  18789  12345  running",
+    });
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0 } as never);
+
+    const result = checkAndRecoverSandboxProcesses("current-probe-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+      recoveryFailureDetail: expect.stringContaining(
+        "unsafe config path: GATEWAY_UNSAFE_CONFIG_PATH",
+      ),
+    });
+    expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").not.toContain(
+      "identity changed",
+    );
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(4);
+    expect(finalize).toHaveBeenCalledWith(true);
+    expect(runOpenshell).toHaveBeenCalledOnce();
   });
 });

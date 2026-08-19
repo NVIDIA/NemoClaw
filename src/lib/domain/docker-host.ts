@@ -85,3 +85,15 @@ export function isSupportedGatewayDockerHost(value: string | undefined): boolean
   const socketPath = candidate.slice(prefix.length);
   return path.isAbsolute(socketPath) && !socketPath.includes("'");
 }
+
+/**
+ * Credential-helper names that only Docker Desktop writes into the Docker
+ * client config (`credsStore`). The helper needs an interactive GUI session,
+ * so headless sessions can fail every image pull with it configured (#9457).
+ * Shared by host assessment (WSL helper probing) and the advisory check so
+ * the two consumers cannot diverge.
+ */
+export const DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES: ReadonlySet<string> = new Set([
+  "desktop",
+  "desktop.exe",
+]);
