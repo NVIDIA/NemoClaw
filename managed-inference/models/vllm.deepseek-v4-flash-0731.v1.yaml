@@ -24,13 +24,13 @@ spec:
       targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py
     exactTextReplacement:
       targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4.py
-      expectedText: |-
-        elif reasoning_effort in ("max", "xhigh"):
+      expectedText: |2-
+                    elif reasoning_effort in ("max", "xhigh"):
                         reasoning_effort = "max"
                     else:
                         reasoning_effort = "high"
-      replacementText: |-
-        elif reasoning_effort in ("max", "xhigh"):
+      replacementText: |2-
+                    elif reasoning_effort in ("max", "xhigh"):
                         reasoning_effort = "max"
                     elif reasoning_effort == "high":
                         reasoning_effort = "high"

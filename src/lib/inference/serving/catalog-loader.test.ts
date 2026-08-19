@@ -130,6 +130,11 @@ function expectManagedRuntimeDefinitions(
   expect(catalog.recipes.map(({ metadata }) => metadata.id)).toEqual(
     expectedRecipes.map(({ metadata }) => metadata.id),
   );
+  expect(catalog.models.map(({ metadata }) => metadata.id)).toEqual(
+    servingCatalog.models
+      .filter(({ metadata }) => expectedModelIds.has(metadata.id))
+      .map(({ metadata }) => metadata.id),
+  );
   expect(catalog.presets.map(({ metadata }) => metadata.id)).toEqual(
     expectedPresets.map(({ metadata }) => metadata.id),
   );

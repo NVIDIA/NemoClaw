@@ -81,7 +81,7 @@ Before you start, confirm these prerequisites:
 
 - Use a DGX Spark host with Linux on Arm64.
 - Confirm that Docker, the NVIDIA Container Toolkit, and the NVIDIA GPU driver are operational.
-- Stop any server that already uses port `8000`.
+- Stop any server that already uses the selected `NEMOCLAW_VLLM_PORT` (`8000` by default).
 - Allow capacity for container images, model artifacts, and same-filesystem download staging.
 - Export `HF_TOKEN` only if the configured artifact source requires Hugging Face authentication.
 
@@ -149,7 +149,7 @@ docker container inspect \
 ```
 
 The bridge result must contain exactly one private IPv4 `Gateway` value.
-The container result must contain exactly two bindings with `HostPort` set to `8000`: one `HostIp` value of `127.0.0.1` and one that exactly matches the private bridge gateway.
+The container result must contain exactly two bindings with `HostPort` set to the selected `NEMOCLAW_VLLM_PORT` (`8000` by default): one `HostIp` value of `127.0.0.1` and one that exactly matches the private bridge gateway. The inspect key remains `8000/tcp` because the container listener is fixed even when the published host port changes.
 Reject the runtime if a binding uses `0.0.0.0`, `::`, an empty address, another host address, or an additional entry.
 
 If installation stops after a model download, rerun the same installer command.

@@ -51,6 +51,8 @@ spec:
   serve:
     authentication: bearer
     directInstall:
+      # Preserve the legacy interactive Station install surface; fixed managed
+      # profiles opt into bearer auth through an allowlisted install policy.
       authentication: none
       fixedArguments: false
       catalogReceipt: false
@@ -62,7 +64,7 @@ spec:
         value: 150
       - name: --cpu-offload-params
         value: experts
-      - name: --kernel_config
+      - name: --kernel-config
         value: '{"enable_flashinfer_autotune":false}'
       - name: --speculative-config
         value: '{"method":"nemotron_h_mtp","num_speculative_tokens":3}'

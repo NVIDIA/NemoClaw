@@ -292,6 +292,9 @@ describe("managed vLLM authentication", () => {
     "http://127.0.0.1:80",
     "http://user:password@127.0.0.1:19000",
     "http://127.0.0.1:19000/unexpected",
+    "http://127.0.0.1:19000?unexpected=true",
+    "http://127.0.0.1:19000#unexpected",
+    "http://127.0.0.1:65536",
   ])("rejects an unsafe recovered host-local endpoint %s", (baseUrl) => {
     lifecycle.baseUrl.mockReturnValue(null);
 

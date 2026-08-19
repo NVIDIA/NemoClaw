@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { VllmProfile } from "../vllm.js";
+import { computeCapabilityPreflight, type VllmProfile } from "../vllm.js";
 import {
   HOST_LOCAL_VLLM_LIFECYCLE_REF,
   HOST_LOCAL_VLLM_MATERIALIZER_REF,
@@ -96,12 +96,20 @@ describe("host-local vLLM selection", () => {
       recipeId: selection.recipe.metadata.id,
       profile: {
         image: selection.recipe.spec.runtime.image,
+        minComputeCapability: selection.recipe.spec.runtime.minimumComputeCapability,
+        minGpuMemoryBytes: selection.recipe.spec.runtime.minimumGpuMemoryBytes,
         servingCatalog: {
           presetDigest: selection.presetDigest,
           recipeDigest: selection.recipeDigest,
         },
       },
-      model: { id: selection.recipe.spec.model.id },
+      model: {
+        id: selection.recipe.spec.model.id,
+        runtime: {
+          minComputeCapability: selection.recipe.spec.runtime.minimumComputeCapability,
+          minGpuMemoryBytes: selection.recipe.spec.runtime.minimumGpuMemoryBytes,
+        },
+      },
     });
     expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledOnce();
     expect(mocks.resolveManagedInferenceServing).toHaveBeenCalledWith(
@@ -129,6 +137,13 @@ describe("host-local vLLM selection", () => {
       fixedServeCommand: true,
       managedBearerAuth: true,
     });
+    expect(
+      computeCapabilityPreflight(
+        result.model,
+        [1],
+        result.profile.minComputeCapability,
+      ),
+    ).toMatchObject({ ok: false });
   });
 
   it("routes a direct model slug through the same readiness resolver", () => {

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
-import path from "node:path";
 
 import { getBuildIdentity } from "../../core/version.js";
 import { createHostReadinessReport } from "../../readiness/host.js";
@@ -15,23 +14,16 @@ import {
   getManagedInferenceVllmInstallPolicy,
   isHostLocalInferenceServingRecipe,
 } from "./adapter-registry.js";
+import {
+  hostLocalVllmDockerRunArguments,
+  hostLocalVllmModelArguments,
+} from "./host-local-vllm-materialization.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
 import type {
   HostLocalInferenceServingRecipe,
   ManagedInferenceReadinessSource,
   ResolvedHostLocalInferenceSelection,
 } from "./types.js";
-
-const MATERIALIZER_OWNED_ARGUMENTS = new Set([
-  "--host",
-  "--port",
-  "--revision",
-  "--served-model-name",
-  "--max-model-len",
-  "--tensor-parallel-size",
-  "--pipeline-parallel-size",
-  "--data-parallel-size",
-]);
 
 export interface MaterializedHostLocalVllmSelection {
   readonly profile: VllmProfile;
@@ -63,42 +55,6 @@ function positiveIntegerArgument(
     throw new Error(`host-local vLLM recipe must define one positive ${name}`);
   }
   return parsed;
-}
-
-function modelArguments(
-  selection: ResolvedHostLocalInferenceSelection,
-): string[] {
-  return (selection.recipe.spec.serve?.arguments ?? []).flatMap(
-    ({ name, value }) => {
-      if (MATERIALIZER_OWNED_ARGUMENTS.has(name)) return [];
-      return value === undefined ? [name] : [name, String(value)];
-    },
-  );
-}
-
-function dockerRunArguments(recipe: HostLocalInferenceServingRecipe): string[] {
-  const { devices, sharedMemoryBytes, temporaryFilesystems, ulimits } =
-    recipe.spec.runtime;
-  const memlock = ulimits.memlock === "unlimited" ? -1 : ulimits.memlock;
-  return [
-    "--gpus",
-    recipe.spec.runtime.gpuRequest,
-    "--ipc",
-    recipe.spec.runtime.ipcMode,
-    "--mount",
-    `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface", "hub")},target=${recipe.spec.runtime.modelCache.target}/hub,readonly`,
-    "--shm-size",
-    `${String(sharedMemoryBytes)}b`,
-    "--ulimit",
-    `memlock=${String(memlock)}`,
-    "--ulimit",
-    `stack=${String(ulimits.stackBytes)}`,
-    ...devices.flatMap((device) => ["--device", device]),
-    ...temporaryFilesystems.flatMap(({ target, sizeBytes, mode, options }) => [
-      "--tmpfs",
-      `${target}:${[...options, `size=${String(sizeBytes)}`, `mode=${mode}`].join(",")}`,
-    ]),
-  ];
 }
 
 export function materializeHostLocalVllmSelection(
@@ -163,7 +119,7 @@ export function materializeHostLocalVllmSelection(
     maxModelLen: positiveIntegerArgument(selection, "--max-model-len"),
     revision: recipe.spec.model.revision,
     servedModelId,
-    modelArgs: modelArguments(selection),
+    modelArgs: hostLocalVllmModelArguments(recipe),
     gated: recipe.spec.model.gated,
     platforms: [baseProfile.platform],
     minComputeCapability: runtime.minimumComputeCapability,
@@ -177,7 +133,8 @@ export function materializeHostLocalVllmSelection(
       loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
       pullTimeoutSec: runtime.pullTimeoutSeconds,
       minComputeCapability: runtime.minimumComputeCapability,
-      dockerRunArgs: dockerRunArguments(recipe),
+      minGpuMemoryBytes: runtime.minimumGpuMemoryBytes,
+      dockerRunArgs: hostLocalVllmDockerRunArguments(recipe),
       dockerRunArgsMode: "replace",
     },
     installFastSafetensors: recipe.spec.model.installFastSafetensors,
@@ -204,6 +161,8 @@ export function materializeHostLocalVllmSelection(
       pullTimeoutSec: runtime.pullTimeoutSeconds,
       loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
       modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
+      minComputeCapability: runtime.minimumComputeCapability,
+      minGpuMemoryBytes: runtime.minimumGpuMemoryBytes,
       defaultModel: model,
       servingCatalog: directInstall.catalogReceipt
         ? {

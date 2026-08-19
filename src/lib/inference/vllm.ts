@@ -150,6 +150,8 @@ export interface VllmProfile {
   modelDownloadSizeBytes?: number;
   /** GPU floor selected by a compatibility-qualified model runtime. */
   minComputeCapability?: number;
+  /** Minimum GPU or unified-memory capacity selected by the runtime recipe. */
+  minGpuMemoryBytes?: number;
   servingCatalog?: {
     catalogDigest: string;
     presetId: string;
@@ -615,7 +617,7 @@ function replaceCatalogGpuRequest(
   if (runtime.dockerRunArgsMode !== "replace" || !profile.buildDockerRunFlags) {
     return extraRunArgs;
   }
-  if (profile.platform !== "station" || !runtime.catalogPresetId) return extraRunArgs;
+  if (!runtime.catalogPresetId) return extraRunArgs;
   const platformFlags = profile.buildDockerRunFlags();
   const platformGpuIndex = platformFlags.indexOf("--gpus");
   const recipeGpuIndex = extraRunArgs.indexOf("--gpus");
@@ -665,6 +667,7 @@ function applyVllmRuntimeProfile(
             : undefined,
       pullTimeoutSec: runtime.pullTimeoutSec ?? profile.pullTimeoutSec,
       minComputeCapability: runtime.minComputeCapability ?? model.minComputeCapability,
+      minGpuMemoryBytes: runtime.minGpuMemoryBytes,
       servingCatalog: runtime.servingCatalog ?? profile.servingCatalog,
     };
   }

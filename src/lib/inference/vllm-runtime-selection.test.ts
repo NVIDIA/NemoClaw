@@ -20,6 +20,7 @@ describe("vLLM catalog runtime selection", () => {
     );
     expect(runtime.imageDownloadSizeBytes).toBe(8_632_473_449);
     expect(runtime.minComputeCapability).toBe(120);
+    expect(runtime.minGpuMemoryBytes).toBe(25_447_097_878);
   });
 
   it("rejects Muse Glimmer when no architecture-qualified runtime exists", () => {
@@ -44,9 +45,10 @@ describe("vLLM catalog runtime selection", () => {
     );
     expect(runtime.imageDownloadSizeBytes).toBe(9_110_652_559);
     expect(runtime.minComputeCapability).toBe(80);
+    expect(runtime.minGpuMemoryBytes).toBe(21_561_882_284);
   });
 
-  it("orders a general Linux baseline before a device-specific optimized recipe", () => {
+  it("prefers a device-specific optimized recipe over the general Linux baseline", () => {
     const sparkProfile = detectVllmProfile({
       platform: "spark",
       type: "nvidia",

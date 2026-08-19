@@ -870,6 +870,14 @@ describe("managed inference resolver", () => {
     ).toMatchObject({ outcome: "no-match", code: "explicit-intent" });
   });
 
+  it("ignores blank extra arguments during declarative selection", () => {
+    expect(
+      resolveManagedInferenceServing(
+        resolverInput({ intent: { vllmExtraArguments: ["", "   "] } }),
+      ),
+    ).toMatchObject({ outcome: "selected" });
+  });
+
   it.each([
     { intent: { provider: "vllm" }, outcome: "no-match", code: "requirements-not-met" },
     {

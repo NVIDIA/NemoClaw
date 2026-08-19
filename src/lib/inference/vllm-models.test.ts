@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { vllmProbePolicyForModel } from "./openai-probe-models";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
-import type { HostLocalInferenceServingRecipe } from "./serving/types";
+import type {
+  HostLocalInferenceServingRecipe,
+  ServingModelPreparation,
+} from "./serving/types";
 import {
   assertGatedModelAccess,
   buildNemotronUltraDistributedServeCommand,
@@ -24,21 +27,15 @@ import {
 } from "./vllm-models";
 
 describe("vllm model registry", () => {
-  it("derives every host-local vLLM preset from the compiled catalog", () => {
+  it("maps every generated runtime variant to a compiled catalog preset", () => {
     const catalog = loadManagedInferenceCatalog();
-    const recipeById = new Map(catalog.recipes.map((recipe) => [recipe.metadata.id, recipe]));
-    const activeHostLocalPresets = catalog.presets.filter((preset) => {
-      const recipe = recipeById.get(preset.spec.plan.recipeRef);
-      return (
-        preset.spec.selection !== "disabled" &&
-        preset.spec.plan.backend === "vllm" &&
-        recipe?.spec.execution.materializerRef === "vllm.host-local/v1"
-      );
-    });
+    const presetIds = new Set(catalog.presets.map(({ metadata }) => metadata.id));
+    const runtimeVariants = VLLM_MODELS.flatMap((model) => model.runtimeVariants ?? []);
+    const runtimePresetIds = runtimeVariants.map(({ catalogPresetId }) => catalogPresetId);
 
-    expect(VLLM_MODELS.flatMap((model) => model.runtimeVariants ?? [])).toHaveLength(
-      activeHostLocalPresets.length,
-    );
+    expect(runtimeVariants.length).toBeGreaterThan(0);
+    expect(runtimePresetIds.filter((presetId) => !presetIds.has(presetId!))).toEqual([]);
+    expect(new Set(runtimePresetIds).size).toBe(runtimeVariants.length);
     expect(new Set(VLLM_MODELS.map((model) => model.envValue)).size).toBe(VLLM_MODELS.length);
   });
 
@@ -235,6 +232,31 @@ describe("vllm model registry", () => {
     ).toEqual(deepseek);
   });
 
+  it("preserves Python indentation in the DeepSeek V4 tokenizer patch", () => {
+    const model = loadManagedInferenceCatalog().models.find(
+      ({ metadata }) => metadata.id === "vllm.deepseek-v4-flash-0731.v1",
+    );
+    const preparation = model?.spec.preparation as Extract<
+      ServingModelPreparation,
+      { readonly ref: "snapshot-copy-and-exact-text-replacement/v1" }
+    >;
+
+    expect(preparation.exactTextReplacement.expectedText).toBe(
+      '            elif reasoning_effort in ("max", "xhigh"):\n' +
+        '                reasoning_effort = "max"\n' +
+        "            else:\n" +
+        '                reasoning_effort = "high"',
+    );
+    expect(preparation.exactTextReplacement.replacementText).toBe(
+      '            elif reasoning_effort in ("max", "xhigh"):\n' +
+        '                reasoning_effort = "max"\n' +
+        '            elif reasoning_effort == "high":\n' +
+        '                reasoning_effort = "high"\n' +
+        "            else:\n" +
+        '                reasoning_effort = "low"',
+    );
+  });
+
   it("pins the DGX Station Nemotron Ultra serving recipe", () => {
     const ultra = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-ultra-550b-a55b");
     expect(ultra).toBeDefined();
@@ -257,6 +279,7 @@ describe("vllm model registry", () => {
       ]),
       dockerRunArgsMode: "replace",
       minComputeCapability: 100,
+      minGpuMemoryBytes: 352_381_245_521,
       pullTimeoutSec: 43_200,
     });
 
@@ -267,6 +290,7 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--max-model-len 262144");
     expect(cmd).toContain("--revision 183968f87ae4cedce3039313cac1fd43d112c578");
     expect(cmd).toContain("--cpu-offload-gb 150");
+    expect(cmd).toContain(`--kernel-config '{"enable_flashinfer_autotune":false}'`);
     expect(cmd).toContain("--reasoning-parser nemotron_v3");
     expect(cmd).not.toContain("--trust-remote-code");
   });
@@ -296,6 +320,7 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--port 19000");
     expect(cmd).toContain("--max-num-seqs 256");
     expect(cmd).toContain("--gpu-memory-utilization 0.9");
+    expect(cmd).not.toContain("--kernel-config");
     expect(cmd).not.toContain("--kernel_config");
     expect(cmd).not.toContain("--speculative-config");
     expect(cmd).not.toContain("--cpu-offload");

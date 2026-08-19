@@ -28,12 +28,14 @@
  */
 
 import net from "node:net";
-import os from "node:os";
-import path from "node:path";
 
 import { isHostLocalInferenceServingRecipe } from "./serving/adapter-registry.js";
 import { managedInferenceDigest } from "./serving/catalog-integrity.js";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader.js";
+import {
+  hostLocalVllmDockerRunArguments,
+  hostLocalVllmModelArguments,
+} from "./serving/host-local-vllm-materialization.js";
 import type {
   CompiledManagedInferenceCatalog,
   HostLocalInferenceServingRecipe,
@@ -73,6 +75,8 @@ export interface VllmRuntimeOverride {
   pullTimeoutSec?: number;
   /** Runtime-specific GPU floor, overriding the model-wide default. */
   minComputeCapability?: number;
+  /** Minimum GPU or unified-memory capacity declared by the recipe. */
+  minGpuMemoryBytes?: number;
   /** Catalog identity that produced this runtime. */
   servingCatalog?: VllmServingCatalogIdentity;
   /** Catalog preset that declared this runtime, independent of receipt ownership. */
@@ -183,17 +187,6 @@ export interface VllmModelDef {
   probePolicyRef?: string;
 }
 
-const CATALOG_MATERIALIZER_OWNED_ARGUMENTS = new Set([
-  "--host",
-  "--port",
-  "--revision",
-  "--served-model-name",
-  "--max-model-len",
-  "--tensor-parallel-size",
-  "--pipeline-parallel-size",
-  "--data-parallel-size",
-]);
-
 interface CatalogModelVariant {
   readonly id: string;
   readonly label: string;
@@ -212,38 +205,6 @@ function argumentValue(arguments_: readonly ServingArgument[], name: string): st
   if (matches.length !== 1) return undefined;
   const value = matches[0]!.value;
   return value === undefined ? undefined : String(value);
-}
-
-function modelArguments(arguments_: readonly ServingArgument[]): string[] {
-  return arguments_.flatMap(({ name, value }) => {
-    if (CATALOG_MATERIALIZER_OWNED_ARGUMENTS.has(name)) return [];
-    return value === undefined ? [name] : [name, String(value)];
-  });
-}
-
-function catalogDockerRunArguments(recipe: HostLocalInferenceServingRecipe): string[] {
-  const { devices, gpuRequest, ipcMode, sharedMemoryBytes, temporaryFilesystems, ulimits } =
-    recipe.spec.runtime;
-  const memlock = ulimits.memlock === "unlimited" ? -1 : ulimits.memlock;
-  return [
-    "--gpus",
-    gpuRequest,
-    "--ipc",
-    ipcMode,
-    "--mount",
-    `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface", "hub")},target=${recipe.spec.runtime.modelCache.target}/hub,readonly`,
-    "--shm-size",
-    `${String(sharedMemoryBytes)}b`,
-    "--ulimit",
-    `memlock=${String(memlock)}`,
-    "--ulimit",
-    `stack=${String(ulimits.stackBytes)}`,
-    ...devices.flatMap((device) => ["--device", device]),
-    ...temporaryFilesystems.flatMap(({ target, sizeBytes, mode, options }) => [
-      "--tmpfs",
-      `${target}:${[...options, `size=${String(sizeBytes)}`, `mode=${mode}`].join(",")}`,
-    ]),
-  ];
 }
 
 function nodeArchitecture(architecture: string): NodeJS.Architecture {
@@ -306,9 +267,10 @@ function catalogModelVariant(
         recipe.spec.runtime.minimumComputeCapability > 0
           ? recipe.spec.runtime.minimumComputeCapability
           : undefined,
-      dockerRunArgs: catalogDockerRunArguments(recipe),
+      minGpuMemoryBytes: recipe.spec.runtime.minimumGpuMemoryBytes,
+      dockerRunArgs: hostLocalVllmDockerRunArguments(recipe),
       dockerRunArgsMode: "replace",
-      modelArgs: modelArguments(recipe.spec.serve.arguments),
+      modelArgs: hostLocalVllmModelArguments(recipe),
       maxModelLen,
       revision: recipe.spec.model.revision,
       servedModelId: recipe.spec.model.servedName,
@@ -400,6 +362,7 @@ export function vllmModelsFromCatalog(
               dockerRunArgsMode: base.variant.dockerRunArgsMode,
               pullTimeoutSec: base.variant.pullTimeoutSec,
               minComputeCapability: base.variant.minComputeCapability,
+              minGpuMemoryBytes: base.variant.minGpuMemoryBytes,
               orchestrationRef: base.variant.orchestrationRef,
               stationPair: base.variant.stationPair,
             }
@@ -444,7 +407,11 @@ export const VLLM_MODELS: readonly VllmModelDef[] = vllmModelsFromCatalog(
   loadManagedInferenceCatalog(),
 );
 
-export const DEFAULT_VLLM_MODEL: VllmModelDef = VLLM_MODELS[0];
+const defaultVllmModel = VLLM_MODELS[0];
+if (!defaultVllmModel) {
+  throw new Error("Managed inference catalog has no host-local vLLM models.");
+}
+export const DEFAULT_VLLM_MODEL: VllmModelDef = defaultVllmModel;
 
 /**
  * Rank a runtime platform declaration for a target host. Every specialized
@@ -833,7 +800,7 @@ export function buildNemotronUltraDistributedServeCommand(
     new Set([
       "--cpu-offload-gb",
       "--cpu-offload-params",
-      "--kernel_config",
+      "--kernel-config",
       "--speculative-config",
       "--default-chat-template-kwargs",
     ]),
@@ -899,7 +866,7 @@ export function buildNemotronUltraDistributedServeCommand(
     "    time.sleep(5)",
     "print(ray.cluster_resources())",
     "PY",
-    `exec vllm serve ${model.id} ${args.join(" ")}`,
+    `exec vllm serve ${[model.id, ...args].map(shellQuote).join(" ")}`,
   ].join("\n");
 }
 

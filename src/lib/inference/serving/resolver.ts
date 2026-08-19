@@ -70,7 +70,7 @@ function compareStrings(left: string, right: string): number {
 }
 
 function unmanagedExplicitIntent(intent: ManagedInferenceSelectionIntent): boolean {
-  return (intent.vllmExtraArguments?.length ?? 0) > 0;
+  return intent.vllmExtraArguments?.some(hasText) ?? false;
 }
 
 function recipeMatchesModelIntent(
@@ -398,7 +398,7 @@ function intentCompatibilityError(
   ) {
     return `model ${intent.vllmModel} conflicts with preset ${preset.metadata.id}`;
   }
-  if ((intent.vllmExtraArguments?.length ?? 0) > 0) {
+  if (unmanagedExplicitIntent(intent)) {
     return `extra vLLM arguments conflict with preset ${preset.metadata.id}`;
   }
   return undefined;

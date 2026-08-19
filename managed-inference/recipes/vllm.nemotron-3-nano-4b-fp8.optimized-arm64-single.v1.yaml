@@ -42,6 +42,8 @@ spec:
   serve:
     authentication: bearer
     directInstall:
+      # Preserve the legacy interactive appliance install surface; fixed managed
+      # profiles opt into bearer auth through an allowlisted install policy.
       authentication: none
       fixedArguments: false
       catalogReceipt: false
