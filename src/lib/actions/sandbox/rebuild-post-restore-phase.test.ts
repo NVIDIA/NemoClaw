@@ -84,6 +84,7 @@ describe("rebuild post-restore phase", () => {
     vi.spyOn(registry, "getSandbox").mockImplementation(
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
+    vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([]);
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
     vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockReturnValue(true);
   });
@@ -121,6 +122,28 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(input());
 
     expect(order).toEqual(["doctor", "reconcile", "messaging", "config-hash"]);
+  });
+
+  it("fails when doctor returns 255 and the final OpenClaw config hash is unverified (#9530)", async () => {
+    vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
+      status: 255,
+      stdout: "",
+      stderr: "",
+    });
+    vi.mocked(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).mockReturnValue(false);
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(args.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw config integrity verification failed after rebuild.",
+    );
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+      "rebuilt successfully",
+    );
   });
 
   it("does not run OpenClaw session reconciliation for another agent (#7102)", async () => {

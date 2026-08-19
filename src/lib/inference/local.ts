@@ -15,6 +15,7 @@ import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-pr
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
+import { isObjectRecord } from "../core/json-types";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 
 import { retryUntil } from "../core/retry";
@@ -357,18 +358,13 @@ export function probeVllmModels(
   }
 }
 
-// A 200 response on `/api/tags` alone is not enough to call Ollama healthy —
-// a captive HTTP_PROXY, a stale listener, or a stub on the loopback port can
-// all answer with arbitrary 2xx bodies that look healthy at the curl-status
-// level. The authoritative signal is the Ollama wire format itself:
-// `{ "models": [...] }`. An empty array is fine — that just means no models
-// pulled yet — but a body that doesn't parse as JSON-with-array-`models` did
-// not come from Ollama and the probe should not call it healthy. (#4275)
+// A successful `/api/tags` response proves Ollama health only when its body
+// contains a `models` array of objects. An empty array is valid. (#4275)
 export function isValidOllamaTagsResponseBody(body: string): boolean {
   if (!body) return false;
   try {
     const parsed = JSON.parse(body);
-    return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.models);
+    return isObjectRecord(parsed) && Array.isArray(parsed.models) && parsed.models.every(isObjectRecord);
   } catch {
     return false;
   }
@@ -376,13 +372,13 @@ export function isValidOllamaTagsResponseBody(body: string): boolean {
 
 function modelInventory(provider: string, body: string): string[] | null {
   try {
-    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const parsed = JSON.parse(body);
+    if (!isObjectRecord(parsed)) return null;
     const entries = provider === "ollama-local" ? parsed.models : parsed.data;
     if (!Array.isArray(entries)) return null;
     return entries.flatMap((entry) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-      const record = entry as Record<string, unknown>;
-      const values = provider === "ollama-local" ? [record.name, record.model] : [record.id];
+      if (!isObjectRecord(entry)) return [];
+      const values = provider === "ollama-local" ? [entry.name, entry.model] : [entry.id];
       return values.filter((value): value is string => typeof value === "string" && value !== "");
     });
   } catch {

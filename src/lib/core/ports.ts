@@ -217,21 +217,6 @@ export function parseGatewayPort(
   return port;
 }
 
-export function validateOpenRouterRuntimeAdapterPort(
-  envVar: string,
-  port: number,
-  options: RuntimeAdapterPortValidationOptions,
-): void {
-  validateServicePort(envVar, port, options, "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT");
-}
-
-export function validateHttpsPinRuntimeAdapterPort(
-  envVar: string,
-  port: number,
-  options: RuntimeAdapterPortValidationOptions,
-): void {
-  validateServicePort(envVar, port, options, "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT");
-}
 /** OpenShell gateway port (default 8080, override via NEMOCLAW_GATEWAY_PORT). */
 export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, {
   dashboardPort: DASHBOARD_PORT,
@@ -245,14 +230,8 @@ export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GA
   httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
 });
 
-/** Reject llama.cpp collisions with every other configured host service. */
-export function validateLlamaCppPortReservation(
-  options: RuntimeAdapterPortValidationOptions,
-): void {
-  validateServicePort(LLAMA_CPP_PORT_ENV, LLAMA_CPP_PORT, options, LLAMA_CPP_PORT_ENV);
-}
-
-validateLlamaCppPortReservation({
+/** The live host-port configuration every runtime adapter is validated against. */
+const CURRENT_RUNTIME_PORT_CONFIGURATION: RuntimeAdapterPortValidationOptions = {
   gatewayPort: GATEWAY_PORT,
   dashboardPort: DASHBOARD_PORT,
   dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
@@ -263,4 +242,28 @@ validateLlamaCppPortReservation({
   bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
   openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
   httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
-});
+};
+
+/**
+ * Reject a runtime adapter port that overlaps the dashboard allocation range, a
+ * reserved service default, or another configured service port. `ownerEnvVar`
+ * names the adapter being validated: it is both the variable reported in the
+ * error and the catalog entry excluded from the self-conflict check. Tests
+ * inject `options`; production callers use the live configuration above.
+ */
+export function validateRuntimeAdapterPort(
+  ownerEnvVar: string,
+  port: number,
+  options: RuntimeAdapterPortValidationOptions = CURRENT_RUNTIME_PORT_CONFIGURATION,
+): void {
+  validateServicePort(ownerEnvVar, port, options, ownerEnvVar);
+}
+
+/** Reject llama.cpp collisions with every other configured host service. */
+export function validateLlamaCppPortReservation(
+  options: RuntimeAdapterPortValidationOptions,
+): void {
+  validateServicePort(LLAMA_CPP_PORT_ENV, LLAMA_CPP_PORT, options, LLAMA_CPP_PORT_ENV);
+}
+
+validateLlamaCppPortReservation(CURRENT_RUNTIME_PORT_CONFIGURATION);

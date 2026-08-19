@@ -85,6 +85,7 @@ export type DockerFixtureOptions = {
   readonly replacementEnvironment?: (environment: readonly string[]) => readonly string[];
   readonly sharedState?: "committed" | "none" | "pending";
   readonly sharedStateCommitResult?: FixtureCommandResult;
+  readonly sharedStateRollbackResult?: FixtureCommandResult;
   readonly sharedReceiptClearFailures?: readonly Error[];
 };
 
@@ -456,10 +457,12 @@ export function fixture(options: DockerFixtureOptions = {}) {
           switch (true) {
             case args.includes("--shared-state-transaction-status"):
               return ok(`${sharedState}\n`);
-            case args.includes("--rollback-shared-state-transaction"):
-              sharedState = "none";
+            case args.includes("--rollback-shared-state-transaction"): {
+              const result = options.sharedStateRollbackResult ?? ok();
+              if (result.status === 0) sharedState = "none";
               events.push("shared:rollback");
-              return ok();
+              return result;
+            }
           }
           break;
         case "exec":

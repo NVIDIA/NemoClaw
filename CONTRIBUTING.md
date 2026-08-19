@@ -511,8 +511,7 @@ For Markdown docs routing, user-skill guidance, and release-prep documentation w
 
 ## Pull Requests
 
-We welcome contributions. Every PR requires maintainer review before merge. Contributors may have up to 5 open PRs at one time.
-Core maintainers listed in `.github/workflows/pr-limit.yaml` are exempt from this limit.
+We welcome contributions. Every PR requires maintainer review before merge. The default limit is 5 open PRs at one time.
 Maintainers review pull requests according to project priority, security impact, release readiness, and reviewer availability.
 PRs that solve issues with Priority set to Urgent or High are more likely to receive earlier review when maintainers have capacity.
 For substantial features or behavior changes, start with a GitHub Discussion before opening a large implementation PR.
@@ -561,8 +560,9 @@ If the PR description is missing the DCO declaration, update the PR description 
 If any commit is missing GitHub verification, fix the branch before opening a PR.
 If force-push is not allowed after an unverified commit is published, open a fresh branch and fresh PR with a clean compliant history.
 
-> [!WARNING]
-> Non-exempt accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.
+When an opened or reopened PR exceeds the account's limit, automation comments on and closes that PR.
+
+> Accounts that submit automated bulk PRs may have their PRs closed or their access restricted.
 
 ### No External Project Links
 

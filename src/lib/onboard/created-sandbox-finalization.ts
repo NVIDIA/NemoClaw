@@ -21,7 +21,7 @@ import * as sandboxState from "../state/sandbox";
 import * as buildContext from "../build-context";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import { restoreDefaultAfterRecreate } from "./default-preservation";
-import { getDcodeSelectionDrift } from "./dcode-selection-drift";
+import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
@@ -53,6 +53,7 @@ export type CreatedSandboxFinalizationOptions = {
   provider: string;
   model: string;
   preferredInferenceApi: string | null;
+  endpointUrl?: string | null;
 };
 
 export type CreatedSandboxFinalizationDeps = {
@@ -69,6 +70,7 @@ export type CreatedSandboxFinalizationDeps = {
     provider: string,
     model: string,
     preferredInferenceApi: string | null,
+    endpointUrl: string | null,
   ): SelectionDrift;
   register(
     openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
@@ -399,6 +401,7 @@ type OnboardInferenceSelection = {
   readonly provider: string;
   readonly model: string;
   readonly preferredInferenceApi: string | null;
+  readonly endpointUrl: string | null;
 };
 type OnboardMessagingRegistration = {
   readonly plannedMessagingState: RegistrationSeed["plannedMessagingState"];
@@ -457,7 +460,7 @@ export function createOnboardCreatedSandboxCompletion(
   workload: WorkloadResolutionInput["workload"],
   note: (message: string) => void,
 ): CreatedSandboxCompletionActions {
-  const { provider, model, preferredInferenceApi } = inference;
+  const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
   return createCreatedSandboxCompletionActions(
     {
@@ -472,6 +475,7 @@ export function createOnboardCreatedSandboxCompletion(
         provider,
         model,
         preferredInferenceApi,
+        endpointUrl,
       },
       registration: {
         sandboxName,
@@ -538,10 +542,7 @@ export function createOnboardCreatedSandboxCompletion(
           agent?.configPaths.dir,
         ),
       restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
-      getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
-        getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
-          runCaptureOpenshell,
-        }),
+      getDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
@@ -632,6 +633,7 @@ export function finalizeCreatedSandbox(
       options.provider,
       options.model,
       options.preferredInferenceApi,
+      options.endpointUrl ?? null,
     );
     if (finalSelection.changed || finalSelection.unknown) {
       deps.error(
