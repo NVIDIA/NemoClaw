@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   V00103_SANDBOX_BUILD_DIGESTS,
   V00103_SUPERVISOR_MANIFEST_DIGEST,
+  V00106_SUPERVISOR_MANIFEST_DIGEST,
 } from "./helpers/openshell-release-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
@@ -191,10 +192,24 @@ describe("OpenShell supervisor manifest trust", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("accepts the base-trusted OpenShell 0.0.103 supervisor identity before version selection (#8893)", () => {
+  it.each([
+    ["0.0.103", V00103_SUPERVISOR_MANIFEST_DIGEST],
+    ["0.0.106", V00106_SUPERVISOR_MANIFEST_DIGEST],
+  ] as const)(
+    "accepts the base-trusted OpenShell %s supervisor identity before version selection (#8893)",
+    (version, digest) => {
+      const result = runParser({
+        transformSupervisor: (source) => addSupervisorManifestPin(source, version, digest),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it("accepts the exact OpenShell 0.0.106 supervisor identity before version selection", () => {
     const result = runParser({
       transformSupervisor: (source) =>
-        addSupervisorManifestPin(source, "0.0.103", V00103_SUPERVISOR_MANIFEST_DIGEST),
+        addSupervisorManifestPin(source, "0.0.106", V00106_SUPERVISOR_MANIFEST_DIGEST),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -220,6 +235,17 @@ describe("OpenShell supervisor manifest trust", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("must use only base-trusted identities");
     expect(result.stderr).toContain("|0.0.104|");
+  });
+
+  it("rejects the OpenShell 0.0.106 supervisor identity remapped to another release", () => {
+    const result = runParser({
+      transformSupervisor: (source) =>
+        addSupervisorManifestPin(source, "0.0.105", V00106_SUPERVISOR_MANIFEST_DIGEST),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must use only base-trusted identities");
+    expect(result.stderr).toContain(`|0.0.105|${V00106_SUPERVISOR_MANIFEST_DIGEST}`);
   });
 
   it("rejects selecting OpenShell 0.0.103 without its supervisor manifest identity (#8893)", () => {

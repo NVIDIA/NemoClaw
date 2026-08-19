@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandboxInferenceConfig } from "../inference/config";
+import { resolveManagedDcodeIdentity } from "../inference/managed-dcode/identity";
 import type { SelectionDrift } from "./selection-drift";
 
 export type DcodeInferenceIdentity = {
@@ -13,11 +14,20 @@ export type DcodeInferenceIdentity = {
 
 export type DcodeSelectionDriftDeps = {
   getGatewayName(): string;
+  requestedEndpointUrl?: string | null;
   runCaptureOpenshell(
     args: string[],
     options?: { ignoreError?: boolean },
   ): string | null | undefined;
 };
+
+export type DcodeSelectionDriftReader = (
+  sandboxName: string,
+  requestedProvider: string | null,
+  requestedModel: string | null,
+  preferredInferenceApi: string | null,
+  requestedEndpointUrl: string | null,
+) => SelectionDrift;
 
 const IDENTITY_FIELDS = ["Route", "Provider", "Model", "Endpoint"] as const;
 type IdentityField = (typeof IDENTITY_FIELDS)[number];
@@ -46,11 +56,6 @@ const UNKNOWN_SELECTION_DRIFT: SelectionDrift = {
   existingModel: null,
   unknown: true,
 };
-
-export function normalizeDcodeModelName(model: string): string {
-  const trimmed = model.trim();
-  return trimmed.startsWith("openai:") ? trimmed.slice("openai:".length) : trimmed;
-}
 
 export function parseDcodeInferenceIdentity(
   output: string | null | undefined,
@@ -84,14 +89,23 @@ export function getExpectedDcodeInferenceIdentity(
   requestedProvider: string | null,
   requestedModel: string | null,
   preferredInferenceApi: string | null,
+  requestedEndpointUrl?: string | null,
 ): DcodeInferenceIdentity | null {
   if (requestedModel === null) return null;
 
   const route = getSandboxInferenceConfig(requestedModel, requestedProvider, preferredInferenceApi);
+  const managedIdentity = resolveManagedDcodeIdentity(
+    requestedProvider,
+    requestedModel,
+    requestedEndpointUrl,
+  );
   return {
     route: route.providerKey,
-    provider: requestedProvider?.trim() || route.providerKey,
-    model: `openai:${normalizeDcodeModelName(requestedModel)}`,
+    provider:
+      managedIdentity.provider === "openrouter"
+        ? managedIdentity.provider
+        : requestedProvider?.trim() || route.providerKey,
+    model: managedIdentity.defaultModel,
     endpoint: route.inferenceBaseUrl,
   };
 }
@@ -107,6 +121,7 @@ export function getDcodeSelectionDrift(
     requestedProvider,
     requestedModel,
     preferredInferenceApi,
+    deps.requestedEndpointUrl,
   );
   if (!sandboxName || !expected) return { ...UNKNOWN_SELECTION_DRIFT };
 
@@ -146,4 +161,22 @@ export function getDcodeSelectionDrift(
     existingModel: existing.model,
     unknown: false,
   };
+}
+
+export function createDcodeSelectionDriftReader(
+  runCaptureOpenshell: DcodeSelectionDriftDeps["runCaptureOpenshell"],
+  getGatewayName: DcodeSelectionDriftDeps["getGatewayName"],
+): DcodeSelectionDriftReader {
+  return (
+    sandboxName,
+    requestedProvider,
+    requestedModel,
+    preferredInferenceApi,
+    requestedEndpointUrl,
+  ) =>
+    getDcodeSelectionDrift(sandboxName, requestedProvider, requestedModel, preferredInferenceApi, {
+      getGatewayName,
+      runCaptureOpenshell,
+      requestedEndpointUrl,
+    });
 }

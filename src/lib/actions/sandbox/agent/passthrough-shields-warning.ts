@@ -22,10 +22,10 @@ import {
 // - Presentation boundary: sandbox names are user-controlled command text and
 //   must remain shell-quoted. Direct stderr output is deliberate so the warning
 //   is visible in a one-shot CLI while machine-readable stdout stays clean.
-// - Source-fix constraint: an already-running in-sandbox TUI has no host CLI
-//   interception point. That surface needs an upstream structured relock error
-//   or a separate extend-on-activity design; this helper covers only host
-//   `nemoclaw <name> agent` dispatches.
+// - Source-fix constraint: this helper covers only host `nemoclaw <name> agent`
+//   dispatches. Connect-managed OpenClaw sessions use a separate bounded audit
+//   watcher. Sessions entered outside NemoClaw still need an upstream structured
+//   relock error or a separate extend-on-activity design.
 // - Regression tests cover validated/fallback timeouts, shell metacharacters
 //   and embedded quotes, real-file JSON stdout separation, unreadable/absent
 //   history, newer-down suppression, and terminal-runtime exclusion.
@@ -44,6 +44,23 @@ type ShieldsWarningProcess = {
 
 type RecentShieldsAutoRestoreReader = (sandboxName: string) => ShieldsAutoRestoreReadResult;
 
+export function normalizeShieldsRelockTimeoutSeconds(timeoutSeconds: number | null): number | null {
+  return timeoutSeconds !== null &&
+    Number.isInteger(timeoutSeconds) &&
+    timeoutSeconds >= 1 &&
+    timeoutSeconds <= 1800
+    ? timeoutSeconds
+    : null;
+}
+
+export function formatShieldsDownRecoveryCommand(
+  sandboxName: string,
+  timeoutSeconds: number | null,
+): string {
+  const safeTimeout = normalizeShieldsRelockTimeoutSeconds(timeoutSeconds);
+  return `${CLI_NAME} ${shellQuote(sandboxName)} shields down --timeout ${String(safeTimeout ?? 60)}s`;
+}
+
 function emitShieldsRelockWarning(
   proc: ShieldsWarningProcess,
   relock: ShieldsAutoRestoreEvent,
@@ -51,18 +68,10 @@ function emitShieldsRelockWarning(
 ): void {
   // Defend the user-facing command suggestion even when tests or future
   // callers inject an event without going through the audit reader.
-  const timeoutSeconds =
-    relock.timeoutSeconds !== null &&
-    Number.isInteger(relock.timeoutSeconds) &&
-    relock.timeoutSeconds >= 1 &&
-    relock.timeoutSeconds <= 1800
-      ? relock.timeoutSeconds
-      : null;
+  const timeoutSeconds = normalizeShieldsRelockTimeoutSeconds(relock.timeoutSeconds);
   const afterPart = timeoutSeconds !== null ? ` after ${String(timeoutSeconds)}s` : "";
-  const timeoutSuggestion =
-    timeoutSeconds !== null ? `--timeout ${String(timeoutSeconds)}s` : "--timeout 60s";
   proc.stderr.write(
-    `  ⚠ Shields auto-relocked${afterPart} — run \`${CLI_NAME} ${shellQuote(sandboxName)} shields down ${timeoutSuggestion}\` to extend.\n`,
+    `  ⚠ Shields auto-relocked${afterPart} — run \`${formatShieldsDownRecoveryCommand(sandboxName, timeoutSeconds)}\` to extend.\n`,
   );
 }
 

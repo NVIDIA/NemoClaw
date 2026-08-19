@@ -233,6 +233,7 @@ const { createSandbox } = require(${onboardPath});
       [],
       null,
       null,
+      null,
       preparedBuildContext,
     );
   } catch (error) {

@@ -8,6 +8,7 @@ import type { TrustedRemoteBaseImageOverride } from "../../agent/base-image";
 import { loadAgent } from "../../agent/defs";
 import {
   ensureAgentBaseImage,
+  getAgentSandboxBaseImageEnvVar,
   pinTrustedAgentBaseImageOverrideForOperation,
   pinTrustedAgentRemoteBaseImageOverrideForOperation,
 } from "../../agent/onboard";
@@ -16,6 +17,7 @@ import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   getResumeSandboxGpuOverrides,
@@ -36,7 +38,7 @@ import {
   type ResolvedDcodeRebuildTarget,
   resolveDcodeRebuildTarget,
 } from "./rebuild-dcode-target";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import type { RebuildAgentBaseImageOptions, RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
   disposePreparedDcodeRebuildImage,
   type PreparedDcodeRebuildImage,
@@ -81,6 +83,7 @@ export type DcodeReplacementPreflightInput = {
 
 export type DcodeReplacementPreparationInput = DcodeReplacementPreflightInput & {
   webSearchConfig: WebSearchConfig | null;
+  baseImageOptions?: RebuildAgentBaseImageOptions;
 };
 
 export type DcodeRebuildPreflightScope = {
@@ -281,22 +284,94 @@ function isImmutableRemoteImageRef(imageRef: string): boolean {
   return /^[^\s@]+@sha256:[0-9a-f]{64}$/i.test(imageRef);
 }
 
-function resolvePinnedDcodeBaseImage(bail: DcodeRebuildPreflightBail): PinnedDcodeBaseImage {
+function recordedDcodeOverrideReference(
+  metadata: SandboxBaseImageResolutionMetadata | null | undefined,
+  imageName: string,
+  bail: DcodeRebuildPreflightBail,
+): string | null {
+  if (!metadata || metadata.source !== "override") return null;
+  if (
+    typeof metadata.digest !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/u.test(metadata.digest) ||
+    metadata.imageName !== imageName ||
+    metadata.ref !== `${imageName}@${metadata.digest}` ||
+    metadata.pinnedRemoteRef !== undefined
+  ) {
+    fail(
+      "the recorded Deep Agents Code base-image resolution metadata does not describe an exact published override",
+      bail,
+    );
+  }
+  return metadata.ref;
+}
+
+function reuseRecordedDcodeBaseImage(
+  agent: ReturnType<typeof loadAgent>,
+  options: RebuildAgentBaseImageOptions,
+  bail: DcodeRebuildPreflightBail,
+): ReturnType<typeof ensureAgentBaseImage> | null {
+  const metadata = options.resolutionHint;
+  const envName = getAgentSandboxBaseImageEnvVar(agent.name);
+  if (
+    process.env[envName]?.trim() ||
+    options.forceBaseImageRefresh === true ||
+    isSandboxBaseImageRefreshRequested(process.env) ||
+    !metadata
+  ) {
+    return null;
+  }
+  const imageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
+  const imageRef = recordedDcodeOverrideReference(metadata, imageName, bail);
+  if (!imageRef) return null;
+
+  const hadPrevious = Object.hasOwn(process.env, envName);
+  const previous = process.env[envName];
+  const restoreLease = pinTrustedAgentRemoteBaseImageOverrideForOperation(envName, {
+    ref: imageRef,
+    resolutionMetadata: metadata,
+  });
+  try {
+    process.env[envName] = imageRef;
+    const result = ensureAgentBaseImage(agent, { forceBaseImageRefresh: true });
+    if (
+      result.imageTag !== imageRef ||
+      result.resolutionMetadata !== metadata ||
+      result.resolutionMetadata.source !== "override"
+    ) {
+      fail(
+        "the recorded Deep Agents Code base-image resolution metadata could not be revalidated",
+        bail,
+      );
+    }
+    return result;
+  } finally {
+    restoreLease();
+    if (hadPrevious && previous !== undefined) process.env[envName] = previous;
+    else delete process.env[envName];
+  }
+}
+
+function resolvePinnedDcodeBaseImage(
+  bail: DcodeRebuildPreflightBail,
+  options: RebuildAgentBaseImageOptions = {},
+): PinnedDcodeBaseImage {
   const agent = loadAgent(DCODE_AGENT_NAME);
   if (!agent.dockerfileBasePath) {
     fail("DCode is missing its sandbox base Dockerfile", bail);
   }
-  let result: ReturnType<typeof ensureAgentBaseImage>;
-  try {
-    result = ensureAgentBaseImage(agent, { forceBaseImageRefresh: true });
-  } catch (error) {
+  let result = reuseRecordedDcodeBaseImage(agent, options, bail);
+  if (!result) {
     try {
-      result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
-    } catch (buildError) {
-      fail(
-        `DCode base image could not be resolved or built: ${buildError instanceof Error ? buildError.message : String(buildError)}`,
-        bail,
-      );
+      result = ensureAgentBaseImage(agent, { forceBaseImageRefresh: true });
+    } catch (error) {
+      try {
+        result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
+      } catch (buildError) {
+        fail(
+          `DCode base image could not be resolved or built: ${buildError instanceof Error ? buildError.message : String(buildError)}`,
+          bail,
+        );
+      }
     }
   }
   if (
@@ -450,7 +525,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
     if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
 
-    pinnedBase = resolvePinnedDcodeBaseImage(bail);
+    pinnedBase = resolvePinnedDcodeBaseImage(bail, input.baseImageOptions);
     const sandboxGpuConfig = getRecordedGpuConfig(sandboxName, entry, session);
     if (sandboxGpuConfig.errors.length > 0) fail(sandboxGpuConfig.errors.join(" "), bail);
     const pinnedBaseForPreparation = pinnedBase;

@@ -1264,8 +1264,18 @@ if ! printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3; then
 fi
 wait_for_turn_count 2
 
+exit_command_write_status=0
 if [[ -n "$NEMOCLAW_LAUNCH_EXIT_COMMAND" ]]; then
-  printf '%s\r' "$NEMOCLAW_LAUNCH_EXIT_COMMAND" >&3
+  # The TUI may finish cleanly immediately after publishing the two required
+  # structured turns. Preserve that successful child status even when its
+  # input reader wins the race with the best-effort exit command.
+  trap '' PIPE
+  if printf '%s\r' "$NEMOCLAW_LAUNCH_EXIT_COMMAND" >&3; then
+    :
+  else
+    exit_command_write_status=$?
+  fi
+  trap - PIPE
 else
   # Some TUIs have no exit command. They may close the FIFO after the first
   # interrupt, so ignore SIGPIPE while sending the second one.
@@ -1285,6 +1295,9 @@ fi
 session_pid=""
 
 if [[ "$launch_status" != 0 ]]; then
+  if [[ "$exit_command_write_status" != 0 ]]; then
+    echo "launch PTY closed before the exit command was submitted (status $exit_command_write_status)" >&2
+  fi
   echo "launch exited with status $launch_status" >&2
   terminal_diagnostic
   exit "$launch_status"

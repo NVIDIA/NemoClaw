@@ -134,10 +134,8 @@ require_brief_line_once() {
 
 printf -v expected_pi_candidate -- "- Pi candidate: \`%s\`" "$target"
 printf -v expected_base_candidate -- "- Base-image candidate: \`%s\`" "$target"
-printf -v expected_launchable_candidate -- "- Launchable candidate: \`%s\`" "$target"
 require_brief_line_once "$expected_pi_candidate" "plan-bound Pi candidate"
 require_brief_line_once "$expected_base_candidate" "plan-bound base-image candidate"
-require_brief_line_once "$expected_launchable_candidate" "plan-bound Launchable candidate"
 if grep -Eq -- "TODO_RELEASE_BRIEF|Complete before confirmation" "$brief_snapshot"; then
   fail "Release brief still contains unresolved prompts"
 fi

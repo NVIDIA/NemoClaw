@@ -21,6 +21,9 @@ const sourceMocks = vi.hoisted(() => ({
   inputsChanged: vi.fn(),
   nearestTags: vi.fn(),
 }));
+const heartbeatMocks = vi.hoisted(() => ({
+  run: vi.fn((operation: () => unknown, _options?: { activity?: string }) => operation()),
+}));
 
 vi.mock("./adapters/docker", () => ({
   dockerBuild: dockerMocks.build,
@@ -33,6 +36,10 @@ vi.mock("./adapters/docker", () => ({
 
 vi.mock("./trace", () => ({
   addTraceEvent: traceMocks.add,
+}));
+
+vi.mock("./sandbox-base-image/local-build-heartbeat", () => ({
+  withLocalBuildHeartbeat: heartbeatMocks.run,
 }));
 
 vi.mock("./sandbox-base-image/source-identity", async (importOriginal) => ({
@@ -179,6 +186,8 @@ describe("sandbox base-image warm resolution", () => {
     ).toBeNull();
     expect(dockerMocks.imageInspect).toHaveBeenCalled();
     expect(dockerMocks.pull).toHaveBeenCalled();
+    expect(heartbeatMocks.run).toHaveBeenCalledTimes(dockerMocks.pull.mock.calls.length);
+    expect(heartbeatMocks.run.mock.calls.every((call) => call[1]?.activity === "pull")).toBe(true);
     expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_miss", {
       has_hint: true,
     });

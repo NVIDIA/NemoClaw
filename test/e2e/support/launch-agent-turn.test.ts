@@ -522,6 +522,7 @@ if (process.argv[2] !== "tui") {
   const second = await ask();
   append("user", second);
   append("assistant", "second response");
+  if (mode === "delayed-input-attachment") process.exit(0);
   const exitCommand = await ask();
   if (mode === "late-extra") append("user", firstInput);
   rl.close();
@@ -1043,7 +1044,7 @@ it.runIf(process.platform === "linux").each(["absent", "ansi", "reordered"] as c
 );
 
 it.runIf(process.platform === "linux")(
-  "waits for the OpenClaw TUI input mode before submitting PTY input (#9160)",
+  "waits for OpenClaw input mode and accepts a clean exit after two turns (#9160, #9384)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
       "delayed-input-attachment",
