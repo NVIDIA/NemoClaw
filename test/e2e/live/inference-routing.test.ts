@@ -11,6 +11,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
 import {
@@ -333,6 +334,9 @@ async function runRuntimeIdentityE2EScenario(
   const { artifacts, cleanup, host, progress, sandbox, skip } = context;
   const artifactPrefix = scenario.testId.toLowerCase();
   progress.phase("confirm live runtime identity prerequisites");
+  if (!OPENSHELL_V0106_QUALIFICATION.supportsRuntimeIdentityRefreshProjection) {
+    skip("OpenShell 0.0.106 does not project provider-refresh credentials into Docker sandboxes");
+  }
   await requireLivePrerequisites(host, skip);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-identity-e2e-"));
   const workdir = path.join(root, "blueprint");
