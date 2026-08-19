@@ -29,7 +29,10 @@ import {
   expectSandboxProviderAttachment,
   upsertGenericGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
-import { ONBOARD_COMMAND_TIMEOUT_MS } from "../fixtures/onboard-timeout-contract.ts";
+import {
+  ONBOARD_COMMAND_TIMEOUT_MS,
+  ONBOARD_TEST_TIMEOUT_MS,
+} from "../fixtures/onboard-timeout-contract.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 // Disruption-recovery contract — regression for #446.
@@ -152,6 +155,7 @@ function expectHermeticCompatibleEndpointUsed(
 test(
   "onboard-resume: interrupted onboard then --resume can recreate with cached setup",
   {
+    timeout: ONBOARD_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm runtime and compatible-endpoint prerequisites",
