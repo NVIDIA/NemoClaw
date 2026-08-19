@@ -196,11 +196,17 @@ jobs:
             exit 1
           }
 
-          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
-            fail "workflow must run from NVIDIA/NemoClaw main"
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]; then
+            fail "workflow must run from NVIDIA/NemoClaw"
           fi
           if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             fail "workflow event must be push or workflow_dispatch"
+          fi
+          if [[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]; then
+            fail "push workflow must run from NVIDIA/NemoClaw main"
+          fi
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]; then
+            fail "manual workflow must run from an NVIDIA/NemoClaw branch"
           fi
           # PR E2E mode: maintainer-dispatched PR commit.
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
@@ -433,11 +439,17 @@ jobs:
             exit 1
           }
 
-          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
-            fail "workflow must run from NVIDIA/NemoClaw main"
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]; then
+            fail "workflow must run from NVIDIA/NemoClaw"
           fi
           if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             fail "workflow event must be push or workflow_dispatch"
+          fi
+          if [[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]; then
+            fail "push workflow must run from NVIDIA/NemoClaw main"
+          fi
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]; then
+            fail "manual workflow must run from an NVIDIA/NemoClaw branch"
           fi
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
             if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
