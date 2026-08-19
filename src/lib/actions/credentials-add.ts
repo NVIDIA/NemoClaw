@@ -12,8 +12,13 @@ import {
 } from "../credentials/command-support";
 import { redact } from "../security/redact";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
+import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
-import { listManagedMcpCredentialReservations, recordExtraProvider } from "./global";
+import {
+  forgetExtraProvider,
+  listManagedMcpCredentialReservations,
+  recordExtraProvider,
+} from "./global";
 
 export type CredentialsAddInput = {
   provider: string;
@@ -231,15 +236,10 @@ export async function runCredentialsAddAction(
   if (explicitCollision) return explicitCollision;
 
   if (fromExisting && managedMcpReservations.length > 0) {
-    const inspection = inspectProviderProfileCredentialKeys(type);
-    if (inspection.credentialKeys) {
-      const importedCollision = managedMcpCollisionFailure(
-        provider,
-        inspection.credentialKeys,
-        managedMcpReservations,
-      );
-      if (importedCollision) return importedCollision;
-    }
+    return fail([
+      `  Could not reserve credential ownership for provider profile '${type}'.`,
+      "  Refusing --from-existing while managed MCP credential keys are reserved.",
+    ]);
   }
 
   const recoveryFailureLines: string[] = [];
@@ -253,21 +253,17 @@ export async function runCredentialsAddAction(
   const providerProfileFailure = ensureBundledProviderProfile(type);
   if (providerProfileFailure) return providerProfileFailure;
 
-  if (fromExisting && managedMcpReservations.length > 0) {
+  let importedCredentialKeys: string[] | null = null;
+  if (fromExisting) {
     const inspection = inspectProviderProfileCredentialKeys(type);
     if (!inspection.credentialKeys) {
       return fail([
         `  Could not inspect credential keys for provider profile '${type}'.`,
-        "  Refusing --from-existing while managed MCP credential keys are reserved.",
+        "  Refusing --from-existing because credential ownership could not be reserved safely.",
         ...(inspection.diagnostic ? [`  ${inspection.diagnostic}`] : []),
       ]);
     }
-    const importedCollision = managedMcpCollisionFailure(
-      provider,
-      inspection.credentialKeys,
-      managedMcpReservations,
-    );
-    if (importedCollision) return importedCollision;
+    importedCredentialKeys = inspection.credentialKeys;
   }
 
   const openshellArgs: string[] = ["provider", "create", "--name", provider, "--type", type];
@@ -282,33 +278,51 @@ export async function runCredentialsAddAction(
     openshellArgs.push("--config", configPair);
   }
 
-  const result = runOpenshellProviderCommand(openshellArgs, {
-    env: Object.fromEntries(credentials.map((credential) => [credential, process.env[credential]])),
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-
-  if (result.status === 0) {
-    recordExtraProvider(provider);
-    return ok([
-      `  Registered provider '${provider}' with the OpenShell gateway.`,
-      `  Verify with '${CLI_NAME} credentials list'.`,
-      `  Rebuild the target sandbox (\`${CLI_NAME} <sandbox> rebuild\`) to attach the new provider.`,
-    ]);
-  }
-
-  const rawStderr = String(result.stderr || "").trim();
-  const redactedStderr = redact(rawStderr);
-  const lines = [`  Could not register provider '${provider}'.`];
-  if (/already exists/i.test(rawStderr)) {
-    lines.push(
-      "",
-      `  '${provider}' is already registered.`,
-      `  Run '${CLI_NAME} credentials reset ${provider} --yes' first if you need to replace it.`,
+  return withMcpCredentialOwnershipLock(() => {
+    const ownershipCredentialKeys = importedCredentialKeys ?? credentials;
+    const collision = managedMcpCollisionFailure(
+      provider,
+      ownershipCredentialKeys,
+      listManagedMcpCredentialReservations(),
     );
-  } else if (redactedStderr) {
-    lines.push(`  ${redactedStderr}`);
-  }
-  return fail(lines);
+    if (collision) return collision;
+
+    const recordedReservation = recordExtraProvider(provider);
+    let keepReservation = false;
+    try {
+      const result = runOpenshellProviderCommand(openshellArgs, {
+        env: Object.fromEntries(
+          credentials.map((credential) => [credential, process.env[credential]]),
+        ),
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      });
+
+      if (result.status === 0) {
+        keepReservation = true;
+        return ok([
+          `  Registered provider '${provider}' with the OpenShell gateway.`,
+          `  Verify with '${CLI_NAME} credentials list'.`,
+          `  Rebuild the target sandbox (\`${CLI_NAME} <sandbox> rebuild\`) to attach the new provider.`,
+        ]);
+      }
+
+      const rawStderr = String(result.stderr || "").trim();
+      const redactedStderr = redact(rawStderr);
+      const lines = [`  Could not register provider '${provider}'.`];
+      if (/already exists/i.test(rawStderr)) {
+        lines.push(
+          "",
+          `  '${provider}' is already registered.`,
+          `  Run '${CLI_NAME} credentials reset ${provider} --yes' first if you need to replace it.`,
+        );
+      } else if (redactedStderr) {
+        lines.push(`  ${redactedStderr}`);
+      }
+      return fail(lines);
+    } finally {
+      if (recordedReservation && !keepReservation) forgetExtraProvider(provider);
+    }
+  });
 }

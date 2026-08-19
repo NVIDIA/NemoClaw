@@ -166,7 +166,7 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
 
-  it("rejects a credential imported by provider type when managed MCP reserves it (#9388)", async () => {
+  it("rejects --from-existing before gateway work when managed MCP reserves credentials (#9388)", async () => {
     mocks.listManagedMcpCredentialReservations.mockReturnValue([
       {
         sandboxName: "hermes",
@@ -174,13 +174,6 @@ describe("credentials oclif adapter source coverage", () => {
         credentialKeys: ["MAAS_GLEAN_TOKEN"],
       },
     ]);
-    mocks.runOpenshellProviderCommand.mockReturnValue({
-      status: 0,
-      stdout: JSON.stringify({
-        credentials: [{ name: "api_key", env_vars: ["MAAS_GLEAN_TOKEN"] }],
-      }),
-      stderr: "",
-    });
 
     const result = await runCredentialsAddAction({
       provider: "maas-glean",
@@ -192,18 +185,36 @@ describe("credentials oclif adapter source coverage", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.failureLines.join("\n")).toContain(
-      "Credential key 'MAAS_GLEAN_TOKEN' is reserved by managed MCP server 'maas-glean' on sandbox 'hermes'",
+      "Refusing --from-existing while managed MCP credential keys are reserved.",
     );
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(1);
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
-      ["provider", "profile", "export", "generic", "--output", "json"],
-      {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30_000,
-      },
-    );
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(mocks.resolveGatewayCredentialMutationAuthority).not.toHaveBeenCalled();
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+  });
+
+  it("releases a provider reservation when credential registration fails (#9388)", async () => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-secret");
+    mocks.recordExtraProvider.mockReturnValueOnce(true);
+    mocks.runOpenshellProviderCommand.mockReturnValueOnce({
+      status: 1,
+      stdout: "",
+      stderr: "provider creation failed",
+    });
+
+    const result = await runCredentialsAddAction({
+      provider: "custom-provider",
+      type: "generic",
+      credentials: ["CUSTOM_TOKEN"],
+      configPairs: [],
+      fromExisting: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(mocks.recordExtraProvider).toHaveBeenCalledWith("custom-provider");
+    expect(mocks.forgetExtraProvider).toHaveBeenCalledWith("custom-provider");
+    expect(mocks.recordExtraProvider.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runOpenshellProviderCommand.mock.invocationCallOrder[0],
+    );
   });
 });

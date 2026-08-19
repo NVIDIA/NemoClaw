@@ -13,6 +13,7 @@ import {
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/credential-ownership";
 import {
   assertAgentMcpConfigMutationAllowed,
   assertAgentMcpMutationRuntimeCapability,
@@ -302,15 +303,14 @@ async function addMcpBridgeUnlocked(
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName);
   if (!existingEntry) {
-    // A collision is external state, not an owned partial transaction. Reject
-    // it before recording the durable manifest for a fresh add.
-    assertNoProviderCredentialCollisions(sandboxName, [entry]);
+    await withMcpCredentialOwnershipLock(() => {
+      // Publish the durable MCP reservation under the same cross-command lock
+      // used by credentials add. Neither command can pass its collision check
+      // before the other publishes ownership of the key.
+      assertNoProviderCredentialCollisions(sandboxName, [entry]);
+      writeBridgeEntry(sandboxName, entry);
+    });
   }
-  // This is the durable ownership manifest for every resource created below.
-  // It intentionally precedes every OpenShell resource mutation, so process
-  // death can never leave an unowned provider, policy, or adapter entry.
-  if (!existingEntry) writeBridgeEntry(sandboxName, entry);
-
   let providerCreated = false;
   let providerAttachAttempted = false;
   let policyApplied = false;
