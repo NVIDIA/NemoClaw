@@ -114,6 +114,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
+    testsToRun: runTests(
+      "test/managed-image-publication-workflow.test.ts",
+      "test/pull-public-exact-digest.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)\.github\/actions\/build-base-image-platform\/action\.yaml$/,
     testsToRun: runTests(
       "test/dcode-base-image-workflow.test.ts",
@@ -140,6 +147,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/validate-managed-base-index.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/checks\/pull-public-exact-digest\.sh$/,
+    testsToRun: runTests(
+      "test/pull-public-exact-digest.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
     ),
   },
   {

@@ -141,6 +141,11 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
     ]);
+    expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
+      "test/pi-candidate-runtime-artifacts.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/pull-public-exact-digest.test.ts",
+    ]);
     expect(triggeredBy("scripts/export-managed-base-image-contract.sh")).toEqual([
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
@@ -164,6 +169,10 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/validate-managed-base-index.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
+    ]);
+    expect(triggeredBy("scripts/checks/pull-public-exact-digest.sh")).toEqual([
+      "test/pull-public-exact-digest.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",

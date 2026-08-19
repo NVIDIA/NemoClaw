@@ -792,9 +792,7 @@ jobs:
             echo "ERROR: published PR manifest bytes do not match the build digest" >&2
             exit 1
           }
-          anonymous_config="$(mktemp -d "$RUNNER_TEMP/managed-pr-anonymous.XXXXXX")"
-          trap 'rm -rf -- "$anonymous_config"' EXIT
-          DOCKER_CONFIG="$anonymous_config" docker pull --platform linux/amd64 "$reference"
+          scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
           release="v$(node -p 'require("./package.json").version')"
           contract_dir="$RUNNER_TEMP/managed-pr-contract"
           mkdir -p "$contract_dir"
