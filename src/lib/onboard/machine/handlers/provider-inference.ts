@@ -167,10 +167,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       gatewayName: string,
       operation: () => Promise<T> | T,
     ): Promise<T>;
-    withModelRouterPortLifecycleLock?<T>(
-      port: number,
-      operation: () => Promise<T> | T,
-    ): Promise<T>;
+    withModelRouterPortLifecycleLock?<T>(port: number, operation: () => Promise<T> | T): Promise<T>;
     getModelRouterPort?(): number;
     normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null;
     setupNim(
@@ -551,19 +548,19 @@ function hostLocalInferenceSetupOptions(
       throw new Error("Host-local inference startup selection drifted from the accepted provider.");
     }
     if (
-      selected.request.service !== "ollama" &&
       selected.request.service !== "llama-cpp" &&
+      (selected.request.service !== "ollama" || "managed" in selected.request) &&
       selected.request.recover !== undefined &&
       typeof selected.request.recover !== "boolean"
     ) {
       throw new Error("Host-local inference startup selection has invalid recovery authority.");
     }
     const hasDurableToolCallingAuthority =
-      selected.request.service === "ollama"
+      selected.request.service === "ollama" && "endpoint" in selected.request
         ? input.recover
         : selected.request.service === "llama-cpp"
           ? selected.request.publishedRoute
-        : selected.request.resumeReceipt !== undefined || selected.request.recover === true;
+          : selected.request.resumeReceipt !== undefined || selected.request.recover === true;
     const expectedToolCalling =
       input.requireToolCalling ??
       (hasDurableToolCallingAuthority ? null : input.freshRequireToolCalling);
@@ -575,6 +572,7 @@ function hostLocalInferenceSetupOptions(
     if (
       selectedModel !== acceptedModel ||
       (selected.request.service === "ollama" &&
+        "endpoint" in selected.request &&
         selected.request.endpoint.acceleration !== input.acceleration) ||
       (expectedToolCalling !== null &&
         hostLocalInferenceRequestToolCalling(selected.request) !== expectedToolCalling)
@@ -590,7 +588,7 @@ function hostLocalInferenceSetupOptions(
       ) {
         throw new Error("Managed llama.cpp startup selection drifted from recovery authority.");
       }
-    } else if (selected.request.service !== "ollama") {
+    } else if (selected.request.service !== "ollama" || "managed" in selected.request) {
       if (input.acceleration !== "nvidia-gpu") {
         throw new Error(
           "Managed host-local inference requires accepted NVIDIA GPU passthrough authority.",
@@ -598,14 +596,20 @@ function hostLocalInferenceSetupOptions(
       }
       const hasPublishedResume = selected.request.resumeReceipt !== undefined;
       const hasInterruptedRecovery = selected.request.recover === true;
-      // These two accepted-state bits encode three fail-closed modes:
-      // canonical route = published only; accepted pre-publication = fresh,
-      // published, or interrupted; every other selection = fresh only.
+      // Canonical managed Ollama recovery also admits the exact journaled
+      // route-publication gap: its runtime is interrupted and its receipt is
+      // not published yet. Other canonical managed routes remain published-only.
       const recoveryAuthorityMatches = input.recover
-        ? input.allowPublishedResume && hasPublishedResume && !hasInterruptedRecovery
-        : input.allowPublishedResume
-          ? !(hasPublishedResume && hasInterruptedRecovery)
-          : !hasPublishedResume && !hasInterruptedRecovery;
+        ? input.allowPublishedResume &&
+          ((hasPublishedResume && !hasInterruptedRecovery) ||
+            (selected.request.service === "ollama" &&
+              !hasPublishedResume &&
+              hasInterruptedRecovery))
+        : selected.request.service === "ollama"
+          ? !input.allowPublishedResume && !hasPublishedResume && !hasInterruptedRecovery
+          : input.allowPublishedResume
+            ? !(hasPublishedResume && hasInterruptedRecovery)
+            : !hasPublishedResume && !hasInterruptedRecovery;
       if (!recoveryAuthorityMatches) {
         throw new Error("Host-local inference startup selection drifted from recovery authority.");
       }
@@ -691,7 +695,7 @@ function hasActiveMessagingChannels(
   const channels = session?.messagingPlan?.channels;
   return Boolean(
     Array.isArray(channels) &&
-      channels.some((channel) => channel.active === true && channel.disabled !== true),
+    channels.some((channel) => channel.active === true && channel.disabled !== true),
   );
 }
 
@@ -1065,6 +1069,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       session,
       sandboxName,
     );
+    let deferProviderSelectionUntilInference = completeRecoveredReviewSelectionAfterInference;
     const reviewRecoveredInteractively =
       completeRecoveredReviewSelectionAfterInference && !deps.isNonInteractive();
     const resumeProviderSelection = canResumeProviderSelection(
@@ -1345,9 +1350,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       endpointSource,
     });
     const acceptedHostLocalResume =
-      effectiveResume &&
-      resumeProviderSelection &&
-      isHostLocalInferenceProvider(selectedProvider);
+      effectiveResume && resumeProviderSelection && isHostLocalInferenceProvider(selectedProvider);
     const resolveCachedHostLocalInferenceSetupOptions = createCachedHostLocalInferenceSetupResolver(
       {
         resolver: deps.resolveHostLocalInferenceStartupSelection,
@@ -1603,10 +1606,21 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         continue;
       }
       const confirmedSandboxName = review.sandboxName;
-      // The review acceptance authorizes this fresh selection. Persist it
-      // before inference setup starts so an interruption in setup can resume
-      // the accepted provider/model rather than returning to the default menu.
-      if (shouldRecordProviderSelection && !effectiveResume) {
+      activeHostLocalInferenceSetupOptions =
+        resolveCachedHostLocalInferenceSetupOptions(confirmedSandboxName);
+      const freshManagedOllama =
+        activeHostLocalInferenceSetupOptions.hostLocalInference?.request.service === "ollama" &&
+        "managed" in activeHostLocalInferenceSetupOptions.hostLocalInference.request;
+      deferProviderSelectionUntilInference =
+        completeRecoveredReviewSelectionAfterInference || freshManagedOllama;
+      // Ordinary selections retain the accepted provider/model before setup.
+      // Fresh managed Ollama stays in progress until its runtime, route,
+      // receipt, and registry reservation have committed together.
+      if (
+        shouldRecordProviderSelection &&
+        !effectiveResume &&
+        !deferProviderSelectionUntilInference
+      ) {
         session = await deps.recordStepComplete(
           "provider_selection",
           deps.toSessionUpdates({
@@ -1624,8 +1638,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           }),
         );
       }
-      activeHostLocalInferenceSetupOptions =
-        resolveCachedHostLocalInferenceSetupOptions(confirmedSandboxName);
       // The injected host-local transaction owns its runtime and uses a
       // secret-free route. Do not start or persist the legacy host Ollama
       // proxy alongside it; that would leave cross-engine residue before the
@@ -1647,6 +1659,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
+        ...(freshManagedOllama ? { reservationSessionId: session?.sessionId } : {}),
         ...providerRecovery.setupOptions(
           recoveredRecordedProvider,
           confirmedSandboxName,
@@ -1694,27 +1707,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     endpointSource = hostLocalRoute.endpointSource;
     onboardEndpointUrl = hostLocalRoute.onboardEndpointUrl;
     if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
-    session = await deps.recordStepComplete(
-      "inference",
-      deps.toSessionUpdates({
-        provider,
-        model,
-        hermesAuthMethod,
-        compatibleEndpointReasoning,
-        compatibleEndpointReasoningEffort,
-        nimContainer,
-        hermesToolGateways,
-        ...hostLocalInferenceSessionRoute(
-          hostLocalInferenceRouteOnly,
-          endpointUrl,
-          endpointSource,
-        ),
-        // The forced #6294/#6289 heal succeeded: the gateway registration now
-        // matches the adjusted route, so the stale session seed can be replaced.
-        ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
-      }),
-    );
-    if (completeRecoveredReviewSelectionAfterInference) {
+    if (deferProviderSelectionUntilInference) {
       // Provider selection remains in progress until its inference route has
       // configured successfully. This retains the selected provider/model for
       // interruption recovery without claiming a usable route prematurely.
@@ -1737,6 +1730,22 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }),
       );
     }
+    session = await deps.recordStepComplete(
+      "inference",
+      deps.toSessionUpdates({
+        provider,
+        model,
+        hermesAuthMethod,
+        compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort,
+        nimContainer,
+        hermesToolGateways,
+        ...hostLocalInferenceSessionRoute(hostLocalInferenceRouteOnly, endpointUrl, endpointSource),
+        // The forced #6294/#6289 heal succeeded: the gateway registration now
+        // matches the adjusted route, so the stale session seed can be replaced.
+        ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
+      }),
+    );
     break;
   }
 

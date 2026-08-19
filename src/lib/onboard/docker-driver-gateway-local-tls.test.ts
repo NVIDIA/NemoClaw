@@ -12,6 +12,7 @@ import {
   ensureDockerDriverGatewayLocalTlsBundle,
   getDockerDriverGatewayLocalTlsBundle,
 } from "./docker-driver-gateway-local-tls";
+import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 
 const TEST_CERT_VALID_AT = new Date("2026-06-27T00:00:00.000Z");
 const TEST_CERT_SKEW_BOUNDARY_NOT_YET_VALID_AT = new Date("2026-06-26T20:38:47.000Z");
@@ -239,7 +240,7 @@ describe("docker-driver-gateway-local-tls", () => {
           }) as never,
         }),
       ).toThrow("did not create a complete");
-      expect(calls[0]).toEqual(expect.arrayContaining(["--server-san", "169.254.1.2"]));
+      expect(calls[0]).toEqual(expect.arrayContaining(["--server-san", PORTABLE_HOST_GATEWAY_IP]));
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

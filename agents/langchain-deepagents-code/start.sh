@@ -263,7 +263,7 @@ fi
 
 _PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
 _NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
-# Deep Agents Code 0.1.34 intentionally ignores environment proxies in
+# Deep Agents Code 0.1.55 intentionally ignores environment proxies in
 # fetch_url so it can pin direct DNS results against rebinding. OpenShell's
 # sandbox instead requires all ordinary egress, including DNS resolution for a
 # destination, to stay behind its policy proxy. This explicit variable opts the

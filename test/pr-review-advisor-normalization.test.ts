@@ -64,6 +64,41 @@ describe("PR review advisor", () => {
     expect(result.reviewCompleteness.requiresHumanReview).toBe(true);
   });
 
+  it("preserves public-schema receipt vocabulary", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        acceptanceCoverage: [
+          { clause: "Required behavior", status: "met", evidence: "src/example.ts:7" },
+        ],
+        securityCategories: [
+          {
+            category: "Secrets and Credentials",
+            verdict: "pass",
+            justification: "No secret path changed.",
+          },
+        ],
+        sourceOfTruthReview: [
+          {
+            surface: "config",
+            status: "satisfied",
+            findingId: null,
+            invalidState: "none",
+            sourceBoundary: "config",
+            whyNotSourceFix: "not needed",
+            regressionTest: "covered",
+            removalCondition: "not applicable",
+            evidence: "src/example.ts:7",
+          },
+        ],
+      }),
+      metadata(),
+    );
+
+    expect(result.acceptanceCoverage[0]?.status).toBe("met");
+    expect(result.securityCategories[0]?.verdict).toBe("pass");
+    expect(result.sourceOfTruthReview[0]?.status).toBe("satisfied");
+  });
+
   it("normalizes deterministic floors without exposing manual-only PR selectors", () => {
     const changedFiles = ["src/lib/actions/upgrade-sandboxes.ts"];
     const reviewMetadata = metadata({ changedFiles });

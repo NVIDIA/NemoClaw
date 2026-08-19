@@ -56,6 +56,14 @@ export interface HostLocalInferenceGatewayMutationInput {
  * owner captures the prior provider and inference selection before returning.
  */
 export interface HostLocalInferenceGatewayMutation {
+  /** Exact provider mutation owned by a product transaction when supplied. */
+  upsertProvider?: (
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string,
+    env?: NodeJS.ProcessEnv,
+  ) => { ok: boolean; message?: string; status?: number };
   commit(): void | Promise<void>;
   rollback(): void | Promise<void>;
 }
@@ -65,6 +73,16 @@ export type HostLocalInferenceStartupRequest =
       readonly application: HostLocalInferenceApplication;
       readonly service: "ollama";
       readonly endpoint: HostLocalOllamaInferenceInput;
+      readonly receiptWriter: HostLocalInferenceReceiptWriter;
+    }
+  | {
+      readonly application: HostLocalInferenceApplication;
+      readonly service: "ollama";
+      readonly managed: HostLocalManagedInferenceInput;
+      /** Exact durable receipt for a previously published canonical route. */
+      readonly resumeReceipt?: HostLocalInferenceReceipt;
+      /** Recover only an interrupted, not-yet-published same-transaction start. */
+      readonly recover?: boolean;
       readonly receiptWriter: HostLocalInferenceReceiptWriter;
     }
   | {
@@ -125,15 +143,20 @@ export interface HostLocalInferenceSandboxProofAuthority {
   readonly toolCallingRequired: boolean;
 }
 
+function isHostOllamaRequest(
+  request: HostLocalInferenceStartupRequest,
+): request is Extract<HostLocalInferenceStartupRequest, { readonly endpoint: unknown }> {
+  return request.service === "ollama" && "endpoint" in request;
+}
+
 export function hostLocalInferenceSandboxProofAuthority(
   request: HostLocalInferenceStartupRequest,
 ): HostLocalInferenceSandboxProofAuthority {
-  const input =
-    request.service === "ollama"
-      ? request.endpoint
-      : request.service === "llama-cpp"
-        ? null
-        : request.managed;
+  const input = isHostOllamaRequest(request)
+    ? request.endpoint
+    : request.service === "llama-cpp"
+      ? null
+      : request.managed;
   const directHealthPath =
     request.service === "ollama"
       ? "/api/tags"
@@ -151,14 +174,14 @@ export function hostLocalInferenceSandboxProofAuthority(
 }
 
 export function hostLocalInferenceRequestModel(request: HostLocalInferenceStartupRequest): string {
-  if (request.service === "ollama") return normalizeHostLocalOllamaModelRef(request.endpoint.model);
+  if (isHostOllamaRequest(request)) return normalizeHostLocalOllamaModelRef(request.endpoint.model);
   return request.service === "llama-cpp" ? request.adapter.model : request.managed.model;
 }
 
 export function hostLocalInferenceRequestToolCalling(
   request: HostLocalInferenceStartupRequest,
 ): boolean {
-  if (request.service === "ollama") return request.endpoint.requireToolCalling;
+  if (isHostOllamaRequest(request)) return request.endpoint.requireToolCalling;
   return request.service === "llama-cpp"
     ? request.requireToolCalling
     : request.managed.requireToolCalling;
@@ -231,17 +254,15 @@ function normalizeStartupReceipt(
     }
     return normalized;
   }
-  const model =
-    request.service === "ollama"
-      ? normalizeHostLocalOllamaModelRef(request.endpoint.model)
-      : request.managed.model;
-  const toolCallingRequired =
-    request.service === "ollama"
-      ? request.endpoint.requireToolCalling
-      : request.managed.requireToolCalling;
+  const model = isHostOllamaRequest(request)
+    ? normalizeHostLocalOllamaModelRef(request.endpoint.model)
+    : request.managed.model;
+  const toolCallingRequired = isHostOllamaRequest(request)
+    ? request.endpoint.requireToolCalling
+    : request.managed.requireToolCalling;
   const protocol = "openai-chat-completions";
   const { inference, publication } = normalized;
-  const requestInput = request.service === "ollama" ? request.endpoint : request.managed;
+  const requestInput = isHostOllamaRequest(request) ? request.endpoint : request.managed;
   const expectedProbeImageRef = normalizeHostLocalInferenceImageRef(requestInput.probeImageRef);
   const endpointMatches =
     "networkId" in normalized.endpoint &&
@@ -249,20 +270,20 @@ function normalizeStartupReceipt(
     normalized.endpoint.port === requestInput.hostPort &&
     normalized.endpoint.networkName === requestInput.networkName &&
     normalized.endpoint.networkId === requestInput.networkId &&
-    normalized.endpoint.networkGatewayIp === requestInput.networkGatewayIp;
-  const runtimeMatches =
-    request.service === "ollama"
-      ? normalized.runtime.kind === "host" &&
-        normalized.runtime.probeImageRef === expectedProbeImageRef &&
-        normalized.runtime.acceleration === request.endpoint.acceleration
-      : normalized.runtime.kind === "container" &&
-        normalized.runtime.name === request.managed.containerName &&
-        normalized.runtime.imageRef ===
-          normalizeHostLocalInferenceImageRef(request.managed.imageRef) &&
-        normalized.runtime.probeImageRef === expectedProbeImageRef &&
-        "devices" in normalized.runtime.gpu &&
-        canonicalGpuDevices(normalized.runtime.gpu.devices) ===
-          canonicalGpuDevices(request.managed.gpuDevices);
+    normalized.endpoint.networkGatewayIp === requestInput.networkGatewayIp &&
+    normalized.endpoint.networkListenerIp === requestInput.networkListenerIp;
+  const runtimeMatches = isHostOllamaRequest(request)
+    ? normalized.runtime.kind === "host" &&
+      normalized.runtime.probeImageRef === expectedProbeImageRef &&
+      normalized.runtime.acceleration === request.endpoint.acceleration
+    : normalized.runtime.kind === "container" &&
+      normalized.runtime.name === request.managed.containerName &&
+      normalized.runtime.imageRef ===
+        normalizeHostLocalInferenceImageRef(request.managed.imageRef) &&
+      normalized.runtime.probeImageRef === expectedProbeImageRef &&
+      "devices" in normalized.runtime.gpu &&
+      canonicalGpuDevices(normalized.runtime.gpu.devices) ===
+        canonicalGpuDevices(request.managed.gpuDevices);
   if (
     normalized.providerId !== operation.providerId ||
     normalized.providerId !== runtime.providerId ||
@@ -361,7 +382,7 @@ export function prepareHostLocalInferenceStartup(
       throw new Error("Managed llama.cpp route publication authority is invalid.");
     }
     prepared = request.adapter.prepareStartup();
-  } else if (request.service === "ollama") {
+  } else if (isHostOllamaRequest(request)) {
     prepared = runtime.qualifyOllama(request.endpoint, request.receiptWriter);
   } else {
     if (request.managed.service !== request.service) {
@@ -413,22 +434,22 @@ export function prepareHostLocalInferenceStartup(
     }
     throw error;
   }
+  const managedPublishedResume =
+    request.service !== "llama-cpp" &&
+    !isHostOllamaRequest(request) &&
+    request.resumeReceipt !== undefined;
   const expectedRollbackPriorState =
     request.service === "llama-cpp"
       ? prepared.rollbackPriorState
-      : request.service !== "ollama" && request.resumeReceipt !== undefined
-      ? prepared.rollbackPriorState
-      : receipt.publication?.priorState;
+      : managedPublishedResume
+        ? prepared.rollbackPriorState
+        : receipt.publication?.priorState;
   if (
     prepared.rollbackPriorState !== expectedRollbackPriorState ||
-    (request.service !== "ollama" &&
-      request.service !== "llama-cpp" &&
-      request.resumeReceipt !== undefined &&
+    (managedPublishedResume &&
       prepared.rollbackPriorState !== "running" &&
       prepared.rollbackPriorState !== "stopped") ||
-    (request.service !== "ollama" &&
-      request.service !== "llama-cpp" &&
-      request.resumeReceipt !== undefined &&
+    (managedPublishedResume &&
       serializeHostLocalInferenceReceipt(
         normalizeHostLocalInferenceReceipt(request.resumeReceipt),
       ) !== serializeHostLocalInferenceReceipt(receipt))
