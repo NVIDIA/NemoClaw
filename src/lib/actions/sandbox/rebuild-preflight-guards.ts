@@ -178,12 +178,6 @@ export function commitRebuildRoutePreflight(
     if (conflict) return { ok: false, message: conflict };
 
     Object.assign(currentTarget, input.targetUpdate);
-    // Rebuild and its route migration are authority changes even if a later
-    // phase restores the old values. Revoke candidate readiness atomically.
-    registry.invalidateCuaRuntimeReadinessInRegistry(sandboxRegistry, input.sandboxName);
-    for (const name of migratedSandboxNames) {
-      registry.invalidateCuaRuntimeReadinessInRegistry(sandboxRegistry, name);
-    }
     dependencies.save(sandboxRegistry);
     return {
       ok: true,

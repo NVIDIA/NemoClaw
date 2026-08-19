@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CuaRuntimeReadiness } from "../../cua/contract";
 import type { InferenceSelection } from "../../inference/selection";
 import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
@@ -144,8 +143,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
-  /** Candidate runtime authority recorded only by canonical CUA onboarding. */
-  cuaRuntimeReadiness?: CuaRuntimeReadiness;
   /** Plugin install baseline captured before state is restored into a fresh OpenClaw image. */
   openclawImagePluginInstalls?: OpenClawImagePluginInstall[];
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
