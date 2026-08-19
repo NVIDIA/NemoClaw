@@ -679,11 +679,9 @@ describe("complete managed-image publication workflow", () => {
     expect(uploadContract.if).toBe(sameRepository);
     expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(exportContract));
     expect(exportContract.run).toContain('DOCKER_CONFIG="$anonymous_config" docker pull');
-    expect(exportContract.run).toContain("resolveSourceBuildIdentity");
     expect(exportContract.run).toContain(
-      "identity.sourceRevision !== process.env.CANDIDATE_SHA",
+      "release=\"$(git describe --tags --match 'v*' \"$CANDIDATE_SHA\")\"",
     );
-    expect(exportContract.run).toContain("`v${identity.nemoclawVersion}`");
     expect(exportContract.run).not.toContain('require("./package.json").version');
     expect(exportContract.run).toContain("revision: $revision");
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);

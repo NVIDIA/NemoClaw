@@ -786,16 +786,7 @@ jobs:
           anonymous_config="$(mktemp -d "$RUNNER_TEMP/managed-pr-anonymous.XXXXXX")"
           trap 'rm -rf -- "$anonymous_config"' EXIT
           DOCKER_CONFIG="$anonymous_config" docker pull --platform linux/amd64 "$reference"
-          release="$(
-            node --experimental-strip-types --no-warnings --input-type=module -e '
-              import { resolveSourceBuildIdentity } from "./src/lib/core/version.ts";
-              const identity = resolveSourceBuildIdentity({ rootDir: process.cwd() });
-              if (identity.sourceRevision !== process.env.CANDIDATE_SHA) {
-                throw new Error("managed image contract build identity does not match the candidate commit");
-              }
-              process.stdout.write(`v${identity.nemoclawVersion}`);
-            '
-          )"
+          release="$(git describe --tags --match 'v*' "$CANDIDATE_SHA")"
           contract_dir="$RUNNER_TEMP/managed-pr-contract"
           mkdir -p "$contract_dir"
           jq -n \
