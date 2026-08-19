@@ -126,6 +126,90 @@ function abandonedPortableConfig(host: ReturnType<typeof scope>, mode: number): 
   return directory;
 }
 
+function completedPortableAuthorityWithoutReceipt(host: ReturnType<typeof scope>): void {
+  const uid = process.getuid?.() ?? 1001;
+  const sessionId = "completed-portable-session";
+  const sandboxName = "portable-sandbox";
+  const generation = "e".repeat(64);
+  const gateway = {
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    mode: "nemoclaw-managed" as const,
+    source: "standalone" as const,
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  };
+  const session = createSession({
+    agent: "openclaw",
+    sandboxName,
+    sessionId,
+    metadata: { gatewayName: gateway.gatewayName, fromDockerfile: null },
+  });
+  session.status = "complete";
+  session.resumable = false;
+  session.machine = {
+    version: 1,
+    state: "complete",
+    stateEnteredAt: "2026-08-19T00:00:00.000Z",
+    revision: 1,
+  };
+  session.checkpoint = {
+    schemaVersion: 4,
+    sessionId,
+    machineState: "complete",
+    updatedAt: "2026-08-19T00:00:00.000Z",
+    profile: { kind: "selected", value: "portable" },
+    runtimeAuthority: {
+      kind: "selected",
+      value: {
+        schemaVersion: 1,
+        kind: "podman",
+        ownership: "current-user",
+        uid,
+        homeDir: host.homeDir,
+        configHome: path.join(host.homeDir, ".config"),
+        runtimeDir: `/run/user/${uid}`,
+        socketPath: `/run/user/${uid}/podman/podman.sock`,
+      },
+    },
+    sandboxIdentity: { kind: "selected", value: { name: sandboxName, agent: "openclaw" } },
+    webSearch: { kind: "unset" },
+    messaging: { kind: "unset" },
+    resourceProfile: { kind: "unset" },
+    gatewayAuthority: { kind: "selected", value: gateway },
+    effectGroups: {},
+    bindings: { credentialEnvs: [], registeredProviders: [] },
+    sandboxRecreate: null,
+  } as never;
+  fs.writeFileSync(
+    path.join(stateRoot(host), "onboard-session.json"),
+    `${JSON.stringify(session)}\n`,
+    { mode: 0o600 },
+  );
+  fs.writeFileSync(
+    path.join(host.stateDir, "sandboxes.json"),
+    `${JSON.stringify({
+      defaultSandbox: sandboxName,
+      sandboxes: {
+        [sandboxName]: {
+          name: sandboxName,
+          agent: null,
+          dashboardPort: 18789,
+          gatewayName: gateway.gatewayName,
+          gatewayPort: gateway.gatewayPort,
+          lifecycleGeneration: generation,
+          openshellDriver: "docker",
+        },
+      },
+    })}\n`,
+    { mode: 0o600 },
+  );
+  abandonedPortableConfig(host, 0o700);
+  fs.mkdirSync(path.join(host.stateDir, "portable-demo-lifecycle"), { mode: 0o700 });
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const directory of restoredDirectories.splice(0)) fs.chmodSync(directory, 0o700);
@@ -158,11 +242,30 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     (mode) => {
       const host = scope("nemoclaw-uninstall-config-");
       stateRoot(host);
-      abandonedPortableConfig(host, mode);
+      const directory = abandonedPortableConfig(host, mode);
 
       expectOrdinaryUninstall(host);
+      expect(host.rmSync.mock.calls.map(([target]) => String(target))).toContain(
+        path.dirname(directory),
+      );
     },
   );
+
+  it("refuses completed portable authority after its lifecycle receipt disappears", () => {
+    const host = scope("nemoclaw-uninstall-completed-portable-");
+    completedPortableAuthorityWithoutReceipt(host);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = uninstall(host);
+
+    expect(result.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Portable lifecycle state is unsafe"),
+    );
+    expect(host.runModelCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
 
   it("removes the state directory a failed onboarding left behind (#9573)", () => {
     const host = scope("nemoclaw-uninstall-state-");

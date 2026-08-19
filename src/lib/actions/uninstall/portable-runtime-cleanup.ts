@@ -214,14 +214,21 @@ function currentReceipts(stateDir: string): PortableDemoLifecycleReceiptRecord[]
 /** Detect portable uninstall from strict durable receipts, never ambient selectors or names. */
 export function hasPortableRuntimeCleanup(stateDir: string): boolean {
   const homeDir = path.dirname(stateDir);
+  const registryFile = path.join(stateDir, "sandboxes.json");
   return hasPortableUninstallAuthority(
     {
       homeDir,
-      registryFile: path.join(stateDir, "sandboxes.json"),
+      registryFile,
       sessionFile: path.join(stateDir, "onboard-session.json"),
       stateDir,
     },
-    {},
+    {
+      loadRegistry: () => {
+        const registry = readGatewayRegistryFile(homeDir, registryFile);
+        if (!registry) throw new Error("Completed onboarding registry is missing");
+        return registry;
+      },
+    },
   );
 }
 

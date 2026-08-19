@@ -11,6 +11,7 @@ import {
   inspectPortableOnboardSupersession,
   inspectPortableRetirementRecovery,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
+  provePortableOnboardAuthority,
   readPortableAuthorityDirectory,
   readPortableAuthoritySnapshot,
   resumePortableEvidenceRetirement,
@@ -444,10 +445,11 @@ async function recover(
 /**
  * Report whether uninstall must run portable runtime cleanup.
  *
- * A retirement record, or any entry in the lifecycle receipt directory, is the
- * only state that establishes portable ownership. With neither present, the
- * portable transaction throws before it acquires its fences, so uninstall
- * reports no portable cleanup for each of these states:
+ * A retirement record or lifecycle receipt establishes portable ownership. A
+ * completed onboarding session also has to remain consistent with that durable
+ * evidence. With none present, the portable transaction throws before it
+ * acquires its fences, so uninstall reports no portable cleanup for each of
+ * these states:
  *
  * - An onboarding session that never reached a runtime.
  * - A missing onboarding session.
@@ -464,7 +466,7 @@ async function recover(
  */
 export function hasPortableUninstallAuthority(
   boundary: PortableOnboardRetirementBoundary,
-  deps: Pick<PortableAuthorityAdmissionDeps, "listReceipts">,
+  deps: PortableAuthorityAdmissionDeps,
 ): boolean {
   readPortableAuthorityDirectory(boundary.stateDir, false);
   const receiptDirectory = readPortableAuthorityDirectory(
@@ -474,6 +476,15 @@ export function hasPortableUninstallAuthority(
   const recovery = inspectPortableRetirementRecovery(boundary.homeDir);
   if (!recovery && !receiptDirectory.entries.length) {
     rejectUnknownRetirementArtifacts(boundary.homeDir, null, false, true);
+    const sessionBytes = readPortableAuthoritySnapshot(boundary.sessionFile);
+    if (sessionBytes) {
+      const raw = strictJson(sessionBytes, "Onboarding session");
+      if (raw.status === "complete" && raw.resumable === false) {
+        const session = completedSession(sessionBytes);
+        const profile = session.checkpoint!.profile.value;
+        provePortableOnboardAuthority(admission(boundary, profile, deps));
+      }
+    }
     return false;
   }
   const configDirectory = readPortableAuthorityDirectory(

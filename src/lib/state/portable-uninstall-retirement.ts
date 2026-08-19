@@ -920,7 +920,7 @@ export function readPortableAuthoritySnapshot(
 ): Buffer | null {
   return readFile(target, limit)?.bytes ?? null;
 }
-function provePortableOnboardAuthority(admission: PortableOnboardAuthorityAdmission): void {
+export function provePortableOnboardAuthority(admission: PortableOnboardAuthorityAdmission): void {
   if (
     admission.files.length < 2 ||
     admission.files.length > 3 ||
