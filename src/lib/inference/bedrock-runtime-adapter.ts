@@ -436,7 +436,7 @@ export async function ensureBedrockRuntimeAdapter(options: {
       updatedAt: new Date().toISOString(),
     });
   } catch (err) {
-    cleanupFailedLocalAdapterStartup(ADAPTER_PROCESS);
+    cleanupFailedLocalAdapterStartup(ADAPTER_PROCESS, child.pid);
     throw err;
   }
   process.env[BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV] = token;

@@ -31,7 +31,16 @@ import {
   cleanupFailedLocalAdapterStartup,
   isLocalAdapterProcess,
   killLocalAdapterPid,
+  persistLocalAdapterPid,
 } from "./local-adapter-lifecycle";
+
+const US_EAST_1_CLASSIFICATION = {
+  kind: "bedrock-runtime",
+  endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+  hostname: "bedrock-runtime.us-east-1.amazonaws.com",
+  region: "us-east-1",
+  fips: false,
+} as const;
 
 const servers: http.Server[] = [];
 
@@ -407,23 +416,34 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     vi.mocked(cleanupFailedLocalAdapterStartup).mockClear();
 
     await expect(
-      ensureBedrockRuntimeAdapter({
-        classification: {
-          kind: "bedrock-runtime",
-          endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
-          hostname: "bedrock-runtime.us-east-1.amazonaws.com",
-          region: "us-east-1",
-          fips: false,
-        },
-      }),
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
     ).rejects.toThrow("did not become healthy");
 
     // The single direct kill is the pre-spawn one that clears any prior adapter; tearing the new
-    // child down is the shared cleanup's job, and it must target this adapter's own files.
+    // child down is the shared cleanup's job, and it must target this adapter's own files and the
+    // pid of the child this call spawned.
     expect(vi.mocked(killLocalAdapterPid).mock.calls).toHaveLength(1);
     const [cleanup] = vi.mocked(cleanupFailedLocalAdapterStartup).mock.calls;
     expect(cleanup?.[0].pidPath.endsWith("bedrock-runtime-adapter.pid")).toBe(true);
     expect(cleanup?.[0].statePath.endsWith("bedrock-runtime-adapter.json")).toBe(true);
+    expect(cleanup?.[1]).toBe(4242);
+  });
+
+  it("hands the spawned child to cleanup when its pid file cannot be persisted", async () => {
+    vi.mocked(cleanupFailedLocalAdapterStartup).mockClear();
+    vi.mocked(persistLocalAdapterPid).mockImplementationOnce(() => {
+      throw new Error("ENOSPC: no space left on device");
+    });
+
+    await expect(
+      ensureBedrockRuntimeAdapter({ classification: US_EAST_1_CLASSIFICATION }),
+    ).rejects.toThrow("ENOSPC");
+
+    // The pid file the cleanup would otherwise reload was never written, so 4242 — the pid the
+    // mocked spawn returned — is the only remaining handle on the orphaned child.
+    const [cleanup] = vi.mocked(cleanupFailedLocalAdapterStartup).mock.calls;
+    expect(cleanup?.[0].pidPath.endsWith("bedrock-runtime-adapter.pid")).toBe(true);
+    expect(cleanup?.[1]).toBe(4242);
   });
 
   it("spawns the typed .mts launcher entrypoint", () => {

@@ -281,7 +281,7 @@ async function ensureOpenRouterRuntimeAdapterLocked(
       );
     }
   } catch (err) {
-    cleanupFailedLocalAdapterStartup(ADAPTER_PROCESS);
+    cleanupFailedLocalAdapterStartup(ADAPTER_PROCESS, child.pid);
     throw err;
   }
 

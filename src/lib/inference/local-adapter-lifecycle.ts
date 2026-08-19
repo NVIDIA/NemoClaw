@@ -172,10 +172,12 @@ export type LocalAdapterProcessOptions = {
   runCapture: RunCaptureFn;
 };
 
-export function killLocalAdapterPid(options: LocalAdapterProcessOptions): void {
-  const persistedPid = loadLocalAdapterPid(options.pidPath);
-  if (isLocalAdapterProcess(persistedPid, options.processMatcher, options.runCapture)) {
-    options.run(["kill", String(persistedPid)], { ignoreError: true, suppressOutput: true });
+export function killLocalAdapterPid(
+  options: LocalAdapterProcessOptions,
+  pid: number | null | undefined = loadLocalAdapterPid(options.pidPath),
+): void {
+  if (isLocalAdapterProcess(pid, options.processMatcher, options.runCapture)) {
+    options.run(["kill", String(pid)], { ignoreError: true, suppressOutput: true });
   }
   removeLocalAdapterFile(options.pidPath);
 }
@@ -184,11 +186,15 @@ export function killLocalAdapterPid(options: LocalAdapterProcessOptions): void {
  * Undoes a partial adapter startup so a failed `ensure` leaves no adapter holding the port and no
  * state file describing an adapter that is not running. It removes the pid and state files only,
  * so any other file an adapter deliberately reuses across a respawn survives.
+ *
+ * Callers pass `spawnedPid` so the child of the failed startup is still signalled when the pid file
+ * was never written — persisting it can itself fail, and the pid file is then the wrong source.
  */
 export function cleanupFailedLocalAdapterStartup(
   options: LocalAdapterProcessOptions & { statePath: string },
+  spawnedPid?: number,
 ): void {
-  killLocalAdapterPid(options);
+  killLocalAdapterPid(options, spawnedPid);
   removeLocalAdapterFile(options.statePath);
 }
 

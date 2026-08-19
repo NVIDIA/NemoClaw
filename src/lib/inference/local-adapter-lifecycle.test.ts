@@ -9,9 +9,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  cleanupFailedLocalAdapterStartup,
   ensureLocalAdapterStateDir,
   isLocalAdapterProcess,
   killLocalAdapterPid,
+  type LocalAdapterProcessOptions,
   LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES,
   loadLocalAdapterPid,
   localAdapterTokenHash,
@@ -156,6 +158,34 @@ describe("local adapter lifecycle", () => {
 
     expect(killed).toEqual([]);
     expect(loadLocalAdapterPid(pidPath)).toBeNull();
+  });
+
+  it("signals the spawned child of a failed startup when its pid file was never written", () => {
+    const dir = tempDir();
+    const statePath = path.join(dir, "adapter.json");
+    const killed: string[][] = [];
+    const options: LocalAdapterProcessOptions & { statePath: string } = {
+      pidPath: path.join(dir, "adapter.pid"),
+      statePath,
+      processMatcher: isOllamaAuthProxyCommandLine,
+      run: (args) => {
+        killed.push(args);
+      },
+      runCapture: () => "node /opt/nemoclaw/scripts/ollama-auth-proxy.mts",
+    };
+
+    // Control: with no pid file and no spawned pid there is nothing the cleanup can identify.
+    writeLocalAdapterJsonFile(statePath, { pid: 4242 });
+    cleanupFailedLocalAdapterStartup(options);
+    expect(killed).toEqual([]);
+    expect(fs.existsSync(statePath)).toBe(false);
+
+    // A failed persistLocalAdapterPid leaves the same empty pid path, so the caller's own handle on
+    // the child it just spawned is the only way the orphan can still be reclaimed.
+    writeLocalAdapterJsonFile(statePath, { pid: 4242 });
+    cleanupFailedLocalAdapterStartup(options, 4242);
+    expect(killed).toEqual([["kill", "4242"]]);
+    expect(fs.existsSync(statePath)).toBe(false);
   });
 
   it("probes adapter health with the expected token hash", async () => {
