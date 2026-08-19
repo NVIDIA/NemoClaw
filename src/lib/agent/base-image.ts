@@ -14,7 +14,7 @@ import {
   dockerRmi,
   dockerTag,
 } from "../adapters/docker";
-import { requireCuaSandboxImageRef } from "../cua/feature";
+import { CUA_SANDBOX_IMAGE_ENV, requireCuaSandboxImageRef } from "../cua/feature";
 import { encodeCorporateCaArg, resolveCorporateCa } from "../onboard/corporate-ca";
 import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
 import { ROOT } from "../runner";
@@ -172,6 +172,7 @@ function reuseTrustedAgentRemoteBaseImageOverride(
 }
 
 export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
+  if (agentName === "nemocua") return CUA_SANDBOX_IMAGE_ENV;
   return `NEMOCLAW_${agentName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`;
 }
 
@@ -724,11 +725,13 @@ export function createAgentSandbox(
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
   try {
-    const shouldIncludeBuildContextPath = createCustomBuildContextFilter(rootDir);
-    fs.cpSync(rootDir, buildCtx, {
-      recursive: true,
-      filter: (src) => path.basename(src) !== ".claude" && shouldIncludeBuildContextPath(src),
-    });
+    if (agent.name !== "nemocua") {
+      const shouldIncludeBuildContextPath = createCustomBuildContextFilter(rootDir);
+      fs.cpSync(rootDir, buildCtx, {
+        recursive: true,
+        filter: (src) => path.basename(src) !== ".claude" && shouldIncludeBuildContextPath(src),
+      });
+    }
     fs.copyFileSync(agentDockerfile, stagedDockerfile);
     if (baseImageRef) {
       const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");

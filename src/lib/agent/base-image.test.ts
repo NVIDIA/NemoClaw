@@ -121,25 +121,20 @@ describe("agent base image provisioning", () => {
     });
   });
 
-  it("stages NemoCUA through the ordinary agent Dockerfile path (#9649)", () => {
+  it("stages only the NemoCUA Dockerfile in the caller-image build context (#9649)", () => {
     vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
     vi.stubEnv("NEMOCLAW_CUA_SANDBOX_IMAGE_REF", "nemocua-scenario:staged");
     const agent = loadAgent("nemocua");
     const root = tmpDir();
-    const stagedAgentDir = path.join(root, "agents", "nemocua");
-    fs.mkdirSync(path.dirname(stagedAgentDir), { recursive: true });
-    fs.cpSync(agent.agentDir, stagedAgentDir, { recursive: true });
+    fs.writeFileSync(path.join(root, "unrelated-sentinel.txt"), "must not enter build context");
     let buildContext = root;
 
     try {
       withMockedDocker(({ createAgentSandbox }) => {
         const result = createAgentSandbox(agent, { rootDir: root });
         buildContext = result.buildCtx;
-        expect(fs.readdirSync(path.join(result.buildCtx, "agents", "nemocua")).sort()).toEqual([
-          "Dockerfile",
-          "manifest.yaml",
-          "policy-additions.yaml",
-        ]);
+        expect(fs.readdirSync(result.buildCtx)).toEqual(["Dockerfile"]);
+        expect(fs.existsSync(path.join(result.buildCtx, "unrelated-sentinel.txt"))).toBe(false);
         expect(fs.readFileSync(result.stagedDockerfile, "utf8")).toContain(
           "ARG BASE_IMAGE=nemocua-scenario:staged",
         );
