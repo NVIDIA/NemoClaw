@@ -23,6 +23,7 @@ vi.mock("./dockerfile-tool-disclosure-contract", () => ({
 
 import {
   applyOnboardToolDisclosureRequest,
+  prepareHermesPortableToolDisclosure,
   prepareSandboxToolDisclosure,
 } from "./tool-disclosure-flow";
 
@@ -191,6 +192,20 @@ describe("onboard tool-disclosure flow", () => {
 
     expect(registryEntry?.baselineExclusions).toEqual(baselineExclusions);
     expect(mocks.updateSession).toHaveBeenCalledOnce();
+    expect(mocks.removeSandbox).not.toHaveBeenCalled();
+  });
+
+  it("resolves schema-5 tool disclosure without reading or writing session state (#9203)", () => {
+    const result = prepareHermesPortableToolDisclosure("direct");
+
+    expect(result).toMatchObject({
+      existingEntry: null,
+      liveExists: false,
+      effectiveToolDisclosure: "direct",
+      toolDisclosureMigrationNeeded: false,
+    });
+    expect(mocks.loadSession).not.toHaveBeenCalled();
+    expect(mocks.updateSession).not.toHaveBeenCalled();
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,9 @@ const captureMock = vi.hoisted(() => vi.fn());
 const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() => vi.fn(async () => ({})));
 const getSandboxMock = vi.hoisted(() => vi.fn(() => null as { agent?: string } | null));
+const withLifecycleLockMock = vi.hoisted(() =>
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
+);
 
 vi.mock("../../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureMock,
@@ -17,6 +20,9 @@ vi.mock("../exec", async () => {
 });
 vi.mock("../gateway-state", () => ({ ensureLiveSandboxOrExit: ensureLiveMock }));
 vi.mock("../../../state/registry", () => ({ getSandbox: getSandboxMock }));
+vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
+  withMcpLifecycleLock: withLifecycleLockMock,
+}));
 
 import { WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
 import {
@@ -248,7 +254,10 @@ describe("runSessionsPassthrough", () => {
       extraArgs: ["--agent", "main", "--json"],
     });
 
-    expect(ensureLiveMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
+    expect(ensureLiveMock).toHaveBeenCalledWith("alpha", {
+      allowNonReadyPhase: true,
+      exit: expect.any(Function),
+    });
     expect(execMock).not.toHaveBeenCalled();
     expect(captureMock).toHaveBeenCalledWith(
       [
@@ -389,7 +398,12 @@ describe("runSessionsPassthrough", () => {
     await runSessionsPassthrough("hermes", { extraArgs: [] });
 
     expect(captureMock).not.toHaveBeenCalled();
-    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions", "list"]);
+    expect(execMock).toHaveBeenCalledWith(
+      "hermes",
+      ["hermes", "sessions", "list"],
+      {},
+      expect.objectContaining({ exit: expect.any(Function) }),
+    );
   });
 
   it("uses openclaw binary for openclaw-agent sandboxes (#6247)", async () => {
@@ -414,7 +428,12 @@ describe("runSessionsPassthrough", () => {
     });
 
     expect(captureMock).not.toHaveBeenCalled();
-    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions", "list", "--limit", "5"]);
+    expect(execMock).toHaveBeenCalledWith(
+      "hermes",
+      ["hermes", "sessions", "list", "--limit", "5"],
+      {},
+      expect.objectContaining({ exit: expect.any(Function) }),
+    );
   });
 
   it("defaults to the openclaw binary + filter path when the registry has no entry (#6247)", async () => {
@@ -467,4 +486,5 @@ describe("runSessionsPassthrough", () => {
     expect(stdoutSpy).not.toHaveBeenCalled();
     expect(String(stderrSpy.mock.calls[0]?.[0])).toBe("unknown flag: --bad\n");
   });
+
 });

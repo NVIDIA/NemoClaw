@@ -124,7 +124,8 @@ const sdk = vi.hoisted(() => {
         Array.from({ length: terminalTool ? terminalPlan.failureCount : 0 }).forEach(() =>
           failTerminalTool(terminalTool as MockTool, emit),
         );
-        const isRepairPrompt = prompt.includes("Call `turn_action` now");
+        const isRepairPrompt =
+          prompt.includes("Call `turn_action` now") || prompt.includes("Complete the repair");
         const retryError = "429 status code (no body)";
         const retryAttemptEvents = [
           {
@@ -252,6 +253,16 @@ function analysisTurn(name: string): AdvisorPromptTurn {
   };
 }
 
+function submitTurn(name: string): AdvisorPromptTurn {
+  return {
+    ...turn(name, '{"submit":true}'),
+    activeToolNames: ["turn_action", "draft_action"],
+    terminalSubmitToolName: "turn_action",
+    terminalSubmitRepairPrompt: "Repair the failed draft and submit it.",
+    terminalSubmitRepairToolNames: ["repair_action"],
+  };
+}
+
 function commitTurn(name: string): AdvisorPromptTurn {
   return {
     name,
@@ -280,7 +291,11 @@ async function run(promptTurns: AdvisorPromptTurn[]) {
     credentialEnv: "TEST_ADVISOR_KEY",
     logPrefix: "test-advisor",
     logProgress: () => {},
-    customTools: [customTool("turn_action")],
+    customTools: [
+      customTool("turn_action"),
+      customTool("draft_action"),
+      customTool("repair_action"),
+    ],
   });
 }
 
@@ -367,6 +382,66 @@ describe("advisor session runner", () => {
     ]);
     expect(sdk.state.prompts).toHaveLength(3);
     expect(sdk.state.prompts[2]).toContain("Call `turn_action` now");
+  });
+
+  it("repairs a preparatory terminal submit only after a settled failure", async () => {
+    sdk.state.terminalResponses = ["fail-once", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("terminal_submit_repair_start prepare-and-submit turn_action");
+    expect(sdk.state.activeToolCalls).toContainEqual(["repair_action", "turn_action"]);
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it.each([
+    ["two failed initial attempts", ["fail-twice", "success"]],
+    ["a failed then successful initial attempt", ["fail-then-success"]],
+  ] as const)("rejects %s without terminal-submit repair", async (_case, responses) => {
+    sdk.state.terminalResponses = [...responses];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toContain("exactly 1 turn_action submit attempt");
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("allows one failed initial submit followed by one repair success", async () => {
+    sdk.state.terminalResponses = ["fail-once", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("rejects multiple submit attempts during terminal-submit repair", async () => {
+    sdk.state.terminalResponses = ["fail-once", "fail-then-success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toContain("terminal-submit repair must make exactly 1");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("rejects prose during preparatory terminal-submit repair", async () => {
+    sdk.state.emitRepairProse = true;
+    sdk.state.terminalResponses = ["fail-once", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toContain("terminal-submit repair emitted prose during repair");
+    expect(result.turnErrors).toEqual([
+      expect.stringContaining("terminal-submit repair emitted prose during repair"),
+    ]);
+  });
+
+  it("does not repair an omitted preparatory terminal submit", async () => {
+    sdk.state.terminalResponses = ["omit", "success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toContain("must make exactly 1 turn_action submit attempt");
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
   });
 
   it("accepts a failed atomic attempt followed by one same-turn success (#6446)", async () => {
