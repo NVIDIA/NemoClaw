@@ -4,9 +4,7 @@
 import * as agentRuntime from "../../agent/runtime";
 import type { AgentDefinition } from "../../agent/definition-types";
 import { spawnExitCode } from "../../core/process-exit";
-import { requireCuaLifecycleReadiness } from "../../cua/lifecycle-readiness";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
-import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import type { SandboxEntry } from "../../state/registry";
 import {
   completeReadinessQualifiedInteractiveSessionSetup,
@@ -47,46 +45,11 @@ const LAUNCH_READINESS_FENCE_REPAIR =
  */
 interface LaunchSandboxDeps {
   getSandbox?: typeof getKnownSandboxTarget;
-  requireCuaReadiness?: (entry: NonNullable<ReturnType<typeof getKnownSandboxTarget>>) => unknown;
   resolveSandboxGatewayName?: typeof resolveSandboxGatewayName;
-  withGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
   withSandboxMutationLock?: typeof withSandboxMutationLock;
   inspectLaunchReadiness?: typeof inspectLaunchReadiness;
   publishLaunchReadiness?: typeof publishLaunchReadiness;
   withLaunchReadinessMutationGate?: typeof withLaunchReadinessMutationGate;
-}
-
-async function launchCuaUnderMutationLocks(
-  sandboxName: string,
-  deps: LaunchSandboxDeps,
-  beforeOrdinaryLaunch?: () => void,
-): Promise<void> {
-  const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
-  const lockGateway = deps.withGatewayRouteMutationLock ?? withGatewayRouteMutationLock;
-  const getSandbox = deps.getSandbox ?? getKnownSandboxTarget;
-  const resolveGateway = deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName;
-  await lockSandbox(sandboxName, async () => {
-    if (inspectPortableAgentReceiptDisposition(sandboxName).kind === "hermes") {
-      throw new Error("Hermes portable lifecycle authority changed before agent launch.");
-    }
-    beforeOrdinaryLaunch?.();
-    const lockedEntry = getSandbox(sandboxName);
-    if (!lockedEntry || lockedEntry.agent !== "nemocua") {
-      throw new Error(
-        `NemoCUA authority changed while waiting to launch sandbox '${sandboxName}'.`,
-      );
-    }
-    const gatewayName = resolveGateway(lockedEntry);
-    await lockGateway(gatewayName, async () => {
-      (deps.requireCuaReadiness ?? requireCuaLifecycleReadiness)(lockedEntry);
-      await execSandbox(sandboxName, ["nemocua", "interactive"], {
-        tty: true,
-        stdin: true,
-        // 0 means no timeout. Any other value kills a long interactive session.
-        timeoutSeconds: 0,
-      });
-    });
-  });
 }
 
 async function launchAgentWithPortableAuthority(
@@ -146,8 +109,8 @@ async function launchAgentWithPortableAuthority(
     if (current.phase !== "active") {
       throw new Error("Hermes portable lifecycle authority changed before agent launch.");
     }
-    const getSandbox = deps.getSandbox ?? getKnownSandboxTarget;
-    const registered = getSandbox(sandboxName);
+    const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
+    const registered = readSandbox(sandboxName);
     if (
       agent?.name !== "hermes" ||
       entry?.agent !== "hermes" ||
@@ -241,15 +204,9 @@ export async function launchSandbox(
     break;
   }
   const { agent, sb, hermesPortable = false } = session;
-  const isCua = sb?.agent === "nemocua";
-  const agentCommand = isCua
-    ? agentRuntime.getTerminalCommand(agent, "interactive")
-    : agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
+  const agentCommand = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
   if (!agentCommand) {
     throw new Error(`Cannot resolve an interactive command for sandbox '${sandboxName}'.`);
-  }
-  if (isCua && agentCommand !== "nemocua interactive") {
-    throw new Error("NemoCUA interactive command must be exactly 'nemocua interactive'");
   }
 
   // `connect` runs this immediately before opening its SSH session. It is not
@@ -264,13 +221,6 @@ export async function launchSandbox(
   // file through the profile. Passing bare argv here would silently start the
   // agent under a different auth mode than `connect` gives it, so `-l` is
   // load-bearing: do not flatten this to `bash -c` or to the split command.
-  if (isCua) {
-    await launchCuaUnderMutationLocks(sandboxName, deps, () => {
-      acceptedReadinessSetup?.();
-      prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
-    });
-    return;
-  }
   const command = ["bash", "-lc", agentCommand];
   await launchAgentWithPortableAuthority(
     sandboxName,

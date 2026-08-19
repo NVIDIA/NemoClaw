@@ -4,8 +4,6 @@
 import path from "node:path";
 import { isObjectRecord } from "../../core/json-types";
 import { GATEWAY_PORT } from "../../core/ports";
-import { isCuaQualificationEnabled } from "../../cua/feature";
-import { parseCuaRuntimeReadiness } from "../../cua/schema";
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
@@ -30,26 +28,6 @@ import {
 } from "./host-local-inference";
 import type { SandboxEntry, SandboxRegistry } from "./types";
 import { cloneSandboxWorkloadReceipt } from "./workload";
-
-const OPAQUE_CUA_RUNTIME_READINESS = Symbol("opaqueCuaRuntimeReadiness");
-
-type RegistryWithOpaqueCuaState = SandboxRegistry & {
-  [OPAQUE_CUA_RUNTIME_READINESS]?: Map<string, unknown>;
-};
-
-function opaqueCuaRuntimeReadiness(data: SandboxRegistry): Map<string, unknown> | undefined {
-  return (data as RegistryWithOpaqueCuaState)[OPAQUE_CUA_RUNTIME_READINESS];
-}
-
-/** True when deep-off persistence is carrying an unread CUA record for this row. */
-export function hasOpaqueCuaRuntimeReadiness(data: SandboxRegistry, name: string): boolean {
-  return opaqueCuaRuntimeReadiness(data)?.has(name) === true;
-}
-
-/** Revoke a deep-off opaque CUA record before an authority-changing write. */
-export function discardOpaqueCuaRuntimeReadiness(data: SandboxRegistry, name: string): void {
-  opaqueCuaRuntimeReadiness(data)?.delete(name);
-}
 
 function cloneSandboxWorkloadReceiptOrThrow(
   value: SandboxEntry["workload"],
@@ -107,19 +85,6 @@ function cloneServingProfileProvenanceOrThrow(
   return provenance ?? undefined;
 }
 
-function normalizeCuaRuntimeReadiness(
-  value: SandboxEntry["cuaRuntimeReadiness"],
-): SandboxEntry["cuaRuntimeReadiness"] {
-  if (value === undefined) return undefined;
-  try {
-    return parseCuaRuntimeReadiness(value);
-  } catch {
-    // A legacy or malformed optional CUA record must fail closed without
-    // making unrelated sandbox rows or commands unloadable.
-    return undefined;
-  }
-}
-
 export const REGISTRY_FILE = path.join(
   nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
   "sandboxes.json",
@@ -137,20 +102,11 @@ export function save(data: SandboxRegistry): void {
 function normalizeRegistry(value: unknown): SandboxRegistry {
   const data = isObjectRecord(value) ? value : {};
   const extraProviders = normalizeExtraProviders(data.extraProviders);
-  const cuaQualificationEnabled = isCuaQualificationEnabled();
-  const opaqueReadiness = new Map<string, unknown>();
   const sandboxes = Object.fromEntries(
-    parseSandboxRegistryEntries(data.sandboxes).map(([name, entry]) => {
-      if (
-        !cuaQualificationEnabled &&
-        Object.prototype.hasOwnProperty.call(entry, "cuaRuntimeReadiness")
-      ) {
-        // Preserve the raw JSON value only as private persistence metadata. It
-        // is neither parsed nor returned to runtime callers while CUA is off.
-        opaqueReadiness.set(name, entry.cuaRuntimeReadiness);
-      }
-      return [name, normalizeSandboxEntryForRuntime(entry, cuaQualificationEnabled)];
-    }),
+    parseSandboxRegistryEntries(data.sandboxes).map(([name, entry]) => [
+      name,
+      normalizeSandboxEntryForRuntime(entry),
+    ]),
   );
   const base: SandboxRegistry = {
     // Preserve a stale string pointer at read time so diagnostics can explain
@@ -162,28 +118,16 @@ function normalizeRegistry(value: unknown): SandboxRegistry {
     sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
-  if (opaqueReadiness.size > 0) {
-    // Enumerable symbols survive the registry's immutable object spreads, but
-    // JSON serialization and public entry iteration cannot expose this map.
-    (base as RegistryWithOpaqueCuaState)[OPAQUE_CUA_RUNTIME_READINESS] = opaqueReadiness;
-  }
   return base;
 }
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
-  const cuaQualificationEnabled = isCuaQualificationEnabled();
-  const opaqueReadiness = opaqueCuaRuntimeReadiness(data);
   const sandboxes = Object.fromEntries(
-    Object.entries(data.sandboxes).map(([name, entry]) => {
-      const serialized = serializeSandboxEntryForDisk(entry, cuaQualificationEnabled);
-      if (!cuaQualificationEnabled && opaqueReadiness?.has(name)) {
-        serialized.cuaRuntimeReadiness = opaqueReadiness.get(name) as
-          | SandboxEntry["cuaRuntimeReadiness"]
-          | undefined;
-      }
-      return [name, serialized];
-    }),
+    Object.entries(data.sandboxes).map(([name, entry]) => [
+      name,
+      serializeSandboxEntryForDisk(entry),
+    ]),
   );
   const defaultSandbox = retainedDefaultSandbox(data.defaultSandbox, sandboxes);
   const currentDefaultSelectionRevision = reversibleRemoval.normalizeDefaultSelectionRevision(
@@ -201,10 +145,7 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   return base;
 }
 
-function normalizeSandboxEntryForRuntime(
-  entry: SandboxEntry,
-  cuaQualificationEnabled: boolean,
-): SandboxEntry {
+function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
   const workload = cloneSandboxWorkloadReceiptOrThrow(entry.workload, "load");
   const hostLocalInferenceReceipt = cloneHostLocalInferenceReceiptOrThrow(
@@ -226,10 +167,8 @@ function normalizeSandboxEntryForRuntime(
     entry.baselineExclusionTransition,
   );
   const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
-  const cuaRuntimeReadiness = cuaQualificationEnabled
-    ? normalizeCuaRuntimeReadiness(entry.cuaRuntimeReadiness)
-    : undefined;
   const {
+    cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
     workload: _workload,
     hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
@@ -239,9 +178,8 @@ function normalizeSandboxEntryForRuntime(
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
     customPolicies: _customPolicies,
-    cuaRuntimeReadiness: _cuaRuntimeReadiness,
     ...rest
-  } = entry;
+  } = entry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
   return {
     ...rest,
     ...(workload ? { workload } : {}),
@@ -253,7 +191,6 @@ function normalizeSandboxEntryForRuntime(
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(customPolicies ? { customPolicies } : {}),
-    ...(cuaRuntimeReadiness ? { cuaRuntimeReadiness } : {}),
   };
 }
 
@@ -263,10 +200,7 @@ function normalizeSandboxEntryForRuntime(
  * markers plus legacy provider credential hashes that must never reach
  * sandboxes.json.
  */
-function serializeSandboxEntryForDisk(
-  entry: SandboxEntry,
-  cuaQualificationEnabled: boolean,
-): SandboxEntry {
+function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   // Defensively drop non-durable recovery markers and legacy
   // providerCredentialHashes so they can never reach sandboxes.json even if a
   // caller force-passed them through updateSandbox().
@@ -301,10 +235,8 @@ function serializeSandboxEntryForDisk(
     durable.baselineExclusionTransition,
   );
   const customPolicies = normalizeCustomPolicyEntries(durable.customPolicies);
-  const cuaRuntimeReadiness = cuaQualificationEnabled
-    ? normalizeCuaRuntimeReadiness(durable.cuaRuntimeReadiness)
-    : undefined;
   const {
+    cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
     messaging: _messaging,
     workload: _workload,
     hostLocalInferenceReceipt: _hostLocalInferenceReceipt,
@@ -314,9 +246,8 @@ function serializeSandboxEntryForDisk(
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
     customPolicies: _customPolicies,
-    cuaRuntimeReadiness: _cuaRuntimeReadiness,
     ...rest
-  } = durable;
+  } = durable as SandboxEntry & { cuaRuntimeReadiness?: unknown };
   return {
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
@@ -329,6 +260,5 @@ function serializeSandboxEntryForDisk(
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
     ...(customPolicies ? { customPolicies } : {}),
-    ...(cuaRuntimeReadiness ? { cuaRuntimeReadiness } : {}),
   };
 }

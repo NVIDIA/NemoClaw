@@ -890,10 +890,9 @@ describe("launch readiness validation", () => {
     expect(publishedIdentity?.session).toBeNull();
   });
 
-  it("uses the normalized trusted agent name for CUA semantic health (#8942)", async () => {
+  it("uses ordinary terminal smoke health for feature-gated NemoCUA (#9649)", async () => {
     sandbox = entry(" nemocua ");
     const currentDeps = deps();
-    const cuaReadiness = vi.fn();
     const gatewayHealth = vi.fn(async () => true);
     const smoke = vi.fn(() => ({ ok: true }) as const);
     const cuaAgent = {
@@ -901,20 +900,18 @@ describe("launch readiness validation", () => {
       name: "nemocua",
       runtime: {
         kind: "terminal" as const,
-        interactive_command: "nemocua interactive",
-        headless_command: "nemocua headless",
+        interactive_command: "/bin/bash",
+        headless_command: "python3 /app/run_with_harness.py",
       },
     };
     currentDeps.listAgents = () => ["nemocua"];
     currentDeps.loadAgent = () => cuaAgent;
-    currentDeps.cuaReadiness = cuaReadiness;
     currentDeps.gatewayHealth = gatewayHealth;
     currentDeps.smoke = smoke;
 
     await createAcceptedLease(currentDeps);
     expect(await inspectLaunchReadiness(SANDBOX, currentDeps)).toMatchObject({ kind: "accepted" });
-    expect(cuaReadiness).toHaveBeenCalledTimes(2);
-    expect(smoke).not.toHaveBeenCalled();
+    expect(smoke).toHaveBeenCalled();
     expect(gatewayHealth).not.toHaveBeenCalled();
   });
 
@@ -936,7 +933,6 @@ describe("launch readiness validation", () => {
         "agent",
         "agentVersion",
         "baselineExclusions",
-        "cuaRuntimeReadinessSha256",
         "customPolicies",
         "dashboardPort",
         "dashboardRemoteBindPrepared",

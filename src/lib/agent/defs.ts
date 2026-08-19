@@ -9,8 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DASHBOARD_PORT } from "../core/ports";
-import { isCuaFrameworkEnabled, requireCuaFrameworkEnabled } from "../cua/feature";
-import { getCuaExternalAgentManifestPath } from "../cua/runtime-manifest";
+import { isCuaEnabled, requireCuaEnabled } from "../cua/feature";
 import { ROOT } from "../runner";
 import {
   formatAgentAliasSuffix,
@@ -127,18 +126,11 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
     ? fs
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
-        .filter((entry) => entry.name !== "nemocua")
+        .filter((entry) => entry.name !== "nemocua" || isCuaEnabled(env))
         .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env))
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
-  if (
-    isCuaFrameworkEnabled(env) &&
-    env.NEMOCLAW_CUA_RUNTIME_MANIFEST &&
-    env.NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256
-  ) {
-    agents.push("nemocua");
-  }
   return [...new Set(agents)].sort();
 }
 
@@ -162,14 +154,10 @@ export function requireAgentPolicyAdditionsPath(
  * Load and parse an agent manifest.
  */
 export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): AgentDefinition {
-  if (name === "nemocua") requireCuaFrameworkEnabled(env);
+  if (name === "nemocua") requireCuaEnabled(env);
   requireCandidateAgentSelectable(name, env);
-  const externalCua = name === "nemocua";
-  const manifestPath = externalCua
-    ? getCuaExternalAgentManifestPath(env)
-    : path.join(AGENTS_DIR, name, "manifest.yaml");
-  const cacheKey = externalCua ? null : name;
-  const cached = cacheKey ? _cache.get(cacheKey) : undefined;
+  const manifestPath = path.join(AGENTS_DIR, name, "manifest.yaml");
+  const cached = _cache.get(name);
   if (cached) return cached;
 
   if (!fs.existsSync(manifestPath)) {
@@ -406,24 +394,7 @@ export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): A
     },
   };
 
-  if (externalCua) {
-    if (
-      agent.name !== "nemocua" ||
-      runtime.kind !== "terminal" ||
-      !runtime.interactive_command ||
-      !runtime.headless_command ||
-      !runtime.smoke_commands?.length ||
-      !binaryPath?.startsWith("/") ||
-      !versionCommand ||
-      !expectedVersion
-    ) {
-      throw new Error(
-        "External NemoCUA agent manifest must declare the canonical terminal runtime, binary, version, and smoke surfaces",
-      );
-    }
-  }
-
-  if (cacheKey) _cache.set(cacheKey, agent);
+  _cache.set(name, agent);
   return agent;
 }
 

@@ -5,13 +5,10 @@ import {
   checkGatewayRouteCompatibility,
   GatewayRouteConflictError,
   isAdvisoryProviderModelRouteConflict,
-  resolveLiveInferenceGatewayName,
 } from "../../inference/gateway-route-compatibility";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
-
-export { resolveLiveInferenceGatewayName };
 
 function sandboxGatewayRouteCompatibility(
   sandboxName: string,

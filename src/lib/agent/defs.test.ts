@@ -28,6 +28,7 @@ import {
   resolveAgentName,
   resolveAgentNameAlias,
 } from "./defs";
+import { resolveAgent } from "./onboard";
 
 const tempAgentDirs: string[] = [];
 
@@ -43,6 +44,7 @@ const qualificationFixtures: CandidateQualificationFixture[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_AGENT;
+  delete process.env.NEMOCLAW_CUA_ENABLED;
   authority.digests.splice(0, authority.digests.length);
   while (qualificationFixtures.length > 0) qualificationFixtures.pop()?.cleanup();
   while (tempAgentDirs.length > 0) {
@@ -54,25 +56,31 @@ afterEach(() => {
 });
 
 describe("agent definitions", () => {
-  it("cannot discover or load a local NemoCUA manifest while the feature is disabled (#7755)", () => {
-    const realExistsSync = fs.existsSync.bind(fs);
-    vi.spyOn(fs, "existsSync").mockImplementation((candidate) =>
-      candidate === path.join(AGENTS_DIR, "nemocua", "manifest.yaml")
-        ? true
-        : realExistsSync(candidate),
-    );
-    vi.spyOn(fs, "readdirSync").mockReturnValue([
-      { name: "nemocua", isDirectory: () => true } as fs.Dirent,
-    ] as never);
-    const disabledEnv = {
-      NEMOCLAW_CUA_RUNTIME_MANIFEST: "/private/untrusted/runtime-manifest.json",
-      NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256: "a".repeat(64),
-    };
+  it("exposes NemoCUA only behind the exact experimental feature flag (#9649)", () => {
+    expect(fs.existsSync(path.join(AGENTS_DIR, "nemocua", "manifest.yaml"))).toBe(true);
+    expect(listAgents({})).not.toContain("nemocua");
+    expect(listAgents({ NEMOCLAW_CUA_ENABLED: "true" })).not.toContain("nemocua");
+    expect(() => loadAgent("nemocua", {})).toThrow("NemoCUA is disabled");
 
-    expect(listAgents(disabledEnv)).not.toContain("nemocua");
-    expect(() => loadAgent("nemocua", disabledEnv)).toThrow(
-      "use the controlled Brev Launchable activation",
-    );
+    const enabledEnv = { NEMOCLAW_CUA_ENABLED: "1" };
+    expect(listAgents(enabledEnv)).toContain("nemocua");
+    expect(loadAgent("nemocua", enabledEnv)).toMatchObject({
+      name: "nemocua",
+      runtime: {
+        kind: "terminal",
+        headless_command: "python3 /app/run_with_harness.py",
+      },
+    });
+  });
+
+  it("keeps NemoCUA out of choices and direct resolution until enabled (#9649)", () => {
+    expect(getAgentChoices().map((choice) => choice.name)).not.toContain("nemocua");
+    expect(() => resolveAgent({ agentFlag: "nemocua" })).toThrow("Unknown agent 'nemocua'");
+
+    vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
+
+    expect(getAgentChoices().map((choice) => choice.name)).toContain("nemocua");
+    expect(resolveAgent({ agentFlag: "nemocua" })?.name).toBe("nemocua");
   });
 
   it("keeps the Pi candidate manifest out of agent selection by default (#7925)", () => {

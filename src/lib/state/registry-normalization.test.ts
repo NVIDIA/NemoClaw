@@ -100,6 +100,38 @@ describe("sandbox registry normalization", () => {
     ]);
   });
 
+  it("drops legacy CUA readiness while preserving ordinary sandbox data (#9649)", async () => {
+    const registry = await loadRegistryWith({
+      alpha: {
+        name: "alpha",
+        agent: "nemocua",
+        provider: "nvidia",
+        model: "model-a",
+        cuaRuntimeReadiness: { schemaVersion: 1, digest: "legacy" },
+      },
+    });
+
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      name: "alpha",
+      agent: "nemocua",
+      provider: "nvidia",
+      model: "model-a",
+    });
+    expect(registry.getSandbox("alpha")).not.toHaveProperty("cuaRuntimeReadiness");
+
+    registry.save(registry.load());
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(process.env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8"),
+    ) as { sandboxes?: { alpha?: Record<string, unknown> } };
+    expect(persisted.sandboxes?.alpha).toMatchObject({
+      name: "alpha",
+      agent: "nemocua",
+      provider: "nvidia",
+      model: "model-a",
+    });
+    expect(persisted.sandboxes?.alpha).not.toHaveProperty("cuaRuntimeReadiness");
+  });
+
   it("lists managed MCP credential reservations in a stable order", async () => {
     const registry = await loadRegistryWith({
       zeta: {

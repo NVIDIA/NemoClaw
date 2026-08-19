@@ -3362,7 +3362,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             recordStepComplete,
             recordStepFailed,
             skippedStepMessage,
-            cuaRegistry: registry,
           }),
           ensureAgentDashboardForward: (name, selectedAgent) =>
             selectedAgent

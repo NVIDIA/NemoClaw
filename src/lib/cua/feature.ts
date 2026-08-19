@@ -1,26 +1,29 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const CUA_FRAMEWORK_FEATURE_ENV = "NEMOCLAW_CUA_ENABLED" as const;
-export const CUA_QUALIFICATION_FEATURE_ENV = "NEMOCLAW_CUA_QUALIFICATION" as const;
-export const CUA_RUNTIME_MANIFEST_ENV = "NEMOCLAW_CUA_RUNTIME_MANIFEST" as const;
-export const CUA_RUNTIME_MANIFEST_SHA256_ENV = "NEMOCLAW_CUA_RUNTIME_MANIFEST_SHA256" as const;
-export const CUA_QUALIFICATION_ENVIRONMENT_ENV = "NEMOCLAW_CUA_QUALIFICATION_ENVIRONMENT" as const;
+export const CUA_FEATURE_ENV = "NEMOCLAW_CUA_ENABLED" as const;
 export const CUA_SANDBOX_IMAGE_ENV = "NEMOCLAW_CUA_SANDBOX_IMAGE_REF" as const;
 
-/** Keep executable CUA lifecycle surfaces fail-closed until explicitly enabled. */
-export function isCuaFrameworkEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[CUA_FRAMEWORK_FEATURE_ENV] === "1";
+const SANDBOX_IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._:@/+\-]{0,511}$/;
+
+export function isCuaEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[CUA_FEATURE_ENV] === "1";
 }
 
-/** Refuse every CUA artifact or product-surface read before the default-off gate. */
-export function requireCuaFrameworkEnabled(env: NodeJS.ProcessEnv = process.env): void {
-  if (!isCuaFrameworkEnabled(env)) {
-    throw new Error("CUA is disabled; use the controlled Brev Launchable activation");
+export function requireCuaEnabled(env: NodeJS.ProcessEnv = process.env): void {
+  if (!isCuaEnabled(env)) {
+    throw new Error(`NemoCUA is disabled; set ${CUA_FEATURE_ENV}=1 to use the experimental agent`);
   }
 }
 
-/** Candidate lifecycle authority is narrower than enabling the CUA surface. */
-export function isCuaQualificationEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isCuaFrameworkEnabled(env) && env[CUA_QUALIFICATION_FEATURE_ENV] === "1";
+export function requireCuaSandboxImageRef(env: NodeJS.ProcessEnv = process.env): string {
+  requireCuaEnabled(env);
+  const rawImageRef = env[CUA_SANDBOX_IMAGE_ENV] ?? "";
+  const imageRef = rawImageRef.trim();
+  if (rawImageRef !== imageRef || !SANDBOX_IMAGE_REF.test(imageRef)) {
+    throw new Error(
+      `${CUA_SANDBOX_IMAGE_ENV} must name the prepared NemoCUA sandbox image without whitespace`,
+    );
+  }
+  return imageRef;
 }
