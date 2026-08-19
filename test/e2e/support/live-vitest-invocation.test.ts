@@ -152,7 +152,7 @@ describe("buildLiveVitestArgs (#6961)", () => {
     expect(
       buildLiveVitestArgs({
         testPath: "test/e2e/live/registry-targets.test.ts",
-        selector: "^ubuntu-repo-cloud-openclaw$",
+        selector: "^ubuntu-repo-cloud-openclaw:",
       }),
     ).toEqual([
       "vitest",
@@ -161,7 +161,7 @@ describe("buildLiveVitestArgs (#6961)", () => {
       "e2e-live",
       "test/e2e/live/registry-targets.test.ts",
       "-t",
-      "^ubuntu-repo-cloud-openclaw$",
+      "^ubuntu-repo-cloud-openclaw:",
       "--silent=false",
       "--reporter=default",
       `--reporter=${RISK_SIGNAL_REPORTER}`,

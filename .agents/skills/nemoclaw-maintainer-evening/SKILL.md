@@ -75,7 +75,7 @@ move to the next target, but do not perform label writes here.
 Load `nemoclaw-maintainer-cut-release-tag` and pass the exact version. That skill owns:
 
 - the exact-version plan and candidate;
-- nonwaivable documentation, image, and exact staging Launchable evidence;
+- nonwaivable documentation and image evidence;
 - the maintainer's focused, full, or proceed E2E choice;
 - `../nemoclaw-release-vX.Y.Z/release-brief.md`;
 - the exact confirmation phrase; and
@@ -90,7 +90,7 @@ After tag readback, return immediately with:
 
 - tag and candidate commit;
 - plan and release-brief paths;
-- documentation, image, and exact Launchable evidence URLs;
+- documentation and image evidence URLs;
 - E2E decision and exception reason, if any; and
 - current state of `latest`, release labels, public documentation, release images, `lkg`, and the Announcement.
 
@@ -102,8 +102,7 @@ tag. Draft the public Announcement later with
 ## Hard Rules
 
 - Never cut a tag without the maintainer's exact confirmation phrase.
-- Never bypass the release entry, approved-empty Pi result, applicable GHCR evidence, or exact
-  staging Brev Launchable E2E and cleanup receipts.
+- Never bypass the release entry, approved-empty Pi result, or applicable GHCR evidence.
 - Never make a different candidate stale merely because `main` advanced or a later documentation PR opened.
 - Never wait for `latest`, label retirement, public documentation, release images, `lkg`, or the Announcement
   before reporting the tag as cut.

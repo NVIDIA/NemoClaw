@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -42,6 +43,7 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly version: string;
   readonly policy?: ManagedImageSelectionPolicy;
   readonly catalogPath?: string | null;
+  readonly expectedCatalogRevision?: string | null;
   readonly catalogRevision?: string | null;
   /** Contract from the repository-accepted candidate qualification receipt. */
   readonly acceptedCandidateContract?: ManagedImageContractV1 | null;
@@ -51,6 +53,42 @@ export function liveE2eManagedImageRevision(environment: NodeJS.ProcessEnv): str
   if (environment.GITHUB_ACTIONS !== "true") return null;
   const revision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
   return revision ? revision : null;
+}
+
+export interface LiveE2eManagedImageCatalog {
+  readonly path: string;
+  readonly revision: string;
+}
+
+/** Select the trusted PR catalog only for an exact live E2E candidate. */
+export function liveE2eManagedImageCatalog(
+  environment: NodeJS.ProcessEnv,
+): LiveE2eManagedImageCatalog | null {
+  if (environment.GITHUB_ACTIONS !== "true" || environment.NEMOCLAW_RUN_LIVE_E2E !== "1") {
+    return null;
+  }
+  const configuredPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
+  const workspace = environment.GITHUB_WORKSPACE?.trim();
+  const catalogPath =
+    configuredPath ||
+    (workspace ? path.join(workspace, "dist", "e2e-managed-image-catalog.json") : "");
+  if (!catalogPath) return null;
+  try {
+    fs.lstatSync(catalogPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new SandboxWorkloadPreparationError(
+      "the live E2E managed-image catalog path could not be inspected",
+      { cause: error },
+    );
+  }
+  const revision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  if (!/^[0-9a-f]{40}$/u.test(revision)) {
+    throw new SandboxWorkloadPreparationError(
+      "the live E2E managed-image catalog requires an exact candidate revision",
+    );
+  }
+  return { path: catalogPath, revision };
 }
 
 function readExactManagedImageCatalog(catalogPath: string): ManagedImageContractCatalog {
@@ -146,7 +184,7 @@ function requireCompleteManagedImageCatalog(
   catalog: ManagedImageContractCatalog,
   expectedRelease: string,
   expectedPlatform: ManagedImagePlatform,
-): void {
+): string {
   let cohortRevision: string | null = null;
   let publicationCohort: string | null = null;
   for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
@@ -183,6 +221,7 @@ function requireCompleteManagedImageCatalog(
       );
     }
   }
+  return cohortRevision!;
 }
 
 function requireCandidateManagedImageCatalog(
@@ -313,7 +352,12 @@ export async function prepareSandboxWorkloadSource(
       acceptedCandidateContract,
     );
   } else {
-    requireCompleteManagedImageCatalog(catalog, release, platform);
+    const catalogRevision = requireCompleteManagedImageCatalog(catalog, release, platform);
+    if (input.expectedCatalogRevision && catalogRevision !== input.expectedCatalogRevision) {
+      throw new SandboxWorkloadPreparationError(
+        "managed image catalog source revision does not match the live E2E candidate revision",
+      );
+    }
   }
 
   return {

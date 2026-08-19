@@ -42,6 +42,10 @@ const DEFAULT_GUARD_MARKERS: ReadonlyArray<string> = [
   "nemoclaw-sandbox-safety-net",
   "nemoclaw-ciao-network-guard",
 ];
+const GUARD_CHAIN_PROXY_ENV_PATH = "/tmp/nemoclaw-proxy-env.sh";
+const GUARD_CHAIN_ACTIVE_SENTINEL = "NEMOCLAW_GUARD_CHAIN_ACTIVE";
+const GUARD_CHAIN_FILE_UNAVAILABLE_EXIT_CODE = 20;
+const GUARD_CHAIN_MARKER_MISSING_EXIT_CODE = 21;
 
 /** Default gateway log path inside the sandbox. */
 const GATEWAY_LOG_PATH = "/tmp/gateway.log";
@@ -302,27 +306,50 @@ export class GatewayClient {
   }
 
   /**
-   * Assert that the NODE_OPTIONS guard chain is active for the gateway by
-   * reading `/tmp/nemoclaw-proxy-env.sh` and verifying it contains the
-   * expected preload markers (`--require` paths). The proxy-env file is
-   * the single source of truth — when recovery sources it, the gateway
-   * inherits the chain.
+   * Assert that the NODE_OPTIONS guard chain is active for the gateway. The
+   * sandbox command checks `/tmp/nemoclaw-proxy-env.sh` for every expected
+   * preload marker and returns only a fixed credential-free sentinel. It does
+   * not return the proxy environment file contents to the host or store them
+   * in evidence artifacts.
    *
    * We deliberately read the file rather than `/proc/<pid>/environ`:
    * `kernel.yama.ptrace_scope=1` blocks reads of /proc/.../environ across
    * non-ancestor process trees. This matches the legacy 2478 bash test's
    * approach (`gateway_guards_active` -> `proxy_env_contents`).
    *
-   * @throws if the file is missing or any expected marker is absent.
+   * @throws if the expected marker list is empty or a marker is empty or
+   * contains a carriage return or line feed; the file is missing, unreadable,
+   * or empty; an expected marker is absent; or the sentinel response is invalid.
    */
   async expectGuardChainActive(
     instance: NemoClawInstance,
     options: ExpectGuardChainOptions = {},
   ): Promise<void> {
     const expected = options.expectedMarkers ?? DEFAULT_GUARD_MARKERS;
+    if (
+      expected.length === 0 ||
+      expected.some((marker) => marker.length === 0 || /[\r\n]/u.test(marker))
+    ) {
+      throw new Error(
+        "expectGuardChainActive: expectedMarkers must be a non-empty list of non-empty single-line markers",
+      );
+    }
+    const script =
+      'set -eu; proxy_env="$1"; sentinel="$2"; shift 2; ' +
+      '[ -r "$proxy_env" ] && [ -s "$proxy_env" ] || exit 20; ' +
+      'for marker do grep -Fq -- "$marker" "$proxy_env" 2>/dev/null || exit 21; done; ' +
+      'printf "%s\\n" "$sentinel"';
     const result = await this.sandbox.exec(
       instance.sandboxName,
-      ["sh", "-c", "cat /tmp/nemoclaw-proxy-env.sh 2>/dev/null"],
+      [
+        "sh",
+        "-c",
+        script,
+        "nemoclaw-guard-chain-proof",
+        GUARD_CHAIN_PROXY_ENV_PATH,
+        GUARD_CHAIN_ACTIVE_SENTINEL,
+        ...expected,
+      ],
       {
         artifactName: `gateway-guard-chain-${instance.sandboxName}`,
         env: probeEnv(),
@@ -330,18 +357,31 @@ export class GatewayClient {
       },
     );
 
-    if (result.exitCode !== 0 || result.stdout.trim() === "") {
-      throw new Error(
-        `expectGuardChainActive: /tmp/nemoclaw-proxy-env.sh missing or empty in ${instance.sandboxName}`,
-      );
+    if (
+      result.exitCode === 0 &&
+      result.signal === null &&
+      !result.timedOut &&
+      result.stdout === `${GUARD_CHAIN_ACTIVE_SENTINEL}\n` &&
+      result.stderr === ""
+    ) {
+      return;
     }
 
-    const missing = expected.filter((marker) => !result.stdout.includes(marker));
-    if (missing.length > 0) {
+    const quietFailure =
+      result.signal === null && !result.timedOut && result.stdout === "" && result.stderr === "";
+    if (quietFailure && result.exitCode === GUARD_CHAIN_FILE_UNAVAILABLE_EXIT_CODE) {
       throw new Error(
-        `expectGuardChainActive: /tmp/nemoclaw-proxy-env.sh missing markers ${JSON.stringify(missing)} in ${instance.sandboxName}`,
+        `expectGuardChainActive: /tmp/nemoclaw-proxy-env.sh missing, unreadable, or empty in ${instance.sandboxName}`,
       );
     }
+    if (quietFailure && result.exitCode === GUARD_CHAIN_MARKER_MISSING_EXIT_CODE) {
+      throw new Error(
+        `expectGuardChainActive: /tmp/nemoclaw-proxy-env.sh missing an expected marker in ${instance.sandboxName}`,
+      );
+    }
+    throw new Error(
+      `expectGuardChainActive: guard-chain check was invalid in ${instance.sandboxName}`,
+    );
   }
 
   /**

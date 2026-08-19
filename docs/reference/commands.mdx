@@ -1928,6 +1928,7 @@ The existing inference probes run in a fresh sandbox command, so they do not att
 NemoClaw does not probe the serving process yet.
 For terminal runtimes, `servingProcessHealth` is `null` and the text output omits this line because there is no long-running gateway process.
 The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, the authoritative in-sandbox inference route fails or cannot be probed, or a terminal runtime sandbox reports a recorded OOM kill.
+When the canonical text command targets an unregistered name, it reports that the sandbox is not registered and tells you to run `$$nemoclaw list`.
 The alias form `$$nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `$$nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
 For a sandbox that owns managed llama.cpp, text output also reports the recipe ID, model digest, image reference, `https://inference.local/v1` endpoint, and lifecycle state.
@@ -3622,6 +3623,9 @@ If OpenShell does not confirm absence within the bounded wait, including when ga
 Restore OpenShell connectivity and confirm the sandbox's live state before you retry, and keep the printed backup path for recovery.
 Before deletion, rebuild records a replacement journal that binds the operation to the recorded gateway, source identity, and target settings.
 Rerunning the same rebuild continues from the recorded boundary or accepts the proven replacement instead of deleting it again.
+A mount-free journal written before host-mount identity binding remains resumable.
+An older journal that used host mounts fails closed because it cannot prove the original host source identity, even when the visible mount settings are unchanged.
+Preserve the sandbox, onboarding session, printed backup, exact error, and `Journaled replacement` diagnostic, then follow the legacy journal guidance in [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
 Use `--verbose` to print the replacement identifier, gateway, and journal phase.
 Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the recovery procedure and fail-closed conditions.
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.

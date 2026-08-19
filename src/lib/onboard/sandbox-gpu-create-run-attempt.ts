@@ -278,13 +278,6 @@ export function createSandboxGpuCreateAttemptRunner(
           },
         })
       : null;
-    const inspectNativeRuntime = (): NativeRuntimeSnapshot | null => {
-      const lifecycleSnapshot = managedLifecycle?.inspectNativeRuntime?.();
-      if (lifecycleSnapshot !== undefined) return lifecycleSnapshot;
-      if (managedRouting) return managedRouting.inspectNativeRuntime();
-      const snapshot = queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
-      return snapshot.ok ? snapshot : null;
-    };
     const persistRestartSafeStartup =
       input.persistStartupCommand === true &&
       (route !== "native" || !input.terminalAgent || hasRequiredUlimits);
@@ -315,6 +308,16 @@ export function createSandboxGpuCreateAttemptRunner(
             backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
             deps,
           }));
+    const inspectNativeRuntime = (): NativeRuntimeSnapshot | null => {
+      const lifecycleSnapshot = managedLifecycle?.inspectNativeRuntime?.();
+      if (lifecycleSnapshot !== undefined) return lifecycleSnapshot;
+      if (managedRouting) return managedRouting.inspectNativeRuntime();
+      const expectedContainerId = runtimePatch.replacementRuntimeId?.() ?? null;
+      const snapshot = expectedContainerId
+        ? queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName, {}, { expectedContainerId })
+        : queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
+      return snapshot.ok ? snapshot : null;
+    };
     const recovery = await managedLifecycle?.recoverUnfinished();
     if (recovery) {
       enforceManagedBootstrapRecoveryForSandbox(recovery, input.sandboxName, (message) =>

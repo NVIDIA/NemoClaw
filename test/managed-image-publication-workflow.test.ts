@@ -126,6 +126,10 @@ function managedPrActivation(workflow: Workflow): Job {
   );
 }
 
+function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
+  return required(workflow.jobs?.["pr-openclaw-mcp-discovery"], "missing exact PR MCP gate");
+}
+
 function managedPromoter(workflow: Workflow): Job {
   return required(
     workflow.jobs?.promote,
@@ -791,12 +795,49 @@ describe("complete managed-image publication workflow", () => {
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
+    expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(/npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u);
     expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
     expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
     const run = step(activation, "Run real all-agent managed runtime activation").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(run).toContain("test/e2e/live/managed-image-activation-e2e.test.ts");
     expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
+  });
+
+  it("passes the reported OpenClaw trusted-private MCP discovery twice on one exact PR cohort (#8746)", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const discovery = managedPrOpenClawMcpDiscovery(workflow);
+    expect(discovery.needs).toBe("pr-build-and-entrypoint");
+    expect(discovery.if).toContain(
+      "github.event.pull_request.head.repo.full_name == github.repository",
+    );
+    expect(discovery.permissions).toEqual({ contents: "read" });
+    expect(discovery.strategy?.["fail-fast"]).toBe(false);
+    expect(discovery.strategy?.matrix?.pass).toEqual([1, 2]);
+    expect(discovery.env?.CANDIDATE_SHA).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(discovery.env?.NEMOCLAW_E2E_EXPECTED_SHA).toBe(
+      "${{ github.event.pull_request.head.sha }}",
+    );
+    expect(discovery.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG).toContain("managed-pr-catalog.json");
+    expect(discovery.env?.NEMOCLAW_MCP_BRIDGE_AGENT).toBe("openclaw");
+    expect(discovery.env?.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
+    expect(discovery.env?.NEMOCLAW_E2E_SHARD).toBe("openclaw");
+    expect(discovery.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(discovery.env).not.toHaveProperty("E2E_MANAGED_IMAGE_REVISION");
+    expect(JSON.stringify(discovery)).not.toContain("secrets.");
+    expect(JSON.stringify(discovery)).not.toContain("github.token");
+    expect(step(discovery, "Checkout exact PR head").with?.ref).toBe(
+      "${{ github.event.pull_request.head.sha }}",
+    );
+    expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
+    const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
+    expect(assemble).toMatch(/npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u);
+    const run = step(discovery, "Run exact OpenClaw trusted-private MCP discovery").run ?? "";
+    expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
+    expect(JSON.stringify(discovery)).not.toContain("jq ");
+    expect(run).toMatch(/npx --no-install tsx[\s\S]*test\/e2e\/live\/mcp-bridge\.test\.ts/u);
+    expect(run).not.toContain("--selector");
+    expect(step(discovery, "Scan MCP artifacts for fixture credentials").if).toBe("always()");
   });
 
   it("keeps the activation proof outside mocked runtime boundaries (#7744)", () => {

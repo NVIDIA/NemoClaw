@@ -26,6 +26,7 @@ const {
   createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
   resolveCompatibleEndpointSelection,
+  selectFeaturedModelAfterCredentialPrompt,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const setupNimFlow: typeof import("./onboard/setup-nim-flow") = require("./onboard/setup-nim-flow");
 const openrouterSelection: typeof import("./onboard/openrouter-selection") = require("./onboard/openrouter-selection");
@@ -2539,6 +2540,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
   hydrateCredentialEnv(state.credentialEnv);
   if (selected.key === "build") {
     providerKeyBridge.stageBuildProviderKeyBridge();
+    let apiKeyNavigation: unknown = null;
     if (isNonInteractive()) {
       const reuseGatewayCredential = buildCredentialReuse.resolveNonInteractiveBuildCredential({
         provider: state.provider,
@@ -2549,14 +2551,9 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       state.skipHostInferenceSmoke = reuseGatewayCredential;
       state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
     } else {
-      await ensureApiKey();
+      apiKeyNavigation = await ensureApiKey();
     }
-    state.model = await state.nvidiaFeaturedModels!.select(
-      requestedModel || (typeof state.model === "string" ? state.model : null),
-      recoveredFromSandbox ? recoveredModel : null,
-      isNonInteractive(),
-      process.env.NEMOCLAW_MODEL,
-    );
+    state.model = await selectFeaturedModelAfterCredentialPrompt(state.nvidiaFeaturedModels!, apiKeyNavigation, credentialPrompt.shouldReturnToProviderSelection, requestedModel || (typeof state.model === "string" ? state.model : null), recoveredFromSandbox ? recoveredModel : null, isNonInteractive(), process.env.NEMOCLAW_MODEL);
     if (isBackToSelection(state.model)) {
       console.log("  Returning to provider selection.");
       console.log("");
@@ -2843,8 +2840,8 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
   filterEnabledChannelsByAgent,
   defaultPolicyPath: path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
   getAgentPolicyPath: (agent) => (agent ? agentOnboard.getAgentPolicyPath(agent) : null),
-  resolveGpuPlan: (config, agent) =>
-    dockerGpuSandboxCreate.resolveAgentPlan(config, agent, isLinuxDockerDriverGatewayEnabled()),
+  resolveGpuPlan: (config) =>
+    dockerGpuSandboxCreate.resolveProfileGpuCreatePlan(config, isLinuxDockerDriverGatewayEnabled()),
   appendResourceCreateArgs: (args, resourceProfile) =>
     appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
       isNonInteractive,

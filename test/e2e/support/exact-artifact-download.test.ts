@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   bindExactArtifact,
+  bindNamedExactArtifact,
   downloadBoundArtifact,
   exactArtifactName,
   materializeContractArchive,
@@ -77,6 +78,18 @@ describe("exact artifact download (#9340)", () => {
       id: 9001,
       name: exactArtifactName(EXPECTED),
       size: bytes.length,
+    });
+  });
+
+  it("binds another exact contract name without weakening artifact identity", () => {
+    const bytes = archive();
+    const name = "managed-pr-contract-7001-2-openclaw";
+    const value = metadata(bytes, { name });
+
+    expect(bindNamedExactArtifact(value, EXPECTED, name)).toMatchObject({
+      ...EXPECTED,
+      id: 9001,
+      name,
     });
   });
 

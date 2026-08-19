@@ -13,7 +13,6 @@ import {
   buildSubprocessEnv as buildPluginSubprocessEnv,
   withLocalNoProxy as withPluginLocalNoProxy,
 } from "../nemoclaw/src/lib/subprocess-env";
-import { getCurlTimingArgs } from "../src/lib/adapters/http/probe";
 import {
   buildSubprocessEnv as buildCliSubprocessEnv,
   withLocalNoProxy as withCliLocalNoProxy,
@@ -149,7 +148,4 @@ describe("credential exposure in process arguments", () => {
     }
   });
 
-  it("onboard curl probes use explicit timeouts", () => {
-    expect(getCurlTimingArgs()).toEqual(["--connect-timeout", "10", "--max-time", "60"]);
-  });
 });

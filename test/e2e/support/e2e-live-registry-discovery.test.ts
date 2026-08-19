@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
 import { target } from "../registry/builder.ts";
+import { liveTargetInventoryEntry } from "../registry/run.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
 import type { TargetDefinition, TargetEnvironment } from "../registry/types.ts";
 
@@ -76,6 +77,20 @@ describe("live target registry discovery support", () => {
     expect(liveTargetSupport(missingExpectedState)).toMatchObject({
       supported: false,
       reasons: ["missing expectedStateId"],
+    });
+  });
+
+  it("reports a missing-environment declaration without resolving a runner (#9167)", () => {
+    const declaration = target("synthetic-no-environment").expectedState("synthetic-ready").build();
+
+    expect(liveTargetInventoryEntry(declaration)).toEqual({
+      id: declaration.id,
+      agentRuntime: "unresolved",
+      observableOutcome: "unresolved",
+      environmentOrInferenceEndpoint: "unresolved",
+      unresolvedReason: "This typed registry declaration has no executable owner",
+      supported: false,
+      supportReasons: ["missing environment"],
     });
   });
 
