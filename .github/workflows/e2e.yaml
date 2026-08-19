@@ -577,7 +577,7 @@ jobs:
           NODE
           for agent in openclaw hermes langchain-deepagents-code; do
             contract="$contracts/$agent/contract.json"
-            jq --arg release 'v0.0.110-84-ga4f9b59aa6' --arg revision 'a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e' '
+            jq --arg release 'v0.0.110-84-ga4f9b59aa' --arg revision 'a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e' '
               if .source.revision != $revision or .source.release != "v0.1.0" then error("unexpected reused contract source identity")
               else .source.release = $release end
             ' "$contract" >"$contract.next"
