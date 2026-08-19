@@ -187,6 +187,8 @@ export interface SandboxStateOptions<
 > {
   resume: boolean;
   fresh: boolean;
+  /** Exact schema-5 lifecycle selection owned by the locked portable runtime. */
+  hermesPortableLifecycle?: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
@@ -468,9 +470,9 @@ function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
 function endpointSourceForCreateIntent(
   fresh: boolean,
   endpointSource: InferenceEndpointSource | null | undefined,
-  hostLocalInferenceRouteOnly: boolean,
+  preserveSelectedEndpointSource: boolean,
 ): InferenceEndpointSource | null {
-  return fresh && !hostLocalInferenceRouteOnly ? "onboard" : (endpointSource ?? null);
+  return fresh && !preserveSelectedEndpointSource ? "onboard" : (endpointSource ?? null);
 }
 
 function compatibleEndpointReasoningForCreateIntent(
@@ -1577,7 +1579,8 @@ class SandboxStateFlow<
       endpointSource: endpointSourceForCreateIntent(
         this.options.fresh,
         this.options.endpointSource,
-        this.options.hostLocalInferenceRouteOnly === true,
+        this.options.hostLocalInferenceRouteOnly === true ||
+          this.options.hermesPortableLifecycle === true,
       ),
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }

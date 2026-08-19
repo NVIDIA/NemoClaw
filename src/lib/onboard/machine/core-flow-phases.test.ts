@@ -322,7 +322,7 @@ function createPhases(
 }
 
 describe("core onboard flow phases", () => {
-  it("classifies the provider reservation as owned during fresh sandbox creation (#9203)", async () => {
+  it("carries the fresh install-Ollama reservation into Hermes portable creation (#9203)", async () => {
     const durableSession = createSession();
     const sandboxName = `hermes-route-${durableSession.sessionId}`;
     const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
@@ -336,9 +336,24 @@ describe("core onboard flow phases", () => {
       };
       const reservation = getSandbox(sandboxName);
       expect(authority).toEqual({ sessionId: durableSession.sessionId });
+      expect(createIntent.endpointSource).toBeNull();
       expect(isPendingReservationForSession(reservation, authority?.sessionId as string)).toBe(
         true,
       );
+      expect(
+        classifySandboxInferenceRouteReservation(
+          {
+            sandboxName,
+            gatewayName: "nemoclaw",
+            sessionId: authority?.sessionId as string,
+            selection: normalizeInferenceSelection({
+              ...reservation,
+              endpointSource: "onboard",
+            }),
+          },
+          reservation,
+        ).kind,
+      ).toBe("conflict");
       expect(
         classifySandboxInferenceRouteReservation(
           {
@@ -395,6 +410,7 @@ describe("core onboard flow phases", () => {
         getSandboxRegistryEntry: getSandbox,
         promptValidatedSandboxName: vi.fn(async () => sandboxName),
       },
+      sandboxOptions: { hermesPortableLifecycle: true },
     });
 
     try {
@@ -406,11 +422,13 @@ describe("core onboard flow phases", () => {
           sandboxName,
         }),
       );
-      await sandboxPhase.run({
-        ...providerResult.context,
+      expect(providerResult.context).toMatchObject({
+        provider: "ollama-local",
+        model: "qwen3-vl:4b",
         endpointSource: null,
-        hostLocalInferenceRouteOnly: true,
+        hostLocalInferenceRouteOnly: false,
       });
+      await sandboxPhase.run(providerResult.context);
 
       expect(createSandbox).toHaveBeenCalledOnce();
     } finally {

@@ -67,6 +67,8 @@ export interface SandboxOnboardFlowPhaseOptions<
   ResourceProfile = unknown,
 > {
   gatewayName: string;
+  /** Exact schema-5 route authority selected before sandbox create intent is rendered. */
+  hermesPortableLifecycle?: boolean;
   authoritativeResumeConfig?: boolean;
   authoritativePolicyTier?: string | null;
 
@@ -224,6 +226,7 @@ export function createSandboxOnboardFlowPhase<
       resume: context.resume,
       fresh: context.fresh,
       gatewayName: options.gatewayName,
+      hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
 
