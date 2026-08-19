@@ -340,7 +340,7 @@ function validateOwnedConfigAuthority(input: {
   if (socketPath) assertOwnedDescendants(runtimeDir, path.dirname(socketPath));
 }
 
-function ensureRegistryContainer(
+function ensurePortableSandboxNetwork(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
   networkName: string,
@@ -367,7 +367,13 @@ function ensureRegistryContainer(
       "Creating the portable sandbox network",
     );
   }
+}
 
+function ensureRegistryContainer(
+  env: NodeJS.ProcessEnv,
+  docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  networkName: string,
+): void {
   const inspection = docker(
     [
       "inspect",
@@ -621,6 +627,7 @@ export function preparePortableExperimentalHost(
         timeout: REGISTRY_COMMAND_TIMEOUT_MS,
       }));
   requireDockerCompatibleCli(docker, podmanEnv);
+  ensurePortableSandboxNetwork(podmanEnv, docker, dockerNetworkName);
   const ip =
     deps.ip ??
     ((args, childEnv) =>
@@ -659,6 +666,7 @@ export const portableHostPreparationInternals = {
   REGISTRY_FRAGMENT,
   PORTABLE_CONTAINERS_CONF,
   ensurePortableHostGatewayAlias,
+  ensurePortableSandboxNetwork,
   portableHostGatewayAliasState,
   validateOwnedConfigAuthority,
   resolvePodmanDockerHost,

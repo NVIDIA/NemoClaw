@@ -423,21 +423,33 @@ describe("preparePortableExperimentalHost", () => {
     expect(sudo).not.toHaveBeenCalled();
   });
 
-  it("configures and verifies the portable gateway loopback alias before registry mutation (#9461)", () => {
+  it("validates the portable network before configuring the gateway alias (#9587)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
-    const docker = vi
-      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
-      .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }])))
-      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+    const events: string[] = [];
+    const dockerResults = [
+      result(),
+      result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }])),
+      result(0, `1 true ${PORTABLE_REGISTRY_IP}`),
+    ];
+    const docker = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(
+      (args) => {
+        events.push(args[0] === "network" ? `docker network ${args[1]}` : `docker ${args[0]}`);
+        return dockerResults.shift() ?? result();
+      },
+    );
     const ip = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
-      .mockReturnValueOnce(result())
-      .mockReturnValueOnce(
-        result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`),
-      );
-    const sudo = vi.fn(() => result());
+      .mockImplementation(() => {
+        events.push("ip inspect");
+        return ip.mock.calls.length === 1
+          ? result()
+          : result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`);
+      });
+    const sudo = vi.fn(() => {
+      events.push("sudo alias");
+      return result();
+    });
 
     preparePortableExperimentalHost(
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
@@ -455,6 +467,49 @@ describe("preparePortableExperimentalHost", () => {
       expect.any(Object),
     );
     expect(docker).toHaveBeenCalledTimes(3);
+    expect(events).toEqual([
+      "docker --version",
+      "docker network inspect",
+      "ip inspect",
+      "sudo alias",
+      "ip inspect",
+      "docker inspect",
+    ]);
+  });
+
+  it("does not configure the portable gateway alias when network creation fails (#9587)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result(1))
+      .mockReturnValueOnce(result(1, "create failed"));
+    const ip = vi.fn(() => result());
+    const sudo = vi.fn(() => result());
+
+    expect(() =>
+      preparePortableExperimentalHost(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        portablePreparationDeps(home, docker, { ip, sudo }),
+        undefined,
+        { simulateExistingPortableNetwork: false },
+      ),
+    ).toThrow(/Creating the portable sandbox network failed: create failed/u);
+
+    expect(docker.mock.calls.map(([args]) => args)).toEqual([
+      ["--version"],
+      ["network", "inspect", "--format", "{{json .IPAM.Config}}", PORTABLE_DOCKER_NETWORK_NAME],
+      [
+        "network",
+        "create",
+        "--subnet",
+        PORTABLE_DOCKER_NETWORK_SUBNET,
+        PORTABLE_DOCKER_NETWORK_NAME,
+      ],
+    ]);
+    expect(ip).not.toHaveBeenCalled();
+    expect(sudo).not.toHaveBeenCalled();
   });
 
   it("refuses a conflicting portable gateway assignment before registry mutation (#9461)", () => {
@@ -474,7 +529,7 @@ describe("preparePortableExperimentalHost", () => {
         }),
       ),
     ).toThrow(/address already has a conflicting host assignment/u);
-    expect(docker).toHaveBeenCalledTimes(1);
+    expect(docker.mock.calls.map(([args]) => args)).toEqual([["--version"]]);
     expect(sudo).not.toHaveBeenCalled();
   });
 
