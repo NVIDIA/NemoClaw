@@ -84,17 +84,19 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
       owned(realLstatSync(file, options))) as typeof fs.lstatSync);
   }
 
-  function mockRuntimeDescriptorOwnership(uid: bigint, gid: bigint): void {
+  function mockRuntimeDescriptorOwnership(
+    runtimeEnvironmentFile: string,
+    uid: bigint,
+    gid: bigint,
+  ): void {
     const realFstatSync = fs.fstatSync.bind(fs);
-    let fstatCalls = 0;
+    const runtimeInode = fs.lstatSync(runtimeEnvironmentFile, { bigint: true }).ino;
     vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor: number, options: { bigint: true }) => {
       const stat = realFstatSync(descriptor, options);
-      fstatCalls += 1;
-      const descriptorUid = fstatCalls <= 2 ? 0n : uid;
-      const descriptorGid = fstatCalls <= 2 ? 0n : gid;
+      const isRuntimeDescriptor = stat.ino === runtimeInode;
       const ownership = new Map<PropertyKey, unknown>([
-        ["uid", descriptorUid],
-        ["gid", descriptorGid],
+        ["uid", isRuntimeDescriptor ? uid : 0n],
+        ["gid", isRuntimeDescriptor ? gid : 0n],
       ]);
       return new Proxy(stat, {
         get(inner, property) {
@@ -283,7 +285,7 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
 
   it("fails closed when the runtime handoff is not root owned", () => {
     const fixture = writeCompletionFixture(managedStartupE2eProfile("langchain-deepagents-code"));
-    mockRuntimeDescriptorOwnership(501n, 20n);
+    mockRuntimeDescriptorOwnership(fixture.runtimeEnvironmentFile, 501n, 20n);
 
     expect(() =>
       verifyManagedStartupImageCompletion(
