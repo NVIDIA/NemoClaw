@@ -77,11 +77,6 @@
       "category": "security"
     },
     {
-      "file": "test/managed-image-rerun-artifacts.test.ts",
-      "test": "retains exact producer outputs when successful jobs are reused on a failed-job rerun (#9529)",
-      "category": "security"
-    },
-    {
       "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "rejects %s",
       "category": "security"

@@ -8,68 +8,35 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 
 import {
   publicationAgents,
   publicationPlatforms,
+  reuseOpenclawAmd64FromAttemptOne,
+  runManagedImageBaseRestore,
+  runManagedImageCandidateRestore,
   runManagedImagePromotion,
   runPublicationBarrier,
 } from "./helpers/managed-image-publication-barrier";
+import { publicationBoundaryErrors } from "./helpers/managed-image-publication-workflow-boundary";
+import {
+  managedPromoter,
+  managedPublisher,
+  readWorkflow,
+  repoRoot,
+  required,
+  step,
+} from "./helpers/managed-image-publication-workflow";
 import type {
   Job,
   MatrixEntry,
-  Step,
   Workflow,
 } from "./helpers/managed-image-publication-workflow-types";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
-const managedInputPaths = [
-  ".dockerignore",
-  ".github/actions/ci-reviewed-npm-audit/**",
-  ".github/workflows/managed-images.yaml",
-  "Dockerfile",
-  "agents/**",
-  "ci/npm-audit-exceptions.json",
-  "ci/reviewed-npm-audit.json",
-  "nemoclaw/**",
-  "nemoclaw-blueprint/**",
-  "scripts/**",
-  "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
-  "src/lib/core/json-types.ts",
-  "src/lib/core/ports.ts",
-  "src/lib/messaging/**",
-  "src/lib/onboard/managed-bootstrap/envelope.ts",
-  "src/lib/onboard/managed-startup/**",
-  "src/lib/security/credential-hash.ts",
-  "src/lib/state/paths.ts",
-  "src/lib/state/state-root.ts",
-  "src/lib/tool-disclosure.ts",
-  "tools/mcp-tool-discovery-runtime/**",
-  "tsconfig.runtime-preloads.json",
-] as const;
 
-function readWorkflow(file: string): Workflow {
-  return YAML.parse(
-    fs.readFileSync(path.join(repoRoot, ".github", "workflows", file), "utf8"),
-  ) as Workflow;
-}
-
-function required<T>(value: T | undefined, message: string): T {
-  return (
-    value ??
-    (() => {
-      throw new Error(message);
-    })()
-  );
-}
-
-function step(job: Job, name: string): Step {
-  return required(
-    job.steps?.find((candidate) => candidate.name === name),
-    `managed-image workflow is missing '${name}'`,
-  );
+function needsOutput(job: string, output: string): string {
+  return `\${{ needs.${job}.outputs.${output} }}`;
 }
 
 function inlineNodeStdinValidator(source: string): string {
@@ -86,13 +53,6 @@ function isStrictChildPath(root: string, candidate: string): boolean {
     relative !== ".." &&
     !relative.startsWith(`..${path.sep}`) &&
     !path.isAbsolute(relative)
-  );
-}
-
-function managedPublisher(workflow: Workflow): Job {
-  return required(
-    workflow.jobs?.["build-and-validate"],
-    "managed-image workflow is missing its publisher",
   );
 }
 
@@ -130,121 +90,6 @@ function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
   return required(workflow.jobs?.["pr-openclaw-mcp-discovery"], "missing exact PR MCP gate");
 }
 
-function managedPromoter(workflow: Workflow): Job {
-  return required(
-    workflow.jobs?.promote,
-    "managed-image workflow is missing its aggregate promoter",
-  );
-}
-
-function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Workflow): string[] {
-  const triggerPaths = baseWorkflow.on?.push?.paths ?? [];
-  const caller = required(
-    baseWorkflow.jobs?.["publish-managed-images"],
-    "base-image workflow is missing the managed-image publisher",
-  );
-  const publisher = managedPublisher(managedWorkflow);
-  const promoter = managedPromoter(managedWorkflow);
-  const steps = publisher.steps ?? [];
-  const build = step(publisher, "Build and push managed image by digest");
-  const base = step(publisher, "Validate exact base image contract");
-  const validate = step(publisher, "Validate exact managed image before promotion");
-  const workflowSource = JSON.stringify(managedWorkflow);
-  const publisherSource = JSON.stringify(publisher);
-  const validationMarkers = [
-    'mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX"',
-    'DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"',
-    "bootstrap the GHCR package",
-    "/opt/nemoclaw-blueprint/blueprint.yaml",
-    "/usr/local/share/nemoclaw/corporate-ca.pem",
-    '--entrypoint "$REQUIRED_BINARY"',
-    "io.nvidia.nemoclaw.managed-image.contract",
-    "io.nvidia.nemoclaw.managed-image.startup-profile",
-    "io.nvidia.nemoclaw.managed-image.capabilities",
-    "io.nvidia.nemoclaw.managed-image.cohort",
-    'cohort_prefix="ghrun-${GITHUB_RUN_ID}-"',
-    '[ "$cohort_attempt" -gt "$GITHUB_RUN_ATTEMPT" ]',
-    "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
-    "@openclaw/diagnostics-otel",
-    "@openclaw/brave-plugin",
-    "@openclaw/discord",
-    "@tencent-weixin/openclaw-weixin",
-    "@openclaw/slack",
-    "@openclaw/whatsapp",
-    "@openclaw/msteams",
-    "@openclaw/googlechat",
-    "/sandbox/.openclaw/npm/projects",
-    'const nodeModulesRoot = path.join(projectRoot, "node_modules")',
-    'path.join(nodeModulesRoot, ...name.split("/"))',
-    "lstatSync(packageRoot).isDirectory()",
-    "lstatSync(manifestPath).isFile()",
-    "realpathSync(nodeModulesRoot)",
-    "realpathSync(packageRoot)",
-    "packageRelative.startsWith(`..${path.sep}`)",
-    "path.isAbsolute(packageRelative)",
-    "matches.length !== 1",
-    "microsoft-teams-apps",
-    "config.plugins?.entries?.[id]?.enabled !== false",
-    'config["platforms"].get(name) != {"enabled": False}',
-    "run-managed-image-direct-e2e.ts",
-    '--agent "$AGENT"',
-    '--image "$reference"',
-    '--platform "$PLATFORM"',
-  ];
-  const forbiddenPerLanePromotionMarkers = [
-    'aliases=("${IMAGE}:${GITHUB_SHA}")',
-    "docker buildx imagetools create",
-    "docker tag ",
-    "docker push ",
-  ];
-  const buildIndex = steps.indexOf(build);
-  const validateIndex = steps.indexOf(validate);
-
-  return [
-    ...managedInputPaths
-      .filter((input) => !triggerPaths.includes(input))
-      .map((input) => `managed image trigger is missing ${input}`),
-    ...(baseWorkflow.concurrency?.group === "base-image-${{ github.ref }}"
-      ? []
-      : ["base image concurrency must be scoped by github.ref"]),
-    ...(baseWorkflow.concurrency?.["cancel-in-progress"] ===
-    "${{ !startsWith(github.ref, 'refs/tags/v') }}"
-      ? []
-      : ["v* release runs must never be cancelled"]),
-    ...(caller.if?.includes("inputs.openclaw_version == ''")
-      ? []
-      : ["custom OpenClaw base builds must not publish managed images"]),
-    ...(build.with?.outputs ===
-      "type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true" &&
-    build.with.push === undefined &&
-    build.with.tags === undefined
-      ? []
-      : ["managed images must be pushed by digest without consumer tags"]),
-    ...(!workflowSource.includes("GITHUB_SHA:0:8") && !workflowSource.includes("format=short")
-      ? []
-      : ["managed image handoff and aliases must not use short source SHAs"]),
-    ...(base.run?.includes('.reference == (.image + "@" + .digest)') &&
-    base.run.includes(".sourceRevision == $revision") &&
-    base.run.includes(".run.id == $runId") &&
-    base.run.includes(".run.attempt <= $runAttempt")
-      ? []
-      : ["managed image build must consume the same-run exact base digest contract"]),
-    ...validationMarkers
-      .filter((marker) => !validate.run?.includes(marker))
-      .map((marker) => `exact managed image validation is missing ${marker}`),
-    ...forbiddenPerLanePromotionMarkers
-      .filter((marker) => publisherSource.includes(marker))
-      .map((marker) => `per-agent lane must not publish mutable alias with ${marker}`),
-    ...(buildIndex >= 0 && buildIndex < validateIndex
-      ? []
-      : ["managed image validation must follow its immutable digest build"]),
-    ...(JSON.stringify(promoter.needs) ===
-    JSON.stringify(["publication-identity", "build-and-validate"])
-      ? []
-      : ["aggregate promotion must require every matrix lane"]),
-  ];
-}
-
 describe("complete managed-image publication workflow", () => {
   it("rejects managed package paths redirected outside node_modules", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-plugin-"));
@@ -267,6 +112,7 @@ describe("complete managed-image publication workflow", () => {
   it.each([
     {
       agent: "hermes",
+      contractInput: "hermes-base-contract-base64",
       displayName: "Hermes",
       image: "nvidia/nemoclaw/hermes-sandbox-base",
       job: "build-and-push-hermes",
@@ -274,6 +120,7 @@ describe("complete managed-image publication workflow", () => {
     },
     {
       agent: "langchain-deepagents-code",
+      contractInput: "dcode-base-contract-base64",
       displayName: "Deep Agents Code",
       image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
       job: "build-and-push-dcode",
@@ -281,6 +128,7 @@ describe("complete managed-image publication workflow", () => {
     },
     {
       agent: "openclaw",
+      contractInput: "openclaw-base-contract-base64",
       displayName: "OpenClaw",
       image: "nvidia/nemoclaw/sandbox-base",
       job: "build-and-push-openclaw",
@@ -376,6 +224,8 @@ describe("complete managed-image publication workflow", () => {
         uses: "./.github/actions/publish-base-image-manifest",
         with: {
           agent: expectedPublisher.agent,
+          "amd64-digest": needsOutput(expectedPublisher.platformsJob, "amd64-digest"),
+          "arm64-digest": needsOutput(expectedPublisher.platformsJob, "arm64-digest"),
           "display-name": expectedPublisher.displayName,
           image: expectedPublisher.image,
           registry: "${{ env.REGISTRY }}",
@@ -383,6 +233,12 @@ describe("complete managed-image publication workflow", () => {
           "registry-password": "${{ secrets.GITHUB_TOKEN }}",
         },
       });
+      expect(basePublisher.outputs?.["contract-base64"]).toBe(
+        "${{ steps.publish.outputs.contract-base64 }}",
+      );
+      expect(publisher.with?.[expectedPublisher.contractInput]).toBe(
+        needsOutput(expectedPublisher.job, "contract-base64"),
+      );
       expect(step(basePublisher, "Checkout").with?.["persist-credentials"]).toBe(false);
 
       const nativePlatforms = required(
@@ -390,6 +246,10 @@ describe("complete managed-image publication workflow", () => {
         `base-image workflow is missing native ${expectedPublisher.agent} platforms`,
       );
       expect(nativePlatforms.needs).toEqual(["reviewed-npm-audit"]);
+      expect(nativePlatforms.outputs).toEqual({
+        "amd64-digest": "${{ steps.platform.outputs.amd64-digest }}",
+        "arm64-digest": "${{ steps.platform.outputs.arm64-digest }}",
+      });
       expect(nativePlatforms.strategy?.matrix?.include).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -1077,9 +937,21 @@ fi
         expect(action.uses, action.name).toMatch(fullShaAction);
       });
     expect(step(publisher, "Checkout").with?.["persist-credentials"]).toBe(false);
-    expect(step(publisher, "Restore exact base image contract").run).toContain(
-      'base64 --decode > "$contract_root/contract.json"',
+    const restoreBase = step(publisher, "Restore exact base image contract");
+    expect(restoreBase.run).toContain('base64 --decode > "$contract_root/contract.json"');
+    expect(restoreBase.env?.OPENCLAW_CONTRACT_BASE64).toBe(
+      "${{ inputs.openclaw-base-contract-base64 }}",
     );
+    const canonicalBase = runManagedImageBaseRestore(
+      restoreBase.run ?? "",
+      Buffer.from("{}\n").toString("base64"),
+    );
+    expect(canonicalBase.status, canonicalBase.stderr).toBe(0);
+    expect(canonicalBase.restored).toBe(true);
+    const noncanonicalBase = runManagedImageBaseRestore(restoreBase.run ?? "", "TR==");
+    expect(noncanonicalBase.status).not.toBe(0);
+    expect(noncanonicalBase.restored).toBe(false);
+    expect(noncanonicalBase.stderr).not.toContain("TR==");
 
     const guard = step(publisher, "Validate production build args");
     const build = step(publisher, "Build and push managed image by digest");
@@ -1179,8 +1051,11 @@ fi
 
   it("holds every alias behind the exact six-candidate aggregate barrier (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
+    const identity = workflow.jobs?.["publication-identity"];
+    const publisher = managedPublisher(workflow);
     const promoter = managedPromoter(workflow);
     const steps = promoter.steps ?? [];
+    const restoreCandidates = step(promoter, "Restore all validated managed image candidates");
     const barrier = step(promoter, "Validate complete managed image candidate set");
     const revalidate = step(promoter, "Revalidate exact managed image publication evidence");
     const promotion = step(
@@ -1194,10 +1069,48 @@ fi
         String(candidate.with?.name ?? "").startsWith("managed-image-"),
     );
 
-    expect(promoter.needs).toEqual(["publication-identity", "build-and-validate"]);
-    expect(step(promoter, "Restore all validated managed image candidates").run).toContain(
-      "restore_candidate()",
+    expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
+    expect(publisher.needs).toBe("publication-identity");
+    expect(publisher.outputs?.["openclaw-linux-amd64"]).toBe(
+      "${{ steps.candidate-output.outputs.openclaw_linux_amd64 }}",
     );
+    expect(publisher.outputs?.["openclaw-linux-amd64-attempt"]).toBe(
+      "${{ steps.candidate-output.outputs.openclaw_linux_amd64_attempt }}",
+    );
+    expect(promoter.needs).toEqual(["publication-identity", "build-and-validate"]);
+    expect(restoreCandidates.run).toContain("restore_candidate()");
+    expect(restoreCandidates.env).toMatchObject({
+      OPENCLAW_AMD64: "${{ needs.build-and-validate.outputs.openclaw-linux-amd64 }}",
+      OPENCLAW_AMD64_ATTEMPT:
+        "${{ needs.build-and-validate.outputs.openclaw-linux-amd64-attempt }}",
+    });
+    expect(barrier.env?.PUBLICATION_COHORT).toBe(
+      "${{ needs.publication-identity.outputs.cohort }}",
+    );
+
+    const acceptedRestore = runManagedImageCandidateRestore(restoreCandidates.run ?? "");
+    expect(acceptedRestore.status, acceptedRestore.stderr).toBe(0);
+    expect(acceptedRestore.files.filter((file) => file.endsWith("contract.json"))).toHaveLength(6);
+    const invalidAttempt = runManagedImageCandidateRestore(restoreCandidates.run ?? "", {
+      OPENCLAW_AMD64_ATTEMPT: "0",
+    });
+    expect(invalidAttempt.status).not.toBe(0);
+    expect(invalidAttempt.stderr).toContain("producer attempt is invalid");
+    const futureAttempt = runManagedImageCandidateRestore(restoreCandidates.run ?? "", {
+      OPENCLAW_AMD64_ATTEMPT: "3",
+    });
+    expect(futureAttempt.status).not.toBe(0);
+    expect(futureAttempt.stderr).toContain("producer attempt is invalid");
+    const malformedContract = runManagedImageCandidateRestore(restoreCandidates.run ?? "", {
+      OPENCLAW_AMD64: "not-base64",
+    });
+    expect(malformedContract.status).not.toBe(0);
+    expect(malformedContract.stderr).not.toContain("not-base64");
+    const noncanonicalContract = runManagedImageCandidateRestore(restoreCandidates.run ?? "", {
+      OPENCLAW_AMD64: "TR==",
+    });
+    expect(noncanonicalContract.status).not.toBe(0);
+    expect(noncanonicalContract.stderr).not.toContain("TR==");
     expect(barrier.run).toContain("expected exactly six managed image candidate artifacts");
     expect(barrier.run).toContain("length == 6");
     expect(barrier.run).toContain('([.[].platform] | sort) == ["linux/amd64", "linux/arm64"]');
@@ -1217,7 +1130,24 @@ fi
     expect(revalidate.run).toContain("registry publication evidence changed");
     expect(steps.indexOf(barrier)).toBeLessThan(steps.indexOf(promotion));
     expect(steps.indexOf(revalidate)).toBeLessThan(steps.indexOf(promotion));
-    expect(durableUploads).toHaveLength(7);
+    expect(durableUploads.map((upload) => upload.with)).toEqual([
+      {
+        name: "managed-image-cohort-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "${{ runner.temp }}/managed-image-contracts/cohort.json",
+        "if-no-files-found": "error",
+        "retention-days": 90,
+      },
+      ...publicationAgents.flatMap((agent) =>
+        publicationPlatforms.map((platform) => ({
+          name:
+            "managed-image-${{ github.run_id }}-${{ github.run_attempt }}-" +
+            `${agent}-${platform.replaceAll("/", "-")}`,
+          path: `\${{ runner.temp }}/managed-image-contracts/${agent}/${platform.replaceAll("/", "-")}/contract.json`,
+          "if-no-files-found": "error",
+          "retention-days": 90,
+        })),
+      ),
+    ]);
     durableUploads.forEach((upload) => {
       expect(steps.indexOf(promotion)).toBeLessThan(steps.indexOf(upload));
       expect(steps.indexOf(upload)).toBeLessThan(steps.indexOf(pointer));
@@ -1383,6 +1313,29 @@ fi
     );
 
     expect(runPublicationBarrier(barrier.run ?? "").status).toBe(0);
+    const reusedKey = "openclaw|linux/amd64";
+    const mixedAttempts = runPublicationBarrier(
+      barrier.run ?? "",
+      reuseOpenclawAmd64FromAttemptOne,
+      "",
+      {
+        expectedAttempts: { [reusedKey]: "1" },
+        publicationCohort: "ghrun-7744-1",
+      },
+    );
+    expect(mixedAttempts.status, mixedAttempts.stderr).toBe(0);
+    const futureCohort = runPublicationBarrier(barrier.run ?? "", (value) => value, "", {
+      publicationCohort: "ghrun-7744-3",
+    });
+    expect(futureCohort.status).not.toBe(0);
+    expect(futureCohort.stderr).toContain("publication cohort is invalid");
+    expect(futureCohort.dockerCalls).toEqual([]);
+    const wrongRunCohort = runPublicationBarrier(barrier.run ?? "", (value) => value, "", {
+      publicationCohort: "ghrun-8877-1",
+    });
+    expect(wrongRunCohort.status).not.toBe(0);
+    expect(wrongRunCohort.stderr).toContain("publication cohort is invalid");
+    expect(wrongRunCohort.dockerCalls).toEqual([]);
   });
 
   it("stages all multi-platform cohort aliases before moving the sole root pointer (#7744)", () => {
@@ -1473,5 +1426,13 @@ fi
         "langchain-deepagents-code": expect.any(Object),
       },
     });
+
+    const reusedKey = "openclaw|linux/amd64";
+    const mixedPromotion = runManagedImagePromotion(promotion, "", "", {
+      mutate: reuseOpenclawAmd64FromAttemptOne,
+      publicationCohort: "ghrun-7744-1",
+    });
+    expect(mixedPromotion.status, mixedPromotion.stderr).toBe(0);
+    expect(mixedPromotion.platformContracts[reusedKey]?.run).toEqual({ id: 7744, attempt: 1 });
   });
 });

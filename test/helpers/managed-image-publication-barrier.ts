@@ -163,6 +163,97 @@ function candidates(): Candidate[] {
   );
 }
 
+export const reuseOpenclawAmd64FromAttemptOne: CandidateMutation = (candidateSet) =>
+  candidateSet.map((candidate) => {
+    const contract = structuredClone(candidate.contract);
+    const producerAttempt =
+      `${candidate.agent}|${candidate.platform}` === "openclaw|linux/amd64" ? 1 : 2;
+    (contract.source as Record<string, unknown>).cohort = "ghrun-7744-1";
+    (contract.run as Record<string, unknown>).attempt = producerAttempt;
+    const evidence = contract.publicationEvidence as Record<string, unknown>;
+    const attestations = evidence.attestations as Record<string, unknown>;
+    const statement = (attestations.slsa as Record<string, unknown>).statement as Record<
+      string,
+      unknown
+    >;
+    statement.builderId = `https://github.com/NVIDIA/NemoClaw/actions/runs/7744/attempts/${producerAttempt}`;
+    (statement.bindings as Record<string, unknown>).cohort = "ghrun-7744-1";
+    return {
+      ...candidate,
+      artifact: candidate.artifact.replace("-7744-2-", `-7744-${producerAttempt}-`),
+      contract,
+    };
+  });
+
+export function runManagedImageCandidateRestore(
+  script: string,
+  overrides: Record<string, string> = {},
+): { files: string[]; status: number | null; stderr: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-restore-"));
+  const contract = Buffer.from("{}\n").toString("base64");
+  try {
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DCODE_AMD64: contract,
+        DCODE_AMD64_ATTEMPT: "1",
+        DCODE_ARM64: contract,
+        DCODE_ARM64_ATTEMPT: "2",
+        GITHUB_RUN_ID: runId,
+        GITHUB_RUN_ATTEMPT: runAttempt,
+        HERMES_AMD64: contract,
+        HERMES_AMD64_ATTEMPT: "1",
+        HERMES_ARM64: contract,
+        HERMES_ARM64_ATTEMPT: "2",
+        OPENCLAW_AMD64: contract,
+        OPENCLAW_AMD64_ATTEMPT: "1",
+        OPENCLAW_ARM64: contract,
+        OPENCLAW_ARM64_ATTEMPT: "2",
+        RUNNER_TEMP: root,
+        ...overrides,
+      },
+    });
+    const candidateRoot = path.join(root, "managed-image-candidates");
+    return {
+      files: fs.existsSync(candidateRoot)
+        ? fs.readdirSync(candidateRoot, { recursive: true }).map(String).sort()
+        : [],
+      status: result.status,
+      stderr: result.stderr,
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+export function runManagedImageBaseRestore(
+  script: string,
+  contract: string,
+): { restored: boolean; status: number | null; stderr: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-base-restore-"));
+  try {
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AGENT: "openclaw",
+        DCODE_CONTRACT_BASE64: contract,
+        HERMES_CONTRACT_BASE64: contract,
+        OPENCLAW_CONTRACT_BASE64: contract,
+        RUNNER_TEMP: root,
+      },
+    });
+    return {
+      restored: fs.existsSync(path.join(root, "managed-base-contract", "contract.json")),
+      status: result.status,
+      stderr: result.stderr,
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export function runPublicationBarrier(
   script: string,
   mutate: CandidateMutation = (value) => value,
