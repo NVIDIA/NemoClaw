@@ -71,24 +71,12 @@ const CREDENTIAL_WINDOW_ARTIFACT_DIR = "e2e-artifacts/live/openshell-credential-
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
-const STABLE_RELEASE_SOURCE_SHA = "c4b500a7de64d0b66e3ee8098f58d14299092162";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
   "722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01";
-const STABLE_RELEASE_IDENTITY_TOKENS = [
-  'releaseTag: "v0.0.106"',
-  STABLE_RELEASE_SOURCE_SHA,
-  "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59",
-  "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c",
-  "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8",
-] as const;
-const STABLE_RELEASE_PROVENANCE_TOKENS = [
-  ...STABLE_RELEASE_IDENTITY_TOKENS,
-  "mcp-bridge-deepagents/openshell-exact-main-provenance.json",
-] as const;
-const CREDENTIAL_WINDOW_PROVENANCE_TOKENS = [
-  ...STABLE_RELEASE_IDENTITY_TOKENS,
-  "openshell-credential-generation-window/openshell-exact-main-provenance.json",
-] as const;
+const STABLE_MCP_INSTALL_CONTENT_SHA256 =
+  "ae974423128d4c25d93cc9f971a59e0a8254b4003c08bd237eff15fb88890a49";
+const CREDENTIAL_WINDOW_INSTALL_CONTENT_SHA256 =
+  "449d438d27cbfaeadc502142335d321e5a66b71aec80bc4aeab4abe9793eaf42";
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
@@ -486,17 +474,11 @@ function validateJobExecution(
     if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
       errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
     }
-    const installRun = asString(install.run);
-    for (const token of STABLE_RELEASE_PROVENANCE_TOKENS) {
-      if (!installRun.includes(token)) {
-        errors.push(`mcp-bridge stable release provenance is missing reviewed identity: ${token}`);
-      }
-    }
-    requireContains(
+    requireEqual(
       errors,
-      install.run,
-      "bash scripts/install-openshell.sh",
-      `${jobName} must use the repository OpenShell installer`,
+      contentSha256(asString(install.run)),
+      STABLE_MCP_INSTALL_CONTENT_SHA256,
+      `${jobName} stable installer command block must match the reviewed release installation and provenance sequence`,
     );
   }
   if (jobName === "mcp-bridge-dev") {
@@ -961,20 +943,12 @@ function validateCredentialWindowJob(
     "1",
     `${CREDENTIAL_WINDOW_JOB} must force the stable OpenShell install`,
   );
-  requireContains(
+  requireEqual(
     errors,
-    install.run,
-    "bash scripts/install-openshell.sh",
-    `${CREDENTIAL_WINDOW_JOB} must use the repository OpenShell installer`,
+    contentSha256(asString(install.run)),
+    CREDENTIAL_WINDOW_INSTALL_CONTENT_SHA256,
+    `${CREDENTIAL_WINDOW_JOB} installer command block must match the reviewed release installation and provenance sequence`,
   );
-  for (const token of CREDENTIAL_WINDOW_PROVENANCE_TOKENS) {
-    requireContains(
-      errors,
-      install.run,
-      token,
-      `${CREDENTIAL_WINDOW_JOB} stable release provenance is missing reviewed identity: ${token}`,
-    );
-  }
 
   for (const required of [
     CREDENTIAL_WINDOW_FILE,
