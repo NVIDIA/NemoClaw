@@ -38,19 +38,25 @@ jobs:
             }
             const policy = JSON.parse(Buffer.from(response.data.content, "base64").toString());
             if (
-              !Array.isArray(policy.elevatedAccounts) ||
-              !policy.elevatedAccounts.every((login) => typeof login === "string") ||
-              !Number.isSafeInteger(policy.elevatedLimit) ||
-              policy.elevatedLimit < 0 ||
-              !Number.isSafeInteger(policy.defaultLimit) ||
-              policy.defaultLimit < 0
+              typeof policy !== "object" ||
+              policy === null ||
+              Array.isArray(policy) ||
+              !("*" in policy) ||
+              !Object.entries(policy).every(
+                ([login, value]) =>
+                  (login === "*" ||
+                    /^(?=.{1,39}$)[a-z\d](?:(?:[a-z\d]|-(?!-))*[a-z\d])?$/.test(login)) &&
+                  typeof value === "string" &&
+                  /^(0|[1-9]\d*)$/.test(value) &&
+                  Number.isSafeInteger(Number(value)),
+              )
             ) {
               throw new Error("Invalid PR limit policy values");
             }
-            const elevatedAccounts = new Set(policy.elevatedAccounts.map((login) => login.toLowerCase()));
-            const limit = elevatedAccounts.has(author.toLowerCase())
-              ? policy.elevatedLimit
-              : policy.defaultLimit;
+            const normalizedAuthor = author.toLowerCase();
+            const limit = Number(
+              Object.hasOwn(policy, normalizedAuthor) ? policy[normalizedAuthor] : policy["*"],
+            );
             const issues = await github.paginate(github.rest.issues.listForRepo, {
               ...context.repo,
               state: "open",
@@ -68,10 +74,13 @@ jobs:
             core.info(`Author ${author} has ${openCount} open PR(s); limit is ${limit}`);
             if (openCount <= limit) return;
 
+            const body = limit === 0
+              ? "This account cannot have open pull requests under the repository policy."
+              : `This repository limits you to ${limit} open pull requests. Please close or merge an existing PR before opening another one.`;
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pull.number,
-              body: `This repository limits you to ${limit} open pull requests. Please close or merge an existing PR before opening another one.`,
+              body,
             });
             await github.rest.pulls.update({
               ...context.repo,
