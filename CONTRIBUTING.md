@@ -511,7 +511,7 @@ For Markdown docs routing, user-skill guidance, and release-prep documentation w
 
 ## Pull Requests
 
-We welcome contributions. Every PR requires maintainer review before merge. Contributors may have up to 10 open PRs at one time.
+We welcome contributions. Every PR requires maintainer review before merge. Contributors may have up to 5 open PRs at one time.
 Core maintainers listed in `.github/workflows/pr-limit.yaml` are exempt from this limit.
 Maintainers review pull requests according to project priority, security impact, release readiness, and reviewer availability.
 PRs that solve issues with Priority set to Urgent or High are more likely to receive earlier review when maintainers have capacity.
