@@ -12,15 +12,17 @@ import {
   parseDcodeBaseImagePublicationEvidence,
   verifyDcodeBaseImageRuntimeEvidence,
 } from "../live/dcode-base-image-runtime-evidence.ts";
-
-const INDEX_DIGEST = `sha256:${"a".repeat(64)}`;
-const AMD64_DIGEST = `sha256:${"b".repeat(64)}`;
-const ARM64_DIGEST = `sha256:${"c".repeat(64)}`;
-const INDEX_REFERENCE = `${DCODE_BASE_IMAGE}@${INDEX_DIGEST}`;
-const AMD64_REFERENCE = `${DCODE_BASE_IMAGE}@${AMD64_DIGEST}`;
-const ARM64_REFERENCE = `${DCODE_BASE_IMAGE}@${ARM64_DIGEST}`;
-const CANDIDATE_REVISION = "d".repeat(40);
-const PUBLICATION_REVISION = "e".repeat(40);
+import {
+  DCODE_BASE_IMAGE_AMD64_DIGEST,
+  DCODE_BASE_IMAGE_AMD64_REFERENCE,
+  DCODE_BASE_IMAGE_ARM64_DIGEST,
+  DCODE_BASE_IMAGE_ARM64_REFERENCE,
+  DCODE_BASE_IMAGE_CANDIDATE_SHA,
+  DCODE_BASE_IMAGE_INDEX_DIGEST,
+  DCODE_BASE_IMAGE_INDEX_REFERENCE,
+  dcodeBaseImagePublicationEvidence,
+  DCODE_BASE_IMAGE_SOURCE_REVISION,
+} from "./fixtures/dcode-base-image-publication-evidence.ts";
 const PLATFORM_MISMATCH =
   "Deep Agents Code sandbox image did not use the published linux/amd64 base digest";
 
@@ -41,33 +43,8 @@ function thrownMessage(action: () => unknown): string {
 
 function publicationEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
-    [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE,
+    [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_AMD64_REFERENCE,
     ...overrides,
-  };
-}
-
-function publicationEvidence() {
-  return {
-    contractVersion: 1,
-    candidateSha: CANDIDATE_REVISION,
-    base: {
-      agent: "langchain-deepagents-code",
-      contractVersion: 1,
-      digest: INDEX_DIGEST,
-      image: DCODE_BASE_IMAGE,
-      platformDigests: {
-        "linux/amd64": AMD64_DIGEST,
-        "linux/arm64": ARM64_DIGEST,
-      },
-      platformReferences: {
-        "linux/amd64": AMD64_REFERENCE,
-        "linux/arm64": ARM64_REFERENCE,
-      },
-      platforms: ["linux/amd64", "linux/arm64"],
-      reference: INDEX_REFERENCE,
-      run: { attempt: 1, id: 1234 },
-      sourceRevision: PUBLICATION_REVISION,
-    },
   };
 }
 
@@ -78,8 +55,8 @@ function resolutionMetadata(
     schema: 1,
     key: "resolution-key",
     imageName: DCODE_BASE_IMAGE,
-    ref: AMD64_REFERENCE,
-    digest: AMD64_DIGEST,
+    ref: DCODE_BASE_IMAGE_AMD64_REFERENCE,
+    digest: DCODE_BASE_IMAGE_AMD64_DIGEST,
     source: "override",
     imageId: `sha256:${"e".repeat(64)}`,
     os: "linux",
@@ -97,17 +74,20 @@ describe("Deep Agents Code published base runtime evidence", () => {
       GITHUB_ACTIONS: "true",
       GITHUB_EVENT_NAME: "workflow_dispatch",
       GITHUB_SHA: "f".repeat(40),
-      NEMOCLAW_E2E_EXPECTED_SHA: CANDIDATE_REVISION,
+      NEMOCLAW_E2E_EXPECTED_SHA: DCODE_BASE_IMAGE_CANDIDATE_SHA,
     });
-    const contract = parseDcodeBaseImagePublicationEvidence(publicationEvidence(), environment);
+    const contract = parseDcodeBaseImagePublicationEvidence(
+      dcodeBaseImagePublicationEvidence(),
+      environment,
+    );
 
-    expect(dcodeBaseImageReferenceForContract(contract)).toBe(AMD64_REFERENCE);
-    expect(environment[DCODE_BASE_IMAGE_ENV]).toBe(AMD64_REFERENCE);
+    expect(dcodeBaseImageReferenceForContract(contract)).toBe(DCODE_BASE_IMAGE_AMD64_REFERENCE);
+    expect(environment[DCODE_BASE_IMAGE_ENV]).toBe(DCODE_BASE_IMAGE_AMD64_REFERENCE);
   });
 
   it("records the completed sandbox image only when its platform digest matches publication", () => {
     const contract = parseDcodeBaseImagePublicationEvidence(
-      publicationEvidence(),
+      dcodeBaseImagePublicationEvidence(),
       publicationEnvironment(),
     );
 
@@ -118,21 +98,21 @@ describe("Deep Agents Code published base runtime evidence", () => {
         resolutionMetadata(),
       ),
     ).toEqual({
-      contractReference: INDEX_REFERENCE,
-      digest: AMD64_DIGEST,
+      contractReference: DCODE_BASE_IMAGE_INDEX_REFERENCE,
+      digest: DCODE_BASE_IMAGE_AMD64_DIGEST,
       image: DCODE_BASE_IMAGE,
       imageId: `sha256:${"e".repeat(64)}`,
       platform: "linux/amd64",
-      reference: AMD64_REFERENCE,
+      reference: DCODE_BASE_IMAGE_AMD64_REFERENCE,
       sandboxImage: "nemoclaw-langchain-deepagents-code:e2e",
       source: "override",
-      sourceRevision: PUBLICATION_REVISION,
+      sourceRevision: DCODE_BASE_IMAGE_SOURCE_REVISION,
     });
   });
 
   it("reports base-image resolution mismatch labels without rejected values (#9386)", () => {
     const contract = parseDcodeBaseImagePublicationEvidence(
-      publicationEvidence(),
+      dcodeBaseImagePublicationEvidence(),
       publicationEnvironment(),
     );
     const message = thrownMessage(() =>
@@ -141,24 +121,26 @@ describe("Deep Agents Code published base runtime evidence", () => {
         "nemoclaw-langchain-deepagents-code:e2e",
         resolutionMetadata({
           source: "source-sha",
-          digest: INDEX_DIGEST,
-          ref: INDEX_REFERENCE,
+          digest: DCODE_BASE_IMAGE_INDEX_DIGEST,
+          ref: DCODE_BASE_IMAGE_INDEX_REFERENCE,
         }),
       ),
     );
 
     expect(message).toBe(baseContractMismatch("source", "digest", "reference"));
     expect(
-      ["source-sha", INDEX_DIGEST, INDEX_REFERENCE].filter((value) => message.includes(value)),
+      ["source-sha", DCODE_BASE_IMAGE_INDEX_DIGEST, DCODE_BASE_IMAGE_INDEX_REFERENCE].filter(
+        (value) => message.includes(value),
+      ),
     ).toEqual([]);
   });
 
   it("rejects the publication index instead of the validated platform reference (#9386)", () => {
     expect(() =>
       parseDcodeBaseImagePublicationEvidence(
-        publicationEvidence(),
+        dcodeBaseImagePublicationEvidence(),
         publicationEnvironment({
-          [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
+          [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_INDEX_REFERENCE,
         }),
       ),
     ).toThrow(/does not match the published linux\/amd64 base contract/);
@@ -167,27 +149,27 @@ describe("Deep Agents Code published base runtime evidence", () => {
   it("prefers the selected manual candidate over the trusted workflow SHA", () => {
     expect(
       parseDcodeBaseImagePublicationEvidence(
-        publicationEvidence(),
+        dcodeBaseImagePublicationEvidence(),
         publicationEnvironment({
           GITHUB_ACTIONS: "true",
           GITHUB_SHA: "f".repeat(40),
-          NEMOCLAW_E2E_EXPECTED_SHA: CANDIDATE_REVISION,
+          NEMOCLAW_E2E_EXPECTED_SHA: DCODE_BASE_IMAGE_CANDIDATE_SHA,
         }),
       ),
-    ).toMatchObject({ reference: INDEX_REFERENCE });
+    ).toMatchObject({ reference: DCODE_BASE_IMAGE_INDEX_REFERENCE });
   });
 
   it("uses the workflow SHA for trusted main qualification", () => {
     expect(
       parseDcodeBaseImagePublicationEvidence(
-        publicationEvidence(),
+        dcodeBaseImagePublicationEvidence(),
         publicationEnvironment({
           GITHUB_ACTIONS: "true",
-          GITHUB_SHA: CANDIDATE_REVISION,
+          GITHUB_SHA: DCODE_BASE_IMAGE_CANDIDATE_SHA,
           NEMOCLAW_E2E_EXPECTED_SHA: "",
         }),
       ),
-    ).toMatchObject({ reference: INDEX_REFERENCE });
+    ).toMatchObject({ reference: DCODE_BASE_IMAGE_INDEX_REFERENCE });
   });
 
   it.each([
@@ -195,7 +177,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
       "a manual candidate",
       {
         GITHUB_ACTIONS: "true",
-        GITHUB_SHA: CANDIDATE_REVISION,
+        GITHUB_SHA: DCODE_BASE_IMAGE_CANDIDATE_SHA,
         NEMOCLAW_E2E_EXPECTED_SHA: "f".repeat(40),
       },
     ],
@@ -210,7 +192,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
   ])("rejects stale publication evidence for %s", (_label, environment) => {
     expect(() =>
       parseDcodeBaseImagePublicationEvidence(
-        publicationEvidence(),
+        dcodeBaseImagePublicationEvidence(),
         publicationEnvironment(environment),
       ),
     ).toThrow(/candidate SHA does not match the selected candidate/);
@@ -222,7 +204,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
   ])("rejects %s in GitHub Actions", (_label, githubSha) => {
     expect(() =>
       parseDcodeBaseImagePublicationEvidence(
-        publicationEvidence(),
+        dcodeBaseImagePublicationEvidence(),
         publicationEnvironment({
           GITHUB_ACTIONS: "true",
           GITHUB_SHA: githubSha,
@@ -233,8 +215,8 @@ describe("Deep Agents Code published base runtime evidence", () => {
   });
 
   it("rejects a platform reference that does not match its published digest", () => {
-    const evidence = publicationEvidence();
-    evidence.base.platformReferences["linux/amd64"] = INDEX_REFERENCE;
+    const evidence = dcodeBaseImagePublicationEvidence();
+    evidence.base.platformReferences["linux/amd64"] = DCODE_BASE_IMAGE_INDEX_REFERENCE;
 
     expect(() =>
       parseDcodeBaseImagePublicationEvidence(evidence, publicationEnvironment()),
@@ -246,7 +228,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
       loadDcodeBaseImagePublicationEvidence(
         DCODE_BASE_IMAGE_TARGET_ID,
         `/missing-dcode-base-evidence-${process.pid}.json`,
-        { [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE },
+        { [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_AMD64_REFERENCE },
       ),
     ).toBeUndefined();
   });
@@ -258,7 +240,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
         `/missing-dcode-base-evidence-${process.pid}.json`,
         {
           GITHUB_ACTIONS: "true",
-          [DCODE_BASE_IMAGE_ENV]: AMD64_REFERENCE,
+          [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_AMD64_REFERENCE,
         },
       ),
     ).toThrow(/GitHub Actions run is missing published base evidence/);
@@ -279,25 +261,31 @@ describe("Deep Agents Code published base runtime evidence", () => {
     },
     {
       label: "the publication index instead of the selected platform",
-      metadata: resolutionMetadata({ digest: INDEX_DIGEST, ref: INDEX_REFERENCE }),
+      metadata: resolutionMetadata({
+        digest: DCODE_BASE_IMAGE_INDEX_DIGEST,
+        ref: DCODE_BASE_IMAGE_INDEX_REFERENCE,
+      }),
       expectedMessage: baseContractMismatch("digest", "reference"),
-      rejectedValues: [INDEX_DIGEST, INDEX_REFERENCE],
+      rejectedValues: [DCODE_BASE_IMAGE_INDEX_DIGEST, DCODE_BASE_IMAGE_INDEX_REFERENCE],
     },
     {
       label: "the opposite platform digest for amd64",
-      metadata: resolutionMetadata({ digest: ARM64_DIGEST, ref: ARM64_REFERENCE }),
+      metadata: resolutionMetadata({
+        digest: DCODE_BASE_IMAGE_ARM64_DIGEST,
+        ref: DCODE_BASE_IMAGE_ARM64_REFERENCE,
+      }),
       expectedMessage: baseContractMismatch("digest", "reference"),
-      rejectedValues: [ARM64_DIGEST, ARM64_REFERENCE],
+      rejectedValues: [DCODE_BASE_IMAGE_ARM64_DIGEST, DCODE_BASE_IMAGE_ARM64_REFERENCE],
     },
     {
       label: "self-consistent opposite-platform metadata",
       metadata: resolutionMetadata({
         architecture: "arm64",
-        digest: ARM64_DIGEST,
-        ref: ARM64_REFERENCE,
+        digest: DCODE_BASE_IMAGE_ARM64_DIGEST,
+        ref: DCODE_BASE_IMAGE_ARM64_REFERENCE,
       }),
       expectedMessage: PLATFORM_MISMATCH,
-      rejectedValues: [ARM64_DIGEST, ARM64_REFERENCE],
+      rejectedValues: [DCODE_BASE_IMAGE_ARM64_DIGEST, DCODE_BASE_IMAGE_ARM64_REFERENCE],
     },
     {
       label: "a different image repository",
@@ -313,9 +301,9 @@ describe("Deep Agents Code published base runtime evidence", () => {
     },
     {
       label: "a pinned fallback reference",
-      metadata: resolutionMetadata({ pinnedRemoteRef: AMD64_REFERENCE }),
+      metadata: resolutionMetadata({ pinnedRemoteRef: DCODE_BASE_IMAGE_AMD64_REFERENCE }),
       expectedMessage: baseContractMismatch("pinned reference"),
-      rejectedValues: [AMD64_REFERENCE],
+      rejectedValues: [DCODE_BASE_IMAGE_AMD64_REFERENCE],
     },
     {
       label: "an unsupported platform",
@@ -325,7 +313,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
     },
   ])("rejects $label", ({ metadata, expectedMessage, rejectedValues }) => {
     const contract = parseDcodeBaseImagePublicationEvidence(
-      publicationEvidence(),
+      dcodeBaseImagePublicationEvidence(),
       publicationEnvironment(),
     );
     const message = thrownMessage(() =>
