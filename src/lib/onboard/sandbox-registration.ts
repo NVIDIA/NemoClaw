@@ -21,6 +21,7 @@ import {
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 } from "../state/registry/host-local-inference";
+import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
@@ -102,7 +103,11 @@ export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryE
   portableLifecycle?: boolean;
   environment?: NodeJS.ProcessEnv;
   classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
-  registerSandbox?(entry: SandboxEntry): void;
+  inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation;
+  registerSandbox?(
+    entry: SandboxEntry,
+    routeReservation?: QualifiedSandboxInferenceRouteReservation,
+  ): SandboxEntry | void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
 }
 
@@ -315,7 +320,7 @@ export function loadServingProfileResumeSession(): {
 }
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
-  const pending = registry.getSandbox(input.sandboxName);
+  const pending = input.inferenceRouteReservation?.entry ?? registry.getSandbox(input.sandboxName);
   const pendingHostLocalInferenceReceipt =
     input.hostLocalInferenceReceipt !== undefined
       ? input.hostLocalInferenceReceipt
@@ -360,6 +365,9 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       `Runtime provider '${provider.identity.id}' does not accept the registered workload receipt.`,
     );
   }
-  (input.registerSandbox ?? registry.registerSandbox)(entry);
-  return entry;
+  const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
+  const registered = input.inferenceRouteReservation
+    ? writeRegistry(entry, input.inferenceRouteReservation)
+    : writeRegistry(entry);
+  return registered ?? entry;
 }

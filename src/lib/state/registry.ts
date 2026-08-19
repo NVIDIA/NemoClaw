@@ -29,9 +29,21 @@ import {
   load,
   save,
 } from "./registry/persistence";
+import {
+  isCurrentSandboxInferenceRouteReservation,
+  sandboxRegistrationMatchesInferenceRouteReservation,
+  type QualifiedSandboxInferenceRouteReservation,
+} from "./registry/route-reservation";
 export {
+  classifySandboxInferenceRouteReservation,
+  isCurrentSandboxInferenceRouteReservation,
   isPendingReservationForSession,
   isRouteOnlySandboxReservation,
+  normalizeSandboxInferenceRouteSelection,
+  sandboxRegistrationMatchesInferenceRouteReservation,
+  type QualifiedSandboxInferenceRouteReservation,
+  type SandboxInferenceRouteReservationAuthority,
+  type SandboxInferenceRouteReservationDisposition,
 } from "./registry/route-reservation";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload";
 import { normalizeSandboxMcpState } from "./registry-mcp";
@@ -129,9 +141,22 @@ export function getDefault(): string | null {
   return names.length > 0 ? names[0] || null : null;
 }
 
-export function registerSandbox(entry: SandboxEntry): void {
-  withLock(() => {
+export function registerSandbox(
+  entry: SandboxEntry,
+  routeReservation?: QualifiedSandboxInferenceRouteReservation,
+): SandboxEntry {
+  return withLock(() => {
     const data = load();
+    if (
+      routeReservation &&
+      (!isCurrentSandboxInferenceRouteReservation(
+        routeReservation,
+        data.sandboxes[entry.name] ?? null,
+      ) ||
+        !sandboxRegistrationMatchesInferenceRouteReservation(entry, routeReservation))
+    ) {
+      throw new Error("Cannot register a sandbox after its inference route reservation changed");
+    }
     const servingProfileProvenance = parseServingProfileProvenance(entry.servingProfileProvenance);
     if (entry.servingProfileProvenance !== undefined && !servingProfileProvenance) {
       throw new Error("Cannot register a sandbox with invalid serving profile provenance");
@@ -179,7 +204,7 @@ export function registerSandbox(entry: SandboxEntry): void {
         );
       }
     }
-    data.sandboxes[entry.name] = {
+    const registered: SandboxEntry = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
       servingProfileProvenance: servingProfileProvenance ?? undefined,
@@ -258,10 +283,12 @@ export function registerSandbox(entry: SandboxEntry): void {
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
     };
+    data.sandboxes[entry.name] = registered;
     // Registration establishes a new sandbox lifecycle and may not inherit a
     // deep-off readiness record carried from a previous same-named row.
     discardOpaqueCuaRuntimeReadiness(data, entry.name);
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name));
+    return structuredClone(registered);
   });
 }
 

@@ -362,7 +362,9 @@ describe("created DCode sandbox finalization", () => {
             return sandboxState.restoreRecreatedSandboxState(name, backup, options);
           },
           getDcodeSelectionDrift: vi.fn(),
-          register: () => registeredConfigs.push(fs.readFileSync(fixture.currentPath, "utf8")),
+          register: () => {
+            registeredConfigs.push(fs.readFileSync(fixture.currentPath, "utf8"));
+          },
           note: vi.fn(),
           error: vi.fn(),
           exitProcess: (code): never => {
@@ -426,7 +428,9 @@ describe("created OpenClaw sandbox finalization", () => {
   it("captures and registers a fresh image plugin baseline without a restore", () => {
     const order: string[] = [];
     const restoreRecreatedSandboxState = vi.fn();
-    const register = vi.fn(() => order.push("register"));
+    const register = vi.fn(() => {
+      order.push("register");
+    });
 
     finalizeCreatedSandbox(
       {
@@ -463,7 +467,9 @@ describe("created OpenClaw sandbox finalization", () => {
 
   it("preserves the fresh image plugin baseline across recreation before registration", () => {
     const order: string[] = [];
-    const register = vi.fn(() => order.push("register"));
+    const register = vi.fn(() => {
+      order.push("register");
+    });
     const restoreRecreatedSandboxState = vi.fn(() => {
       order.push("restore");
       return {

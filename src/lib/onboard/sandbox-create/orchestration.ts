@@ -1113,8 +1113,25 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         createSandbox: (attemptArgv, readyCapture, readyRunner, buildContextPath) =>
           runCreateFlow([...attemptArgv], readyCapture, readyRunner, buildContextPath),
         readRegistry: () => registry.getSandbox(sandboxName),
-        registerSandbox: (created, receipt, liveIdentityFingerprint, revalidate) =>
-          completeCreatedSandboxRegistration(created, receipt, liveIdentityFingerprint, revalidate),
+        registerSandbox: async (
+          created,
+          receipt,
+          liveIdentityFingerprint,
+          revalidate,
+          routeReservation,
+        ) => {
+          const registered = await completeCreatedSandboxRegistration(
+            created,
+            receipt,
+            liveIdentityFingerprint,
+            revalidate,
+            routeReservation,
+          );
+          if (!registered) {
+            throw new Error("Hermes portable sandbox registration returned no authority.");
+          }
+          return registered;
+        },
         sourceRoot: ROOT,
         buildContextSettings: {
           model,

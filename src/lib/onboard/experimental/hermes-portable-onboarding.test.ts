@@ -13,6 +13,7 @@ import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-
 import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
+import { isCurrentSandboxInferenceRouteReservation } from "../../state/registry/route-reservation";
 import {
   captureHermesPortablePolicySource,
   createHermesPortableTransactionId,
@@ -417,14 +418,27 @@ function deps(
       return { ready: true };
     },
     readRegistry: () => registryEntry,
-    registerSandbox: (_result, _receipt, _liveIdentityFingerprint, revalidate) => {
+    registerSandbox: (
+      _result,
+      _receipt,
+      _liveIdentityFingerprint,
+      revalidate,
+      routeReservation,
+    ) => {
       registryEntry =
         "replaceRegistryBeforeRegistration" in options
           ? (options.replaceRegistryBeforeRegistration ?? null)
           : registryEntry;
+      isCurrentSandboxInferenceRouteReservation(routeReservation, registryEntry) ||
+        (() => {
+          throw new Error(
+            "Cannot register a sandbox after its inference route reservation changed",
+          );
+        })();
       revalidate();
       events.push("registry");
       registryEntry = matchingRegistryEntry();
+      return registryEntry;
     },
     afterRegistryCommit: async () => {
       const failure = registryFailures.shift();

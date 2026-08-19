@@ -6,7 +6,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import type { AgentDefinition } from "../../agent/defs";
-import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
+import type { InferenceSelection } from "../../inference/selection";
 import {
   fingerprintOpenShellSandboxLiveIdentity,
   parseOpenShellSandboxId,
@@ -26,8 +26,11 @@ import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-che
 import type { SandboxEntry } from "../../state/registry/types";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import {
-  isPendingReservationForSession,
-  isRouteOnlySandboxReservation,
+  classifySandboxInferenceRouteReservation,
+  isCurrentSandboxInferenceRouteReservation,
+  normalizeSandboxInferenceRouteSelection,
+  type QualifiedSandboxInferenceRouteReservation,
+  type SandboxInferenceRouteReservationAuthority,
 } from "../../state/registry/route-reservation";
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
@@ -140,7 +143,8 @@ export interface HermesPortableOnboardingDeps<T> {
     receipt: HermesPortableConfiguredReceipt,
     liveIdentityFingerprint: string,
     revalidate: () => string,
-  ) => void | Promise<void>;
+    routeReservation: QualifiedSandboxInferenceRouteReservation,
+  ) => SandboxEntry | Promise<SandboxEntry>;
   readonly afterRegistryCommit?: () => void | Promise<void>;
   readonly cleanupTemporaryPolicy?: () => boolean;
 }
@@ -488,7 +492,7 @@ function createHermesPortableCreateIntentSha256(
         createSourceAuthority,
         inferenceRouteReservation: {
           sessionId: input.inferenceRouteReservation.sessionId,
-          selection: normalizeHermesPortableRouteSelection(
+          selection: normalizeSandboxInferenceRouteSelection(
             input.inferenceRouteReservation.selection,
           ),
         },
@@ -567,104 +571,6 @@ export function observeHermesPortableSandbox(
   return named.test(output) || coded.test(output)
     ? { kind: "absent" }
     : { kind: "ambiguous", detail: "sandbox get did not prove exact sandbox absence" };
-}
-
-const HERMES_PORTABLE_ROUTE_RESERVATION_KEYS = new Set<string>([
-  "credentialEnv",
-  "endpointSource",
-  "endpointUrl",
-  "gatewayName",
-  "gatewayPort",
-  "hostLocalInferenceProvenance",
-  "hostLocalInferenceReceipt",
-  "model",
-  "name",
-  "openshellDriver",
-  "pendingRouteReservation",
-  "preferredInferenceApi",
-  "provider",
-  "reservationSessionId",
-]);
-
-type HermesPortableRouteReservationDisposition =
-  | { readonly kind: "missing" }
-  | { readonly kind: "owned"; readonly entry: SandboxEntry }
-  | { readonly kind: "not-reservation" }
-  | { readonly kind: "conflict"; readonly detail: string };
-
-function normalizeHermesPortableRouteSelection(input: InferenceSelection) {
-  const normalized = normalizeInferenceSelection(input);
-  return {
-    provider: normalized.provider,
-    model: normalized.model,
-    endpointUrl: normalized.endpointUrl,
-    endpointSource: normalized.endpointSource,
-    credentialEnv: normalized.credentialEnv,
-    preferredInferenceApi: normalized.preferredInferenceApi,
-  };
-}
-
-function classifyHermesPortableRouteReservation(
-  sandboxName: string,
-  gatewayName: string,
-  authority: HermesPortableInferenceRouteReservationAuthority,
-  entry: SandboxEntry | null,
-): HermesPortableRouteReservationDisposition {
-  if (!entry) return { kind: "missing" };
-  if (entry.pendingRouteReservation !== true) return { kind: "not-reservation" };
-  if (!isRouteOnlySandboxReservation(entry)) {
-    return { kind: "conflict", detail: "the inference route reservation is already completed" };
-  }
-  if (!isPendingReservationForSession(entry, authority.sessionId)) {
-    return {
-      kind: "conflict",
-      detail: "the inference route reservation belongs to another onboarding session",
-    };
-  }
-  if (Object.keys(entry).some((key) => !HERMES_PORTABLE_ROUTE_RESERVATION_KEYS.has(key))) {
-    return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
-  }
-  if (entry.name !== sandboxName || entry.gatewayName !== gatewayName) {
-    return {
-      kind: "conflict",
-      detail: "the inference route reservation has another sandbox or gateway",
-    };
-  }
-  const expectedSelection = normalizeHermesPortableRouteSelection(authority.selection);
-  if (
-    !authority.sessionId ||
-    authority.sessionId.length > 256 ||
-    CREATE_INTENT_CONTROL.test(authority.sessionId) ||
-    !expectedSelection.provider ||
-    !expectedSelection.model ||
-    !isDeepStrictEqual(
-      normalizeHermesPortableRouteSelection(normalizeInferenceSelection(entry)),
-      expectedSelection,
-    )
-  ) {
-    return { kind: "conflict", detail: "the inference route reservation has another route" };
-  }
-  if (
-    (entry.gatewayPort !== undefined &&
-      (typeof entry.gatewayPort !== "number" ||
-        !Number.isSafeInteger(entry.gatewayPort) ||
-        entry.gatewayPort < 1 ||
-        entry.gatewayPort > 65_535)) ||
-    (entry.openshellDriver !== undefined &&
-      (typeof entry.openshellDriver !== "string" || entry.openshellDriver.length === 0)) ||
-    (entry.hostLocalInferenceReceipt !== undefined &&
-      entry.hostLocalInferenceReceipt !== null &&
-      (typeof entry.hostLocalInferenceReceipt !== "string" ||
-        entry.hostLocalInferenceReceipt.length === 0)) ||
-    (entry.hostLocalInferenceProvenance !== undefined &&
-      (typeof entry.hostLocalInferenceProvenance !== "object" ||
-        entry.hostLocalInferenceProvenance === null ||
-        Array.isArray(entry.hostLocalInferenceProvenance) ||
-        typeof entry.hostLocalInferenceReceipt !== "string"))
-  ) {
-    return { kind: "conflict", detail: "the inference route reservation is malformed" };
-  }
-  return { kind: "owned", entry };
 }
 
 export function classifyHermesPortableRegistry(
@@ -956,28 +862,32 @@ export async function runHermesPortableOnboardingTransaction<T>(
     if (authority.kind === "openclaw") fail("will not reinterpret OpenClaw lifecycle authority");
     let snapshot = authority.kind === "hermes" ? authority.snapshot : null;
     const initialRegistryEntry = deps.readRegistry();
-    const initialRouteReservation = classifyHermesPortableRouteReservation(
-      input.sandboxName,
-      input.gatewayName,
-      input.inferenceRouteReservation,
+    const routeReservationAuthority: SandboxInferenceRouteReservationAuthority = {
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      sessionId: input.inferenceRouteReservation.sessionId,
+      selection: input.inferenceRouteReservation.selection,
+    };
+    const initialRouteReservation = classifySandboxInferenceRouteReservation(
+      routeReservationAuthority,
       initialRegistryEntry,
     );
     const admittedRouteReservation =
-      initialRouteReservation.kind === "owned"
-        ? structuredClone(initialRouteReservation.entry)
-        : null;
-    let registryCommitAccepted = Boolean(
+      initialRouteReservation.kind === "owned" ? initialRouteReservation.reservation : null;
+    let committedRegistryEntry =
       snapshot &&
       snapshot.receipt.phase !== "pending" &&
-      classifyHermesPortableRegistry(snapshot.receipt, initialRegistryEntry).kind === "matching",
-    );
+      initialRegistryEntry &&
+      classifyHermesPortableRegistry(snapshot.receipt, initialRegistryEntry).kind === "matching"
+        ? structuredClone(initialRegistryEntry)
+        : null;
     const canClassifyCommittedRegistry = Boolean(
       snapshot &&
       snapshot.receipt.phase !== "pending" &&
       initialRouteReservation.kind === "not-reservation",
     );
     if (
-      !registryCommitAccepted &&
+      !committedRegistryEntry &&
       initialRouteReservation.kind !== "owned" &&
       !canClassifyCommittedRegistry
     ) {
@@ -987,16 +897,14 @@ export async function runHermesPortableOnboardingTransaction<T>(
       receipt: HermesPortableLifecycleReceipt,
     ): HermesPortableRegistryDisposition => {
       const entry = deps.readRegistry();
-      const reservation = classifyHermesPortableRouteReservation(
-        receipt.sandboxName,
-        receipt.gatewayName,
-        input.inferenceRouteReservation,
+      const reservation = classifySandboxInferenceRouteReservation(
+        routeReservationAuthority,
         entry,
       );
       if (reservation.kind === "conflict") return reservation;
       if (reservation.kind === "owned") {
         return admittedRouteReservation &&
-          isDeepStrictEqual(reservation.entry, admittedRouteReservation)
+          isCurrentSandboxInferenceRouteReservation(admittedRouteReservation, entry)
           ? { kind: "missing" }
           : {
               kind: "conflict",
@@ -1012,7 +920,10 @@ export async function runHermesPortableOnboardingTransaction<T>(
           : { kind: "missing" };
       }
       const committed = classifyHermesPortableRegistry(receipt, entry);
-      if (committed.kind === "matching" && !registryCommitAccepted) {
+      if (
+        committed.kind === "matching" &&
+        (!committedRegistryEntry || !isDeepStrictEqual(entry, committedRegistryEntry))
+      ) {
         return {
           kind: "conflict",
           detail: "sandbox registry authority replaced the route reservation before registration",
@@ -1246,13 +1157,16 @@ export async function runHermesPortableOnboardingTransaction<T>(
         );
         return currentIdentity.liveIdentityFingerprint;
       };
-      await deps.registerSandbox(
+      if (!admittedRouteReservation) {
+        fail("inference route reservation is missing before sandbox registration");
+      }
+      committedRegistryEntry = await deps.registerSandbox(
         createResult,
         configuringSnapshot.receipt,
         liveIdentity.liveIdentityFingerprint,
         revalidateRegistryBoundary,
+        admittedRouteReservation,
       );
-      registryCommitAccepted = true;
       await deps.afterRegistryCommit?.();
     }
     assertCurrentTransaction(

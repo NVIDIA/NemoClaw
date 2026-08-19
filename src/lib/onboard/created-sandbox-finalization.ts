@@ -9,6 +9,7 @@ import type {
 } from "../state/openclaw-plugin-restore";
 import * as openClawPluginRestore from "../state/openclaw-plugin-restore";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
+import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import {
   MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
@@ -69,7 +70,9 @@ export type CreatedSandboxFinalizationDeps = {
     model: string,
     preferredInferenceApi: string | null,
   ): SelectionDrift;
-  register(openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[]): void;
+  register(
+    openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  ): SandboxEntry | void;
   note(message: string): void;
   error(message: string): void;
   exitProcess(code: number): never;
@@ -87,6 +90,7 @@ type RegistrationSeed = Omit<
   | "dashboardPort"
   | "lifecycleGeneration"
   | "lifecycleLiveIdentityFingerprint"
+  | "inferenceRouteReservation"
 >;
 
 export interface CreatedSandboxCompletionOptions {
@@ -143,7 +147,8 @@ export interface CreatedSandboxCompletionActions {
     manageDashboard: boolean,
     resolveLifecycleRegistrationFields: () => Pick<SandboxEntry, "lifecycleGeneration">,
     lifecycle: CreatedSandboxLifecycle,
-  ): Promise<void>;
+    inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation,
+  ): Promise<SandboxEntry | void>;
 }
 
 type OnboardCreatedSandboxRegistration = (
@@ -151,7 +156,8 @@ type OnboardCreatedSandboxRegistration = (
   configuredReceipt: HermesPortableConfiguredReceipt | null,
   configuredLiveIdentityFingerprint?: string,
   revalidateHermesAuthority?: () => string,
-) => Promise<void>;
+  inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation,
+) => Promise<SandboxEntry | void>;
 
 /** Bind the post-create registration callback to its finalization authorities. */
 export function createOnboardCreatedSandboxRegistration(input: {
@@ -161,7 +167,13 @@ export function createOnboardCreatedSandboxRegistration(input: {
   readonly manageDashboard: boolean;
   readonly sandboxGpuEnabled: boolean;
 }): OnboardCreatedSandboxRegistration {
-  return async (created, configuredReceipt, configuredLiveIdentityFingerprint, revalidate) => {
+  return async (
+    created,
+    configuredReceipt,
+    configuredLiveIdentityFingerprint,
+    revalidate,
+    inferenceRouteReservation,
+  ) => {
     if (!created && !configuredReceipt) {
       throw new Error("Sandbox registration requires create or Hermes receipt authority.");
     }
@@ -195,6 +207,7 @@ export function createOnboardCreatedSandboxRegistration(input: {
             }
           : created!.lifecycleRegistrationFields,
       lifecycle,
+      inferenceRouteReservation,
     );
   };
 }
@@ -320,6 +333,7 @@ export function createCreatedSandboxCompletionActions(
       manageDashboard,
       resolveLifecycleRegistrationFields,
       lifecycle,
+      inferenceRouteReservation,
     ) => {
       if (providerGpuDisposition === "created") {
         await verifyCreatedProviderGpu(created!);
@@ -336,7 +350,7 @@ export function createCreatedSandboxCompletionActions(
       const verifiedLifecycle = lifecycle.revalidate(
         lifecycle.capture(resolveLifecycleRegistrationFields()),
       );
-      finalizeCreatedSandbox(options.finalization, {
+      return finalizeCreatedSandbox(options.finalization, {
         ...deps,
         register: (openclawImagePluginInstalls) =>
           (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
@@ -354,6 +368,7 @@ export function createCreatedSandboxCompletionActions(
             hermesDashboardState,
             dashboardPort,
             ...verifiedLifecycle,
+            inferenceRouteReservation,
           }),
       });
     },
@@ -538,7 +553,7 @@ export function createOnboardCreatedSandboxCompletion(
 export function finalizeCreatedSandbox(
   options: CreatedSandboxFinalizationOptions,
   deps: CreatedSandboxFinalizationDeps,
-): void {
+): SandboxEntry | void {
   let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
   if (options.discoverOpenClawImagePluginInstalls === true) {
     const discovery = deps.discoverFreshOpenClawImagePluginInstalls(options.sandboxName);
@@ -635,5 +650,5 @@ export function finalizeCreatedSandbox(
     }
   }
 
-  deps.register(freshOpenClawImagePluginInstalls);
+  return deps.register(freshOpenClawImagePluginInstalls);
 }
