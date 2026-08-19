@@ -1172,11 +1172,12 @@ function renderFindingsDetails(records: FindingRecord[]): string {
   const suggestionFindings = records.filter((record) => record.finding.severity === "suggestion");
   const lines: string[] = [];
   if (blockerFindings.length > 0) {
+    const displayedBlockerFindings = blockerFindings.slice(0, 20);
     lines.push("", "### Blockers", "");
-    for (const record of blockerFindings.slice(0, 20)) {
+    for (const record of displayedBlockerFindings) {
       lines.push(formatFinding(record, false), "");
     }
-    appendRecommendedRefactoring(lines, blockerFindings);
+    appendRecommendedRefactoring(lines, displayedBlockerFindings);
   }
   if (warningFindings.length === 0 && suggestionFindings.length === 0)
     return `${lines.join("\n")}\n`;
@@ -1206,14 +1207,12 @@ function appendRecommendedRefactoring(lines: string[], records: FindingRecord[])
     "_Implementation guidance; a fix with equal or lower complexity is acceptable._",
     "",
   );
-  for (const record of recommendations.slice(0, 20)) {
+  for (const record of recommendations) {
     const item = record.finding.simplification;
     if (!item) continue;
     const net =
       typeof item.estimatedNetLines === "number" ? ` Net: ${item.estimatedNetLines} lines.` : "";
-    const keep = item.safetyBoundary
-      ? ` Keep: ${escapeCommentText(item.safetyBoundary)}`
-      : "";
+    const keep = item.safetyBoundary ? ` Keep: ${escapeCommentText(item.safetyBoundary)}` : "";
     lines.push(
       `- **\`${record.id}\`:** Remove ${escapeCommentText(item.cut || record.finding.title || "the custom path")}; use ${escapeCommentText(item.replacement || "the simpler existing path")}.${net}${keep}`,
     );

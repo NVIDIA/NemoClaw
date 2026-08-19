@@ -100,6 +100,41 @@ describe("PR review advisor", () => {
     expect(comment.match(/`PRA-1`/g)).toHaveLength(2);
   });
 
+  it("keeps refactoring guidance within the visible blocker cap", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        findings: Array.from({ length: 21 }, (_, index) => ({
+          severity: "blocker",
+          category: "architecture",
+          file: "src/lib/example.ts",
+          line: index + 1,
+          title: `Blocker ${index + 1}`,
+          description: "The changed path has an unresolved design issue.",
+          impact: "The implementation remains harder to maintain.",
+          recommendation: "Use the existing result path.",
+          ...(index === 20
+            ? {
+                simplification: {
+                  tag: "shrink",
+                  cut: "the extra state path",
+                  replacement: "the existing result path",
+                  estimatedNetLines: -12,
+                  safetyBoundary: "Preserve cleanup ordering.",
+                },
+              }
+            : {}),
+        })),
+      }),
+      metadata(),
+    );
+
+    const comment = buildComment({ summary: renderSummary(result), result });
+
+    expect(comment).toContain("#### `PRA-20` Blocker — Blocker 20");
+    expect(comment).not.toContain("`PRA-21`");
+    expect(comment).not.toContain("### Recommended refactoring");
+  });
+
   it("keeps warning-only reviews non-blocking without synthetic test tasks", () => {
     const result = normalizeReviewResult(
       validResult({
