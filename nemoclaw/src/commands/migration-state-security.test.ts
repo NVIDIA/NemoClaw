@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { listSnapshots, pruneSnapshots } from "../blueprint/snapshot-management.js";
 import type { PluginLogger } from "../index.js";
 import * as credentialFilter from "../security/credential-filter.js";
 import * as snapshotSanitizer from "../security/snapshot-sanitizer.js";
@@ -120,6 +121,36 @@ describe("migration-state snapshot directory reservation", () => {
     expect(second.snapshotDir).not.toBe(first.snapshotDir);
     expect(path.basename(first.snapshotDir)).toBe(first.manifest.timestamp);
     expect(path.basename(second.snapshotDir)).toBe(second.manifest.timestamp);
+  });
+
+  it("publishes persisted migration snapshots to the retention reader (#9433)", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-18T06:43:16.500Z"));
+    const { home, configPath, logger } = makeMinimalHostSnapshot();
+    const bundle = createSnapshotBundle(makeHostState(home, configPath), logger, {
+      persist: true,
+    });
+    expectSnapshotBundle(bundle);
+    const snapshotsDir = path.join(home, ".nemoclaw", "snapshots");
+
+    expect(listSnapshots({ snapshotsDir })).toEqual([
+      expect.objectContaining({
+        path: bundle.snapshotDir,
+        timestamp: bundle.manifest.timestamp,
+      }),
+    ]);
+
+    const result = pruneSnapshots(0, {
+      snapshotsDir,
+      deleteDirectory: (root, name) => {
+        expect(root).toBe(snapshotsDir);
+        expect(name).toBe(bundle.manifest.timestamp);
+        rmSync(path.join(root, name), { force: true, recursive: true });
+        return true;
+      },
+    });
+    expect(result).toEqual({ deleted: [bundle.snapshotDir], failed: [], kept: [] });
+    expect(listSnapshots({ snapshotsDir })).toEqual([]);
   });
 });
 
