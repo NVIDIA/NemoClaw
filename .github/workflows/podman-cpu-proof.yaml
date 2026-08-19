@@ -474,6 +474,7 @@ jobs:
             esac
           done < <(podman --url "$endpoint" secret ls --format '{{.Name}}' 2>/dev/null || true)
           podman --url "$endpoint" network rm openshell-docker 2>/dev/null || true
+          # gateway-alias-cleanup
           portable_host_gateway_ip=""
           if portable_host_gateway_ip="$(
             node --input-type=module --eval '
