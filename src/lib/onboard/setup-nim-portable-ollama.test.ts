@@ -65,29 +65,51 @@ describe("fresh Hermes Portable provider selection", () => {
     });
   });
 
-  it("uses the ordinary Ollama model prompt when an interactive selection has no model (#9596)", async () => {
+  it("uses the scoped Portable model before host discovery in interactive mode (#9596)", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
-    const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
-      async (_gpu, requestedModel, _recoveredModel, _running, state) => {
-        expect(requestedModel).toBeNull();
-        state.provider = "ollama-local";
-        state.model = "prompted-model";
-        state.endpointUrl = "http://127.0.0.1:11434/v1";
-        state.credentialEnv = null;
-        state.preferredInferenceApi = "openai-completions";
-        return "selected";
-      },
+    const detectHostState = vi.fn(() => makeHostState());
+    const handleRunningOllamaSelection = vi.fn(() => unexpected("host Ollama selection"));
+    const handleInstallOllamaSelection = vi.fn(() => unexpected("host Ollama installation"));
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => false,
+        getNonInteractiveProvider: () => "ollama",
+        getNonInteractiveModel: () => "qwen3-vl:4b",
+        detectInferenceProviderHostState: detectHostState,
+        handleRunningOllamaSelection,
+        handleInstallOllamaSelection,
+      }),
     );
-    const detectHostState = vi.fn(() =>
-      makeHostState({ hasOllama: true, ollamaRunning: true, ollamaHost: "127.0.0.1" }),
-    );
+
+    await expect(
+      setupNim(
+        { type: "nvidia" } as SetupNimGpu,
+        "portable-hermes",
+        { name: "hermes" } as AgentDefinition,
+        false,
+      ),
+    ).resolves.toMatchObject({ provider: "ollama-local", model: "qwen3-vl:4b" });
+
+    expect(detectHostState).not.toHaveBeenCalled();
+    expect(handleRunningOllamaSelection).not.toHaveBeenCalled();
+    expect(handleInstallOllamaSelection).not.toHaveBeenCalled();
+  });
+
+  it("prompts for a Portable model without discovering host runtimes (#9596)", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    const detectHostState = vi.fn(() => makeHostState());
+    const handleRunningOllamaSelection = vi.fn(() => unexpected("host Ollama selection"));
+    const handleInstallOllamaSelection = vi.fn(() => unexpected("host Ollama installation"));
+    const prompt = vi.fn(async () => "prompted-model");
     const setupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => false,
         getNonInteractiveProvider: () => "ollama",
         getNonInteractiveModel: () => null,
+        prompt,
         detectInferenceProviderHostState: detectHostState,
         handleRunningOllamaSelection,
+        handleInstallOllamaSelection,
       }),
     );
 
@@ -100,8 +122,10 @@ describe("fresh Hermes Portable provider selection", () => {
       ),
     ).resolves.toMatchObject({ provider: "ollama-local", model: "prompted-model" });
 
-    expect(detectHostState).toHaveBeenCalledOnce();
-    expect(handleRunningOllamaSelection).toHaveBeenCalledOnce();
+    expect(prompt).toHaveBeenCalledWith("  Ollama model id: ");
+    expect(detectHostState).not.toHaveBeenCalled();
+    expect(handleRunningOllamaSelection).not.toHaveBeenCalled();
+    expect(handleInstallOllamaSelection).not.toHaveBeenCalled();
   });
 
   it("requires an explicit Portable Ollama model in non-interactive mode (#9596)", async () => {

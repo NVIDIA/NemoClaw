@@ -26,6 +26,7 @@ import {
 } from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import type { VllmProfile } from "../inference/vllm";
+import { promptManualModelId } from "../inference/model-prompts";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
@@ -539,15 +540,30 @@ async function resolveFreshHermesPortableOllamaSelection(input: {
   ) {
     return null;
   }
-  if (!input.requestedModel) {
-    if (!input.deps.isNonInteractive()) return null;
+  const nonInteractive = input.deps.isNonInteractive();
+  let portableModel =
+    input.requestedModel ??
+    input.deps.getNonInteractiveModel("ollama", { allowProviderModelFallback: false });
+  if (!portableModel && !nonInteractive) {
+    const promptedModel = await promptManualModelId("  Ollama model id: ", "Ollama", null, {
+      promptFn: input.deps.prompt,
+      errorLine: input.deps.error,
+      writeLine: input.deps.log,
+      exitFn: () => input.deps.exitProcess(1),
+    });
+    if (isBackToSelection(promptedModel)) {
+      throw new Error("Hermes Portable Ollama model selection was cancelled.");
+    }
+    portableModel = promptedModel;
+  }
+  if (!portableModel) {
     input.deps.abortNonInteractive(
       "Hermes Portable Ollama requires an explicit local model selection.",
     );
   }
   const state = input.createSelectionState();
   state.provider = "ollama-local";
-  state.model = input.requestedModel;
+  state.model = portableModel;
   state.endpointUrl = null;
   state.credentialEnv = null;
   state.preferredInferenceApi = "openai-completions";
