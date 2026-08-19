@@ -7,12 +7,33 @@ import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   originalSandboxName,
+  portableAgentLifecycle,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
 
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
+
+  it("rejects schema-5 before rebuild effects and rechecks under the lifecycle lock (#9203)", async () => {
+    const guard = vi
+      .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("schema-5 appeared");
+      });
+    const harness = createRebuildFlowHarness();
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("schema-5 appeared");
+
+    expect(guard).toHaveBeenNthCalledWith(1, "alpha", "sandbox:rebuild");
+    expect(guard).toHaveBeenNthCalledWith(2, "alpha", "sandbox:rebuild");
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
 
   it("rejects a multi-agent sandbox before backup, onboard, or deletion", async () => {
     const harness = createRebuildFlowHarness({

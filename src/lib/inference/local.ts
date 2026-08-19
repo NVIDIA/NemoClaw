@@ -15,6 +15,7 @@ import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-pr
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
+import { isObjectRecord } from "../core/json-types";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 
 import { retryUntil } from "../core/retry";
@@ -41,6 +42,7 @@ import type {
 } from "./ollama-runtime-context";
 import {
   applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
+  fetchOllamaModelShowMetadata,
   getOllamaContextWindowFloorForAgent,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
   MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
@@ -356,18 +358,13 @@ export function probeVllmModels(
   }
 }
 
-// A 200 response on `/api/tags` alone is not enough to call Ollama healthy —
-// a captive HTTP_PROXY, a stale listener, or a stub on the loopback port can
-// all answer with arbitrary 2xx bodies that look healthy at the curl-status
-// level. The authoritative signal is the Ollama wire format itself:
-// `{ "models": [...] }`. An empty array is fine — that just means no models
-// pulled yet — but a body that doesn't parse as JSON-with-array-`models` did
-// not come from Ollama and the probe should not call it healthy. (#4275)
-function isValidOllamaTagsResponseBody(body: string): boolean {
+// A successful `/api/tags` response proves Ollama health only when its body
+// contains a `models` array of objects. An empty array is valid. (#4275)
+export function isValidOllamaTagsResponseBody(body: string): boolean {
   if (!body) return false;
   try {
     const parsed = JSON.parse(body);
-    return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.models);
+    return isObjectRecord(parsed) && Array.isArray(parsed.models) && parsed.models.every(isObjectRecord);
   } catch {
     return false;
   }
@@ -375,13 +372,13 @@ function isValidOllamaTagsResponseBody(body: string): boolean {
 
 function modelInventory(provider: string, body: string): string[] | null {
   try {
-    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const parsed = JSON.parse(body);
+    if (!isObjectRecord(parsed)) return null;
     const entries = provider === "ollama-local" ? parsed.models : parsed.data;
     if (!Array.isArray(entries)) return null;
     return entries.flatMap((entry) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-      const record = entry as Record<string, unknown>;
-      const values = provider === "ollama-local" ? [record.name, record.model] : [record.id];
+      if (!isObjectRecord(entry)) return [];
+      const values = provider === "ollama-local" ? [entry.name, entry.model] : [entry.id];
       return values.filter((value): value is string => typeof value === "string" && value !== "");
     });
   } catch {
@@ -1753,76 +1750,22 @@ export function probeOllamaModelCapabilities(
   model: string,
   runCaptureImpl?: RunCaptureFn,
 ): OllamaCapabilities {
-  const capture = runCaptureImpl ?? runCapture;
-  const host = getResolvedOllamaHost();
-  const body = JSON.stringify({ model });
-  let output: string;
-  try {
-    output = capture(
-      [
-        "curl",
-        "-sS",
-        "--connect-timeout",
-        "3",
-        "--max-time",
-        "5",
-        "-X",
-        "POST",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
-        body,
-        `http://${host}:${OLLAMA_PORT}/api/show`,
-      ],
-      { ignoreError: true },
-    );
-  } catch (err) {
+  const metadata = fetchOllamaModelShowMetadata(model, getResolvedOllamaHost, runCaptureImpl);
+  if (!metadata.ok) {
     return {
       source: "unknown",
       capabilities: [],
       supportsTools: null,
-      rawError: err instanceof Error ? err.message : String(err),
+      rawError: metadata.error,
     };
   }
 
-  if (!output || !String(output).trim()) {
-    return {
-      source: "unknown",
-      capabilities: [],
-      supportsTools: null,
-      rawError: "empty response from /api/show",
-    };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(String(output));
-  } catch (err) {
-    return {
-      source: "unknown",
-      capabilities: [],
-      supportsTools: null,
-      rawError: err instanceof Error ? err.message : "JSON parse error",
-    };
-  }
-
-  if (!parsed || typeof parsed !== "object") {
-    return {
-      source: "unknown",
-      capabilities: [],
-      supportsTools: null,
-      rawError: "unexpected /api/show payload shape",
-    };
-  }
-
-  const capsRaw = (parsed as { capabilities?: unknown }).capabilities;
+  const capsRaw = metadata.payload.capabilities;
   if (!Array.isArray(capsRaw)) {
     // Ollama returned a body but no capabilities array (older version,
     // custom registry, or shape change). Degrade to unknown.
     const errText =
-      typeof (parsed as { error?: unknown }).error === "string"
-        ? String((parsed as { error?: unknown }).error)
-        : "missing capabilities field";
+      typeof metadata.payload.error === "string" ? metadata.payload.error : "missing capabilities field";
     return {
       source: "unknown",
       capabilities: [],

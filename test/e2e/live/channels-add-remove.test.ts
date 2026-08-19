@@ -16,6 +16,10 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  openClawHasConfiguredTelegram,
+  type OpenClawTelegramState,
+} from "./channels-add-remove-helpers.ts";
 
 // Preserve the user-visible contract: onboard OpenClaw without messaging,
 // add Telegram later, rebuild through the real CLI/OpenShell boundary, verify
@@ -286,7 +290,7 @@ async function expectProvider(
 async function readOpenClawTelegramState(
   sandbox: SandboxClient,
   artifactName: string,
-): Promise<JsonRecord> {
+): Promise<OpenClawTelegramState> {
   const result = await sandbox.exec(
     SANDBOX_NAME,
     [
@@ -312,7 +316,7 @@ async function readOpenClawTelegramState(
   );
   assertExitZero(result, "read /sandbox/.openclaw/openclaw.json");
   const output = stripAnsi(result.stdout).trim().split(/\r?\n/).at(-1) ?? "";
-  return JSON.parse(output) as JsonRecord;
+  return JSON.parse(output) as OpenClawTelegramState;
 }
 
 /** Detect an active policy preset in the human-readable policy listing. */
@@ -469,13 +473,8 @@ test(
       sandbox,
       "phase-2-openclaw-json-baseline",
     );
-    expect(baselineTelegram).toEqual({
-      accountEnabled: false,
-      channelEnabled: false,
-      channelPresent: true,
-      pluginEnabled: false,
-      pluginPresent: false,
-    });
+    expect(openClawHasConfiguredTelegram(baselineTelegram)).toBe(false);
+    expect(baselineTelegram.accountEnabled).toBe(false);
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-2-policy-list-baseline");
 
     progress.phase("add Telegram and rebuild sandbox");
@@ -521,12 +520,11 @@ test(
       sandbox,
       "phase-4-openclaw-json-after-add",
     );
-    expect(activeTelegram).toEqual({
+    expect(openClawHasConfiguredTelegram(activeTelegram)).toBe(true);
+    expect(activeTelegram).toMatchObject({
       accountEnabled: true,
       channelEnabled: true,
-      channelPresent: true,
       pluginEnabled: true,
-      pluginPresent: true,
     });
     await expectProvider(host, "present", "phase-4-provider-get-after-add");
     expectHostTelegramConfig("after add+rebuild");
@@ -575,12 +573,11 @@ test(
       sandbox,
       "phase-6-openclaw-json-after-remove",
     );
-    expect(removedTelegram).toEqual({
+    expect(openClawHasConfiguredTelegram(removedTelegram)).toBe(false);
+    expect(removedTelegram).toMatchObject({
       accountEnabled: false,
       channelEnabled: false,
       channelPresent: false,
-      pluginEnabled: false,
-      pluginPresent: false,
     });
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");

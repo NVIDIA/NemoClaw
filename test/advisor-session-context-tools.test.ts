@@ -11,6 +11,10 @@ import {
   promptWithRequiredContextTools,
   resolveAdvisorTurnTools,
 } from "../tools/advisors/session.mts";
+import {
+  repairableTerminalSubmitToolName,
+  terminalSubmitRepairErrors,
+} from "../tools/advisors/turn-protocol.mts";
 
 function contextTurn(name: string, content: string): AdvisorPromptTurn {
   return {
@@ -163,13 +167,14 @@ describe("advisor session context tool flow", () => {
     ).toThrow("atomic terminal tool must be the turn's only active and required tool");
   });
 
-  it.each(
-    invalidFinalMutationFlows,
-  )("rejects %s for an atomic mutation tool (#6446)", (_case, events, expectedError) => {
-    expect(advisorTurnFlowErrors("review", events, atomicMutationTools).join("; ")).toContain(
-      expectedError,
-    );
-  });
+  it.each(invalidFinalMutationFlows)(
+    "rejects %s for an atomic mutation tool (#6446)",
+    (_case, events, expectedError) => {
+      expect(advisorTurnFlowErrors("review", events, atomicMutationTools).join("; ")).toContain(
+        expectedError,
+      );
+    },
+  );
 
   it("accepts failed atomic attempts before one successful commit (#6446)", () => {
     const errors = advisorTurnFlowErrors(
@@ -179,5 +184,169 @@ describe("advisor session context tool flow", () => {
     );
 
     expect(errors).toEqual([]);
+  });
+
+  it("allows reads, prose, and draft tools before one terminal submit", () => {
+    const turn: AdvisorPromptTurn = {
+      ...contextTurn("prepare", "{}"),
+      activeToolNames: ["batch_draft", "submit_review"],
+      terminalSubmitToolName: "submit_review",
+      terminalSubmitRepairToolNames: ["repair_draft"],
+    };
+    const tools = resolveAdvisorTurnTools(
+      turn,
+      ["pr_review_context"],
+      new Set(["pr_review_context", "batch_draft", "repair_draft", "submit_review"]),
+    );
+    const events: AdvisorTurnFlowEvent[] = [
+      { type: "tool_start", toolName: "pr_review_context" },
+      { type: "tool_end", toolName: "pr_review_context", isError: false },
+      { type: "tool_start", toolName: "read" },
+      { type: "tool_end", toolName: "read", isError: false },
+      { type: "text", text: "prepared findings" },
+      { type: "tool_start", toolName: "batch_draft" },
+      { type: "tool_end", toolName: "batch_draft", isError: false },
+      { type: "tool_start", toolName: "submit_review" },
+      { type: "tool_end", toolName: "submit_review", isError: false },
+    ];
+
+    expect(tools.requiredToolNames).toContain("submit_review");
+    expect(tools.terminalSubmitRepairToolNames).toEqual(["repair_draft"]);
+    expect(advisorTurnFlowErrors("prepare", events, tools)).toEqual([]);
+  });
+
+  it.each([
+    ["omission", [], undefined, new Set<string>()],
+    ["prose only", [analysisEvent], undefined, new Set<string>()],
+    [
+      "an unexpected tool with a failed submit",
+      [
+        { type: "tool_start", toolName: "unexpected" },
+        { type: "tool_end", toolName: "unexpected", isError: false },
+        ledgerStart,
+        ledgerFailure,
+      ],
+      undefined,
+      new Set<string>(),
+    ],
+    ["provider error", [ledgerStart, ledgerFailure], "provider failed", new Set<string>()],
+    ["unsettled call", [ledgerStart], undefined, new Set<string>()],
+    ["prior success", [ledgerStart, ledgerSuccess], undefined, new Set([ledgerToolName])],
+  ] as const)(
+    "does not repair terminal submit after %s",
+    (_case, events, turnError, successful) => {
+      const turn: AdvisorPromptTurn = {
+        name: "prepare",
+        prompt: "prepare",
+        terminalSubmitToolName: ledgerToolName,
+        terminalSubmitRepairPrompt: "repair",
+      };
+      const tools = {
+        ...atomicMutationTools,
+        atomicTerminalToolName: undefined,
+        terminalSubmitToolName: ledgerToolName,
+        terminalSubmitRepairToolNames: [],
+      };
+      expect(
+        repairableTerminalSubmitToolName(turn, [...events], tools, successful, turnError),
+      ).toBe(undefined);
+    },
+  );
+
+  it("repairs terminal submit after exactly one settled failed submit", () => {
+    const turn: AdvisorPromptTurn = {
+      name: "prepare",
+      prompt: "prepare",
+      terminalSubmitToolName: ledgerToolName,
+      terminalSubmitRepairPrompt: "repair",
+    };
+    const tools = {
+      ...atomicMutationTools,
+      atomicTerminalToolName: undefined,
+      terminalSubmitToolName: ledgerToolName,
+      terminalSubmitRepairToolNames: ["repair_draft"],
+    };
+    expect(
+      repairableTerminalSubmitToolName(
+        turn,
+        [ledgerStart, ledgerFailure],
+        tools,
+        new Set(),
+        undefined,
+      ),
+    ).toBe(ledgerToolName);
+    expect(
+      repairableTerminalSubmitToolName(
+        turn,
+        [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure],
+        tools,
+        new Set(),
+        undefined,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("rejects prose, unconfigured tools, and multiple submits during terminal-submit repair", () => {
+    const successfulSubmit = [ledgerStart, ledgerSuccess];
+    expect(
+      terminalSubmitRepairErrors("prepare", [analysisEvent, ...successfulSubmit], ledgerToolName, [
+        "repair_draft",
+      ]).join("; "),
+    ).toContain("emitted prose during repair");
+    expect(
+      terminalSubmitRepairErrors(
+        "prepare",
+        [
+          { type: "tool_start", toolName: "read" },
+          { type: "tool_end", toolName: "read", isError: false },
+          ...successfulSubmit,
+        ],
+        ledgerToolName,
+        ["repair_draft"],
+      ).join("; "),
+    ).toContain("called unexpected tool read");
+    expect(
+      terminalSubmitRepairErrors(
+        "prepare",
+        [
+          { type: "tool_start", toolName: "repair_draft" },
+          { type: "tool_end", toolName: "repair_draft", isError: false },
+          ...successfulSubmit,
+        ],
+        ledgerToolName,
+        ["repair_draft"],
+      ),
+    ).toEqual([]);
+    expect(
+      terminalSubmitRepairErrors(
+        "prepare",
+        [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+        ledgerToolName,
+        ["repair_draft"],
+      ).join("; "),
+    ).toContain("exactly 1");
+  });
+
+  it.each([
+    ["duplicate success", [ledgerStart, ledgerSuccess, ledgerStart, ledgerSuccess]],
+    [
+      "failed then successful initial attempts",
+      [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+    ],
+    [
+      "failed twice then successful initial attempts",
+      [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+    ],
+    ["activity after success", [ledgerStart, ledgerSuccess, analysisEvent]],
+  ])("rejects terminal submit %s", (_case, events) => {
+    const tools = {
+      ...atomicMutationTools,
+      atomicTerminalToolName: undefined,
+      terminalSubmitToolName: ledgerToolName,
+      terminalSubmitRepairToolNames: [],
+    };
+    expect(advisorTurnFlowErrors("prepare", events, tools).join("; ")).toMatch(
+      /exactly 1|activity after successful/,
+    );
   });
 });

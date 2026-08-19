@@ -390,8 +390,8 @@ export function createShieldsFlowHarness(
       const openClawGuard = args.some((arg) => arg.endsWith("openclaw-config-guard.py"));
       const shouldFailOpenClawGuard = Boolean(
         openClawGuard &&
-          (action === "preflight" || action === "lock" || action === "unlock") &&
-          options.failOpenClawGuardActions?.includes(action),
+        (action === "preflight" || action === "lock" || action === "unlock") &&
+        options.failOpenClawGuardActions?.includes(action),
       );
       const failures = options.openClawGuardFailures ?? [
         options.openClawGuardFailure ?? {

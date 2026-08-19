@@ -98,6 +98,7 @@ import {
 import {
   clearDockerManagedStartupSharedStateCommitReceipt,
   DockerManagedStartupSharedStateCommitIndeterminateError,
+  DockerManagedStartupSharedStateRestoreError,
   finalizeDockerManagedStartupSharedState,
   probeDockerManagedStartupSharedState,
 } from "./docker-shared-state";
@@ -262,6 +263,21 @@ function supervisorReconnectFailureDetail(runtimeId: string, deps: ResolvedDeps)
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+function replacementNotStableError(runtimeId: string, label: string, deps: ResolvedDeps): Error {
+  const evidence = captureDockerContainerFailureEvidence(runtimeId, deps);
+  const stateDetail = formatDockerContainerState(evidence.state).join(" ");
+  return new Error(
+    [
+      `Managed bootstrap Docker ${label} is not stably running.`,
+      `Replacement runtime ID: ${runtimeId}.`,
+      stateDetail ? `Replacement state: ${stateDetail}.` : "",
+      evidence.redactedLogTail ? `Redacted replacement log tail:\n${evidence.redactedLogTail}` : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
 }
 
 function isExactMissingDockerContainer(containerId: string, result: DockerCommandResult): boolean {
@@ -1201,7 +1217,9 @@ function assertCompletedCutoverRuntimeState(
   assertTransactionOriginal(transaction, original);
   assertTransactionReplacement(transaction, replacement);
   assertExplicitlyStopped(original, "rollback backup");
-  assertStableRunning(replacement, "replacement");
+  if (!isStableRunning(replacement)) {
+    throw replacementNotStableError(transaction.replacementRuntimeId, "replacement", deps);
+  }
   if (
     dockerContainerName(original) !== transaction.backupName ||
     dockerContainerName(replacement) !== transaction.originalName
@@ -1259,6 +1277,46 @@ function removeExactReplacement(
   }
 }
 
+function restoreExactOriginalName(
+  transaction: DockerBootstrapTransaction,
+  original: DockerContainerInspect,
+  deps: ResolvedDeps,
+): DockerContainerInspect {
+  assertTransactionOriginal(transaction, original);
+  const currentName = dockerContainerName(original);
+  if (currentName !== transaction.originalName) {
+    if (currentName !== transaction.backupName) {
+      throw new Error("Managed bootstrap original container has an unexpected rollback name.");
+    }
+    const renamed = deps.dockerRename(transaction.originalRuntimeId, transaction.originalName, {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    });
+    if (!hasZeroDockerExitStatus(renamed)) {
+      const afterRename = inspectTransactionRuntime(
+        transaction,
+        transaction.originalRuntimeId,
+        deps,
+      );
+      if (!afterRename || dockerContainerName(afterRename) !== transaction.originalName) {
+        throw new Error(
+          `Managed bootstrap could not restore the original container name: ${
+            commandDetail(renamed) || "Docker rename failed"
+          }`,
+        );
+      }
+      assertTransactionOriginal(transaction, afterRename);
+    }
+  }
+  const restored = inspectExact(transaction.originalRuntimeId, deps);
+  assertTransactionOriginal(transaction, restored);
+  if (dockerContainerName(restored) !== transaction.originalName) {
+    throw new Error("Managed bootstrap rollback did not restore the authoritative container name.");
+  }
+  return restored;
+}
+
 function restoreOriginal(transaction: DockerBootstrapTransaction, deps: ResolvedDeps): void {
   const options = {
     ignoreError: true,
@@ -1286,35 +1344,11 @@ function restoreOriginal(transaction: DockerBootstrapTransaction, deps: Resolved
   if (replacement) {
     removeExactReplacement(transaction, replacement, deps);
   }
-  const original = inspectExact(transaction.originalRuntimeId, deps);
-  assertTransactionOriginal(transaction, original);
-  const currentName = dockerContainerName(original);
-  if (currentName !== transaction.originalName) {
-    if (currentName !== transaction.backupName) {
-      throw new Error("Managed bootstrap original container has an unexpected rollback name.");
-    }
-    const renamed = deps.dockerRename(
-      transaction.originalRuntimeId,
-      transaction.originalName,
-      options,
-    );
-    if (!hasZeroDockerExitStatus(renamed)) {
-      const afterRename = inspectTransactionRuntime(
-        transaction,
-        transaction.originalRuntimeId,
-        deps,
-      );
-      if (!afterRename || dockerContainerName(afterRename) !== transaction.originalName) {
-        throw new Error(
-          `Managed bootstrap could not restore the original container name: ${
-            commandDetail(renamed) || "Docker rename failed"
-          }`,
-        );
-      }
-      assertTransactionOriginal(transaction, afterRename);
-    }
-  }
-  const restoredBeforeStart = inspectExact(transaction.originalRuntimeId, deps);
+  const restoredBeforeStart = restoreExactOriginalName(
+    transaction,
+    inspectExact(transaction.originalRuntimeId, deps),
+    deps,
+  );
   if (restoredBeforeStart.State?.Running !== true) {
     const started = deps.dockerStart(transaction.originalRuntimeId, options);
     if (!hasZeroDockerExitStatus(started)) {
@@ -2059,6 +2093,121 @@ export function createDockerManagedBootstrapAdapter(
     removeDockerBootstrapJournalDurably(journal, deps);
     return finalization;
   };
+  const failAfterSharedStateRestoreError = (
+    journal: DockerBootstrapTransaction,
+    failure: DockerManagedStartupSharedStateRestoreError,
+  ): never => {
+    try {
+      let activeJournal = journal;
+      if (journal.phase === "cutover") {
+        const current = deps.journalStore.load(journal.bootstrapIdentity);
+        if (!current || !sameDockerBootstrapJournal(current, journal)) {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: journal.bootstrapIdentity,
+            runtimeId: journal.replacementRuntimeId,
+            detail: "durable authority changed before failed shared-state restoration cleanup",
+          });
+        }
+        activeJournal = transitionDockerBootstrapJournalDurably(
+          journal,
+          "rollback-authorized",
+          deps,
+        );
+      }
+      if (activeJournal.phase !== "rollback-authorized") {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: activeJournal.bootstrapIdentity,
+          runtimeId: activeJournal.replacementRuntimeId,
+          detail: `failed shared-state restoration cleanup is forbidden from durable phase ${activeJournal.phase}`,
+        });
+      }
+
+      const current = deps.journalStore.load(activeJournal.bootstrapIdentity);
+      if (!current || !sameDockerBootstrapJournal(current, activeJournal)) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: activeJournal.bootstrapIdentity,
+          runtimeId: activeJournal.replacementRuntimeId,
+          detail: "rollback authority changed before failed shared-state restoration cleanup",
+        });
+      }
+      const original = inspectTransactionRuntime(
+        activeJournal,
+        activeJournal.originalRuntimeId,
+        deps,
+      );
+      const replacement = inspectTransactionRuntime(
+        activeJournal,
+        activeJournal.replacementRuntimeId,
+        deps,
+      );
+      if (!original || !replacement) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: activeJournal.bootstrapIdentity,
+          runtimeId: original
+            ? activeJournal.replacementRuntimeId
+            : activeJournal.originalRuntimeId,
+          detail:
+            "failed shared-state restoration cleanup requires both exact transaction runtimes",
+        });
+      }
+      assertTransactionOriginal(activeJournal, original);
+      assertTransactionReplacement(activeJournal, replacement);
+      if (
+        dockerContainerName(original) !== activeJournal.backupName ||
+        !isExplicitlyStopped(original) ||
+        dockerContainerName(replacement) !== activeJournal.originalName ||
+        !isExplicitlyStopped(replacement)
+      ) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: activeJournal.bootstrapIdentity,
+          runtimeId: activeJournal.replacementRuntimeId,
+          detail:
+            "failed shared-state restoration cleanup runtimes do not match exact cutover authority",
+        });
+      }
+
+      removeExactReplacement(activeJournal, replacement, deps);
+      const restored = restoreExactOriginalName(activeJournal, original, deps);
+      if (
+        !isExplicitlyStopped(restored) ||
+        normalizeDockerManagedBootstrapLaunchSpec(restored).hash !== activeJournal.originalSpecHash
+      ) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: activeJournal.bootstrapIdentity,
+          runtimeId: activeJournal.originalRuntimeId,
+          detail:
+            "failed shared-state restoration cleanup did not retain the exact original container in the stopped state",
+        });
+      }
+      requireExactOwnerCleanup(activeJournal);
+      throw new Error(
+        "Managed bootstrap owner cleanup was not retained after restoration failure.",
+      );
+    } catch (cleanupError) {
+      attachManagedBootstrapRollbackError(failure, cleanupError);
+    }
+    throw failure;
+  };
+  const finalizePendingSharedStateRollback = (
+    journal: DockerBootstrapTransaction,
+    transaction: ReturnType<typeof managedSharedStateTransaction>,
+  ): void => {
+    try {
+      finalizeDockerManagedStartupSharedState(
+        {
+          transaction,
+          supervisorReady: false,
+          retainContainerAfterRollback: true,
+        },
+        deps,
+      );
+    } catch (error) {
+      if (error instanceof DockerManagedStartupSharedStateRestoreError) {
+        failAfterSharedStateRestoreError(journal, error);
+      }
+      throw error;
+    }
+  };
   const completedCommit = (
     handle: ManagedBootstrapHeldWorkloadHandle,
     commitReceipt: ManagedBootstrapCompletionReceipt,
@@ -2389,14 +2538,7 @@ export function createDockerManagedBootstrapAdapter(
         );
       }
       if (sharedStatus === "pending") {
-        finalizeDockerManagedStartupSharedState(
-          {
-            transaction: sharedTransaction,
-            supervisorReady: false,
-            retainContainerAfterRollback: true,
-          },
-          deps,
-        );
+        finalizePendingSharedStateRollback(activeJournal, sharedTransaction);
       }
     } else if (journal.phase === "cutover") {
       activeJournal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
@@ -2688,14 +2830,7 @@ export function createDockerManagedBootstrapAdapter(
       }
       activeJournal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
       if (!sharedStateAlreadyRolledBack && sharedStatus === "pending") {
-        finalizeDockerManagedStartupSharedState(
-          {
-            transaction: sharedTransaction,
-            supervisorReady: false,
-            retainContainerAfterRollback: true,
-          },
-          deps,
-        );
+        finalizePendingSharedStateRollback(activeJournal, sharedTransaction);
       }
     } else {
       if (!originalAtTargetRecoverable && !originalAtBackupRecoverable) {
@@ -2746,14 +2881,7 @@ export function createDockerManagedBootstrapAdapter(
           });
         }
         if (sharedStatus === "pending") {
-          finalizeDockerManagedStartupSharedState(
-            {
-              transaction: sharedTransaction,
-              supervisorReady: false,
-              retainContainerAfterRollback: true,
-            },
-            deps,
-          );
+          finalizePendingSharedStateRollback(activeJournal, sharedTransaction);
         }
       }
     }
@@ -3020,6 +3148,9 @@ export function createDockerManagedBootstrapAdapter(
               runtimeId: replacement.replacementRuntimeId,
               detail: error.message,
             });
+          }
+          if (error instanceof DockerManagedStartupSharedStateRestoreError) {
+            failAfterSharedStateRestoreError(journal, error);
           }
           throw error;
         }
@@ -3575,13 +3706,16 @@ export function createDockerManagedBootstrapAdapter(
         const started = deps.dockerStart(prepared.preparedRuntimeId, options);
         const running = inspectExact(prepared.preparedRuntimeId, deps);
         assertTransactionReplacement(journal, running);
+        if (!isStableRunning(running)) {
+          throw replacementNotStableError(
+            journal.replacementRuntimeId,
+            "replacement after Docker start",
+            deps,
+          );
+        }
         const runningSpec = normalizeDockerManagedBootstrapLaunchSpec(running);
         if (
           dockerContainerName(running) !== journal.originalName ||
-          running.State?.Running !== true ||
-          running.State.Paused === true ||
-          running.State.Restarting === true ||
-          running.State.Dead === true ||
           runningSpec.canonicalJson !== prepared.expectedActivatedSpecCanonicalJson
         ) {
           throw new Error(
@@ -3649,13 +3783,16 @@ export function createDockerManagedBootstrapAdapter(
       }
       assertCompletedCutoverRuntimeState(journal, deps);
       const before = inspectExact(replacement.replacementRuntimeId, deps);
-      assertStableRunning(before, "replacement");
+      if (!isStableRunning(before)) {
+        throw replacementNotStableError(replacement.replacementRuntimeId, "replacement", deps);
+      }
       const beforeImageContentId = assertImage(before, replacement.image, deps);
       if (beforeImageContentId !== replacement.runtimeImageContentId) {
         throw new Error("Managed bootstrap Docker replacement image content changed.");
       }
       assertReplacementBoundary(before, handle, snapshot);
-      const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
+      const supervisorReconnectTimeoutSecs =
+        getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
       if (
         !waitForOpenShellSupervisorReconnect(
           handle.sandbox.sandboxName,
@@ -3675,7 +3812,13 @@ export function createDockerManagedBootstrapAdapter(
       }
       assertCompletedCutoverRuntimeState(afterWaitJournal, deps);
       const after = inspectExact(replacement.replacementRuntimeId, deps);
-      assertStableRunning(after, "completed replacement");
+      if (!isStableRunning(after)) {
+        throw replacementNotStableError(
+          replacement.replacementRuntimeId,
+          "completed replacement",
+          deps,
+        );
+      }
       if (assertImage(after, replacement.image, deps) !== replacement.runtimeImageContentId) {
         throw new Error("Managed bootstrap Docker completed image content changed.");
       }

@@ -272,11 +272,6 @@ function completeBrief(plan: Record<string, string>): string {
     `- Base-image candidate: \`${plan.originMainCommit}\``,
     "- Evidence: successful publication aggregate.",
     "",
-    "## Exact staging Brev Launchable evidence",
-    "",
-    `- Launchable candidate: \`${plan.originMainCommit}\``,
-    "- Evidence: successful exact Launchable E2E and cleanup receipts.",
-    "",
     "## General E2E decision",
     "",
     "- Decision: proceed.",
@@ -542,7 +537,6 @@ describe("release-latest-tag.sh", () => {
   it.each([
     ["Pi", "Pi candidate", "plan-bound Pi candidate"],
     ["base image", "Base-image candidate", "plan-bound base-image candidate"],
-    ["Launchable", "Launchable candidate", "plan-bound Launchable candidate"],
   ])("does not accept %s evidence copied from an earlier candidate", (_kind, field, error) => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);

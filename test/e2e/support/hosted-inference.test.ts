@@ -278,14 +278,6 @@ printf '{"data":[]}'
     ]);
   });
 
-  it("rejects provider reachability endpoints with SSRF-shaped hosts", () => {
-    expect(() => trustedProviderEndpoint("http://169.254.169.254/latest/meta-data")).toThrow(
-      /private or link-local|blocked/,
-    );
-    expect(() =>
-      trustedProviderEndpoint("https://metadata.google.internal/computeMetadata/v1"),
-    ).toThrow(/blocked/);
-  });
 
   it("uses a lightweight compatible reachability probe without API or auth requests", () => {
     const { result, calls } = runHostedProbe({

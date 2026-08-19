@@ -16,6 +16,13 @@ vi.mock("../exec", () => ({
   execSandbox: vi.fn(async () => undefined),
 }));
 
+const withLifecycleLockMock = vi.hoisted(() =>
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
+);
+vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
+  withMcpLifecycleLock: withLifecycleLockMock,
+}));
+
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { deleteSandboxSession } from "./delete";
@@ -47,6 +54,7 @@ beforeEach(() => {
   hermesAgentMock.mockReturnValue(false);
   execSandboxMock.mockReset();
   execSandboxMock.mockResolvedValue(undefined);
+  withLifecycleLockMock.mockClear();
   processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
     throw new Error(`process.exit:${code ?? 0}`);
   });
@@ -68,7 +76,10 @@ describe("deleteSandboxSession", () => {
       key: "agent:main:slot-1",
     });
 
-    expect(ensureMock).toHaveBeenCalledWith("sb-1", { allowNonReadyPhase: true });
+    expect(ensureMock).toHaveBeenCalledWith("sb-1", {
+      allowNonReadyPhase: true,
+      exit: expect.any(Function),
+    });
     expect(gatewayMock).toHaveBeenCalledTimes(1);
     expect(gatewayMock.mock.calls[0]?.[0]).toMatchObject({
       sandboxName: "sb-1",
@@ -77,6 +88,17 @@ describe("deleteSandboxSession", () => {
     });
     expect(result.removedTranscript).toBe(true);
     expect(result.key).toBe("agent:main:slot-1");
+  });
+
+  it("defers an OpenClaw readiness exit through lifecycle authority (#9203)", async () => {
+    ensureMock.mockImplementationOnce(async (_sandboxName, options) => options.exit(1));
+
+    await expect(deleteSandboxSession("sb-1", { key: "agent:main:slot-1" })).rejects.toThrow(
+      /process\.exit:1/,
+    );
+
+    expect(withLifecycleLockMock).toHaveBeenCalledOnce();
+    expect(gatewayMock).not.toHaveBeenCalled();
   });
 
   it("translates --keep-transcript into deleteTranscript=false", async () => {
@@ -181,8 +203,8 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     hermesAgentMock.mockReturnValue(true);
     // execSandbox streams the native output and exits the process with its
     // code; model that terminal behavior so the routing never returns a value.
-    execSandboxMock.mockImplementation(async () => {
-      process.exit(0);
+    execSandboxMock.mockImplementation(async (_name, _command, _options, deps) => {
+      deps.exit(0);
     });
   });
 
@@ -192,14 +214,16 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     );
 
     expect(gatewayMock).not.toHaveBeenCalled();
-    expect(ensureMock).toHaveBeenCalledWith("sb-h", { allowNonReadyPhase: true });
-    expect(execSandboxMock).toHaveBeenCalledWith("sb-h", [
-      "hermes",
-      "sessions",
-      "delete",
-      "20260727_130357_cb2b61",
-      "--yes",
-    ]);
+    expect(ensureMock).toHaveBeenCalledWith("sb-h", {
+      allowNonReadyPhase: true,
+      exit: expect.any(Function),
+    });
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "sb-h",
+      ["hermes", "sessions", "delete", "20260727_130357_cb2b61", "--yes"],
+      {},
+      expect.objectContaining({ exit: expect.any(Function) }),
+    );
   });
 
   it("passes the native hermes session id through without OpenClaw canonicalization (#7642)", async () => {
@@ -269,4 +293,5 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     expect(execSandboxMock).not.toHaveBeenCalled();
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(/session id/i);
   });
+
 });

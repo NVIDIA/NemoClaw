@@ -15,9 +15,9 @@ export function buildRefreshMutableOpenClawConfigHashCommand(
     '[ ! -L "$config_file" ] || { echo "refusing symlinked OpenClaw config file: $config_file" >&2; exit 11; }',
     '[ ! -L "$hash_file" ] || { echo "refusing symlinked OpenClaw config hash: $hash_file" >&2; exit 12; }',
     'owner="$(stat -c "%U" "$config_dir" 2>/dev/null || echo unknown)"',
-    '[ "$owner" != "root" ] || exit 0',
     '[ -f "$config_file" ] || exit 0',
     'cd "$config_dir" || exit 13',
+    '[ "$owner" != "root" ] || { expected_hash="$(sha256sum openclaw.json 2>/dev/null)" && actual_hash="$(cat .config-hash 2>/dev/null)" && [ "$actual_hash" = "$expected_hash" ] || { echo "root-owned OpenClaw config hash does not match openclaw.json" >&2; exit 15; }; exit 0; }',
     "sha256sum openclaw.json > .config-hash || exit 14",
     "chmod 660 .config-hash 2>/dev/null || true",
   ].join("; ");

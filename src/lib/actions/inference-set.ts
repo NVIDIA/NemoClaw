@@ -72,6 +72,7 @@ import {
 } from "./inference-set-gateway-restart";
 import {
   type InferenceSetSandboxRouteProbe,
+  assertInferenceSetCommandAvailable,
   prepareInferenceSetProviderBinding,
   probeInferenceSetSandboxRoute,
   probeInferenceSetSandboxRouteUntilConverged,
@@ -1171,6 +1172,12 @@ async function runInferenceSetWithoutHostLock(
           {
             probe: deps.probeSandboxRoute,
             sleep: deps.sleep,
+            onRetry: (result, delayMs, attempt) => {
+              if (result.ok) return;
+              deps.log(
+                `  Waiting ${delayMs / 1_000}s for OpenShell route convergence after HTTP ${result.httpStatus} (probe ${attempt}/3)...`,
+              );
+            },
           },
         );
       } catch (probeError) {
@@ -1478,8 +1485,10 @@ export async function runInferenceSet(
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
   assertInferenceSetRuntimeAuthority(selected.entry, deps.runtimeProviders);
+  assertInferenceSetCommandAvailable(selected.sandboxName);
   deps.prepareRunOpenshell();
   return withSandboxMutationLock(selected.sandboxName, async () => {
+    assertInferenceSetCommandAvailable(selected.sandboxName);
     const lockedSelection = resolveTargetSandbox(selected.sandboxName, deps);
     assertInferenceSetRuntimeAuthority(lockedSelection.entry, deps.runtimeProviders);
     const gatewayName = resolveSandboxGatewayName(lockedSelection.entry);
