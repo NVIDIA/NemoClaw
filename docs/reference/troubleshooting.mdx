@@ -3048,9 +3048,12 @@ For onboarding-time context, refer to [Use an Existing Server](../inference/loca
 
 Check whether vLLM is a bring-your-own server or the NemoClaw managed Spark profile:
 
+Set `NEMOCLAW_VLLM_PORT` to the existing server's host port when it differs from the managed default.
+
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
-curl -sf http://127.0.0.1:8000/v1/models
+VLLM_HOST_PORT="${NEMOCLAW_VLLM_PORT:-8000}"
+curl -sf "http://127.0.0.1:${VLLM_HOST_PORT}/v1/models"
 free -h
 journalctl -k --since "24 hours ago" --no-pager | grep -Ei 'NVRM|OOM|out of memory|lockup|watchdog'
 ```
