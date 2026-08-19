@@ -3,7 +3,6 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -73,7 +72,7 @@ function cloneWithInstaller(
 
 describe("Hermes portable installer admission", testTimeoutOptions(60_000), () => {
   it("activates one schema-5 receipt from a private checkout and validates both installer sources (#9211)", async () => {
-    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-admission-"));
+    const fixtureRoot = fs.mkdtempSync(path.join(ROOT, ".nemoclaw-hermes-admission-"));
     fs.chmodSync(fixtureRoot, 0o700);
     const stateDir = path.join(fixtureRoot, "state");
     const homeDir = path.join(fixtureRoot, "home");
