@@ -91,6 +91,12 @@ describe("runInferenceSet OpenClaw routing", () => {
       inSandboxConfigSynced: true,
     });
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      openclawVersion: "",
+      stateDirectory: "/sandbox/.openclaw",
+    });
   });
 
   it("preserves same-provider Bedrock Runtime adapter routing for OpenClaw switches", async () => {
