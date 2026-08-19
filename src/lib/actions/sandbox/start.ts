@@ -13,6 +13,7 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
+import { withSandboxLifecycleLock } from "./gateway-state";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -74,6 +75,7 @@ export interface SandboxStartDeps {
   waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
+  withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
 }
 
@@ -156,6 +158,15 @@ export async function startSandbox(
   sandboxName: string,
   deps: SandboxStartDeps = {},
 ): Promise<SandboxLifecycleResult> {
+  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(sandboxName, () =>
+    startSandboxWithinLifecycleFence(sandboxName, deps),
+  );
+}
+
+async function startSandboxWithinLifecycleFence(
+  sandboxName: string,
+  deps: SandboxStartDeps,
+): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
   const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
   const resolved = resolveSandboxLifecycleProvider(
@@ -176,6 +187,9 @@ export async function startSandbox(
   if (preflight) return preflight;
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
+  if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
+    return { exitCode: 0 };
+  }
 
   const readiness: { inference: SandboxInferenceInvocationResult | null } = { inference: null };
   await resolved.lifecycle.verifyStarted(input, async (name) => {
