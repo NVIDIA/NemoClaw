@@ -12,6 +12,7 @@ import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
   createCorporateCaFixture,
+  registeredCorporateCaWorkloadKind,
 } from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
@@ -241,11 +242,15 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(list.exitCode, resultText(list)).toBe(0);
   expect(list.stdout).toContain(SANDBOX_NAME);
 
-  const corporateCaProbe = await sandbox.execShell(SANDBOX_NAME, corporateCaMergeProbeScript(), {
-    artifactName: "phase-2-corporate-ca-merge-probe",
-    env: testEnv(),
-    timeoutMs: 60_000,
-  });
+  const corporateCaProbe = await sandbox.execShell(
+    SANDBOX_NAME,
+    corporateCaMergeProbeScript(registeredCorporateCaWorkloadKind(SANDBOX_NAME, testHome)),
+    {
+      artifactName: "phase-2-corporate-ca-merge-probe",
+      env: testEnv(),
+      timeoutMs: 60_000,
+    },
+  );
   expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
   progress.phase("verify compatible endpoint reasoning propagation");

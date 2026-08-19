@@ -84,6 +84,31 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
       owned(realLstatSync(file, options))) as typeof fs.lstatSync);
   }
 
+  function mockRuntimeDescriptorOwnership(
+    runtimeEnvironmentFile: string,
+    uid: bigint,
+    gid: bigint,
+  ): void {
+    const realFstatSync = fs.fstatSync.bind(fs);
+    const runtimeInode = fs.lstatSync(runtimeEnvironmentFile, { bigint: true }).ino;
+    vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor: number, options: { bigint: true }) => {
+      const stat = realFstatSync(descriptor, options);
+      const isRuntimeDescriptor = stat.ino === runtimeInode;
+      const ownership = new Map<PropertyKey, unknown>([
+        ["uid", isRuntimeDescriptor ? uid : 0n],
+        ["gid", isRuntimeDescriptor ? gid : 0n],
+      ]);
+      return new Proxy(stat, {
+        get(inner, property) {
+          const value = ownership.has(property)
+            ? ownership.get(property)
+            : (Reflect.get(inner, property, inner) as unknown);
+          return typeof value === "function" ? value.bind(inner) : value;
+        },
+      });
+    }) as typeof fs.fstatSync);
+  }
+
   function writeCompletionFixture(
     profile: ManagedStartupProfile,
     corporateCaMerged = false,
@@ -189,11 +214,16 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     ).toThrow(/completion marker does not match the requested profile/u);
   });
 
-  it("rejects runtime handoff drift after a matching completion", () => {
+  it("rejects a replaced runtime handoff after a matching completion", () => {
     const fixture = writeCompletionFixture(managedStartupE2eProfile("hermes"));
     mockDescriptorOwnership(0n, 0n);
-    fs.chmodSync(fixture.runtimeEnvironmentFile, 0o644);
-    fs.appendFileSync(fixture.runtimeEnvironmentFile, "export NEMOCLAW_MODEL='tampered/model'\n");
+    const originalRuntimeEnvironment = fs.readFileSync(fixture.runtimeEnvironmentFile, "utf8");
+    fs.renameSync(fixture.runtimeEnvironmentFile, `${fixture.runtimeEnvironmentFile}.original`);
+    fs.writeFileSync(
+      fixture.runtimeEnvironmentFile,
+      `${originalRuntimeEnvironment}export NEMOCLAW_MODEL='tampered/model'\n`,
+      { mode: 0o444 },
+    );
     fs.chmodSync(fixture.runtimeEnvironmentFile, 0o444);
 
     expect(() =>
@@ -204,6 +234,67 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
         fixture.runtimeEnvironmentFile,
       ),
     ).toThrow(/runtime environment digest mismatch/u);
+  });
+
+  it("fails closed when the runtime handoff is missing", () => {
+    const fixture = writeCompletionFixture(managedStartupE2eProfile("openclaw"));
+    mockDescriptorOwnership(0n, 0n);
+    fs.unlinkSync(fixture.runtimeEnvironmentFile);
+
+    expect(() =>
+      verifyManagedStartupImageCompletion(
+        fixture.agent,
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  });
+
+  it("fails closed when the runtime handoff is symlinked", () => {
+    const fixture = writeCompletionFixture(managedStartupE2eProfile("openclaw"));
+    mockDescriptorOwnership(0n, 0n);
+    const replacement = `${fixture.runtimeEnvironmentFile}.replacement`;
+    fs.renameSync(fixture.runtimeEnvironmentFile, replacement);
+    fs.symlinkSync(replacement, fixture.runtimeEnvironmentFile);
+
+    expect(() =>
+      verifyManagedStartupImageCompletion(
+        fixture.agent,
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toThrow(/refusing unsafe or unreadable file/u);
+  });
+
+  it("fails closed when the runtime handoff mode is not 0444", () => {
+    const fixture = writeCompletionFixture(managedStartupE2eProfile("hermes"));
+    mockDescriptorOwnership(0n, 0n);
+    fs.chmodSync(fixture.runtimeEnvironmentFile, 0o640);
+
+    expect(() =>
+      verifyManagedStartupImageCompletion(
+        fixture.agent,
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toThrow(/runtime environment must be root:root mode 0444/u);
+  });
+
+  it("fails closed when the runtime handoff is not root owned", () => {
+    const fixture = writeCompletionFixture(managedStartupE2eProfile("langchain-deepagents-code"));
+    mockRuntimeDescriptorOwnership(fixture.runtimeEnvironmentFile, 501n, 20n);
+
+    expect(() =>
+      verifyManagedStartupImageCompletion(
+        fixture.agent,
+        fixture.fingerprint,
+        fixture.completionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toThrow(/runtime environment must be root:root mode 0444/u);
   });
 
   it("accepts merged CA paths without putting the CA payload in the readable handoff", () => {
