@@ -3,10 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { normalizeManagedDcodeModelName } from "../inference/managed-dcode/identity";
 import {
+  createDcodeSelectionDriftReader,
   getDcodeSelectionDrift,
   getExpectedDcodeInferenceIdentity,
-  normalizeDcodeModelName,
   parseDcodeInferenceIdentity,
   requiresSelectionRecreate,
   usesManagedDcodeIdentity,
@@ -52,7 +53,8 @@ describe("live DCode selection drift", () => {
   });
 
   it("mirrors generated DCode model and route identity (#6311)", () => {
-    expect(normalizeDcodeModelName("  openai:model:tag  ")).toBe("model:tag");
+    expect(normalizeManagedDcodeModelName("  openai:model:tag  ")).toBe("model:tag");
+    expect(normalizeManagedDcodeModelName("  openrouter:model:tag  ")).toBe("model:tag");
     expect(
       getExpectedDcodeInferenceIdentity(
         "compatible-anthropic-endpoint",
@@ -67,8 +69,117 @@ describe("live DCode selection drift", () => {
     });
   });
 
+  it("accepts the generated OpenRouter identity (#9555)", () => {
+    const output = identity({
+      Provider: "openrouter",
+      Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+    });
+
+    expect(
+      getDcodeSelectionDrift("alpha", "openrouter-api", "nvidia/nemotron-3-ultra-550b-a55b", null, {
+        runCaptureOpenshell: () => output,
+      }),
+    ).toEqual({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      existingProvider: "openrouter",
+      existingModel: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+      unknown: false,
+    });
+  });
+
+  it("accepts the generated OpenRouter identity for its compatible endpoint (#9555)", () => {
+    const output = identity({
+      Provider: "openrouter",
+      Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+    });
+    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(() => output);
+
+    expect(
+      readDcodeSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        null,
+        "https://openrouter.ai/api/v1/",
+      ),
+    ).toMatchObject({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      unknown: false,
+    });
+  });
+
+  it.each([
+    "https://openrouter.ai:8443/api/v1",
+    "https://user:password@openrouter.ai/api/v1",
+    "https://openrouter.ai/api/v1?route=other",
+    "https://openrouter.ai/api/v1#route",
+  ])("rejects a noncanonical OpenRouter-compatible endpoint: %s (#9555)", (endpointUrl) => {
+    const output = identity({
+      Provider: "openrouter",
+      Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+    });
+    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(() => output);
+
+    expect(
+      readDcodeSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        null,
+        endpointUrl,
+      ),
+    ).toMatchObject({
+      changed: true,
+      providerChanged: true,
+      modelChanged: true,
+      unknown: false,
+    });
+  });
+
+  it("keeps ordinary compatible endpoints on the OpenAI identity (#9555)", () => {
+    const output = identity({
+      Provider: "compatible-endpoint",
+      Model: "openai:model-a",
+    });
+    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(() => output);
+
+    expect(
+      readDcodeSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "model-a",
+        null,
+        "https://example.test/v1",
+      ),
+    ).toMatchObject({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      unknown: false,
+    });
+  });
+
+  it("rejects an OpenAI identity for an OpenRouter selection (#9555)", () => {
+    expect(
+      getDcodeSelectionDrift("alpha", "openrouter-api", "nvidia/nemotron-3-ultra-550b-a55b", null, {
+        runCaptureOpenshell: () => identity(),
+      }),
+    ).toMatchObject({
+      changed: true,
+      providerChanged: true,
+      modelChanged: true,
+      unknown: false,
+    });
+  });
+
   it("preserves colon-bearing model IDs in expected DCode identity (#6311)", () => {
-    expect(normalizeDcodeModelName("minimax/minimax-m2.5:free")).toBe("minimax/minimax-m2.5:free");
+    expect(normalizeManagedDcodeModelName("minimax/minimax-m2.5:free")).toBe(
+      "minimax/minimax-m2.5:free",
+    );
     expect(
       getExpectedDcodeInferenceIdentity("compatible-endpoint", "minimax/minimax-m2.5:free", null),
     ).toMatchObject({ model: "openai:minimax/minimax-m2.5:free" });
