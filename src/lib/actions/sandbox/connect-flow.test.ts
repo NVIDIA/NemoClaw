@@ -972,6 +972,77 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it.each([
+    {
+      condition: "a Docker final-handoff failure",
+      expectedDetail:
+        "Docker could not start the replacement container to complete the final recovery handoff",
+      recoveryFailureDetail:
+        "Docker could not start the replacement container to complete the final recovery handoff",
+    },
+    {
+      condition: "a pinned replacement identity failure",
+      expectedDetail:
+        "the replacement container identity changed during the final managed supervisor health check",
+      recoveryFailureDetail:
+        "the replacement container identity changed during the final managed supervisor health check",
+    },
+    {
+      condition: "an OpenShell readiness failure",
+      expectedDetail: "the replacement container did not become ready in OpenShell",
+      recoveryFailureDetail:
+        "the replacement container did not become ready in OpenShell\nAuthorization: Bearer opaque-connect-recovery-token\u001b[31m",
+    },
+    {
+      condition: "an unconfirmed rollback after a gateway wait failure",
+      expectedDetail: "NemoClaw could not confirm rollback to the previous sandbox container",
+      recoveryFailureDetail:
+        "NemoClaw could not confirm rollback to the previous sandbox container. Inspect Docker state before retrying. Recovery failure before rollback: the recovered gateway did not become responsive before the recovery timeout",
+    },
+    {
+      condition: "a detail-free recovery failure",
+      expectedDetail: "the gateway recovery attempt did not complete",
+      recoveryFailureDetail: undefined,
+    },
+  ])(
+    "stops non-probe connect before route repair, pairing, or SSH after $condition (#9364)",
+    async ({ expectedDetail, recoveryFailureDetail }) => {
+      const harness = createConnectHarness({
+        registryEntry: { model: "qwen3-vl:4b", provider: "ollama-local" },
+        processCheck: {
+          checked: true,
+          wasRunning: false,
+          recovered: false,
+          forwardRecovered: false,
+          recoveryFailureDetail,
+        },
+      });
+
+      await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+      const errorOutput = harness.errorSpy.mock.calls
+        .map((call) => String(call[0] ?? ""))
+        .join("\n");
+      expect(errorOutput).toContain(
+        "Recovery failed: NemoClaw could not recover the OpenClaw gateway in 'alpha'",
+      );
+      expect(errorOutput).toContain(expectedDetail);
+      expect(errorOutput).not.toContain("opaque-connect-recovery-token");
+      expect(errorOutput).not.toContain("\u001b");
+      expect(harness.ensureOllamaAuthProxySpy).not.toHaveBeenCalled();
+      expect(harness.findReachableOllamaHostSpy).not.toHaveBeenCalled();
+      expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
+      expect(harness.settlePortablePairingSpy).not.toHaveBeenCalled();
+      expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+      expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+        "openshell",
+        ["sandbox", "connect", "alpha"],
+        expect.any(Object),
+      );
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    },
+  );
+
   it("redacts untrusted gateway recovery details before reporting them", async () => {
     const opaqueToken = "opaque-gateway-recovery-token";
     const harness = createConnectHarness({
