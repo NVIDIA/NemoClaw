@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  bindDcodeSelectionDrift,
   getDcodeSelectionDrift,
   getExpectedDcodeInferenceIdentity,
   normalizeDcodeModelName,
@@ -53,6 +54,7 @@ describe("live DCode selection drift", () => {
 
   it("mirrors generated DCode model and route identity (#6311)", () => {
     expect(normalizeDcodeModelName("  openai:model:tag  ")).toBe("model:tag");
+    expect(normalizeDcodeModelName("  openrouter:model:tag  ")).toBe("model:tag");
     expect(
       getExpectedDcodeInferenceIdentity(
         "compatible-anthropic-endpoint",
@@ -64,6 +66,87 @@ describe("live DCode selection drift", () => {
       provider: "compatible-anthropic-endpoint",
       model: "openai:model:tag",
       endpoint: "https://inference.local",
+    });
+  });
+
+  it("accepts the generated OpenRouter identity (#9555)", () => {
+    const output = identity({
+      Provider: "openrouter",
+      Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+    });
+
+    expect(
+      getDcodeSelectionDrift("alpha", "openrouter-api", "nvidia/nemotron-3-ultra-550b-a55b", null, {
+        runCaptureOpenshell: () => output,
+      }),
+    ).toEqual({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      existingProvider: "openrouter",
+      existingModel: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+      unknown: false,
+    });
+  });
+
+  it("accepts the generated OpenRouter identity for its compatible endpoint (#9555)", () => {
+    const output = identity({
+      Provider: "openrouter",
+      Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+    });
+    const readDcodeSelectionDrift = bindDcodeSelectionDrift(
+      () => output,
+      "https://openrouter.ai/api/v1/",
+    );
+
+    expect(
+      readDcodeSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        null,
+      ),
+    ).toMatchObject({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      unknown: false,
+    });
+  });
+
+  it("keeps ordinary compatible endpoints on the OpenAI identity (#9555)", () => {
+    const output = identity({
+      Provider: "compatible-endpoint",
+      Model: "openai:model-a",
+    });
+    const readDcodeSelectionDrift = bindDcodeSelectionDrift(() => output);
+
+    expect(
+      readDcodeSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "model-a",
+        null,
+        "https://example.test/v1",
+      ),
+    ).toMatchObject({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      unknown: false,
+    });
+  });
+
+  it("rejects an OpenAI identity for an OpenRouter selection (#9555)", () => {
+    expect(
+      getDcodeSelectionDrift("alpha", "openrouter-api", "nvidia/nemotron-3-ultra-550b-a55b", null, {
+        runCaptureOpenshell: () => identity(),
+      }),
+    ).toMatchObject({
+      changed: true,
+      providerChanged: true,
+      modelChanged: true,
+      unknown: false,
     });
   });
 

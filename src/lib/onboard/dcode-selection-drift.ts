@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandboxInferenceConfig } from "../inference/config";
+import { OPENROUTER_ENDPOINT_URL, OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
 import type { SelectionDrift } from "./selection-drift";
 
 export type DcodeInferenceIdentity = {
@@ -12,11 +13,20 @@ export type DcodeInferenceIdentity = {
 };
 
 export type DcodeSelectionDriftDeps = {
+  requestedEndpointUrl?: string | null;
   runCaptureOpenshell(
     args: string[],
     options?: { ignoreError?: boolean },
   ): string | null | undefined;
 };
+
+export type DcodeSelectionDriftReader = (
+  sandboxName: string,
+  requestedProvider: string | null,
+  requestedModel: string | null,
+  preferredInferenceApi: string | null,
+  requestedEndpointUrl?: string | null,
+) => SelectionDrift;
 
 const IDENTITY_FIELDS = ["Route", "Provider", "Model", "Endpoint"] as const;
 type IdentityField = (typeof IDENTITY_FIELDS)[number];
@@ -48,7 +58,37 @@ const UNKNOWN_SELECTION_DRIFT: SelectionDrift = {
 
 export function normalizeDcodeModelName(model: string): string {
   const trimmed = model.trim();
-  return trimmed.startsWith("openai:") ? trimmed.slice("openai:".length) : trimmed;
+  for (const prefix of ["openai:", "openrouter:"]) {
+    if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length);
+  }
+  return trimmed;
+}
+
+function isOpenRouterEndpointUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    const openRouterUrl = new URL(OPENROUTER_ENDPOINT_URL);
+    return (
+      url.protocol === "https:" &&
+      url.hostname.toLowerCase() === openRouterUrl.hostname &&
+      url.pathname.replace(/\/+$/, "") === openRouterUrl.pathname.replace(/\/+$/, "")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getManagedDcodeProvider(
+  requestedProvider: string | null,
+  requestedEndpointUrl?: string | null,
+): "openai" | "openrouter" {
+  const provider = requestedProvider?.trim();
+  return provider === "openrouter" ||
+    provider === OPENROUTER_PROVIDER_NAME ||
+    (provider === "compatible-endpoint" && isOpenRouterEndpointUrl(requestedEndpointUrl))
+    ? "openrouter"
+    : "openai";
 }
 
 export function parseDcodeInferenceIdentity(
@@ -83,14 +123,19 @@ export function getExpectedDcodeInferenceIdentity(
   requestedProvider: string | null,
   requestedModel: string | null,
   preferredInferenceApi: string | null,
+  requestedEndpointUrl?: string | null,
 ): DcodeInferenceIdentity | null {
   if (requestedModel === null) return null;
 
   const route = getSandboxInferenceConfig(requestedModel, requestedProvider, preferredInferenceApi);
+  const managedProvider = getManagedDcodeProvider(requestedProvider, requestedEndpointUrl);
   return {
     route: route.providerKey,
-    provider: requestedProvider?.trim() || route.providerKey,
-    model: `openai:${normalizeDcodeModelName(requestedModel)}`,
+    provider:
+      managedProvider === "openrouter"
+        ? managedProvider
+        : requestedProvider?.trim() || route.providerKey,
+    model: `${managedProvider}:${normalizeDcodeModelName(requestedModel)}`,
     endpoint: route.inferenceBaseUrl,
   };
 }
@@ -106,6 +151,7 @@ export function getDcodeSelectionDrift(
     requestedProvider,
     requestedModel,
     preferredInferenceApi,
+    deps.requestedEndpointUrl,
   );
   if (!sandboxName || !expected) return { ...UNKNOWN_SELECTION_DRIFT };
 
@@ -135,4 +181,21 @@ export function getDcodeSelectionDrift(
     existingModel: existing.model,
     unknown: false,
   };
+}
+
+export function bindDcodeSelectionDrift(
+  runCaptureOpenshell: DcodeSelectionDriftDeps["runCaptureOpenshell"],
+  defaultEndpointUrl?: string | null,
+): DcodeSelectionDriftReader {
+  return (
+    sandboxName,
+    requestedProvider,
+    requestedModel,
+    preferredInferenceApi,
+    requestedEndpointUrl = defaultEndpointUrl,
+  ) =>
+    getDcodeSelectionDrift(sandboxName, requestedProvider, requestedModel, preferredInferenceApi, {
+      runCaptureOpenshell,
+      requestedEndpointUrl,
+    });
 }

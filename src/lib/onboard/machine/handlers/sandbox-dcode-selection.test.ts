@@ -207,6 +207,7 @@ describe("handleSandboxState live DCode selection", () => {
       "provider",
       "model",
       "openai-completions",
+      null,
     );
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
       resolved: expect.any(Object),
