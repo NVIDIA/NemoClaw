@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
+import {
+  type ManagedWorkloadAuthority,
+  readManagedWorkloadAuthority,
+} from "../../../src/lib/onboard/workload/authority.ts";
 import { load as loadSandboxRegistry } from "../../../src/lib/state/registry/persistence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
@@ -37,12 +40,7 @@ interface HermesGpuStartupProofOptions {
   status: Pick<ShellProbeResult, "stdout" | "stderr">;
 }
 
-interface HermesManagedWorkloadAuthorityProof {
-  readonly agent: unknown;
-  readonly contract: { readonly agent?: unknown; readonly reference?: unknown };
-  readonly profile: { readonly agent?: unknown };
-  readonly receipt: { readonly kind?: unknown; readonly reference?: unknown };
-}
+const IMMUTABLE_IMAGE_REFERENCE = /^[^@\s]+@sha256:[a-f0-9]{64}$/u;
 
 export function assertHermesGpuStartupOutputContract(
   gpuRoute: HermesGpuStartupProofOptions["gpuRoute"],
@@ -70,13 +68,22 @@ export function assertHermesGpuStartupOutputContract(
 export function assertHermesManagedWorkloadAuthority(
   sandboxName: string,
   registryImageTag: string | null | undefined,
-  authority: HermesManagedWorkloadAuthorityProof | null,
+  authority: ManagedWorkloadAuthority | null,
 ): string {
   if (!authority) {
-    throw new Error(`Hermes GPU sandbox '${sandboxName}' has no managed workload authority`);
+    throw new Error(
+      `Hermes GPU sandbox '${sandboxName}' has no managed workload authority`,
+    );
   }
-  if (typeof registryImageTag !== "string" || typeof authority.receipt.reference !== "string") {
-    throw new Error(`Hermes GPU sandbox '${sandboxName}' has no immutable image reference`);
+  if (
+    typeof registryImageTag !== "string" ||
+    typeof authority.receipt.reference !== "string" ||
+    !IMMUTABLE_IMAGE_REFERENCE.test(registryImageTag) ||
+    !IMMUTABLE_IMAGE_REFERENCE.test(authority.receipt.reference)
+  ) {
+    throw new Error(
+      `Hermes GPU sandbox '${sandboxName}' has no immutable image reference`,
+    );
   }
   const authorityReference = authority.receipt.reference;
   expect(authority).toMatchObject({
@@ -118,11 +125,14 @@ export async function assertHermesGpuStartupProof({
   expect(plainStatus).toContain("CUDA verified");
   expect(plainStatus).not.toMatch(/last CUDA proof failed|CUDA unverified/i);
 
-  const openshellState = await sandbox.openshell(["sandbox", "get", sandboxName], {
-    artifactName: "phase-4-openshell-sandbox-ready-gpu-startup",
-    env,
-    timeoutMs: 30_000,
-  });
+  const openshellState = await sandbox.openshell(
+    ["sandbox", "get", sandboxName],
+    {
+      artifactName: "phase-4-openshell-sandbox-ready-gpu-startup",
+      env,
+      timeoutMs: 30_000,
+    },
+  );
   expect(openshellState.exitCode, resultText(openshellState)).toBe(0);
   expect(stripAnsi(resultText(openshellState))).toMatch(/Phase:\s*Ready/i);
 
@@ -172,7 +182,9 @@ export async function assertHermesGpuStartupProof({
 
   const registryEntry = loadSandboxRegistry().sandboxes[sandboxName];
   if (!registryEntry) {
-    throw new Error(`Hermes GPU sandbox '${sandboxName}' is missing from the registry`);
+    throw new Error(
+      `Hermes GPU sandbox '${sandboxName}' is missing from the registry`,
+    );
   }
   const managedAuthority = readManagedWorkloadAuthority(registryEntry);
   const managedImageReference = assertHermesManagedWorkloadAuthority(
@@ -217,7 +229,9 @@ raise SystemExit(1)`,
     },
   );
   expect(extraPlaceholderEnv.exitCode, resultText(extraPlaceholderEnv)).toBe(0);
-  expect(extraPlaceholderEnv.stdout.trim()).toBe(expectedExtraPlaceholderAssignment);
+  expect(extraPlaceholderEnv.stdout.trim()).toBe(
+    expectedExtraPlaceholderAssignment,
+  );
 
   const guardWithoutStartupOwner = await sandbox.execShell(
     sandboxName,
@@ -277,14 +291,20 @@ raise SystemExit(1)`,
       timeoutMs: 30_000,
     },
   );
-  expect(dockerCommandBoundary.exitCode, resultText(dockerCommandBoundary)).toBe(0);
+  expect(
+    dockerCommandBoundary.exitCode,
+    resultText(dockerCommandBoundary),
+  ).toBe(0);
   const commandBoundary = JSON.parse(dockerCommandBoundary.stdout);
   expect(commandBoundary).toMatchObject({
     cmd: ["--workdir", "/sandbox"],
     entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
     has_openshell_sandbox_command: true,
   });
-  assertHermesContainerImageAuthority(commandBoundary.image, managedImageReference);
+  assertHermesContainerImageAuthority(
+    commandBoundary.image,
+    managedImageReference,
+  );
   expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
   expect(commandBoundary.command_is_sleep_infinity).toBe(false);
 
@@ -322,5 +342,7 @@ raise SystemExit(1)`,
     .map((line) => line.trim())
     .filter(Boolean);
   expect(allContainerNames).toHaveLength(1);
-  expect(allContainerNames.filter((name) => name.includes("-nemoclaw-gpu-backup-"))).toEqual([]);
+  expect(
+    allContainerNames.filter((name) => name.includes("-nemoclaw-gpu-backup-")),
+  ).toEqual([]);
 }

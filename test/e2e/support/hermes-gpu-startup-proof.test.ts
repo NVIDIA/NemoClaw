@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { ManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
 import {
   assertHermesContainerImageAuthority,
   assertHermesGpuStartupOutputContract,
@@ -27,12 +28,13 @@ const NON_FALLBACK_DISCLOSURE_CASES = [
   ["compatibility-only", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[4]],
 ] as const;
 const MANAGED_IMAGE_REFERENCE = `ghcr.io/nvidia/test@sha256:${"a".repeat(64)}`;
+const OTHER_MANAGED_IMAGE_REFERENCE = `ghcr.io/nvidia/test@sha256:${"b".repeat(64)}`;
 const VALID_MANAGED_AUTHORITY = {
   agent: "hermes",
   contract: { agent: "hermes", reference: MANAGED_IMAGE_REFERENCE },
   profile: { agent: "hermes" },
   receipt: { kind: "managed-image", reference: MANAGED_IMAGE_REFERENCE },
-} as const;
+} as unknown as ManagedWorkloadAuthority;
 
 describe("Hermes GPU startup output contract", () => {
   it.each(["native-success", "compatibility-only"] as const)(
@@ -111,7 +113,10 @@ describe("Hermes GPU managed-image authority proof", () => {
       "contract reference",
       {
         ...VALID_MANAGED_AUTHORITY,
-        contract: { ...VALID_MANAGED_AUTHORITY.contract, reference: "different-reference" },
+        contract: {
+          ...VALID_MANAGED_AUTHORITY.contract,
+          reference: "different-reference",
+        },
       },
     ],
     ["profile agent", { ...VALID_MANAGED_AUTHORITY, profile: { agent: "openclaw" } }],
@@ -124,7 +129,11 @@ describe("Hermes GPU managed-image authority proof", () => {
     ],
   ] as const)("rejects managed authority drift in %s (#9362)", (_label, authority) => {
     expect(() =>
-      assertHermesManagedWorkloadAuthority("hermes-gpu", MANAGED_IMAGE_REFERENCE, authority),
+      assertHermesManagedWorkloadAuthority(
+        "hermes-gpu",
+        MANAGED_IMAGE_REFERENCE,
+        authority as unknown as ManagedWorkloadAuthority,
+      ),
     ).toThrow();
   });
 
@@ -132,10 +141,26 @@ describe("Hermes GPU managed-image authority proof", () => {
     expect(() =>
       assertHermesManagedWorkloadAuthority(
         "hermes-gpu",
-        "ghcr.io/nvidia/test@sha256:different",
+        OTHER_MANAGED_IMAGE_REFERENCE,
         VALID_MANAGED_AUTHORITY,
       ),
     ).toThrow();
+  });
+
+  it.each([
+    "ghcr.io/nvidia/test:latest",
+    "ghcr.io/nvidia/test@sha256:different",
+    `ghcr.io/nvidia/test@sha256:${"A".repeat(64)}`,
+  ])("rejects matching mutable or malformed image authority: %s (#9362)", (reference) => {
+    const authority = {
+      ...VALID_MANAGED_AUTHORITY,
+      contract: { ...VALID_MANAGED_AUTHORITY.contract, reference },
+      receipt: { ...VALID_MANAGED_AUTHORITY.receipt, reference },
+    } as unknown as ManagedWorkloadAuthority;
+
+    expect(() => assertHermesManagedWorkloadAuthority("hermes-gpu", reference, authority)).toThrow(
+      "has no immutable image reference",
+    );
   });
 
   it("accepts the running container's exact digest-backed authority (#9362)", () => {
