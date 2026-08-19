@@ -28,7 +28,7 @@ function controller(
   traces = new Map<string, TerminologyTrace>(),
   normalizeE2e = (draft: Record<string, unknown>) => draft,
   securityCategoryNames: readonly string[] = SECURITY_CATEGORY_NAMES,
-  hasOpenPrOverlap = false,
+  hasOpenPrReplacement = false,
 ) {
   return createReviewSubmissionController({
     metadata: {
@@ -42,7 +42,7 @@ function controller(
           rationale: "A runtime boundary changed.",
           suggestedTests: ["deterministic runtime test"],
         },
-        hasOpenPrOverlap,
+        hasOpenPrReplacement,
       },
     },
     schema: reviewSchema,
@@ -203,11 +203,7 @@ describe("PR review advisor submission tools", () => {
     const submission = controller();
     await execute(submission, RECORD_FINDINGS_TOOL, { findings });
     const draft = receipt() as Record<string, any>;
-    draft.summary = {
-      ...draft.summary,
-      confidence,
-      recommendation: confidence === "low" ? "info_only" : draft.summary.recommendation,
-    };
+    draft.summary = { ...draft.summary, confidence };
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
     await execute(submission, SUBMIT_REVIEW_TOOL, {});
@@ -1117,7 +1113,7 @@ describe("PR review advisor submission tools", () => {
             rationale: "Unit coverage is sufficient.",
             suggestedTests: ["focused unit test"],
           },
-          hasOpenPrOverlap: false,
+          hasOpenPrReplacement: false,
         },
       },
       schema: reviewSchema,

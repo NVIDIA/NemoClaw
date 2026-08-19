@@ -133,7 +133,7 @@ function categoryBasisKey(category: Category, basisKind: FindingBasisKind): stri
   return `${category}:${basisKind}`;
 }
 
-function findingId(index: number): string {
+export function findingId(index: number): string {
   return `F-${String(index + 1).padStart(3, "0")}`;
 }
 

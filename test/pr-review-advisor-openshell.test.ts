@@ -264,9 +264,9 @@ describe("PR review advisor OpenShell wrapper", () => {
     const longFiles = Array.from({ length: 300 }, (_, index) => ({
       filename: `deep/${String(index).padStart(3, "0")}/${"segment/".repeat(480)}file.ts`,
     }));
-    const openPulls = Array.from({ length: 5 }, (_, index) => ({
+    const openPulls = Array.from({ length: 30 }, (_, index) => ({
       number: 8_000 + index,
-      title: `Overlapping PR ${index}`,
+      title: index === 29 ? "Replaces PR #7542" : `Concurrent PR ${index}`,
       body: "",
       labels: [],
     }));
@@ -308,12 +308,15 @@ describe("PR review advisor OpenShell wrapper", () => {
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
           });
-    expect(context?.openPrOverlaps).toHaveLength(5);
+    expect(context?.openPrOverlaps).toHaveLength(25);
     (context?.openPrOverlaps ?? []).forEach((overlap) => {
       expect(overlap.sameFileCount).toBe(300);
       expect(overlap.sameFiles).toHaveLength(20);
       expect(overlap.sameFiles.every((file) => file.length <= 300)).toBe(true);
     });
+    expect(context?.openPrOverlaps?.filter((overlap) => overlap.replacesCurrentPr)).toEqual([
+      expect.objectContaining({ number: 8_029 }),
+    ]);
     expect(() => serializePreparedGitHubContext(context)).not.toThrow();
   });
 

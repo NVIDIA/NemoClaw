@@ -906,7 +906,7 @@ process.exitCode = valid ? 0 : 1;`,
     }
   });
 
-  it("accepts bounded same-head primary and secondary artifacts for publication", () => {
+  it("accepts the legacy sinceLastReview field in bounded same-head artifacts", () => {
     const artifact = validPrimaryResult();
     artifact.summary = {
       ...(artifact.summary as Record<string, unknown>),

@@ -59,6 +59,7 @@ import {
 } from "./trusted-guidance.mts";
 import {
   collectGitHubReviewContext,
+  hasOpenPrReplacement,
   type GitHubReviewContext,
   readPreparedGitHubContext,
 } from "./github-context.mts";
@@ -495,7 +496,9 @@ async function runAdvisorConversation(
       changedFiles: options.metadata.changedFiles,
       deterministic: {
         testDepth: options.metadata.deterministic.testDepth,
-        hasOpenPrOverlap: (options.metadata.deterministic.github?.openPrOverlaps?.length ?? 0) > 0,
+        hasOpenPrReplacement: hasOpenPrReplacement(
+          options.metadata.deterministic.github?.openPrOverlaps,
+        ),
       },
     },
     schema: options.schema,

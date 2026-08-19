@@ -203,8 +203,10 @@ and required tests intact. A blocker keeps its evidence and required outcome in 
 Its simplification metadata renders once in a brief `Recommended refactoring` section below the
 blockers.
 Trusted submission derives `merge_after_fixes` when findings remain and `info_only` for low-confidence
-review evidence. For a finding-free review, it preserves `superseded` only when deterministic context
-contains an overlapping open PR; it derives `merge_as_is` otherwise. Failure output can also use
+review evidence. A finding-free `superseded` request succeeds only when deterministic context identifies
+an open PR that explicitly replaces the PR under review. Without that evidence, `submit_review` rejects
+the request and discards pending state. A `superseded` request with findings becomes
+`merge_after_fixes`. Other finding-free reviews become `merge_as_is`. Failure output can also use
 `info_only`.
 These recommendations describe advisor findings only.
 They never approve a PR, replace required human review, or change the repository's merge gates.

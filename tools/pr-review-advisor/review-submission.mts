@@ -16,6 +16,7 @@ import {
   REVIEW_FINDING_LIMIT,
   REVIEW_FINDING_SEVERITIES,
   REVIEW_FINDING_SIMPLIFICATION_TAGS,
+  findingId,
   validateReviewFindingSubmission,
   type ReviewFinding,
   type CandidateFindingInput,
@@ -246,7 +247,7 @@ export type ReviewSubmissionMetadata = Readonly<{
   changedFiles: readonly string[];
   deterministic: Readonly<{
     testDepth: ReviewTestDepth;
-    hasOpenPrOverlap: boolean;
+    hasOpenPrReplacement: boolean;
   }>;
 }>;
 export type NormalizeReviewE2e = (
@@ -335,7 +336,7 @@ export function createReviewSubmissionController({
       return toolResult({
         findingsRevision,
         findings: findingsDraft.map((finding, index) => ({
-          id: draftFindingId(index),
+          id: findingId(index),
           title: finding.title,
           category: finding.category,
           basisKind: finding.basis.kind,
@@ -407,7 +408,7 @@ export function createReviewSubmissionController({
       const summary = canonicalSummary(
         receiptDraft!.summary,
         openFindings,
-        metadata.deterministic.hasOpenPrOverlap,
+        metadata.deterministic.hasOpenPrReplacement,
       );
       const normalizedE2e = await normalizeE2e(structuredClone(e2eDraft!), metadata);
       const candidateTerminology = createTerminologyLedger(metadata.headSha);
@@ -528,7 +529,7 @@ function validateReceiptFindingReferences(
   receipt: DraftReceipt,
   findings: readonly CandidateFindingInput[],
 ): void {
-  const findingsById = new Map(findings.map((finding, index) => [draftFindingId(index), finding]));
+  const findingsById = new Map(findings.map((finding, index) => [findingId(index), finding]));
   validateConcernEntries(
     "acceptanceCoverage",
     receipt.acceptanceCoverage,
@@ -590,10 +591,6 @@ function validateConcernEntries(
   }
 }
 
-function draftFindingId(index: number): string {
-  return `F-${String(index + 1).padStart(3, "0")}`;
-}
-
 function publicReceiptDraft(receipt: DraftReceipt, deterministicTestDepth: ReviewTestDepth) {
   return {
     ...receipt,
@@ -610,11 +607,11 @@ function stripDraftFindingId(value: unknown): Record<string, unknown> {
 function canonicalSummary(
   input: Record<string, unknown>,
   findings: readonly ReviewFinding[],
-  hasOpenPrOverlap: boolean,
+  hasOpenPrReplacement: boolean,
 ): Record<string, unknown> {
   const confidence = input.confidence;
   const requestedRecommendation = input.recommendation;
-  if (findings.length === 0 && requestedRecommendation === "superseded" && !hasOpenPrOverlap) {
+  if (findings.length === 0 && requestedRecommendation === "superseded" && !hasOpenPrReplacement) {
     throw new Error(
       "submit_review cannot use summary.recommendation superseded without deterministic open-PR overlap evidence",
     );

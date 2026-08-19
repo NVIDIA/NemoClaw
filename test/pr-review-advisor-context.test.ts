@@ -13,7 +13,12 @@ import {
   detectLocalizedPatchSignals,
   detectSimplificationSignals,
 } from "../tools/pr-review-advisor/deterministic-context.mts";
-import { extractIssueRefs } from "../tools/pr-review-advisor/github-context.mts";
+import {
+  declaresReplacement,
+  extractIssueRefs,
+  hasOpenPrReplacement,
+  type OpenPrOverlap,
+} from "../tools/pr-review-advisor/github-context.mts";
 import { buildSystemPrompt } from "../tools/pr-review-advisor/trusted-guidance.mts";
 import { loadAdvisorSchema, metadata, ROOT } from "./helpers/pr-review-advisor-test-fixtures.ts";
 
@@ -55,6 +60,26 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
         testOnlySignal,
       ).verdict,
     ).toBe("unit_sufficient");
+  });
+
+  it("requires an explicit replacement relation for superseded recommendations", () => {
+    const overlap = (overrides: Partial<OpenPrOverlap>): OpenPrOverlap => ({
+      number: 7654,
+      title: "Concurrent change",
+      labels: [],
+      linkedIssues: [123],
+      linkedIssueCount: 1,
+      sameFiles: ["src/lib/example.ts"],
+      sameFileCount: 1,
+      duplicateLinkedIssues: [123],
+      replacesCurrentPr: false,
+      ...overrides,
+    });
+
+    expect(declaresReplacement("Refs #123 and shares files", 7542)).toBe(false);
+    expect(declaresReplacement("Replaces PR #7542", 7542)).toBe(true);
+    expect(hasOpenPrReplacement([overlap({})])).toBe(false);
+    expect(hasOpenPrReplacement([overlap({ replacesCurrentPr: true })])).toBe(true);
   });
 
   it("surfaces GitHub GraphQL errors even when the HTTP status is successful", async () => {

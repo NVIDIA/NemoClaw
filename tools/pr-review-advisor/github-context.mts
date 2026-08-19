@@ -21,7 +21,7 @@ const OVERLAP_PATH_CHARACTER_LIMIT = 300;
 const BODY_CHARACTER_LIMIT = 20_000;
 const COMMENT_BODY_CHARACTER_LIMIT = 4_000;
 
-type OpenPrOverlap = {
+export type OpenPrOverlap = {
   number: number;
   title: string;
   labels: string[];
@@ -30,6 +30,7 @@ type OpenPrOverlap = {
   sameFiles: string[];
   sameFileCount: number;
   duplicateLinkedIssues: number[];
+  replacesCurrentPr: boolean;
 };
 
 type LinkedIssue = {
@@ -336,7 +337,9 @@ async function collectOpenPrOverlaps(
         .filter((label): label is string => Boolean(label))
         .slice(0, 100)
         .map((label) => boundedText(label, 200, "pull-request label") as string);
-      const allLinkedIssues = extractIssueRefs(`${title}\n${body}`, number);
+      const pullText = `${title}\n${body}`;
+      const allLinkedIssues = extractIssueRefs(pullText, number);
+      const replacesCurrentPr = declaresReplacement(pullText, currentPrNumber);
       const duplicateLinkedIssues = allLinkedIssues.filter((issue) =>
         currentLinkedIssues.includes(issue),
       );
@@ -357,7 +360,12 @@ async function collectOpenPrOverlaps(
         }
       }
       const uniqueSameFiles = [...new Set(allSameFiles)];
-      if (uniqueSameFiles.length === 0 && duplicateLinkedIssues.length === 0) return null;
+      if (
+        uniqueSameFiles.length === 0 &&
+        duplicateLinkedIssues.length === 0 &&
+        !replacesCurrentPr
+      )
+        return null;
       return {
         number,
         title: boundedText(title, 1_000, "pull-request title") as string,
@@ -371,6 +379,7 @@ async function collectOpenPrOverlaps(
           ),
         sameFileCount: uniqueSameFiles.length,
         duplicateLinkedIssues,
+        replacesCurrentPr,
       };
     },
   );
@@ -378,11 +387,23 @@ async function collectOpenPrOverlaps(
     .filter((overlap): overlap is OpenPrOverlap => overlap !== null)
     .sort(
       (a, b) =>
+        Number(b.replacesCurrentPr) - Number(a.replacesCurrentPr) ||
         b.sameFileCount - a.sameFileCount ||
         b.duplicateLinkedIssues.length - a.duplicateLinkedIssues.length ||
         a.number - b.number,
     )
     .slice(0, 25);
+}
+
+export function declaresReplacement(text: string, currentPrNumber: number): boolean {
+  const relationPattern = /\b(?:replaces|supersedes)\s+(?:pr\s*)?#(\d+)\b/giu;
+  return [...text.matchAll(relationPattern)].some(
+    (match) => Number.parseInt(match[1] || "", 10) === currentPrNumber,
+  );
+}
+
+export function hasOpenPrReplacement(overlaps: readonly OpenPrOverlap[] | undefined): boolean {
+  return overlaps?.some((overlap) => overlap.replacesCurrentPr) ?? false;
 }
 
 export function extractIssueRefs(text: string, prNumber: number): number[] {
