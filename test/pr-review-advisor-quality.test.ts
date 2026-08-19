@@ -8,7 +8,6 @@ import {
   normalizeReviewResult,
   parseSecurityRubric,
   readTrustedSecurityRubric,
-  recordSynthesisValidationFailureOnDraft,
   renderDetailedReview,
   renderSummary,
   reviewQualityIssues,
@@ -79,14 +78,6 @@ describe("PR review advisor", () => {
         }),
       ]),
     );
-  });
-
-  it("preserves the canonical draft when same-session synthesis validation fails", () => {
-    const draft = normalizeReviewResult(validResult(), metadata());
-    const preserved = recordSynthesisValidationFailureOnDraft(draft, "validation timeout");
-
-    expect(preserved.findings).toEqual(draft.findings);
-    expect(preserved.reviewCompleteness.limitations[0]).toContain("using canonical draft");
   });
 
   it("loads the security rubric from the trusted module checkout, not cwd", () => {

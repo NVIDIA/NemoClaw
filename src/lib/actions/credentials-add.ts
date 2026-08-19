@@ -12,8 +12,13 @@ import {
 } from "../credentials/command-support";
 import { redact } from "../security/redact";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
+import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
-import { recordExtraProvider } from "./global";
+import {
+  forgetExtraProvider,
+  listManagedMcpCredentialReservations,
+  recordExtraProvider,
+} from "./global";
 
 export type CredentialsAddInput = {
   provider: string;
@@ -43,6 +48,69 @@ function ok(successLines: readonly string[]): CredentialsAddResult {
 
 function fail(failureLines: readonly string[], exitCode = 1): CredentialsAddResult {
   return { exitCode, successLines: [], failureLines };
+}
+
+function managedMcpCollisionFailure(
+  provider: string,
+  credentialKeys: readonly string[],
+  reservations: ReturnType<typeof listManagedMcpCredentialReservations>,
+): CredentialsAddResult | null {
+  for (const credential of credentialKeys) {
+    const collision = reservations.find((reservation) =>
+      reservation.credentialKeys.includes(credential),
+    );
+    if (collision) {
+      return fail([
+        `  Credential key '${credential}' is reserved by managed MCP server '${collision.server}' on sandbox '${collision.sandboxName}'.`,
+        `  Refusing to register provider '${provider}' because registered providers attach during sandbox rebuild.`,
+        "  Use a different credential key, or remove the managed MCP server before retrying.",
+      ]);
+    }
+  }
+  return null;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseProviderProfileCredentialKeys(output: string): string[] | null {
+  let profile: unknown;
+  try {
+    profile = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  if (!isObjectRecord(profile) || !Array.isArray(profile.credentials)) return null;
+
+  const keys = new Set<string>();
+  for (const credential of profile.credentials) {
+    if (!isObjectRecord(credential) || !Array.isArray(credential.env_vars)) return null;
+    for (const key of credential.env_vars) {
+      if (typeof key !== "string" || !ENV_NAME_PATTERN.test(key)) return null;
+      keys.add(key);
+    }
+  }
+  return [...keys].sort();
+}
+
+function inspectProviderProfileCredentialKeys(type: string): {
+  credentialKeys: string[] | null;
+  diagnostic: string;
+} {
+  const result = runOpenshellProviderCommand(
+    ["provider", "profile", "export", type, "--output", "json"],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    },
+  );
+  return {
+    credentialKeys:
+      result.status === 0 ? parseProviderProfileCredentialKeys(String(result.stdout || "")) : null,
+    diagnostic: redact(`${String(result.stderr || "")} ${String(result.stdout || "")}`).trim(),
+  };
 }
 
 function bundledProviderProfilePath(type: string): string {
@@ -159,6 +227,22 @@ export async function runCredentialsAddAction(
     }
   }
 
+  const managedMcpReservations = listManagedMcpCredentialReservations();
+  const explicitCollision = managedMcpCollisionFailure(
+    provider,
+    credentials,
+    managedMcpReservations,
+  );
+  if (explicitCollision) return explicitCollision;
+
+  if (fromExisting && managedMcpReservations.length > 0) {
+    return fail([
+      "  --from-existing does not expose credential keys before provider creation.",
+      "  Cannot compare imported provider credentials with keys reserved by managed MCP servers.",
+      "  Rerun with explicit --credential <ENV_NAME> input, or remove every managed MCP server that reserves credential keys before retrying.",
+    ]);
+  }
+
   const recoveryFailureLines: string[] = [];
   const recovered = await recoverGatewayForCredentialMutationOrExit((lines) => {
     recoveryFailureLines.push(...lines);
@@ -169,6 +253,19 @@ export async function runCredentialsAddAction(
 
   const providerProfileFailure = ensureBundledProviderProfile(type);
   if (providerProfileFailure) return providerProfileFailure;
+
+  let importedCredentialKeys: string[] | null = null;
+  if (fromExisting) {
+    const inspection = inspectProviderProfileCredentialKeys(type);
+    if (!inspection.credentialKeys) {
+      return fail([
+        `  Could not inspect credential keys for provider profile '${type}'.`,
+        "  Refusing --from-existing because the provider profile credential keys could not be compared with managed MCP reservations.",
+        ...(inspection.diagnostic ? [`  ${inspection.diagnostic}`] : []),
+      ]);
+    }
+    importedCredentialKeys = inspection.credentialKeys;
+  }
 
   const openshellArgs: string[] = ["provider", "create", "--name", provider, "--type", type];
   if (fromExisting) {
@@ -182,33 +279,51 @@ export async function runCredentialsAddAction(
     openshellArgs.push("--config", configPair);
   }
 
-  const result = runOpenshellProviderCommand(openshellArgs, {
-    env: Object.fromEntries(credentials.map((credential) => [credential, process.env[credential]])),
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
-
-  if (result.status === 0) {
-    recordExtraProvider(provider);
-    return ok([
-      `  Registered provider '${provider}' with the OpenShell gateway.`,
-      `  Verify with '${CLI_NAME} credentials list'.`,
-      `  Rebuild the target sandbox (\`${CLI_NAME} <sandbox> rebuild\`) to attach the new provider.`,
-    ]);
-  }
-
-  const rawStderr = String(result.stderr || "").trim();
-  const redactedStderr = redact(rawStderr);
-  const lines = [`  Could not register provider '${provider}'.`];
-  if (/already exists/i.test(rawStderr)) {
-    lines.push(
-      "",
-      `  '${provider}' is already registered.`,
-      `  Run '${CLI_NAME} credentials reset ${provider} --yes' first if you need to replace it.`,
+  return withMcpCredentialOwnershipLock(() => {
+    const providerCredentialKeys = importedCredentialKeys ?? credentials;
+    const collision = managedMcpCollisionFailure(
+      provider,
+      providerCredentialKeys,
+      listManagedMcpCredentialReservations(),
     );
-  } else if (redactedStderr) {
-    lines.push(`  ${redactedStderr}`);
-  }
-  return fail(lines);
+    if (collision) return collision;
+
+    const recordedReservation = recordExtraProvider(provider);
+    let keepReservation = false;
+    try {
+      const result = runOpenshellProviderCommand(openshellArgs, {
+        env: Object.fromEntries(
+          credentials.map((credential) => [credential, process.env[credential]]),
+        ),
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      });
+
+      if (result.status === 0) {
+        keepReservation = true;
+        return ok([
+          `  Registered provider '${provider}' with the OpenShell gateway.`,
+          `  Verify with '${CLI_NAME} credentials list'.`,
+          `  Rebuild the target sandbox (\`${CLI_NAME} <sandbox> rebuild\`) to attach the new provider.`,
+        ]);
+      }
+
+      const rawStderr = String(result.stderr || "").trim();
+      const redactedStderr = redact(rawStderr);
+      const lines = [`  Could not register provider '${provider}'.`];
+      if (/already exists/i.test(rawStderr)) {
+        lines.push(
+          "",
+          `  '${provider}' is already registered.`,
+          `  Run '${CLI_NAME} credentials reset ${provider} --yes' first if you need to replace it.`,
+        );
+      } else if (redactedStderr) {
+        lines.push(`  ${redactedStderr}`);
+      }
+      return fail(lines);
+    } finally {
+      if (recordedReservation && !keepReservation) forgetExtraProvider(provider);
+    }
+  });
 }

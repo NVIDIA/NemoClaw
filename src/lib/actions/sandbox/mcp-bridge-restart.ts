@@ -3,6 +3,7 @@
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
 import { registerAgentAdapter } from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -11,6 +12,7 @@ import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-b
 import {
   assertMcpProviderRecoverable,
   assertNoAttachedProviderCredentialCollisions,
+  assertNoProviderCredentialCollisions,
   attachProvider,
   detachMissingProviderReference,
   type McpCredentialRevisionObservation,
@@ -58,7 +60,10 @@ function resolvedTargetPins(
 }
 
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () => restartMcpBridgeUnlocked(sandboxName, server));
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:restart");
+    return restartMcpBridgeUnlocked(sandboxName, server);
+  });
 }
 
 async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): Promise<void> {
@@ -117,10 +122,9 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   for (const entry of missingProviderEntries) {
     waitForDetachedMcpCredential(sandboxName, entry);
   }
-  // Reject a collision on any target before the first policy/provider/adapter
-  // mutation. The per-entry checks below still close races at each mutation
-  // edge without allowing a later target to fail after an earlier update.
-  assertNoAttachedProviderCredentialCollisions(sandboxName, targetEntries);
+  // Inspect registered providers once before the first mutation. Per-entry
+  // checks below inspect only attached providers at each mutation edge.
+  assertNoProviderCredentialCollisions(sandboxName, targetEntries);
   for (const [name, storedEntry] of targets) {
     // Validated as a complete authenticated entry before gateway side effects.
     if (!storedEntry) continue;
@@ -218,10 +222,11 @@ export async function restoreExistingMcpBridgeRuntime(
       );
     }
   }
-  // Prove every restored entry is collision-free before the first mutation.
-  // The singleton check in the mutation loop still closes the race for each
-  // entry immediately before its policy and attachment are restored.
-  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
+  // Reject every current collision before the first restore mutation, so a
+  // pre-existing collision on a later entry cannot follow an earlier restore
+  // mutation. Per-entry attached-provider checks detect new collisions at each
+  // restore mutation edge.
+  assertNoProviderCredentialCollisions(sandboxName, entries);
   for (const entry of entries) {
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
     applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));

@@ -58,6 +58,7 @@ export interface PreflightStateOptions<
         wslDockerDesktopGpuProofPassed?: boolean;
         allowDeferredN1xManagedVllm?: boolean;
         resuming: true;
+        presentAdvisories?: boolean;
       },
     ): void;
     /** Revalidate canonical gateway ownership before resume probe effects. */
@@ -203,6 +204,7 @@ export async function handlePreflightState<
         ...(wslDockerDesktopGpuProofPassed === undefined ? {} : { wslDockerDesktopGpuProofPassed }),
         allowDeferredN1xManagedVllm,
         resuming: true,
+        presentAdvisories: false,
       });
     }
     deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);

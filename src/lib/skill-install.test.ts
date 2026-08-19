@@ -11,7 +11,6 @@ import {
   parseFrontmatter,
   postInstall,
   resolveSkillPaths,
-  shellQuote,
   validateRelativePath,
   verifyInstall,
 } from "./skill-install";
@@ -114,15 +113,6 @@ describe("validateRelativePath", () => {
   });
 });
 
-describe("shellQuote", () => {
-  it("wraps simple strings in single quotes", () => {
-    expect(shellQuote("hello")).toBe("'hello'");
-  });
-
-  it("escapes embedded single quotes", () => {
-    expect(shellQuote("it's")).toBe("'it'\\''s'");
-  });
-});
 
 describe("collectFiles", () => {
   let tmpDir: string;

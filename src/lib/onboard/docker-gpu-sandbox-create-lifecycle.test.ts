@@ -71,7 +71,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
       },
     });
 
+    expect(patch.replacementRuntimeId()).toBeNull();
     patch.maybeApplyDuringCreate();
+    expect(patch.replacementRuntimeId()).toBe(result.newContainerId);
     expect(recreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ waitForSupervisor: false }),
       expect.objectContaining({

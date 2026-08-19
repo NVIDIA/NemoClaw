@@ -81,16 +81,6 @@ function writeProductionSourceGraph(
   return { sourceLock, sourcePackage };
 }
 
-function writePackageManifests(
-  root: string,
-  entries: ReadonlyArray<readonly [directory: string, manifest: object]>,
-): void {
-  for (const [directory, manifest] of entries) {
-    fs.mkdirSync(path.join(root, directory), { recursive: true });
-    fs.writeFileSync(path.join(root, directory, "package.json"), `${JSON.stringify(manifest)}\n`);
-  }
-}
-
 describe("trusted reviewed npm audit workflow (#5896)", () => {
   it("accepts only an explicitly reviewed lock during a dependency transition", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
@@ -820,10 +810,16 @@ esac
       },
     };
     try {
-      writePackageManifests(root, [
+      for (const [directory, manifest] of [
         [aliasPath, aliasManifest],
         [requesterPath, requesterManifest],
-      ]);
+      ] as const) {
+        fs.mkdirSync(path.join(root, directory), { recursive: true });
+        fs.writeFileSync(
+          path.join(root, directory, "package.json"),
+          `${JSON.stringify(manifest)}\n`,
+        );
+      }
 
       fs.writeFileSync(path.join(root, "package-lock.json"), `${JSON.stringify(lock)}\n`);
 

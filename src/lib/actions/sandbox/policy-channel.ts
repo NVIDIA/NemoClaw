@@ -1207,7 +1207,6 @@ function buildCredentialAvailability(channelIds: readonly string[]): Record<stri
     for (const input of manifest.inputs) {
       if (input.kind !== "secret" || !input.envKey) continue;
       if (!getMessagingToken(input.envKey)) continue;
-      availability[input.id] = true;
       availability[`${manifest.id}.${input.id}`] = true;
       availability[input.envKey] = true;
     }

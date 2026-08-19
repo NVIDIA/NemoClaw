@@ -128,28 +128,29 @@ export function verifyDcodeBaseImageRuntimeEvidence(
   }
   const expectedDigest = contract.platformDigests[DCODE_BASE_IMAGE_TARGET_PLATFORM];
   const expectedReference = dcodeBaseImageReferenceForContract(contract);
-  if (
-    metadata.schema !== 1 ||
-    metadata.imageName !== contract.image ||
-    metadata.source !== "override" ||
-    metadata.pinnedRemoteRef !== undefined ||
-    metadata.digest !== expectedDigest ||
-    metadata.ref !== expectedReference ||
-    metadata.ref !== `${metadata.imageName}@${metadata.digest}`
-  ) {
+  const mismatchedFields = [
+    metadata.schema !== 1 ? "schema" : null,
+    metadata.imageName !== contract.image ? "image" : null,
+    metadata.source !== "override" ? "source" : null,
+    metadata.pinnedRemoteRef !== undefined ? "pinned reference" : null,
+    metadata.digest !== expectedDigest ? "digest" : null,
+    metadata.ref !== expectedReference ? "reference" : null,
+    metadata.ref !== `${metadata.imageName}@${metadata.digest}` ? "reference binding" : null,
+  ].filter((field): field is string => field !== null);
+  if (mismatchedFields.length > 0) {
     throw new Error(
-      `Deep Agents Code sandbox image did not use the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base digest`,
+      `Deep Agents Code sandbox image does not match the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base-image contract (mismatched fields: ${mismatchedFields.join(", ")})`,
     );
   }
   return {
     contractReference: contract.reference,
-    digest: metadata.digest,
-    image: metadata.imageName,
+    digest: expectedDigest,
+    image: contract.image,
     imageId: metadata.imageId,
     platform: DCODE_BASE_IMAGE_TARGET_PLATFORM,
-    reference: metadata.ref,
+    reference: expectedReference,
     sandboxImage,
-    source: metadata.source,
+    source: "override",
     sourceRevision: contract.sourceRevision,
   };
 }

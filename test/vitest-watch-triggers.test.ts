@@ -55,6 +55,7 @@ const OPAQUE_INPUTS = [
   "scripts/setup-jetson.sh",
   "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
+  ".github/workflows/base-image-platform.yaml",
   "scripts/export-managed-base-image-contract.sh",
   "scripts/checks/validate-managed-base-index.sh",
   "scripts/e2e/sanitize-trace-timing.py",
@@ -140,6 +141,11 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
     ]);
+    expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
+      "test/pi-candidate-runtime-artifacts.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/pull-public-exact-digest.test.ts",
+    ]);
     expect(triggeredBy("scripts/export-managed-base-image-contract.sh")).toEqual([
       "test/managed-base-image-contract.test.ts",
       "test/managed-image-publication-workflow.test.ts",
@@ -149,6 +155,12 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/dcode-base-image-workflow.test.ts",
       "test/openclaw-dependency-review.test.ts",
     ]);
+    expect(triggeredBy(".github/workflows/base-image-platform.yaml")).toEqual([
+      "test/dcode-base-image-workflow.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/perl-critical-cve-remediation.test.ts",
+      "test/pi-candidate-runtime-artifacts.test.ts",
+    ]);
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
       "test/validate-managed-base-index.test.ts",
     ]);
@@ -157,6 +169,10 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/validate-managed-base-index.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
+    ]);
+    expect(triggeredBy("scripts/checks/pull-public-exact-digest.sh")).toEqual([
+      "test/pull-public-exact-digest.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
     ]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",

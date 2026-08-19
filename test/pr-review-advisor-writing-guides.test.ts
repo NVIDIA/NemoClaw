@@ -95,7 +95,8 @@ describe("PR review advisor writing guides", () => {
     expect(prompt).toContain("E2E guidance is not a finding");
     expect(prompt).toContain("A required validation job is not a finding unless");
     expect(prompt).toContain("Prior-advisor availability, failure, or incompleteness");
-    expect(prompt).toContain("one flat atomic commit object");
+    expect(prompt).toContain("record_findings");
+    expect(prompt).toContain("submit_review is nonmutating validation and assembly");
     expect(prompt).toContain("delete, stdlib, native, yagni, or shrink");
     expect(prompt).not.toContain("Consider writing more tests for");
     expect(prompt).toContain("E2E suite architecture");
@@ -115,9 +116,8 @@ describe("PR review advisor writing guides", () => {
   it("documents the same-session conversation contract", () => {
     const prompt = buildSystemPrompt();
 
-    expect(prompt).toContain("multi-turn conversation");
-    expect(prompt).toContain(
-      "The immediately following validation turn stays in the same agent session",
-    );
+    expect(prompt).toContain("exactly two normal turns");
+    expect(prompt).toContain("investigate turn");
+    expect(prompt).toContain("challenge-and-record turn");
   });
 });

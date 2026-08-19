@@ -15,6 +15,7 @@ import {
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { requireRuntimeProviderBundleForSandbox } from "../../onboard/runtime-provider/access";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../onboard/runtime-provider/current";
 import {
   type ManagedWorkloadRebuildHandoff,
@@ -53,6 +54,10 @@ const defaultRouteDependencies: RebuildRouteRegistryDependencies = {
   load,
   save,
 };
+
+export function assertSandboxRebuildCommandAvailable(sandboxName: string): void {
+  assertHermesPortableCommandUnavailable(sandboxName, "sandbox:rebuild");
+}
 
 function normalizedRoute(entry: Partial<SandboxEntry>): GatewayInferenceRoute {
   const route = normalizeInferenceSelection(entry);
