@@ -33,7 +33,10 @@ function runNvmSweep(tmpHome: string, existing: readonly string[], removed: stri
         supervisor: null,
         requiredCapabilities: [],
       }),
-      rmSync: vi.fn((target: fs.PathLike) => removed.push(String(target))),
+      rmSync: vi.fn((target: fs.PathLike, options?: fs.RmOptions) => {
+        removed.push(String(target));
+        fs.rmSync(target, options);
+      }),
       run: vi.fn((command, args) =>
         command === "openshell" && args[0] === "gateway" && args[1] === "list"
           ? ok(JSON.stringify([{ name: "nemoclaw" }]))
@@ -129,7 +132,9 @@ describe("uninstall NVM leftovers", () => {
       const nodeVersionsDir = path.join(tmpHome, ".nvm", "versions", "node");
       expect(runNvmSweep(tmpHome, [nodeVersionsDir], removed).exitCode).toBe(0);
       expect(new Set(removed)).toEqual(new Set(bins));
+      bins.forEach((bin) => expect(fs.existsSync(bin)).toBe(false));
       expect(fs.readlinkSync(packageLink)).toBe(linkedPackage);
+      expect(fs.existsSync(linkedPackage)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
