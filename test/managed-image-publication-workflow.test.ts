@@ -260,7 +260,7 @@ describe("complete managed-image publication workflow", () => {
     },
   );
 
-  it("owns the platform build body in one reusable workflow (#9529)", () => {
+  it("defines the platform build in one reusable workflow (#9529)", () => {
     const workflow = readWorkflow("base-image-platform.yaml");
     const call = required(workflow.on?.workflow_call, "platform workflow is not reusable");
     const builder = required(workflow.jobs?.build, "platform workflow is missing its builder");
@@ -1369,7 +1369,7 @@ fi
   });
 
   it.each([0, 3])(
-    "fails before alias code on producer attempt %s",
+    "rejects producer attempt %s without publishing aliases",
     (producerAttempt) => {
       const barrier = step(
         managedPromoter(readWorkflow("managed-images.yaml")),

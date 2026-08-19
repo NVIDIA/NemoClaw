@@ -94,7 +94,7 @@ runs:
         set -euo pipefail
         contract="$RUNNER_TEMP/managed-base-contract/contract.json"
         if [ ! -f "$contract" ] || [ -L "$contract" ]; then
-          echo "ERROR: managed base image contract is missing or unsafe." >&2
+          echo "ERROR: managed base image contract is missing or is a symbolic link." >&2
           exit 1
         fi
         contract_size="$(wc -c < "$contract" | tr -d '[:space:]')"
