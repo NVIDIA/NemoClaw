@@ -95,14 +95,22 @@ export async function runDashboardConnectUntilForwardHandoff(
   let captureError: Error | null = null;
   let forceKillTimer: NodeJS.Timeout | undefined;
 
-  const requestProofStop = (): void => {
-    if (proofStopRequested) return;
-    proofStopRequested = true;
-    signalChild(child, "SIGTERM");
+  const scheduleForcedCleanup = (): void => {
+    if (forceKillTimer) clearTimeout(forceKillTimer);
     forceKillTimer = setTimeout(() => {
       cleanupEscalated = true;
       signalChildGroup(child, "SIGKILL");
     }, options.stopGraceMs ?? CONNECT_STOP_GRACE_MS);
+  };
+  const terminateGroup = (): void => {
+    signalChildGroup(child, "SIGTERM");
+    scheduleForcedCleanup();
+  };
+  const requestProofStop = (): void => {
+    if (proofStopRequested) return;
+    proofStopRequested = true;
+    signalChild(child, "SIGTERM");
+    scheduleForcedCleanup();
   };
   const inspectProof = (): void => {
     if (forwardProof || captureError) return;
@@ -121,7 +129,7 @@ export async function runDashboardConnectUntilForwardHandoff(
       inspectProof();
     } catch (error) {
       captureError = error instanceof Error ? error : new Error(String(error));
-      signalChildGroup(child, "SIGTERM");
+      terminateGroup();
     }
   };
   child.stdout?.on("data", (chunk: Buffer | string) => capture("stdout", chunk));
@@ -129,19 +137,11 @@ export async function runDashboardConnectUntilForwardHandoff(
 
   const deadline = setTimeout(() => {
     deadlineExpired = true;
-    signalChildGroup(child, "SIGTERM");
-    forceKillTimer = setTimeout(() => {
-      cleanupEscalated = true;
-      signalChildGroup(child, "SIGKILL");
-    }, options.stopGraceMs ?? CONNECT_STOP_GRACE_MS);
+    terminateGroup();
   }, options.timeoutMs);
   const abort = (): void => {
     aborted = true;
-    signalChildGroup(child, "SIGTERM");
-    forceKillTimer = setTimeout(() => {
-      cleanupEscalated = true;
-      signalChildGroup(child, "SIGKILL");
-    }, options.stopGraceMs ?? CONNECT_STOP_GRACE_MS);
+    terminateGroup();
   };
   if (options.signal?.aborted) abort();
   else options.signal?.addEventListener("abort", abort, { once: true });
