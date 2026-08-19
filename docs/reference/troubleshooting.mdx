@@ -3048,15 +3048,44 @@ For onboarding-time context, refer to [Use an Existing Server](../inference/loca
 
 Check whether vLLM is a bring-your-own server or the NemoClaw managed Spark profile:
 
-Set `NEMOCLAW_VLLM_PORT` to the existing server's host port when it differs from the managed default.
+Inspect the running containers, current memory, and kernel evidence:
 
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
-VLLM_HOST_PORT="${NEMOCLAW_VLLM_PORT:-8000}"
-curl -sf "http://127.0.0.1:${VLLM_HOST_PORT}/v1/models"
 free -h
 journalctl -k --since "24 hours ago" --no-pager | grep -Ei 'NVRM|OOM|out of memory|lockup|watchdog'
 ```
+
+For a NemoClaw-managed Spark profile, derive the host port from the managed container's fixed `8000/tcp` mapping.
+Bearer-protected profiles publish two bindings with the same host port, while bearerless profiles publish one all-interface binding.
+
+```bash
+VLLM_HOST_PORT="$(
+  docker port nemoclaw-vllm 8000/tcp |
+    sed -n 's/^.*:\([0-9][0-9]*\)$/\1/p' |
+    sort -u
+)"
+case "$VLLM_HOST_PORT" in
+  ""|*[!0-9]*)
+    printf '%s\n' 'Could not identify one managed vLLM host port.' >&2
+    exit 1
+    ;;
+esac
+if [ "$VLLM_HOST_PORT" -lt 1024 ] || [ "$VLLM_HOST_PORT" -gt 65535 ]; then
+  printf 'Invalid managed vLLM host port: %s\n' "$VLLM_HOST_PORT" >&2
+  exit 1
+fi
+curl -fsS "http://127.0.0.1:${VLLM_HOST_PORT}/health"
+```
+
+For an existing vLLM server, set `NEMOCLAW_VLLM_PORT` to its host port in the current shell:
+
+```bash
+VLLM_HOST_PORT="${NEMOCLAW_VLLM_PORT:?Set NEMOCLAW_VLLM_PORT to the existing vLLM host port.}"
+curl -fsS "http://127.0.0.1:${VLLM_HOST_PORT}/health"
+```
+
+Both checks use `/health` because a managed profile can require bearer authentication for `/v1/models`.
 
 For an existing vLLM server, inspect its launch arguments:
 
