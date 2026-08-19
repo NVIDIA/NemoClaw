@@ -355,58 +355,7 @@ describe("preparePortableExperimentalHost", () => {
     expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
   });
 
-  it("creates the portable network before publishing the registry gateway address (#9461)", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
-    tempDirs.push(home);
-    const docker = vi
-      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
-      .mockReturnValueOnce(result()) // --version probe
-      .mockReturnValueOnce(result(1)) // network inspect: absent
-      .mockReturnValueOnce(result()) // network create
-      .mockReturnValueOnce(result(1)) // registry inspect: absent
-      .mockReturnValueOnce(result()); // registry run
-
-    preparePortableExperimentalHost(
-      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-      {
-        platform: "linux",
-        home,
-        uid: 1001,
-        systemctl: () => result(),
-        podman: () => result(0, "/run/user/1001/podman/podman.sock"),
-        docker,
-        hardenSocketDirectory: vi.fn(),
-        validateConfigAuthority: vi.fn(),
-      },
-      undefined,
-      { simulateExistingPortableNetwork: false },
-    );
-
-    expect(docker.mock.calls[1]?.[0]).toEqual([
-      "network",
-      "inspect",
-      "--format",
-      "{{json .IPAM.Config}}",
-      PORTABLE_DOCKER_NETWORK_NAME,
-    ]);
-    expect(docker.mock.calls[2]?.[0]).toEqual([
-      "network",
-      "create",
-      "--subnet",
-      PORTABLE_DOCKER_NETWORK_SUBNET,
-      PORTABLE_DOCKER_NETWORK_NAME,
-    ]);
-    expect(docker.mock.calls[4]?.[0]).toEqual(
-      expect.arrayContaining([
-        "--network",
-        PORTABLE_DOCKER_NETWORK_NAME,
-        "--ip",
-        PORTABLE_REGISTRY_IP,
-      ]),
-    );
-  });
-
-  it("retries registry startup by reusing the portable alias and network (#9461)", () => {
+  it("creates then reuses the portable network when registry startup retries (#9461)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
     const docker = vi
@@ -438,6 +387,13 @@ describe("preparePortableExperimentalHost", () => {
     });
 
     const commands = docker.mock.calls.map(([args]) => args);
+    expect(commands.slice(1, 5).map(([command]) => command)).toEqual([
+      "network",
+      "network",
+      "inspect",
+      "run",
+    ]);
+    expect(commands.slice(6, 9).map(([command]) => command)).toEqual(["network", "inspect", "run"]);
     expect(commands.filter(([command]) => command === "network")).toEqual([
       ["network", "inspect", "--format", "{{json .IPAM.Config}}", PORTABLE_DOCKER_NETWORK_NAME],
       [
@@ -449,7 +405,20 @@ describe("preparePortableExperimentalHost", () => {
       ],
       ["network", "inspect", "--format", "{{json .IPAM.Config}}", PORTABLE_DOCKER_NETWORK_NAME],
     ]);
-    expect(commands.filter(([command]) => command === "run")).toHaveLength(2);
+    expect(commands.filter(([command]) => command === "run")).toEqual([
+      expect.arrayContaining([
+        "--network",
+        PORTABLE_DOCKER_NETWORK_NAME,
+        "--ip",
+        PORTABLE_REGISTRY_IP,
+      ]),
+      expect.arrayContaining([
+        "--network",
+        PORTABLE_DOCKER_NETWORK_NAME,
+        "--ip",
+        PORTABLE_REGISTRY_IP,
+      ]),
+    ]);
     expect(ip).toHaveBeenCalledTimes(2);
     expect(sudo).not.toHaveBeenCalled();
   });
