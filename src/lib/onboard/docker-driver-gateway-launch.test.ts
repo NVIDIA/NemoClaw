@@ -158,7 +158,7 @@ describe("docker-driver-gateway-launch", () => {
   it("writes the exact rootless socket only for the Podman driver", () => {
     const toml = buildDockerDriverGatewayConfigToml({
       OPENSHELL_DRIVERS: "podman",
-      OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
+      OPENSHELL_GRPC_ENDPOINT: "https://169.254.2.2:8080",
       OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
       OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",

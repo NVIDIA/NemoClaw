@@ -209,7 +209,7 @@ describe("OpenShell 0.0.101 migration review", () => {
       const podmanToml = buildDockerDriverGatewayConfigToml({
         ...untrustedNewSurfaceInputs,
         OPENSHELL_DRIVERS: "podman",
-        OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
+        OPENSHELL_GRPC_ENDPOINT: "https://169.254.2.2:8080",
         OPENSHELL_DOCKER_NETWORK_NAME: "openshell-podman",
         OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
         OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",

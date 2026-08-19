@@ -239,7 +239,7 @@ describe("docker-driver-gateway-local-tls", () => {
           }) as never,
         }),
       ).toThrow("did not create a complete");
-      expect(calls[0]).toEqual(expect.arrayContaining(["--server-san", "169.254.1.2"]));
+      expect(calls[0]).toEqual(expect.arrayContaining(["--server-san", "169.254.2.2"]));
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
@@ -266,8 +266,11 @@ describe("docker-driver-gateway-local-tls", () => {
 
       expect(bundle.localTlsDir).toBe(path.join(stateDir, "tls"));
       expect(certgenCalls).toBe(0);
-      expect(Object.entries(contents).every(([filePath, content]) =>
-          Object.is(fs.readFileSync(filePath, "utf-8"), content))).toBe(true);
+      expect(
+        Object.entries(contents).every(([filePath, content]) =>
+          Object.is(fs.readFileSync(filePath, "utf-8"), content),
+        ),
+      ).toBe(true);
       expect(fs.statSync(paths.serverKeyPath).mode & 0o777).toBe(0o600);
       expect(fs.statSync(paths.clientKeyPath).mode & 0o777).toBe(0o600);
     } finally {

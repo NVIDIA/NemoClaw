@@ -156,14 +156,14 @@ describe("buildDockerDriverGatewayEnv", () => {
         OPENSHELL_DRIVERS: "podman",
         CONTAINERS_CONF: "/tmp/nemoclaw-portable/containers.conf",
         OPENSHELL_BIND_ADDRESS: "0.0.0.0",
-        OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
+        OPENSHELL_GRPC_ENDPOINT: "https://169.254.2.2:8080",
         NETAVARK_FW: "iptables",
         OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
       });
       const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(toml).toContain('compute_drivers = ["podman"]');
       expect(toml).toContain("[openshell.drivers.podman]");
-      expect(toml).toContain('host_gateway_ip = "169.254.1.2"');
+      expect(toml).toContain('host_gateway_ip = "169.254.2.2"');
       expect(toml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
       expect(toml).not.toContain("supervisor_bin");
     } finally {
@@ -198,9 +198,7 @@ describe("buildDockerDriverGatewayEnv", () => {
   });
 });
 
-
 describe("writeDockerGatewayDebEnvOverride", () => {
-
   it("rejects an env file swapped to a symlink after opening without writing its target", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const envDir = path.join(tempHome, ".config", "openshell");
@@ -242,7 +240,6 @@ describe("writeDockerGatewayDebEnvOverride", () => {
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
-
 
   it("uses the provided HOME as the config root fallback when XDG_CONFIG_HOME is unset", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-home-"));
