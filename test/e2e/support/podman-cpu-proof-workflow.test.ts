@@ -527,7 +527,11 @@ describe("native Podman CPU proof workflow", () => {
         [fixture.runner.envAtCreate.get(delegationTemp), "E2E_CPU_DELEGATION_DROP_IN_TEMP_CREATED"],
         [fixture.runner.envAtCreate.get(userSliceTemp), "E2E_USER_SLICE_DROP_IN_TEMP_CREATED"],
       ] as const;
-      expect(records.every(([environment, name]) => environment?.includes(`${name}=unrecorded\n`) === true)).toBe(true);
+      expect(
+        records.every(
+          ([environment, name]) => environment?.includes(`${name}=unrecorded\n`) === true,
+        ),
+      ).toBe(true);
       expect(fixture.runner.envAtCreate.get(appTemp)).toContain(
         `E2E_APP_SLICE_DROP_IN_TEMP=${appTemp}\n`,
       );
@@ -820,6 +824,7 @@ describe("native Podman CPU proof workflow", () => {
   });
 
   it("runs the real pinned OpenShell activation proof without synthetic fixtures", () => {
+    const configureGateway = namedStep("Configure exact Portable host gateway alias");
     const proof = namedStep(
       "Prove pinned OpenShell activation and registered-agent Podman CPU lifecycle",
     );
@@ -855,6 +860,15 @@ describe("native Podman CPU proof workflow", () => {
     expect(scripts).toMatch(/onboard\.js"\)\)\.default[\s\S]*stopHostGatewayProcesses/u);
     expect(scripts).not.toContain("openshell-sandbox-$sandbox_name");
     expect(scripts).not.toContain("openshell.sandbox-name");
+    expect(configureGateway.run).toContain(
+      'await import("./dist/lib/onboard/docker-driver-platform.js")',
+    );
+    expect(configureGateway.run).toContain("PORTABLE_HOST_GATEWAY_IP");
+    expect(configureGateway.run).toContain(
+      'sudo ip address replace "$portable_host_gateway_ip/32" dev lo',
+    );
+    expect(configureGateway.run).toContain('grep -Fx "$portable_host_gateway_ip/32"');
+    expect(configureGateway.run).toContain("E2E_PORTABLE_HOST_GATEWAY_IP");
     expect(diagnostics.if).toBe("failure()");
     expect(diagnostics.run).toContain('podman --url "$endpoint" inspect');
     expect(diagnostics.run).toContain(
@@ -872,6 +886,10 @@ describe("native Podman CPU proof workflow", () => {
     expect(cleanup.run).toContain('podman --url "$endpoint" volume rm --force');
     expect(cleanup.run).toContain('podman --url "$endpoint" secret rm');
     expect(cleanup.run).toContain('podman --url "$endpoint" network rm openshell-docker');
+    expect(cleanup.run).toContain(
+      '[ "${E2E_PORTABLE_HOST_GATEWAY_IP:-}" = "$portable_host_gateway_ip" ]',
+    );
+    expect(cleanup.run).toContain('sudo ip address delete "$portable_host_gateway_ip/32" dev lo');
     const stopGateway = namedStep("Stop the exact portable-retirement proof gateway");
     expect(stopGateway.env?.E2E_PORTABLE_GATEWAY_STOP_SCOPE).toBe("full");
   });
