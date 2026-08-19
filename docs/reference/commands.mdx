@@ -287,6 +287,13 @@ nemohermes onboard [options]
 nemoclaw onboard --agent hermes [options]
 ```
 
+The experimental Portable Hermes path records `pending`, `configuring`, and `active` lifecycle phases under the current user's rootless Podman authority.
+If onboarding stops in `pending` or `configuring`, correct the reported condition and run `nemohermes onboard --experimental-profile portable --resume`.
+Mutation, connection, and recovery commands do not act on an incomplete receipt; `status` and `doctor` report its phase.
+After the receipt reaches `active`, the supported runtime actions are `launch`, `connect`, `recover`, `start`, and `stop`; `status` and read-only `doctor` provide diagnostics.
+Other sandbox commands fail before their action runs while the Portable Hermes receipt exists.
+The supported commands revalidate the receipt-owned Podman container and do not fall back to Docker.
+
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
@@ -1243,6 +1250,15 @@ Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `$$nemoclaw <name> rebuild` hint.
 If another terminal is already connected to the sandbox, `connect` prints a note with the number of existing sessions before proceeding. Multiple concurrent sessions are allowed.
 
+<AgentOnly variant="openclaw">
+
+While an OpenClaw session opened by `connect` remains active, NemoClaw watches for a Shields auto-relock that occurs after the connection begins.
+When one occurs, the host terminal prints one warning for that event on stderr, explains that restricted operations can now fail, and shows the exact `$$nemoclaw <name> shields down --timeout ...` command to run on the host.
+The connected session remains open.
+If the Shields audit cannot be read, NemoClaw keeps the session open and might not print the advisory warning.
+
+</AgentOnly>
+
 Without `--probe-only`, `connect` does not pull a model itself, but it does inspect managed-vLLM install variables such as `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` if you exported them in the same shell.
 An unknown model slug, malformed extra-args JSON, or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
 Unset the managed-vLLM variable, or fix the value, before retrying a regular connection.
@@ -1818,7 +1834,7 @@ Terminal agents do not have a gateway runtime and fail as unsupported.
 
 ### `$$nemoclaw <name> stop`
 
-Stop the sandbox's Docker container while preserving all of its state.
+Stop the sandbox's local runtime container while preserving all of its state.
 Workspace files, credentials, network policies, the registry entry, and the OpenShell sandbox record stay in place.
 Use this to free CPU, memory, and GPU resources without destroying the sandbox; use [`$$nemoclaw <name> destroy`](#$$nemoclaw-name-destroy) when you want to delete it instead.
 
@@ -1826,20 +1842,31 @@ Use this to free CPU, memory, and GPU resources without destroying the sandbox; 
 $$nemoclaw my-assistant stop
 ```
 
-For OpenClaw-managed gateways, the command first asks the in-sandbox gateway to shut down its channels gracefully; agent-managed gateways (for example Hermes) are supervised inside the sandbox and shut down with the container's stop signal.
+<AgentOnly variant="hermes">
+
+For an active Portable Hermes receipt, `stop` targets only the exact receipt-owned Podman container and waits for its terminal stopped state without using Docker as a fallback.
+A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
+Portable Hermes does not run the Docker provider's channel hook or the generic post-stop dashboard-forward cleanup.
+
+</AgentOnly>
+
+For OpenClaw-managed gateways, the command first asks the in-sandbox gateway to shut down its channels gracefully; non-Portable agent-managed gateways (for example Hermes) are supervised inside the sandbox and shut down with the container's stop signal.
 Then the container stops; a container stuck in a crash loop is stopped the same way, which also disarms its restart policy.
 <AgentOnly variant="openclaw,hermes">
-After the container stops, NemoClaw attempts to stop that sandbox's host dashboard forward.
+Except for Portable Hermes, after the container stops NemoClaw attempts to stop that sandbox's host dashboard forward.
 If the container does not stop, NemoClaw leaves the dashboard forward running.
 </AgentOnly>
 The shared host gateway, tunnel services, and any local NIM inference container serve other sandboxes and keep running.
 <AgentOnly variant="openclaw,hermes">
-Stopping an already-stopped sandbox succeeds and attempts to remove any leftover dashboard forward for that sandbox.
+Stopping an already-stopped sandbox succeeds.
+Except for Portable Hermes, NemoClaw also attempts to remove any leftover dashboard forward for that sandbox.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Stopping an already-stopped sandbox succeeds without changes.
 </AgentOnly>
-The command controls the local container directly, so it is available for local-container drivers (the default Docker driver and the vm driver) and unavailable for remote drivers such as kubernetes; if the Docker daemon itself is unreachable, the command reports the outage instead of guessing at container state.
+The command is available only when NemoClaw holds local-container authority.
+Portable profiles use receipt-owned Podman authority; non-Portable local-container paths use the default Docker driver or the vm driver.
+Remote drivers such as kubernetes are unavailable, and an unreachable selected runtime produces an outage report instead of a guessed container state.
 
 ### `$$nemoclaw <name> start`
 
@@ -1848,6 +1875,13 @@ Restart a sandbox container that was stopped with [`$$nemoclaw <name> stop`](#$$
 ```bash
 $$nemoclaw my-assistant start
 ```
+
+<AgentOnly variant="hermes">
+
+For an active Portable Hermes receipt, `start` revalidates and recovers the exact receipt-owned Podman container and manifest-owned Hermes startup command without using Docker as a fallback.
+A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
+
+</AgentOnly>
 
 Starting an already-running sandbox skips the container start and still runs the gateway and forward health checks.
 A paused container is unpaused.
@@ -1875,6 +1909,13 @@ Use this form when you care about a specific sandbox's live OpenShell state, age
 Do not pass a sandbox name to `$$nemoclaw status`; that command is the global all-sandbox/service overview.
 NemoClaw resolves the sandbox's recorded owning OpenShell gateway before querying live state.
 If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
+
+<AgentOnly variant="hermes">
+
+For Portable Hermes, `status` reports `Portable lifecycle phase: pending`, `configuring`, or `active` from the receipt authority without running Docker or OpenClaw status work.
+An active receipt must match its sandbox registry lifecycle identity; a mismatch fails instead of reporting status from another runtime.
+
+</AgentOnly>
 
 For a `compatible-endpoint` route that uses `openai-completions`, the text output prints `Reasoning effort` as `low`, `medium`, `high`, or `endpoint-default`.
 The line is omitted for another provider or API family.
@@ -2117,6 +2158,14 @@ For gateway-based agents, it also reports messaging channel conflicts within the
 When lifecycle metadata is incomplete, the report names the missing or invalid fields and affected operations without printing stored values.
 Dashboard metadata is required only for agents that manage a dashboard.
 If the registered gateway binding is invalid, `doctor` reports a failed gateway check and does not select, probe, or recover a gateway from that binding.
+
+<AgentOnly variant="hermes">
+
+For Portable Hermes, `doctor` reports a `Portable lifecycle` check with the receipt phase.
+The `pending` and `configuring` phases produce a warning, while `active` passes when the receipt and registry authority agree.
+This read-only path does not run Docker or OpenClaw checks, and `doctor --fix` is not supported while the Portable Hermes receipt exists.
+
+</AgentOnly>
 
 For inference health, `doctor` treats the probe to `https://inference.local/v1/models` from inside the sandbox as authoritative.
 HTTP responses from `200` through `499`, including `401` and `403`, pass this check.
