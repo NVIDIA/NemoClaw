@@ -114,6 +114,33 @@ describe("live DCode selection drift", () => {
     });
   });
 
+  it.each([
+    "https://openrouter.ai:8443/api/v1",
+    "https://user:password@openrouter.ai/api/v1",
+    "https://openrouter.ai/api/v1?route=other",
+    "https://openrouter.ai/api/v1#route",
+  ])("rejects a noncanonical OpenRouter-compatible endpoint: %s (#9555)", (endpointUrl) => {
+    const output = identity({
+      Provider: "openrouter",
+      Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+    });
+    const readDcodeSelectionDrift = bindDcodeSelectionDrift(() => output, endpointUrl);
+
+    expect(
+      readDcodeSelectionDrift(
+        "alpha",
+        "compatible-endpoint",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        null,
+      ),
+    ).toMatchObject({
+      changed: true,
+      providerChanged: true,
+      modelChanged: true,
+      unknown: false,
+    });
+  });
+
   it("keeps ordinary compatible endpoints on the OpenAI identity (#9555)", () => {
     const output = identity({
       Provider: "compatible-endpoint",

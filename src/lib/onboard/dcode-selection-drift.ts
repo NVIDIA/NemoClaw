@@ -70,8 +70,11 @@ function isOpenRouterEndpointUrl(value: string | null | undefined): boolean {
     const url = new URL(value);
     const openRouterUrl = new URL(OPENROUTER_ENDPOINT_URL);
     return (
-      url.protocol === "https:" &&
-      url.hostname.toLowerCase() === openRouterUrl.hostname &&
+      url.origin === openRouterUrl.origin &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
       url.pathname.replace(/\/+$/, "") === openRouterUrl.pathname.replace(/\/+$/, "")
     );
   } catch {

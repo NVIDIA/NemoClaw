@@ -258,6 +258,37 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
   });
 
+  it("reuses a ready OpenRouter-compatible sandbox after endpoint-aware verification (#9555)", async () => {
+    const endpointUrl = "https://openrouter.ai/api/v1/";
+    const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getDcodeSelectionDrift,
+      getSandboxRegistryEntry: (name) =>
+        dcodeRegistryEntry(name, {
+          provider: "compatible-endpoint",
+          model: "nvidia/nemotron-3-ultra-550b-a55b",
+        }),
+    });
+
+    await handleSandboxState({
+      ...dcodeOptions(deps),
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      endpointUrl,
+    });
+
+    expect(getDcodeSelectionDrift).toHaveBeenCalledWith(
+      "saved",
+      "compatible-endpoint",
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "openai-completions",
+      endpointUrl,
+    );
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
+  });
+
   it("refuses managed DCode reuse when the registry record is missing (#6311)", async () => {
     const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
     const { deps, calls } = createDeps({
