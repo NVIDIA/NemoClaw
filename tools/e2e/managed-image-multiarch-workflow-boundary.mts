@@ -29,7 +29,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
 const PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime";
-const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_ID}') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${PROTECTED_RUNTIME_JOB_ID}')) }}`;
+const SELECTOR = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_ID}') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${PROTECTED_RUNTIME_JOB_ID}')) }}`;
 const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =

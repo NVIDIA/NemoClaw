@@ -95,6 +95,12 @@ describe("larger-runner workflow routing boundary", () => {
     },
     {
       label: "ubuntu-24.04-8core",
+      name: "the workflow is not running from main",
+      ref: "refs/heads/feature",
+      repository: "NVIDIA/NemoClaw",
+    },
+    {
+      label: "ubuntu-24.04-8core",
       name: "the workflow belongs to another repository",
       ref: "refs/heads/main",
       repository: "someone/NemoClaw",
@@ -121,32 +127,29 @@ describe("larger-runner workflow routing boundary", () => {
   );
 
   // source-shape-contract: security -- Executes the shipped pre-checkout router to prove trusted main can reach only the reviewed heavy lanes
-  it.each(["refs/heads/main", "refs/heads/feature"])(
-    "routes only the measured heavy lanes on a direct run from %s (#7145)",
-    (ref) => {
-      const largerRunner = "ubuntu-24.04-8core";
-      expect(
-        evaluateRouting(readWorkflow() as RoutingWorkflow, {
-          label: largerRunner,
-          ref,
-          repository: "NVIDIA/NemoClaw",
-        }),
-      ).toEqual({
-        ...standardRouting,
-        "channels-stop-start-hermes": largerRunner,
-        "common-egress-agent": largerRunner,
-        "hermes-discord": largerRunner,
-        "hermes-e2e": largerRunner,
-        "hermes-inference-switch": largerRunner,
-        "hermes-shields-config": largerRunner,
-        "mcp-bridge-deepagents": largerRunner,
-        "mcp-bridge-hermes": largerRunner,
-        "rebuild-hermes": largerRunner,
-        "rebuild-hermes-stale-base": largerRunner,
-        "security-posture-hermes": largerRunner,
-      });
-    },
-  );
+  it("routes only the measured heavy lanes on trusted main (#7145)", () => {
+    const largerRunner = "ubuntu-24.04-8core";
+    expect(
+      evaluateRouting(readWorkflow() as RoutingWorkflow, {
+        label: largerRunner,
+        ref: "refs/heads/main",
+        repository: "NVIDIA/NemoClaw",
+      }),
+    ).toEqual({
+      ...standardRouting,
+      "channels-stop-start-hermes": largerRunner,
+      "common-egress-agent": largerRunner,
+      "hermes-discord": largerRunner,
+      "hermes-e2e": largerRunner,
+      "hermes-inference-switch": largerRunner,
+      "hermes-shields-config": largerRunner,
+      "mcp-bridge-deepagents": largerRunner,
+      "mcp-bridge-hermes": largerRunner,
+      "rebuild-hermes": largerRunner,
+      "rebuild-hermes-stale-base": largerRunner,
+      "security-posture-hermes": largerRunner,
+    });
+  });
 
   it.each(Array.from(E2E_CATALOGUE_RUNNER_KEYS, (value) => [value]))(
     "keeps catalogue runner key %s in the trusted routing map (#7145)",
@@ -179,7 +182,7 @@ describe("larger-runner workflow routing boundary", () => {
     generate.outputs!.runner_routing = "${{ steps.matrix.outputs.runner_routing }}";
     routing.env!.CHECKOUT_SHA = "${{ github.sha }}";
     routing.env!.REF = "${{ inputs.base_sha }}";
-    routing.run = routing.run!.replace('"${REPOSITORY}" == "NVIDIA/NemoClaw" && ', "");
+    routing.run = routing.run!.replace('"${REF}" == "refs/heads/main" && ', "");
     routing.run = routing.run!.replace('-z "${CHECKOUT_SHA}" && ', "");
     steps.splice(steps.indexOf(routing), 1);
     steps.push(routing);
@@ -188,7 +191,7 @@ describe("larger-runner workflow routing boundary", () => {
       expect.arrayContaining([
         "generate-matrix job must expose the trusted larger-runner routing output",
         "trusted larger-runner routing step must bind only the administrator label and trusted repository identity",
-        "trusted larger-runner routing step must preserve the exact direct-run map and ubuntu-latest fallback",
+        "trusted larger-runner routing step must preserve the exact main-only map and ubuntu-latest fallback",
         "trusted larger-runner routing step must run before PR checkout",
       ]),
     );

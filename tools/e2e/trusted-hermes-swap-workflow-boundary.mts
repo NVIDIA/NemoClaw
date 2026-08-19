@@ -19,7 +19,7 @@ export const TRUSTED_HERMES_SWAP_STEP_NAME = "Provision trusted Hermes E2E swap"
 export const TRUSTED_HERMES_SWAP_STEP_ID = "trusted_hermes_swap";
 
 const TRUSTED_HERMES_SWAP_IF =
-  "github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))";
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')";
 const TRUSTED_HERMES_E2E_SELECTION = `(${selectorsForCanonicalE2eId("hermes-e2e")
   .flatMap((selector) => [
     `contains(format(',{0},', inputs.jobs), ',${selector},')`,
@@ -60,17 +60,11 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
   "  exit 1",
   "}",
   "",
-  'if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]; then',
-  '  fail "workflow must run from NVIDIA/NemoClaw"',
+  'if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then',
+  '  fail "workflow must run from NVIDIA/NemoClaw main"',
   "fi",
   'if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then',
   '  fail "workflow event must be push or workflow_dispatch"',
-  "fi",
-  'if [[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]; then',
-  '  fail "push workflow must run from NVIDIA/NemoClaw main"',
-  "fi",
-  'if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]; then',
-  '  fail "manual workflow must run from an NVIDIA/NemoClaw branch"',
   "fi",
   "# PR E2E mode: maintainer-dispatched PR commit.",
   'if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then',
@@ -81,12 +75,12 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
   '    fail "workflow source must match the trusted dispatch revision"',
   "  fi",
   "else",
-  "  # Direct workflow mode: a main push or manual branch dispatch.",
+  "  # Direct-main mode: push or manual trigger on main.",
   '  if [[ -n "${CHECKOUT_SHA}" || -n "${EXPECTED_WORKFLOW_SHA}" ]]; then',
-  '    fail "direct runs must not request an alternate checkout or workflow revision"',
+  '    fail "direct main runs must not request an alternate checkout or workflow revision"',
   "  fi",
   '  if [[ ! "${WORKFLOW_SHA}" =~ ^[0-9a-f]{40}$ || "${WORKFLOW_SHA}" != "${DISPATCH_SHA}" ]]; then',
-  '    fail "direct workflow source must match the run revision"',
+  '    fail "direct main workflow source must match the run revision"',
   "  fi",
   "fi",
   'if [[ "${RUNNER_ENVIRONMENT_KIND}" != "github-hosted" || "${RUNNER_OS_KIND}" != "Linux" || "${RUNNER_ARCH_KIND}" != "X64" ]]; then',

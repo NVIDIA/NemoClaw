@@ -36,7 +36,7 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
-    "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:)",
+    "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
     "    required=1",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)",
@@ -48,20 +48,6 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     "    ;;",
     "esac",
     'printf \'required=%s\\n\' "${required}" >> "${GITHUB_OUTPUT}"',
-  ].join("\n") + "\n";
-const PUBLICATION_VERIFIER_SCRIPT =
-  [
-    "set -euo pipefail",
-    '[[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base-image publication requires exact commit SHAs" >&2; exit 1; }',
-    '[[ "$GITHUB_REF" == "$CANDIDATE_REF" ]] || { echo "::error::base-image publication ref changed" >&2; exit 1; }',
-    '[[ "$GITHUB_SHA" == "$CANDIDATE_SHA" ]] || { echo "::error::base-image publication candidate changed" >&2; exit 1; }',
-    '[[ "$(git rev-parse --verify HEAD)" == "$EXPECTED_SHA" ]] || { echo "::error::base-image publication checkout changed" >&2; exit 1; }',
-    'if [[ "$EXPECTED_SHA" != "$CANDIDATE_SHA" ]]; then',
-    '  git merge-base --is-ancestor "$EXPECTED_SHA" "$CANDIDATE_SHA" || { echo "::error::base-image publication revision is not an ancestor of the branch" >&2; exit 1; }',
-    "  export GITHUB_REF=refs/heads/main",
-    "fi",
-    'export GITHUB_SHA="$EXPECTED_SHA"',
-    "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
   ].join("\n") + "\n";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
@@ -311,7 +297,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   if (
     authentication.id !== "candidate_authorization" ||
     authentication.if !==
-      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.workflow_sha != '' }}"
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}"
   ) {
     errors.push("Manual PR authentication must run when any candidate identity input is present");
   }
@@ -487,8 +473,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         jobName === "base-image-publication" &&
         step.name === "Check out trusted E2E workflow" &&
         step.if === PUBLICATION_REQUIRED_CONDITION &&
-        step.with?.ref ===
-          "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || github.sha }}";
+        step.with?.ref === "${{ github.sha }}";
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
@@ -615,7 +600,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         if: PUBLICATION_REQUIRED_CONDITION,
         uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         with: {
-          ref: "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || github.sha }}",
+          ref: "${{ github.sha }}",
           "fetch-depth": 0,
           "persist-credentials": false,
         },
@@ -633,14 +618,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         name: "Verify applicable base-image publication",
         if: PUBLICATION_REQUIRED_CONDITION,
         env: {
-          CANDIDATE_REF: "${{ github.ref }}",
-          CANDIDATE_SHA: "${{ github.sha }}",
-          EXPECTED_SHA:
-            "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || github.sha }}",
+          EXPECTED_SHA: "${{ github.sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
         },
-        shell: "bash",
-        run: PUBLICATION_VERIFIER_SCRIPT,
+        run: "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
       },
       {
         name: "Download immutable Deep Agents Code base contract",

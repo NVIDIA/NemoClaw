@@ -411,51 +411,6 @@ describe("managed image GHCR catalog", () => {
     },
   );
 
-  it("resolves an existing immutable revision and retains one exact cohort (#7744)", async () => {
-    const fixture = catalogFixture({ openclaw: { rootReference: REVISION } });
-
-    const catalog = await resolveManagedImageCatalogFromGhcr({
-      release: RELEASE,
-      revision: REVISION,
-      fetchImpl: fixture.fetchImpl,
-    });
-
-    expect(
-      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) =>
-        (catalog[agent] as { source: { cohort: string; release: string; revision: string } })
-          .source,
-      ),
-    ).toEqual(
-      SHIPPED_MANAGED_IMAGE_AGENTS.map(() => ({
-        cohort: COHORT,
-        release: RELEASE,
-        revision: REVISION,
-      })),
-    );
-    const rootManifestRequests = fixture.fetchMock.mock.calls
-      .map(([input]) => new URL(String(input)).pathname)
-      .filter((pathname) => pathname.includes("/manifests/"));
-    expect(rootManifestRequests).toContain(
-      `/v2/nvidia/nemoclaw/openclaw-sandbox/manifests/${REVISION}`,
-    );
-    expect(rootManifestRequests).not.toContain(
-      `/v2/nvidia/nemoclaw/openclaw-sandbox/manifests/${RELEASE}`,
-    );
-  });
-
-  it("rejects a malformed immutable revision before registry access (#7744)", async () => {
-    const fetchImpl = vi.fn();
-
-    await expect(
-      resolveManagedImageCatalogFromGhcr({
-        release: RELEASE,
-        revision: "main",
-        fetchImpl: fetchImpl as typeof fetch,
-      }),
-    ).rejects.toThrow(/managed image revision 'main' is not a full lowercase SHA/);
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
   it("resolves an immutable qualification revision as one exact cohort (#9385)", async () => {
     const fixture = catalogFixture({ openclaw: { rootReference: REVISION } });
 

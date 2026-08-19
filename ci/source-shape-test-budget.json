@@ -58,7 +58,7 @@
     },
     {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
-      "test": "routes only the measured heavy lanes on a direct run from %s (#7145)",
+      "test": "routes only the measured heavy lanes on trusted main (#7145)",
       "category": "security"
     },
     {

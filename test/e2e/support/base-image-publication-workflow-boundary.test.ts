@@ -109,16 +109,15 @@ describe("base-image publication workflow boundary (#7372)", () => {
   it.each([
     ["push to main", "push", "", "1"],
     ["manual main", "workflow_dispatch", "", "1"],
-    ["manual branch", "workflow_dispatch", "", "1"],
     ["controller-selected PR", "workflow_dispatch", "a".repeat(40), "1"],
   ])(
     "classifies %s without executing untrusted code (#7372)",
-    (caseName, eventName, checkoutSha, required) => {
+    (_case, eventName, checkoutSha, required) => {
       expect(
         runClassifier({
           checkoutSha,
           eventName,
-          ref: caseName === "manual branch" ? "refs/heads/feature" : "refs/heads/main",
+          ref: "refs/heads/main",
           repository: "NVIDIA/NemoClaw",
         }),
       ).toEqual({ output: `required=${required}\n`, status: 0 });

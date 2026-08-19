@@ -15,7 +15,6 @@ import {
   githubRequest,
   type PublicationRun,
   isBaseImagePublicationEvent,
-  isBaseImagePublicationRun,
   parseBaseImagePushPaths,
   resolveFirstParentHistory,
   selectPublicationRun,
@@ -174,23 +173,6 @@ describe("base-image publication evidence", () => {
       expect(isBaseImagePublicationEvent(eventName)).toBe(false);
     },
   );
-
-  it.each([
-    ["push", "refs/heads/main"],
-    ["workflow_dispatch", "refs/heads/main"],
-    ["workflow_dispatch", "refs/heads/feat/b3-e-buildless-onboarding-9140"],
-  ])("accepts a %s publication check from %s", (eventName, ref) => {
-    expect(isBaseImagePublicationRun(eventName, ref)).toBe(true);
-  });
-
-  it.each([
-    ["push", "refs/heads/feature"],
-    ["workflow_dispatch", "refs/tags/v1"],
-    ["workflow_dispatch", "refs/heads/"],
-    ["pull_request", "refs/heads/main"],
-  ])("rejects a %s publication check from %s", (eventName, ref) => {
-    expect(isBaseImagePublicationRun(eventName, ref)).toBe(false);
-  });
 
   it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
     const source = fs.readFileSync(
