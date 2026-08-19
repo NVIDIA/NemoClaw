@@ -123,7 +123,7 @@ jobs:
             NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)
               if [[ "${CHECKOUT_SHA}" == "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e" ||
                     "${CHECKOUT_SHA}" == "6d6d5d1518fd6d0f269c0ac7478ec02088122b0d" ||
-                    "${CHECKOUT_SHA}" == "015bb4502ad1b6823c69415f16408844f6e6784d" ]]; then
+                    "${CHECKOUT_SHA}" == "fbc2d2a87b5ead5b513b8a1049dba148df405c95" ]]; then
                 required=0
                 reuse=1
               else
@@ -581,8 +581,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$CHECKOUT_SHA" == "015bb4502ad1b6823c69415f16408844f6e6784d" ]] || {
-            echo "::error::Diagnostic reused catalog is pinned to 015bb4502ad1b6823c69415f16408844f6e6784d" >&2
+          [[ "$CHECKOUT_SHA" == "fbc2d2a87b5ead5b513b8a1049dba148df405c95" ]] || {
+            echo "::error::Diagnostic reused catalog is pinned to fbc2d2a87b5ead5b513b8a1049dba148df405c95" >&2
             exit 1
           }
           contracts="${RUNNER_TEMP}/reused-managed-contracts"
