@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
+import type {
+  DcodeSandboxBaseImageResolutionMetadata,
+  SandboxBaseImageResolutionMetadata,
+} from "../../../src/lib/sandbox-base-image/types.ts";
 import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
 import {
   DCODE_BASE_IMAGE_TARGET_ID,
@@ -49,8 +52,8 @@ function publicationEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.Proce
 }
 
 function resolutionMetadata(
-  overrides: Partial<SandboxBaseImageResolutionMetadata> = {},
-): SandboxBaseImageResolutionMetadata {
+  overrides: Partial<DcodeSandboxBaseImageResolutionMetadata> = {},
+): DcodeSandboxBaseImageResolutionMetadata {
   return {
     schema: 1,
     key: "resolution-key",
@@ -58,6 +61,7 @@ function resolutionMetadata(
     ref: DCODE_BASE_IMAGE_AMD64_REFERENCE,
     digest: DCODE_BASE_IMAGE_AMD64_DIGEST,
     source: "override",
+    sourceRevision: DCODE_BASE_IMAGE_SOURCE_REVISION,
     imageId: `sha256:${"e".repeat(64)}`,
     os: "linux",
     architecture: "amd64",
@@ -66,6 +70,12 @@ function resolutionMetadata(
     minGlibcVersion: "2.39",
     ...overrides,
   };
+}
+
+function resolutionMetadataWithoutSourceRevision(): SandboxBaseImageResolutionMetadata {
+  const metadata = resolutionMetadata();
+  delete (metadata as unknown as Record<string, unknown>).sourceRevision;
+  return metadata;
 }
 
 describe("Deep Agents Code published base runtime evidence", () => {
@@ -252,6 +262,27 @@ describe("Deep Agents Code published base runtime evidence", () => {
       metadata: null,
       expectedMessage: "Deep Agents Code sandbox image is missing base resolution metadata",
       rejectedValues: [],
+    },
+    {
+      label: "missing immutable source revision",
+      metadata: resolutionMetadataWithoutSourceRevision(),
+      expectedMessage: baseContractMismatch("source revision"),
+      rejectedValues: [],
+    },
+    {
+      label: "malformed immutable source revision",
+      metadata: {
+        ...resolutionMetadata(),
+        sourceRevision: "main",
+      } as SandboxBaseImageResolutionMetadata,
+      expectedMessage: baseContractMismatch("source revision"),
+      rejectedValues: ["main"],
+    },
+    {
+      label: "mismatched immutable source revision",
+      metadata: resolutionMetadata({ sourceRevision: "f".repeat(40) }),
+      expectedMessage: baseContractMismatch("source revision"),
+      rejectedValues: ["f".repeat(40)],
     },
     {
       label: "an unsupported metadata schema version",
