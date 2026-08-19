@@ -95,6 +95,7 @@ exit 90
     DISPLAY_NAME: "OpenClaw",
     DOCKER_LOG: dockerLog,
     GITHUB_OUTPUT: output,
+    GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
     GITHUB_STEP_SUMMARY: summary,
     LOCAL_BASE_REFERENCE: "nemoclaw-managed-pr/openclaw-base:test",
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
@@ -109,11 +110,11 @@ exit 90
     });
     expect(result.status, result.stderr).toBe(0);
     expect(fs.readFileSync(output, "utf8")).toBe(
-      `ref=nemoclaw-managed-pr/openclaw-base:test\nlocal=true\noci=${temporaryRoot}/pr-base.oci@sha256:0000000000000000000000000000000000000000000000000000000000000000\n`,
+      `ref=nemoclaw-managed-pr/openclaw-base:test\nidentity_ref=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:0000000000000000000000000000000000000000000000000000000000000000\nsource_revision=${candidateSha}\nlocal=true\noci=${temporaryRoot}/pr-base.oci@sha256:0000000000000000000000000000000000000000000000000000000000000000\n`,
     );
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
     expect(dockerCommands).toContain(
-      `buildx build --platform linux/amd64 --provenance=false --sbom=false --file Dockerfile.base --tag nemoclaw-managed-pr/openclaw-base:test --output type=docker,dest=${temporaryRoot}/pr-base.docker.tar --output type=oci,dest=${temporaryRoot}/pr-base.oci.tar .`,
+      `buildx build --platform linux/amd64 --provenance=false --sbom=false --file Dockerfile.base --tag nemoclaw-managed-pr/openclaw-base:test --label org.opencontainers.image.source=https://github.com/NVIDIA/NemoClaw --label org.opencontainers.image.revision=${candidateSha} --output type=docker,dest=${temporaryRoot}/pr-base.docker.tar --output type=oci,dest=${temporaryRoot}/pr-base.oci.tar .`,
     );
     expect(dockerCommands).toContain(`load --input ${temporaryRoot}/pr-base.docker.tar`);
     expect(dockerCommands).not.toContain("imagetools inspect");
