@@ -113,13 +113,11 @@ export function formatOnboardConfigSummary({
   const noteLines = (Array.isArray(notes) ? notes : [])
     .filter((note) => typeof note === "string" && note.length > 0)
     .map((note) => `  Note:          ${note}`);
+  const reviewModel = servingProfileProvenance?.model.id ?? model;
   const profileLines = servingProfileProvenance
     ? [
         `  Profile:       ${servingProfileProvenance.preset.displayName} (${servingProfileProvenance.preset.id})`,
-        // `profiles list` reports the recipe's model id, while the Model line
-        // above shows the served alias the endpoint reports. Recipes that pin a
-        // different alias made the two outputs impossible to compare (#9563).
-        `  Profile model: ${servingProfileProvenance.model.id}`,
+        `  Served model:  ${model ?? "(unset)"}`,
         `  Recipe:        ${servingProfileProvenance.recipe.id}`,
         `  Support:       ${servingProfileProvenance.preset.supportState}`,
         `  Runtime image: ${servingProfileProvenance.runtimeImage ?? "(not declared)"}`,
@@ -132,7 +130,7 @@ export function formatOnboardConfigSummary({
     "  Review configuration",
     bar,
     `  Provider:      ${provider ?? "(unset)"}`,
-    `  Model:         ${model ?? "(unset)"}`,
+    `  Model:         ${reviewModel ?? "(unset)"}`,
     ...profileLines,
     apiKeyLine,
     `  Web search:    ${webSearch}`,

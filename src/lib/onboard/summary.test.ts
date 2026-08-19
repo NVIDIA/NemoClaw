@@ -142,8 +142,8 @@ describe("onboard summary helpers", () => {
       },
     });
 
-    assert.match(summary, /Model: {9}muse-glimmer/u);
-    assert.match(summary, /Profile model: Inferact\/Muse-Glimmer-30B-NVFP4-W4A4/u);
+    assert.match(summary, /Model: {9}Inferact\/Muse-Glimmer-30B-NVFP4-W4A4/u);
+    assert.match(summary, /Served model: {2}muse-glimmer/u);
   });
 
   it("formatSandboxBuildEstimateNote warns when runtime is under-provisioned (#2514)", () => {
