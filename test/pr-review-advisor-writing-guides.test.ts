@@ -111,6 +111,10 @@ describe("PR review advisor writing guides", () => {
     expect(prompt).toContain("A Refs, Related, or Follow-up link does not commit the PR");
     expect(prompt).toContain("When several symptoms or locations share one root cause and remedy");
     expect(prompt).toContain("suggestion renders as 'Suggestion'");
+    expect(prompt).toContain("The controlled word list is not a general dictionary");
+    expect(prompt).toContain(
+      "absence of an ordinary phrase from the controlled word list",
+    );
   });
 
   it("treats material present design defects as blockers", () => {

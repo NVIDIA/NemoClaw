@@ -210,6 +210,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(challenge?.prompt).toContain(
       "using `submit_review` retries to discover the mismatch",
     );
+    expect(challenge?.prompt).toContain(
+      "Set terminologyReview.noChangesReason only when decisions is empty",
+    );
     expect(challenge?.prompt.indexOf("record_findings")).toBeLessThan(
       challenge?.prompt.indexOf("record_review_receipt") ?? -1,
     );
