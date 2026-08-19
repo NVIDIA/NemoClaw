@@ -127,6 +127,16 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
     expect(fs.existsSync(path.join(first.buildContextPath, ".git"))).toBe(false);
     expect(fs.existsSync(path.join(first.buildContextPath, "node_modules"))).toBe(false);
     expect(
+      fs.existsSync(
+        path.join(first.buildContextPath, "src/lib/messaging/channels/wechat/contract.ts"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(first.buildContextPath, "src/lib/messaging/managed-startup-placeholders.ts"),
+      ),
+    ).toBe(true);
+    expect(
       fs.existsSync(path.join(first.buildContextPath, "agents/hermes/plugin/__pycache__")),
     ).toBe(false);
 
