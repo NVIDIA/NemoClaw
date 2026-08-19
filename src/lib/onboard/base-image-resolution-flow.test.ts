@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../agent/defs";
 import {
   SANDBOX_BASE_RESOLUTION_LABEL,
+  type DcodeSandboxBaseImageResolutionMetadata,
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import {
@@ -39,21 +40,35 @@ const recordedMetadata: SandboxBaseImageResolutionMetadata = {
   minGlibcVersion: "2.39",
 };
 
+const LOCAL_IMAGE_ID = `sha256:${"a".repeat(64)}`;
+
+function dcodeLocalMetadata(
+  ref: string,
+  sourceRevision: string,
+): DcodeSandboxBaseImageResolutionMetadata {
+  return {
+    ...recordedMetadata,
+    ref,
+    digest: null,
+    source: "local",
+    imageId: LOCAL_IMAGE_ID,
+    sourceRevision,
+  };
+}
+
 describe("base image resolution flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it.each([
-    "1",
-    "true",
-    "YES",
-    "on",
-  ])("recognizes the %s refresh environment value (#4680)", (value) => {
-    expect(isSandboxBaseImageRefreshRequested({ NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH: value })).toBe(
-      true,
-    );
-  });
+  it.each(["1", "true", "YES", "on"])(
+    "recognizes the %s refresh environment value (#4680)",
+    (value) => {
+      expect(
+        isSandboxBaseImageRefreshRequested({ NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH: value }),
+      ).toBe(true);
+    },
+  );
 
   it("captures a recorded hint for warm runs and exposes patch options (#4680)", () => {
     mocks.dockerImageInspectFormat.mockReturnValue(
@@ -214,6 +229,63 @@ describe("base image resolution flow", () => {
             key: "different-resolution-key",
             ref: `nemoclaw-hermes-sandbox-base-local:rebuild-123-${"b".repeat(16)}-image-${"a".repeat(64)}`,
           },
+        })),
+      ),
+    ).toThrow("did not match the stable outer resolution");
+    expect(context.preResolvedMetadata).toBe(stableMetadata);
+  });
+
+  it("retains DCode metadata when disposable handoff source revisions match (#9386)", () => {
+    const sourceRevision = "c".repeat(40);
+    const stableMetadata = dcodeLocalMetadata(
+      "nemoclaw-langchain-deepagents-code-sandbox-base-local:3ef2ca87",
+      sourceRevision,
+    );
+    const context = createBaseImageResolutionContext({
+      fresh: false,
+      initialPreResolvedMetadata: stableMetadata,
+      env: {},
+    });
+
+    createAgentSandboxWithResolution(
+      context,
+      { name: "langchain-deepagents-code" } as AgentDefinition,
+      vi.fn(() => ({
+        buildCtx: "/tmp/dcode-build",
+        stagedDockerfile: "/tmp/dcode-build/Dockerfile",
+        baseImageResolutionMetadata: dcodeLocalMetadata(
+          `nemoclaw-langchain-deepagents-code-sandbox-base-local:rebuild-123-${"b".repeat(16)}-image-${"a".repeat(64)}`,
+          sourceRevision,
+        ),
+      })),
+    );
+
+    expect(context.preResolvedMetadata).toBe(stableMetadata);
+    expect(context.preResolvedMetadata).toMatchObject({ sourceRevision });
+  });
+
+  it("rejects a DCode disposable handoff with a different source revision (#9386)", () => {
+    const stableMetadata = dcodeLocalMetadata(
+      "nemoclaw-langchain-deepagents-code-sandbox-base-local:3ef2ca87",
+      "c".repeat(40),
+    );
+    const context = createBaseImageResolutionContext({
+      fresh: false,
+      initialPreResolvedMetadata: stableMetadata,
+      env: {},
+    });
+
+    expect(() =>
+      createAgentSandboxWithResolution(
+        context,
+        { name: "langchain-deepagents-code" } as AgentDefinition,
+        vi.fn(() => ({
+          buildCtx: "/tmp/dcode-build",
+          stagedDockerfile: "/tmp/dcode-build/Dockerfile",
+          baseImageResolutionMetadata: dcodeLocalMetadata(
+            `nemoclaw-langchain-deepagents-code-sandbox-base-local:rebuild-123-${"b".repeat(16)}-image-${"a".repeat(64)}`,
+            "d".repeat(40),
+          ),
         })),
       ),
     ).toThrow("did not match the stable outer resolution");

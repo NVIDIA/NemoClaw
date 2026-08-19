@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import {
+  hasDcodeSourceRevision,
   parseTemporarySandboxBaseImageId,
   readSandboxBaseImageResolutionMetadata,
   type SandboxBaseImageResolutionMetadata,
@@ -85,7 +86,13 @@ function isStableMetadataForDisposableHandoff(
   ) {
     return false;
   }
+  const sourceRevisionMatches =
+    agentName !== "langchain-deepagents-code" ||
+    (hasDcodeSourceRevision(stable) &&
+      hasDcodeSourceRevision(staged) &&
+      stable.sourceRevision === staged.sourceRevision);
   return (
+    sourceRevisionMatches &&
     stable.schema === staged.schema &&
     stable.key === staged.key &&
     stable.imageName === staged.imageName &&
