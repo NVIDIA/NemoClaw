@@ -204,6 +204,12 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "hypothetical future failures without a present defect",
     );
     expect(challenge?.prompt).toContain("Then batch-record in this exact sequence");
+    expect(challenge?.prompt).toContain(
+      "Drop an unverifiable terminology decision instead of rephrasing it",
+    );
+    expect(challenge?.prompt).toContain(
+      "using `submit_review` retries to discover the mismatch",
+    );
     expect(challenge?.prompt.indexOf("record_findings")).toBeLessThan(
       challenge?.prompt.indexOf("record_review_receipt") ?? -1,
     );
