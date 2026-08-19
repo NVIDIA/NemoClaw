@@ -3,6 +3,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  type InferenceEndpointSource,
+  normalizeInferenceSelection,
+} from "../../inference/selection";
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
 import {
   getSandbox,
@@ -10,6 +14,7 @@ import {
   removeSandbox,
   reserveSandboxInferenceRoute,
 } from "../../state/registry";
+import { classifySandboxInferenceRouteReservation } from "../../state/registry/route-reservation";
 import {
   type CoreOnboardFlowPhases,
   createProviderInferenceOnboardFlowPhase,
@@ -317,7 +322,7 @@ function createPhases(
 }
 
 describe("core onboard flow phases", () => {
-  it("carries the real inference reservation owner into sandbox creation (#9203)", async () => {
+  it("classifies the provider reservation as owned during fresh sandbox creation (#9203)", async () => {
     const durableSession = createSession();
     const sandboxName = `hermes-route-${durableSession.sessionId}`;
     const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
@@ -326,11 +331,28 @@ describe("core onboard flow phases", () => {
     });
     const createSandbox = vi.fn(async (...args: unknown[]) => {
       const authority = args.at(-2) as { sessionId?: unknown } | null;
+      const createIntent = args.at(-1) as {
+        endpointSource?: InferenceEndpointSource | null;
+      };
       const reservation = getSandbox(sandboxName);
       expect(authority).toEqual({ sessionId: durableSession.sessionId });
       expect(isPendingReservationForSession(reservation, authority?.sessionId as string)).toBe(
         true,
       );
+      expect(
+        classifySandboxInferenceRouteReservation(
+          {
+            sandboxName,
+            gatewayName: "nemoclaw",
+            sessionId: authority?.sessionId as string,
+            selection: normalizeInferenceSelection({
+              ...reservation,
+              endpointSource: createIntent.endpointSource,
+            }),
+          },
+          reservation,
+        ).kind,
+      ).toBe("owned");
       return "created-sandbox";
     });
     const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
@@ -384,7 +406,11 @@ describe("core onboard flow phases", () => {
           sandboxName,
         }),
       );
-      await sandboxPhase.run(providerResult.context);
+      await sandboxPhase.run({
+        ...providerResult.context,
+        endpointSource: null,
+        hostLocalInferenceRouteOnly: true,
+      });
 
       expect(createSandbox).toHaveBeenCalledOnce();
     } finally {

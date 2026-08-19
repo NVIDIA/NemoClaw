@@ -122,6 +122,20 @@ describe("handleSandboxState", () => {
     expect(result.session?.checkpoint?.messaging).toEqual(decisionDeclined());
   });
 
+  it("preserves a null endpoint source for fresh host-local inference-only creation (#9203)", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleSandboxState({
+      ...baseOptions(deps),
+      fresh: true,
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      endpointSource: null,
+      hostLocalInferenceRouteOnly: true,
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ endpointSource: null });
+  });
+
   it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
     const { deps } = createDeps({
       configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),

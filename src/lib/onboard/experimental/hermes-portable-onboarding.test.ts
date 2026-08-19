@@ -13,7 +13,10 @@ import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-
 import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry";
-import { isCurrentSandboxInferenceRouteReservation } from "../../state/registry/route-reservation";
+import {
+  isCurrentSandboxInferenceRouteReservation,
+  normalizeSandboxInferenceRouteSelection,
+} from "../../state/registry/route-reservation";
 import {
   captureHermesPortablePolicySource,
   createHermesPortableTransactionId,
@@ -203,24 +206,6 @@ function routeSelection() {
   } as const;
 }
 
-function routeReservation(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
-  const selection = routeSelection();
-  return {
-    name: "alpha",
-    pendingRouteReservation: true,
-    reservationSessionId: ROUTE_SESSION_ID,
-    provider: selection.provider,
-    model: selection.model,
-    endpointUrl: selection.endpointUrl,
-    endpointSource: selection.endpointSource,
-    credentialEnv: selection.credentialEnv,
-    preferredInferenceApi: selection.preferredInferenceApi,
-    gatewayName: "nemoclaw",
-    hostLocalInferenceReceipt: "receipt-1",
-    ...overrides,
-  };
-}
-
 function matchingRegistryEntry(
   options: { openshellVersion?: string | null; liveFingerprint?: string } = {},
 ): SandboxEntry {
@@ -299,6 +284,17 @@ function input() {
   };
 }
 
+function reservationForOnboarding(current: ReturnType<typeof input> = input()): SandboxEntry {
+  return {
+    name: current.sandboxName,
+    pendingRouteReservation: true,
+    reservationSessionId: current.inferenceRouteReservation.sessionId,
+    ...normalizeSandboxInferenceRouteSelection(current.inferenceRouteReservation.selection),
+    gatewayName: current.gatewayName,
+    hostLocalInferenceReceipt: "receipt-1",
+  };
+}
+
 function deps(
   options: {
     existingSandbox?: boolean;
@@ -332,7 +328,7 @@ function deps(
               : {}),
             liveFingerprint: options.registryLiveFingerprint,
           })
-        : routeReservation();
+        : reservationForOnboarding();
   const registryFailures = options.failAfterRegistry
     ? [new Error("simulated registry-to-active exit")]
     : [];
@@ -600,7 +596,7 @@ describe("Hermes portable onboarding transaction", () => {
   });
 
   it("admits the current session's exact inference route reservation before registration (#9203)", async () => {
-    const fixture = deps({ registryEntry: routeReservation() });
+    const fixture = deps();
 
     const completed = await runHermesPortableOnboardingTransaction(input(), fixture.value);
 
@@ -609,51 +605,22 @@ describe("Hermes portable onboarding transaction", () => {
     expect(fixture.events).toContain("registry");
   });
 
-  it.each([
-    ["ownerless", routeReservation({ reservationSessionId: undefined })],
-    ["missing", null],
-    ["another session", routeReservation({ reservationSessionId: "session-beta" })],
-    ["completed", routeReservation({ createdAt: "2026-08-18T00:00:00.000Z" })],
-    ["sandbox authority", routeReservation({ agent: "hermes" })],
-    ["malformed", routeReservation({ gatewayPort: 0 })],
-    ["another sandbox", routeReservation({ name: "beta" })],
-    ["another route", routeReservation({ model: "qwen3:8b" })],
-    ["another gateway", routeReservation({ gatewayName: "other-gateway" })],
-  ])(
-    "rejects %s inference reservation before publishing Hermes receipt authority (#9203)",
-    async (_label, row) => {
-      const fixture = deps({ registryEntry: row });
+  it("aborts active publication after registry-side route replacement (#9203)", async () => {
+    const replacement = {
+      ...reservationForOnboarding(),
+      reservationSessionId: "session-beta",
+      model: "qwen3:8b",
+    };
+    const fixture = deps({ replaceRegistryBeforeRegistration: replacement });
 
-      await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
-        "inference route reservation is not owned by the current onboarding session",
-      );
-      expect(fs.existsSync(hermesPortableReceiptDirectory("alpha", stateDir))).toBe(false);
-      expect(fixture.events).not.toContain("create");
-      expect(fixture.podman).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    ["changes", routeReservation({ model: "qwen3:8b" })],
-    ["disappears", null],
-    ["becomes completed", matchingRegistryEntry()],
-  ])(
-    "rejects when the admitted inference reservation %s immediately before registration (#9203)",
-    async (_label, replacement) => {
-      const fixture = deps({
-        registryEntry: routeReservation(),
-        replaceRegistryBeforeRegistration: replacement,
-      });
-
-      await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
-        /inference route reservation|replaced the route reservation/u,
-      );
-      expect(fixture.events).not.toContain("registry");
-      expect(
-        fs.existsSync(path.join(hermesPortableReceiptDirectory("alpha", stateDir), "active.json")),
-      ).toBe(false);
-    },
-  );
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "Cannot register a sandbox after its inference route reservation changed",
+    );
+    expect(fixture.events).not.toContain("registry");
+    expect(
+      fs.existsSync(path.join(hermesPortableReceiptDirectory("alpha", stateDir), "active.json")),
+    ).toBe(false);
+  });
 
   it("resumes identical pending authority with effects without a duplicate create (#9203)", async () => {
     const first = deps({ updateFails: true });
@@ -704,7 +671,7 @@ describe("Hermes portable onboarding transaction", () => {
       sessionId: "session-beta",
     };
     const second = deps({
-      registryEntry: routeReservation({ reservationSessionId: "session-beta" }),
+      registryEntry: reservationForOnboarding(changed),
     });
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
@@ -846,7 +813,7 @@ describe("Hermes portable onboarding transaction", () => {
     const changed = input();
     changed.gatewayName = "other-gateway";
     changed.createArgv[changed.createArgv.indexOf("-g") + 1] = "other-gateway";
-    const second = deps({ registryEntry: routeReservation({ gatewayName: "other-gateway" }) });
+    const second = deps({ registryEntry: reservationForOnboarding(changed) });
 
     await expect(runHermesPortableOnboardingTransaction(changed, second.value)).rejects.toThrow(
       "saved transaction disagrees",

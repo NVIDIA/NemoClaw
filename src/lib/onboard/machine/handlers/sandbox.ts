@@ -468,8 +468,9 @@ function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
 function endpointSourceForCreateIntent(
   fresh: boolean,
   endpointSource: InferenceEndpointSource | null | undefined,
+  hostLocalInferenceRouteOnly: boolean,
 ): InferenceEndpointSource | null {
-  return fresh ? "onboard" : (endpointSource ?? null);
+  return fresh && !hostLocalInferenceRouteOnly ? "onboard" : (endpointSource ?? null);
 }
 
 function compatibleEndpointReasoningForCreateIntent(
@@ -1576,6 +1577,7 @@ class SandboxStateFlow<
       endpointSource: endpointSourceForCreateIntent(
         this.options.fresh,
         this.options.endpointSource,
+        this.options.hostLocalInferenceRouteOnly === true,
       ),
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
