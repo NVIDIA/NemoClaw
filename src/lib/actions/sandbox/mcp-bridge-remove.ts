@@ -3,6 +3,7 @@
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
   assertAgentMcpConfigMutationAllowed,
@@ -116,6 +117,7 @@ export async function removeMcpBridge(
   options: { force?: boolean; allowResidual?: boolean } = {},
 ): Promise<void> {
   return withMcpLifecycleLock(sandboxName, async () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:remove");
     // #6376: capture the recoverable prepared-destroy phase BEFORE the removal.
     const before = getSandboxOrThrow(sandboxName).mcp;
     const recoverPreparedDestroy =

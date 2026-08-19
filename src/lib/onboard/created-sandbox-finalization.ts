@@ -1,17 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import type {
   OpenClawImagePluginInstall,
   OpenClawManagedExtensionDiscoveryResult,
 } from "../state/openclaw-plugin-restore";
+import * as openClawPluginRestore from "../state/openclaw-plugin-restore";
+import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
+import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
+import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import {
   MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
   OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR,
   type RecreatedSandboxRestoreOptions,
   type RestoreResult,
 } from "../state/sandbox";
+import * as sandboxState from "../state/sandbox";
+import * as buildContext from "../build-context";
+import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
+import { restoreDefaultAfterRecreate } from "./default-preservation";
+import { getDcodeSelectionDrift } from "./dcode-selection-drift";
+import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
+import type { HermesDashboardOnboardState } from "./hermes-dashboard";
+import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
+import { warnIfLandlockUnsupported } from "./landlock-warning";
+import * as managedWorkloadOnboard from "./managed-workload/onboard-orchestration";
+import { printMessagingProviderMissing } from "./preflight-messages";
+import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import type { SelectionDrift } from "./selection-drift";
+import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
+import {
+  creationFidelity,
+  registerCreatedSandbox,
+  selection,
+  type CreatedSandboxRegistrationInput,
+} from "./sandbox-registration";
+import type {
+  CreatedSandboxLifecycle,
+  CreatedSandboxLifecycleRegistration,
+} from "./sandbox-recreate-transaction";
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;
@@ -41,17 +70,490 @@ export type CreatedSandboxFinalizationDeps = {
     model: string,
     preferredInferenceApi: string | null,
   ): SelectionDrift;
-  register(openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[]): void;
+  register(
+    openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  ): SandboxEntry | void;
   note(message: string): void;
   error(message: string): void;
   exitProcess(code: number): never;
 };
 
+type WorkloadResolutionInput = Parameters<
+  typeof managedWorkloadOnboard.resolveOnboardSandboxWorkloadReceipt
+>[0];
+type RegistrationSeed = Omit<
+  CreatedSandboxRegistrationInput,
+  | "imageTag"
+  | "workload"
+  | "openclawImagePluginInstalls"
+  | "hermesDashboardState"
+  | "dashboardPort"
+  | "lifecycleGeneration"
+  | "lifecycleLiveIdentityFingerprint"
+  | "inferenceRouteReservation"
+>;
+
+export interface CreatedSandboxCompletionOptions {
+  readonly finalization: CreatedSandboxFinalizationOptions;
+  readonly registration: RegistrationSeed;
+  readonly gpu: {
+    readonly config: Parameters<
+      typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
+    >[0];
+    readonly provider: string;
+    readonly dockerDriverGateway: boolean;
+    readonly verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
+    readonly runCaptureOpenshell: NonNullable<
+      Parameters<
+        typeof dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady
+      >[2]["runCaptureOpenshell"]
+    >;
+  };
+  readonly dashboard: {
+    readonly chatUiUrl: string;
+    readonly initialHermesState: HermesDashboardOnboardState;
+    readonly releasePort: () => Promise<void>;
+    readonly ensureForward: (
+      sandboxName: string,
+      chatUiUrl: string,
+      options: { rollbackSandboxOnFailure: true },
+    ) => number;
+    readonly getForwardPort: (chatUiUrl: string) => string;
+    readonly resolveHermesState: (port: number) => HermesDashboardOnboardState;
+    readonly ensureHermesForward: (
+      state: HermesDashboardOnboardState,
+      sandboxName: string,
+      rollback: true,
+    ) => void;
+  };
+  readonly workload: Omit<
+    WorkloadResolutionInput,
+    "registryImageRef" | "firstCreateOutput" | "createOutput"
+  >;
+}
+
+export interface CreatedSandboxCompletionDeps extends Omit<
+  CreatedSandboxFinalizationDeps,
+  "register"
+> {
+  readonly registerCreatedSandbox?: typeof registerCreatedSandbox;
+}
+
+export interface CreatedSandboxCompletionActions {
+  complete(
+    created: SandboxGpuCreateFlowResult | null,
+    configuredReceipt: HermesPortableConfiguredReceipt | null,
+    providerGpuDisposition: "disabled" | "created" | "hermes",
+    manageDashboard: boolean,
+    resolveLifecycleRegistrationFields: () => Pick<SandboxEntry, "lifecycleGeneration">,
+    lifecycle: CreatedSandboxLifecycle,
+    inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation,
+  ): Promise<SandboxEntry | void>;
+}
+
+type OnboardCreatedSandboxRegistration = (
+  created: SandboxGpuCreateFlowResult | null,
+  configuredReceipt: HermesPortableConfiguredReceipt | null,
+  configuredLiveIdentityFingerprint?: string,
+  revalidateHermesAuthority?: () => string,
+  inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation,
+) => Promise<SandboxEntry | void>;
+
+/** Bind the post-create registration callback to its finalization authorities. */
+export function createOnboardCreatedSandboxRegistration(input: {
+  readonly completion: CreatedSandboxCompletionActions;
+  readonly createdLifecycle: CreatedSandboxLifecycle;
+  readonly cleanupBuildContext: () => void;
+  readonly manageDashboard: boolean;
+  readonly sandboxGpuEnabled: boolean;
+}): OnboardCreatedSandboxRegistration {
+  return async (
+    created,
+    configuredReceipt,
+    configuredLiveIdentityFingerprint,
+    revalidate,
+    inferenceRouteReservation,
+  ) => {
+    if (!created && !configuredReceipt) {
+      throw new Error("Sandbox registration requires create or Hermes receipt authority.");
+    }
+    input.cleanupBuildContext();
+    const providerGpuDisposition = !input.sandboxGpuEnabled
+      ? "disabled"
+      : configuredReceipt
+        ? "hermes"
+        : "created";
+    const lifecycle = configuredReceipt
+      ? createHermesPortableCreatedSandboxLifecycle(
+          configuredReceipt,
+          revalidate ??
+            (() => {
+              throw new Error(
+                "Hermes portable registry publication has no revalidation authority.",
+              );
+            }),
+        )
+      : input.createdLifecycle;
+    await input.completion.complete(
+      created,
+      configuredReceipt,
+      providerGpuDisposition,
+      input.manageDashboard,
+      () =>
+        configuredReceipt
+          ? {
+              lifecycleGeneration: configuredReceipt.lifecycleGeneration,
+              lifecycleLiveIdentityFingerprint: configuredLiveIdentityFingerprint,
+            }
+          : created!.lifecycleRegistrationFields,
+      lifecycle,
+      inferenceRouteReservation,
+    );
+  };
+}
+
+/** Finish ordinary post-registration actions after portable onboarding has returned. */
+export function completeOrdinaryOnboardSandboxCreation(
+  input: {
+    readonly sandboxName: string;
+    readonly sandboxWasLiveDefault: boolean;
+    readonly runtimeFields: RegistrationSeed["runtimeFields"];
+    readonly messagingProviders: readonly string[];
+    readonly liveExists: boolean;
+  },
+  deps: {
+    readonly setDefault: (sandboxName: string) => void;
+    readonly runFile: (command: string, args: string[], options: { ignoreError: true }) => unknown;
+    readonly scriptsDir: string;
+    readonly gatewayName: string;
+    readonly providerExistsInGateway: (providerName: string) => boolean;
+    readonly armCancelRollback: (sandboxName: string) => void;
+    readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
+    readonly runCapture: Parameters<typeof warnIfLandlockUnsupported>[0]["runCapture"];
+  },
+): string {
+  restoreDefaultAfterRecreate(deps.setDefault, input.sandboxName, input.sandboxWasLiveDefault);
+  if (input.runtimeFields.openshellDriver === "kubernetes") {
+    console.log("  Setting up sandbox DNS proxy...");
+    deps.runFile(
+      "bash",
+      [path.join(deps.scriptsDir, "setup-dns-proxy.sh"), deps.gatewayName, input.sandboxName],
+      { ignoreError: true },
+    );
+  }
+  applyOnboardVmDnsMonkeypatch(input.sandboxName, input.runtimeFields);
+  for (const provider of input.messagingProviders) {
+    if (!deps.providerExistsInGateway(provider)) printMessagingProviderMissing(provider);
+  }
+  console.log(`  ✓ Sandbox '${input.sandboxName}' created`);
+  warnIfLandlockUnsupported(deps);
+  if (!input.liveExists) deps.armCancelRollback(input.sandboxName);
+  return input.sandboxName;
+}
+
+/** Revalidate the configuring receipt at both registry-publication checks. */
+export function createHermesPortableCreatedSandboxLifecycle(
+  receipt: HermesPortableConfiguredReceipt,
+  revalidate: () => string,
+): CreatedSandboxLifecycle {
+  const requireCurrent = () => ({
+    lifecycleGeneration: receipt.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: revalidate(),
+  });
+  return {
+    generation: receipt.lifecycleGeneration,
+    capture: (fields) => {
+      if (fields.lifecycleGeneration !== receipt.lifecycleGeneration) {
+        throw new Error("Hermes portable registry generation disagrees with receipt authority.");
+      }
+      return requireCurrent();
+    },
+    revalidate: (registration) => {
+      const current = requireCurrent();
+      if (
+        registration.lifecycleGeneration !== current.lifecycleGeneration ||
+        registration.lifecycleLiveIdentityFingerprint !== current.lifecycleLiveIdentityFingerprint
+      ) {
+        throw new Error("Hermes portable registry publication disagrees with receipt authority.");
+      }
+      return current;
+    },
+  };
+}
+
+/** Keep post-Ready action bodies with the finalization owner while onboarding retains decisions. */
+export function createCreatedSandboxCompletionActions(
+  options: CreatedSandboxCompletionOptions,
+  deps: CreatedSandboxCompletionDeps,
+): CreatedSandboxCompletionActions {
+  let chatUiUrl = options.dashboard.chatUiUrl;
+  let dashboardPort = 0;
+  let hermesDashboardState = options.dashboard.initialHermesState;
+  async function verifyCreatedProviderGpu(created: SandboxGpuCreateFlowResult): Promise<void> {
+    await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+      options.gpu.config,
+      options.gpu.provider,
+      {
+        sandboxName: options.finalization.sandboxName,
+        dockerDriverGateway: options.gpu.dockerDriverGateway,
+        selectedRoute: created.route,
+        verifyDirectSandboxGpu: options.gpu.verifyDirectSandboxGpu,
+        runCaptureOpenshell: options.gpu.runCaptureOpenshell,
+        log: console.log,
+      },
+      created.runtimePatch,
+    );
+  }
+  function recordHermesGpuProof(): void {
+    options.gpu.config.sandboxGpuProof = options.gpu.verifyDirectSandboxGpu(
+      options.finalization.sandboxName,
+    );
+  }
+  async function finalizeDashboard(): Promise<void> {
+    await options.dashboard.releasePort();
+    dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
+      rollbackSandboxOnFailure: true,
+    });
+    if (dashboardPort !== Number(options.dashboard.getForwardPort(chatUiUrl))) {
+      chatUiUrl = `http://127.0.0.1:${dashboardPort}`;
+    }
+    process.env.CHAT_UI_URL = chatUiUrl;
+    hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
+    options.dashboard.ensureHermesForward(
+      hermesDashboardState,
+      options.finalization.sandboxName,
+      true,
+    );
+  }
+  return {
+    complete: async (
+      created,
+      configuredReceipt,
+      providerGpuDisposition,
+      manageDashboard,
+      resolveLifecycleRegistrationFields,
+      lifecycle,
+      inferenceRouteReservation,
+    ) => {
+      if (providerGpuDisposition === "created") {
+        await verifyCreatedProviderGpu(created!);
+      } else if (providerGpuDisposition === "hermes") {
+        recordHermesGpuProof();
+      }
+      if (manageDashboard) await finalizeDashboard();
+      const resolved = managedWorkloadOnboard.resolveOnboardSandboxWorkloadReceipt({
+        ...options.workload,
+        registryImageRef: created?.registryImageRef ?? configuredReceipt?.container.imageId ?? null,
+        firstCreateOutput: created?.firstCreateOutput ?? "",
+        createOutput: created?.createResult.output ?? "",
+      });
+      const verifiedLifecycle = lifecycle.revalidate(
+        lifecycle.capture(resolveLifecycleRegistrationFields()),
+      );
+      return finalizeCreatedSandbox(options.finalization, {
+        ...deps,
+        register: (openclawImagePluginInstalls) =>
+          (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
+            ...options.registration,
+            runtimeFields: {
+              ...options.registration.runtimeFields,
+              openshellVersion:
+                configuredReceipt?.openshellExecutableAuthority.version ??
+                options.registration.runtimeFields.openshellVersion,
+            },
+            hermesPortableLifecycle: configuredReceipt !== null,
+            imageTag: resolved.resolvedImageTag,
+            workload: resolved.workloadReceipt,
+            openclawImagePluginInstalls,
+            hermesDashboardState,
+            dashboardPort,
+            ...verifiedLifecycle,
+            inferenceRouteReservation,
+          }),
+      });
+    },
+  };
+}
+
+type OnboardCreateIntent = {
+  readonly endpointSource?: RegistrationSeed["inferenceSelection"]["endpointSource"];
+  readonly observabilityEnabled?: boolean;
+} | null;
+type OnboardResolvedCreateIntent = {
+  readonly policy: {
+    readonly options: {
+      readonly baselineExclusions: NonNullable<RegistrationSeed["baselineExclusions"]>;
+    };
+  };
+  readonly hostMounts?: RegistrationSeed["hostMounts"];
+};
+type OnboardCreateContext = {
+  readonly createIntent: OnboardCreateIntent;
+  readonly resolvedCreateIntent: OnboardResolvedCreateIntent;
+};
+type OnboardAgentFlags = {
+  readonly customOpenClawImage: boolean;
+  readonly isManagedDcodeAgent: boolean;
+};
+type OnboardInferenceSelection = {
+  readonly provider: string;
+  readonly model: string;
+  readonly preferredInferenceApi: string | null;
+};
+type OnboardMessagingRegistration = {
+  readonly plannedMessagingState: RegistrationSeed["plannedMessagingState"];
+  readonly preservedMcpState: RegistrationSeed["preservedMcpState"];
+  readonly hermesToolGateways: string[];
+};
+type OnboardCreationFidelity = {
+  readonly webSearchConfig: Parameters<typeof creationFidelity>[0];
+  readonly hermesAuthMethod: Parameters<typeof creationFidelity>[2];
+};
+type OnboardPolicyRegistration = {
+  readonly toolDisclosure: RegistrationSeed["toolDisclosure"];
+  readonly dcodeAutoApprovalMode: RegistrationSeed["dcodeAutoApprovalMode"];
+};
+type OnboardGatewayBinding = {
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+};
+type OnboardPreparedPolicy = Pick<
+  managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
+  "initialSandboxPolicy" | "policyTier" | "dashboardRemoteBindPrepared"
+>;
+
+/** Assemble the exact post-Ready owners without adding an onboarding decision. */
+export function createOnboardCreatedSandboxCompletion(
+  sandboxName: string,
+  restoreBackupPath: string | null,
+  pendingStateRestoreBackupPath: string | null,
+  agent: RegistrationSeed["agent"],
+  fromDockerfile: string | null,
+  agentFlags: OnboardAgentFlags,
+  inference: OnboardInferenceSelection,
+  createContext: OnboardCreateContext,
+  runtimeFields: RegistrationSeed["runtimeFields"],
+  portableLifecycle: boolean,
+  policyRegistration: OnboardPolicyRegistration,
+  creation: OnboardCreationFidelity,
+  messaging: OnboardMessagingRegistration,
+  hermesApiPort: number | null,
+  gateway: OnboardGatewayBinding,
+  preparedPolicy: OnboardPreparedPolicy,
+  prebuildImageRef: string | null,
+  buildId: string,
+  gpuConfig: CreatedSandboxCompletionOptions["gpu"]["config"],
+  dockerDriverGateway: boolean,
+  verifyDirectSandboxGpu: CreatedSandboxCompletionOptions["gpu"]["verifyDirectSandboxGpu"],
+  runCaptureOpenshell: CreatedSandboxCompletionOptions["gpu"]["runCaptureOpenshell"],
+  chatUiUrl: string,
+  initialHermesDashboardState: HermesDashboardOnboardState,
+  releaseDashboardPort: CreatedSandboxCompletionOptions["dashboard"]["releasePort"],
+  ensureDashboardForward: CreatedSandboxCompletionOptions["dashboard"]["ensureForward"],
+  getDashboardForwardPort: CreatedSandboxCompletionOptions["dashboard"]["getForwardPort"],
+  resolveHermesDashboardState: CreatedSandboxCompletionOptions["dashboard"]["resolveHermesState"],
+  ensureHermesDashboardForward: CreatedSandboxCompletionOptions["dashboard"]["ensureHermesForward"],
+  workloadRuntime: WorkloadResolutionInput["runtime"],
+  workload: WorkloadResolutionInput["workload"],
+  note: (message: string) => void,
+): CreatedSandboxCompletionActions {
+  const { provider, model, preferredInferenceApi } = inference;
+  const { createIntent, resolvedCreateIntent } = createContext;
+  return createCreatedSandboxCompletionActions(
+    {
+      finalization: {
+        sandboxName,
+        restoreBackupPath,
+        preUpgradeBackup: pendingStateRestoreBackupPath !== null,
+        targetAgentType: agent?.name ?? "openclaw",
+        customImage: Boolean(fromDockerfile),
+        discoverOpenClawImagePluginInstalls: agentFlags.customOpenClawImage,
+        validateManagedDcode: agentFlags.isManagedDcodeAgent,
+        provider,
+        model,
+        preferredInferenceApi,
+      },
+      registration: {
+        sandboxName,
+        inferenceSelection: selection(
+          sandboxName,
+          provider,
+          model,
+          preferredInferenceApi,
+          createIntent?.endpointSource ?? null,
+        ),
+        runtimeFields,
+        agent,
+        agentVersionKnown: !fromDockerfile,
+        portableLifecycle,
+        appliedPolicies: preparedPolicy.initialSandboxPolicy.appliedPresets,
+        toolDisclosure: policyRegistration.toolDisclosure,
+        observabilityEnabled: createIntent?.observabilityEnabled === true,
+        ...(agentFlags.isManagedDcodeAgent
+          ? { dcodeAutoApprovalMode: policyRegistration.dcodeAutoApprovalMode }
+          : {}),
+        policyTier: preparedPolicy.policyTier,
+        ...creationFidelity(
+          creation.webSearchConfig,
+          fromDockerfile,
+          creation.hermesAuthMethod,
+          preparedPolicy.dashboardRemoteBindPrepared,
+          resolvedCreateIntent.policy.options.baselineExclusions,
+        ),
+        ...messaging,
+        hermesApiPort,
+        ...gateway,
+        hostMounts: resolvedCreateIntent.hostMounts,
+      },
+      gpu: {
+        config: gpuConfig,
+        provider,
+        dockerDriverGateway,
+        verifyDirectSandboxGpu,
+        runCaptureOpenshell,
+      },
+      dashboard: {
+        chatUiUrl,
+        initialHermesState: initialHermesDashboardState,
+        releasePort: releaseDashboardPort,
+        ensureForward: ensureDashboardForward,
+        getForwardPort: getDashboardForwardPort,
+        resolveHermesState: resolveHermesDashboardState,
+        ensureHermesForward: ensureHermesDashboardForward,
+      },
+      workload: {
+        runtime: workloadRuntime,
+        workload,
+        prebuildImageRef,
+        buildId,
+        extractBuiltImageRef: buildContext.extractBuiltImageRef,
+        resolveSandboxImageTagFromCreateOutput,
+      },
+    },
+    {
+      discoverFreshOpenClawImagePluginInstalls: (name) =>
+        openClawPluginRestore.discoverFreshOpenClawImagePluginInstalls(
+          name,
+          sandboxState,
+          agent?.configPaths.dir,
+        ),
+      restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
+      getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
+        getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
+          runCaptureOpenshell,
+        }),
+      note,
+      error: console.error,
+      exitProcess: (code) => process.exit(code),
+    },
+  );
+}
+
 /** Restore state and validate the live managed DCode route before registry publication. */
 export function finalizeCreatedSandbox(
   options: CreatedSandboxFinalizationOptions,
   deps: CreatedSandboxFinalizationDeps,
-): void {
+): SandboxEntry | void {
   let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
   if (options.discoverOpenClawImagePluginInstalls === true) {
     const discovery = deps.discoverFreshOpenClawImagePluginInstalls(options.sandboxName);
@@ -148,5 +650,5 @@ export function finalizeCreatedSandbox(
     }
   }
 
-  deps.register(freshOpenClawImagePluginInstalls);
+  return deps.register(freshOpenClawImagePluginInstalls);
 }

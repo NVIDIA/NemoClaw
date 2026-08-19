@@ -33,7 +33,9 @@ import {
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { listTargets } from "../registry/registry.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
+import { liveTargetSupport } from "../registry/runtime-support.ts";
 
 const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
@@ -1204,7 +1206,20 @@ describe("E2E workflow plan", () => {
       "| `llama-cpp-dgx-spark-qualification` | unresolved | Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence | NVIDIA DGX Spark GB10; local llama.cpp inference | Explicit dispatch only; excluded from the default release matrix | The protected plan can enable or skip its OpenClaw subqualification |",
     );
     expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
-    expect(complete.stdout).toMatch(/The \d+ inert typed declarations above/);
+    const inertDeclarations = listTargets()
+      .map((target) => ({ target, support: liveTargetSupport(target) }))
+      .filter(({ support }) => !support.supported);
+    expect(complete.stdout).toContain(
+      `The ${inertDeclarations.length} inert typed declarations above`,
+    );
+    expect(complete.stdout).toContain(
+      inertDeclarations
+        .map(
+          ({ target, support }) =>
+            `| \`${target.id}\` | unresolved | unresolved | unresolved | ${support.reasons.join("; ")} |`,
+        )
+        .join("\n"),
+    );
     expect(complete.stdout).toContain("#8285");
     expect(complete.stdout).toContain("#8286");
   });

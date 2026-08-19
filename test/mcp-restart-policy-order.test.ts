@@ -182,6 +182,7 @@ const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js")
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 
 let resourceVersion = 1;
+let registeredProviderGets = 0;
 const observations = [];
 const proofScripts = [];
 const providerCalls = [];
@@ -209,6 +210,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
+    if (args[2] === "foreign-registered") {
+      registeredProviderGets += 1;
+      return {
+        status: 0,
+        stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: generic\nResource version: 1\nCredential keys: OTHER_TOKEN\n",
+        stderr: "",
+      };
+    }
     return {
       status: 0,
       stdout: "Id: " + entry.providerId + "\nType: generic\nResource version: " + resourceVersion + "\nCredential keys: MCP_TOKEN\n",
@@ -257,6 +266,7 @@ registry.registerSandbox({
   gatewayName: "nemoclaw",
   mcp: { bridges: { example: entry } },
 });
+registry.addExtraProvider("foreign-registered");
 registry.addCustomPolicy("alpha", {
   name: entry.policyName,
   content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
@@ -267,7 +277,7 @@ registry.addCustomPolicy("alpha", {
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.restartMcpBridge("alpha", "example").then(
-  () => process.stdout.write(JSON.stringify({ observations, proofScripts, providerCalls })),
+  () => process.stdout.write(JSON.stringify({ observations, proofScripts, providerCalls, registeredProviderGets })),
   (error) => { console.error(error); process.exit(1); },
 );
 `;
@@ -284,11 +294,13 @@ bridge.restartMcpBridge("alpha", "example").then(
       observations: string[];
       proofScripts: string[];
       providerCalls: string[];
+      registeredProviderGets: number;
     };
     expect(payload.observations).toEqual(["v1", "v2"]);
     expect(payload.providerCalls).toEqual([
       "provider update alpha-mcp-example --credential MCP_TOKEN",
     ]);
+    expect(payload.registeredProviderGets).toBe(1);
     expect(payload.proofScripts).toHaveLength(2);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });
