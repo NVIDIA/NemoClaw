@@ -12,6 +12,18 @@ const HEALTHY_NEW_GATEWAY = [
   "Starting OpenShell Docker-driver gateway...",
   "Docker-driver gateway is healthy",
 ].join("\n");
+const NON_FALLBACK_DISCLOSURE_CASES = [
+  ["native-success", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[0]],
+  ["native-success", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[1]],
+  ["native-success", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[2]],
+  ["native-success", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[3]],
+  ["native-success", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[4]],
+  ["compatibility-only", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[0]],
+  ["compatibility-only", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[1]],
+  ["compatibility-only", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[2]],
+  ["compatibility-only", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[3]],
+  ["compatibility-only", HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS[4]],
+] as const;
 
 describe("Hermes GPU startup output contract", () => {
   it.each(["native-success", "compatibility-only"] as const)(
@@ -33,13 +45,29 @@ describe("Hermes GPU startup output contract", () => {
     ).not.toThrow();
   });
 
-  it("rejects fallback output that omits an operator disclosure fragment (#9362)", () => {
-    const output = [
-      HEALTHY_NEW_GATEWAY,
-      "Operator-authorized GPU fallback enabled; trying native OpenShell injection with one compatibility retry.",
-      ...HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.slice(1),
-    ].join("\n");
+  it.each(HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS)(
+    "rejects fallback output that omits %s (#9362)",
+    (missingFragment) => {
+      const output = [
+        HEALTHY_NEW_GATEWAY,
+        "Operator-authorized GPU fallback enabled; trying native OpenShell injection with one compatibility retry.",
+        ...HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.filter(
+          (fragment) => fragment !== missingFragment,
+        ),
+      ].join("\n");
 
-    expect(() => assertHermesGpuStartupOutputContract("compatibility-fallback", output)).toThrow();
-  });
+      expect(() =>
+        assertHermesGpuStartupOutputContract("compatibility-fallback", output),
+      ).toThrow();
+    },
+  );
+
+  it.each(NON_FALLBACK_DISCLOSURE_CASES)(
+    "rejects fallback disclosure in %s output: %s (#9362)",
+    (route, fragment) => {
+      expect(() =>
+        assertHermesGpuStartupOutputContract(route, `${HEALTHY_NEW_GATEWAY}\n${fragment}`),
+      ).toThrow();
+    },
+  );
 });
