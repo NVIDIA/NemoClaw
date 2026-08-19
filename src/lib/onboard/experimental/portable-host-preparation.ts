@@ -340,7 +340,7 @@ function validateOwnedConfigAuthority(input: {
   if (socketPath) assertOwnedDescendants(runtimeDir, path.dirname(socketPath));
 }
 
-function ensureRegistryContainer(
+function ensurePortableSandboxNetwork(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
   networkName: string,
@@ -367,7 +367,13 @@ function ensureRegistryContainer(
       "Creating the portable sandbox network",
     );
   }
+}
 
+function ensureRegistryContainer(
+  env: NodeJS.ProcessEnv,
+  docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  networkName: string,
+): void {
   const inspection = docker(
     [
       "inspect",
@@ -637,6 +643,7 @@ export function preparePortableExperimentalHost(
         env: childEnv,
         timeout: HOST_COMMAND_TIMEOUT_MS,
       }));
+  ensurePortableSandboxNetwork(podmanEnv, docker, dockerNetworkName);
   ensurePortableHostGatewayAlias(podmanEnv, ip, sudo);
   ensureRegistryContainer(podmanEnv, docker, dockerNetworkName);
   if (socketAuthority) {
