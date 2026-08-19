@@ -641,11 +641,9 @@ function applyVllmRuntimeProfile(
 ): VllmProfile {
   let resolved = profile;
   if (runtime) {
-    const extraRunArgs = replaceCatalogGpuRequest(
-      profile,
-      runtime,
-      [...(runtime.dockerRunArgs ?? [])],
-    );
+    const extraRunArgs = replaceCatalogGpuRequest(profile, runtime, [
+      ...(runtime.dockerRunArgs ?? []),
+    ]);
     resolved = {
       ...profile,
       image: runtime.image,
@@ -968,11 +966,17 @@ function startContainer(
     const resolvedFlags = profile.buildDockerRunFlags
       ? profile.buildDockerRunFlags()
       : profile.dockerRunFlags;
+    const commandEnv: NodeJS.ProcessEnv = {
+      ...dockerEnv,
+      ...(process.env[VLLM_EXTRA_ARGS_ENV] === undefined
+        ? {}
+        : { [VLLM_EXTRA_ARGS_ENV]: process.env[VLLM_EXTRA_ARGS_ENV] }),
+    };
     runArgs = buildVllmRunArgs(
       profile,
       model,
       resolvedFlags,
-      dockerEnv,
+      commandEnv,
       model.managedBearerAuth ? resolveBridgeHost(dockerEnv) : undefined,
     );
   } catch (err) {
@@ -1764,12 +1768,16 @@ async function runVllmInstall(
     resolved.source === "picker" &&
     !process.env[VLLM_EXTRA_ARGS_ENV]?.trim()
   ) {
-    const selected = resolveHostLocalVllmSelection(profile, {
-      ...process.env,
-      NEMOCLAW_VLLM_MODEL: resolved.model.envValue,
-    }, {
-      readinessReports: opts.readinessReports,
-    });
+    const selected = resolveHostLocalVllmSelection(
+      profile,
+      {
+        ...process.env,
+        NEMOCLAW_VLLM_MODEL: resolved.model.envValue,
+      },
+      {
+        readinessReports: opts.readinessReports,
+      },
+    );
     if (selected.kind === "rejected") {
       console.error(`  vLLM install failed: ${selected.reason}`);
       return { ok: false };
@@ -1808,9 +1816,7 @@ async function runVllmInstall(
   let runtimeProfile: VllmProfile;
   if (
     hostLocalSelection ||
-    (profile.platform === "station" &&
-      configuredPeer.length > 0 &&
-      usesStationPair)
+    (profile.platform === "station" && configuredPeer.length > 0 && usesStationPair)
   ) {
     runtimeProfile = profile;
   } else {

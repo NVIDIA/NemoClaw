@@ -911,8 +911,9 @@ describe("installVllm model resolution", () => {
   it("preserves explicit extra arguments after an interactive model choice", async () => {
     process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(["--max-model-len", "32768"]);
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const queue = ["", "n"];
+    const queue = ["", "y"];
     const promptFn = vi.fn<(q: string) => Promise<string>>(async () => queue.shift() ?? "");
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -920,13 +921,16 @@ describe("installVllm model resolution", () => {
       promptFn,
     });
 
-    expect(result).toEqual({ ok: false });
+    expect(result).toEqual({ ok: true });
     const questions = promptFn.mock.calls.map((call: [string]) => call[0]);
     expect(questions[0]).toContain("Choose model [1]");
     expect(questions[1]).toContain("Continue?");
     expect(errSpy).not.toHaveBeenCalledWith(
       expect.stringContaining("NEMOCLAW_VLLM_MODEL cannot be combined"),
     );
+    const [runArgs] = mocks.dockerRunDetached.mock.calls[0] as [string[]];
+    expect(runArgs.at(-1)).toContain("--max-model-len");
+    expect(runArgs.at(-1)).toContain("32768");
   });
 
   it("fails the env override before guidance or docker work when a gated model has no HF token (#7157)", async () => {
