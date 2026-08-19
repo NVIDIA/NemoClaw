@@ -60,6 +60,31 @@ function compile(sources: readonly ServingCatalogSource[]) {
 }
 
 describe("managed inference YAML profile contract", () => {
+  it.each([
+    ["vllm.qwen3-6-27b-fp8.linux-amd64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-27b-fp8.linux-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-27b-fp8.optimized-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1", 64_000_000_000, 0.4, 23_500_000_000],
+  ])(
+    "reserves model-weight headroom within the %s GPU utilization budget",
+    (recipeId, minimumGpuMemoryBytes, utilization, downloadSizeBytes) => {
+      const recipe = compile(catalogSources()).recipes.find(
+        ({ metadata }) => metadata.id === recipeId,
+      );
+
+      expect(recipe?.spec).toMatchObject({
+        model: { downloadSizeBytes },
+        runtime: { minimumGpuMemoryBytes },
+        serve: {
+          arguments: expect.arrayContaining([
+            { name: "--gpu-memory-utilization", value: utilization },
+          ]),
+        },
+      });
+      expect(minimumGpuMemoryBytes * utilization).toBeGreaterThan(downloadSizeBytes * 1.05);
+    },
+  );
+
   it("compiles the shipped managed-cluster profile through the canonical catalog (#8129)", () => {
     const catalog = compile(catalogSources());
     const preset = catalog.presets.find(({ metadata }) => metadata.id === PROFILE_ID);

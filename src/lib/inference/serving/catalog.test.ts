@@ -735,6 +735,12 @@ describe("managed inference serving catalog compiler", () => {
 
   it.each([
     [
+      "a model reference",
+      "  backend: install-llama-cpp",
+      `  backend: install-llama-cpp
+  modelRef: vllm.test-model.v1`,
+    ],
+    [
       "top-level topology bindings",
       "  backend: install-llama-cpp",
       `  backend: install-llama-cpp
@@ -753,10 +759,22 @@ describe("managed inference serving catalog compiler", () => {
       ref: none/v1`,
     ],
     [
+      "a model probe policy",
+      "    servedName: test-model",
+      `    servedName: test-model
+    probePolicyRef: vllm.default/v1`,
+    ],
+    [
       "managed runtime networking",
       "    networkExposure: loopback",
       `    networkExposure: loopback
     networkMode: host`,
+    ],
+    [
+      "managed runtime GPU memory sizing",
+      "    networkExposure: loopback",
+      `    networkExposure: loopback
+    minimumGpuMemoryBytes: 32000000000`,
     ],
     [
       "managed cluster execution sizing",
@@ -765,10 +783,25 @@ describe("managed inference serving catalog compiler", () => {
     nodeCount: 1`,
     ],
     [
+      "managed orchestration",
+      "    receiptRef: test.receipt/v1",
+      `    receiptRef: test.receipt/v1
+    orchestrationRef: vllm.host-local.standard/v1`,
+    ],
+    [
       "an executable override",
       "    authentication: bearer",
       `    authentication: bearer
     executable: /usr/local/bin/llama-server`,
+    ],
+    [
+      "a direct-install policy",
+      "    authentication: bearer",
+      `    authentication: bearer
+    directInstall:
+      authentication: none
+      fixedArguments: false
+      catalogReceipt: false`,
     ],
   ])(
     "rejects generic-only %s in a llama.cpp recipe (#8173)",

@@ -160,12 +160,17 @@ function qualifiedDualStationServedModel(
   env: NodeJS.ProcessEnv,
   model: VllmModelDef,
 ): string | null {
-  const stationPair = vllmStationPairForOrchestration(
-    model,
-    STATION_PAIR_OPTIONAL_ORCHESTRATION,
-    "station",
-    "arm64",
-  );
+  let stationPair;
+  try {
+    stationPair = vllmStationPairForOrchestration(
+      model,
+      STATION_PAIR_OPTIONAL_ORCHESTRATION,
+      "station",
+      "arm64",
+    );
+  } catch {
+    return null;
+  }
   if (
     !stationPair ||
     String(env.NEMOCLAW_DGX_STATION_PEER ?? "").trim().length === 0 ||

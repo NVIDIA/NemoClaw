@@ -16,7 +16,7 @@ spec:
     image: nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4
     imageDownloadSizeBytes: 9278081698
     minimumComputeCapability: 89
-    minimumGpuMemoryBytes: 30900000000
+    minimumGpuMemoryBytes: 48000000000
     pullTimeoutSeconds: 43200
     architecture: arm64
     networkMode: bridge

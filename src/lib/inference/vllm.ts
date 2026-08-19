@@ -1759,7 +1759,11 @@ async function runVllmInstall(
     });
   }
   if (!resolved) return { ok: false };
-  if (!hostLocalSelection && resolved.source === "picker") {
+  if (
+    !hostLocalSelection &&
+    resolved.source === "picker" &&
+    !process.env[VLLM_EXTRA_ARGS_ENV]?.trim()
+  ) {
     const selected = resolveHostLocalVllmSelection(profile, {
       ...process.env,
       NEMOCLAW_VLLM_MODEL: resolved.model.envValue,

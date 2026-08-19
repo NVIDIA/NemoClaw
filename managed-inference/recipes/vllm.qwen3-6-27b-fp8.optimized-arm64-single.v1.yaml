@@ -17,7 +17,7 @@ spec:
     imageDownloadSizeBytes: 9603085145
     imageUnpackedSizeBytes: 27658526720
     minimumComputeCapability: 89
-    minimumGpuMemoryBytes: 30900000000
+    minimumGpuMemoryBytes: 48000000000
     pullTimeoutSeconds: 43200
     architecture: arm64
     networkMode: bridge
