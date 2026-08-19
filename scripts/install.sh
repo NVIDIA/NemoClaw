@@ -5292,7 +5292,7 @@ station_managed_dual_head_running() {
     "$running" == "true" &&
     "$managed" == "true" &&
     "$role" == "head" &&
-    "$schema" == "3" &&
+    ("$schema" == "2" || "$schema" == "3") &&
     "$cluster" =~ ^[a-f0-9]{64}$ &&
     "$launch_contract" =~ ^[a-f0-9]{64}$ &&
     "$api_fingerprint" =~ ^[a-f0-9]{64}$ &&
@@ -5334,7 +5334,7 @@ ensure_station_express_host() {
     # the post-Node coordinator revalidates the reciprocal physical pair before
     # the existing lifecycle is allowed to reuse it.
     _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=1
-    info "Found a complete running NemoClaw-managed dual-Station head candidate; deferring host preparation until reciprocal pair and lifecycle validation."
+    info "Found a complete running NemoClaw-managed dual-Station head candidate; deferring host preparation until reciprocal pair and lifecycle validation, including any required launch-schema replacement."
     return 0
   fi
   if station_dual_model_requested && station_migratable_legacy_single_head_running; then

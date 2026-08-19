@@ -697,6 +697,9 @@ describe("starter prompt docs CTA", () => {
     expect(sparkSource).toContain(
       "Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset",
     );
+    expect(sparkSource).toContain(
+      "Preserve an existing `NEMOCLAW_VLLM_PORT` host-port override",
+    );
     expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
     expect(stationSource).toContain("`nemotron-ultra`");
     expect(stationSource).toContain("`deepseek-v4-flash`");

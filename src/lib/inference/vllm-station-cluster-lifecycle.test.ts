@@ -32,11 +32,13 @@ import {
   DUAL_STATION_VLLM_ROLE_LABEL,
   DUAL_STATION_VLLM_TRANSACTION_LABEL,
   DUAL_STATION_VLLM_WORKER_CONTAINER_NAME,
+  PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA,
   type DualStationVllmLifecycleDeps,
   dualStationVllmApiKeyFingerprint,
   dualStationVllmClusterId,
   dualStationVllmLaunchContract,
   getDualStationManagedVllmBaseUrl,
+  previousDualStationVllmLaunchContract,
   preflightDualStationGpuRuntime,
   preflightDualStationManagedVllm,
   rollbackDualStationLegacyMigration,
@@ -196,6 +198,15 @@ function seedLegacyHead(fake: LifecycleHarness): void {
       labels: { [DUAL_STATION_VLLM_MANAGED_LABEL]: "true" },
     }),
   );
+}
+
+function previousSchemaContainer(role: "head" | "worker"): FakeContainer {
+  const container = fakeContainer(role);
+  container.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] =
+    PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA;
+  container.labels[DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL] =
+    previousDualStationVllmLaunchContract(fixturePlan(), role);
+  return container;
 }
 
 function expectRestoredLegacyHead(fake: LifecycleHarness): void {
@@ -639,6 +650,38 @@ describe("dual-Station managed vLLM lifecycle", () => {
       { kind: "rm", target: "peer", value: WORKER_SMOKE_ID },
       { kind: "rm", target: "local", value: HEAD_SMOKE_ID },
     ]);
+  });
+
+  it("authenticates and replaces an exact schema-2 pair instead of treating it as foreign", async () => {
+    const fake = harness();
+    fake.seed("local", previousSchemaContainer("head"));
+    fake.seed("peer", previousSchemaContainer("worker"));
+
+    expect(preflightDualStationManagedVllm(fixturePlan(), fake.deps)).toEqual({ ok: true });
+    expect(await startDualStationManagedVllm(fixturePlan(), START_CONFIG, fake.deps)).toMatchObject({
+      ok: true,
+      reusedExisting: false,
+    });
+    expect(fake.operations.filter((operation) => operation.kind === "rm")).toEqual(
+      expect.arrayContaining([
+        { kind: "rm", target: "local", value: HEAD_ID },
+        { kind: "rm", target: "peer", value: WORKER_ID },
+      ]),
+    );
+  });
+
+  it("refuses a schema-2 pair whose historical launch contract does not match", () => {
+    const fake = harness();
+    const head = previousSchemaContainer("head");
+    head.labels[DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL] = "f".repeat(64);
+    fake.seed("local", head);
+    fake.seed("peer", previousSchemaContainer("worker"));
+
+    expect(preflightDualStationManagedVllm(fixturePlan(), fake.deps)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("foreign"),
+    });
+    expect(fake.operations.some((operation) => operation.kind === "rm")).toBe(false);
   });
 
   it.each([

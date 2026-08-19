@@ -27,7 +27,7 @@ Accept the N1x Express prompt or set `NEMOCLAW_PROVIDER=install-vllm` to provide
 | Option | When to use it | Availability | Runtime API |
 |---|---|---|---|
 | Ollama | You want the default local option and want NemoClaw to install, start, or use Ollama on supported hosts. | Appears when Ollama is installed or running, and the wizard can offer installation on supported hosts. | Ollama through the managed local route. |
-| Existing vLLM | You already run vLLM on `localhost:8000`. | Unavailable on N1x. On other hosts, it appears when NemoClaw detects the server. | `/v1/chat/completions`. |
+| Existing vLLM | You already run vLLM on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. | Unavailable on N1x. On other hosts, it appears when NemoClaw detects the server. | `/v1/chat/completions`. |
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station. N1x offers this route as its only admitted provider through a Deferred preview. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
 | Fixed vLLM profile | You need the fixed catalog-selected vLLM model and serving configuration. | Appears as option 2 in DGX Spark Express. Direct installation can use the dedicated installer flag. The profile does not appear in the provider menu. | `/v1/chat/completions`. |
 | Existing llama.cpp | You already operate an authenticated llama.cpp server on loopback port `8081`. | Experimental. Always available for explicit selection and attaches only after cooperative fingerprinting succeeds. | `/v1/chat/completions`. |
@@ -38,7 +38,7 @@ Accept the N1x Express prompt or set `NEMOCLAW_PROVIDER=install-vllm` to provide
 <AgentOnly variant="deepagents">
 | Option | When to use it | Availability | Runtime API |
 |---|---|---|---|
-| Existing vLLM | You already run vLLM on `localhost:8000`. | Unavailable on N1x. On other hosts, it appears when NemoClaw detects the server. | `/v1/chat/completions`. |
+| Existing vLLM | You already run vLLM on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. | Unavailable on N1x. On other hosts, it appears when NemoClaw detects the server. | `/v1/chat/completions`. |
 | Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station. N1x offers this route as its only admitted provider through a Deferred preview. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
 | Fixed vLLM profile | You need the fixed catalog-selected vLLM model and serving configuration. | Appears as option 2 in DGX Spark Express. Direct installation can use the dedicated installer flag. The profile does not appear in the provider menu. | `/v1/chat/completions`. |
 | Existing llama.cpp | You already operate an authenticated llama.cpp server on loopback port `8081`. | Experimental. Always available for explicit selection and attaches only after cooperative fingerprinting succeeds. | `/v1/chat/completions`. |
@@ -115,6 +115,7 @@ Selecting Express option 2 enables the same profile gate and selects the vLLM ru
 Do not combine this path with `NEMOCLAW_PROVIDER` or `NEMOCLAW_MODEL`.
 The profile rejects `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before installation.
 Set `NEMOCLAW_VLLM_PORT` before installation to use another host listener port.
+Before installation, ensure no other process owns `127.0.0.1:${NEMOCLAW_VLLM_PORT:-8000}`.
 
 The profile performs these actions:
 
@@ -140,16 +141,17 @@ The `healthy` state means the route served one inference request; it does not es
 Verify the bounded host publication:
 
 ```bash
+VLLM_PORT="${NEMOCLAW_VLLM_PORT:-8000}"
 docker network inspect \
   --format '{{json .IPAM.Config}}' \
   openshell-docker
 docker container inspect \
-  --format '{{json (index .NetworkSettings.Ports "8000/tcp")}}' \
+  --format "{{json (index .NetworkSettings.Ports \"${VLLM_PORT}/tcp\")}}" \
   nemoclaw-vllm
 ```
 
 The bridge result must contain exactly one private IPv4 `Gateway` value.
-The container result must contain exactly two bindings with `HostPort` set to `8000`: one `HostIp` value of `127.0.0.1` and one that exactly matches the private bridge gateway.
+The container result must contain exactly two bindings with `HostPort` set to `${NEMOCLAW_VLLM_PORT:-8000}`: one `HostIp` value of `127.0.0.1` and one that exactly matches the private bridge gateway.
 Reject the runtime if a binding uses `0.0.0.0`, `::`, an empty address, another host address, or an additional entry.
 
 If installation stops after a model download, rerun the same installer command.
