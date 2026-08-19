@@ -67,6 +67,8 @@ export interface SandboxOnboardFlowPhaseOptions<
   ResourceProfile = unknown,
 > {
   gatewayName: string;
+  /** Internal schema-5 lifecycle selection from the locked portable runtime. */
+  hermesPortableLifecycle?: boolean;
   authoritativeResumeConfig?: boolean;
   authoritativePolicyTier?: string | null;
 
@@ -224,6 +226,7 @@ export function createSandboxOnboardFlowPhase<
       resume: context.resume,
       fresh: context.fresh,
       gatewayName: options.gatewayName,
+      hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
 

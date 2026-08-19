@@ -7,6 +7,7 @@ import {
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
 } from "../onboard/gateway-provider-metadata";
+import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
@@ -91,6 +92,10 @@ export function requireInferenceSetRuntimeAuthority(
 ): void {
   const runtimeProvider = requireRuntimeProviderBundleForSandbox(entry, providers);
   requireRuntimeProviderMutationAuthority(runtimeProvider, "inference-set");
+}
+
+export function assertInferenceSetCommandAvailable(sandboxName: string): void {
+  assertHermesPortableCommandUnavailable(sandboxName, "inference:set");
 }
 
 type CaptureProviderCommand = (

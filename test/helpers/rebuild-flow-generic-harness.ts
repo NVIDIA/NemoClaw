@@ -53,6 +53,7 @@ import {
 export {
   installRebuildFlowTestHooks,
   originalSandboxName,
+  portableAgentLifecycle,
   snapshotEnv,
 } from "./rebuild-flow-harness";
 
