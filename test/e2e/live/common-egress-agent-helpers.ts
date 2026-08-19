@@ -13,10 +13,18 @@ import {
   type BoundedRetryResult,
   type RetryEvidence,
   type RetryFailureClass,
+  type RetryIdempotence,
 } from "../fixtures/retry-policy.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 export const COMMON_EGRESS_TEST_TIMEOUT_MS = 40 * 60_000;
+export const HERMES_API_SESSION_ID_PATTERN = "api-[0-9a-f]{16}";
+export const HERMES_TOOL_PROOF_SHELL_SUCCESS =
+  'test "$chat_rc" -eq 0 && test "$messages_rc" -eq 0 && test "$proof_rc" -eq 0';
+export const HERMES_SENSITIVE_PROBE_OPTIONS = Object.freeze({
+  captureLimitBytes: 4096,
+  persistArtifacts: false,
+});
 
 interface AgentJsonDoc {
   payloads?: Array<{ text?: unknown }>;
@@ -139,9 +147,22 @@ interface HermesAgentAssertionResult extends OpenClawAgentAssertionResult {
   httpStatus: string;
 }
 
+export interface HermesToolExecutionProof {
+  schemaVersion: 1;
+  messagesHttpStatus: string;
+  sessionRecordFound: boolean;
+  exactTerminalCallCount: number;
+  otherToolCallCount: number;
+  matchingToolResultCount: number;
+  otherToolResultCount: number;
+  successfulToolResultCount: number;
+  passed: boolean;
+}
+
 interface AgentAssertionRetryOptions {
   attempts: number;
   delayMs: (attempt: number) => number;
+  idempotence?: RetryIdempotence;
   onEvidence: (evidence: RetryEvidence) => Promise<void> | void;
   run: (attempt: number) => Promise<AgentAssertionAttempt>;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -171,7 +192,7 @@ export function runHermesAgentAssertionRetry(
   return runBoundedRetry({
     operation: "common-egress.hermes-agent",
     owner: "hermes-agent",
-    idempotence: "read-only",
+    idempotence: options.idempotence ?? "read-only",
     maxAttempts: options.attempts,
     delayMs: options.delayMs,
     onEvidence: options.onEvidence,
@@ -1030,6 +1051,52 @@ export function parseChatContent(raw: string): string {
   const choice = doc.choices?.[0];
   const content = choice?.message?.content ?? choice?.message?.reasoning_content ?? choice?.text;
   return typeof content === "string" ? content.trim() : "";
+}
+
+export function parseHermesToolExecutionProof(raw: string): HermesToolExecutionProof | null {
+  const marker = "__NEMOCLAW_HERMES_TOOL_PROOF__=";
+  const encoded = raw
+    .split("\n")
+    .filter((line) => line.startsWith(marker))
+    .at(-1)
+    ?.slice(marker.length);
+  if (!encoded) return null;
+
+  try {
+    const proof = JSON.parse(encoded) as Record<string, unknown>;
+    const expectedKeys = [
+      "exactTerminalCallCount",
+      "matchingToolResultCount",
+      "messagesHttpStatus",
+      "otherToolCallCount",
+      "otherToolResultCount",
+      "passed",
+      "schemaVersion",
+      "sessionRecordFound",
+      "successfulToolResultCount",
+    ];
+    const counts = [
+      proof.exactTerminalCallCount,
+      proof.otherToolCallCount,
+      proof.otherToolResultCount,
+      proof.matchingToolResultCount,
+      proof.successfulToolResultCount,
+    ];
+    if (
+      Object.keys(proof).sort().join(",") !== expectedKeys.sort().join(",") ||
+      proof.schemaVersion !== 1 ||
+      typeof proof.messagesHttpStatus !== "string" ||
+      !/^\d{3}$/u.test(proof.messagesHttpStatus) ||
+      typeof proof.sessionRecordFound !== "boolean" ||
+      typeof proof.passed !== "boolean" ||
+      !counts.every((value) => Number.isInteger(value) && Number(value) >= 0)
+    ) {
+      return null;
+    }
+    return proof as unknown as HermesToolExecutionProof;
+  } catch {
+    return null;
+  }
 }
 
 function compactAgentReply(value: string): string {

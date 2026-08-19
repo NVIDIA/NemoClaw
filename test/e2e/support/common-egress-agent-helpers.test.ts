@@ -15,9 +15,13 @@ import {
   classifyHermesAgentAssertion,
   classifyOpenClawAgentAssertion,
   classifyPreContractProviderValidationSkip,
+  HERMES_API_SESSION_ID_PATTERN,
+  HERMES_SENSITIVE_PROBE_OPTIONS,
+  HERMES_TOOL_PROOF_SHELL_SUCCESS,
   isHermesTransientAgentFailure,
   nvdaPersonalStockReplyMatchesEvidence,
   parseChatContent,
+  parseHermesToolExecutionProof,
   parseNvdaPersonalStockReply,
   parseOpenClawAgentText,
   parseOpenClawToolEvidence,
@@ -40,6 +44,68 @@ const STOCK_REPLY = {
   source_url: STOCK_SOURCE_URL,
   as_of: "2026-08-17T15:59:00Z",
 } satisfies NvdaPersonalStockReply;
+const HERMES_TOOL_PROOF_SCRIPT = join(
+  import.meta.dirname,
+  "..",
+  "live",
+  "hermes-tool-execution-proof.py",
+);
+const HERMES_REFERENCE_COMMAND =
+  "/usr/bin/curl -fsS --proto '=https' --max-time 20 --max-filesize 65536 --remove-on-error -o /tmp/nemoclaw-c3-wikidata.json 'https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json'";
+
+function runHermesToolProof(body: string | Buffer | null, httpStatus = "200") {
+  const directory = mkdtempSync(join(tmpdir(), "hermes-tool-proof-"));
+  const messagesPath = join(directory, "messages.json");
+  const writeBody = body === null ? () => undefined : () => writeFileSync(messagesPath, body);
+  writeBody();
+  try {
+    return spawnSync(
+      "python3",
+      ["-I", HERMES_TOOL_PROOF_SCRIPT, messagesPath, HERMES_REFERENCE_COMMAND, httpStatus],
+      { encoding: "utf8", timeout: 5000 },
+    );
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+function projectHermesToolProof(messages: unknown, httpStatus = "200") {
+  return runHermesToolProof(JSON.stringify({ data: messages }), httpStatus);
+}
+
+function hermesToolMessages(
+  overrides: {
+    command?: string;
+    extraCalls?: unknown[];
+    extraResults?: unknown[];
+    resultCallId?: string;
+    resultContent?: unknown;
+    resultToolName?: string;
+  } = {},
+) {
+  return [
+    {
+      role: "assistant",
+      tool_calls: [
+        {
+          id: "call-reference",
+          function: {
+            name: "terminal",
+            arguments: JSON.stringify({ command: overrides.command ?? HERMES_REFERENCE_COMMAND }),
+          },
+        },
+        ...(overrides.extraCalls ?? []),
+      ],
+    },
+    {
+      role: "tool",
+      tool_call_id: overrides.resultCallId ?? "call-reference",
+      tool_name: overrides.resultToolName ?? "terminal",
+      content: overrides.resultContent ?? JSON.stringify({ output: "", exit_code: 0, error: null }),
+    },
+    ...(overrides.extraResults ?? []),
+  ];
+}
 
 function stockPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -873,6 +939,166 @@ describe("common-egress agent parsing and classification helpers", () => {
         JSON.stringify({ choices: [{ message: { content: "HERMES_REFERENCE_AGENT_OK" } }] }),
       ),
     ).toBe("HERMES_REFERENCE_AGENT_OK");
+  });
+
+  it("reduces one persisted Hermes terminal execution to bounded proof (#9528)", () => {
+    const result = projectHermesToolProof([
+      { role: "user", content: "prompt-with-API_SERVER_KEY=private-api-key" },
+      ...hermesToolMessages({
+        resultContent: JSON.stringify({
+          output: "private-fetched-body-and-terminal-output",
+          exit_code: 0,
+          error: null,
+        }),
+      }),
+      { role: "assistant", content: "private-assistant-response" },
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(parseHermesToolExecutionProof(result.stdout)).toEqual({
+      schemaVersion: 1,
+      messagesHttpStatus: "200",
+      sessionRecordFound: true,
+      exactTerminalCallCount: 1,
+      otherToolCallCount: 0,
+      matchingToolResultCount: 1,
+      otherToolResultCount: 0,
+      successfulToolResultCount: 1,
+      passed: true,
+    });
+    expect(result.stdout).not.toContain("private-api-key");
+    expect(result.stdout).not.toContain("private-fetched-body-and-terminal-output");
+    expect(result.stdout).not.toContain("private-assistant-response");
+    expect(result.stdout).not.toContain("www.wikidata.org");
+  });
+
+  it("disables shell artifacts for the Hermes prompt and session probe (#9528)", () => {
+    expect(HERMES_SENSITIVE_PROBE_OPTIONS).toEqual({
+      captureLimitBytes: 4096,
+      persistArtifacts: false,
+    });
+  });
+
+  it.each([
+    ["accepts shell proof after every subprocess succeeds", 0, 0, 0, true],
+    ["rejects shell proof after the chat transfer fails", 1, 0, 0, false],
+    ["rejects shell proof after the session transfer fails", 0, 63, 0, false],
+    ["rejects shell proof after the reducer fails", 0, 0, 1, false],
+  ])("%s (#9528)", (_name, chatRc, messagesRc, proofRc, passed) => {
+    const result = spawnSync(
+      "sh",
+      [
+        "-c",
+        `chat_rc=$1; messages_rc=$2; proof_rc=$3; ${HERMES_TOOL_PROOF_SHELL_SUCCESS}`,
+        "--",
+        String(chatRc),
+        String(messagesRc),
+        String(proofRc),
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+
+    expect(result.status === 0).toBe(passed);
+  });
+
+  it.each([
+    {
+      name: "changed command",
+      messages: hermesToolMessages({ command: "/usr/bin/curl https://example.com" }),
+    },
+    {
+      name: "duplicate exact tool call",
+      messages: hermesToolMessages({
+        extraCalls: [
+          {
+            id: "call-reference-duplicate",
+            function: {
+              name: "terminal",
+              arguments: JSON.stringify({ command: HERMES_REFERENCE_COMMAND }),
+            },
+          },
+        ],
+      }),
+    },
+    {
+      name: "other tool call",
+      messages: hermesToolMessages({
+        extraCalls: [
+          {
+            id: "call-other",
+            function: { name: "read_file", arguments: JSON.stringify({ path: "/tmp/result" }) },
+          },
+        ],
+      }),
+    },
+    {
+      name: "mismatched tool result ID",
+      messages: hermesToolMessages({ resultCallId: "call-other" }),
+    },
+    {
+      name: "mismatched tool result name",
+      messages: hermesToolMessages({ resultToolName: "read_file" }),
+    },
+    {
+      name: "unmatched extra tool result",
+      messages: hermesToolMessages({
+        extraResults: [
+          {
+            role: "tool",
+            tool_call_id: "call-other",
+            tool_name: "terminal",
+            content: JSON.stringify({ output: "private-extra-output", exit_code: 0, error: null }),
+          },
+        ],
+      }),
+    },
+    {
+      name: "nonzero tool result",
+      messages: hermesToolMessages({
+        resultContent: JSON.stringify({
+          output: "private-terminal-output",
+          exit_code: 1,
+          error: null,
+        }),
+      }),
+    },
+    {
+      name: "malformed tool result",
+      messages: hermesToolMessages({ resultContent: "private-malformed-output" }),
+    },
+  ])("rejects a Hermes session with $name (#9528)", ({ messages }) => {
+    const result = projectHermesToolProof(messages);
+
+    expect(result.status).toBe(1);
+    expect(parseHermesToolExecutionProof(result.stdout)).toMatchObject({ passed: false });
+    expect(result.stdout).not.toContain("private-terminal-output");
+    expect(result.stdout).not.toContain("private-malformed-output");
+    expect(result.stdout).not.toContain("private-extra-output");
+  });
+
+  it.each([
+    { name: "missing", body: null },
+    { name: "malformed", body: '{"data":[' },
+    { name: "oversized", body: Buffer.alloc(2 * 1024 * 1024 + 1, "private-session") },
+  ])("rejects a $name Hermes session response without exposing it (#9528)", ({ body }) => {
+    const result = runHermesToolProof(body);
+
+    expect(result.status).toBe(1);
+    expect(parseHermesToolExecutionProof(result.stdout)).toMatchObject({
+      sessionRecordFound: false,
+      passed: false,
+    });
+    expect(result.stdout).not.toContain("private-session");
+  });
+
+  it.each([
+    ["api-0123456789abcdef", true],
+    ["api-0123456789abcde", false],
+    ["api-0123456789abcdef/../messages", false],
+    ["api-0123456789abcdef\r\nAuthorization: leaked", false],
+    ["api-0123456789abcdeg", false],
+  ])("accepts only a bounded Hermes API session ID [case %#] (#9528)", (sessionId, expected) => {
+    expect(new RegExp(`^${HERMES_API_SESSION_ID_PATTERN}$`, "u").test(sessionId)).toBe(expected);
   });
 
   it("expected-token matching ignores model line breaks", () => {

@@ -66,6 +66,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)test\/e2e\/live\/hermes-tool-execution-proof\.py$/,
+    testsToRun: runTests("test/e2e/support/common-egress-agent-helpers.test.ts"),
+  },
+  {
     pattern:
       /(?:^|\/)(?:agents\/pi\/(?:Dockerfile(?:\.base)?|dependency-review\.md|generate-config\.ts|manifest\.yaml|policy-additions\.yaml|start\.sh|pi-runtime\/package(?:-lock)?\.json)|\.github\/workflows\/(?:managed-images|base-image)\.yaml)$/,
     testsToRun: runTests("test/pi-candidate-runtime-artifacts.test.ts"),

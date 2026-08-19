@@ -46,6 +46,7 @@ const OPAQUE_INPUTS = [
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
   "agents/hermes/policy-additions.yaml",
+  "test/e2e/live/hermes-tool-execution-proof.py",
   "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
   "nemoclaw-blueprint/policies/presets/local-inference.yaml",
   "nemoclaw-blueprint/policies/presets/claude-code.yaml",
@@ -86,14 +87,12 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  it.each(
-    [
-        ".github/actions/docker-auth-setup/action.yaml",
-        ".github/actions/docker-auth-cleanup/action.yaml",
-        ".github/scripts/docker-auth-setup.sh",
-        ".github/scripts/docker-auth-cleanup.sh",
-      ],
-  )("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
+  it.each([
+    ".github/actions/docker-auth-setup/action.yaml",
+    ".github/actions/docker-auth-cleanup/action.yaml",
+    ".github/scripts/docker-auth-setup.sh",
+    ".github/scripts/docker-auth-cleanup.sh",
+  ])("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",
@@ -112,6 +111,9 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/policy-additions.yaml")).toEqual([
       "src/lib/onboard/initial-policy-real-policy.test.ts",
       "src/lib/onboard/initial-policy.test.ts",
+    ]);
+    expect(triggeredBy("test/e2e/live/hermes-tool-execution-proof.py")).toEqual([
+      "test/e2e/support/common-egress-agent-helpers.test.ts",
     ]);
     expect(triggeredBy("src/lib/messaging/channels/telegram/policy/openclaw.yaml")).toEqual([
       "src/lib/messaging/channels/policy.test.ts",
