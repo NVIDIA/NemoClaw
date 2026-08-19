@@ -635,8 +635,8 @@ describe("focused staging Brev Launchable lane", () => {
         "203.0.113.20",
         "identityfile /hidden/private-key",
         "user hidden-user",
-      ].every((secretOrConfiguration) => !output.includes(secretOrConfiguration)),
-    ).toBe(true);
+      ].filter((secretOrConfiguration) => output.includes(secretOrConfiguration)),
+    ).toEqual([]);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
