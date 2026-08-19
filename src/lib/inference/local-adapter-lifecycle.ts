@@ -165,17 +165,31 @@ export function isLocalAdapterProcess(
     : processMatcher(commandLine);
 }
 
-export function killLocalAdapterPid(options: {
+export type LocalAdapterProcessOptions = {
   pidPath: string;
   processMatcher: LocalAdapterProcessMatcher;
   run: RunFn;
   runCapture: RunCaptureFn;
-}): void {
+};
+
+export function killLocalAdapterPid(options: LocalAdapterProcessOptions): void {
   const persistedPid = loadLocalAdapterPid(options.pidPath);
   if (isLocalAdapterProcess(persistedPid, options.processMatcher, options.runCapture)) {
     options.run(["kill", String(persistedPid)], { ignoreError: true, suppressOutput: true });
   }
   removeLocalAdapterFile(options.pidPath);
+}
+
+/**
+ * Undoes a partial adapter startup so a failed `ensure` leaves no adapter holding the port and no
+ * state file describing an adapter that is not running. It removes the pid and state files only,
+ * so any other file an adapter deliberately reuses across a respawn survives.
+ */
+export function cleanupFailedLocalAdapterStartup(
+  options: LocalAdapterProcessOptions & { statePath: string },
+): void {
+  killLocalAdapterPid(options);
+  removeLocalAdapterFile(options.statePath);
 }
 
 export function spawnDetachedNodeAdapter(options: {

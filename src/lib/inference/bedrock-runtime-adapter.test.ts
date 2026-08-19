@@ -5,14 +5,33 @@ import http from "node:http";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// Only the process- and disk-touching helpers are replaced; every pure helper this file also
+// exercises keeps its real implementation.
+vi.mock("./local-adapter-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./local-adapter-lifecycle")>()),
+  cleanupFailedLocalAdapterStartup: vi.fn(),
+  killLocalAdapterPid: vi.fn(),
+  loadLocalAdapterPid: vi.fn(() => null),
+  persistLocalAdapterPid: vi.fn(),
+  readLocalAdapterJsonFile: vi.fn(() => null),
+  readLocalAdapterTextFile: vi.fn(() => null),
+  spawnDetachedNodeAdapter: vi.fn(() => ({ pid: 4242 })),
+  waitForLocalAdapterHealth: vi.fn(async () => false),
+}));
+
 import {
   __test,
   buildBedrockConverseRequest,
   createBedrockRuntimeAdapterServer,
   createOpenAiChatCompletion,
+  ensureBedrockRuntimeAdapter,
   streamOpenAiChatCompletion,
 } from "./bedrock-runtime-adapter";
-import { isLocalAdapterProcess } from "./local-adapter-lifecycle";
+import {
+  cleanupFailedLocalAdapterStartup,
+  isLocalAdapterProcess,
+  killLocalAdapterPid,
+} from "./local-adapter-lifecycle";
 
 const servers: http.Server[] = [];
 
@@ -381,6 +400,30 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     expect(response.status).toBe(502);
     const body = (await response.json()) as any;
     expect(body.error.message).toContain("Could not load credentials");
+  });
+
+  it("kills the spawned child and clears adapter state when startup never becomes healthy", async () => {
+    vi.mocked(killLocalAdapterPid).mockClear();
+    vi.mocked(cleanupFailedLocalAdapterStartup).mockClear();
+
+    await expect(
+      ensureBedrockRuntimeAdapter({
+        classification: {
+          kind: "bedrock-runtime",
+          endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+          hostname: "bedrock-runtime.us-east-1.amazonaws.com",
+          region: "us-east-1",
+          fips: false,
+        },
+      }),
+    ).rejects.toThrow("did not become healthy");
+
+    // The single direct kill is the pre-spawn one that clears any prior adapter; tearing the new
+    // child down is the shared cleanup's job, and it must target this adapter's own files.
+    expect(vi.mocked(killLocalAdapterPid).mock.calls).toHaveLength(1);
+    const [cleanup] = vi.mocked(cleanupFailedLocalAdapterStartup).mock.calls;
+    expect(cleanup?.[0].pidPath.endsWith("bedrock-runtime-adapter.pid")).toBe(true);
+    expect(cleanup?.[0].statePath.endsWith("bedrock-runtime-adapter.json")).toBe(true);
   });
 
   it("spawns the typed .mts launcher entrypoint", () => {
