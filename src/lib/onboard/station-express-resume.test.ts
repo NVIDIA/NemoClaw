@@ -242,6 +242,40 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(env).toEqual({});
   });
 
+  it("replays an interrupted Station Express provider setup from its sealed intent (#9522)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const interrupted = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: ultraIntent,
+      provider: "vllm-local",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      steps: {
+        provider_selection: {
+          status: "in_progress",
+          startedAt: "2026-08-18T19:17:55.000Z",
+          completedAt: null,
+          error: null,
+        },
+      },
+    });
+    interrupted.status = "failed";
+    const deps = resumeDeps(interrupted);
+    const run = vi.fn(async () => {
+      expect(env).toMatchObject({
+        NEMOCLAW_STATION_EXPRESS: "1",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
+        NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+      });
+    });
+
+    await withStationExpressResumeEnvironment(run, deps, env)({ resume: true });
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(env).toEqual({});
+  });
+
   it("reuses a completed provider selection without replaying managed installation", async () => {
     const completeProviderStep = {
       status: "complete" as const,
