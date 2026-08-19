@@ -41,11 +41,11 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field, ValidationError
 
 PINNED_VERSIONS = {
-    "deepagents-code": "0.1.34",
-    "deepagents": "0.7.0a6",
-    "langchain": "1.3.11",
-    "langchain-core": "1.4.8",
-    "langgraph": "1.2.6",
+    "deepagents-code": "0.1.55",
+    "deepagents": "0.7.5",
+    "langchain": "1.3.14",
+    "langchain-core": "1.5.3",
+    "langgraph": "1.2.10",
 }
 
 
@@ -571,6 +571,31 @@ def _validate_bounded_catalog_and_provider_native_tools() -> None:
     )
     assert core_request.tools[0] is oversized_core
     assert core_request.tools[1] is unserializable_core
+
+    projected_tool = {
+        "type": "function",
+        "function": {
+            "name": "fake_fake_echo",
+            "description": "Returns an authenticated MCP proof token",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    projected_middleware = ProgressiveToolDisclosureMiddleware(
+        registered_tools=[projected_tool]
+    )
+    projected_result = projected_middleware._search_tools(  # noqa: SLF001
+        "AuThEnTiCaTeD McP",
+        _RuntimeProbe([projected_middleware.tools[0]]),
+    )
+    assert projected_result.update["discovered_tools"] == ["fake_fake_echo"]
+    assert "- fake_fake_echo:" in projected_result.update["messages"][0].content
+    projected_request = projected_middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe(
+            [projected_tool, projected_middleware.tools[0]],
+            {"discovered_tools": ["fake_fake_echo"]},
+        )
+    )
+    assert projected_tool in projected_request.tools
 
     duplicate_first = {
         "type": "function",

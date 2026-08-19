@@ -11,6 +11,7 @@ import {
   type HostLocalManagedInferenceInput,
   normalizeHostLocalInferenceReceipt,
 } from "./host-local-inference";
+import { PORTABLE_HOST_GATEWAY_IP } from "../experimental/portable-profile";
 import { prepareHostLocalInferenceStartup } from "./host-local-inference-routing";
 import { createPodmanHostLocalInferenceOperation } from "./podman-host-local-inference";
 
@@ -26,7 +27,7 @@ function managedOllamaFixture(
 ) {
   const harness = createPodmanHostLocalInferenceTestHarness();
   const assertCurrent = vi.fn();
-  const externalListenerIp = options.externalListenerIp ?? "10.89.0.2";
+  const externalListenerIp = options.externalListenerIp ?? PORTABLE_HOST_GATEWAY_IP;
   const inputListenerIp = options.inputListenerIp ?? externalListenerIp;
   const operation = createPodmanHostLocalInferenceOperation({
     engine: harness.engine,
@@ -85,7 +86,7 @@ function prepareManagedOllama(fixture: ReturnType<typeof managedOllamaFixture>) 
 describe("Podman managed Ollama lifecycle", () => {
   it.each([
     ["wildcard", "0.0.0.0"],
-    ["alternate", "10.89.0.2"],
+    ["alternate", PORTABLE_HOST_GATEWAY_IP],
   ])("rejects a %s listener without external network authority (#9596)", (_name, listenerIp) => {
     const fixture = managedOllamaFixture({ externalNetwork: false, inputListenerIp: listenerIp });
 
@@ -99,7 +100,10 @@ describe("Podman managed Ollama lifecycle", () => {
     ["wildcard", "0.0.0.0"],
     ["network", "10.89.0.0"],
     ["broadcast", "10.89.0.255"],
+    ["gateway", "10.89.0.1"],
+    ["inside-subnet alternate", "10.89.0.2"],
     ["multicast", "224.0.0.1"],
+    ["reserved", "240.0.0.1"],
   ])("rejects a %s external listener before Podman run (#9596)", (_name, listenerIp) => {
     const fixture = managedOllamaFixture({
       externalListenerIp: listenerIp,
@@ -110,10 +114,20 @@ describe("Podman managed Ollama lifecycle", () => {
     expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(false);
   });
 
+  it("rejects a loopback external listener before Podman run (#9596)", () => {
+    const fixture = managedOllamaFixture({
+      externalListenerIp: "127.0.0.1",
+      inputListenerIp: "127.0.0.1",
+    });
+
+    expect(() => prepareManagedOllama(fixture)).toThrow("exact non-loopback IPv4 address");
+    expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(false);
+  });
+
   it("rejects listener drift from external network authority before Podman run (#9596)", () => {
     const fixture = managedOllamaFixture({
-      externalListenerIp: "10.89.0.3",
-      inputListenerIp: "10.89.0.2",
+      externalListenerIp: PORTABLE_HOST_GATEWAY_IP,
+      inputListenerIp: "192.0.2.2",
     });
 
     expect(() => prepareManagedOllama(fixture)).toThrow(
@@ -147,7 +161,7 @@ describe("Podman managed Ollama lifecycle", () => {
         networkId: harness.input.networkId,
         networkName: harness.input.networkName,
         networkGatewayIp: harness.input.networkGatewayIp,
-        networkListenerIp: "10.89.0.2",
+        networkListenerIp: PORTABLE_HOST_GATEWAY_IP,
         networkAuthoritySha256: "8".repeat(64),
       },
       inference: { model: "qwen3-vl:4b" },
@@ -166,7 +180,7 @@ describe("Podman managed Ollama lifecycle", () => {
     ).toThrow("Ollama model digest is malformed");
     expect(assertCurrent).toHaveBeenCalled();
     expect(harness.events).toContainEqual(
-      expect.stringContaining("--publish 10.89.0.2:11434:11434"),
+      expect.stringContaining(`--publish ${PORTABLE_HOST_GATEWAY_IP}:11434:11434`),
     );
     const ready = harness.events.findIndex((event) => event.includes("/api/tags"));
     const pull = harness.events.findIndex((event) => event.includes("ollama pull qwen3-vl:4b"));
