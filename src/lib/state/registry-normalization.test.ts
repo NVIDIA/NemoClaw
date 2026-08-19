@@ -121,6 +121,14 @@ describe("sandbox registry normalization", () => {
         name: "alpha",
         mcp: {
           bridges: {
+            logs: {
+              server: "logs",
+              agent: "openclaw",
+              url: "https://9.9.9.9/mcp",
+              env: ["LOGS_TOKEN"],
+              policyName: "mcp-bridge-logs",
+              addedAt: "2026-08-18T00:00:00.000Z",
+            },
             files: {
               server: "files",
               agent: "hermes",
@@ -136,6 +144,7 @@ describe("sandbox registry normalization", () => {
 
     expect(registry.listManagedMcpCredentialReservations()).toEqual([
       { sandboxName: "alpha", server: "files", credentialKeys: ["FILES_TOKEN"] },
+      { sandboxName: "alpha", server: "logs", credentialKeys: ["LOGS_TOKEN"] },
       {
         sandboxName: "zeta",
         server: "search",

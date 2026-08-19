@@ -295,7 +295,7 @@ if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'
   exit 0
 fi
-if [ "$1 $2 $3" = "sandbox provider list" ]; then
+if [ "$1 $2 $3" = "sandbox provider list" ] && [ "$4" = "alpha" ]; then
   printf '%s\n' 'No providers attached to sandbox alpha.'
   exit 0
 fi
