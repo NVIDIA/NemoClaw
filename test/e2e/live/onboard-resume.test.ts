@@ -29,6 +29,7 @@ import {
   expectSandboxProviderAttachment,
   upsertGenericGatewayProvider,
 } from "../fixtures/gateway-providers.ts";
+import { ONBOARD_COMMAND_TIMEOUT_MS } from "../fixtures/onboard-timeout-contract.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 // Disruption-recovery contract — regression for #446.
@@ -54,11 +55,6 @@ const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
 const EXTRA_PROVIDER_TOKEN = "e2e-resume-extra-provider-token";
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
-
-// 15 minutes per onboard run; matches NEMOCLAW_E2E_DEFAULT_TIMEOUT in the
-// former shell test (`export NEMOCLAW_E2E_DEFAULT_TIMEOUT=600` is per-step;
-// the full onboard sequence dominates).
-const ONBOARD_TIMEOUT_MS = 15 * 60_000;
 
 interface SessionStateInterrupted {
   status: "failed";
@@ -385,7 +381,7 @@ test(
       artifactName: "phase-2-onboard-interrupted",
       env: firstRunEnv,
       redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-      timeoutMs: ONBOARD_TIMEOUT_MS,
+      timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
     });
     const firstText = `${firstRun.stdout}\n${firstRun.stderr}`;
 
@@ -488,7 +484,7 @@ test(
         artifactName: "phase-3-onboard-resume",
         env: resumeEnv,
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
+        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
       },
     );
     const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
@@ -582,7 +578,7 @@ test(
         artifactName: "phase-3-5-onboard-resume-route-unavailable",
         env: resumeEnv,
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
+        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
       },
     );
     const unavailableResumeText = `${unavailableResumeRun.stdout}\n${unavailableResumeRun.stderr}`;
@@ -619,7 +615,7 @@ test(
         artifactName: "phase-3-5-onboard-resume-route-restored",
         env: resumeEnv,
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
+        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
       },
     );
     const repairedResumeText = `${repairedResumeRun.stdout}\n${repairedResumeRun.stderr}`;
@@ -646,7 +642,7 @@ test(
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         },
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
+        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
       },
     );
     const implicitResumeText = `${implicitResumeRun.stdout}\n${implicitResumeRun.stderr}`;
@@ -673,7 +669,7 @@ test(
           NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "preflight",
         },
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_TIMEOUT_MS,
+        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
       },
     );
     const freshText = `${freshRun.stdout}\n${freshRun.stderr}`;
