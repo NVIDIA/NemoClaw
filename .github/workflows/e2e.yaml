@@ -99,8 +99,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     outputs:
-      dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract || steps.validate_reused_dcode_base.outputs.contract }}
-      dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref || steps.validate_reused_dcode_base.outputs.base_ref }}
+      dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract }}
+      dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref }}
     permissions:
       actions: read
       contents: read
@@ -115,18 +115,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reuse=0
           case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in
             NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)
               required=1
               ;;
-            NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)
-              if [[ "${CHECKOUT_SHA}" == "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e" ]]; then
-                required=0
-                reuse=1
-              else
-                required=1
-              fi
+            NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)
+              required=1
               ;;
             *)
               echo "::error::base-image publication mode is not trusted" >&2
@@ -134,18 +128,17 @@ jobs:
               ;;
           esac
           printf 'required=%s\n' "${required}" >> "${GITHUB_OUTPUT}"
-          printf 'reuse=%s\n' "${reuse}" >> "${GITHUB_OUTPUT}"
 
       - name: Check out trusted E2E workflow
-        if: ${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.reuse == '1' }}
+        if: ${{ steps.publication_mode.outputs.required == '1' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.checkout_sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node for publication verification
-        if: ${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.reuse == '1' }}
+        if: ${{ steps.publication_mode.outputs.required == '1' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
@@ -154,14 +147,9 @@ jobs:
         name: Verify applicable base-image publication
         if: ${{ steps.publication_mode.outputs.required == '1' }}
         env:
-          EXPECTED_SHA: ${{ inputs.checkout_sha || github.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
           GITHUB_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          export GITHUB_REF=refs/heads/main
-          export GITHUB_SHA="$EXPECTED_SHA"
-          node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
+        run: node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
 
       - name: Download immutable Deep Agents Code base contract
         if: ${{ steps.publication_mode.outputs.required == '1' }}
@@ -172,15 +160,6 @@ jobs:
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
         run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract"
 
-      - name: Download reused a4f9b59 Deep Agents Code base contract
-        if: ${{ steps.publication_mode.outputs.reuse == '1' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_HEAD_SHA: ee6762b9941777d64dad832994b03ca2a572d4c9
-          PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32204372443"
-        run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"
-
       - id: validate_dcode_base
         name: Validate immutable Deep Agents Code base
         if: ${{ steps.publication_mode.outputs.required == '1' }}
@@ -189,15 +168,6 @@ jobs:
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
           PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
         run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"
-
-      - id: validate_reused_dcode_base
-        name: Validate reused a4f9b59 Deep Agents Code base
-        if: ${{ steps.publication_mode.outputs.reuse == '1' }}
-        env:
-          PUBLICATION_HEAD_SHA: ee6762b9941777d64dad832994b03ca2a572d4c9
-          PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32204372443"
-        run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"
 
   generate-matrix:
     runs-on: ubuntu-latest
@@ -208,7 +178,6 @@ jobs:
       pull-requests: read
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
-      managed_image_catalog: ${{ steps.package_cli_artifact.outputs.managed_image_catalog }}
       e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
@@ -266,8 +235,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == refs/heads/* ]] || {
-            echo "::error::Manual PR E2E must be dispatched from this repository branch" >&2
+          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || {
+            echo "::error::Manual PR E2E must be dispatched from main" >&2
             exit 1
           }
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
@@ -285,6 +254,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository must be NVIDIA/NemoClaw" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch must be main" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
           nvidia_owned=false
           if [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
@@ -570,51 +540,15 @@ jobs:
             fi
           fi
 
-      - name: Assemble reused a4f9b59 managed-image catalog
+      - name: Resolve exact PR managed-image catalog
         if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "${{ inputs.checkout_sha }}" == "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e" ]] || {
-            echo "::error::Temporary reused catalog is pinned to a4f9b59" >&2
-            exit 1
-          }
-          contracts="${RUNNER_TEMP}/reused-managed-contracts"
-          install -d -m 0700 "$contracts"
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
-          import path from "node:path";
-          import { githubRequest } from "./tools/e2e/base-image-publication.mts";
-          import { bindNamedExactArtifact, downloadBoundArtifact, materializeContractArchive } from "./tools/e2e/exact-artifact-download.mts";
-          const expected = { headSha: "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e", runAttempt: 1, runId: 32208754890 };
-          const artifacts = [
-            ["openclaw", 9350414757, "sha256:913b7ac71b62038b72b6bfc2a530749fe3aa0fa1761d87f4d9521da9cf2fc6dc"],
-            ["hermes", 9350110051, "sha256:fa3786b6b581643b425dcccf830de4e41c2e640cbace5e95909ef07c12074edd"],
-            ["langchain-deepagents-code", 9350088553, "sha256:657e17cd20c45afd36e46a82bb9439482504e65a6b739340cd51f2d3b3585425"],
-          ];
-          for (const [agent, id, digest] of artifacts) {
-            const name = `managed-pr-contract-${expected.runId}-${expected.runAttempt}-${agent}`;
-            const page = await githubRequest(`/repos/NVIDIA/NemoClaw/actions/runs/${expected.runId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`, process.env.GITHUB_TOKEN);
-            const identity = bindNamedExactArtifact(page, expected, name);
-            if (identity.id !== id || identity.digest !== digest) throw new Error(`reused ${agent} artifact identity changed`);
-            materializeContractArchive(await downloadBoundArtifact(identity, process.env.GITHUB_TOKEN), path.join(process.env.RUNNER_TEMP, "reused-managed-contracts", agent));
-          }
-          NODE
-          for agent in openclaw hermes langchain-deepagents-code; do
-            contract="$contracts/$agent/contract.json"
-            jq --arg revision 'a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e' '
-              if .source.revision != $revision or .source.release != "v0.1.0" then error("unexpected reused contract source identity")
-              else . end
-            ' "$contract" >"$contract.next"
-            mv "$contract.next" "$contract"
-          done
-          node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts assemble \
-            a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e \
-            "${RUNNER_TEMP}/pr-managed-image-catalog.json" \
-            "$contracts/openclaw/contract.json" \
-            "$contracts/hermes/contract.json" \
-            "$contracts/langchain-deepagents-code/contract.json"
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"
 
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -647,6 +581,7 @@ jobs:
           [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "NVIDIA/NemoClaw" ]] || { echo "::error::pull request base repository changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository changed before execution" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha changed before execution" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha changed before execution" >&2; exit 1; }
           if [[ "$NVIDIA_OWNED" == "true" ]]; then
             [[ "$(jq -r '.head.repo.owner.login // ""' <<< "$pull_json")" == "NVIDIA" &&
@@ -675,7 +610,7 @@ jobs:
           if [[ "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw" &&
                 "$NVIDIA_OWNED" == "true" &&
                 "$EVENT_NAME" == "workflow_dispatch" &&
-                "$REF" == refs/heads/* &&
+                "$REF" == "refs/heads/main" &&
                 "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" &&
@@ -736,16 +671,7 @@ jobs:
           if [[ -e "$managed_catalog" ]]; then
             [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] ||
               { echo "::error::trusted PR managed-image catalog is not a nonempty regular file"; exit 1; }
-            candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
-            jq --arg release "$candidate_release" --arg revision "$CANDIDATE_SHA" '
-              with_entries(
-                if .value.source.revision != $revision then error("managed-image catalog revision mismatch")
-                else .value.source.release = $release end
-              )
-            ' "$managed_catalog" >"${managed_catalog}.next"
-            mv "${managed_catalog}.next" "$managed_catalog"
             install -m 0600 "$managed_catalog" dist/e2e-managed-image-catalog.json
-            printf 'managed_image_catalog=%s\n' "$(jq -c . "$managed_catalog")" >>"$GITHUB_OUTPUT"
           fi
 
           artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
@@ -2553,7 +2479,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -2665,7 +2590,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       # Keep only the credential-bearing step anchored. Cleanup mappings stay
@@ -2674,9 +2598,9 @@ jobs:
         name: Authenticate to Docker Hub
         uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f
         with:
-          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && '1' || '0' }}
-          username: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && '1' || '0' }}
+          username: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+          token: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
 
       - name: Configure live E2E trace directory
         env:
@@ -2717,7 +2641,6 @@ jobs:
           BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           TARGET_ID: ${{ matrix.id }}
-          TARGET_LABEL: ${{ matrix.label }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2731,19 +2654,6 @@ jobs:
                 (.candidateSha | test("^[0-9a-f]{40}$"))
                 and (.base.reference | test("@sha256:[0-9a-f]{64}$"))
               )' >"${evidence_dir}/dcode-base-image.json"
-          test_artifact_name="$(node -e '
-            const slug = process.argv[1]
-              .trim()
-              .toLowerCase()
-              .replace(/[^a-z0-9._-]+/g, "-")
-              .replace(/^-+|-+$/g, "");
-            process.stdout.write(slug || "unnamed-test");
-          ' "${TARGET_LABEL}")"
-          test_evidence_dir="${E2E_ARTIFACT_DIR}/${test_artifact_name}"
-          install -d -m 0700 "${test_evidence_dir}"
-          install -m 0600 \
-            "${evidence_dir}/dcode-base-image.json" \
-            "${test_evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
@@ -2902,7 +2812,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -2944,7 +2853,6 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: no provider credential
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -2964,10 +2872,10 @@ jobs:
       github_token: false
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
-      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
-      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
 
   catalogue-nvidia-api:
     name: ${{ matrix.display_name }}
@@ -2984,7 +2892,6 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: NVIDIA API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3004,11 +2911,11 @@ jobs:
       github_token: false
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
-      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
-      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
-      NVIDIA_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}
+      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      NVIDIA_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}
 
   catalogue-nvidia-inference:
     name: ${{ matrix.display_name }}
@@ -3025,7 +2932,6 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: NVIDIA inference API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3045,11 +2951,11 @@ jobs:
       github_token: false
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
-      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
-      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
-      NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
 
   catalogue-github-read:
     name: ${{ matrix.display_name }}
@@ -3066,7 +2972,6 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: GitHub read token
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3086,10 +2991,10 @@ jobs:
       github_token: true
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
-      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
-      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
 
   catalogue-brave-nvidia-inference:
     name: ${{ matrix.display_name }}
@@ -3107,7 +3012,6 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
       credential_boundary: Brave and NVIDIA inference API keys
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3127,12 +3031,12 @@ jobs:
       github_token: false
       shard: ${{ matrix.shard }}
       artifact_layout: ${{ matrix.artifact_layout }}
-      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
     secrets:
-      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
-      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
-      BRAVE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.BRAVE_API_KEY || '' }}
-      NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      BRAVE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.BRAVE_API_KEY || '' }}
+      NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
 
   openshell-gateway-auth-contract:
     needs: generate-matrix
@@ -3155,7 +3059,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3250,7 +3153,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && matrix.agent == 'hermes' }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -3282,17 +3185,11 @@ jobs:
             exit 1
           }
 
-          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" ]]; then
-            fail "workflow must run from NVIDIA/NemoClaw"
+          if [[ "${REPOSITORY}" != "NVIDIA/NemoClaw" || "${REF}" != "refs/heads/main" ]]; then
+            fail "workflow must run from NVIDIA/NemoClaw main"
           fi
           if [[ "${EVENT_NAME}" != "push" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then
             fail "workflow event must be push or workflow_dispatch"
-          fi
-          if [[ "${EVENT_NAME}" == "push" && "${REF}" != "refs/heads/main" ]]; then
-            fail "push workflow must run from NVIDIA/NemoClaw main"
-          fi
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${REF}" != refs/heads/* ]]; then
-            fail "manual workflow must run from an NVIDIA/NemoClaw branch"
           fi
           # PR E2E mode: maintainer-dispatched PR commit.
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then
@@ -3448,7 +3345,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3584,7 +3480,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3766,7 +3661,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3934,7 +3828,7 @@ jobs:
   managed-image-multiarch-startup:
     name: Protected managed-image startup (${{ matrix.platform }})
     needs: generate-matrix
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-multiarch-startup') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime')) }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-multiarch-startup') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime')) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 210
     permissions:
@@ -3988,8 +3882,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && ( ( "$EVENT_NAME" == "push" && "$REF" == "refs/heads/main" ) || ( "$EVENT_NAME" == "workflow_dispatch" && "$REF" == refs/heads/* ) ) ]] || {
-            echo "::error::Protected managed-image startup must run from NVIDIA/NemoClaw" >&2
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && ( "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ) ]] || {
+            echo "::error::Protected managed-image startup must run from trusted NVIDIA/NemoClaw main" >&2
             exit 1
           }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
@@ -4568,7 +4462,7 @@ jobs:
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
     needs: [generate-matrix, managed-image-multiarch-startup]
-    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 300
     permissions:
@@ -4611,8 +4505,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && ( ( "$EVENT_NAME" == "push" && "$REF" == "refs/heads/main" ) || ( "$EVENT_NAME" == "workflow_dispatch" && "$REF" == refs/heads/* ) ) ]] || {
-            echo "::error::Protected managed-image runtime must run from NVIDIA/NemoClaw" >&2
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && ( "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ) ]] || {
+            echo "::error::Protected managed-image runtime must run from trusted NVIDIA/NemoClaw main" >&2
             exit 1
           }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
@@ -4798,7 +4692,7 @@ jobs:
 
       - name: Run all-agent GPU, local inference, rollback, and cleanup qualification
         env:
-          NVIDIA_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_API_KEY || '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -4875,7 +4769,7 @@ jobs:
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (github.event_name == 'push' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))) }}
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.event_name == 'push' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))) }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}
         env:
           BASH_ENV: /dev/null
@@ -4897,7 +4791,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4920,7 +4813,7 @@ jobs:
 
       - name: Run Hermes live Vitest test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-e2e.test.ts
@@ -4984,7 +4877,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout trusted Hermes GPU runtime fixture
@@ -5285,7 +5177,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -5323,29 +5214,6 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
-      - name: Materialize cloud-onboard managed-image catalog
-        if: ${{ needs.generate-matrix.outputs.managed_image_catalog != '' }}
-        env:
-          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
-          MANAGED_IMAGE_CATALOG: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          release="$(jq -r 'first(.[]).source.release' <<<"$MANAGED_IMAGE_CATALOG")"
-          catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
-          jq --arg release "$release" --arg revision "$CANDIDATE_SHA" '
-            with_entries(
-              if .value.source.revision != $revision then error("managed-image catalog revision mismatch")
-              else .value.source.release = $release end
-            )
-          ' <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
-          [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
-            echo "::error::temporary managed-image catalog is invalid" >&2
-            exit 1
-          }
-          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
-          printf 'NEMOCLAW_E2E_EXACT_RELEASE=%s\n' "$release" >>"$GITHUB_ENV"
-
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
@@ -5354,40 +5222,6 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          if [[ -n "${NEMOCLAW_E2E_EXACT_RELEASE:-}" ]]; then
-            [[ "$NEMOCLAW_E2E_EXACT_RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[0-9a-f]+$ ]] || {
-              echo "::error::exact E2E release identity is invalid" >&2
-              exit 1
-            }
-            real_git="$(command -v git)"
-            [[ "$real_git" == /* ]] || { echo "::error::real git path is invalid" >&2; exit 1; }
-            shim_dir="${RUNNER_TEMP}/nemoclaw-e2e-exact-git"
-            install -d -m 0700 "$shim_dir"
-            printf '%s\n' "$NEMOCLAW_E2E_EXACT_RELEASE" >"${shim_dir}/version"
-            chmod 0600 "${shim_dir}/version"
-            {
-              printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
-              printf 'real_git=%q\n' "$real_git"
-              printf '%s\n' \
-                'if [[ $# -eq 4 && $1 == describe && $2 == --tags && $3 == --match && $4 == "v*" ]]; then' \
-                '  cat "$(dirname -- "$0")/version"' \
-                '  exit 0' \
-                'fi' \
-                'if [[ $# -eq 6 && $1 == -C && -n $2 && $3 == describe && $4 == --tags && $5 == --match && $6 == "v*" ]]; then' \
-                '  cat "$(dirname -- "$0")/version"' \
-                '  exit 0' \
-                'fi' \
-                'exec "$real_git" "$@"'
-            } >"${shim_dir}/git"
-            chmod 0700 "${shim_dir}/git"
-            export PATH="${shim_dir}:${PATH}"
-            profile_path="/etc/profile.d/nemoclaw-e2e-git-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
-            sudo test ! -e "$profile_path" || { echo "::error::temporary E2E profile path already exists" >&2; exit 1; }
-            printf 'export PATH=%q:"$PATH"\n' "$shim_dir" | sudo tee "$profile_path" >/dev/null
-            sudo chmod 0644 "$profile_path"
-            cleanup_exact_git() { sudo rm -f -- "$profile_path"; }
-            trap cleanup_exact_git EXIT
-          fi
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           if command -v openshell >/dev/null 2>&1; then
             OPENSHELL_BIN="$(command -v openshell)"
@@ -5467,7 +5301,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -5536,7 +5369,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -5612,7 +5444,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -5826,7 +5657,6 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
           sparse-checkout: |
             ci/onboard-performance-budget.json
