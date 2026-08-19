@@ -560,20 +560,20 @@ describe("base-image publication evidence", () => {
     ).toThrow(/incomplete/u);
   });
 
-  it("requires every publisher in the selected attempt to complete successfully (#9549)", () => {
+  it("requires every publisher job to belong to the selected attempt (#9549)", () => {
     const run = selectedRun({ attempt: 2 });
-    const jobs = [
-      publisherJob("Build and push OpenClaw base image", { id: 1, run_attempt: 1 }),
-      publisherJob("Build and push Hermes base image", {
-        id: 2,
-        run_attempt: 1,
-        conclusion: "failure",
-      }),
-      publisherJob("Build and push Deep Agents Code base image", { id: 3, run_attempt: 1 }),
-      ...successfulJobs({ runAttempt: 2 }).map((job, index) => ({ ...job, id: index + 4 })),
-    ];
+    const jobs = successfulJobs({ runAttempt: 2 });
 
     expect(validatePublisherJobs({ total_count: jobs.length, jobs }, run)).toBe("ready");
+    expect(() =>
+      validatePublisherJobs(
+        {
+          total_count: jobs.length,
+          jobs: jobs.map((job, index) => (index === 0 ? { ...job, run_attempt: 1 } : job)),
+        },
+        run,
+      ),
+    ).toThrow(/provenance does not match/u);
   });
 
   it("classifies an incomplete required publisher as pending only while the selected run is in progress (#9549)", () => {
@@ -609,21 +609,6 @@ describe("base-image publication evidence", () => {
       ).toThrow(/did not complete successfully in attempt 1/u);
     },
   );
-
-  it("does not use publisher success from a previous run attempt (#9549)", () => {
-    const jobs = successfulJobs({ runAttempt: 1 });
-    const payload = { total_count: jobs.length, jobs };
-
-    expect(
-      validatePublisherJobs(
-        payload,
-        selectedRun({ attempt: 2, status: "in_progress", conclusion: null }),
-      ),
-    ).toBe("pending");
-    expect(() => validatePublisherJobs(payload, selectedRun({ attempt: 2 }))).toThrow(
-      /missing required .* attempt 2/u,
-    );
-  });
 
   it("reconfirms the selected run identity after reading job history (#9549)", () => {
     expect(() => validateBoundRun(workflowRun(), selectedRun())).not.toThrow();
@@ -713,9 +698,9 @@ describe("base-image publication evidence", () => {
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml",
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
-      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/jobs?filter=all&per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       "/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml/runs?branch=main&event=push&per_page=100&page=1",
-      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/jobs?filter=all&per_page=100&page=1`,
+      `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=1`,
       `/repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}`,
     ]);
     expect(notices).toHaveLength(2);

@@ -447,15 +447,12 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
     throw new Error("publisher job listing is incomplete");
   }
 
-  const jobsByName = new Map<
-    string,
-    Array<{ attempt: number; status: string; conclusion: string | null }>
-  >();
+  const jobsByName = new Map<string, { status: string; conclusion: string | null }>();
   for (const [index, value] of response.jobs.entries()) {
     const job = asRecord(value);
     positiveSafeInteger(job.id, `publisher job ${index} id`);
     const attempt = positiveSafeInteger(job.run_attempt, `publisher job ${index} attempt`);
-    if (job.run_id !== run.id || attempt > run.attempt || job.head_sha !== run.headSha) {
+    if (job.run_id !== run.id || attempt !== run.attempt || job.head_sha !== run.headSha) {
       throw new Error(`publisher job ${index} provenance does not match the selected run`);
     }
     if (typeof job.name !== "string" || job.name.length === 0) {
@@ -476,24 +473,17 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
     } else if (!PENDING_RUN_STATUSES.has(status) || job.conclusion !== null) {
       throw new Error(`publisher job ${requiredName} pending state is invalid; ${run.url}`);
     }
-    const occurrences = jobsByName.get(requiredName) ?? [];
-    if (occurrences.some((occurrence) => occurrence.attempt === attempt)) {
+    if (jobsByName.has(requiredName)) {
       throw new Error(
-        `publisher job ${requiredName} is duplicated in attempt ${attempt}; ${run.url}`,
+        `publisher job ${requiredName} is duplicated in attempt ${run.attempt}; ${run.url}`,
       );
     }
-    occurrences.push({
-      attempt,
-      status,
-      conclusion,
-    });
-    jobsByName.set(requiredName, occurrences);
+    jobsByName.set(requiredName, { status, conclusion });
   }
 
   let pending = false;
   for (const requiredName of REQUIRED_PUBLISHER_JOBS) {
-    const occurrences = jobsByName.get(requiredName) ?? [];
-    const current = occurrences.find((occurrence) => occurrence.attempt === run.attempt);
+    const current = jobsByName.get(requiredName);
     if (!current) {
       if (run.status === "completed") {
         throw new Error(
@@ -637,7 +627,7 @@ export async function waitForBaseImagePublication(
     const runs = await collectPaginated(options.request, runsPath, "workflow_runs");
     const selection = selectPublicationRun(runs, options.history, workflowId);
     if (selection.state === "selected") {
-      const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/jobs?filter=all&per_page=100`;
+      const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/attempts/${selection.run.attempt}/jobs?per_page=100`;
       if (now() > deadline) {
         throw new Error(
           `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
