@@ -93,6 +93,7 @@ describe("sandbox-facing Ollama model validation", () => {
     ["a non-Ollama body", "<html>proxy</html>"],
     ["a JSON body without a models array", JSON.stringify({ error: "nope" })],
     ["an inventory with a malformed model entry", JSON.stringify({ models: [{}] })],
+    ["an inventory with a whitespace-only model name", tagsBody("   ")],
   ])("never fails onboarding on %s", (_name, body) => {
     expect(validateSandboxFacingOllamaModel("llama3.2:1b", () => body)).toEqual({ ok: true });
   });

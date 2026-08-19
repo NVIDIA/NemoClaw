@@ -375,7 +375,7 @@ function parseModelInventory(provider: string, body: string): string[] | null {
       const record = entry as Record<string, unknown>;
       const values = provider === "ollama-local" ? [record.name, record.model] : [record.id];
       const names = values.filter(
-        (value): value is string => typeof value === "string" && value !== "",
+        (value): value is string => typeof value === "string" && value.trim() !== "",
       );
       if (names.length === 0) return null;
       inventory.push(...names);
