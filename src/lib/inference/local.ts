@@ -1079,7 +1079,7 @@ export function getLocalProviderContainerReachabilityCheck(
           : `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
       ];
     }
-    case "ollama-local":
+    case "ollama-local": {
       // Check the host port reachable from containers: raw Ollama when host
       // loopback is reachable, otherwise the auth proxy.
       // Use -w %{http_code} (instead of -sf) so an authenticated-but-401
@@ -1105,6 +1105,7 @@ export function getLocalProviderContainerReachabilityCheck(
           : ["-sf"]),
         `http://host.openshell.internal:${containerPort}/api/tags`,
       ];
+    }
     default:
       return null;
   }
