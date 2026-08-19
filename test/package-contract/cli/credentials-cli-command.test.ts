@@ -58,6 +58,11 @@ type RuntimeBridge = {
   runOpenshell: (args: string[], opts?: RuntimeBridgeRunOptions) => SpawnLikeResult;
   recordExtraProvider: (name: string) => boolean;
   forgetExtraProvider: (name: string) => boolean;
+  listManagedMcpCredentialReservations: () => readonly {
+    sandboxName: string;
+    server: string;
+    credentialKeys: readonly string[];
+  }[];
 };
 type OpenshellCall = { args: string[]; opts?: RuntimeBridgeRunOptions };
 
@@ -83,6 +88,7 @@ function installRuntimeBridge(bridge: Partial<RuntimeBridge> = {}): OpenshellCal
     },
     recordExtraProvider: () => true,
     forgetExtraProvider: () => true,
+    listManagedMcpCredentialReservations: () => [],
     ...bridge,
   };
   const globalActions = require(GLOBAL_ACTIONS_PATH) as {

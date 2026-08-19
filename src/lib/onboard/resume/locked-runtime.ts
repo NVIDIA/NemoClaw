@@ -13,6 +13,7 @@ import {
   createPortableOnboardEnvironmentScope,
   preparePortableExperimentalHost,
   type PortableOnboardEnvironmentScope,
+  type PortableOnboardRuntimeContext,
 } from "../session-bootstrap";
 import type { OnboardOptions } from "../types";
 import { ensureUsageNoticeConsent } from "../usage-notice";
@@ -20,7 +21,7 @@ import { ensureUsageNoticeConsent } from "../usage-notice";
 export interface LockedOnboardRuntimePreparation {
   readonly checkpointProfile: CheckpointOnboardProfile;
   readonly environmentScope: PortableOnboardEnvironmentScope | null;
-  readonly preparedPortableAuthority: CheckpointPortableRuntimeAuthority | null;
+  readonly portableRuntimeContext: PortableOnboardRuntimeContext | null;
 }
 
 async function ensureNoticeAccepted(
@@ -87,12 +88,12 @@ function prepareEnvironment(
   expectedPortableAuthority: CheckpointPortableRuntimeAuthority | null,
 ): {
   environmentScope: PortableOnboardEnvironmentScope | null;
-  preparedPortableAuthority: CheckpointPortableRuntimeAuthority | null;
+  portableRuntimeContext: PortableOnboardRuntimeContext | null;
 } {
   if (checkpointProfile !== "portable") {
     return {
       environmentScope: resume ? createDefaultResumeProfileEnvironmentScope(process.env) : null,
-      preparedPortableAuthority: null,
+      portableRuntimeContext: null,
     };
   }
   const environmentScope = createPortableOnboardEnvironmentScope(
@@ -111,7 +112,10 @@ function prepareEnvironment(
       containersConf: prepared.containersConf,
       socketPath: prepared.authority.socketPath,
     });
-    return { environmentScope, preparedPortableAuthority: prepared.authority };
+    return {
+      environmentScope,
+      portableRuntimeContext: { authority: prepared.authority, environmentScope },
+    };
   } catch (error) {
     environmentScope.restore();
     throw error;

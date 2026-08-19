@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../test/helpers/timeouts";
 
 const mocks = vi.hoisted(() => {
   class GatewayTokenCommandError extends Error {
@@ -43,6 +44,10 @@ const mocks = vi.hoisted(() => {
     runStartCommand: vi.fn().mockResolvedValue(undefined),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
+    assertHermesPortableCommandUnavailable: vi.fn(),
+    withMcpLifecycleLock: vi.fn(async (_sandboxName: string, operation: () => unknown) =>
+      operation(),
+    ),
     showRootHelp: vi.fn(),
     showVersion: vi.fn(),
     spawnSync: vi.fn(),
@@ -86,6 +91,14 @@ vi.mock("../lib/uninstall-command", () => ({
   runUninstallCommand: mocks.runUninstallCommand,
 }));
 vi.mock("../lib/core/version", () => ({ getVersion: mocks.getVersion }));
+vi.mock("../lib/onboard/experimental/portable-agent-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal()),
+  assertHermesPortableCommandUnavailable: mocks.assertHermesPortableCommandUnavailable,
+}));
+vi.mock("../lib/state/mcp-lifecycle-lock-acquisition", async (importOriginal) => ({
+  ...(await importOriginal()),
+  withMcpLifecycleLock: mocks.withMcpLifecycleLock,
+}));
 
 import { log } from "../lib/cli/logger";
 import DebugCliCommand from "./debug";
@@ -106,7 +119,7 @@ import UninstallCliCommand from "./uninstall";
 
 const rootDir = process.cwd();
 
-describe("simple global oclif adapters", () => {
+describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -178,6 +191,26 @@ describe("simple global oclif adapters", () => {
       { quiet: true },
       { fetchToken, getSandboxAgent, agentExposesToken },
     );
+    expect(mocks.withMcpLifecycleLock).toHaveBeenCalledWith("alpha", expect.any(Function));
+  });
+
+  it("rejects schema-5 gateway-token before fetching or printing credentials (#9203)", async () => {
+    const fetchToken = vi.fn(() => "must-not-print");
+    setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
+      fetchToken,
+      getSandboxAgent: () => "hermes",
+      agentExposesToken: () => true,
+    }));
+    mocks.assertHermesPortableCommandUnavailable.mockImplementationOnce(() => {
+      throw new Error("schema-5 token rejected");
+    });
+
+    await expect(GatewayTokenCliCommand.run(["alpha", "--quiet"], rootDir)).rejects.toThrow(
+      "schema-5 token rejected",
+    );
+
+    expect(fetchToken).not.toHaveBeenCalled();
+    expect(mocks.runGatewayTokenCommand).not.toHaveBeenCalled();
   });
 
   it("maps dashboard-url flags to the dashboard URL action", async () => {

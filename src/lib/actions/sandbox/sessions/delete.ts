@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+import {
+  deferSandboxLifecycleExit,
+  runWithDeferredSandboxLifecycleExit,
+} from "../../../core/process-exit";
+import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { callOpenclawGateway, sandboxUsesHermesAgent } from "./gateway-rpc";
@@ -38,6 +44,18 @@ export async function deleteSandboxSession(
   sandboxName: string,
   opts: SessionsDeleteOptions,
 ): Promise<SessionsDeleteResult> {
+  return runWithDeferredSandboxLifecycleExit(() =>
+    withMcpLifecycleLock(sandboxName, () => {
+      assertHermesPortableCommandUnavailable(sandboxName, "sandbox:sessions:delete");
+      return deleteSandboxSessionUnlocked(sandboxName, opts);
+    }),
+  );
+}
+
+async function deleteSandboxSessionUnlocked(
+  sandboxName: string,
+  opts: SessionsDeleteOptions,
+): Promise<SessionsDeleteResult> {
   // Route by the sandbox's registered agent before OpenClaw key validation,
   // the same dispatch `sessions export` uses (#5526). Hermes ships a native
   // `hermes sessions delete` over its own SQLite store and neither exposes the
@@ -63,31 +81,35 @@ export async function deleteSandboxSession(
     console.error(
       `  Drop --agent or pass a key under that agent (e.g. agent:${requestedAgent}:...).`,
     );
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
 
   const resolvedAgent = keyAgent ?? requestedAgent ?? DEFAULT_AGENT_ID;
   const canonicalKey = buildCanonicalSessionKey(resolvedAgent, rawKey);
   const deleteTranscript = opts.keepTranscript !== true;
 
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  await ensureLiveSandboxOrExit(sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
 
   const { payload, rawOutput } = callOpenclawGateway<SessionsDeletePayload>({
     sandboxName,
     method: "sessions.delete",
     params: { key: canonicalKey, deleteTranscript },
+    exit: deferSandboxLifecycleExit,
   });
 
   if (payload.ok === false || payload.error) {
     const code = payload.error?.code ?? "unknown";
     const message = payload.error?.message ?? "no message";
     console.error(`  Gateway refused sessions.delete for '${canonicalKey}': [${code}] ${message}`);
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
   if (payload.ok !== true || typeof payload.key !== "string") {
     console.error("  Gateway returned an unexpected sessions.delete payload.");
     console.error(`  ${rawOutput.trim()}`);
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
 
   const removedTranscript = payload.removedTranscript ?? deleteTranscript;
@@ -119,19 +141,19 @@ function rejectOpenClawOnlyDeleteOptions(opts: SessionsDeleteOptions): void {
     console.error(
       `  Refusing to delete: --agent ${opts.agent} is OpenClaw-only and is not supported on a Hermes sandbox. Omit the flag.`,
     );
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
   if (opts.keepTranscript === true) {
     console.error(
       "  Refusing to delete: --keep-transcript is OpenClaw-only and is not supported on a Hermes sandbox. Hermes removes the session entry directly; omit the flag.",
     );
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
   if (opts.json || opts.verbose) {
     console.error(
       "  Refusing to delete: --json and --verbose print the OpenClaw gateway result and are OpenClaw-only; a Hermes sandbox streams the native command output. Omit the flags.",
     );
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
 }
 
@@ -143,7 +165,7 @@ function validateHermesSessionId(rawKey: string): string {
     console.error(
       `  Refusing to delete: '${rawKey}' is not a valid Hermes session id. Pass a native id from \`sessions list\` (for example 20260727_130357_cb2b61).`,
     );
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
   return sessionId;
 }
@@ -155,10 +177,18 @@ async function deleteHermesSession(
   rejectOpenClawOnlyDeleteOptions(opts);
   const sessionId = validateHermesSessionId(opts.key);
 
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  await ensureLiveSandboxOrExit(sandboxName, {
+    allowNonReadyPhase: true,
+    exit: deferSandboxLifecycleExit,
+  });
   // execSandbox streams the native command output and exits the process with
   // its exit code, so control never returns here and there is no NemoClaw-side
   // result envelope to build (unlike the OpenClaw gateway path above).
-  await execSandbox(sandboxName, ["hermes", "sessions", "delete", sessionId, "--yes"]);
+  await execSandbox(
+    sandboxName,
+    ["hermes", "sessions", "delete", sessionId, "--yes"],
+    {},
+    { exit: deferSandboxLifecycleExit },
+  );
   throw new Error("unreachable: execSandbox terminates the process");
 }

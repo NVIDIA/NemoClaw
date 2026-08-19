@@ -79,6 +79,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
+      { sessionId: expect.any(String) },
       {
         resolved: expect.any(Object),
         recreate: false,
@@ -119,6 +120,20 @@ describe("handleSandboxState", () => {
     });
     expect(result.session?.checkpoint?.webSearch).toEqual(decisionSelected({ fetchEnabled: true }));
     expect(result.session?.checkpoint?.messaging).toEqual(decisionDeclined());
+  });
+
+  it("preserves a null endpoint source for fresh host-local inference-only creation (#9203)", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleSandboxState({
+      ...baseOptions(deps),
+      fresh: true,
+      endpointUrl: "http://host.openshell.internal:11435/v1",
+      endpointSource: null,
+      hostLocalInferenceRouteOnly: true,
+    });
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ endpointSource: null });
   });
 
   it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
@@ -539,6 +554,7 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
+      { sessionId: expect.any(String) },
       {
         resolved: expect.any(Object),
         recreate: false,
@@ -824,6 +840,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
+      { sessionId: session.sessionId },
       {
         resolved: expect.any(Object),
         recreate: true,
@@ -991,6 +1008,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
+      { sessionId: session.sessionId },
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
@@ -1123,6 +1141,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
+      { sessionId: session.sessionId },
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,

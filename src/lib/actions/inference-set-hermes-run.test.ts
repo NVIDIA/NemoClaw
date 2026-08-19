@@ -1,13 +1,94 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const portableMocks = vi.hoisted(() => ({
+  assertUnavailable: vi.fn(),
+}));
+
+vi.mock("../onboard/experimental/portable-agent-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal()),
+  assertHermesPortableCommandUnavailable: portableMocks.assertUnavailable,
+}));
 import { HERMES_PROXY_REWRITE_SENTINEL } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
 
 describe("runInferenceSet Hermes routing", () => {
+  beforeEach(() => {
+    portableMocks.assertUnavailable.mockReset();
+  });
+
+  it("rejects schema-5 before OpenShell or registry mutation (#9203)", async () => {
+    portableMocks.assertUnavailable.mockImplementation(() => {
+      throw new Error("schema-5 rejected");
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("schema-5 rejected");
+
+    expect(deps.calls.prepareRunOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rechecks schema-5 after the lifecycle lock is acquired (#9203)", async () => {
+    portableMocks.assertUnavailable
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("schema-5 appeared");
+    });
+    const deps = createDeps({
+      config: {},
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("schema-5 appeared");
+
+    expect(deps.calls.prepareRunOpenshell).toHaveBeenCalledOnce();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("updates OpenShell, Hermes config.yaml, registry, and the matching onboard session", async () => {
     const config: ConfigObject = {
       model: {
