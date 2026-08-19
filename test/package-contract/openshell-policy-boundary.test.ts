@@ -24,48 +24,6 @@ function packageFiles(packageRoot: string): string[] {
   return packageJson.files ?? [];
 }
 
-type ManagedInferenceRequest = {
-  binary: string;
-  host: string;
-  port: number;
-  method: string;
-  path: string;
-};
-
-type ManagedInferencePolicy = {
-  binaries?: Array<{ path?: string }>;
-  endpoints?: Array<{
-    host?: string;
-    port?: number;
-    rules?: Array<{ allow?: { method?: string; path?: string } }>;
-  }>;
-};
-
-function restPathMatches(pattern: string, requestPath: string): boolean {
-  return (
-    pattern === requestPath ||
-    (pattern.endsWith("/**") && requestPath.startsWith(pattern.slice(0, -2)))
-  );
-}
-
-function managedInferenceAllows(
-  policy: ManagedInferencePolicy,
-  request: ManagedInferenceRequest,
-): boolean {
-  const endpoint = (policy.endpoints ?? []).find(
-    (candidate) => candidate.host === request.host && candidate.port === request.port,
-  );
-  return (
-    (policy.binaries ?? []).some((binary) => binary.path === request.binary) &&
-    endpoint?.rules?.some(
-      (rule) =>
-        rule.allow?.method === request.method &&
-        typeof rule.allow.path === "string" &&
-        restPathMatches(rule.allow.path, request.path),
-    ) === true
-  );
-}
-
 describe("OpenShell policy boundary package contract", () => {
   it.each([repoRoot, path.join(repoRoot, "nemoclaw")])(
     "pins the YAML parser used by both production package boundaries [case %#]",
@@ -276,37 +234,6 @@ describe("OpenShell policy boundary package contract", () => {
       true,
     );
   });
-
-  it.each(["/usr/bin/python3", "/usr/local/bin/python3", "/usr/bin/curl"])(
-    "keeps NemoCUA managed inference deny-by-default for %s (#9649)",
-    (binary) => {
-      const rawPolicy = YAML.parse(
-        fs.readFileSync(path.join(repoRoot, "agents", "nemocua", "policy-additions.yaml"), "utf8"),
-      ) as { network_policies?: { managed_inference?: ManagedInferencePolicy } };
-      const policy = rawPolicy.network_policies?.managed_inference;
-      expect(policy).toBeDefined();
-
-      const decide = (overrides: Partial<ManagedInferenceRequest> = {}) =>
-        managedInferenceAllows(policy!, {
-          binary,
-          host: "inference.local",
-          port: 443,
-          method: "POST",
-          path: "/v1/chat/completions",
-          ...overrides,
-        });
-
-      expect(decide()).toBe(true);
-      expect(decide({ method: "GET" })).toBe(false);
-      expect(decide({ path: "/v1/embeddings" })).toBe(false);
-      expect(decide({ host: "api.example.invalid" })).toBe(false);
-      expect(decide({ port: 80 })).toBe(false);
-      expect(decide({ binary: "/bin/sh" })).toBe(false);
-      expect(decide({ method: "GET", path: "/v1/models" })).toBe(true);
-      expect(decide({ method: "GET", path: "/v1/models/example" })).toBe(true);
-      expect(decide({ method: "POST", path: "/v1/models/example" })).toBe(false);
-    },
-  );
 
   it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 240_000 }, () => {
     const productionDependencyTree = spawnSync(

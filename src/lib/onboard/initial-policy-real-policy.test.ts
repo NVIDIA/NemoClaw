@@ -181,10 +181,32 @@ describe("initial sandbox policy real preset merge", () => {
       ),
     );
 
+    const managedInference = effective.network_policies?.managed_inference;
+
     expect(effective.filesystem_policy?.read_only).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
-    expect(
-      effective.network_policies?.managed_inference?.binaries?.map((binary) => binary.path),
-    ).toEqual(["/usr/bin/python3", "/usr/local/bin/python3", "/usr/bin/curl"]);
+    expect(managedInference).toEqual({
+      name: "managed_inference",
+      endpoints: [
+        {
+          host: "inference.local",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: [
+            { allow: { method: "POST", path: "/v1/chat/completions" } },
+            { allow: { method: "POST", path: "/v1/responses" } },
+            { allow: { method: "GET", path: "/v1/models" } },
+            { allow: { method: "GET", path: "/v1/models/**" } },
+          ],
+        },
+      ],
+      binaries: [
+        { path: "/usr/bin/python3" },
+        { path: "/usr/local/bin/python3" },
+        { path: "/usr/bin/curl" },
+      ],
+    });
+    expect(managedInference?.endpoints?.[0]).not.toHaveProperty("access");
   });
 
   it("uses Hermes channel YAML when the Hermes base policy path implies the agent", () => {
