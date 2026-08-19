@@ -483,6 +483,15 @@ function patchedContainerLooksFailed(state: DockerContainerState | null): boolea
   return false;
 }
 
+function patchedContainerIsHealthyAndRunning(state: DockerContainerState | null): boolean {
+  return (
+    state?.Status?.toLowerCase() === "running" &&
+    state.Running === true &&
+    state.ExitCode === 0 &&
+    state.Health?.Status?.toLowerCase() === "healthy"
+  );
+}
+
 /**
  * Turn the snapshot + selected GPU mode into a user-facing classification
  * that distinguishes "the patched container itself died" from "the sandbox
@@ -504,6 +513,9 @@ export function classifyDockerGpuPatchFailure(
   if (selectedMode) lines.push(`patched_create_option=${selectedMode.label}`);
 
   const containerFailed = patchedContainerLooksFailed(snapshot.patchedContainerState);
+  const healthyContainerInDeletingPhase =
+    snapshot.sandboxPhase === "Deleting" &&
+    patchedContainerIsHealthyAndRunning(snapshot.patchedContainerState);
   const sandboxInErrorPhase = isFailurePhase(snapshot.sandboxPhase);
   const sandboxNotLive =
     !!snapshot.sandboxPhase && !SANDBOX_LIVE_PHASE_TOKENS.has(snapshot.sandboxPhase);
@@ -528,6 +540,14 @@ export function classifyDockerGpuPatchFailure(
   } else if (sandboxInErrorPhase) {
     kind = "sandbox_error_phase";
     headline = `OpenShell sandbox entered ${snapshot.sandboxPhase} phase before the GPU proof could run.`;
+  } else if (healthyContainerInDeletingPhase) {
+    kind = "sandbox_deleting_phase";
+    headline =
+      "OpenShell kept the sandbox in Deleting after the replacement container became healthy.";
+    lines.push("lifecycle_authority=openshell");
+    hints.push(
+      "OpenShell owns the sandbox lifecycle phase. NemoClaw does not accept Docker container health as lifecycle success.",
+    );
   } else if (sandboxNotLive && (snapshot.patchedContainerState || options.proofError)) {
     // Cover the non-live-but-non-terminal case (e.g. Provisioning / NotReady)
     // BEFORE the proof-error branch — a proof failing while the sandbox
