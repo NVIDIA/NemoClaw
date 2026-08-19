@@ -385,6 +385,24 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     ).toBe(script);
   });
 
+  it("serializes OpenClaw reasoning into the managed runtime handoff", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const mapped = mapManagedStartupProfileToAgentEnvironment({
+      ...profile,
+      tuning: { ...profile.tuning, reasoning: true },
+    });
+    const script = serializeManagedStartupRuntimeEnvironment(
+      mapped.runtimeEnvironment,
+      false,
+      mapped.configurationEnvironment,
+      mapped.applicationRuntime,
+    );
+
+    expect(script.match(/^export NEMOCLAW_REASONING=.*$/gmu)).toEqual([
+      "export NEMOCLAW_REASONING='true'",
+    ]);
+  });
+
   it("validates runtime plans while removing launch-only exports and unsets from child commands", () => {
     const ambient = {
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "stale",
