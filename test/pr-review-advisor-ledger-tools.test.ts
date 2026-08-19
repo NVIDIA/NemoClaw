@@ -1,50 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Check } from "typebox/value";
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
+const ROOT = path.resolve(import.meta.dirname, "..");
+
 import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
+import { normalizeReviewResult } from "../tools/pr-review-advisor/analyze.mts";
 import {
-  canonicalRetryFallback,
-  normalizeReviewResult,
-  partialLedgerFailureResult,
-  recordSynthesisValidationFailureOnDraft,
-  reviewLedgerConsistencyIssues,
-  terminologyReviewConsistencyIssues,
-  withCanonicalReviewLedgerFindings,
-} from "../tools/pr-review-advisor/analyze.mts";
-import {
-  createReviewFindingLedger,
-  createReviewLedgerToolController,
-  REVIEW_LEDGER_READ_TOOL,
-  REVIEW_LEDGER_UPDATE_TOOL,
+  EMPTY_REVIEW_FINDING_LEDGER_SNAPSHOT,
+  REVIEW_FINDING_LIMIT,
+  REVIEW_FINDING_SOURCE_MAX_BYTES,
+  type CandidateFindingInput,
+  validateReviewFindingSubmission,
 } from "../tools/pr-review-advisor/review-ledger.mts";
-import { createTerminologyLedger } from "../tools/pr-review-advisor/terminology.mts";
-
-type CallableTool = ToolDefinition & {
-  execute(
-    toolCallId: string,
-    params: Record<string, unknown>,
-    signal: AbortSignal | undefined,
-    onUpdate: undefined,
-    context: never,
-  ): Promise<{
-    content: Array<{ type: string; text?: string }>;
-    details: unknown;
-    terminate?: boolean;
-  }>;
-};
-
-function tool(tools: ToolDefinition[], name: string): CallableTool {
-  const match = tools.find((candidate) => candidate.name === name);
-  expect(match, `Missing tool ${name}`).toBeDefined();
-  return match as CallableTool;
-}
-
-function contentJson(result: { content: Array<{ type: string; text?: string }> }): unknown {
-  return JSON.parse(result.content[0]?.text ?? "null");
-}
 
 function finding() {
   return {
@@ -62,7 +33,7 @@ function finding() {
   };
 }
 
-function addition(overrides: Record<string, unknown> = {}) {
+function candidate(overrides: Partial<CandidateFindingInput> = {}): CandidateFindingInput {
   return {
     ...finding(),
     basis: {
@@ -70,25 +41,6 @@ function addition(overrides: Record<string, unknown> = {}) {
       observed: "The refusal path returns success.",
       expected: "The refusal path returns a nonzero status.",
     },
-    ...overrides,
-  };
-}
-
-function ledgerCommit(
-  overrides: Partial<{
-    additions: unknown[];
-    updates: unknown[];
-    resolutions: unknown[];
-    supersessions: unknown[];
-    noChangesReason: string | null;
-  }> = {},
-) {
-  return {
-    additions: [],
-    updates: [],
-    resolutions: [],
-    supersessions: [],
-    noChangesReason: null,
     ...overrides,
   };
 }
@@ -124,7 +76,7 @@ function reviewMetadata(): Parameters<typeof normalizeReviewResult>[1] {
   };
 }
 
-describe("PR review ledger tools", () => {
+describe("PR review finding submission", () => {
   it("requires every source-of-truth review item to declare findingId", () => {
     expect(() =>
       normalizeReviewResult(
@@ -136,9 +88,7 @@ describe("PR review ledger tools", () => {
     ).toThrow("sourceOfTruthReview[1] must include findingId");
   });
 
-  it("keeps source-of-truth prose from creating findings outside the ledger", () => {
-    const ledger = createReviewFindingLedger();
-    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
+  it("keeps source-of-truth prose from creating findings", () => {
     const result = normalizeReviewResult(
       {
         findings: [{ ...finding(), evidence: finding().evidence.join("\n") }],
@@ -160,704 +110,348 @@ describe("PR review ledger tools", () => {
     );
 
     expect(result.findings).toHaveLength(1);
-    expect(reviewLedgerConsistencyIssues(result, ledger.snapshot())).toEqual([]);
-  });
-
-  it("rejects unresolved source-of-truth review without an open ledger finding", () => {
-    const result = normalizeReviewResult(
-      {
-        findings: [],
-        sourceOfTruthReview: [
-          {
-            surface: "best-effort cleanup",
-            status: "missing",
-            findingId: null,
-            invalidState: "A failed resource may remain allocated.",
-            sourceBoundary: "Resource creation lifecycle.",
-            whyNotSourceFix: "Not established.",
-            regressionTest: "Missing.",
-            removalCondition: "Unknown.",
-            evidence: "The cleanup suppresses deletion failures.",
-          },
-        ],
-      },
-      reviewMetadata(),
-    );
-
-    const snapshot = createReviewFindingLedger().snapshot();
-    expect(reviewLedgerConsistencyIssues(result, snapshot)).toEqual([
-      "sourceOfTruthReview[1] best-effort cleanup must reference an open ledger finding",
-    ]);
-    expect(canonicalRetryFallback(result, snapshot)).toBeNull();
-  });
-
-  it("rejects draft finding drift before applying canonical ledger findings", () => {
-    const ledger = createReviewFindingLedger();
-    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
-    const draft = normalizeReviewResult({ findings: [] }, reviewMetadata());
-
-    expect(canonicalRetryFallback(draft, ledger.snapshot())).toBeNull();
-  });
-
-  it("accepts equivalent terminology receipts with reordered object keys", () => {
-    const metadata = reviewMetadata();
-    const findingSnapshot = createReviewFindingLedger().snapshot();
-    const terminologySnapshot = createTerminologyLedger(metadata.headSha).snapshot();
-    const normalized = normalizeReviewResult(
-      { terminologyReview: terminologySnapshot.review },
-      metadata,
-    );
-    const reordered = {
-      ...normalized,
-      terminologyReview: {
-        noChangesReason: terminologySnapshot.review.noChangesReason,
-        decisions: terminologySnapshot.review.decisions,
-        status: terminologySnapshot.review.status,
-      },
-    };
-
-    expect(terminologyReviewConsistencyIssues(reordered, terminologySnapshot)).toEqual([]);
-    expect(canonicalRetryFallback(reordered, findingSnapshot, terminologySnapshot)).not.toBeNull();
-  });
-
-  it("preserves canonical findings when a later advisor stage fails", () => {
-    const ledger = createReviewFindingLedger();
-    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
-
-    const result = partialLedgerFailureResult(
-      reviewMetadata(),
-      "tests-regressions omitted its ledger commit",
-      ledger.snapshot(),
-    );
-
-    expect(result).toMatchObject({
-      summary: { confidence: "low", recommendation: "info_only" },
-      findings: [{ title: finding().title }],
-      reviewCompleteness: { requiresHumanReview: true },
-    });
-    expect(result?.findings[0]?.title).not.toBe("PR review advisor unavailable");
-    expect(result?.reviewCompleteness.limitations[0]).toContain(
-      "stopped before completing all review stages",
-    );
-  });
-
-  it("maps a completed empty canonical ledger to merge_as_is without waiving human review", () => {
-    const result = normalizeReviewResult(
-      {
-        summary: {
-          recommendation: "info_only",
-          confidence: "high",
-          oneLine: "No actionable findings remain.",
-        },
-        findings: [],
-        reviewCompleteness: {
-          limitations: [],
-          requiresHumanReview: false,
-        },
-      },
-      reviewMetadata(),
-    );
-
-    const canonical = withCanonicalReviewLedgerFindings(
-      result,
-      createReviewFindingLedger().snapshot(),
-    );
-
-    expect(canonical.summary).toMatchObject({
-      confidence: "high",
-      recommendation: "merge_as_is",
-      oneLine: "No actionable findings remain in the canonical review ledger.",
-    });
-    expect(canonical.reviewCompleteness.requiresHumanReview).toBe(true);
-  });
-
-  it("keeps a low-confidence empty canonical ledger fail-closed as info_only (#7521)", () => {
-    const result = normalizeReviewResult(
-      {
-        summary: {
-          recommendation: "merge_as_is",
-          confidence: "low",
-          oneLine: "No actionable findings remain.",
-        },
-        findings: [],
-        reviewCompleteness: {
-          limitations: ["Review confidence remained low."],
-          requiresHumanReview: true,
-        },
-      },
-      reviewMetadata(),
-    );
-
-    const canonical = withCanonicalReviewLedgerFindings(
-      result,
-      createReviewFindingLedger().snapshot(),
-    );
-
-    expect(canonical.summary).toMatchObject({
-      confidence: "low",
-      recommendation: "info_only",
-    });
-    expect(canonical.reviewCompleteness.requiresHumanReview).toBe(true);
-  });
-
-  it("marks a canonical draft incomplete when synthesis validation fails (#7521)", () => {
-    const result = normalizeReviewResult(
-      {
-        summary: {
-          recommendation: "merge_as_is",
-          confidence: "high",
-          oneLine: "No actionable findings remain.",
-        },
-        findings: [],
-        reviewCompleteness: {
-          limitations: [],
-          requiresHumanReview: false,
-        },
-      },
-      reviewMetadata(),
-    );
-    const canonical = canonicalRetryFallback(result, createReviewFindingLedger().snapshot());
-
-    expect(canonical).not.toBeNull();
-    const fallback = recordSynthesisValidationFailureOnDraft(canonical!, "validation turn failed");
-
-    expect(fallback.summary).toMatchObject({
-      confidence: "low",
-      recommendation: "info_only",
-      oneLine: "Same-session synthesis validation failed; the advisor result is incomplete.",
-    });
-    expect(fallback.reviewCompleteness.requiresHumanReview).toBe(true);
-    expect(fallback.reviewCompleteness.limitations).toContain(
-      "Same-session synthesis validation failed; using canonical draft: validation turn failed",
-    );
-  });
-
-  it("binds mutations to the runner stage and exposes the canonical snapshot (#6446)", async () => {
-    const ledger = createReviewFindingLedger();
-    const controller = createReviewLedgerToolController(ledger);
-    const update = tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL);
-    const read = tool(controller.tools, REVIEW_LEDGER_READ_TOOL);
-    controller.setStage("correctness-state");
-
-    const updated = await update.execute(
-      "update-1",
-      ledgerCommit({ additions: [addition()] }),
-      undefined,
-      undefined,
-      undefined as never,
-    );
-    controller.setStage("synthesize-json");
-    const snapshot = await read.execute("read-1", {}, undefined, undefined, undefined as never);
-
-    expect(updated.details).toMatchObject({ revision: 1 });
-    expect(updated.terminate).toBe(true);
-    expect(snapshot.terminate).toBe(false);
-    expect(ledger.snapshot().history).toMatchObject([
-      { operation: "add", stage: "correctness-state" },
-    ]);
-    expect(ledger.snapshot().findings[0]).not.toHaveProperty("basis");
-    expect(ledger.snapshot().history[0]?.change).not.toHaveProperty("basis");
-    expect(contentJson(snapshot)).toMatchObject({
-      revision: 1,
-      findings: [{ id: "F-001", status: "open", severity: "warning" }],
-    });
-  });
-
-  it("records an explicit no-change receipt without mutating the ledger (#6446)", async () => {
-    const ledger = createReviewFindingLedger();
-    const controller = createReviewLedgerToolController(ledger);
-    controller.setStage("security-trust");
-    const result = await tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
-      "update-none",
-      ledgerCommit({ noChangesReason: "All nine security categories passed." }),
-      undefined,
-      undefined,
-      undefined as never,
-    );
-
-    expect(result.details).toMatchObject({ revision: 1 });
-    expect(contentJson(result)).toMatchObject({
-      revision: 1,
-      findings: [],
-    });
-    expect(ledger.snapshot().history).toMatchObject([
-      { operation: "none", stage: "security-trust" },
+    expect(result.sourceOfTruthReview).toMatchObject([
+      { surface: "best-effort refusal cleanup", findingId: "F-001" },
     ]);
   });
 
-  it("commits every independent stage finding in one atomic terminating batch (#6446)", async () => {
-    const ledger = createReviewFindingLedger();
-    const controller = createReviewLedgerToolController(ledger);
-    controller.setStage("correctness-state");
-    const result = await tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
-      "update-many",
-      ledgerCommit({
-        additions: [
-          addition(),
-          addition({
-            file: "src/lib/timeout.ts",
-            line: 17,
-            title: "Timeout status is masked",
-            evidence: ["src/lib/timeout.ts:17 returns success after timeout"],
-          }),
-        ],
-      }),
-      undefined,
-      undefined,
-      undefined as never,
-    );
+  it("returns the explicit immutable empty canonical snapshot", () => {
+    const snapshot = validateReviewFindingSubmission([], ROOT);
 
-    expect(result.terminate).toBe(true);
-    expect(result.details).toMatchObject({ revision: 2 });
-    expect(ledger.snapshot().findings).toMatchObject([
-      { id: "F-001", title: "Refusal status is masked" },
-      { id: "F-002", title: "Timeout status is masked" },
-    ]);
+    expect(snapshot).toBe(EMPTY_REVIEW_FINDING_LEDGER_SNAPSHOT);
+    expect(snapshot).toEqual({ version: 1, revision: 0, findings: [], history: [] });
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.findings)).toBe(true);
+    expect(Object.isFrozen(snapshot.history)).toBe(true);
   });
 
-  it("shows synthesis only open findings while preserving the full audit ledger (#6446)", async () => {
-    const ledger = createReviewFindingLedger();
-    ledger.applyBatch(
+  it("assigns canonical IDs and creates the immutable submission snapshot", () => {
+    const snapshot = validateReviewFindingSubmission(
       [
-        { operation: "add", finding: finding() },
-        {
-          operation: "add",
-          finding: {
-            ...finding(),
-            title: "Independent open finding",
-            evidence: ["src/lib/runner.ts:52 has a second independent defect"],
-          },
-        },
+        candidate(),
+        candidate({
+          file: "tools/pr-review-advisor/review-ledger.mts",
+          line: 9,
+          title: "Timeout status is masked",
+          evidence: ["tools/pr-review-advisor/review-ledger.mts:9 returns zero on timeout"],
+        }),
       ],
-      "correctness-state",
+      ROOT,
     );
-    const controller = createReviewLedgerToolController(ledger);
-    controller.setStage("reconcile-findings");
-    const reconciled = await tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
-      "resolve-one",
-      ledgerCommit({
-        resolutions: [
-          {
-            id: "F-001",
-            reason: "The reconciliation evidence proves the refusal is propagated.",
-            evidence: ["src/lib/runner.ts:42 now returns the refusal status"],
+
+    expect(snapshot).toMatchObject({
+      version: 1,
+      revision: 2,
+      findings: [
+        { id: "F-001", status: "open", supersededBy: null },
+        { id: "F-002", status: "open", supersededBy: null },
+      ],
+      history: [
+        { revision: 1, operation: "add", id: "F-001", stage: "submit-review", reason: null },
+        { revision: 2, operation: "add", id: "F-002", stage: "submit-review", reason: null },
+      ],
+    });
+    expect(snapshot.findings[0]).not.toHaveProperty("basis");
+    expect(snapshot.history[0]?.change).not.toHaveProperty("basis");
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.findings)).toBe(true);
+    expect(Object.isFrozen(snapshot.history)).toBe(true);
+    expect(Object.isFrozen(snapshot.findings[0])).toBe(true);
+    expect(Object.isFrozen(snapshot.findings[0]?.evidence)).toBe(true);
+  });
+
+  it("deeply freezes canonical finding and history values", () => {
+    const snapshot = validateReviewFindingSubmission(
+      [
+        candidate({
+          simplification: {
+            tag: "delete",
+            cut: "duplicate fallback",
+            replacement: "direct return",
+            estimatedNetLines: -8,
+            safetyBoundary: "preserve refusal status",
           },
-        ],
-      }),
-      undefined,
-      undefined,
-      undefined as never,
+        }),
+      ],
+      ROOT,
     );
-    controller.setStage("synthesize-json");
+    const findingValue = snapshot.findings[0]!;
+    const historyChange = snapshot.history[0]!.change;
 
-    const result = await tool(controller.tools, REVIEW_LEDGER_READ_TOOL).execute(
-      "read-open",
-      {},
-      undefined,
-      undefined,
-      undefined as never,
-    );
-
-    expect(contentJson(reconciled)).toMatchObject({
-      revision: 3,
-      findings: [{ id: "F-002", status: "open", title: "Independent open finding" }],
-    });
-    expect(contentJson(result)).toMatchObject({
-      revision: 3,
-      findings: [{ id: "F-002", status: "open", title: "Independent open finding" }],
-    });
-    expect(ledger.snapshot().findings).toMatchObject([
-      { id: "F-001", status: "resolved" },
-      { id: "F-002", status: "open" },
+    expect(Object.isFrozen(findingValue.simplification)).toBe(true);
+    expect(Object.isFrozen(snapshot.history[0])).toBe(true);
+    expect(Object.isFrozen(historyChange)).toBe(true);
+    expect(Object.isFrozen(historyChange.simplification)).toBe(true);
+    expect(() => {
+      (findingValue.simplification as { cut: string }).cut = "mutated";
+    }).toThrow(TypeError);
+    expect(() => {
+      (historyChange.simplification as { replacement: string }).replacement = "mutated";
+    }).toThrow(TypeError);
+    expect(() => {
+      (snapshot.history[0]!.addedEvidence as string[]).push("mutated");
+    }).toThrow(TypeError);
+    expect(snapshot.findings[0]!.simplification?.cut).toBe("duplicate fallback");
+    expect(snapshot.history[0]!.change.simplification?.replacement).toBe("direct return");
+    expect(snapshot.history[0]!.addedEvidence).toEqual([
+      "src/lib/runner.ts:42 returns zero on refusal",
     ]);
   });
 
-  it("translates flat reconciliation updates and supersessions atomically (#6446)", async () => {
-    const ledger = createReviewFindingLedger();
-    ledger.applyBatch(
+  it("normalizes submitted finding text, evidence, and simplification", () => {
+    const snapshot = validateReviewFindingSubmission(
       [
-        { operation: "add", finding: finding() },
-        {
-          operation: "add",
-          finding: { ...finding(), title: "Duplicate refusal symptom" },
-        },
+        candidate({
+          file: "  src/lib/runner.ts  ",
+          title: "  Refusal status is masked  ",
+          description: "  The refusal path returns success.  ",
+          impact: "  Automation sees success.  ",
+          recommendation: "  Propagate refusal.  ",
+          verificationHint: "  Read line 42.  ",
+          missingRegressionTest: "  Assert refusal status.  ",
+          evidence: ["  src/lib/runner.ts:42 returns zero  ", "src/lib/runner.ts:42 returns zero"],
+          simplification: {
+            tag: "delete",
+            cut: "  duplicate fallback  ",
+            replacement: "  direct return  ",
+            estimatedNetLines: -8,
+            safetyBoundary: "  preserve refusal status  ",
+          },
+        }),
       ],
-      "correctness-state",
-    );
-    const controller = createReviewLedgerToolController(ledger);
-    controller.setStage("reconcile-findings");
-
-    const result = await tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
-      "reconcile-flat",
-      ledgerCommit({
-        updates: [
-          {
-            id: "F-001",
-            patch: { title: "Refusal status and duplicate symptom are masked" },
-            reason: "Both citations reach the same refusal return.",
-            evidence: ["src/lib/runner.ts:43 shares the refusal return"],
-          },
-        ],
-        supersessions: [
-          {
-            id: "F-002",
-            supersededBy: "F-001",
-            reason: "The second symptom has the same root cause.",
-            evidence: ["src/lib/runner.ts:43 reaches the F-001 return"],
-          },
-        ],
-      }),
-      undefined,
-      undefined,
-      undefined as never,
+      ROOT,
     );
 
-    expect(result.details).toMatchObject({ revision: 4 });
-    expect(contentJson(result)).toMatchObject({
-      findings: [{ id: "F-001", title: "Refusal status and duplicate symptom are masked" }],
+    expect(snapshot.findings[0]).toMatchObject({
+      file: "src/lib/runner.ts",
+      title: "Refusal status is masked",
+      description: "The refusal path returns success.",
+      impact: "Automation sees success.",
+      recommendation: "Propagate refusal.",
+      verificationHint: "Read line 42.",
+      missingRegressionTest: "Assert refusal status.",
+      evidence: ["src/lib/runner.ts:42 returns zero"],
+      simplification: {
+        cut: "duplicate fallback",
+        replacement: "direct return",
+        safetyBoundary: "preserve refusal status",
+      },
     });
-    expect(ledger.snapshot().findings).toMatchObject([
-      { id: "F-001", status: "open" },
-      { id: "F-002", status: "superseded", supersededBy: "F-001" },
-    ]);
-  });
-
-  it("rolls back the entire stage batch when a later operation fails (#6446)", () => {
-    const ledger = createReviewFindingLedger();
-
-    expect(() =>
-      ledger.applyBatch(
-        [
-          { operation: "add", finding: finding() },
-          { operation: "update", id: "F-999", patch: { title: "Cannot exist" } },
-        ],
-        "correctness-state",
-      ),
-    ).toThrow("Finding F-999 does not exist");
-    expect(ledger.snapshot()).toMatchObject({ revision: 0, findings: [], history: [] });
-  });
-
-  it("accepts only the flat commit contract and strips internal fields (#6446)", () => {
-    const ledger = createReviewFindingLedger();
-    const controller = createReviewLedgerToolController(ledger);
-    const update = tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL);
-    const validBatch = ledgerCommit({ additions: [addition()] });
-
-    expect(Check(update.parameters, validBatch)).toBe(true);
-    expect(
-      Check(update.parameters, {
-        operations: [{ operation: "add", finding: finding() }],
-      }),
-    ).toBe(false);
-    expect(
-      Check(update.parameters, { ...validBatch, additions: JSON.stringify([addition()]) }),
-    ).toBe(false);
-    const { noChangesReason: _noChangesReason, ...missingField } = validBatch;
-    expect(Check(update.parameters, missingField)).toBe(false);
-    expect(Check(update.parameters, { ...validBatch, rogue: true })).toBe(false);
-    expect(
-      Check(update.parameters, {
-        ...validBatch,
-        additions: [{ ...addition(), rogue: true }],
-      }),
-    ).toBe(false);
-    expect(
-      Check(update.parameters, {
-        ...validBatch,
-        additions: [{ ...addition(), status: "resolved" }],
-      }),
-    ).toBe(false);
-    expect(
-      Check(update.parameters, {
-        ...validBatch,
-        additions: [{ ...addition(), line: 0 }],
-      }),
-    ).toBe(false);
-    expect(
-      Check(update.parameters, {
-        ...validBatch,
-        additions: [],
-        updates: [
-          {
-            id: "F-001",
-            patch: { status: "resolved" },
-            reason: "Invalid patch.",
-            evidence: ["new evidence"],
-          },
-        ],
-      }),
-    ).toBe(false);
-    expect(
-      Check(update.parameters, {
-        ...validBatch,
-        additions: [],
-        updates: [
-          {
-            id: "F-001",
-            patch: { file: null, line: null },
-            reason: "Invalid location removal.",
-            evidence: ["new evidence"],
-          },
-        ],
-      }),
-    ).toBe(false);
-
-    ledger.applyBatch(
-      [
-        {
-          operation: "add",
-          finding: { ...finding(), status: "resolved", rogue: true },
-        } as never,
-      ],
-      "correctness-state",
-    );
-    ledger.applyBatch(
-      [
-        {
-          operation: "update",
-          id: "F-001",
-          patch: { title: "Updated title", status: "resolved" },
-          reason: "New evidence changes the title.",
-          evidence: ["src/lib/runner.ts:43 confirms the updated title"],
-        } as never,
-      ],
-      "correctness-state",
-    );
-    expect(ledger.snapshot().findings[0]).toMatchObject({
-      id: "F-001",
-      status: "open",
-      title: "Updated title",
-    });
-    expect(ledger.snapshot().findings[0]).not.toHaveProperty("rogue");
-    expect(ledger.snapshot().history[0]?.change).not.toHaveProperty("status");
-    expect(ledger.snapshot().history[0]?.change).not.toHaveProperty("rogue");
-    expect(ledger.snapshot().history[1]?.change).not.toHaveProperty("status");
   });
 
   it.each([
+    ["correctness behavior", candidate()],
     [
-      "mixing a no-change receipt with a mutation",
-      "correctness-state",
-      ledgerCommit({ additions: [addition()], noChangesReason: "Nothing changed." }),
-      "noChangesReason is mutually exclusive",
-    ],
-    [
-      "an empty commit without a no-change receipt",
-      "correctness-state",
-      ledgerCommit(),
-      "requires a mutation or a non-null noChangesReason",
-    ],
-    [
-      "a transition outside reconciliation",
-      "correctness-state",
-      ledgerCommit({
-        resolutions: [{ id: "F-001", reason: "Resolved.", evidence: ["new evidence"] }],
-      }),
-      "Only reconcile-findings may transition",
-    ],
-    [
-      "a new finding during reconciliation",
-      "reconcile-findings",
-      ledgerCommit({ additions: [addition()] }),
-      "reconcile-findings may not add",
-    ],
-    [
-      "a category owned by another stage",
-      "security-trust",
-      ledgerCommit({ additions: [addition()] }),
-      "security-trust may not add category=correctness",
-    ],
-    [
-      "a basis owned by another stage",
-      "security-trust",
-      ledgerCommit({
-        additions: [addition({ category: "security", basis: addition().basis })],
-      }),
-      "security-trust may not add basis.kind=behavior_mismatch",
-    ],
-  ])("rejects %s atomically", async (_label, stage, commit, message) => {
-    const ledger = createReviewFindingLedger();
-    const controller = createReviewLedgerToolController(ledger);
-    controller.setStage(stage);
-
-    await expect(
-      tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
-        "invalid-commit",
-        commit,
-        undefined,
-        undefined,
-        undefined as never,
-      ),
-    ).rejects.toThrow(message);
-    expect(ledger.snapshot()).toMatchObject({ revision: 0, findings: [], history: [] });
-  });
-
-  it("rejects a candidate whose observed and expected states are the same", async () => {
-    const ledger = createReviewFindingLedger();
-    const controller = createReviewLedgerToolController(ledger);
-    controller.setStage("security-trust");
-    const candidate = addition({
-      category: "security",
-      title: "Argv authentication tightened and blocks spoofing",
-      basis: {
-        kind: "security_violation",
-        observed: "The implementation validates the requested identity.",
-        expected: "  the implementation VALIDATES the requested identity.  ",
-      },
-    });
-
-    await expect(
-      tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
-        "ineligible-finding",
-        ledgerCommit({ additions: [candidate] }),
-        undefined,
-        undefined,
-        undefined as never,
-      ),
-    ).rejects.toThrow("basis.observed and basis.expected must describe different states");
-    expect(ledger.snapshot()).toMatchObject({ revision: 0, findings: [], history: [] });
-  });
-
-  it.each([
-    [
-      "provider timeout handling",
-      "correctness-state",
-      addition({
-        title: "Provider timeout is reported as success",
-        description: "The timeout branch returns a successful result.",
+      "security violation",
+      candidate({
+        category: "security",
         basis: {
-          kind: "behavior_mismatch",
-          observed: "A provider timeout returns success.",
-          expected: "A provider timeout returns a failure.",
+          kind: "security_violation",
+          observed: "The caller controls the requested identity.",
+          expected: "The runtime authenticates the requested identity.",
         },
       }),
     ],
     [
-      "open-PR overlap detection",
-      "scope-risk-map",
-      addition({
-        category: "scope",
-        title: "Open PR overlap detection ignores renamed files",
-        description: "The detector compares only destination paths.",
-        basis: {
-          kind: "behavior_mismatch",
-          observed: "A renamed source path is absent from overlap detection.",
-          expected: "Overlap detection compares both sides of a rename.",
-        },
-      }),
-    ],
-    [
-      "checked-in E2E job validation",
-      "tests-regressions",
-      addition({
+      "missing regression",
+      candidate({
         category: "tests",
-        title: "Cloud-onboard job omits the failure-path assertion",
-        recommendation: "Update the checked-in job to assert the failing exit code.",
         basis: {
           kind: "missing_regression",
-          observed: "The job covers only the successful exit path.",
-          expected: "The job asserts both successful and failing exit paths.",
+          observed: "Only the successful exit path is asserted.",
+          expected: "Both successful and failing exit paths are asserted.",
         },
       }),
     ],
-  ])("keeps a concrete %s defect eligible", async (_label, stage, candidate) => {
-    const ledger = createReviewFindingLedger();
-    const controller = createReviewLedgerToolController(ledger);
-    controller.setStage(stage);
-
-    await expect(
-      tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL).execute(
-        "eligible-finding",
-        ledgerCommit({ additions: [candidate] }),
-        undefined,
-        undefined,
-        undefined as never,
-      ),
-    ).resolves.toMatchObject({ details: { revision: 1 }, terminate: true });
-    expect(ledger.snapshot().findings).toMatchObject([
-      { id: "F-001", title: candidate.title, status: "open" },
+    [
+      "workflow documentation mismatch",
+      candidate({
+        category: "workflow",
+        basis: {
+          kind: "documentation_mismatch",
+          observed: "The workflow accepts an undocumented input.",
+          expected: "The documented and accepted inputs match.",
+        },
+      }),
+    ],
+  ] as const)("keeps an admissible %s eligible", (_label, eligible) => {
+    expect(validateReviewFindingSubmission([eligible], ROOT).findings).toMatchObject([
+      { id: "F-001", status: "open", title: eligible.title },
     ]);
   });
 
-  it("detects synthesis drift and publishes the ledger's canonical finding (#6446)", () => {
-    const ledger = createReviewFindingLedger();
-    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
-    const drifted = {
-      summary: {
-        recommendation: "merge_as_is",
-        confidence: "high",
-        oneLine: "No findings.",
-      },
-      findings: [
-        {
-          severity: "suggestion",
-          category: "correctness",
-          file: "src/lib/runner.ts",
-          line: 42,
-          title: "Refusal status is masked",
-          description: "The refusal path returns success.",
-          impact: "Automation can treat a rejected action as successful.",
-          recommendation: "Propagate the refusal status.",
-          verificationHint: "Read the refusal return at src/lib/runner.ts:42.",
-          missingRegressionTest: "Assert that refusal returns a nonzero status.",
-          evidence: "src/lib/runner.ts:42 returns zero on refusal",
-        },
-      ],
-    } as unknown as Parameters<typeof reviewLedgerConsistencyIssues>[0];
-
-    expect(reviewLedgerConsistencyIssues(drifted, ledger.snapshot())).toEqual([
-      "final findings[1] diverges from canonical ledger finding F-001",
-    ]);
-    expect(
-      withCanonicalReviewLedgerFindings(drifted, ledger.snapshot()).findings[0]?.severity,
-    ).toBe("warning");
-    expect(withCanonicalReviewLedgerFindings(drifted, ledger.snapshot()).summary).toMatchObject({
-      recommendation: "merge_after_fixes",
-      topItem: "Refusal status is masked",
-    });
+  it("rejects oversized submissions before filesystem reads", () => {
+    const realpath = vi.spyOn(fs, "realpathSync");
+    expect(() =>
+      validateReviewFindingSubmission(
+        Array.from({ length: REVIEW_FINDING_LIMIT + 1 }, () => candidate()),
+        ROOT,
+      ),
+    ).toThrow(`findings must contain at most ${REVIEW_FINDING_LIMIT} items`);
+    expect(realpath).not.toHaveBeenCalled();
   });
 
-  it("requires a reason and new evidence to change a conclusion (#6446)", () => {
-    const ledger = createReviewFindingLedger();
-    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
-    const update = {
-      operation: "update" as const,
-      id: "F-001",
-      patch: { severity: "blocker" as const },
-    };
-
-    expect(() => ledger.applyBatch([update], "reconcile-findings")).toThrow("requires a reason");
-    expect(() =>
-      ledger.applyBatch(
-        [{ ...update, reason: "Tests found higher impact.", evidence: ["new test evidence"] }],
-        "tests-regressions",
-      ),
-    ).toThrow("Only reconcile-findings may reclassify");
-    expect(() =>
-      ledger.applyBatch(
-        [{ operation: "update", id: "F-001", patch: { title: "Reworded conclusion" } }],
-        "correctness-state",
-      ),
-    ).toThrow("requires a reason");
-    expect(() =>
-      ledger.applyBatch(
-        [{ ...update, reason: "Acceptance makes this blocking.", evidence: finding().evidence }],
-        "reconcile-findings",
-      ),
-    ).toThrow("requires new evidence");
-    ledger.applyBatch(
-      [
-        {
-          ...update,
-          reason: "Acceptance makes this blocking.",
-          evidence: ["Issue #6466 requires nonzero refusal status"],
-        },
-      ],
-      "reconcile-findings",
+  it("scans each repeated real file once per validation", () => {
+    const open = vi.spyOn(fs, "openSync");
+    validateReviewFindingSubmission(
+      [candidate({ line: 1 }), candidate({ line: 2, title: "Second finding" })],
+      ROOT,
     );
-    expect(ledger.snapshot().findings[0]).toMatchObject({ id: "F-001", severity: "blocker" });
-    expect(ledger.snapshot().history.at(-1)?.addedEvidence).toEqual([
-      "Issue #6466 requires nonzero refusal status",
-    ]);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts a practical large file incrementally", () => {
+    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-large-file-"));
+    const relative = path.relative(ROOT, path.join(tmp, "large.ts"));
+    try {
+      fs.writeFileSync(path.join(tmp, "large.ts"), "x\n".repeat(100_000));
+      expect(
+        validateReviewFindingSubmission([candidate({ file: relative, line: 100_000 })], ROOT)
+          .findings,
+      ).toHaveLength(1);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an inadmissible category and basis combination", () => {
+    expect(() =>
+      validateReviewFindingSubmission(
+        [
+          candidate({
+            category: "security",
+            basis: {
+              kind: "behavior_mismatch",
+              observed: "The caller controls the requested identity.",
+              expected: "The runtime authenticates the requested identity.",
+            },
+          }),
+        ],
+        ROOT,
+      ),
+    ).toThrow("No addition policy admits category=security with basis.kind=behavior_mismatch");
+  });
+
+  it("rejects a candidate whose observed and expected states normalize equally", () => {
+    expect(() =>
+      validateReviewFindingSubmission(
+        [
+          candidate({
+            basis: {
+              kind: "behavior_mismatch",
+              observed: "The implementation validates the requested identity.",
+              expected: "  the implementation VALIDATES the requested identity.  ",
+            },
+          }),
+        ],
+        ROOT,
+      ),
+    ).toThrow("basis.observed and basis.expected must describe different states");
+  });
+
+  it("accepts the valid final text line and rejects invalid repository locations", () => {
+    expect(
+      validateReviewFindingSubmission(
+        [candidate({ file: "tools/pr-review-advisor/review-ledger.mts", line: 1 })],
+        ROOT,
+      ).findings,
+    ).toHaveLength(1);
+    expect(() =>
+      validateReviewFindingSubmission(
+        [candidate({ file: "tools/pr-review-advisor/review-ledger.mts", line: 1_000_000 })],
+        ROOT,
+      ),
+    ).toThrow("exceeds current file line count");
+    expect(() =>
+      validateReviewFindingSubmission([candidate({ file: "tools/pr-review-advisor" })], ROOT),
+    ).toThrow("regular file");
+  });
+
+  it("rejects repository-control metadata without rejecting .github", () => {
+    expect(() =>
+      validateReviewFindingSubmission([candidate({ file: ".git/config", line: 1 })], ROOT),
+    ).toThrow("repository-control metadata");
+    expect(
+      validateReviewFindingSubmission(
+        [candidate({ file: ".github/PULL_REQUEST_TEMPLATE.md", line: 1 })],
+        ROOT,
+      ).findings,
+    ).toHaveLength(1);
+  });
+
+  it("rejects oversized source evidence before opening it", () => {
+    const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-ledger-size-"));
+    const oversized = path.join(repositoryRoot, "oversized.ts");
+    try {
+      const descriptor = fs.openSync(oversized, "w");
+      fs.ftruncateSync(descriptor, REVIEW_FINDING_SOURCE_MAX_BYTES + 1);
+      fs.closeSync(descriptor);
+      const open = vi.spyOn(fs, "openSync");
+      expect(() =>
+        validateReviewFindingSubmission(
+          [candidate({ file: "oversized.ts", line: 1 })],
+          repositoryRoot,
+        ),
+      ).toThrow(`${REVIEW_FINDING_SOURCE_MAX_BYTES}-byte source evidence limit`);
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects NUL-containing source evidence", () => {
+    const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-ledger-binary-"));
+    try {
+      fs.writeFileSync(path.join(repositoryRoot, "binary.ts"), Buffer.from("first\n\0second\n"));
+      expect(() =>
+        validateReviewFindingSubmission(
+          [candidate({ file: "binary.ts", line: 1 })],
+          repositoryRoot,
+        ),
+      ).toThrow("text source without NUL bytes");
+    } finally {
+      fs.rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("counts a final unterminated line and rejects a symlink escape", () => {
+    const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-ledger-root-"));
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-ledger-outside-"));
+    try {
+      fs.writeFileSync(path.join(repositoryRoot, "two-lines.ts"), "first\nsecond");
+      fs.writeFileSync(path.join(outsideRoot, "outside.ts"), "outside\n");
+      fs.symlinkSync(path.join(outsideRoot, "outside.ts"), path.join(repositoryRoot, "escaped.ts"));
+
+      expect(
+        validateReviewFindingSubmission(
+          [candidate({ file: "two-lines.ts", line: 2 })],
+          repositoryRoot,
+        ).findings,
+      ).toHaveLength(1);
+      expect(() =>
+        validateReviewFindingSubmission(
+          [candidate({ file: "two-lines.ts", line: 3 })],
+          repositoryRoot,
+        ),
+      ).toThrow("exceeds current file line count 2");
+      expect(() =>
+        validateReviewFindingSubmission(
+          [candidate({ file: "escaped.ts", line: 1 })],
+          repositoryRoot,
+        ),
+      ).toThrow("regular file");
+    } finally {
+      fs.rmSync(repositoryRoot, { recursive: true, force: true });
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects empty required text during final validation", () => {
+    expect(() => validateReviewFindingSubmission([candidate({ title: "   " })], ROOT)).toThrow(
+      "title must be nonempty",
+    );
+    expect(() => validateReviewFindingSubmission([candidate({ evidence: ["   "] })], ROOT)).toThrow(
+      "evidence must be nonempty",
+    );
   });
 });
