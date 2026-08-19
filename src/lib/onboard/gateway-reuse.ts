@@ -213,6 +213,9 @@ export function createDockerDriverGatewayReuseApplication(
       gatewayBin: identityBin,
     });
     if (dockerGatewayPid !== null) {
+      if (dockerGatewayPid !== managedServicePid) {
+        return verifyNetworkWithoutLifecycleAuthority();
+      }
       const drift = deps.getDockerDriverGatewayReuseDrift(
         dockerGatewayPid,
         desiredEnv,
@@ -220,19 +223,12 @@ export function createDockerDriverGatewayReuseApplication(
         managedServicePid,
       );
       if (drift) {
-        if (dockerGatewayPid !== managedServicePid) {
-          deps.rememberDockerDriverGatewayPid(dockerGatewayPid);
-        }
         log(
           `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
         );
         return "stale";
       }
-      const reconciledState = reconcileManagedGatewayNetwork();
-      if (dockerGatewayPid !== managedServicePid) {
-        deps.rememberDockerDriverGatewayPid(dockerGatewayPid);
-      }
-      return reconciledState;
+      return reconcileManagedGatewayNetwork();
     }
 
     // OpenShell status already proved the selected gateway is reachable. Preserve it when

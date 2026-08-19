@@ -298,6 +298,26 @@ describe("handleGatewayState", () => {
     expect(calls.complete).not.toHaveBeenCalled();
   });
 
+  it("does not retire a gateway when an absent network has no lifecycle authority (#9594)", async () => {
+    const { deps, calls } = createDeps({
+      refreshDockerDriverGatewayReuseState: vi.fn(async () => {
+        throw new Error(
+          "Docker network is absent, but NemoClaw could not verify the running gateway's lifecycle authority.",
+        );
+      }),
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+    });
+
+    await expect(handleGatewayState(baseOptions(deps, "healthy"))).rejects.toThrow(
+      "Docker network is absent, but NemoClaw could not verify the running gateway's lifecycle authority.",
+    );
+
+    expect(calls.startStep).not.toHaveBeenCalled();
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
   it("recreates the NemoClaw-managed OpenShell gateway before completion when its Docker network is absent (#9594)", async () => {
     const order: string[] = [];
     const { deps, calls } = createDeps({

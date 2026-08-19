@@ -257,7 +257,7 @@ describe("Docker-driver gateway reuse application", () => {
     );
   });
 
-  it("adopts a matching gateway port listener when the PID file is absent", async () => {
+  it("reuses the trusted gateway port listener when the PID file is absent (#9594)", async () => {
     const rememberDockerDriverGatewayPid = vi.fn();
     const getDockerDriverGatewayReuseDrift = vi.fn(() => null);
     const application = createDockerDriverReuseApplication({
@@ -266,7 +266,7 @@ describe("Docker-driver gateway reuse application", () => {
       checkGatewayPortAvailable: vi.fn(async () => ({ ok: false, pid: 731 })),
       getDockerDriverGatewayPortListenerPid: vi.fn(() => 731),
       getDockerDriverGatewayReuseDrift,
-      getTrustedActiveOpenShellGatewayUserServicePid: vi.fn(() => 900),
+      getTrustedActiveOpenShellGatewayUserServicePid: vi.fn(() => 731),
       rememberDockerDriverGatewayPid,
     });
 
@@ -280,9 +280,30 @@ describe("Docker-driver gateway reuse application", () => {
         OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
       },
       "/opt/openshell-gateway",
-      900,
+      731,
     );
-    expect(rememberDockerDriverGatewayPid).toHaveBeenCalledWith(731);
+    expect(rememberDockerDriverGatewayPid).not.toHaveBeenCalled();
+  });
+
+  it("rejects an absent network before recording a mismatched gateway port listener (#9594)", async () => {
+    const rememberDockerDriverGatewayPid = vi.fn();
+    const getDockerDriverGatewayReuseDrift = vi.fn(() => null);
+    const application = createDockerDriverReuseApplication({
+      getDockerDriverGatewayPid: () => null,
+      isDockerDriverGatewayProcessAlive: () => false,
+      checkGatewayPortAvailable: vi.fn(async () => ({ ok: false, pid: 731 })),
+      getDockerDriverGatewayPortListenerPid: vi.fn(() => 731),
+      getDockerDriverGatewayReuseDrift,
+      getTrustedActiveOpenShellGatewayUserServicePid: vi.fn(() => 900),
+      inspectDockerDriverNetwork: vi.fn(() => ({ kind: "absent" as const })),
+      rememberDockerDriverGatewayPid,
+    });
+
+    await expect(application.refreshDockerDriverGatewayReuseState("healthy")).rejects.toThrow(
+      'Docker network "openshell-docker" is absent, but NemoClaw could not verify the running gateway\'s lifecycle authority. Restart the gateway through its lifecycle authority, then rerun `nemoclaw onboard`.',
+    );
+    expect(getDockerDriverGatewayReuseDrift).not.toHaveBeenCalled();
+    expect(rememberDockerDriverGatewayPid).not.toHaveBeenCalled();
   });
 
   it("preserves a reachable selected gateway when the port owner is ambiguous", async () => {
