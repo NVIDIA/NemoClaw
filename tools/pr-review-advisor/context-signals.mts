@@ -162,6 +162,14 @@ export function detectLocalizedPatchSignals(diff: string): LocalizedPatchSignal[
 }
 
 export function collectDriftEvidence(baseRef: string, changedFiles: string[]): DriftEvidence[] {
+  const renameHistory = (
+    gitOutput(
+      [["log", "--oneline", "--name-status", "--find-renames", "-40", baseRef, "--"]],
+      120000,
+    ) || ""
+  )
+    .split("\n")
+    .map((line) => line.trim());
   return changedFiles.slice(0, 50).map((file) => {
     const recentHistory = (
       gitOutput([["log", "--oneline", "--follow", "-20", baseRef, "--", file]], 20000) || ""
@@ -170,14 +178,7 @@ export function collectDriftEvidence(baseRef: string, changedFiles: string[]): D
       .map((line) => line.trim())
       .filter(Boolean);
     const normalizedFile = file.replace(/^\.\//, "").replace(/\\/g, "/");
-    const renameHints = (
-      gitOutput(
-        [["log", "--oneline", "--name-status", "--find-renames", "-40", baseRef, "--"]],
-        120000,
-      ) || ""
-    )
-      .split("\n")
-      .map((line) => line.trim())
+    const renameHints = renameHistory
       .filter((line) => {
         const [status, ...paths] = line.replace(/\\/g, "/").split("\t");
         if (!/^(R\d+|A|D|M)$/.test(status || "")) return false;

@@ -190,6 +190,9 @@ function appendFindings(lines: string[], heading: string, findings: RenderFindin
       lines.push(`  - Missing regression test: ${finding.missingRegressionTest}`);
       lines.push(`  - Evidence: ${finding.evidence}`);
     }
+    if (findings.length > 20) {
+      lines.push(`- _${findings.length - 20} more ${heading.toLowerCase()} were omitted._`);
+    }
   }
   lines.push("");
 }

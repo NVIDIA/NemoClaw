@@ -67,7 +67,6 @@ import {
   buildDriftTurnContext,
   buildOperationsTurnContext,
   buildReconciliationTurnContext,
-  buildRiskPlanReviewContext,
   buildScopeRiskTurnContext,
   buildSecurityTurnContext,
   buildTestsTurnContext,
@@ -77,10 +76,7 @@ export { buildRiskPlanReviewContext } from "./turn-context.mts";
 import {
   buildSystemPrompt,
   readSecurityCategoryNames,
-  readTrustedCodeChangeConsiderations,
   readTrustedControlledWords,
-  readTrustedSecurityRubric,
-  readTrustedWritingGuide,
 } from "./trusted-guidance.mts";
 export {
   buildSystemPrompt,
