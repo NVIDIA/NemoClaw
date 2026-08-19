@@ -313,7 +313,9 @@ If the timer expires during the transaction, the deadline gate blocks new mutati
 An initial lock or unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 NemoClaw attempts to restore the previous Shields state before it processes the next sandbox, including when the backup fails.
 If lockdown cannot be restored, `backup-all` stops and does not process the remaining sandboxes.
-Correct the reported issue, run the printed `$$nemoclaw <name> shields up` command, and rerun `$$nemoclaw backup-all`.
+For an ordinary relock failure, correct the reported issue and follow the printed recovery command before rerunning `$$nemoclaw backup-all`.
+If NemoClaw reports that Backup Shields policy recovery failed, do not retry Shields up from the mutable live policy.
+Restore a trusted backup, recreate the sandbox, and then rerun `$$nemoclaw backup-all`.
 
 When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available.
 Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.
