@@ -36,9 +36,15 @@ const SANDBOX_ID_PATTERN = /^[A-Za-z0-9._-]{1,512}$/u;
 const DOCKER_CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const MANAGED_STARTUP_RUNTIME_EXECUTABLE =
   "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
+// Dockerfile copies and validates this exact final-image path; the managed
+// startup hold and bootstrap trampoline invoke the same 0444 runtime through it.
+const MANAGED_STARTUP_NODE_EXECUTABLE = "/usr/local/bin/node";
 const LIFECYCLE_GENERATION_PATTERN = /^[A-Za-z0-9._:/=-]{1,512}$/u;
 const ANSI_PATTERN = /\u001b\[[0-9;]*m/gu;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
+const CONTROL_CHARACTERS_GLOBAL = /[\u0000-\u001f\u007f-\u009f]/gu;
+const TERMINAL_CONTROL_SEQUENCE =
+  /(?:\u001b\[[0-?]*[ -/]*[@-~]|\u009b[0-?]*[ -/]*[@-~]|(?:\u001b\]|\u009d)(?:[^\u0007\u001b\u009c]|\u001b(?!\\))*(?:\u0007|\u001b\\|\u009c)|\u001b[ -/]*[@-~])/gu;
 
 export interface RuntimeProviderSnapshotObservation {
   readonly lifecycleState: RuntimeProviderSnapshotLifecycleState;
@@ -54,6 +60,7 @@ export type RuntimeProviderSnapshotObserver = (
 export type RuntimeProviderManagedProfileRestorer = (
   sandbox: SandboxEntry,
   authority: RuntimeProviderManagedProfileRestoreAuthority,
+  runtime: RuntimeProviderRuntimeReceipt,
 ) => string;
 
 export interface RuntimeProviderSnapshotDriver {
@@ -79,7 +86,6 @@ export interface DockerRuntimeSnapshotDependencies {
     args: string[],
     timeout?: number,
   ) => RuntimeProviderCommandCapture;
-  readonly captureOpenShell: typeof captureOpenshell;
   readonly queryRuntimeSnapshot: (
     sandboxName: string,
   ) => OpenShellDockerSandboxRuntimeSnapshotQuery;
@@ -99,30 +105,30 @@ function gatewayScopedSandboxGetArgs(sandbox: SandboxEntry): string[] {
     : ["sandbox", "get", sandbox.name];
 }
 
-function gatewayScopedManagedProfileVerifyArgs(
-  sandbox: SandboxEntry,
-  authority: RuntimeProviderManagedProfileRestoreAuthority,
-): string[] {
-  const args = ["sandbox", "exec", "--name", sandbox.name];
-  const gatewayName = resolveSandboxGatewayName(sandbox);
-  if (gatewayName) args.push("-g", gatewayName);
-  args.push(
-    "--no-tty",
-    "--timeout",
-    "10",
-    "--",
-    MANAGED_STARTUP_RUNTIME_EXECUTABLE,
-    "--verify-completion",
-    "--agent",
-    authority.agent,
-    "--profile-fingerprint",
-    authority.profileFingerprint,
-  );
-  return args;
-}
-
 function cleanOutput(value: string): string {
   return value.replace(ANSI_PATTERN, "");
+}
+
+function cleanDiagnostic(value: string): string {
+  return value.replace(TERMINAL_CONTROL_SEQUENCE, "").replace(CONTROL_CHARACTERS_GLOBAL, "");
+}
+
+function managedProfileVerificationFailureDetail(result: RuntimeProviderCommandCapture): string {
+  // This command accepts only a validated agent and secret-free profile hash;
+  // bound its fixed-runtime diagnostic so restore failures remain actionable.
+  const output = cleanDiagnostic([result.stderr, result.stdout].filter(Boolean).join("\n"))
+    .replace(/\s+/gu, " ")
+    .trim();
+  const error = cleanDiagnostic(result.error?.message ?? "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return [
+    `status=${result.status}`,
+    ...(error ? [`error=${error}`] : []),
+    ...(output ? [`output=${output}`] : []),
+  ]
+    .join("; ")
+    .slice(0, 1024);
 }
 
 function parseSandboxId(output: string): string | null {
@@ -396,26 +402,56 @@ export function observeDockerRuntimeSnapshot(
   };
 }
 
-export function verifyOpenShellManagedProfileRestore(
+export function verifyDockerManagedProfileRestore(
   sandbox: SandboxEntry,
   authorityValue: RuntimeProviderManagedProfileRestoreAuthority,
-  dependencies: Pick<DockerRuntimeSnapshotDependencies, "captureOpenShell">,
+  runtimeValue: RuntimeProviderRuntimeReceipt,
+  dependencies: Pick<DockerRuntimeSnapshotDependencies, "captureHostCommand">,
 ): string {
   const authority = normalizeRuntimeProviderManagedProfileRestoreAuthority(authorityValue);
   if (!authority) {
     throw new RuntimeProviderSnapshotError("managed profile restore authority is invalid");
   }
-  const result = dependencies.captureOpenShell(
-    gatewayScopedManagedProfileVerifyArgs(sandbox, authority),
-    {
-      ignoreError: true,
-      includeStderr: true,
-      timeout: 15_000,
-    },
-  );
-  if (result.status !== 0 || result.error || result.signal) {
+  const runtime = normalizeRuntimeProviderRuntimeReceipt(runtimeValue);
+  if (
+    !runtime ||
+    runtime.runtime.kind !== "docker-container" ||
+    !DOCKER_CONTAINER_ID_PATTERN.test(runtime.runtime.handle)
+  ) {
     throw new RuntimeProviderSnapshotError(
-      `sandbox '${sandbox.name}' managed profile restoration could not be proven`,
+      `sandbox '${sandbox.name}' exact Docker runtime identity could not be inspected`,
+    );
+  }
+  // The completion handoff is deliberately root-owned under /run/nemoclaw and
+  // therefore outside an ordinary Landlock-confined sandbox exec. The Docker
+  // provider pins this fixed verifier to the exact live container ID, runs no
+  // user-supplied command, and clears the inherited host environment.
+  const result = dependencies.captureHostCommand(
+    "docker",
+    [
+      "exec",
+      "--user",
+      "root",
+      runtime.runtime.handle,
+      "/usr/bin/env",
+      "-i",
+      "HOME=/root",
+      "LANG=C.UTF-8",
+      "LC_ALL=C.UTF-8",
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      MANAGED_STARTUP_NODE_EXECUTABLE,
+      MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+      "--verify-completion",
+      "--agent",
+      authority.agent,
+      "--profile-fingerprint",
+      authority.profileFingerprint,
+    ],
+    15_000,
+  );
+  if (result.status !== 0 || result.error) {
+    throw new RuntimeProviderSnapshotError(
+      `sandbox '${sandbox.name}' managed profile restoration could not be proven (${managedProfileVerificationFailureDetail(result)})`,
     );
   }
   return createHash("sha256")
@@ -425,7 +461,7 @@ export function verifyOpenShellManagedProfileRestore(
     .update("\0", "utf8")
     .update(authority.profileFingerprint, "utf8")
     .update("\0", "utf8")
-    .update(cleanOutput(result.output || ""), "utf8")
+    .update(cleanOutput(result.stdout), "utf8")
     .digest("hex");
 }
 
@@ -541,6 +577,7 @@ function validateRestoreRequest(
   readonly expected: RuntimeProviderSnapshotPreflightReceipt;
   readonly source: RuntimeProviderSnapshotRestoreSource;
   readonly managedProfile: RuntimeProviderManagedProfileRestoreAuthority;
+  readonly observed: RuntimeProviderSnapshotObservation;
 } {
   const expected = requireStablePreflight(preflightValue, providerId, "restore", sandbox);
   const source = normalizeRuntimeProviderSnapshotRestoreSource(sourceValue);
@@ -579,7 +616,7 @@ function validateRestoreRequest(
       `sandbox '${sandbox.name}' cannot represent the snapshot acceleration state`,
     );
   }
-  return { expected, source, managedProfile };
+  return { expected, source, managedProfile, observed };
 }
 
 export function createRuntimeProviderSnapshotSurface(
@@ -618,7 +655,7 @@ export function createRuntimeProviderSnapshotSurface(
       validateRestoreRequest(providerId, driver, sandbox, preflight, source, managedProfile);
     },
     restore(sandbox, preflight, sourceValue, managedProfileValue) {
-      const { expected, source, managedProfile } = validateRestoreRequest(
+      const { expected, source, managedProfile, observed } = validateRestoreRequest(
         providerId,
         driver,
         sandbox,
@@ -626,7 +663,7 @@ export function createRuntimeProviderSnapshotSurface(
         sourceValue,
         managedProfileValue,
       );
-      const providerProof = driver.restoreManagedProfile(sandbox, managedProfile);
+      const providerProof = driver.restoreManagedProfile(sandbox, managedProfile, observed.runtime);
       if (
         typeof providerProof !== "string" ||
         providerProof.trim() === "" ||
@@ -667,13 +704,12 @@ export function createDockerRuntimeProviderSnapshotSurface(
 ): RuntimeProviderSnapshotSurface {
   const resolved = {
     captureHostCommand: dependencies.captureHostCommand,
-    captureOpenShell: dependencies.captureOpenShell ?? captureOpenshell,
     queryRuntimeSnapshot:
       dependencies.queryRuntimeSnapshot ?? queryOpenShellDockerSandboxRuntimeSnapshot,
   };
   return createRuntimeProviderSnapshotSurface(providerId, {
     observe: (sandbox, id) => observeDockerRuntimeSnapshot(sandbox, id, resolved),
-    restoreManagedProfile: (sandbox, authority) =>
-      verifyOpenShellManagedProfileRestore(sandbox, authority, resolved),
+    restoreManagedProfile: (sandbox, authority, runtime) =>
+      verifyDockerManagedProfileRestore(sandbox, authority, runtime, resolved),
   });
 }

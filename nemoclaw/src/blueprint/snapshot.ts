@@ -15,7 +15,6 @@ import {
   cpSync,
   existsSync,
   lstatSync,
-  mkdirSync,
   readdirSync,
   readlinkSync,
   renameSync,
@@ -23,11 +22,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { execa } from "execa";
 
 import * as importedSandboxName from "../shared/sandbox-name.cjs";
+import { compactUtcTimestamp, reserveSnapshotDir } from "./snapshot-directory.js";
 
 const HOME = homedir();
 const OPENCLAW_DIR = join(HOME, ".openclaw");
@@ -39,13 +39,6 @@ const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandb
   default?: typeof importedSandboxName;
 };
 const { assertValidName } = sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
-
-function compactTimestamp(): string {
-  return new Date()
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d+Z$/, "Z");
-}
 
 /**
  * Reject a path if it — or any ancestor up to $HOME — is a symlink.
@@ -111,13 +104,11 @@ export function createSnapshot(): string | null {
   // sensitive files into the snapshot.
   rejectSymlinksOnPath(OPENCLAW_DIR);
 
-  const timestamp = compactTimestamp();
-  const snapshotDir = join(SNAPSHOTS_DIR, timestamp);
+  // SECURITY: Verify snapshot destination ancestors are not symlinks, before reserving.
+  rejectSymlinksOnPath(SNAPSHOTS_DIR);
 
-  // SECURITY: Verify snapshot destination ancestors are not symlinks.
-  rejectSymlinksOnPath(snapshotDir);
-
-  mkdirSync(snapshotDir, { recursive: true });
+  const snapshotDir = reserveSnapshotDir(SNAPSHOTS_DIR);
+  const timestamp = basename(snapshotDir);
 
   const dest = join(snapshotDir, "openclaw");
   cpSync(OPENCLAW_DIR, dest, { recursive: true });
@@ -245,7 +236,7 @@ export function cutoverHost(): boolean {
     return true;
   }
 
-  const archivePath = join(HOME, `.openclaw.pre-nemoclaw.${compactTimestamp()}`);
+  const archivePath = join(HOME, `.openclaw.pre-nemoclaw.${compactUtcTimestamp()}`);
   try {
     moveSync(OPENCLAW_DIR, archivePath);
     return true;
@@ -261,7 +252,7 @@ export function rollbackFromSnapshot(snapshotDir: string): boolean {
   }
 
   const archivePath = existsSync(OPENCLAW_DIR)
-    ? join(HOME, `.openclaw.nemoclaw-archived.${compactTimestamp()}`)
+    ? join(HOME, `.openclaw.nemoclaw-archived.${compactUtcTimestamp()}`)
     : null;
 
   try {

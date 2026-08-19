@@ -95,7 +95,7 @@ function pushInferenceHealthCheck(
 }
 
 function inferenceRouteCheck(sandboxName: string, route: DoctorInferenceRoute): DoctorCheck {
-  const known = route.provider !== "unknown" || route.model !== "unknown";
+  const known = route.provider !== "unknown" && route.model !== "unknown";
   return {
     group: "Inference",
     label: "Route",

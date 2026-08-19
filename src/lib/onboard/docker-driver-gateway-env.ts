@@ -29,7 +29,11 @@ import {
   startPackageManagedDockerDriverGateway,
   stopOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
-import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
+import {
+  isPortableExperimentalProfile,
+  PORTABLE_HOST_GATEWAY_IP,
+  resolveDockerDriverNetworkName,
+} from "./docker-driver-platform";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
 
@@ -232,13 +236,14 @@ export function buildDockerDriverGatewayEnv({
   platform = process.platform,
   gatewayPort = GATEWAY_PORT,
   stateDir,
-  dockerNetworkName = "openshell-docker",
+  dockerNetworkName,
   podmanSocketPath,
   getDockerSupervisorImage,
   resolveSandboxBin,
   enableBindMounts = false,
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
   const portable = isPortableExperimentalProfile();
+  const resolvedDockerNetworkName = dockerNetworkName ?? resolveDockerDriverNetworkName();
   const env: Record<string, string> = {
     OPENSHELL_DRIVERS: portable ? "podman" : "docker",
     ...getGatewayStartNetworkEnv(gatewayPort),
@@ -247,7 +252,7 @@ export function buildDockerDriverGatewayEnv({
     OPENSHELL_GRPC_ENDPOINT: portable
       ? `https://${PORTABLE_HOST_GATEWAY_IP}:${gatewayPort}`
       : getDockerDriverGatewayEndpoint(gatewayPort),
-    OPENSHELL_DOCKER_NETWORK_NAME: dockerNetworkName,
+    OPENSHELL_DOCKER_NETWORK_NAME: resolvedDockerNetworkName,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getDockerSupervisorImage(),
   };
   if (enableBindMounts) env.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS = "1";

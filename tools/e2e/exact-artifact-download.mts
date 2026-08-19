@@ -71,18 +71,21 @@ export function exactArtifactName(expected: ExactArtifactExpectation): string {
   return `managed-base-${expected.runId}-${expected.runAttempt}-langchain-deepagents-code`;
 }
 
-/** Bind exactly one artifact and validate every immutable producer attribute. */
-export function bindExactArtifact(
+/** Bind one named artifact and validate every immutable producer attribute. */
+export function bindNamedExactArtifact(
   value: unknown,
   expected: ExactArtifactExpectation,
+  expectedName: string,
 ): BoundArtifactIdentity {
   positiveInteger(expected.runId, "expected run id");
   positiveInteger(expected.runAttempt, "expected run attempt");
   if (!SHA_PATTERN.test(expected.headSha)) throw new Error("expected head SHA is invalid");
+  if (!expectedName || expectedName.includes("/") || expectedName.includes("\\")) {
+    throw new Error("expected artifact name is invalid");
+  }
 
   const page = record(value, "artifact response");
   if (!Array.isArray(page.artifacts)) throw new Error("artifact response must contain artifacts");
-  const expectedName = exactArtifactName(expected);
   const matches = page.artifacts
     .map((artifact) => record(artifact, "artifact"))
     .filter((artifact) => artifact.name === expectedName);
@@ -119,6 +122,14 @@ export function bindExactArtifact(
     name: expectedName,
     size,
   };
+}
+
+/** Bind the immutable Deep Agents Code base-image contract artifact. */
+export function bindExactArtifact(
+  value: unknown,
+  expected: ExactArtifactExpectation,
+): BoundArtifactIdentity {
+  return bindNamedExactArtifact(value, expected, exactArtifactName(expected));
 }
 
 /** Calculate bounded server-directed or linear retry delay. */

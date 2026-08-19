@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
   withProvenManagedGatewayProcess,
   writeManagedGatewayRuntimeProof,
@@ -214,7 +215,7 @@ afterEach(() => {
   }
 });
 
-describe("portable runtime cleanup in the uninstall run plan", () => {
+describe("portable runtime cleanup in the uninstall run plan", testTimeoutOptions(15_000), () => {
   it.each<[string, EvidenceMutation]>([
     ["receipt without configuration", (home, state) => writeAdmissionReceipt(home, state)],
     [
@@ -368,6 +369,38 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     expect(fs.existsSync(evidence)).toBe(true);
   });
 
+  it("rejects schema-5 Hermes authority under the host fence before uninstall effects (#9203)", async () => {
+    const scope = admissionFailureScope("nemoclaw-hermes-uninstall-");
+    const authority = path.join(scope.stateDir, "hermes-portable-lifecycle", "receipt-stem");
+    fs.mkdirSync(authority, { recursive: true, mode: 0o700 });
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await runUninstallPlanProduction(
+      { assumeYes: true, deleteModels: true, destroyUserData: true, keepOpenShell: false },
+      {
+        ...admissionFailureDeps(scope),
+        env: {
+          HOME: scope.homeDir,
+          VITEST: "true",
+          NEMOCLAW_TEST_BASE_HOME: scope.homeDir,
+          NEMOCLAW_TEST_STATE_DIR: scope.stateDir,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(stderr.mock.calls.flat().join("\n")).toContain(
+      "Command 'uninstall' is not supported while an experimental Hermes portable lifecycle receipt exists",
+    );
+    expect(scope.run).not.toHaveBeenCalled();
+    expect(scope.runDocker).not.toHaveBeenCalled();
+    expect(scope.runModelCleanup).not.toHaveBeenCalled();
+    expect(scope.rmSync).not.toHaveBeenCalled();
+    expect(scope.kill).not.toHaveBeenCalled();
+    expect(scope.runPortableCleanup).not.toHaveBeenCalled();
+    expect(fs.statSync(authority).isDirectory()).toBe(true);
+  });
+
   it("uses exact receipt names without Docker or an all-sandbox mutation (#9189)", () => {
     const order: string[] = [];
     const logs: string[] = [];
@@ -389,14 +422,21 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
       ],
       ["openshell sandbox get -g nemoclaw alpha", () => sandboxAbsent("alpha")],
       ["openshell status -g nemoclaw", () => ok("Status: Connected\nGateway: nemoclaw\n")],
+      [
+        "npm",
+        () => {
+          order.push("cli");
+          return ok();
+        },
+      ],
     ]);
-    const run = vi.fn((command: string, args: string[]) =>
-      (
+    const run = vi.fn((command: string, args: string[]) => {
+      return (
         runHandlers.get(`${command} ${args.join(" ")}`) ??
         runHandlers.get(command) ??
         (() => okWithKnownGatewayList(command, args))
-      )(),
-    );
+      )();
+    });
     const runPortableCleanup = vi.fn(
       (
         _input: PortableRuntimeCleanupInput,
@@ -422,7 +462,8 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: true, keepOpenShell: false },
       {
-        commandExists: (command) => ["openshell", "pgrep", "lsof", "docker"].includes(command),
+        commandExists: (command) =>
+          ["openshell", "pgrep", "lsof", "docker", "npm"].includes(command),
         env: { HOME: homeDir } as NodeJS.ProcessEnv,
         existsSync: (target) => sharedOpenShellPaths.has(String(target)),
         hasPortableRuntimeCleanup: () => true,
@@ -437,12 +478,13 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(order).toEqual(["exact-sandbox", "exact-openshell", "exact-shared"]);
+    expect(order.slice(0, 3)).toEqual(["exact-sandbox", "exact-openshell", "exact-shared"]);
+    expect(order.filter((entry) => entry === "cli")).toHaveLength(2);
     expect(runPortableCleanup).toHaveBeenCalledOnce();
     expect(runDocker).not.toHaveBeenCalled();
     expect(kill).not.toHaveBeenCalled();
     expect(removed).toEqual([]);
-    expect(run.mock.calls.every(([command]) => command === "openshell")).toBe(true);
+    expect(run.mock.calls.every(([command]) => ["openshell", "npm"].includes(command))).toBe(true);
     expect(run).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
@@ -593,7 +635,7 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     ).toEqual(ok("other/alpha usable"));
   });
 
-  it("accepts exact structured sandbox absence only after proving gateway reachability (#9189)", () => {
+  it("settles one failed delete only after the connected gateway proves exact absence (#9499)", () => {
     const registeredSandboxes = new Set(["unrelated"]);
     const { homeDir, sharedPaths: sharedOpenShellPaths } = sharedOpenShellFixture(
       "nemoclaw-portable-absent-",
@@ -601,7 +643,10 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     const removed: string[] = [];
     const error = "code:'Some requested entity was not found',message:'sandbox not found'";
     const runHandlers = new Map<string, () => RunResult>([
-      ["openshell sandbox delete -g nemoclaw alpha", () => sandboxAbsent("alpha")],
+      [
+        "openshell sandbox delete -g nemoclaw alpha",
+        () => ({ status: 1, stdout: "", stderr: "Error: request settlement unavailable" }),
+      ],
       ["openshell sandbox get -g nemoclaw alpha", () => ({ status: 1, stdout: "", stderr: error })],
       ["openshell status -g nemoclaw", () => ok("Status: Connected\nGateway: nemoclaw\n")],
       ["pgrep", notFound],
@@ -648,6 +693,12 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
       },
     );
 
+    expect(
+      run.mock.calls.filter(
+        ([command, args]) =>
+          command === "openshell" && args.join(" ") === "sandbox delete -g nemoclaw alpha",
+      ),
+    ).toHaveLength(1);
     expect(result.exitCode).toBe(0);
     expect(run).toHaveBeenCalledWith("openshell", ["status", "-g", "nemoclaw"], expect.anything());
     expect(
@@ -883,6 +934,11 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
   );
 
   it("preserves retry evidence after an exact cleanup failure with destroy data (#9189)", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-retry-cli-"));
+    temporaryDirectories.push(homeDir);
+    const sourceMarker = path.join(homeDir, ".nemoclaw/source/retry-source-marker");
+    fs.mkdirSync(path.dirname(sourceMarker), { recursive: true });
+    fs.writeFileSync(sourceMarker, "retry\n");
     const removed: string[] = [];
     const errors: string[] = [];
     const run = vi.fn((command: string, args: string[]) =>
@@ -896,10 +952,10 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
         keepOpenShell: false,
       },
       {
-        commandExists: (command) => ["openshell", "pgrep", "lsof"].includes(command),
-        env: { HOME: "/tmp/nemoclaw-uninstall-portable-failure-9189" } as NodeJS.ProcessEnv,
+        commandExists: (command) => ["openshell", "pgrep", "lsof", "npm"].includes(command),
+        env: { HOME: homeDir } as NodeJS.ProcessEnv,
         error: (line) => errors.push(line),
-        existsSync: () => false,
+        existsSync: (target) => fs.existsSync(String(target)),
         hasPortableRuntimeCleanup: () => true,
         isTty: false,
         log: vi.fn(),
@@ -915,6 +971,7 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     expect(result.exitCode).toBe(1);
     expect(errors.join("\n")).toContain("recorded container remains");
     expect(removed).toEqual([]);
+    expect(fs.readFileSync(sourceMarker, "utf8")).toBe("retry\n");
     expect(run.mock.calls.some(([command]) => command === "npm")).toBe(false);
   });
 

@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
@@ -17,6 +21,7 @@ vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
 import {
   createManagedHermesStateVolumeOnboardLifecycle,
   createManagedWorkloadOnboardRuntime,
+  prepareHermesPortableSandboxWorkloadForLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
 } from "./onboard-orchestration";
 
@@ -60,7 +65,61 @@ function createFreshOnboardingRuntime(environment: Readonly<Record<string, strin
   return { prepared, runtime };
 }
 
+async function expectUnsupportedHermesPortableSources(
+  runtime: Parameters<typeof prepareHermesPortableSandboxWorkloadForLifecycle>[0],
+  prepared: {
+    source: {
+      kind: "legacy-dockerfile";
+      dockerfilePath: string;
+      reason: "runtime-unsupported";
+    };
+    release: string;
+    fallbackDiagnostic: null;
+  },
+  expectedDockerfilePath: string,
+): Promise<void> {
+  await Promise.all(
+    [
+      { ...prepared.source, reason: "custom-dockerfile" as const },
+      { ...prepared.source, dockerfilePath: "/workspace/replacement/Dockerfile" },
+    ].map((source) =>
+      expect(
+        prepareHermesPortableSandboxWorkloadForLifecycle(
+          { ...runtime, ensurePreparedWorkload: vi.fn(async () => ({ ...prepared, source })) },
+          expectedDockerfilePath,
+        ),
+      ).rejects.toThrow("requires the shipped Hermes Dockerfile source"),
+    ),
+  );
+}
+
 describe("managed workload onboard orchestration", () => {
+  it("selects only the shipped Hermes Dockerfile fallback without profile or prebuild work", async () => {
+    const expectedDockerfilePath = "/workspace/agents/hermes/Dockerfile";
+    const ensurePreparedProfile = vi.fn(() => null);
+    const prepared = {
+      source: {
+        kind: "legacy-dockerfile" as const,
+        dockerfilePath: expectedDockerfilePath,
+        reason: "runtime-unsupported" as const,
+      },
+      release: "v0.0.0",
+      fallbackDiagnostic: null,
+    };
+    const runtime = {
+      runtimeProvider: null,
+      ensurePreparedWorkload: vi.fn(async () => prepared),
+      ensurePreparedProfile,
+    };
+
+    await expect(
+      prepareHermesPortableSandboxWorkloadForLifecycle(runtime, expectedDockerfilePath),
+    ).resolves.toBe(prepared);
+    expect(ensurePreparedProfile).not.toHaveBeenCalled();
+
+    await expectUnsupportedHermesPortableSources(runtime, prepared, expectedDockerfilePath);
+  });
+
   it("keeps failure cleanup armed until the caller commits registration", () => {
     const docker = createHermesStateVolumeDockerHarness();
     let exitCleanup: (() => void) | null = null;
@@ -102,6 +161,31 @@ describe("managed workload onboard orchestration", () => {
     expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ catalogRevision }),
     );
+  });
+
+  it("binds fresh onboarding to the exact PR catalog (#9464)", async () => {
+    const catalogRevision = "b".repeat(40);
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    try {
+      const { prepared, runtime } = createFreshOnboardingRuntime({
+        GITHUB_ACTIONS: "true",
+        NEMOCLAW_RUN_LIVE_E2E: "1",
+        NEMOCLAW_E2E_EXPECTED_SHA: catalogRevision,
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+      });
+
+      await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+      expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          catalogPath,
+          expectedCatalogRevision: catalogRevision,
+        }),
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
   });
 
   it("omits the qualification catalog revision outside GitHub Actions (#9385)", async () => {

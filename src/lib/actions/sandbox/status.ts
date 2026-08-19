@@ -3,17 +3,29 @@
 
 import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../../cli/branding";
+import { deferSandboxLifecycleExit, isSandboxLifecycleDeferredExit } from "../../core/process-exit";
 import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
 import { parseSandboxPhase } from "../../state/gateway";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
+import {
+  qualifyPortableAgentLifecycleAuthority,
+  type HermesPortableAgentLifecycleAuthority,
+} from "./gateway-state";
 import { printSandboxGatewayLookupStatus } from "./status-lookup-rendering";
 import {
   getSandboxStatusPreflight,
   printSandboxStatusPreflightHeader,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
-import { collectSandboxStatusSnapshot, resolveSandboxStatusAgent } from "./status-snapshot";
+import {
+  collectSandboxStatusSnapshot,
+  getSandboxStatusReport as getLegacySandboxStatusReport,
+  normalizeSandboxStatusHostMounts,
+  resolveSandboxStatusAgent,
+  type SandboxStatusReport,
+} from "./status-snapshot";
 import {
   printAgentProcessStatus,
   printDockerHealth,
@@ -38,7 +50,6 @@ export {
 export {
   collectSandboxStatusSnapshot,
   getSandboxStatusInferenceHealth,
-  getSandboxStatusReport,
   isInferenceHealthFailing,
   maybeGetSandboxStatusInferenceHealth,
   resolveSandboxStatusDcodeAutoApprovalMode,
@@ -46,6 +57,78 @@ export {
   type SandboxStatusSnapshot,
   type ServingProcessHealth,
 } from "./status-snapshot";
+
+function inspectHermesPortableStatus(
+  sandboxName: string,
+): HermesPortableAgentLifecycleAuthority | null {
+  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, {
+    readRegistry: registry.getSandbox,
+  });
+  return authority.kind === "hermes" ? authority : null;
+}
+
+function hermesPortableStatusReport(
+  sandboxName: string,
+  authority: HermesPortableAgentLifecycleAuthority,
+): SandboxStatusReport {
+  const { entry, phase } = authority;
+  const model = entry?.model ?? "unknown";
+  const provider = entry?.provider ?? "unknown";
+  return {
+    schemaVersion: 1,
+    name: sandboxName,
+    found: phase === "active",
+    agent: "hermes",
+    agentDisplayName: "Hermes",
+    agentRuntime: "gateway",
+    dcodeAutoApprovalMode: null,
+    model,
+    provider,
+    servingProfileProvenance: entry?.servingProfileProvenance ?? null,
+    recordedRoute:
+      entry?.provider && entry.model ? { provider: entry.provider, model: entry.model } : null,
+    liveRoute: null,
+    routeDrift: null,
+    phase: null,
+    portableLifecyclePhase: phase,
+    gatewayState: "not-probed",
+    inferenceHealth: null,
+    rpcIssue: null,
+    hostGpuDetected: entry?.hostGpuDetected === true,
+    sandboxGpuEnabled: entry?.sandboxGpuEnabled ?? entry?.gpuEnabled === true,
+    sandboxGpuMode: entry?.sandboxGpuMode ?? null,
+    sandboxGpuDevice: entry?.sandboxGpuDevice ?? null,
+    sandboxGpuProof: entry?.sandboxGpuProof ?? null,
+    hostMounts: normalizeSandboxStatusHostMounts(entry?.hostMounts),
+    openshellDriver: entry?.openshellDriver ?? "unknown",
+    openshellVersion: entry?.openshellVersion ?? "unknown",
+    policies:
+      entry?.policies?.filter((policy): policy is string => typeof policy === "string") ?? [],
+    baselineExclusions: entry?.baselineExclusions?.map((exclusion) => exclusion.key) ?? [],
+    baselineExclusionStates: [],
+    baselineExclusionTransition: entry?.baselineExclusionTransition
+      ? {
+          operation: entry.baselineExclusionTransition.operation,
+          key: entry.baselineExclusionTransition.exclusion.key,
+        }
+      : null,
+    failureLayer: null,
+    terminalRuntimeHealth: null,
+    servingProcessHealth: null,
+    dockerPaused: false,
+  };
+}
+
+export async function getSandboxStatusReport(
+  sandboxName: string,
+  deps: Parameters<typeof getLegacySandboxStatusReport>[1] = {},
+): Promise<SandboxStatusReport> {
+  return withMcpLifecycleLock(sandboxName, async () => {
+    const hermesPortable = inspectHermesPortableStatus(sandboxName);
+    if (hermesPortable) return hermesPortableStatusReport(sandboxName, hermesPortable);
+    return getLegacySandboxStatusReport(sandboxName, deps);
+  });
+}
 
 function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): void {
   if (
@@ -65,6 +148,26 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
 }
 
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
+  let deferredExitCode: number | null = null;
+  try {
+    await withMcpLifecycleLock(sandboxName, async () => {
+      const hermesPortable = inspectHermesPortableStatus(sandboxName);
+      if (hermesPortable) {
+        console.log(`  Sandbox: ${sandboxName}`);
+        console.log("  Agent: Hermes");
+        console.log(`  Portable lifecycle phase: ${hermesPortable.phase}`);
+        return;
+      }
+      await showLegacySandboxStatus(sandboxName);
+    });
+  } catch (error) {
+    if (!isSandboxLifecycleDeferredExit(error)) throw error;
+    deferredExitCode = error.exitCode;
+  }
+  if (deferredExitCode !== null) process.exit(deferredExitCode);
+}
+
+async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
   // hanging when its container is stopped and the published port is held by a
@@ -104,7 +207,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       action: `checking inference status for sandbox '${sandboxName}'`,
       command: `${CLI_NAME} ${sandboxName} status`,
     });
-    process.exit(1);
+    deferSandboxLifecycleExit(1);
   }
   const textContext: SandboxStatusTextContext = {
     sandboxName,

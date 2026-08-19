@@ -27,6 +27,9 @@ const canonicalCredentialFilterBoundary = path.resolve(
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
+const canonicalPrivateNetworksBoundary = path.resolve(
+  "nemoclaw/src/shared/private-networks-boundary.cts",
+);
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
 const canonicalSnapshotSanitizerBoundary = path.resolve(
   "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
@@ -46,6 +49,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*openshell-policy-boundary\.cjs$/,
     replacement: canonicalOpenShellPolicyBoundary,
+  },
+  {
+    find: /^.*private-networks-boundary\.cjs$/,
+    replacement: canonicalPrivateNetworksBoundary,
   },
   {
     find: /^.*sandbox-name\.cjs$/,
@@ -171,6 +178,7 @@ export default defineConfig({
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
             "test/install-forward-restore-diagnostics.test.ts",
+            "test/install-hermes-portable-active.test.ts",
             "test/install-hermes-forward-restore.test.ts",
             "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
@@ -204,6 +212,7 @@ export default defineConfig({
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
             "test/install-forward-restore-diagnostics.test.ts",
+            "test/install-hermes-portable-active.test.ts",
             "test/install-hermes-forward-restore.test.ts",
             "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",

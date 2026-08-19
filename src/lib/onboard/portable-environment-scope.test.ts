@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
 import {
   createDefaultResumeProfileEnvironmentScope,
   createPortableOnboardEnvironmentScope,
@@ -16,6 +17,20 @@ const { getNonInteractiveModel } = require("./providers") as {
 const CLEARED_PORTABLE_RUNTIME_ENV_KEYS = PORTABLE_RUNTIME_ENV_KEYS.filter(
   (key) => key !== "NEMOCLAW_EXPERIMENTAL_PROFILE",
 );
+
+function portableRuntimeAuthority(): CheckpointPortableRuntimeAuthority {
+  const uid = process.getuid!();
+  return {
+    schemaVersion: 1,
+    kind: "podman",
+    ownership: "current-user",
+    uid,
+    homeDir: "/home/alice",
+    configHome: "/home/alice/.config",
+    runtimeDir: `/run/user/${String(uid)}`,
+    socketPath: `/run/user/${String(uid)}/podman/podman.sock`,
+  };
+}
 
 describe("portable onboarding environment scope", () => {
   it("preserves an explicit model during fresh portable onboarding (#9200)", () => {
@@ -175,6 +190,54 @@ describe("portable onboarding environment scope", () => {
       expect(env.CONTAINER_SSHKEY).toBeUndefined();
     },
   );
+
+  it("removes exact scope-owned selectors only from the Hermes Podman authority source", () => {
+    const runtime = portableRuntimeAuthority();
+    const containersConf = "/home/alice/.config/nemoclaw/portable/containers.conf";
+    const env: NodeJS.ProcessEnv = { HOME: runtime.homeDir, PATH: "/usr/bin" };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+    scope.installRuntime({ containersConf, socketPath: runtime.socketPath });
+
+    const source = scope.createHermesPortablePodmanSourceEnvironment(runtime);
+
+    expect(source).not.toHaveProperty("DOCKER_HOST");
+    expect(source).not.toHaveProperty("CONTAINERS_CONF");
+    expect(source).toMatchObject({ HOME: runtime.homeDir, PATH: "/usr/bin" });
+    expect(env).toMatchObject({
+      DOCKER_HOST: `unix://${runtime.socketPath}`,
+      CONTAINERS_CONF: containersConf,
+      NETAVARK_FW: "iptables",
+    });
+  });
+
+  it.each([
+    ["DOCKER_HOST", "unix:///run/user/1000/replaced/podman.sock"],
+    ["CONTAINERS_CONF", "/home/alice/.config/replaced/containers.conf"],
+  ] as const)("keeps a replaced %s selector for Hermes authority rejection", (name, value) => {
+    const runtime = portableRuntimeAuthority();
+    const env: NodeJS.ProcessEnv = { HOME: runtime.homeDir, PATH: "/usr/bin" };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+    scope.installRuntime({
+      containersConf: "/home/alice/.config/nemoclaw/portable/containers.conf",
+      socketPath: runtime.socketPath,
+    });
+    env[name] = value;
+
+    expect(scope.createHermesPortablePodmanSourceEnvironment(runtime)[name]).toBe(value);
+  });
+
+  it("rejects a scope whose installed selectors disagree with runtime authority", () => {
+    const runtime = portableRuntimeAuthority();
+    const scope = createPortableOnboardEnvironmentScope({}, null);
+    scope.installRuntime({
+      containersConf: "/home/alice/.config/nemoclaw/portable/containers.conf",
+      socketPath: "/run/user/1000/replaced/podman.sock",
+    });
+
+    expect(() => scope.createHermesPortablePodmanSourceEnvironment(runtime)).toThrow(
+      "disagrees with runtime authority",
+    );
+  });
 
   it("restores absent, empty, and valued keys exactly after success or failure", () => {
     const env: NodeJS.ProcessEnv = {

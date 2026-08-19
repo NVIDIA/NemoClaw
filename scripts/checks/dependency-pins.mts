@@ -271,26 +271,35 @@ function requireVersionReference(
   }
 }
 
-function requireOpenShellReleaseManifestAllowlist(
+function requireOpenShellReleaseTrustRecord(
   source: string,
   expectedVersion: string,
   failures: string[],
 ): void {
-  const entries = [
-    ...source.matchAll(/^\s*"([0-9]+\.[0-9]+\.[0-9]+)\|([^|"\s]+)\|([a-f0-9]{64})"\s*$/gm),
-  ]
-    .filter((match) => match[1] === expectedVersion)
-    .map((match) => match[2])
+  const marker = "const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [";
+  const start = source.indexOf(marker);
+  const end = source.indexOf("\n] as const;", start + marker.length);
+  const records =
+    start === -1 || end === -1
+      ? []
+      : [...source.slice(start + marker.length, end).matchAll(/^  \{\n([\s\S]*?)^  \},$/gm)].map(
+          (match) => match[1] ?? "",
+        );
+  const matchingRecords = records.filter((record) => {
+    const versions = [...record.matchAll(/^    version: "([0-9]+\.[0-9]+\.[0-9]+)",$/gm)];
+    return versions.length === 1 && versions[0]?.[1] === expectedVersion;
+  });
+  const entries = [...(matchingRecords[0] ?? "").matchAll(/^        asset: "([^"]+)",$/gm)]
+    .map((match) => match[1])
     .filter((manifest): manifest is string => manifest !== undefined);
   const complete =
+    matchingRecords.length === 1 &&
     entries.length === OPENSHELL_RELEASE_MANIFESTS.length &&
     OPENSHELL_RELEASE_MANIFESTS.every(
       (manifest) => entries.filter((entry) => entry === manifest).length === 1,
     );
   if (!complete) {
-    failures.push(
-      `OpenShell release-manifest allowlist: expected one complete entry for ${expectedVersion}`,
-    );
+    failures.push(`OpenShell release trust: expected one complete record for ${expectedVersion}`);
   }
 }
 
@@ -303,7 +312,7 @@ function verifyOpenShellPins(
     hermesDockerfile: string;
     hermesMcpConfigTransaction: string;
     installer: string;
-    installerHashCheck: string;
+    installerPinExtractor: string;
     mcpBridgeValidation: string;
     openshellFeatureGate: string;
     openshellInstall: string;
@@ -340,7 +349,7 @@ function verifyOpenShellPins(
     "OpenShell installer PIN_VERSION",
     failures,
   );
-  requireOpenShellReleaseManifestAllowlist(sources.installerHashCheck, pins.maxVersion, failures);
+  requireOpenShellReleaseTrustRecord(sources.installerPinExtractor, pins.maxVersion, failures);
   compare(
     extractSingle(
       sources.openshellVersion,
@@ -539,7 +548,11 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
 
   const brevLaunchable = readText(rootDir, "scripts/brev-launchable-ci-cpu.sh", failures);
   const installer = readText(rootDir, "scripts/install-openshell.sh", failures);
-  const installerHashCheck = readText(rootDir, "scripts/check-installer-hash.sh", failures);
+  const installerPinExtractor = readText(
+    rootDir,
+    "scripts/checks/extract-installer-pins.mts",
+    failures,
+  );
   const e2eWorkflowSource = readText(rootDir, ".github/workflows/e2e.yaml", failures);
   const openclawManifestSource = readText(rootDir, "agents/openclaw/manifest.yaml", failures);
   const hermesManifestSource = readText(rootDir, "agents/hermes/manifest.yaml", failures);
@@ -613,7 +626,7 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
       hermesDockerfile,
       hermesMcpConfigTransaction,
       installer,
-      installerHashCheck,
+      installerPinExtractor,
       mcpBridgeValidation,
       openshellFeatureGate,
       openshellInstall,

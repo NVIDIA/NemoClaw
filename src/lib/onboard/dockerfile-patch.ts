@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getSandboxInferenceConfig } from "../inference/config";
+import { getSandboxInferenceConfig, isSafeModelId } from "../inference/config";
 import { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import {
   isWebSearchEnabled,
@@ -32,6 +32,7 @@ import {
   encodeCorporateCaArg,
   resolveCorporateCa,
 } from "./corporate-ca";
+import { warnCorporateCa } from "./corporate-ca-policy";
 import {
   DCODE_AUTO_APPROVAL_BUILD_ARG,
   type DcodeAutoApprovalMode,
@@ -64,6 +65,68 @@ export function encodeDockerJsonArg(value: unknown): string {
 
 function sanitizeDockerArg(value: unknown): string {
   return String(value ?? "").replace(/[\r\n]/g, "");
+}
+
+export interface HermesPortableDockerfileBuildSettings {
+  readonly model: string;
+  readonly provider: string | null;
+  readonly preferredInferenceApi: string | null;
+  readonly toolDisclosure: ToolDisclosure;
+}
+
+function replaceExactHermesPortableDockerArg(source: string, name: string, value: string): string {
+  const sanitized = sanitizeDockerArg(value);
+  if (sanitized !== value || /[\p{Cc}\p{Cf}]/u.test(value)) {
+    throw new Error(`Hermes portable ${name} build setting is invalid.`);
+  }
+  const pattern = new RegExp(`^ARG ${name}=.*$`, "gmu");
+  if ((source.match(pattern) ?? []).length !== 1) {
+    throw new Error(`Hermes Dockerfile must declare exactly one ${name} build argument.`);
+  }
+  return source.replace(pattern, `ARG ${name}=${sanitized}`);
+}
+
+/** Render the reviewed non-secret schema-5 Hermes image settings from the shared route owner. */
+export function renderHermesPortableDockerfileBuildSettings(
+  source: string,
+  input: HermesPortableDockerfileBuildSettings,
+): string {
+  if (!input.model || input.model.length > 4096 || !isSafeModelId(input.model)) {
+    throw new Error("Hermes portable model build setting is invalid.");
+  }
+  if (input.provider !== null && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(input.provider)) {
+    throw new Error("Hermes portable provider build setting is invalid.");
+  }
+  if (
+    input.preferredInferenceApi !== null &&
+    !["anthropic-messages", "openai-completions", "openai-responses"].includes(
+      input.preferredInferenceApi,
+    )
+  ) {
+    throw new Error("Hermes portable inference API build setting is invalid.");
+  }
+  const toolDisclosure = normalizeToolDisclosure(input.toolDisclosure);
+  if (toolDisclosure !== input.toolDisclosure) {
+    throw new Error("Hermes portable tool disclosure build setting is invalid.");
+  }
+  const inference = getSandboxInferenceConfig(
+    input.model,
+    input.provider,
+    input.preferredInferenceApi,
+  );
+  const replacements = [
+    ["NEMOCLAW_MODEL", input.model],
+    ["NEMOCLAW_INFERENCE_PROVIDER_ID", inference.providerKey],
+    ["NEMOCLAW_UPSTREAM_PROVIDER", input.provider ?? inference.providerKey],
+    ["NEMOCLAW_INFERENCE_BASE_URL", inference.inferenceBaseUrl],
+    ["NEMOCLAW_INFERENCE_API", inference.inferenceApi],
+    ["NEMOCLAW_TOOL_DISCLOSURE", toolDisclosure],
+    ["CHAT_UI_URL", ""],
+  ] as const;
+  return replacements.reduce(
+    (rendered, [name, value]) => replaceExactHermesPortableDockerArg(rendered, name, value),
+    source,
+  );
 }
 
 function encodeSanitizedDockerJsonArg(value: unknown): string {
@@ -598,9 +661,21 @@ export function patchStagedDockerfile(
           'ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]. ' +
           "NemoClaw cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
       );
+    } else {
+      // A fallback source stays a no-op when a custom Dockerfile lacks either
+      // build argument required for root-owned runtime trust. Onboarding still
+      // exits 0 and the sandbox still reaches Ready, so report the dropped
+      // anchor here; otherwise the missing trust is invisible until external
+      // TLS through the corporate proxy fails at runtime (#8454).
+      const reason = corporateCaArgPattern.test(dockerfile)
+        ? "the Dockerfile does not declare a final-stage ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER that controls the image user before the NemoClaw entrypoint"
+        : "the Dockerfile is missing ARG NEMOCLAW_CORPORATE_CA_B64";
+      warnCorporateCa(
+        `corporate proxy CA from ${corporateCa.sourceEnv} (${corporateCa.sourcePath}) was not baked ` +
+          `into the sandbox image because ${reason}; the sandbox will start without a corporate ` +
+          "trust anchor and external TLS through the corporate proxy may fail",
+      );
     }
-    // An OpenClaw fallback source stays a no-op when a custom Dockerfile lacks
-    // either build argument required for root-owned runtime trust.
   }
 
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);

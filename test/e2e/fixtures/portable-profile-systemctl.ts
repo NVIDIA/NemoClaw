@@ -221,3 +221,17 @@ export async function cleanupPortableProfileRootlessFixture(
   await cleanupPortableProfileSystemctlFixture(runtimeDir);
   fs.rmSync(root, { force: true, recursive: true });
 }
+
+export function cleanupPortableHostGatewayAlias(
+  gatewayIp: string,
+  wasPresentBefore: boolean,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (wasPresentBefore) return;
+  spawnSync("sudo", ["--", "ip", "address", "delete", `${gatewayIp}/32`, "dev", "lo"], {
+    env,
+    killSignal: "SIGKILL",
+    stdio: "ignore",
+    timeout: 15_000,
+  });
+}

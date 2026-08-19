@@ -161,7 +161,7 @@ export function sanitizeTraceAttributes(attributes: Record<string, unknown> = {}
   return safe;
 }
 
-function isTraceFlagEnabled(value: string | undefined): boolean {
+export function isTraceFlagEnabled(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) return false;
   return !["0", "false", "no", "off"].includes(normalized);

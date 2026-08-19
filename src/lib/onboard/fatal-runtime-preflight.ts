@@ -119,6 +119,8 @@ export interface OnboardHostReadinessOptions {
   allowStorageRemediation?: boolean;
   allowPortableHostPreparation?: boolean;
   allowDeferredN1xManagedVllm?: boolean;
+  /** Print warning-severity host advisories before returning an admitted report. */
+  presentAdvisories?: boolean;
   exitProcess?: (code: number) => never;
   observedAt?: string;
   now?: () => Date;
@@ -170,7 +172,13 @@ export function assertOnboardSystemReadiness(
       options.allowDeferredN1xManagedVllm ??
       process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
   });
-  if (admission.admitted) return readinessReport;
+  const advisories = planHostAdvisories(host, { resuming: options.resuming });
+  if (admission.admitted) {
+    if (options.presentAdvisories !== false) {
+      printRemediationActions(advisories.filter(({ severity }) => severity === "warning"));
+    }
+    return readinessReport;
+  }
   const jetsonRuntimeMissing = admission.findingIds.includes("host.gpu.nvidia_runtime_missing");
 
   if (
@@ -190,7 +198,6 @@ export function assertOnboardSystemReadiness(
   } else {
     printReadinessFailure(readinessReport, admission.findingIds, admission.capabilityIds);
   }
-  const advisories = planHostAdvisories(host, { resuming: options.resuming });
   printRemediationActions(
     jetsonRuntimeMissing
       ? advisories.filter(({ id }) => !JETSON_INAPPLICABLE_CDI_ADVISORY_IDS.has(id))
@@ -293,6 +300,8 @@ function collectOnboardHostReadiness(
     resuming: context.resuming,
     allowStorageRemediation,
     allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+    // The initial host readiness gate already presented warning advisories.
+    presentAdvisories: false,
     exitProcess: context.exitProcess,
   });
   return {
@@ -380,6 +389,7 @@ async function collectAdmittedReadinessPair(
     resuming: context.resuming,
     allowStorageRemediation: isManagedGatewayReadiness(gateway),
     allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+    presentAdvisories: false,
     exitProcess,
   });
   return { host, gateway, report };
