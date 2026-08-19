@@ -2717,6 +2717,7 @@ jobs:
           BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           TARGET_ID: ${{ matrix.id }}
+          TARGET_LABEL: ${{ matrix.label }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2730,6 +2731,19 @@ jobs:
                 (.candidateSha | test("^[0-9a-f]{40}$"))
                 and (.base.reference | test("@sha256:[0-9a-f]{64}$"))
               )' >"${evidence_dir}/dcode-base-image.json"
+          test_artifact_name="$(node -e '
+            const slug = process.argv[1]
+              .trim()
+              .toLowerCase()
+              .replace(/[^a-z0-9._-]+/g, "-")
+              .replace(/^-+|-+$/g, "");
+            process.stdout.write(slug || "unnamed-test");
+          ' "${TARGET_LABEL}")"
+          test_evidence_dir="${E2E_ARTIFACT_DIR}/${test_artifact_name}"
+          install -d -m 0700 "${test_evidence_dir}"
+          install -m 0600 \
+            "${evidence_dir}/dcode-base-image.json" \
+            "${test_evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
