@@ -268,6 +268,7 @@ function exitOnGatewayRecoveryFailure(
   agentName: string,
   detail: string,
   operation: "Probe" | "Recovery" = "Probe",
+  showWedgeDiagnostics = false,
 ): never {
   const safeDetail = sanitizeSandboxStartupRecoveryDetail(detail);
   const terminalPunctuation = /[.!?]$/u.test(safeDetail) ? "" : ".";
@@ -276,6 +277,10 @@ function exitOnGatewayRecoveryFailure(
     `  ${operation} failed: NemoClaw could not recover the ${agentName} gateway in '${sandboxName}'.`,
   );
   console.error(`  Recovery detail: ${safeDetail}${terminalPunctuation}`);
+  if (showWedgeDiagnostics) {
+    printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
+    console.error("  Check /tmp/gateway.log inside the sandbox for details.");
+  }
   process.exit(1);
 }
 
@@ -342,6 +347,8 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
       sandboxName,
       agentName,
       String(processCheck.recoveryFailureDetail),
+      "Probe",
+      true,
     );
   }
   if (processCheck.wasRunning) {
