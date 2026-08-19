@@ -375,6 +375,29 @@ describe("dashboard port reservation", () => {
     await closeServer(listener);
   });
 
+  it("releases the selected port when finalization calls the extracted scope callback (#9568)", async () => {
+    const port = await unusedLoopbackPort();
+
+    await withDashboardPortReservationScope(async (scope) => {
+      scope.current = await reserveDashboardPort(port);
+      await assert.rejects(
+        listenOnLoopback(port),
+        (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
+      );
+
+      const finalizationDashboard = { releasePort: scope.release };
+      await finalizationDashboard.releasePort();
+
+      assert.equal(scope.current, null);
+      const listener = await listenOnLoopback(port);
+      try {
+        assert.equal(listener.listening, true);
+      } finally {
+        await closeServer(listener);
+      }
+    });
+  });
+
   it("reselects before sandbox creation when a listener wins the allocation race (#8798)", async () => {
     const attempts: number[] = [];
     const warnings: string[] = [];
