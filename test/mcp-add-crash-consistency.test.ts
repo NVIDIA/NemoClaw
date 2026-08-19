@@ -777,7 +777,7 @@ describe("MCP add crash consistency", () => {
     }
   });
 
-  it("records provider ownership before rejecting a late registered collision (#9388)", () => {
+  it("records managed MCP state before rejecting a late registered collision (#9388)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-late-collision-"));
     try {
       const rejected = runAddProcess(home, "registered-late-collision");

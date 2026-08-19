@@ -306,7 +306,7 @@ async function addMcpBridgeUnlocked(
     await withMcpCredentialOwnershipLock(() => {
       // Publish the durable MCP reservation under the same cross-command lock
       // used by credentials add. Neither command can pass its collision check
-      // before the other publishes ownership of the key.
+      // before the other records its credential-key reservation.
       assertNoProviderCredentialCollisions(sandboxName, [entry]);
       writeBridgeEntry(sandboxName, entry);
     });

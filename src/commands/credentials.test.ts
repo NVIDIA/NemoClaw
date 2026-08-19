@@ -185,7 +185,7 @@ describe("credentials oclif adapter source coverage", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.failureLines.join("\n")).toContain(
-      "Refusing --from-existing while managed MCP credential keys are reserved.",
+      "Cannot compare imported provider credentials with keys reserved by managed MCP servers.",
     );
     expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();

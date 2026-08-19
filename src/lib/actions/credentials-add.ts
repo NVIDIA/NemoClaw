@@ -237,8 +237,9 @@ export async function runCredentialsAddAction(
 
   if (fromExisting && managedMcpReservations.length > 0) {
     return fail([
-      `  Could not reserve credential ownership for provider profile '${type}'.`,
-      "  Refusing --from-existing while managed MCP credential keys are reserved.",
+      "  --from-existing does not expose credential keys before provider creation.",
+      "  Cannot compare imported provider credentials with keys reserved by managed MCP servers.",
+      "  Rerun with explicit --credential <ENV_NAME> input, or remove every managed MCP server that reserves credential keys before retrying.",
     ]);
   }
 
@@ -259,7 +260,7 @@ export async function runCredentialsAddAction(
     if (!inspection.credentialKeys) {
       return fail([
         `  Could not inspect credential keys for provider profile '${type}'.`,
-        "  Refusing --from-existing because credential ownership could not be reserved safely.",
+        "  Refusing --from-existing because the provider profile credential keys could not be compared with managed MCP reservations.",
         ...(inspection.diagnostic ? [`  ${inspection.diagnostic}`] : []),
       ]);
     }
@@ -279,10 +280,10 @@ export async function runCredentialsAddAction(
   }
 
   return withMcpCredentialOwnershipLock(() => {
-    const ownershipCredentialKeys = importedCredentialKeys ?? credentials;
+    const providerCredentialKeys = importedCredentialKeys ?? credentials;
     const collision = managedMcpCollisionFailure(
       provider,
-      ownershipCredentialKeys,
+      providerCredentialKeys,
       listManagedMcpCredentialReservations(),
     );
     if (collision) return collision;

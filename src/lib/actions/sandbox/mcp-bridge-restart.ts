@@ -218,8 +218,10 @@ export async function restoreExistingMcpBridgeRuntime(
       );
     }
   }
-  // Inspect registered providers once before the first mutation. The
-  // singleton checks close attached-provider races at each mutation edge.
+  // Reject every current collision before the first restore mutation, so a
+  // pre-existing collision on a later entry cannot follow an earlier restore
+  // mutation. Per-entry attached-provider checks detect new collisions at each
+  // restore mutation edge.
   assertNoProviderCredentialCollisions(sandboxName, entries);
   for (const entry of entries) {
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
