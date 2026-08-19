@@ -5,6 +5,12 @@ import {
   type ManagedWorkloadAuthority,
   readManagedWorkloadAuthority,
 } from "../../../src/lib/onboard/workload/authority.ts";
+import { managedImageRuntimeIdentity } from "../../../src/lib/onboard/managed-image/contract.ts";
+import { assertManagedBootstrapIdentity } from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
+import { MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE } from "../../../src/lib/onboard/managed-bootstrap/docker.ts";
+import { MANAGED_BOOTSTRAP_REQUEST_FILE } from "../../../src/lib/onboard/managed-bootstrap/envelope.ts";
+import { fingerprintManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
+import { OPENSHELL_SANDBOX_SUPERVISOR_ARGV } from "../../../src/lib/onboard/sandbox-create-launch.ts";
 import { load as loadSandboxRegistry } from "../../../src/lib/state/registry/persistence.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
@@ -296,11 +302,34 @@ raise SystemExit(1)`,
     resultText(dockerCommandBoundary),
   ).toBe(0);
   const commandBoundary = JSON.parse(dockerCommandBoundary.stdout);
-  expect(commandBoundary).toMatchObject({
-    cmd: ["--workdir", "/sandbox"],
-    entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-    has_openshell_sandbox_command: true,
-  });
+  const verifiedManagedAuthority = managedAuthority!;
+  expect(verifiedManagedAuthority.agent).toBe("hermes");
+  const managedBootstrapCommand = commandBoundary.cmd;
+  expect(Array.isArray(managedBootstrapCommand)).toBe(true);
+  const bootstrapIdentity = managedBootstrapCommand[5];
+  expect(typeof bootstrapIdentity).toBe("string");
+  assertManagedBootstrapIdentity(bootstrapIdentity);
+  const agentIdentity = managedImageRuntimeIdentity(verifiedManagedAuthority.agent);
+  expect(commandBoundary.entrypoint).toEqual([MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE]);
+  expect(managedBootstrapCommand).toEqual([
+    "--agent",
+    verifiedManagedAuthority.agent,
+    "--profile-fingerprint",
+    fingerprintManagedStartupProfile(verifiedManagedAuthority.profile),
+    "--bootstrap-identity",
+    bootstrapIdentity,
+    "--agent-uid",
+    String(agentIdentity.uid),
+    "--agent-gid",
+    String(agentIdentity.gid),
+    "--agent-workdir",
+    agentIdentity.workdir,
+    "--request-file",
+    MANAGED_BOOTSTRAP_REQUEST_FILE,
+    "--",
+    ...OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
+  ]);
+  expect(commandBoundary.has_openshell_sandbox_command).toBe(true);
   assertHermesContainerImageAuthority(
     commandBoundary.image,
     managedImageReference,
