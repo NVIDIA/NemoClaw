@@ -127,6 +127,9 @@ jobs:
       - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    outputs:
+      amd64-digest: ${{ steps.platform.outputs.amd64-digest }}
+      arm64-digest: ${{ steps.platform.outputs.arm64-digest }}
     strategy:
       fail-fast: false
       matrix:
@@ -150,6 +153,7 @@ jobs:
           persist-credentials: false
 
       - name: Build and publish platform digest
+        id: platform
         uses: ./.github/actions/build-base-image-platform
         with:
           agent: ${{ matrix.agent }}
@@ -177,6 +181,9 @@ jobs:
       - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    outputs:
+      amd64-digest: ${{ steps.platform.outputs.amd64-digest }}
+      arm64-digest: ${{ steps.platform.outputs.arm64-digest }}
     strategy:
       fail-fast: false
       matrix:
@@ -202,6 +209,7 @@ jobs:
           persist-credentials: false
 
       - name: Build and publish platform digest
+        id: platform
         uses: ./.github/actions/build-base-image-platform
         with:
           agent: ${{ matrix.agent }}
@@ -221,6 +229,9 @@ jobs:
       - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    outputs:
+      amd64-digest: ${{ steps.platform.outputs.amd64-digest }}
+      arm64-digest: ${{ steps.platform.outputs.arm64-digest }}
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +257,7 @@ jobs:
           persist-credentials: false
 
       - name: Build and publish platform digest
+        id: platform
         uses: ./.github/actions/build-base-image-platform
         with:
           agent: ${{ matrix.agent }}
@@ -268,6 +280,9 @@ jobs:
       - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    outputs:
+      amd64-digest: ${{ steps.platform.outputs.amd64-digest }}
+      arm64-digest: ${{ steps.platform.outputs.arm64-digest }}
     strategy:
       fail-fast: false
       matrix:
@@ -290,6 +305,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build and publish platform digest
+        id: platform
         uses: ./.github/actions/build-base-image-platform
         with:
           agent: ${{ matrix.agent }}
@@ -308,15 +324,20 @@ jobs:
       - reviewed-npm-audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      contract-base64: ${{ steps.publish.outputs.contract-base64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Publish validated multi-platform manifest
+        id: publish
         uses: ./.github/actions/publish-base-image-manifest
         with:
           agent: pi
+          amd64-digest: ${{ needs.build-pi-platforms.outputs.amd64-digest }}
+          arm64-digest: ${{ needs.build-pi-platforms.outputs.arm64-digest }}
           display-name: Pi
           image: nvidia/nemoclaw/pi-sandbox-base
           registry: ${{ env.REGISTRY }}
@@ -330,6 +351,8 @@ jobs:
       - reviewed-npm-audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      contract-base64: ${{ steps.publish.outputs.contract-base64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -337,9 +360,12 @@ jobs:
           persist-credentials: false
 
       - name: Publish validated multi-platform manifest
+        id: publish
         uses: ./.github/actions/publish-base-image-manifest
         with:
           agent: hermes
+          amd64-digest: ${{ needs.build-hermes-platforms.outputs.amd64-digest }}
+          arm64-digest: ${{ needs.build-hermes-platforms.outputs.arm64-digest }}
           display-name: Hermes
           image: nvidia/nemoclaw/hermes-sandbox-base
           registry: ${{ env.REGISTRY }}
@@ -355,6 +381,8 @@ jobs:
       - reviewed-npm-audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      contract-base64: ${{ steps.publish.outputs.contract-base64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -362,9 +390,12 @@ jobs:
           persist-credentials: false
 
       - name: Publish validated multi-platform manifest
+        id: publish
         uses: ./.github/actions/publish-base-image-manifest
         with:
           agent: langchain-deepagents-code
+          amd64-digest: ${{ needs.build-dcode-platforms.outputs.amd64-digest }}
+          arm64-digest: ${{ needs.build-dcode-platforms.outputs.arm64-digest }}
           display-name: Deep Agents Code
           image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
           registry: ${{ env.REGISTRY }}
@@ -382,6 +413,8 @@ jobs:
       - reviewed-npm-audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      contract-base64: ${{ steps.publish.outputs.contract-base64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -389,9 +422,12 @@ jobs:
           persist-credentials: false
 
       - name: Publish validated multi-platform manifest
+        id: publish
         uses: ./.github/actions/publish-base-image-manifest
         with:
           agent: openclaw
+          amd64-digest: ${{ needs.build-openclaw-platforms.outputs.amd64-digest }}
+          arm64-digest: ${{ needs.build-openclaw-platforms.outputs.arm64-digest }}
           display-name: OpenClaw
           image: nvidia/nemoclaw/sandbox-base
           registry: ${{ env.REGISTRY }}
@@ -417,3 +453,7 @@ jobs:
       contents: read
       packages: write
     uses: ./.github/workflows/managed-images.yaml
+    with:
+      dcode-base-contract-base64: ${{ needs.build-and-push-dcode.outputs.contract-base64 }}
+      hermes-base-contract-base64: ${{ needs.build-and-push-hermes.outputs.contract-base64 }}
+      openclaw-base-contract-base64: ${{ needs.build-and-push-openclaw.outputs.contract-base64 }}

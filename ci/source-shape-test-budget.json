@@ -78,7 +78,7 @@
     },
     {
       "file": "test/managed-image-rerun-artifacts.test.ts",
-      "test": "retains producer artifact identities during a failed-job rerun (#9529)",
+      "test": "retains exact producer outputs when successful jobs are reused on a failed-job rerun (#9529)",
       "category": "security"
     },
     {

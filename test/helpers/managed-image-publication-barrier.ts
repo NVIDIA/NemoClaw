@@ -24,6 +24,11 @@ type Candidate = {
 
 export type CandidateMutation = (candidates: Candidate[]) => Candidate[];
 
+type BarrierOptions = {
+  expectedAttempts?: Partial<Record<`${Candidate["agent"]}|${Candidate["platform"]}`, string>>;
+  publicationCohort?: string;
+};
+
 type PromotionResult = {
   calls: string[];
   cohortContract: Record<string, unknown> | null;
@@ -157,6 +162,7 @@ export function runPublicationBarrier(
   script: string,
   mutate: CandidateMutation = (value) => value,
   afterBarrier = "",
+  options: BarrierOptions = {},
 ): {
   dockerCalls: string[];
   status: number | null;
@@ -198,7 +204,16 @@ export function runPublicationBarrier(
         GITHUB_RUN_ATTEMPT: runAttempt,
         GITHUB_RUN_ID: runId,
         GITHUB_SHA: revision,
+        DCODE_AMD64_ATTEMPT:
+          options.expectedAttempts?.["langchain-deepagents-code|linux/amd64"] ?? runAttempt,
+        DCODE_ARM64_ATTEMPT:
+          options.expectedAttempts?.["langchain-deepagents-code|linux/arm64"] ?? runAttempt,
+        HERMES_AMD64_ATTEMPT: options.expectedAttempts?.["hermes|linux/amd64"] ?? runAttempt,
+        HERMES_ARM64_ATTEMPT: options.expectedAttempts?.["hermes|linux/arm64"] ?? runAttempt,
+        OPENCLAW_AMD64_ATTEMPT: options.expectedAttempts?.["openclaw|linux/amd64"] ?? runAttempt,
+        OPENCLAW_ARM64_ATTEMPT: options.expectedAttempts?.["openclaw|linux/arm64"] ?? runAttempt,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
+        PUBLICATION_COHORT: options.publicationCohort ?? cohort,
         RUNNER_TEMP: root,
       },
     });
@@ -302,6 +317,7 @@ fi
         GITHUB_RUN_ID: runId,
         GITHUB_SHA: revision,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
+        PUBLICATION_COHORT: cohort,
         RUNNER_TEMP: root,
         STATE_ROOT: root,
       },

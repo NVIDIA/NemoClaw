@@ -224,7 +224,8 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
       : ["managed image handoff and aliases must not use short source SHAs"]),
     ...(base.run?.includes('.reference == (.image + "@" + .digest)') &&
     base.run.includes(".sourceRevision == $revision") &&
-    base.run.includes(".run == {id: $runId, attempt: $runAttempt}")
+    base.run.includes(".run.id == $runId") &&
+    base.run.includes(".run.attempt <= $runAttempt")
       ? []
       : ["managed image build must consume the same-run exact base digest contract"]),
     ...validationMarkers
@@ -236,7 +237,8 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     ...(buildIndex >= 0 && buildIndex < validateIndex
       ? []
       : ["managed image validation must follow its immutable digest build"]),
-    ...(promoter.needs === "build-and-validate"
+    ...(JSON.stringify(promoter.needs) ===
+    JSON.stringify(["publication-identity", "build-and-validate"])
       ? []
       : ["aggregate promotion must require every matrix lane"]),
   ];
@@ -714,9 +716,11 @@ describe("complete managed-image publication workflow", () => {
       path: "staging-qa-base-source",
       "persist-credentials": false,
     });
-    steps.filter((candidate) => candidate.uses).forEach((action) => {
-      expect(action.uses, action.name).toMatch(fullShaAction);
-    });
+    steps
+      .filter((candidate) => candidate.uses)
+      .forEach((action) => {
+        expect(action.uses, action.name).toMatch(fullShaAction);
+      });
     expect(drift.run).toBe(
       step(managedPrBuilder(workflow), "Reproduce reviewed discovery permission drift").run,
     );
@@ -795,7 +799,9 @@ describe("complete managed-image publication workflow", () => {
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
-    expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(/npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u);
+    expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
+      /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
+    );
     expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
     expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
     const run = step(activation, "Run real all-agent managed runtime activation").run ?? "";
@@ -831,7 +837,9 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
-    expect(assemble).toMatch(/npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u);
+    expect(assemble).toMatch(
+      /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
+    );
     const run = step(discovery, "Run exact OpenClaw trusted-private MCP discovery").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(JSON.stringify(discovery)).not.toContain("jq ");
@@ -1062,16 +1070,15 @@ fi
     const promoter = managedPromoter(workflow);
     const steps = publisher.steps ?? [];
 
-    [...steps, ...(promoter.steps ?? [])].filter(
-      (candidate) => candidate.uses,
-    ).forEach((action) => {
-      expect(action.uses, action.name).toMatch(fullShaAction);
-    });
+    [...steps, ...(promoter.steps ?? [])]
+      .filter((candidate) => candidate.uses)
+      .forEach((action) => {
+        expect(action.uses, action.name).toMatch(fullShaAction);
+      });
     expect(step(publisher, "Checkout").with?.["persist-credentials"]).toBe(false);
-    expect(step(publisher, "Download exact base image contract").with).toMatchObject({
-      name: "managed-base-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}",
-      path: "${{ runner.temp }}/managed-base-contract",
-    });
+    expect(step(publisher, "Restore exact base image contract").run).toContain(
+      'base64 --decode > "$contract_root/contract.json"',
+    );
 
     const guard = step(publisher, "Validate production build args");
     const build = step(publisher, "Build and push managed image by digest");
@@ -1095,7 +1102,7 @@ fi
     expect(build.with?.labels).toContain("org.opencontainers.image.revision=${{ github.sha }}");
     expect(build.with?.labels).toContain("io.nvidia.nemoclaw.managed-image.contract=1");
     expect(build.with?.labels).toContain(
-      "io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}",
+      "io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}",
     );
 
     const base = step(publisher, "Validate exact base image contract");
@@ -1103,22 +1110,24 @@ fi
     expect(base.run).toContain('imagetools inspect "$platform_reference"');
 
     const contract = step(publisher, "Export validated managed image candidate");
-    expect([
-          "--arg baseReference",
-          "--arg digest",
-          "--arg platform",
-          "--arg cohort",
-          "--arg revision",
-          "--arg cohort",
-          "--argjson runAttempt",
-          "--argjson runId",
-          "contractVersion: 2",
-          'phase: "candidate"',
-          "--slurpfile publicationEvidence",
-          "publicationEvidence: $publicationEvidence[0]",
-          "https://slsa.dev/provenance/v1",
-          "https://spdx.dev/Document",
-        ].every((marker) => contract.run?.includes(marker) === true)).toBe(true);
+    expect(
+      [
+        "--arg baseReference",
+        "--arg digest",
+        "--arg platform",
+        "--arg cohort",
+        "--arg revision",
+        "--arg cohort",
+        "--argjson runAttempt",
+        "--argjson runId",
+        "contractVersion: 2",
+        'phase: "candidate"',
+        "--slurpfile publicationEvidence",
+        "publicationEvidence: $publicationEvidence[0]",
+        "https://slsa.dev/provenance/v1",
+        "https://spdx.dev/Document",
+      ].every((marker) => contract.run?.includes(marker) === true),
+    ).toBe(true);
     expect(step(publisher, "Upload validated managed image candidate").with).toMatchObject({
       name: "managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}",
       path: "${{ runner.temp }}/managed-image-candidate/contract.json",
@@ -1186,12 +1195,10 @@ fi
         String(candidate.with?.name ?? "").startsWith("managed-image-"),
     );
 
-    expect(promoter.needs).toBe("build-and-validate");
-    expect(step(promoter, "Download all validated managed image candidates").with).toEqual({
-      pattern: "managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-*",
-      path: "${{ runner.temp }}/managed-image-candidates",
-      "merge-multiple": false,
-    });
+    expect(promoter.needs).toEqual(["publication-identity", "build-and-validate"]);
+    expect(step(promoter, "Restore all validated managed image candidates").run).toContain(
+      "restore_candidate()",
+    );
     expect(barrier.run).toContain("expected exactly six managed image candidate artifacts");
     expect(barrier.run).toContain("length == 6");
     expect(barrier.run).toContain('([.[].platform] | sort) == ["linux/amd64", "linux/arm64"]');
@@ -1467,34 +1474,5 @@ fi
         "langchain-deepagents-code": expect.any(Object),
       },
     });
-  });
-
-  it("retains exact platform and aggregate cohort contracts for ninety days (#7744)", () => {
-    const promoter = managedPromoter(readWorkflow("managed-images.yaml"));
-    const uploads = (promoter.steps ?? [])
-      .filter((candidate) => candidate.uses?.startsWith("actions/upload-artifact@"))
-      .map((candidate) => candidate.with);
-
-    expect(uploads).toEqual([
-      {
-        name: "managed-image-cohort-${{ github.run_id }}-${{ github.run_attempt }}",
-        path: "${{ runner.temp }}/managed-image-contracts/cohort.json",
-        "if-no-files-found": "error",
-        "retention-days": 90,
-      },
-      ...publicationAgents.flatMap((agent) =>
-        publicationPlatforms.map((platform) => {
-          const artifactPlatform = platform.replaceAll("/", "-");
-          return {
-            name:
-              "managed-image-${{ github.run_id }}-${{ github.run_attempt }}-" +
-              `${agent}-${artifactPlatform}`,
-            path: `\${{ runner.temp }}/managed-image-contracts/${agent}/${artifactPlatform}/contract.json`,
-            "if-no-files-found": "error",
-            "retention-days": 90,
-          };
-        }),
-      ),
-    ]);
   });
 });

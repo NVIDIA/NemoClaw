@@ -33,6 +33,7 @@ export type Job = {
   env?: Record<string, unknown>;
   if?: string;
   needs?: string | string[];
+  outputs?: Record<string, string>;
   permissions?: Record<string, string>;
   "runs-on"?: string;
   steps?: Step[];
@@ -42,6 +43,7 @@ export type Job = {
   };
   "timeout-minutes"?: number;
   uses?: string;
+  with?: Record<string, unknown>;
 };
 
 export type Workflow = {
@@ -59,7 +61,9 @@ export type Workflow = {
     push?: {
       paths?: string[];
     };
-    workflow_call?: unknown;
+    workflow_call?: {
+      inputs?: Record<string, { required?: boolean; type?: string }>;
+    };
   };
   permissions?: Record<string, string>;
 };

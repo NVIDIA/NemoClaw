@@ -1,19 +1,39 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import {
+  publicationAgents,
+  publicationPlatforms,
+  runPublicationBarrier,
+} from "./helpers/managed-image-publication-barrier";
+
 type Step = {
+  env?: Record<string, unknown>;
+  id?: string;
   name?: string;
+  run?: string;
+  uses?: string;
   with?: Record<string, unknown>;
 };
 
 type Workflow = {
-  jobs?: Record<string, { steps?: Step[] }>;
+  jobs?: Record<
+    string,
+    {
+      needs?: string | string[];
+      outputs?: Record<string, unknown>;
+      steps?: Step[];
+      with?: Record<string, unknown>;
+    }
+  >;
 };
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -31,46 +51,174 @@ function requiredStep(steps: Step[] | undefined, name: string): Step {
   );
 }
 
-function renderArtifactIdentity(value: unknown, runAttempt: number): string {
-  return String(value)
-    .replaceAll("${{ github.run_id }}", "32191102997")
-    .replaceAll("${{ github.run_attempt }}", String(runAttempt))
-    .replaceAll("${{ inputs.agent }}", "openclaw")
-    .replaceAll("${{ matrix.agent }}", "openclaw")
-    .replaceAll("${{ matrix.artifact_platform }}", "linux-amd64");
+function runCandidateRestore(
+  script: string,
+  overrides: Record<string, string> = {},
+): { files: string[]; status: number | null; stderr: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-restore-"));
+  const contract = Buffer.from("{}\n").toString("base64");
+  try {
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DCODE_AMD64: contract,
+        DCODE_AMD64_ATTEMPT: "1",
+        DCODE_ARM64: contract,
+        DCODE_ARM64_ATTEMPT: "2",
+        GITHUB_RUN_ID: "7744",
+        HERMES_AMD64: contract,
+        HERMES_AMD64_ATTEMPT: "1",
+        HERMES_ARM64: contract,
+        HERMES_ARM64_ATTEMPT: "2",
+        OPENCLAW_AMD64: contract,
+        OPENCLAW_AMD64_ATTEMPT: "1",
+        OPENCLAW_ARM64: contract,
+        OPENCLAW_ARM64_ATTEMPT: "2",
+        RUNNER_TEMP: root,
+        ...overrides,
+      },
+    });
+    const candidateRoot = path.join(root, "managed-image-candidates");
+    return {
+      files: fs.existsSync(candidateRoot)
+        ? fs.readdirSync(candidateRoot, { recursive: true }).map(String).sort()
+        : [],
+      status: result.status,
+      stderr: result.stderr,
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 describe("managed-image failed-job rerun artifacts", () => {
   // source-shape-contract: security -- Producer artifact identity must remain exact when GitHub reuses a successful job during a failed-job rerun
-  it("retains producer artifact identities during a failed-job rerun (#9529)", () => {
-    const baseAction = readYaml(
-      ".github/actions/publish-base-image-manifest/action.yaml",
-    ) as Workflow & { runs?: { steps?: Step[] } };
-    const workflow = readYaml(".github/workflows/managed-images.yaml");
-    const publisher = workflow.jobs?.["build-and-validate"];
-    const promoter = workflow.jobs?.promote;
-    const baseUpload = requiredStep(baseAction.runs?.steps, "Upload managed base image contract");
-    const baseDownload = requiredStep(publisher?.steps, "Download exact base image contract");
-    const candidateUpload = requiredStep(
-      publisher?.steps,
-      "Upload validated managed image candidate",
+  it("retains exact producer outputs when successful jobs are reused on a failed-job rerun (#9529)", () => {
+    const baseWorkflow = readYaml(".github/workflows/base-image.yaml");
+    const managedWorkflow = readYaml(".github/workflows/managed-images.yaml");
+    const platformProducer = baseWorkflow.jobs?.["build-openclaw-platforms"];
+    const baseProducer = baseWorkflow.jobs?.["build-and-push-openclaw"];
+    const managedCaller = baseWorkflow.jobs?.["publish-managed-images"];
+    const identity = managedWorkflow.jobs?.["publication-identity"];
+    const publisher = managedWorkflow.jobs?.["build-and-validate"];
+    const promoter = managedWorkflow.jobs?.promote;
+
+    expect(platformProducer?.outputs).toEqual({
+      "amd64-digest": "${{ steps.platform.outputs.amd64-digest }}",
+      "arm64-digest": "${{ steps.platform.outputs.arm64-digest }}",
+    });
+    expect(
+      requiredStep(baseProducer?.steps, "Publish validated multi-platform manifest").with,
+    ).toMatchObject({
+      "amd64-digest": "${{ needs.build-openclaw-platforms.outputs.amd64-digest }}",
+      "arm64-digest": "${{ needs.build-openclaw-platforms.outputs.arm64-digest }}",
+    });
+    expect(baseProducer?.outputs?.["contract-base64"]).toBe(
+      "${{ steps.publish.outputs.contract-base64 }}",
     );
-    const candidateDownload = requiredStep(
+    expect(managedCaller?.with?.["openclaw-base-contract-base64"]).toBe(
+      "${{ needs.build-and-push-openclaw.outputs.contract-base64 }}",
+    );
+    expect(
+      requiredStep(publisher?.steps, "Restore exact base image contract").env
+        ?.OPENCLAW_CONTRACT_BASE64,
+    ).toBe("${{ inputs.openclaw-base-contract-base64 }}");
+
+    expect(identity?.outputs).toEqual({
+      cohort: "${{ steps.identity.outputs.cohort }}",
+    });
+    expect(publisher?.needs).toBe("publication-identity");
+    expect(publisher?.outputs?.["openclaw-linux-amd64"]).toBe(
+      "${{ steps.candidate-output.outputs.openclaw_linux_amd64 }}",
+    );
+    expect(publisher?.outputs?.["openclaw-linux-amd64-attempt"]).toBe(
+      "${{ steps.candidate-output.outputs.openclaw_linux_amd64_attempt }}",
+    );
+    const restoreCandidates = requiredStep(
       promoter?.steps,
-      "Download all validated managed image candidates",
+      "Restore all validated managed image candidates",
     );
+    expect(restoreCandidates.env).toMatchObject({
+      OPENCLAW_AMD64: "${{ needs.build-and-validate.outputs.openclaw-linux-amd64 }}",
+      OPENCLAW_AMD64_ATTEMPT:
+        "${{ needs.build-and-validate.outputs.openclaw-linux-amd64-attempt }}",
+    });
+    expect(promoter?.needs).toEqual(["publication-identity", "build-and-validate"]);
+    expect(
+      requiredStep(promoter?.steps, "Validate complete managed image candidate set").env
+        ?.PUBLICATION_COHORT,
+    ).toBe("${{ needs.publication-identity.outputs.cohort }}");
 
-    const producerBaseName = renderArtifactIdentity(baseUpload.with?.name, 1);
-    const rerunBaseName = renderArtifactIdentity(baseDownload.with?.name, 2);
-    const producerCandidateName = renderArtifactIdentity(candidateUpload.with?.name, 1);
-    const rerunCandidatePrefix = renderArtifactIdentity(candidateDownload.with?.pattern, 2).replace(
-      /\*$/u,
+    const acceptedRestore = runCandidateRestore(restoreCandidates.run ?? "");
+    expect(acceptedRestore.status).toBe(0);
+    expect(acceptedRestore.files.filter((file) => file.endsWith("contract.json"))).toHaveLength(6);
+    const invalidAttempt = runCandidateRestore(restoreCandidates.run ?? "", {
+      OPENCLAW_AMD64_ATTEMPT: "0",
+    });
+    expect(invalidAttempt.status).not.toBe(0);
+    expect(invalidAttempt.stderr).toContain("producer attempt is invalid");
+    const malformedContract = runCandidateRestore(restoreCandidates.run ?? "", {
+      OPENCLAW_AMD64: "not-base64",
+    });
+    expect(malformedContract.status).not.toBe(0);
+    expect(malformedContract.stderr).not.toContain("not-base64");
+
+    const barrier = requiredStep(promoter?.steps, "Validate complete managed image candidate set");
+    const reusedKey = "openclaw|linux/amd64";
+    const mixedAttempts = runPublicationBarrier(
+      barrier.run ?? "",
+      (candidateSet) =>
+        candidateSet.map((candidate) => {
+          const contract = structuredClone(candidate.contract);
+          const producerAttempt = `${candidate.agent}|${candidate.platform}` === reusedKey ? 1 : 2;
+          (contract.source as Record<string, unknown>).cohort = "ghrun-7744-1";
+          (contract.run as Record<string, unknown>).attempt = producerAttempt;
+          const evidence = contract.publicationEvidence as Record<string, unknown>;
+          const attestations = evidence.attestations as Record<string, unknown>;
+          const statement = (attestations.slsa as Record<string, unknown>).statement as Record<
+            string,
+            unknown
+          >;
+          statement.builderId = `https://github.com/NVIDIA/NemoClaw/actions/runs/7744/attempts/${producerAttempt}`;
+          (statement.bindings as Record<string, unknown>).cohort = "ghrun-7744-1";
+          return {
+            ...candidate,
+            artifact: candidate.artifact.replace("-7744-2-", `-7744-${producerAttempt}-`),
+            contract,
+          };
+        }),
       "",
+      {
+        expectedAttempts: { [reusedKey]: "1" },
+        publicationCohort: "ghrun-7744-1",
+      },
     );
+    expect(mixedAttempts.status).toBe(0);
 
-    expect([
-      rerunBaseName === producerBaseName,
-      producerCandidateName.startsWith(rerunCandidatePrefix),
-    ]).toEqual([true, true]);
+    const durableUploads = (promoter?.steps ?? [])
+      .filter((candidate) => candidate.uses?.startsWith("actions/upload-artifact@"))
+      .map((candidate) => candidate.with);
+    expect(durableUploads).toEqual([
+      {
+        name: "managed-image-cohort-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "${{ runner.temp }}/managed-image-contracts/cohort.json",
+        "if-no-files-found": "error",
+        "retention-days": 90,
+      },
+      ...publicationAgents.flatMap((agent) =>
+        publicationPlatforms.map((platform) => {
+          const artifactPlatform = platform.replaceAll("/", "-");
+          return {
+            name:
+              "managed-image-${{ github.run_id }}-${{ github.run_attempt }}-" +
+              `${agent}-${artifactPlatform}`,
+            path: `\${{ runner.temp }}/managed-image-contracts/${agent}/${artifactPlatform}/contract.json`,
+            "if-no-files-found": "error",
+            "retention-days": 90,
+          };
+        }),
+      ),
+    ]);
   });
 });
