@@ -32,6 +32,13 @@ function result(status = 0, stdout = ""): SpawnResult {
   return { status, stdout, stderr: "" } as SpawnResult;
 }
 
+const NO_RETIRED_GATEWAY_EVIDENCE = JSON.stringify([
+  { ifname: "lo", addr_info: [{ family: "inet", local: "127.0.0.1", prefixlen: 8 }] },
+]);
+const RETIRED_LOOPBACK_EVIDENCE = JSON.stringify([
+  { ifname: "lo", addr_info: [{ family: "inet", local: "169.254.1.2", prefixlen: 32 }] },
+]);
+
 function runtimeAuthority(
   homeDir: string,
   socketPath = "/run/user/1001/podman/podman.sock",
@@ -95,7 +102,10 @@ function preparePortableExperimentalHost(
           : docker,
       ip:
         deps.ip ??
-        (() => result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`)),
+        ((args) =>
+          args[0] === "-j"
+            ? result(0, NO_RETIRED_GATEWAY_EVIDENCE)
+            : result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`)),
       sudo: deps.sudo ?? (() => result()),
       // Tests run on hosts without the /sys/fs/cgroup hierarchy the portable
       // CPU-delegation preflight reads; default to a passing stub and inject
@@ -384,8 +394,10 @@ describe("preparePortableExperimentalHost", () => {
       .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }]))) // retry network inspect: reuse
       .mockReturnValueOnce(result(1)) // retry registry inspect: absent
       .mockReturnValueOnce(result()); // retry registry run
-    const ip = vi.fn(() =>
-      result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`),
+    const ip = vi.fn((args: readonly string[]) =>
+      args[0] === "-j"
+        ? result(0, NO_RETIRED_GATEWAY_EVIDENCE)
+        : result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`),
     );
     const sudo = vi.fn(() => result());
     const env: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
@@ -464,13 +476,15 @@ describe("preparePortableExperimentalHost", () => {
         }
       },
     );
-    const ip = vi.fn(() =>
-      result(
-        0,
-        hostGatewayConfigured
-          ? `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`
-          : "1: lo    inet 127.0.0.1/8 scope host lo\n",
-      ),
+    const ip = vi.fn((args: readonly string[]) =>
+      args[0] === "-j"
+        ? result(0, NO_RETIRED_GATEWAY_EVIDENCE)
+        : result(
+            0,
+            hostGatewayConfigured
+              ? `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`
+              : "1: lo    inet 127.0.0.1/8 scope host lo\n",
+          ),
     );
     const sudo = vi.fn(() => {
       commands.push("add host gateway");
@@ -489,11 +503,19 @@ describe("preparePortableExperimentalHost", () => {
   });
 
   it.each([
-    ["missing network", false, "1: lo    inet 169.254.1.2/32 scope global lo\n"],
+    ["missing network", false, RETIRED_LOOPBACK_EVIDENCE],
     [
       "existing network and replacement gateway",
       true,
-      `1: lo    inet 169.254.1.2/32 scope global lo\n1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`,
+      JSON.stringify([
+        {
+          ifname: "lo",
+          addr_info: [
+            { family: "inet", local: "169.254.1.2", prefixlen: 32 },
+            { family: "inet", local: PORTABLE_HOST_GATEWAY_IP, prefixlen: 32 },
+          ],
+        },
+      ]),
     ],
   ])(
     "rejects the retired gateway alias before inspecting the %s (#9587)",
@@ -534,12 +556,85 @@ describe("preparePortableExperimentalHost", () => {
       preparePortableExperimentalHost(
         { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         portablePreparationDeps(home, docker, {
-          ip: () => result(0, "2: eth0    inet 169.254.1.2/24 scope global eth0\n"),
+          ip: () =>
+            result(
+              0,
+              JSON.stringify([
+                {
+                  ifname: "eth0",
+                  addr_info: [{ family: "inet", local: "169.254.1.2", prefixlen: 24 }],
+                },
+              ]),
+            ),
           sudo,
         }),
       ),
     ).toThrow(/retired portable host gateway address 169\.254\.1\.2 has a conflicting/u);
     expect(docker.mock.calls.map(([args]) => args)).toEqual([["--version"]]);
+    expect(sudo).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, SpawnResult, RegExp]>([
+    [
+      "nonzero address inspection",
+      result(2, "permission denied"),
+      /Inspecting the retired portable host gateway address failed: permission denied/u,
+    ],
+    [
+      "address inspection process failure",
+      { ...result(), error: new Error("address inspection interrupted") },
+      /Inspecting the retired portable host gateway address failed: address inspection interrupted/u,
+    ],
+    [
+      "malformed target assignment",
+      result(0, '[{"ifname":"lo","addr_info":[{"family":"inet","local":"169.254.1.2"}]}]'),
+      /inspection returned invalid or ambiguous output/u,
+    ],
+    [
+      "malformed non-target assignment beside target evidence",
+      result(
+        0,
+        JSON.stringify([
+          {
+            ifname: "lo",
+            addr_info: [
+              { family: "inet", local: "169.254.1.2", prefixlen: 32 },
+              { family: "inet", local: "127.0.0.1" },
+            ],
+          },
+        ]),
+      ),
+      /inspection returned invalid or ambiguous output/u,
+    ],
+    ["wholly invalid successful output", result(0, "not-json"), /invalid or ambiguous output/u],
+    [
+      "multiple target assignments",
+      result(
+        0,
+        JSON.stringify([
+          { ifname: "lo", addr_info: [{ family: "inet", local: "169.254.1.2", prefixlen: 32 }] },
+          { ifname: "eth0", addr_info: [{ family: "inet", local: "169.254.1.2", prefixlen: 24 }] },
+        ]),
+      ),
+      /has a conflicting host assignment/u,
+    ],
+  ])("rejects %s before Portable network mutation (#9587)", (_case, inspection, error) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const docker = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(() =>
+      result(),
+    );
+    const ip = vi.fn(() => inspection);
+    const sudo = vi.fn(() => result());
+
+    expect(() =>
+      preparePortableExperimentalHost(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        portablePreparationDeps(home, docker, { ip, sudo }),
+      ),
+    ).toThrow(error);
+    expect(docker.mock.calls.map(([args]) => args)).toEqual([["--version"]]);
+    expect(ip).toHaveBeenCalledTimes(1);
     expect(sudo).not.toHaveBeenCalled();
   });
 
@@ -553,7 +648,7 @@ describe("preparePortableExperimentalHost", () => {
       .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
     const ip = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
-      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result(0, NO_RETIRED_GATEWAY_EVIDENCE))
       .mockReturnValueOnce(result())
       .mockReturnValueOnce(
         result(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`),
@@ -568,7 +663,7 @@ describe("preparePortableExperimentalHost", () => {
     );
 
     expect(ip.mock.calls.map(([args]) => args)).toEqual([
-      ["-o", "-4", "address", "show"],
+      ["-j", "-4", "address", "show"],
       ["-o", "-4", "address", "show"],
       ["-o", "-4", "address", "show"],
     ]);
@@ -586,12 +681,18 @@ describe("preparePortableExperimentalHost", () => {
       result(),
     );
     const sudo = vi.fn(() => result());
+    const ip = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result(0, NO_RETIRED_GATEWAY_EVIDENCE))
+      .mockReturnValueOnce(
+        result(0, `2: eth0    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global eth0\n`),
+      );
 
     expect(() =>
       preparePortableExperimentalHost(
         { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         portablePreparationDeps(home, docker, {
-          ip: () => result(0, `2: eth0    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global eth0\n`),
+          ip,
           sudo,
         }),
       ),
