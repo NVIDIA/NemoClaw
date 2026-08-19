@@ -1737,8 +1737,24 @@ async function runVllmInstall(
   // rendezvous contract and this single-node path never binds it.
   const servingPort = await opts.checkServingPort?.(VLLM_PORT);
   if (servingPort && !servingPort.ok) {
-    printServingPortConflict(servingPort);
-    return { ok: false };
+    // An interrupted host-local install can leave its authenticated managed
+    // container holding the fixed port. Admit that state only after the
+    // lifecycle recovery check validates the exact receipt, bindings, and
+    // credential fingerprint. The replacement guard below then removes the
+    // inspected container ID immediately before the new launch.
+    try {
+      if (recoverHostLocalManagedVllmEndpoint()) {
+        // Continue through the ordinary managed-container replacement path.
+      } else {
+        printServingPortConflict(servingPort);
+        return { ok: false };
+      }
+    } catch (error) {
+      console.error(
+        `  vLLM install failed: managed host-local vLLM recovery could not verify the container: ${(error as Error).message}`,
+      );
+      return { ok: false };
+    }
   }
 
   let hostLocalApiKey: string | null = null;
