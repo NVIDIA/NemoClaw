@@ -78,7 +78,12 @@ for (const [targetIndex, target] of listTargets().entries()) {
     }
     test.skip(
       liveTargetTestTitle(target, support),
-      { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
+      {
+        meta: {
+          e2eArtifactRootId: target.id,
+          e2ePhases: REGISTRY_TARGET_PHASES,
+        },
+      },
       () => {},
     );
     continue;
@@ -86,7 +91,12 @@ for (const [targetIndex, target] of listTargets().entries()) {
 
   test(
     liveTargetTestTitle(target, support),
-    { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
+    {
+      meta: {
+        e2eArtifactRootId: target.id,
+        e2ePhases: REGISTRY_TARGET_PHASES,
+      },
+    },
     async ({
       artifacts,
       environment,
