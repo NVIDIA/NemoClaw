@@ -384,8 +384,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     minComputeCapability: 121,
     runtime: {
       image:
-        "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
-      imageDownloadSizeBytes: 9_699_710_136,
+        "vllm/vllm-openai@sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965",
+      imageDownloadSizeBytes: 9_706_339_423,
       modelDownloadSizeBytes: 25_447_097_878,
     },
     installFastSafetensors: false,

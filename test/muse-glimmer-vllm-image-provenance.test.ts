@@ -43,6 +43,8 @@ describe("Muse Glimmer vLLM image provenance", () => {
     ["source drift", ["build", "sourceRevision"], "0".repeat(40)],
     ["label drift", ["reportedLabels", "org.opencontainers.image.revision"], "0".repeat(40)],
     ["support ancestry drift", ["upstreamSupport", "relationship"], "unverified"],
+    ["runtime dependency drift", ["runtimeDependencies", "huggingfaceHubVersion"], "1.27.0"],
+    ["revision serialization drift", ["revisionSerialization", "resolvedRevisionAfterPickle"], "main"],
   ] as const)("rejects %s", (_name, pathParts, replacement) => {
     const changed = structuredClone(provenance) as JsonRecord;
     let target = changed;
