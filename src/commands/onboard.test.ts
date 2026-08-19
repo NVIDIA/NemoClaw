@@ -59,6 +59,18 @@ describe("onboard oclif command", () => {
     );
   });
 
+  it("accepts an exact managed runtime catalog without candidate activation", async () => {
+    await OnboardCliCommand.run(
+      ["--temp-managed-runtime-catalog", "managed-catalog.json"],
+      rootDir,
+    );
+
+    const [flags, deps] = vi.mocked(runOnboardAction).mock.calls[0]!;
+    expect(flags["temp-managed-runtime-catalog"]).toBe("managed-catalog.json");
+    expect(flags["temp-managed-runtime"]).toBeUndefined();
+    expect(deps).toBe(mocks.onboardRuntimeDeps);
+  });
+
   it("forwards typed sandbox GPU flags", async () => {
     await OnboardCliCommand.run(
       ["--non-interactive", "--yes", "--sandbox-gpu", "--sandbox-gpu-device", "nvidia.com/gpu=0"],
