@@ -11,6 +11,10 @@ import { describe, expect, it } from "vitest";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const puller = path.join(repoRoot, "scripts/checks/pull-public-exact-digest.sh");
 const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(64)}`;
+const managedImagesWorkflow = fs.readFileSync(
+  path.join(repoRoot, ".github/workflows/managed-images.yaml"),
+  "utf8",
+);
 
 type Scenario = "exhausted" | "success" | "terminal" | "transient-then-success";
 
@@ -87,6 +91,24 @@ echo "pulled $EXPECTED_REFERENCE"
 }
 
 describe("pull-public-exact-digest", () => {
+  it("routes the published PR pull through the bounded anonymous helper", () => {
+    const exportStepStart = managedImagesWorkflow.indexOf(
+      "      - name: Export exact published PR managed-image contract",
+    );
+    const exportStepEnd = managedImagesWorkflow.indexOf(
+      "      - name: Upload exact published PR managed-image contract",
+      exportStepStart,
+    );
+    expect(exportStepStart).toBeGreaterThan(-1);
+    expect(exportStepEnd).toBeGreaterThan(exportStepStart);
+
+    const exportStep = managedImagesWorkflow.slice(exportStepStart, exportStepEnd);
+    expect(exportStep).toContain(
+      'scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64',
+    );
+    expect(exportStep).not.toContain('docker pull --platform linux/amd64 "$reference"');
+  });
+
   it("passes once with a credential-free Docker configuration", () => {
     const result = runPuller("success");
 

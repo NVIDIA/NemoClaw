@@ -675,10 +675,6 @@ describe("complete managed-image publication workflow", () => {
     expect(exportContract.if).toBe(sameRepository);
     expect(uploadContract.if).toBe(sameRepository);
     expect(steps.indexOf(logout)).toBeLessThan(steps.indexOf(exportContract));
-    expect(exportContract.run).toContain(
-      'scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64',
-    );
-    expect(exportContract.run).not.toContain('docker pull --platform linux/amd64 "$reference"');
     expect(exportContract.run).toContain("revision: $revision");
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
