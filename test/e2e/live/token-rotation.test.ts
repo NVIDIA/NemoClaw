@@ -127,26 +127,15 @@ function expectCredentialHash(envKey: string): void {
   ).toBeGreaterThan(0);
 }
 
-function expectRotationOutput(
-  output: string,
-  expectedProviders: readonly string[],
-  forbiddenProviders: readonly string[],
-): void {
+function expectTelegramRotationOutput(output: string): void {
   const rotationLine = output
     .split(/\r?\n/)
     .find((line) => line.includes("Messaging credential(s) rotated:"));
   expect(rotationLine, output).toBeTruthy();
-  for (const provider of expectedProviders) {
-    expect(rotationLine, `rotation line should name ${provider}: ${rotationLine}`).toContain(
-      provider,
-    );
-  }
-  for (const provider of forbiddenProviders) {
-    expect(
-      rotationLine,
-      `rotation line should not name ${provider}: ${rotationLine}`,
-    ).not.toContain(provider);
-  }
+  expect(rotationLine).toContain(`${SANDBOX_NAME}-telegram-bridge`);
+  expect(rotationLine).not.toContain(`${SANDBOX_NAME}-discord-bridge`);
+  expect(rotationLine).not.toContain(`${SANDBOX_NAME}-slack-bridge`);
+  expect(rotationLine).not.toContain(`${SANDBOX_NAME}-slack-app`);
   expect(output).toContain("Rebuilding sandbox to propagate new credentials");
 }
 
@@ -490,14 +479,11 @@ test(
       expect(provider.exitCode, resultText(provider)).toBe(0);
     }
 
-    [
-      "TELEGRAM_BOT_TOKEN",
-      "DISCORD_BOT_TOKEN",
-      "SLACK_BOT_TOKEN",
-      "SLACK_APP_TOKEN",
-    ].forEach((envKey) => {
-      expectCredentialHash(envKey);
-    });
+    ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"].forEach(
+      (envKey) => {
+        expectCredentialHash(envKey);
+      },
+    );
     await assertSandboxRunning(host, "phase-1-sandbox-running-after-install");
 
     progress.phase("rotate only the Telegram provider");
@@ -509,15 +495,7 @@ test(
     );
     const telegramText = resultText(telegram);
     expect(telegram.exitCode, telegramText).toBe(0);
-    expectRotationOutput(
-      telegramText,
-      [`${SANDBOX_NAME}-telegram-bridge`],
-      [
-        `${SANDBOX_NAME}-discord-bridge`,
-        `${SANDBOX_NAME}-slack-bridge`,
-        `${SANDBOX_NAME}-slack-app`,
-      ],
-    );
+    expectTelegramRotationOutput(telegramText);
     await assertSandboxRunning(host, "phase-2-sandbox-running-after-telegram-rotation");
 
     progress.phase("reuse the sandbox and record rotation evidence");
@@ -533,11 +511,7 @@ test(
     );
     const afterTelegramSameText = resultText(afterTelegramSame);
     expect(afterTelegramSame.exitCode, afterTelegramSameText).toBe(0);
-    await assertSandboxReused(
-      host,
-      beforeTelegramReuseId,
-      "phase-3-after-same-telegram",
-    );
+    await assertSandboxReused(host, beforeTelegramReuseId, "phase-3-after-same-telegram");
 
     await artifacts.target.complete({
       id: "token-rotation",
