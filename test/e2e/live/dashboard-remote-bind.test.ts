@@ -9,9 +9,10 @@ import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { runDashboardConnectUntilForwardHandoff } from "./dashboard-connect-handoff.ts";
 import {
   buildDashboardRemoteBindEnv,
-  dashboardRemoteBindConnectStarted,
+  dashboardForwardIsRunning,
 } from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
@@ -183,15 +184,19 @@ runDashboardRemoteBindTest(
       timeoutMs: 30_000,
     });
 
-    const connect = await host.nemoclaw([sandboxName, "connect"], {
-      artifactName: "dashboard-remote-bind-connect",
+    const connect = await runDashboardConnectUntilForwardHandoff({
+      artifacts,
+      dashboardPort,
       env: testEnv(),
+      progress,
+      sandboxName,
+      signal: cleanup.currentSignal(),
       timeoutMs: 120_000,
     });
     expect(
-      dashboardRemoteBindConnectStarted(connect, sandboxName, dashboardPort),
-      `nemoclaw connect did not complete or print background-forward proof\nstdout:\n${connect.stdout}\nstderr:\n${connect.stderr}`,
-    ).toBe(true);
+      connect.proof,
+      "nemoclaw connect did not complete or print background-forward proof; see the dashboard-connect-handoff.stdout.txt and dashboard-connect-handoff.stderr.txt artifacts",
+    ).toBe("forward-started");
 
     progress.phase("verify all-interface dashboard forward");
     const forwardList = await sandbox.openshell(["forward", "list"], {
@@ -208,6 +213,10 @@ runDashboardRemoteBindTest(
       `No OpenShell forward found for ${sandboxName} on ${dashboardPort}`,
     ).not.toBe("");
     expect(
+      dashboardForwardIsRunning(forwardLine),
+      `Dashboard forward is not running after connect handoff: ${forwardLine}`,
+    ).toBe(true);
+    expect(
       bindsLoopback(forwardLine, dashboardPort),
       `Dashboard forward is still localhost-only; expected an all-interface bind: ${forwardLine}`,
     ).toBe(false);
@@ -215,6 +224,30 @@ runDashboardRemoteBindTest(
       bindsAllInterfaces(forwardLine, dashboardPort),
       `Could not prove dashboard forward uses 0.0.0.0:${dashboardPort}: ${forwardLine}`,
     ).toBe(true);
+
+    const forwardReachable = await host.command(
+      process.execPath,
+      [
+        "-e",
+        [
+          'const net = require("node:net");',
+          "const socket = net.connect({ host: '127.0.0.1', port: Number(process.argv[1]) });",
+          "const deadline = setTimeout(() => { socket.destroy(); process.exit(1); }, 5000);",
+          "socket.once('connect', () => { clearTimeout(deadline); socket.destroy(); process.exit(0); });",
+          "socket.once('error', () => { clearTimeout(deadline); process.exit(1); });",
+        ].join("\n"),
+        dashboardPort,
+      ],
+      {
+        artifactName: "dashboard-remote-bind-post-handoff-reachability",
+        env: testEnv(),
+        timeoutMs: 10_000,
+      },
+    );
+    expect(
+      forwardReachable.exitCode,
+      `Dashboard forward is unreachable after connect handoff\n${resultText(forwardReachable)}`,
+    ).toBe(0);
 
     progress.phase("audit exposed dashboard controls");
     const audit = await sandbox.execShell(
