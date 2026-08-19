@@ -10,7 +10,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { runDashboardConnectUntilForwardHandoff } from "./dashboard-connect-handoff.ts";
-import { buildDashboardRemoteBindEnv } from "./dashboard-remote-bind-env.ts";
+import {
+  buildDashboardRemoteBindEnv,
+  dashboardForwardIsRunning,
+} from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
 const runDashboardRemoteBindTest =
@@ -210,7 +213,7 @@ runDashboardRemoteBindTest(
       `No OpenShell forward found for ${sandboxName} on ${dashboardPort}`,
     ).not.toBe("");
     expect(
-      /\brunning\b/iu.test(forwardLine),
+      dashboardForwardIsRunning(forwardLine),
       `Dashboard forward is not running after connect handoff: ${forwardLine}`,
     ).toBe(true);
     expect(

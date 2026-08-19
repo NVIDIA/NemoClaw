@@ -27,6 +27,16 @@ async function waitForProcessExit(pid: number): Promise<void> {
   }
 }
 
+async function stopFixtureProcess(pid: number): Promise<void> {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    // The forward may have already exited.
+  }
+  await waitForProcessExit(pid);
+  expect(processExists(pid)).toBe(false);
+}
+
 test("accepts a normally completed connect when the forward is already healthy", async ({
   artifacts,
   progress,
@@ -101,13 +111,12 @@ test("reaps interactive connect after missing-forward proof while its detached f
     expect(result.stdout).toContain("Dashboard port forward re-established.");
     expect(processExists(forwardPid)).toBe(true);
   } finally {
-    try {
-      process.kill(forwardPid, "SIGTERM");
-    } catch {
-      // The fixture may not have reached background process creation.
-    }
-    await waitForProcessExit(forwardPid);
-    expect(processExists(forwardPid)).toBe(false);
+    const cleanupPid = Number.isInteger(forwardPid)
+      ? forwardPid
+      : Number(fs.existsSync(pidFile) ? fs.readFileSync(pidFile, "utf8") : Number.NaN);
+    await (Number.isInteger(cleanupPid) && cleanupPid > 0
+      ? stopFixtureProcess(cleanupPid)
+      : Promise.resolve());
     fs.rmSync(directory, { force: true, recursive: true });
   }
 });

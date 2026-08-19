@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   buildDashboardRemoteBindEnv,
+  dashboardForwardIsRunning,
   dashboardRemoteBindConnectStarted,
 } from "../live/dashboard-remote-bind-env.ts";
 
@@ -58,5 +59,13 @@ describe("dashboard remote-bind E2E environment", () => {
         "18789",
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    ["e2e-dashboard-bind 0.0.0.0 18789 4242 running", true],
+    ["e2e-dashboard-bind 0.0.0.0 18789 4242 not running", false],
+    ["e2e-dashboard-bind 0.0.0.0 18789 4242 stopped", false],
+  ])("recognizes only the exact running forward status", (forwardLine, expected) => {
+    expect(dashboardForwardIsRunning(forwardLine)).toBe(expected);
   });
 });
