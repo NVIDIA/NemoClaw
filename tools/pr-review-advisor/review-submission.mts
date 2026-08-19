@@ -6,6 +6,10 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { Type } from "typebox";
 
 import {
+  REVIEW_FINDING_BASIS_KINDS,
+  REVIEW_FINDING_CATEGORIES,
+  REVIEW_FINDING_SEVERITIES,
+  REVIEW_FINDING_SIMPLIFICATION_TAGS,
   validateReviewFindingSubmission,
   type ReviewFinding,
   type CandidateFindingInput,
@@ -31,19 +35,8 @@ const nullableText = Type.Union([text, Type.Null()]);
 const confidence = Type.Union(["low", "medium", "high"].map((value) => Type.Literal(value)));
 const findingSchema = Type.Object(
   {
-    severity: Type.Union(["blocker", "warning", "suggestion"].map((value) => Type.Literal(value))),
-    category: Type.Union(
-      [
-        "security",
-        "correctness",
-        "tests",
-        "architecture",
-        "workflow",
-        "docs",
-        "scope",
-        "acceptance",
-      ].map((value) => Type.Literal(value)),
-    ),
+    severity: Type.Union(REVIEW_FINDING_SEVERITIES.map((value) => Type.Literal(value))),
+    category: Type.Union(REVIEW_FINDING_CATEGORIES.map((value) => Type.Literal(value))),
     file: Type.Union([text, Type.Null()]),
     line: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
     title: text,
@@ -55,17 +48,7 @@ const findingSchema = Type.Object(
     evidence: Type.Array(text, { minItems: 1 }),
     basis: Type.Object(
       {
-        kind: Type.Union(
-          [
-            "behavior_mismatch",
-            "unmet_acceptance",
-            "security_violation",
-            "missing_regression",
-            "unnecessary_complexity",
-            "documentation_mismatch",
-            "semantic_ambiguity",
-          ].map((value) => Type.Literal(value)),
-        ),
+        kind: Type.Union(REVIEW_FINDING_BASIS_KINDS.map((value) => Type.Literal(value))),
         observed: text,
         expected: text,
       },
@@ -74,9 +57,7 @@ const findingSchema = Type.Object(
     simplification: Type.Optional(
       Type.Object(
         {
-          tag: Type.Union(
-            ["delete", "stdlib", "native", "yagni", "shrink"].map((value) => Type.Literal(value)),
-          ),
+          tag: Type.Union(REVIEW_FINDING_SIMPLIFICATION_TAGS.map((value) => Type.Literal(value))),
           cut: text,
           replacement: text,
           estimatedNetLines: Type.Union([Type.Integer(), Type.Null()]),
@@ -437,8 +418,13 @@ export function createReviewSubmissionController({
 function validateSecurityCategories(categories: unknown[]): void {
   const names = categories.map((value) => (value as { category?: unknown }).category);
   const missing = SECURITY_CATEGORY_NAMES.filter((name) => !names.includes(name));
-  const extras = names.filter((name) => !SECURITY_CATEGORY_NAMES.includes(name as never));
-  if (missing.length > 0 || extras.length > 0 || new Set(names).size !== names.length) {
+  const seen = new Set<unknown>();
+  const extras = names.filter((name) => {
+    const duplicate = seen.has(name);
+    seen.add(name);
+    return !SECURITY_CATEGORY_NAMES.includes(name as never) || duplicate;
+  });
+  if (missing.length > 0 || extras.length > 0) {
     throw new Error(
       `securityCategories must contain each named category exactly once; missing: ${missing.join(", ") || "none"}; unsupported or duplicate: ${extras.join(", ") || "none"}`,
     );
@@ -503,10 +489,13 @@ function canonicalSummary(
         : confidence === "low"
           ? "info_only"
           : "merge_as_is";
-  const counts = ["blocker", "warning", "suggestion"].map(
+  const orderedFindings = REVIEW_FINDING_SEVERITIES.flatMap((severity) =>
+    findings.filter((finding) => finding.severity === severity),
+  );
+  const counts = REVIEW_FINDING_SEVERITIES.map(
     (severity) => findings.filter((finding) => finding.severity === severity).length,
   );
-  const topItem = findings[0]?.title;
+  const topItem = orderedFindings[0]?.title;
   return {
     ...input,
     recommendation,
@@ -520,7 +509,7 @@ function canonicalSummary(
 
 function publicFinding(finding: ReviewFinding): Record<string, unknown> {
   const { id: _id, status: _status, supersededBy: _supersededBy, evidence, ...rest } = finding;
-  return { ...rest, evidence: evidence.join("; ") };
+  return { ...rest, evidence: evidence.join("\n") };
 }
 
 function ensureOpen(submitted: unknown | null): void {

@@ -181,6 +181,28 @@ describe("PR review advisor submission tools", () => {
     expect(payload.terminologyLedger).toMatchObject({ revision: 1, headSha: HEAD });
   });
 
+  it("orders the canonical top item by severity and joins evidence with newlines", async () => {
+    const submission = controller();
+    await execute(submission, RECORD_FINDINGS_TOOL, {
+      findings: [
+        { ...finding("Suggestion first"), severity: "suggestion" },
+        {
+          ...finding("Blocker second"),
+          severity: "blocker",
+          evidence: ["src/example.ts:7 returns success", "src/caller.ts:12 trusts success"],
+        },
+      ],
+    });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    const submitted = await execute(submission, SUBMIT_REVIEW_TOOL, {});
+    const payload = JSON.parse((submitted.content[0] as { text: string }).text);
+    expect(payload.result.summary.topItem).toBe("Blocker second");
+    expect(payload.result.findings[1].evidence).toBe(
+      "src/example.ts:7 returns success\nsrc/caller.ts:12 trusts success",
+    );
+  });
+
   it("fails closed before every section is present without canonical mutation", async () => {
     const submission = controller();
     await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
@@ -204,9 +226,31 @@ describe("PR review advisor submission tools", () => {
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
-      "final-submission may not add findings",
+      "No addition policy admits category=correctness with basis.kind=security_violation; admissible pairs:",
     );
     expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+  });
+
+  it("accepts a finding pair admitted by one canonical policy", async () => {
+    const submission = controller();
+    await execute(submission, RECORD_FINDINGS_TOOL, {
+      findings: [
+        {
+          ...finding(),
+          category: "architecture",
+          basis: {
+            kind: "unnecessary_complexity",
+            observed: "The change adds a parallel dispatcher.",
+            expected: "The existing dispatcher owns the behavior.",
+          },
+        },
+      ],
+    });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
+      terminate: true,
+    });
   });
 
   it("rejects unsupported E2E selectors through the trusted normalizer without canonical mutation", async () => {
@@ -232,6 +276,16 @@ describe("PR review advisor submission tools", () => {
     await execute(missingSecurity, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(missingSecurity, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
       "securityCategories must contain each named category exactly once",
+    );
+
+    const duplicateSecurity = controller();
+    await execute(duplicateSecurity, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    const duplicateReceipt = receipt();
+    duplicateReceipt.securityCategories.push(duplicateReceipt.securityCategories[0]);
+    await execute(duplicateSecurity, RECORD_REVIEW_RECEIPT_TOOL, duplicateReceipt);
+    await execute(duplicateSecurity, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(duplicateSecurity, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      `unsupported or duplicate: ${SECURITY_CATEGORY_NAMES[0]}`,
     );
 
     const badReference = controller();
@@ -305,6 +359,63 @@ describe("PR review advisor submission tools", () => {
       "without a canonical finding",
     );
     expect(submission.result()).toBeNull();
+  });
+
+  it("resolves terminology traces lazily at submission time", async () => {
+    const traces = new Map<string, TerminologyTrace>();
+    const submission = createReviewSubmissionController({
+      metadata: {
+        baseRef: "origin/main",
+        headRef: "HEAD",
+        headSha: HEAD,
+        changedFiles: ["src/example.ts"],
+      },
+      schema: reviewSchema,
+      terminologyTraces: () => traces,
+      normalizeE2e: (draft) => draft,
+    });
+    const trace: TerminologyTrace = {
+      id: "lazy-trace",
+      term: "review receipt",
+      variants: ["review receipt"],
+      baseSha: "b".repeat(40),
+      headSha: HEAD,
+      baseOccurrences: 0,
+      headOccurrences: 1,
+      baseEvidenceTruncated: false,
+      headEvidenceTruncated: false,
+      changedLocations: [{ file: "src/example.ts", line: 9, text: "review receipt" }],
+      baseSamples: [],
+      headSamples: [],
+      firstCommitSha: HEAD,
+    };
+    traces.set(trace.id, trace);
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(
+      submission,
+      RECORD_REVIEW_RECEIPT_TOOL,
+      receipt({
+        decisions: [
+          {
+            term: trace.term,
+            change: "introduced",
+            disposition: "justified",
+            meaning: "The complete structured review sections.",
+            contrast: "Unlike drafts, this is complete.",
+            existingTerm: null,
+            semanticImpact: "evidence",
+            recommendation: "Keep the contrast explicit.",
+            traceId: trace.id,
+            source: { file: "src/example.ts", line: 9 },
+          },
+        ],
+        noChangesReason: null,
+      }),
+    );
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
+      terminate: true,
+    });
   });
 
   it("preserves traced terminology provenance in the canonical result", async () => {

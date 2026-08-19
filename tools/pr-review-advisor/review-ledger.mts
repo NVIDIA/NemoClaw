@@ -7,8 +7,8 @@ import { Type } from "typebox";
 export const REVIEW_LEDGER_UPDATE_TOOL = "pr_review_update_ledger";
 export const REVIEW_LEDGER_READ_TOOL = "pr_review_read_ledger";
 
-const SEVERITIES = ["blocker", "warning", "suggestion"] as const;
-const CATEGORIES = [
+export const REVIEW_FINDING_SEVERITIES = ["blocker", "warning", "suggestion"] as const;
+export const REVIEW_FINDING_CATEGORIES = [
   "security",
   "correctness",
   "tests",
@@ -18,8 +18,14 @@ const CATEGORIES = [
   "scope",
   "acceptance",
 ] as const;
-const SIMPLIFICATION_TAGS = ["delete", "stdlib", "native", "yagni", "shrink"] as const;
-const FINDING_BASIS_KINDS = [
+export const REVIEW_FINDING_SIMPLIFICATION_TAGS = [
+  "delete",
+  "stdlib",
+  "native",
+  "yagni",
+  "shrink",
+] as const;
+export const REVIEW_FINDING_BASIS_KINDS = [
   "behavior_mismatch",
   "unmet_acceptance",
   "security_violation",
@@ -29,10 +35,10 @@ const FINDING_BASIS_KINDS = [
   "semantic_ambiguity",
 ] as const;
 
-type Severity = (typeof SEVERITIES)[number];
-type Category = (typeof CATEGORIES)[number];
-type SimplificationTag = (typeof SIMPLIFICATION_TAGS)[number];
-type FindingBasisKind = (typeof FINDING_BASIS_KINDS)[number];
+type Severity = (typeof REVIEW_FINDING_SEVERITIES)[number];
+type Category = (typeof REVIEW_FINDING_CATEGORIES)[number];
+type SimplificationTag = (typeof REVIEW_FINDING_SIMPLIFICATION_TAGS)[number];
+type FindingBasisKind = (typeof REVIEW_FINDING_BASIS_KINDS)[number];
 
 export type ReviewFinding = Readonly<{
   id: string;
@@ -307,7 +313,19 @@ export function validateReviewFindingSubmission(
           policy.categories.includes(candidate.category) &&
           policy.basisKinds.includes(candidate.basis.kind),
       );
-      const [stage, policy] = policyEntry ?? ["final-submission", undefined];
+      if (!policyEntry) {
+        const admissible = Object.values(ADDITION_POLICIES)
+          .flatMap((policy) =>
+            policy.categories.flatMap((category) =>
+              policy.basisKinds.map((basisKind) => `category=${category} with basis.kind=${basisKind}`),
+            ),
+          )
+          .join("; ");
+        throw new Error(
+          `No addition policy admits category=${candidate.category} with basis.kind=${candidate.basis.kind}; admissible pairs: ${admissible}`,
+        );
+      }
+      const [stage, policy] = policyEntry;
       validateCandidateFinding(candidate, stage, policy);
       const { basis: _basis, ...finding } = candidate;
       return finding;
@@ -321,12 +339,12 @@ export function validateReviewFindingSubmission(
 }
 
 const string = Type.String({ minLength: 1 });
-const severity = Type.Union(SEVERITIES.map((value) => Type.Literal(value)));
-const category = Type.Union(CATEGORIES.map((value) => Type.Literal(value)));
+const severity = Type.Union(REVIEW_FINDING_SEVERITIES.map((value) => Type.Literal(value)));
+const category = Type.Union(REVIEW_FINDING_CATEGORIES.map((value) => Type.Literal(value)));
 const evidence = Type.Array(string, { minItems: 1 });
 const simplification = Type.Object(
   {
-    tag: Type.Union(SIMPLIFICATION_TAGS.map((value) => Type.Literal(value))),
+    tag: Type.Union(REVIEW_FINDING_SIMPLIFICATION_TAGS.map((value) => Type.Literal(value))),
     cut: string,
     replacement: string,
     estimatedNetLines: Type.Union([Type.Integer(), Type.Null()]),
@@ -357,7 +375,7 @@ const patchSchema = Type.Partial(
 );
 const basisSchema = Type.Object(
   {
-    kind: Type.Union(FINDING_BASIS_KINDS.map((value) => Type.Literal(value))),
+    kind: Type.Union(REVIEW_FINDING_BASIS_KINDS.map((value) => Type.Literal(value))),
     observed: string,
     expected: string,
   },
