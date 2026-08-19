@@ -3145,12 +3145,9 @@ If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu
 The route depends on the host environment and the operator control.
 Identify the matching path before applying the recovery guidance.
 
-<AgentOnly variant="openclaw">
-
-Do not apply this compatibility guidance to portable OpenClaw onboarding.
-That path requires native OpenShell GPU injection and does not use `NEMOCLAW_DOCKER_GPU_PATCH`, so do not set `fallback`, `1`, or another legacy nonzero value for a portable OpenClaw run.
-
-</AgentOnly>
+Do not apply this compatibility guidance to portable onboarding.
+Portable onboarding requires native OpenShell GPU injection for every agent and does not use `NEMOCLAW_DOCKER_GPU_PATCH`.
+Do not set `fallback`, `1`, or another legacy nonzero value for a portable run.
 
 | Symptom | Route or stage | Recovery |
 | --- | --- | --- |
@@ -3206,6 +3203,7 @@ After compatibility recreation starts, onboarding keeps the pre-patch container 
 If a later check fails, onboarding prints failure diagnostics and attempts to restore the pre-patch container before it exits.
 When rollback succeeds, the pre-patch sandbox remains available.
 If the failed replacement may remain and NemoClaw retains its validated exact container ID, it prints only an exact-container `docker rm -f` command.
+When a replacement is not stably running, the failure diagnostic includes its exact runtime ID, inspected state, and a bounded redacted log tail when available.
 If replacement cleanup cannot be confirmed without a validated exact ID, onboarding reports cleanup as unknown and prints no deletion command.
 When rollback fails, onboarding reports that the sandbox and container state is uncertain and prints no deletion command.
 A diagnostic bundle captured before rollback records cleanup as pending and contains no deletion command.

@@ -89,6 +89,31 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(seen.args.join(" ")).toContain("nc -zw7 host.openshell.internal 9090");
   });
 
+  it("uses the configured Docker network when networkName is omitted (#9461)", async () => {
+    vi.stubEnv("OPENSHELL_DOCKER_NETWORK_NAME", "portable-custom");
+    const inspectNetworkImpl = vi.fn(() => ({
+      subnet: "10.0.0.0/24",
+      gatewayIp: "10.0.0.1",
+    }));
+    let capturedArgs: readonly string[] = [];
+
+    const result = await isSandboxBridgeGatewayReachable({
+      inspectNetworkImpl,
+      usesHostGatewayRouteImpl: () => false,
+      runImpl: (args) => {
+        capturedArgs = args;
+        return { status: 0 };
+      },
+    });
+
+    expect(inspectNetworkImpl).toHaveBeenCalledWith("portable-custom");
+    const networkIndex = capturedArgs.indexOf("--network");
+    expect(networkIndex).toBeGreaterThanOrEqual(0);
+    expect(capturedArgs[networkIndex + 1]).toBe("portable-custom");
+    expect(result.ok).toBe(true);
+    expect(result.networkName).toBe("portable-custom");
+  });
+
   it("routes probes for the portable experimental profile through the OpenShell Podman host gateway", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const seen: { args: readonly string[] } = { args: [] };
