@@ -2176,7 +2176,7 @@ export function createDockerManagedBootstrapAdapter(
           bootstrapIdentity: activeJournal.bootstrapIdentity,
           runtimeId: activeJournal.originalRuntimeId,
           detail:
-            "failed shared-state restoration cleanup did not retain the exact original stopped",
+            "failed shared-state restoration cleanup did not retain the exact original container in the stopped state",
         });
       }
       requireExactOwnerCleanup(activeJournal);

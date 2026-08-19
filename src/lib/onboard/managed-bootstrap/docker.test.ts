@@ -757,7 +757,7 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.finalization).toBeNull();
   });
 
-  it("reports retryable restart recovery after exact Hermes restoration-failure cleanup (#9486)", async () => {
+  it("reports a retryable restart recovery failure after exact Hermes restoration-failure cleanup (#9486)", async () => {
     const metadataFailure =
       "Managed startup shared-state transaction failed: managed directory metadata was not restored exactly: /sandbox/.hermes";
     const fake = fixture({
@@ -835,7 +835,7 @@ describe("Docker managed bootstrap adapter", () => {
       },
     },
   ])(
-    "fails closed when the exact $driftedRuntime identity changes before restoration-failure cleanup (#9486)",
+    "retains both containers when the exact $driftedRuntime identity changes before restoration-failure cleanup (#9486)",
     async ({ drift }) => {
       const fake = fixture({
         sharedState: "pending",
