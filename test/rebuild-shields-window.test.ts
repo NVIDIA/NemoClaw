@@ -30,6 +30,10 @@ describe("rebuild Shields window", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     timerMock.isShieldsTimerDeadlineExpired.mockReturnValue(false);
+    shieldsMock.shieldsDown.mockReturnValue({
+      sandboxName: "locked-sandbox",
+      processToken: "a".repeat(32),
+    });
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -46,6 +50,7 @@ describe("rebuild Shields window", () => {
       reason: "auto-unlock for rebuild",
       timeout: "30m",
       throwOnError: true,
+      issuePolicySnapshotRecovery: true,
       deferAutoRestoreWhileOwnerAlive: true,
       allowLegacyHermesProtocol: true,
     });
@@ -70,12 +75,63 @@ describe("rebuild Shields window", () => {
       reason: "auto-unlock for backup-all",
       timeout: "30m",
       throwOnError: true,
+      issuePolicySnapshotRecovery: true,
     });
 
     expect(relockBackupShieldsWindow("locked-sandbox", window!, true, options)).toBe(true);
-    expect(shieldsMock.shieldsUp).toHaveBeenCalledWith("locked-sandbox", {
-      throwOnError: true,
+    expect(shieldsMock.shieldsUp).toHaveBeenCalledWith(
+      "locked-sandbox",
+      expect.objectContaining({
+        policySnapshotRecovery: {
+          sandboxName: "locked-sandbox",
+          processToken: "a".repeat(32),
+        },
+        throwOnError: true,
+      }),
+    );
+  });
+
+  it("restores a preserved restrictive policy before backup-all relocks (#9452)", () => {
+    shieldsMock.isShieldsDown.mockReturnValue(false);
+    const options = {
+      operation: "backup-all",
+      reason: "auto-unlock for backup-all",
+      retryCommand: "nemoclaw backup-all",
+      shieldsUpCommand: "nemoclaw locked-sandbox shields up",
+    };
+
+    const window = openBackupShieldsWindow("locked-sandbox", options);
+    const recovery = window!.policySnapshotRecovery;
+
+    expect(relockBackupShieldsWindow("locked-sandbox", window!, true, options)).toBe(true);
+    expect(shieldsMock.shieldsUp).toHaveBeenCalledWith(
+      "locked-sandbox",
+      expect.objectContaining({ policySnapshotRecovery: recovery }),
+    );
+    expect(window!.policySnapshotRecovery).toBeUndefined();
+  });
+
+  it("does not suggest an impossible shields-up retry when preserved policy recovery fails (#9452)", () => {
+    shieldsMock.isShieldsDown.mockReturnValue(false);
+    shieldsMock.shieldsUp.mockImplementation(() => {
+      throw new Error(
+        "Backup Shields policy recovery failed: restrictive snapshot path was replaced",
+      );
     });
+    const options = {
+      operation: "backup-all",
+      reason: "auto-unlock for backup-all",
+      retryCommand: "nemoclaw backup-all",
+      shieldsUpCommand: "nemoclaw locked-sandbox shields up",
+    };
+    const window = openBackupShieldsWindow("locked-sandbox", options);
+
+    expect(relockBackupShieldsWindow("locked-sandbox", window!, true, options)).toBe(false);
+    expect(shieldsMock.shieldsUp).toHaveBeenCalledOnce();
+    expect(window!.policySnapshotRecovery).toBeUndefined();
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("Do not retry Shields up from the mutable live policy");
+    expect(output).not.toContain("then run `nemoclaw locked-sandbox shields up`");
   });
   it("does not open a backup window when corrupt Shields state blocks unlock (#6455)", () => {
     shieldsMock.isShieldsDown.mockReturnValue(false);
