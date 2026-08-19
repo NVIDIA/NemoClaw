@@ -12,12 +12,6 @@ import {
 import { parseServingProfileProvenance } from "../inference/serving/profile-provenance";
 import { normalizeToolDisclosure } from "../tool-disclosure";
 import {
-  applyAddExtraProvider,
-  applyRemoveExtraProvider,
-  isValidExtraProviderName,
-  readExtraProviders,
-} from "./extra-providers";
-import {
   cloneSandboxHostLocalInferenceProvenance,
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
@@ -50,6 +44,15 @@ export {
   cloneSandboxHostLocalInferenceReceipt,
   requireSandboxHostLocalInferenceProvenance,
 };
+export {
+  addExtraProvider,
+  listExtraProviders,
+  removeExtraProvider,
+} from "./registry/extra-providers";
+export {
+  listManagedMcpCredentialReservations,
+  type ManagedMcpCredentialReservation,
+} from "./registry/mcp-credential-reservations";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -642,29 +645,6 @@ export function setDefault(name: string): boolean {
 
 export function clearAll(): void {
   withLock(() => save(reversibleRemoval.clearRegistry(load())));
-}
-
-export function listExtraProviders(): string[] {
-  return readExtraProviders(load());
-}
-
-export function addExtraProvider(name: string): boolean {
-  if (!isValidExtraProviderName(name)) return false;
-  return withLock(() => {
-    const data = load();
-    if (!applyAddExtraProvider(name, data)) return false;
-    save(data);
-    return true;
-  });
-}
-
-export function removeExtraProvider(name: string): boolean {
-  return withLock(() => {
-    const data = load();
-    if (!applyRemoveExtraProvider(name, data)) return false;
-    save(data);
-    return true;
-  });
 }
 
 /** Return the list of custom policy entries recorded for a sandbox (never null). */

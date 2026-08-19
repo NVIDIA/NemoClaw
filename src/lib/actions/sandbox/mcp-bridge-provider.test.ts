@@ -104,24 +104,8 @@ alpha-mcp-slack   generic  1                 0
     );
   });
 
-  it("checks every stored credential key for attached-provider collisions", () => {
-    const result = (stdout: string) => ({
-      pid: 0,
-      output: [null, stdout, ""],
-      stdout,
-      stderr: "",
-      status: 0,
-      signal: null,
-    });
-    vi.spyOn(providerCommand, "runOpenshellProviderCommand")
-      .mockReturnValueOnce(
-        result("NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nforeign-attached generic 1 0\n"),
-      )
-      .mockReturnValueOnce(
-        result(
-          "Id: 99999999-8888-4777-8666-555555555555\nType: generic\nResource version: 1\nCredential keys: SECONDARY_TOKEN\n",
-        ),
-      );
+  it("rejects a multi-key bridge before provider collision inspection", () => {
+    const providerCommandRun = vi.spyOn(providerCommand, "runOpenshellProviderCommand");
     const entry: McpBridgeEntry = {
       server: "example",
       agent: "openclaw",
@@ -135,8 +119,14 @@ alpha-mcp-slack   generic  1                 0
     };
 
     expect(() => assertNoAttachedProviderCredentialCollisions("alpha", [entry])).toThrow(
-      "Credential key 'SECONDARY_TOKEN' is already supplied by attached provider 'foreign-attached'",
+      "MCP server 'example' has no complete authenticated credential binding",
     );
+    expect(() =>
+      assertNoRegisteredProviderCredentialCollisions([entry], {
+        listExtraProviders: () => ["foreign-registered"],
+      }),
+    ).toThrow("MCP server 'example' has no complete authenticated credential binding");
+    expect(providerCommandRun).not.toHaveBeenCalled();
   });
 
   it("rejects a registered provider that will collide on the next rebuild (#9388)", () => {

@@ -90,7 +90,7 @@ export function recordExtraProvider(name: string): boolean {
   if (typeof runtimeHooks.recordExtraProvider === "function") {
     return runtimeHooks.recordExtraProvider(name);
   }
-  const { addExtraProvider } = require("../state/registry") as {
+  const { addExtraProvider } = require("../state/registry/extra-providers") as {
     addExtraProvider: (name: string) => boolean;
   };
   return addExtraProvider(name);
@@ -100,7 +100,7 @@ export function forgetExtraProvider(name: string): boolean {
   if (typeof runtimeHooks.forgetExtraProvider === "function") {
     return runtimeHooks.forgetExtraProvider(name);
   }
-  const { removeExtraProvider } = require("../state/registry") as {
+  const { removeExtraProvider } = require("../state/registry/extra-providers") as {
     removeExtraProvider: (name: string) => boolean;
   };
   return removeExtraProvider(name);
@@ -110,25 +110,9 @@ export function listManagedMcpCredentialReservations(): readonly ManagedMcpCrede
   if (typeof runtimeHooks.listManagedMcpCredentialReservations === "function") {
     return runtimeHooks.listManagedMcpCredentialReservations();
   }
-  const { listSandboxes } = require("../state/registry") as {
-    listSandboxes: () => {
-      sandboxes: Array<{
-        name: string;
-        mcp?: { bridges: Record<string, { server: string; env: string[] }> };
-      }>;
+  const { listManagedMcpCredentialReservations: queryReservations } =
+    require("../state/registry/mcp-credential-reservations") as {
+      listManagedMcpCredentialReservations: () => readonly ManagedMcpCredentialReservation[];
     };
-  };
-  return listSandboxes()
-    .sandboxes.flatMap((sandbox) =>
-      Object.values(sandbox.mcp?.bridges ?? {}).map((entry) => ({
-        sandboxName: sandbox.name,
-        server: entry.server,
-        credentialKeys: [...entry.env],
-      })),
-    )
-    .sort(
-      (left, right) =>
-        left.sandboxName.localeCompare(right.sandboxName) ||
-        left.server.localeCompare(right.server),
-    );
+  return queryReservations();
 }

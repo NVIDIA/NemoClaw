@@ -81,10 +81,6 @@ export function bridgeState(sandbox: SandboxEntry): Record<string, McpBridgeEntr
   return sandbox.mcp?.bridges ?? {};
 }
 
-export function listRegisteredExtraProviders(): string[] {
-  return registry.listExtraProviders();
-}
-
 export function setBridgeState(sandboxName: string, bridges: Record<string, McpBridgeEntry>): void {
   const mcpState = registry.getSandbox(sandboxName)?.mcp;
   const destroyPreparedAt = mcpState?.destroyPreparedAt;

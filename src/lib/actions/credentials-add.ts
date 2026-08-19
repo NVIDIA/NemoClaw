@@ -45,6 +45,69 @@ function fail(failureLines: readonly string[], exitCode = 1): CredentialsAddResu
   return { exitCode, successLines: [], failureLines };
 }
 
+function managedMcpCollisionFailure(
+  provider: string,
+  credentialKeys: readonly string[],
+  reservations: ReturnType<typeof listManagedMcpCredentialReservations>,
+): CredentialsAddResult | null {
+  for (const credential of credentialKeys) {
+    const collision = reservations.find((reservation) =>
+      reservation.credentialKeys.includes(credential),
+    );
+    if (collision) {
+      return fail([
+        `  Credential key '${credential}' is reserved by managed MCP server '${collision.server}' on sandbox '${collision.sandboxName}'.`,
+        `  Refusing to register provider '${provider}' because registered providers attach during sandbox rebuild.`,
+        "  Use a different credential key, or remove the managed MCP server before retrying.",
+      ]);
+    }
+  }
+  return null;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseProviderProfileCredentialKeys(output: string): string[] | null {
+  let profile: unknown;
+  try {
+    profile = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  if (!isObjectRecord(profile) || !Array.isArray(profile.credentials)) return null;
+
+  const keys = new Set<string>();
+  for (const credential of profile.credentials) {
+    if (!isObjectRecord(credential) || !Array.isArray(credential.env_vars)) return null;
+    for (const key of credential.env_vars) {
+      if (typeof key !== "string" || !ENV_NAME_PATTERN.test(key)) return null;
+      keys.add(key);
+    }
+  }
+  return [...keys].sort();
+}
+
+function inspectProviderProfileCredentialKeys(type: string): {
+  credentialKeys: string[] | null;
+  diagnostic: string;
+} {
+  const result = runOpenshellProviderCommand(
+    ["provider", "profile", "export", type, "--output", "json"],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    },
+  );
+  return {
+    credentialKeys:
+      result.status === 0 ? parseProviderProfileCredentialKeys(String(result.stdout || "")) : null,
+    diagnostic: redact(`${String(result.stderr || "")} ${String(result.stdout || "")}`).trim(),
+  };
+}
+
 function bundledProviderProfilePath(type: string): string {
   return path.join(ROOT, "nemoclaw-blueprint", "provider-profiles", `${type.toLowerCase()}.yaml`);
 }
@@ -160,16 +223,22 @@ export async function runCredentialsAddAction(
   }
 
   const managedMcpReservations = listManagedMcpCredentialReservations();
-  for (const credential of credentials) {
-    const collision = managedMcpReservations.find((reservation) =>
-      reservation.credentialKeys.includes(credential),
-    );
-    if (collision) {
-      return fail([
-        `  Credential key '${credential}' is reserved by managed MCP server '${collision.server}' on sandbox '${collision.sandboxName}'.`,
-        `  Refusing to register provider '${provider}' because registered providers attach during sandbox rebuild.`,
-        "  Use a different credential key, or remove the managed MCP server before retrying.",
-      ]);
+  const explicitCollision = managedMcpCollisionFailure(
+    provider,
+    credentials,
+    managedMcpReservations,
+  );
+  if (explicitCollision) return explicitCollision;
+
+  if (fromExisting && managedMcpReservations.length > 0) {
+    const inspection = inspectProviderProfileCredentialKeys(type);
+    if (inspection.credentialKeys) {
+      const importedCollision = managedMcpCollisionFailure(
+        provider,
+        inspection.credentialKeys,
+        managedMcpReservations,
+      );
+      if (importedCollision) return importedCollision;
     }
   }
 
@@ -183,6 +252,23 @@ export async function runCredentialsAddAction(
 
   const providerProfileFailure = ensureBundledProviderProfile(type);
   if (providerProfileFailure) return providerProfileFailure;
+
+  if (fromExisting && managedMcpReservations.length > 0) {
+    const inspection = inspectProviderProfileCredentialKeys(type);
+    if (!inspection.credentialKeys) {
+      return fail([
+        `  Could not inspect credential keys for provider profile '${type}'.`,
+        "  Refusing --from-existing while managed MCP credential keys are reserved.",
+        ...(inspection.diagnostic ? [`  ${inspection.diagnostic}`] : []),
+      ]);
+    }
+    const importedCollision = managedMcpCollisionFailure(
+      provider,
+      inspection.credentialKeys,
+      managedMcpReservations,
+    );
+    if (importedCollision) return importedCollision;
+  }
 
   const openshellArgs: string[] = ["provider", "create", "--name", provider, "--type", type];
   if (fromExisting) {

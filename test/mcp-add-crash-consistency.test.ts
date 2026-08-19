@@ -16,6 +16,8 @@ type CrashBoundary =
   | "policy-failure"
   | "policy-drift"
   | "credential-collision"
+  | "registered-credential-collision"
+  | "registered-late-collision"
   | "adapter"
   | "adapter-mismatch"
   | "attach-race"
@@ -60,7 +62,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
-    if (args[2] === "foreign-attached") {
+    if (args[2] === "foreign-attached" || args[2] === "foreign-registered") {
       return { status: 0, stdout: "Id: " + foreignProviderId + "\nType: generic\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" };
     }
     observedProviderName = args[2];
@@ -79,6 +81,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     if (args[1] === "update") observedProviderName = args[2];
     mark("provider");
     if (args[1] === "update") mark("updated");
+    if (crashAfter === "registered-late-collision") registry.addExtraProvider("foreign-registered");
     if (crashAfter === "provider") process.exit(86);
     return { status: 0, stdout: args[1] === "create" ? "Created provider" : "Updated provider", stderr: "" };
   }
@@ -191,6 +194,9 @@ if (!registry.getSandbox("crash-test")) {
     agent: "openclaw",
     gatewayName: "nemoclaw",
   });
+}
+if (crashAfter === "registered-credential-collision") {
+  registry.addExtraProvider("foreign-registered");
 }
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.addMcpBridge("crash-test", {
@@ -603,6 +609,47 @@ describe("MCP add crash consistency", () => {
       );
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a registered credential-key collision before recording MCP state (#9388)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-registered-collision-"));
+    try {
+      const rejected = runAddProcess(home, "registered-credential-collision");
+
+      expect(rejected.status, `${rejected.stdout}\n${rejected.stderr}`).toBe(2);
+      expect(rejected.stderr).toContain(
+        "Credential key 'FAKE_MCP_SECRET' is already supplied by registered provider 'foreign-registered'",
+      );
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
+      const state = JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
+      ) as { sandboxes: { "crash-test": { mcp?: unknown } } };
+      expect(state.sandboxes["crash-test"].mcp).toBeUndefined();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("records provider ownership before rejecting a late registered collision (#9388)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-late-collision-"));
+    try {
+      const rejected = runAddProcess(home, "registered-late-collision");
+
+      expect(rejected.status, `${rejected.stdout}\n${rejected.stderr}`).toBe(2);
+      expect(rejected.stderr).toContain(
+        "Credential key 'FAKE_MCP_SECRET' is already supplied by registered provider 'foreign-registered'",
+      );
+      expect(readBridge(home)).toMatchObject({
+        addState: "preflighted",
+        providerId: "11111111-2222-4333-8444-555555555555",
+      });
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

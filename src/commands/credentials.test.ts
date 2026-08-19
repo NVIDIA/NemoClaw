@@ -165,4 +165,45 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
+
+  it("rejects a credential imported by provider type when managed MCP reserves it (#9388)", async () => {
+    mocks.listManagedMcpCredentialReservations.mockReturnValue([
+      {
+        sandboxName: "hermes",
+        server: "maas-glean",
+        credentialKeys: ["MAAS_GLEAN_TOKEN"],
+      },
+    ]);
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify({
+        credentials: [{ name: "api_key", env_vars: ["MAAS_GLEAN_TOKEN"] }],
+      }),
+      stderr: "",
+    });
+
+    const result = await runCredentialsAddAction({
+      provider: "maas-glean",
+      type: "generic",
+      credentials: [],
+      configPairs: [],
+      fromExisting: true,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain(
+      "Credential key 'MAAS_GLEAN_TOKEN' is reserved by managed MCP server 'maas-glean' on sandbox 'hermes'",
+    );
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(1);
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+      ["provider", "profile", "export", "generic", "--output", "json"],
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
+    );
+    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+  });
 });

@@ -1145,6 +1145,29 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.removePreset).not.toHaveBeenCalled();
   });
 
+  it("rejects a registered but unattached credential collision before rebuild teardown (#9388)", async () => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    registry.addExtraProvider("example-api");
+    testState.providers.set("example-api", {
+      credential: "GITHUB_TOKEN",
+      id: "99999999-8888-4777-8666-555555555555",
+    });
+    const before = registry.getSandbox("alpha");
+    const message = await captureMessage(() => bridge.prepareMcpBridgesForRebuild("alpha"));
+
+    expect(message).toContain("already supplied by registered provider 'example-api'");
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.attachedProviders.has("example-api")).toBe(false);
+    expect(testState.adapterRegistered).toBe(true);
+    expect(testState.calls.some((call) => call.startsWith("sandbox provider detach"))).toBe(false);
+  });
+
   it("rejects an unowned same-name policy record during absent-sandbox rebuild", async () => {
     registry.registerSandbox({
       name: "alpha",
