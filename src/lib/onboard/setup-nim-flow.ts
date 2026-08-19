@@ -30,8 +30,10 @@ import {
   resolveRequestedServingProfileModel,
 } from "../inference/serving/requested-profile-model";
 import type { VllmProfile } from "../inference/vllm";
+import { promptManualModelId } from "../inference/model-prompts";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import {
   createLocalModelProfileIntegration,
@@ -52,6 +54,7 @@ import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-rout
 import type { RuntimeProviderBundle } from "./runtime-provider/contract";
 
 export { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
+export { createHermesPortableOllamaInferenceResolver } from "./experimental/hermes-portable-ollama-inference";
 
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
@@ -241,10 +244,7 @@ function requireSelectedProvider(
 }
 
 function handleSelectedOllama(
-  deps: Pick<
-    SetupNimFlowDeps,
-    "handleInstallOllamaSelection" | "handleRunningOllamaSelection"
-  >,
+  deps: Pick<SetupNimFlowDeps, "handleInstallOllamaSelection" | "handleRunningOllamaSelection">,
   args: {
     gpu: SetupNimGpu;
     requestedModel: string | null;
@@ -545,6 +545,78 @@ function requestedVllmServingProfileModel(
   return requested?.backend === "vllm" ? requested : null;
 }
 
+async function resolveFreshHermesPortableOllamaSelection(input: {
+  deps: SetupNimFlowDeps;
+  agent: AgentDefinition | null;
+  requestedProvider: string | null;
+  requestedModel: string | null;
+  recoverProvider: boolean;
+  recoveredRegistryRoute: RegistryInferenceRoute | null;
+  createSelectionState: () => SetupNimSelectionState;
+  inferenceCapabilityCache: OnboardInferenceCapabilityCache;
+}): Promise<ProviderSelectionResult | null> {
+  if (
+    input.agent?.name !== "hermes" ||
+    !isPortableExperimentalProfile(process.env) ||
+    input.requestedProvider !== "ollama" ||
+    input.recoverProvider ||
+    input.recoveredRegistryRoute !== null
+  ) {
+    return null;
+  }
+  const nonInteractive = input.deps.isNonInteractive();
+  let portableModel =
+    input.requestedModel ??
+    input.deps.getNonInteractiveModel("ollama", { allowProviderModelFallback: false });
+  if (!portableModel && !nonInteractive) {
+    const promptedModel = await promptManualModelId("  Ollama model id: ", "Ollama", null, {
+      promptFn: input.deps.prompt,
+      errorLine: input.deps.error,
+      writeLine: input.deps.log,
+      exitFn: () => input.deps.exitProcess(1),
+    });
+    if (isBackToSelection(promptedModel)) {
+      throw new Error("Hermes Portable Ollama model selection was cancelled.");
+    }
+    portableModel = promptedModel;
+  }
+  if (!portableModel) {
+    input.deps.abortNonInteractive(
+      "Hermes Portable Ollama requires an explicit local model selection.",
+    );
+  }
+  const state = input.createSelectionState();
+  state.provider = "ollama-local";
+  state.model = portableModel;
+  state.endpointUrl = null;
+  state.credentialEnv = null;
+  state.preferredInferenceApi = "openai-completions";
+  state.assertRouteCompatible?.();
+  const selectedModel = isBackToSelection(state.model) ? null : state.model;
+  await input.deps.maybePromptForInferenceInputCapability(selectedModel);
+  return {
+    model: selectedModel,
+    provider: state.provider,
+    endpointUrl: state.endpointUrl,
+    endpointSource: null,
+    credentialEnv: state.credentialEnv,
+    hermesAuthMethod: null,
+    hermesToolGateways: [],
+    preferredInferenceApi: input.deps.resolveAgentInferenceApi(
+      input.agent.name,
+      state.provider,
+      input.deps.coerceAgentInferenceApi(input.agent, state.preferredInferenceApi),
+    ),
+    compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
+    nimContainer: null,
+    allowToolsIncompatible: false,
+    skipHostInferenceSmoke: false,
+    reuseGatewayCredentialWithoutLocalKey: false,
+    inferenceCapabilityCache: input.inferenceCapabilityCache,
+  };
+}
+
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
@@ -652,6 +724,19 @@ export function createSetupNim(
       canProbeRoute,
       recoverySessionId,
     });
+    const freshHermesPortableOllama = await resolveFreshHermesPortableOllamaSelection({
+      deps,
+      agent,
+      requestedProvider,
+      requestedModel,
+      recoverProvider,
+      recoveredRegistryRoute,
+      createSelectionState,
+      inferenceCapabilityCache,
+    });
+    if (freshHermesPortableOllama) {
+      return freshHermesPortableOllama;
+    }
     const providerHostState = deps.detectInferenceProviderHostState({
       gpu,
       experimental: deps.experimental,

@@ -14,6 +14,7 @@ import type {
 import { parseHostLocalInferenceReceipt } from "../src/lib/onboard/runtime-provider/host-local-inference.js";
 import type {
   HostLocalInferenceApplication,
+  HostLocalInferenceGatewayMutation,
   HostLocalInferenceStartupSelection,
 } from "../src/lib/onboard/runtime-provider/host-local-inference-routing.js";
 import { createPodmanHostLocalInferenceOperation } from "../src/lib/onboard/runtime-provider/podman-host-local-inference.js";
@@ -241,6 +242,7 @@ function fixture(
   options: Parameters<typeof runtime>[2] & {
     gatewayCommitError?: Error;
     gatewayRollbackError?: Error;
+    gatewayUpsertProvider?: NonNullable<HostLocalInferenceGatewayMutation["upsertProvider"]>;
     recover?: boolean;
     resume?: boolean;
   } = {},
@@ -277,7 +279,11 @@ function fixture(
   });
   const prepareGatewayMutation = vi.fn(() => {
     events.push("gateway-snapshot");
-    return { commit: gatewayCommit, rollback: gatewayRollback };
+    return {
+      ...(options.gatewayUpsertProvider ? { upsertProvider: options.gatewayUpsertProvider } : {}),
+      commit: gatewayCommit,
+      rollback: gatewayRollback,
+    };
   });
   const request: HostLocalInferenceStartupSelection["request"] =
     service === "ollama"
@@ -478,8 +484,8 @@ describe("onboard host-local inference routing", () => {
           _sandboxName: string,
           _reservation: Parameters<SetupInferenceDeps["updateSandbox"]>[1],
         ) => {
-        route.events.push("sandbox-reserve");
-        return true;
+          route.events.push("sandbox-reserve");
+          return true;
         },
       );
       const harness = createHarness({
@@ -576,6 +582,36 @@ describe("onboard host-local inference routing", () => {
       expect(route.gatewayRollback).not.toHaveBeenCalled();
     },
   );
+
+  it("uses a transaction-owned provider create instead of the generic gateway upsert", async () => {
+    const exactProviderCreate = vi.fn(() => ({ ok: true }));
+    const genericUpsertProvider = vi.fn(() => ({ ok: true }));
+    const route = fixture("hermes", "ollama", {
+      gatewayUpsertProvider: exactProviderCreate,
+    });
+    const harness = createHarness({
+      overrides: {
+        applyLocalInferenceRoute: undefined,
+        upsertProvider: genericUpsertProvider,
+      },
+    });
+
+    await expect(
+      harness.setupInference(SANDBOX, MODEL, "ollama-local", null, null, null, [], {
+        gatewayName: "nemoclaw",
+        hostLocalInference: route.selection,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(exactProviderCreate).toHaveBeenCalledWith(
+      "ollama-local",
+      "openai",
+      "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+      "http://host.openshell.internal:11434/v1",
+      { NEMOCLAW_OLLAMA_PROXY_TOKEN: "ollama" },
+    );
+    expect(genericUpsertProvider).not.toHaveBeenCalled();
+  });
 
   it.each(APPLICATIONS)(
     "registers explicitly selected llama.cpp for %s with exact private provenance",

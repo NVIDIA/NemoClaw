@@ -3179,7 +3179,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 recoverySessionId,
               ),
             setupInference,
-            resolveHostLocalInferenceStartupSelection: () => null,
+            resolveHostLocalInferenceStartupSelection: setupNimFlow.createHermesPortableOllamaInferenceResolver({ runtimeContext: lockedRuntime.portableRuntimeContext, credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV, getReservationSessionId: () => session?.sessionId, runGatewayOpenshell: runCoreGatewayOpenshell }),
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
