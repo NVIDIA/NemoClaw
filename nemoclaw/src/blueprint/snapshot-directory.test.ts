@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,11 +14,12 @@ import {
 } from "./snapshot-directory.js";
 
 // macOS resolves the default TMPDIR through a /var symlink, which the snapshot delete helper
-// rejects, so root every case under /private/tmp.
+// rejects. Other platforms can use their native temporary directory.
+const temporaryRoot = process.platform === "darwin" ? "/private/tmp" : tmpdir();
 const roots: string[] = [];
 
 function makeSnapshotsDir(): string {
-  const root = mkdtempSync(join("/private/tmp", "nemoclaw-snapshot-dir-"));
+  const root = mkdtempSync(join(temporaryRoot, "nemoclaw-snapshot-dir-"));
   roots.push(root);
   return join(root, "snapshots");
 }
