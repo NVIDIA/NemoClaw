@@ -44,6 +44,28 @@ test("accepts a normally completed connect when the forward is already healthy",
   expect(result).toMatchObject({ exitCode: 0, proof: "command-completed", signal: null });
 });
 
+test("rejects invalid handoff budgets before spawning connect", async ({ artifacts, progress }) => {
+  const base = {
+    artifacts,
+    command: [process.execPath, "-e", "process.exit(0)"] as const,
+    dashboardPort: DASHBOARD_PORT,
+    env: process.env,
+    progress,
+    sandboxName: SANDBOX_NAME,
+  };
+
+  await expect(runDashboardConnectUntilForwardHandoff({ ...base, timeoutMs: 0 })).rejects.toThrow(
+    /timeout must be a positive finite value/,
+  );
+  await expect(
+    runDashboardConnectUntilForwardHandoff({
+      ...base,
+      stopGraceMs: Number.POSITIVE_INFINITY,
+      timeoutMs: 2_000,
+    }),
+  ).rejects.toThrow(/stop grace must be a positive finite value/);
+});
+
 test("reaps interactive connect after missing-forward proof while its detached forward survives", async ({
   artifacts,
   progress,
