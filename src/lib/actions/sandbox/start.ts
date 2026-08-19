@@ -13,6 +13,7 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
+import { withSandboxLifecycleLock } from "./gateway-state";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -74,6 +75,7 @@ export interface SandboxStartDeps {
   waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   probeInferenceInvocation?: typeof probeSandboxInferenceInvocation;
+  withLifecycleLock?: typeof withSandboxLifecycleLock;
   log?: (message: string) => void;
 }
 
@@ -107,14 +109,14 @@ function startupRecoveryFailure(check: SandboxStartupRecoveryResult): string | n
     : `${layer}: the agent gateway did not recover`;
 }
 
-function preservedSandboxRecoveryError(sandboxName: string, detail: unknown): Error {
+function startupRecoveryError(sandboxName: string, detail: unknown): Error {
   const { sanitizeSandboxStartupRecoveryDetail } =
     require("./connect") as typeof import("./connect");
   const rawDetail = detail instanceof Error && detail.message ? detail.message : String(detail);
   const safeDetail = sanitizeSandboxStartupRecoveryDetail(rawDetail);
   return new Error(
     `Sandbox '${sandboxName}' started, but startup recovery failed: ${safeDetail}. ` +
-      `The existing sandbox was preserved. Run \`${cliName()} ${sandboxName} recover\`, then retry \`${cliName()} ${sandboxName} start\`.`,
+      `Inspect the current sandbox state before retrying. Run \`${cliName()} ${sandboxName} recover\`, then retry \`${cliName()} ${sandboxName} start\`.`,
   );
 }
 
@@ -156,6 +158,15 @@ export async function startSandbox(
   sandboxName: string,
   deps: SandboxStartDeps = {},
 ): Promise<SandboxLifecycleResult> {
+  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(sandboxName, () =>
+    startSandboxWithinLifecycleFence(sandboxName, deps),
+  );
+}
+
+async function startSandboxWithinLifecycleFence(
+  sandboxName: string,
+  deps: SandboxStartDeps,
+): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
   const sandbox = (deps.getSandbox ?? registry.getSandbox)(sandboxName);
   const resolved = resolveSandboxLifecycleProvider(
@@ -176,6 +187,9 @@ export async function startSandbox(
   if (preflight) return preflight;
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
+  if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
+    return { exitCode: 0 };
+  }
 
   const readiness: { inference: SandboxInferenceInvocationResult | null } = { inference: null };
   await resolved.lifecycle.verifyStarted(input, async (name) => {
@@ -190,7 +204,7 @@ export async function startSandbox(
     try {
       recovery = restoreStartupState(name);
     } catch (error) {
-      throw preservedSandboxRecoveryError(name, error);
+      throw startupRecoveryError(name, error);
     }
     let failure = startupRecoveryFailure(recovery);
     if (failure && isMissingManagedSupervisorStartupFailure(recovery, failure)) {
@@ -208,12 +222,12 @@ export async function startSandbox(
         try {
           recovery = restoreStartupState(name);
         } catch (error) {
-          throw preservedSandboxRecoveryError(name, error);
+          throw startupRecoveryError(name, error);
         }
         failure = startupRecoveryFailure(recovery);
       }
     }
-    if (failure) throw preservedSandboxRecoveryError(name, failure);
+    if (failure) throw startupRecoveryError(name, failure);
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
     readiness.inference = checkStartedSandboxInference(name, resolved.sandbox, deps, log);

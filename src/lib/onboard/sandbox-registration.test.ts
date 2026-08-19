@@ -733,9 +733,45 @@ describe("registerCreatedSandbox", () => {
       lifecycleLiveIdentityFingerprint: "d".repeat(64),
       gatewayName: "owner-gateway",
     });
+    expect(entry.hermesApiPort).toBe(8642);
     expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
     expect(entry.agent).toBe("hermes");
     expect(classifyPortableLifecycleReceipt).not.toHaveBeenCalled();
+  });
+
+  it("omits unowned API-port state only for schema-5 Hermes registration", () => {
+    const agentDefs = requireDist("../agent/defs.js") as typeof import("../agent/defs");
+    const entry = registerCreatedSandbox({
+      sandboxName: "hermes-portable",
+      inferenceSelection: {
+        model: "qwen3-vl:4b",
+        provider: "ollama-local",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        nimContainer: null,
+      },
+      runtimeFields,
+      agent: agentDefs.loadAgent("hermes"),
+      agentVersionKnown: true,
+      imageTag: null,
+      appliedPolicies: [],
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      hermesApiPort: 8642,
+      hermesPortableLifecycle: true,
+      dashboardPort: 0,
+      lifecycleGeneration: "33333333-3333-4333-8333-333333333333",
+      lifecycleLiveIdentityFingerprint: "e".repeat(64),
+      gatewayName: "owner-gateway",
+      gatewayPort: 8080,
+      registerSandbox: vi.fn(),
+    });
+
+    expect(entry.hermesApiPort).toBeUndefined();
   });
 
   it("passes the built entry to the supplied registry writer", () => {

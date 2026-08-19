@@ -92,6 +92,7 @@ const resolved = {
       null,
       [],
       null,
+      null,
       {
         resolved,
         recreate: true,

@@ -8,10 +8,21 @@ import path from "node:path";
 
 import type { PodmanSocketAuthority } from "../../../src/lib/adapters/podman/index.ts";
 import {
+  DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+} from "../../../src/lib/onboard/experimental/docker-network-authority.ts";
+import {
   inspectPortableCpuDelegation,
   type CpuDelegationPreflight,
 } from "../../../src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts";
-import { preparePortableExperimentalHost } from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
+import {
+  portableHostPreparationInternals,
+  preparePortableExperimentalHost,
+} from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
+import {
+  PORTABLE_HOST_GATEWAY_IP,
+  PORTABLE_REGISTRY_IP,
+} from "../../../src/lib/onboard/experimental/portable-profile.ts";
 import { test } from "../fixtures/e2e-test.ts";
 
 type ExpectedState = "missing" | "delegated";
@@ -119,10 +130,30 @@ function proveAdmission(
   const home = fs.mkdtempSync(path.join(artifactRoot, "admitted-home-"));
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
   const authority = socketAuthority(uid, socketPath);
-  const dockerResults: Record<string, SpawnResult> = {
-    "--version": commandResult(),
-    inspect: commandResult(0, "1 true"),
-  };
+  const networkName = DEFAULT_DOCKER_DRIVER_NETWORK_NAME;
+  const registryContainer = portableHostPreparationInternals.REGISTRY_CONTAINER;
+  const dockerResults: ReadonlyMap<string, SpawnResult> = new Map([
+    [JSON.stringify(["--version"]), commandResult()],
+    [
+      JSON.stringify([
+        "network",
+        "inspect",
+        "--format",
+        DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+        networkName,
+      ]),
+      commandResult(0, JSON.stringify([{ Subnet: "169.254.1.0/24" }])),
+    ],
+    [
+      JSON.stringify([
+        "inspect",
+        "--format",
+        `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
+        registryContainer,
+      ]),
+      commandResult(0, `1 true ${PORTABLE_REGISTRY_IP}`),
+    ],
+  ]);
   try {
     const prepared = preparePortableExperimentalHost(
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
@@ -154,10 +185,16 @@ function proveAdmission(
         },
         docker: (args) => {
           effects.push(`docker-compatible ${args.join(" ")}`);
-          const result = dockerResults[args[0] ?? ""];
+          const result = dockerResults.get(JSON.stringify(args));
           assert.ok(result, `Unexpected Docker-compatible proof command: ${args.join(" ")}`);
           return result;
         },
+        ip: (args) => {
+          assert.deepEqual(args, ["-o", "-4", "address", "show"]);
+          effects.push("portable host gateway address inspection");
+          return commandResult(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`);
+        },
+        sudo: () => assert.fail("Existing portable host gateway address must not require sudo."),
       },
     );
     assert.ok(prepared, "Delegated CPU hierarchy must complete portable host admission.");
