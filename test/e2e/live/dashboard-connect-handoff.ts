@@ -73,6 +73,14 @@ function appendCaptured(current: string, chunk: string): string {
 export async function runDashboardConnectUntilForwardHandoff(
   options: DashboardConnectHandoffOptions,
 ): Promise<DashboardConnectHandoffResult> {
+  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
+    throw new RangeError("dashboard connect handoff timeout must be a positive finite value");
+  }
+  const stopGraceMs = options.stopGraceMs ?? CONNECT_STOP_GRACE_MS;
+  if (!Number.isFinite(stopGraceMs) || stopGraceMs <= 0) {
+    throw new RangeError("dashboard connect stop grace must be a positive finite value");
+  }
+
   const [command, ...args] = options.command ?? ["nemoclaw", options.sandboxName, "connect"];
   const child = spawnObservedChild(command, args, {
     activityLabel: "command: dashboard-remote-bind-connect",
@@ -96,11 +104,11 @@ export async function runDashboardConnectUntilForwardHandoff(
   let forceKillTimer: NodeJS.Timeout | undefined;
 
   const scheduleForcedCleanup = (): void => {
-    if (forceKillTimer) clearTimeout(forceKillTimer);
+    if (forceKillTimer) return;
     forceKillTimer = setTimeout(() => {
       cleanupEscalated = true;
       signalChildGroup(child, "SIGKILL");
-    }, options.stopGraceMs ?? CONNECT_STOP_GRACE_MS);
+    }, stopGraceMs);
   };
   const terminateGroup = (): void => {
     signalChildGroup(child, "SIGTERM");
