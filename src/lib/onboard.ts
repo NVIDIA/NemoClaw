@@ -111,7 +111,7 @@ const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const {
-  bindDcodeSelectionDrift,
+  createDcodeSelectionDriftReader,
   requiresSelectionRecreate,
   usesManagedDcodeIdentity,
 }: typeof import("./onboard/dcode-selection-drift") = require("./onboard/dcode-selection-drift");
@@ -1582,7 +1582,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  bindDcodeSelectionDrift,
+  readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
   getHermesToolGatewayBroker,
@@ -3265,7 +3265,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             messagingChannelConfigsEqual,
             getSandboxReuseState,
             getSandboxRecreateObservation,
-            getDcodeSelectionDrift: bindDcodeSelectionDrift(runCaptureOpenshell),
+            getDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
             hasSandboxGpuDrift,
             getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
             getSandboxRegistryEntry: registry.getSandbox,

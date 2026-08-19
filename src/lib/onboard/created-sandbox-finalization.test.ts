@@ -246,6 +246,53 @@ describe("created DCode sandbox finalization", () => {
     }
   });
 
+  it("publishes fresh metadata after endpoint-aware OpenRouter validation (#9555)", () => {
+    const endpointUrl = "https://openrouter.ai/api/v1";
+    const getDcodeSelectionDrift = vi.fn(() => ({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      existingProvider: "openrouter",
+      existingModel: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+      unknown: false,
+    }));
+    const register = vi.fn();
+
+    finalizeCreatedSandbox(
+      {
+        sandboxName: "dcode",
+        restoreBackupPath: null,
+        preUpgradeBackup: false,
+        targetAgentType: "langchain-deepagents-code",
+        validateManagedDcode: true,
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron-3-ultra-550b-a55b",
+        preferredInferenceApi: "openai-completions",
+        endpointUrl,
+      },
+      {
+        discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+        restoreRecreatedSandboxState: vi.fn(),
+        getDcodeSelectionDrift,
+        register,
+        note: vi.fn(),
+        error: vi.fn(),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+    );
+
+    expect(getDcodeSelectionDrift).toHaveBeenCalledWith(
+      "dcode",
+      "compatible-endpoint",
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "openai-completions",
+      endpointUrl,
+    );
+    expect(register).toHaveBeenCalledOnce();
+  });
+
   it("does not publish registry metadata when live validation fails (#6311)", () => {
     const register = vi.fn();
     const error = vi.fn();

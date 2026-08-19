@@ -3,11 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { normalizeManagedDcodeModelName } from "../inference/managed-dcode/identity";
 import {
-  bindDcodeSelectionDrift,
+  createDcodeSelectionDriftReader,
   getDcodeSelectionDrift,
   getExpectedDcodeInferenceIdentity,
-  normalizeDcodeModelName,
   parseDcodeInferenceIdentity,
   requiresSelectionRecreate,
   usesManagedDcodeIdentity,
@@ -53,8 +53,8 @@ describe("live DCode selection drift", () => {
   });
 
   it("mirrors generated DCode model and route identity (#6311)", () => {
-    expect(normalizeDcodeModelName("  openai:model:tag  ")).toBe("model:tag");
-    expect(normalizeDcodeModelName("  openrouter:model:tag  ")).toBe("model:tag");
+    expect(normalizeManagedDcodeModelName("  openai:model:tag  ")).toBe("model:tag");
+    expect(normalizeManagedDcodeModelName("  openrouter:model:tag  ")).toBe("model:tag");
     expect(
       getExpectedDcodeInferenceIdentity(
         "compatible-anthropic-endpoint",
@@ -94,10 +94,7 @@ describe("live DCode selection drift", () => {
       Provider: "openrouter",
       Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
     });
-    const readDcodeSelectionDrift = bindDcodeSelectionDrift(
-      () => output,
-      "https://openrouter.ai/api/v1/",
-    );
+    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(() => output);
 
     expect(
       readDcodeSelectionDrift(
@@ -105,6 +102,7 @@ describe("live DCode selection drift", () => {
         "compatible-endpoint",
         "nvidia/nemotron-3-ultra-550b-a55b",
         null,
+        "https://openrouter.ai/api/v1/",
       ),
     ).toMatchObject({
       changed: false,
@@ -124,7 +122,7 @@ describe("live DCode selection drift", () => {
       Provider: "openrouter",
       Model: "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
     });
-    const readDcodeSelectionDrift = bindDcodeSelectionDrift(() => output, endpointUrl);
+    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(() => output);
 
     expect(
       readDcodeSelectionDrift(
@@ -132,6 +130,7 @@ describe("live DCode selection drift", () => {
         "compatible-endpoint",
         "nvidia/nemotron-3-ultra-550b-a55b",
         null,
+        endpointUrl,
       ),
     ).toMatchObject({
       changed: true,
@@ -146,7 +145,7 @@ describe("live DCode selection drift", () => {
       Provider: "compatible-endpoint",
       Model: "openai:model-a",
     });
-    const readDcodeSelectionDrift = bindDcodeSelectionDrift(() => output);
+    const readDcodeSelectionDrift = createDcodeSelectionDriftReader(() => output);
 
     expect(
       readDcodeSelectionDrift(
@@ -178,7 +177,9 @@ describe("live DCode selection drift", () => {
   });
 
   it("preserves colon-bearing model IDs in expected DCode identity (#6311)", () => {
-    expect(normalizeDcodeModelName("minimax/minimax-m2.5:free")).toBe("minimax/minimax-m2.5:free");
+    expect(normalizeManagedDcodeModelName("minimax/minimax-m2.5:free")).toBe(
+      "minimax/minimax-m2.5:free",
+    );
     expect(
       getExpectedDcodeInferenceIdentity("compatible-endpoint", "minimax/minimax-m2.5:free", null),
     ).toMatchObject({ model: "openai:minimax/minimax-m2.5:free" });

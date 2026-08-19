@@ -8,10 +8,11 @@ import type { BackupResult } from "../../state/sandbox";
 import type { SandboxEntry } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
+import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
-import type { InferenceRouteReservationAuthority } from "../types";
+import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 
 type SandboxRecreateReasonInput = {
@@ -30,6 +31,25 @@ type SandboxRecreateReasonInput = {
   credentialRotationChanged: boolean;
   existingSandboxState: string;
 };
+
+export function readManagedDcodeCreateSelectionDrift(
+  input: {
+    sandboxName: string;
+    provider: string;
+    model: string;
+    preferredInferenceApi: string | null;
+    createIntent: Pick<SandboxCreateIntent, "endpointUrl"> | null;
+  },
+  readDcodeSelectionDrift: DcodeSelectionDriftReader,
+) {
+  return readDcodeSelectionDrift(
+    input.sandboxName,
+    input.provider,
+    input.model,
+    input.preferredInferenceApi,
+    input.createIntent?.endpointUrl ?? null,
+  );
+}
 
 function reportSandboxRecreateReason(
   input: SandboxRecreateReasonInput,
@@ -131,7 +151,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       formatSandboxAgentName,
       formatSandboxBuildEstimateNote,
       getDashboardForwardPort,
-      bindDcodeSelectionDrift,
+      readDcodeSelectionDrift,
       getDefaultSandboxNameForAgent,
       getDockerDriverGatewayStateDir,
       getHermesToolGatewayBroker,
@@ -523,11 +543,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         hasMessagingTokens &&
         messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
       const selectionDrift = isManagedDcodeAgent
-        ? bindDcodeSelectionDrift(runCaptureOpenshell, createIntent?.endpointUrl ?? null)(
-            sandboxName,
-            provider,
-            model,
-            preferredInferenceApi,
+        ? readManagedDcodeCreateSelectionDrift(
+            { sandboxName, provider, model, preferredInferenceApi, createIntent },
+            readDcodeSelectionDrift,
           )
         : getSelectionDrift(sandboxName, provider, model, { runOpenshell });
       const actionableSelectionDrift = requiresSelectionRecreate(

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandboxInferenceConfig } from "../inference/config";
-import { OPENROUTER_ENDPOINT_URL, OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
+import { resolveManagedDcodeIdentity } from "../inference/managed-dcode/identity";
 import type { SelectionDrift } from "./selection-drift";
 
 export type DcodeInferenceIdentity = {
@@ -25,7 +25,7 @@ export type DcodeSelectionDriftReader = (
   requestedProvider: string | null,
   requestedModel: string | null,
   preferredInferenceApi: string | null,
-  requestedEndpointUrl?: string | null,
+  requestedEndpointUrl: string | null,
 ) => SelectionDrift;
 
 const IDENTITY_FIELDS = ["Route", "Provider", "Model", "Endpoint"] as const;
@@ -55,44 +55,6 @@ const UNKNOWN_SELECTION_DRIFT: SelectionDrift = {
   existingModel: null,
   unknown: true,
 };
-
-export function normalizeDcodeModelName(model: string): string {
-  const trimmed = model.trim();
-  for (const prefix of ["openai:", "openrouter:"]) {
-    if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length);
-  }
-  return trimmed;
-}
-
-function isOpenRouterEndpointUrl(value: string | null | undefined): boolean {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    const openRouterUrl = new URL(OPENROUTER_ENDPOINT_URL);
-    return (
-      url.origin === openRouterUrl.origin &&
-      url.username === "" &&
-      url.password === "" &&
-      url.search === "" &&
-      url.hash === "" &&
-      url.pathname.replace(/\/+$/, "") === openRouterUrl.pathname.replace(/\/+$/, "")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function getManagedDcodeProvider(
-  requestedProvider: string | null,
-  requestedEndpointUrl?: string | null,
-): "openai" | "openrouter" {
-  const provider = requestedProvider?.trim();
-  return provider === "openrouter" ||
-    provider === OPENROUTER_PROVIDER_NAME ||
-    (provider === "compatible-endpoint" && isOpenRouterEndpointUrl(requestedEndpointUrl))
-    ? "openrouter"
-    : "openai";
-}
 
 export function parseDcodeInferenceIdentity(
   output: string | null | undefined,
@@ -131,14 +93,18 @@ export function getExpectedDcodeInferenceIdentity(
   if (requestedModel === null) return null;
 
   const route = getSandboxInferenceConfig(requestedModel, requestedProvider, preferredInferenceApi);
-  const managedProvider = getManagedDcodeProvider(requestedProvider, requestedEndpointUrl);
+  const managedIdentity = resolveManagedDcodeIdentity(
+    requestedProvider,
+    requestedModel,
+    requestedEndpointUrl,
+  );
   return {
     route: route.providerKey,
     provider:
-      managedProvider === "openrouter"
-        ? managedProvider
+      managedIdentity.provider === "openrouter"
+        ? managedIdentity.provider
         : requestedProvider?.trim() || route.providerKey,
-    model: `${managedProvider}:${normalizeDcodeModelName(requestedModel)}`,
+    model: managedIdentity.defaultModel,
     endpoint: route.inferenceBaseUrl,
   };
 }
@@ -186,16 +152,15 @@ export function getDcodeSelectionDrift(
   };
 }
 
-export function bindDcodeSelectionDrift(
+export function createDcodeSelectionDriftReader(
   runCaptureOpenshell: DcodeSelectionDriftDeps["runCaptureOpenshell"],
-  defaultEndpointUrl?: string | null,
 ): DcodeSelectionDriftReader {
   return (
     sandboxName,
     requestedProvider,
     requestedModel,
     preferredInferenceApi,
-    requestedEndpointUrl = defaultEndpointUrl,
+    requestedEndpointUrl,
   ) =>
     getDcodeSelectionDrift(sandboxName, requestedProvider, requestedModel, preferredInferenceApi, {
       runCaptureOpenshell,
