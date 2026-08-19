@@ -54,6 +54,7 @@ const HELPER_FAST_TIMEOUT_MS = 30_000;
 const HELPER_ACTIVATION_TIMEOUT_MS = 5 * 60_000;
 const HELPER_GUARD_TIMEOUT_MS = 15 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
+const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
 const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
 const MAX_INSPECTION_BYTES = 1024 * 1024;
 const MAX_MOUNTS = 256;
@@ -1016,6 +1017,32 @@ function helperCommand(runtimeId: string, action: HelperAction) {
   });
 }
 
+function supervisorSignalCommand(runtimeId: string, requestedSignal: "SIGSTOP" | "SIGCONT") {
+  return Object.freeze({
+    args: Object.freeze(["container", "kill", "--signal", requestedSignal, runtimeId]),
+    targetIndex: 4,
+  });
+}
+
+function signalSupervisorAuthorized(
+  scope: AuthorizedPersistedEngineLifecycle,
+  options: ContainerStateMutationOwnerOptions,
+  requestedSignal: "SIGSTOP" | "SIGCONT",
+): void {
+  // PID-namespace init can only be stopped from an ancestor namespace. Keep
+  // that one lifecycle operation on the authority-bound engine endpoint and
+  // expose neither a caller-authored signal nor a caller-authored command.
+  const result = scope.captureExact(
+    "target",
+    (runtimeId) => supervisorSignalCommand(runtimeId, requestedSignal),
+    SUPERVISOR_SIGNAL_TIMEOUT_MS,
+  );
+  requireCommandSuccess(
+    result,
+    `${options.providerDisplayName} host supervisor ${requestedSignal === "SIGSTOP" ? "stop" : "resume"}`,
+  );
+}
+
 function requireCommandSuccess(
   result: {
     readonly status: number;
@@ -1507,6 +1534,7 @@ function acquireAuthorizedReceipt(
   ) {
     fail("persisted state mutation intent does not match the lifecycle transaction");
   }
+  signalSupervisorAuthorized(scope, options, "SIGSTOP");
   const receipt = invokeHelperAuthorized(
     scope,
     options.providerId,
@@ -1656,6 +1684,7 @@ function releaseAuthorizedFence(
   validateReceipt(receipt, options, bindingSha256, before, scope.record);
   requireFenceReceipt(fence, receipt);
   sameActivationProof(proof, activationProofFromReceipt(receipt, fence.providerHandle));
+  signalSupervisorAuthorized(scope, options, "SIGCONT");
   const after = inspectAuthorized(scope, options);
   sameObservation(before, after);
 }
