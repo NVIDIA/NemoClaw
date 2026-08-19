@@ -92,8 +92,6 @@ expect_export() {
 corp='/usr/local/share/nemoclaw/corporate-ca.pem'
 workload_kind='${workloadKind}'
 if [ "$workload_kind" = 'managed-image' ]; then
-  managed_completion='/run/nemoclaw/managed-startup-complete.json'
-  [ -f "$managed_completion" ] && [ ! -L "$managed_completion" ] || probe_fail invalid-managed-completion
   bundle='/run/nemoclaw/managed-startup-ca-bundle.pem'
   runtime_env='/run/nemoclaw/managed-startup-runtime.env'
   system_bundle='/etc/ssl/certs/ca-certificates.crt'

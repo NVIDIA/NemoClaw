@@ -9,6 +9,7 @@ import YAML from "yaml";
 
 import { SHIPPED_MANAGED_IMAGE_AGENTS } from "./managed-image/contract";
 import {
+  MANAGED_STARTUP_COMPLETION_FILE,
   MANAGED_STARTUP_MERGED_CA_FILE,
   MANAGED_STARTUP_RUNTIME_ENV_FILE,
 } from "./managed-startup/image-runtime";
@@ -116,6 +117,7 @@ describe("initial sandbox policy real preset merge", () => {
     },
   ] as const;
   const protectedManagedStartupPaths = [
+    MANAGED_STARTUP_COMPLETION_FILE,
     "/run/nemoclaw/openclaw-config-guard",
     MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
     MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
