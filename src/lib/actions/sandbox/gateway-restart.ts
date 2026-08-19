@@ -8,6 +8,18 @@ import { redactFull, redactUrl } from "../../security/redact";
 import { URL_TOKEN_PATTERN } from "../../security/redact-url";
 import { hermesMcpReconciliationRemediationLines } from "./mcp-bridge-hermes-reconciliation";
 import { inspectHermesMcpReconciliationRefusal } from "./mcp-bridge-recovery";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+
+export function withUnsupportedHermesPortableGatewayRestartFence<T>(
+  sandboxName: string,
+  operation: () => T,
+): T {
+  return withMcpLifecycleLockSync(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:gateway:restart");
+    return operation();
+  });
+}
 
 export type GatewayRestartCommandResult = {
   status: number;

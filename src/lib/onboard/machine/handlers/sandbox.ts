@@ -102,7 +102,7 @@ import {
 } from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
-import type { SandboxCreateIntent } from "../../types";
+import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import {
@@ -187,6 +187,8 @@ export interface SandboxStateOptions<
 > {
   resume: boolean;
   fresh: boolean;
+  /** Exact schema-5 lifecycle selection owned by the locked portable runtime. */
+  hermesPortableLifecycle?: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
@@ -348,6 +350,7 @@ export interface SandboxStateOptions<
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
       hermesAuthMethod: HermesAuthMethod | null,
+      inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null,
       createIntent: CompleteSandboxCreateIntent,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
@@ -467,8 +470,9 @@ function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
 function endpointSourceForCreateIntent(
   fresh: boolean,
   endpointSource: InferenceEndpointSource | null | undefined,
+  preserveSelectedEndpointSource: boolean,
 ): InferenceEndpointSource | null {
-  return fresh ? "onboard" : (endpointSource ?? null);
+  return fresh && !preserveSelectedEndpointSource ? "onboard" : (endpointSource ?? null);
 }
 
 function compatibleEndpointReasoningForCreateIntent(
@@ -1575,6 +1579,8 @@ class SandboxStateFlow<
       endpointSource: endpointSourceForCreateIntent(
         this.options.fresh,
         this.options.endpointSource,
+        this.options.hostLocalInferenceRouteOnly === true ||
+          this.options.hermesPortableLifecycle === true,
       ),
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
@@ -1898,6 +1904,7 @@ class SandboxStateFlow<
               resourceProfile,
               effectiveHermesToolGateways,
               this.options.hermesAuthMethod,
+              this.options.session ? { sessionId: this.options.session.sessionId } : null,
               effectiveCreateIntent,
             ),
         );

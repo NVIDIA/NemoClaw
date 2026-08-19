@@ -289,7 +289,7 @@ describe("dashboard port reservation", () => {
         return { fresh: false };
       },
       createSandboxWithBaseImageResolution,
-      resolvePortableRuntimeAuthority: () => ({ socketPath: "/run/user/1001/podman.sock" }),
+      resolvePortableRuntimeContext: () => ({ socketPath: "/run/user/1001/podman.sock" }),
       resolveComputePlan: () => {
         events.push("resolve compute plan");
         return { sequence: ++sequence };
@@ -343,7 +343,7 @@ describe("dashboard port reservation", () => {
     >({
       createBaseImageResolutionContext: () => ({ fresh: false }),
       createSandboxWithBaseImageResolution: async () => "unreachable",
-      resolvePortableRuntimeAuthority: () => null,
+      resolvePortableRuntimeContext: () => null,
       resolveComputePlan: () => {
         throw setupFailure;
       },
