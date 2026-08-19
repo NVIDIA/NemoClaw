@@ -45,6 +45,8 @@ type NativeRuntimeSnapshot = ManagedBootstrapRuntimeSnapshot;
 export type SandboxGpuCreateAttemptState = {
   firstCreateOutput: string;
   compatibilityArgv: string[] | null;
+  compatibilityBootstrapIdentity: string | null;
+  compatibilityHeldWorkloadArgv: string[] | null;
   allowUnbuiltCompatibilitySource: boolean;
   nativeRuntimeSnapshot: NativeRuntimeSnapshot | null;
   portableLifecycleGeneration: string | null;
@@ -220,6 +222,8 @@ export function createSandboxGpuCreateAttemptRunner(
   const state: SandboxGpuCreateAttemptState = {
     firstCreateOutput: "",
     compatibilityArgv: null,
+    compatibilityBootstrapIdentity: null,
+    compatibilityHeldWorkloadArgv: null,
     allowUnbuiltCompatibilitySource: false,
     nativeRuntimeSnapshot: null,
     portableLifecycleGeneration: null,
@@ -253,18 +257,22 @@ export function createSandboxGpuCreateAttemptRunner(
     const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
     const managedBootstrap = input.managedBootstrap ?? null;
     const attemptArgv = state.compatibilityArgv ?? input.createArgv;
+    const attemptBootstrapIdentity =
+      state.compatibilityBootstrapIdentity ?? managedBootstrap?.bootstrapIdentity ?? null;
+    const attemptHeldWorkloadArgv =
+      state.compatibilityHeldWorkloadArgv ?? input.sandboxStartupCommand;
     const managedLifecycle = managedBootstrap
       ? managedBootstrap.runtimeProvider.bootstrap.createLifecycle({
           providerId: managedBootstrap.runtimeProvider.identity.id,
           stateRoot: managedBootstrap.stateRoot,
-          bootstrapIdentity: managedBootstrap.bootstrapIdentity,
+          bootstrapIdentity: attemptBootstrapIdentity ?? managedBootstrap.bootstrapIdentity,
           request: managedBootstrap.request,
           image: managedBootstrap.image,
           agentIdentity: managedBootstrap.agentIdentity,
           intendedWorkloadArgv: managedBootstrap.intendedWorkloadArgv,
           expectedSupervisorArgv: managedBootstrap.expectedSupervisorArgv,
           launchArgv: attemptArgv,
-          heldWorkloadArgv: input.sandboxStartupCommand,
+          heldWorkloadArgv: attemptHeldWorkloadArgv,
           authorityStore: managedBootstrap.authorityStore,
           ...(deps.createManagedBootstrapAdapter
             ? { adapterOverride: deps.createManagedBootstrapAdapter(managedBootstrap.stateRoot) }
@@ -366,9 +374,9 @@ export function createSandboxGpuCreateAttemptRunner(
         createResult = await managedLifecycle.runCreate(
           async ({ heldWorkloadArgv, bootstrapIdentity }) => {
             if (
-              bootstrapIdentity !== managedBootstrap.bootstrapIdentity ||
-              heldWorkloadArgv.length !== input.sandboxStartupCommand.length ||
-              heldWorkloadArgv.some((value, index) => value !== input.sandboxStartupCommand[index])
+              bootstrapIdentity !== attemptBootstrapIdentity ||
+              heldWorkloadArgv.length !== attemptHeldWorkloadArgv.length ||
+              heldWorkloadArgv.some((value, index) => value !== attemptHeldWorkloadArgv[index])
             ) {
               throw new Error(
                 "Managed bootstrap launch does not match the rendered identity-bound hold.",
