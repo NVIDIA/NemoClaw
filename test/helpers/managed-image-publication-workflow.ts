@@ -31,10 +31,10 @@ export function required<T>(value: T | undefined, message: string): T {
   );
 }
 
-export function step(job: Job, name: string): Step {
+export function step(job: Job, name: string, container = "managed-image workflow"): Step {
   return required(
     job.steps?.find((candidate) => candidate.name === name),
-    `managed-image workflow is missing '${name}'`,
+    `${container} is missing '${name}'`,
   );
 }
 

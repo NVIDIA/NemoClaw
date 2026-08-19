@@ -220,7 +220,11 @@ describe("complete managed-image publication workflow", () => {
         `base-image workflow is missing ${expectedPublisher.agent} manifest publisher`,
       );
       expect(basePublisher.needs).toEqual([expectedPublisher.platformsJob, "reviewed-npm-audit"]);
-      const manifest = step(basePublisher, "Publish validated multi-platform manifest");
+      const manifest = step(
+        basePublisher,
+        "Publish validated multi-platform manifest",
+        "base-image workflow",
+      );
       expect(manifest).toMatchObject({
         uses: "./.github/actions/publish-base-image-manifest",
         with: {
@@ -240,7 +244,9 @@ describe("complete managed-image publication workflow", () => {
       expect(publisher.with?.[expectedPublisher.contractInput]).toBe(
         needsOutput(expectedPublisher.job, "contract-base64"),
       );
-      expect(step(basePublisher, "Checkout").with?.["persist-credentials"]).toBe(false);
+      expect(
+        step(basePublisher, "Checkout", "base-image workflow").with?.["persist-credentials"],
+      ).toBe(false);
 
       const nativePlatforms = required(
         baseWorkflow.jobs?.[expectedPublisher.platformsJob],
@@ -281,7 +287,11 @@ describe("complete managed-image publication workflow", () => {
     });
     expect(new Set(Object.values(action.outputs ?? {}).map(({ value }) => value)).size).toBe(2);
 
-    const exportDigest = step({ steps: action.runs?.steps }, "Export platform digest");
+    const exportDigest = step(
+      { steps: action.runs?.steps },
+      "Export platform digest",
+      "build-base-image-platform action",
+    );
     expect(exportDigest.run).toContain('printf \'%s_digest=%s\\n\' "$ARCH" "$DIGEST"');
   });
 
@@ -969,6 +979,9 @@ fi
     const noncanonicalBase = runManagedImageBaseRestore(restoreBase.run ?? "", "TR==");
     expect(noncanonicalBase.status).not.toBe(0);
     expect(noncanonicalBase.restored).toBe(false);
+    expect(noncanonicalBase.stderr).toContain(
+      "exact base image producer output is not canonical base64",
+    );
     expect(noncanonicalBase.stderr).not.toContain("TR==");
 
     const guard = step(publisher, "Validate production build args");
@@ -1138,11 +1151,17 @@ fi
       OPENCLAW_AMD64: "not-base64",
     });
     expect(malformedContract.status).not.toBe(0);
+    expect(malformedContract.stderr).toContain(
+      "managed image candidate producer output is not canonical base64",
+    );
     expect(malformedContract.stderr).not.toContain("not-base64");
     const noncanonicalContract = runManagedImageCandidateRestore(restoreCandidates.run ?? "", {
       OPENCLAW_AMD64: "TR==",
     });
     expect(noncanonicalContract.status).not.toBe(0);
+    expect(noncanonicalContract.stderr).toContain(
+      "managed image candidate producer output is not canonical base64",
+    );
     expect(noncanonicalContract.stderr).not.toContain("TR==");
     expect(barrier.run).toContain("expected exactly six managed image candidate artifacts");
     expect(barrier.run).toContain("length == 6");
