@@ -68,7 +68,6 @@ const DOCKER_COMMAND_ENV_NAMES = new Set([
   "SHELL",
   "PATH",
   "SSH_AUTH_SOCK",
-  "TERM",
   "HOSTNAME",
   "LANG",
   "TMPDIR",
