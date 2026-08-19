@@ -362,6 +362,7 @@ jobs:
         with:
           repository: ${{ inputs.candidate_repository }}
           ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Authenticate to Docker Hub

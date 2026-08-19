@@ -2518,6 +2518,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -2629,6 +2630,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       # Keep only the credential-bearing step anchored. Cleanup mappings stay
@@ -2851,6 +2853,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Prepare E2E workspace
@@ -3098,6 +3101,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3390,6 +3394,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3525,6 +3530,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -3706,6 +3712,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4836,6 +4843,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -4922,6 +4930,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout trusted Hermes GPU runtime fixture
@@ -5222,6 +5231,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -5346,6 +5356,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -5414,6 +5425,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -5489,6 +5501,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - *dockerhub-auth
@@ -5702,6 +5715,7 @@ jobs:
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
           sparse-checkout: |
             ci/onboard-performance-budget.json
