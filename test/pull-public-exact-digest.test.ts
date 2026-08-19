@@ -12,7 +12,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const puller = path.join(repoRoot, "scripts/checks/pull-public-exact-digest.sh");
 const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(64)}`;
 
-type Scenario = "exhausted" | "success" | "terminal" | "transient-then-success";
+type Scenario = "exhausted" | "near-match" | "success" | "terminal" | "transient-then-success";
 
 function runPuller(scenario: Scenario, candidateReference = reference) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-pull-"));
@@ -37,6 +37,10 @@ printf '%s\n' "$DOCKER_CONFIG" >>"$CONFIG_LOG"
 if [ "$SCENARIO" = "terminal" ]; then
   echo "denied: permission_denied" >&2
   exit 41
+fi
+if [ "$SCENARIO" = "near-match" ]; then
+  echo "ERROR: $EXPECTED_REFERENCE: not found while resolving manifest" >&2
+  exit 43
 fi
 if [ "$SCENARIO" = "exhausted" ] || { [ "$SCENARIO" = "transient-then-success" ] && [ "$count" -eq 1 ]; }; then
   echo "ERROR: $EXPECTED_REFERENCE: not found" >&2
@@ -119,6 +123,17 @@ describe("pull-public-exact-digest", () => {
     expect(result.configsWereRemoved).toBe(true);
     expect(result.stderr).toContain("outcome=failed-no-retry attempt=1/5 docker-exit=41");
     expect(result.stderr).not.toContain("permission_denied");
+  });
+
+  it("does not retry a near-match Docker not-found error", () => {
+    const result = runPuller("near-match");
+
+    expect(result.status).toBe(43);
+    expect(result.count).toBe(1);
+    expect(result.sleeps).toEqual([]);
+    expect(result.configsWereRemoved).toBe(true);
+    expect(result.stderr).toContain("outcome=failed-no-retry attempt=1/5 docker-exit=43");
+    expect(result.stderr).not.toContain("while resolving manifest");
   });
 
   it("fails after the bounded retry schedule is exhausted", () => {
