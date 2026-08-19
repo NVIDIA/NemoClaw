@@ -83,7 +83,7 @@ describe("credential prompt navigation helpers", () => {
       throw new Error("unexpected exit");
     }) as unknown as () => never;
     vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
       isNonInteractive: () => false,
       prompt: async () => answers.shift() ?? "",
@@ -104,6 +104,11 @@ describe("credential prompt navigation helpers", () => {
       expect(process.env.OPENAI_API_KEY).toBeUndefined();
       expect(answers).toEqual([]);
       expect(exitOnboardFromPrompt).not.toHaveBeenCalled();
+      // The escape route is the contract here, so a bare required-field notice is not enough:
+      // the re-prompt has to name both ways out of the loop.
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringMatching(/is required\..*\bback\b.*\bexit\b/),
+      );
     } finally {
       delete process.env.OPENAI_API_KEY;
       vi.restoreAllMocks();
