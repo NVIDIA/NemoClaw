@@ -55,7 +55,7 @@ describe("detectWindowsHostOllama", () => {
     expect(runCapture).not.toHaveBeenCalled();
   });
 
-  it("returns uninstalled when all Windows Ollama probes miss", () => {
+  it("returns absent state when Windows-host probes do not respond (#9604)", () => {
     runCapture.mockImplementation(() => "");
 
     expect(detectWindowsHostOllama({ isWsl: () => true, runCapture })).toEqual({
@@ -63,17 +63,23 @@ describe("detectWindowsHostOllama", () => {
       installedPath: "",
       loopbackOnly: false,
     });
+    expect(runCapture).toHaveBeenCalledTimes(3);
+    expect(runCapture.mock.calls.map(([, options]) => options)).toEqual([
+      { ignoreError: true, timeout: 5_000 },
+      { ignoreError: true, timeout: 5_000 },
+      { ignoreError: true, timeout: 5_000 },
+    ]);
   });
 
-  it("bounds each Windows-host PowerShell probe when the host does not respond (#9604)", () => {
+  it("continues when the Windows-host port probe does not respond (#9604)", () => {
     const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
-    const outputs = [installedPath, "42", "127.0.0.1"];
+    const outputs = [installedPath, "42", ""];
     runCapture.mockImplementation(() => outputs.shift() ?? "");
 
     expect(detectWindowsHostOllama()).toEqual({
       installed: true,
       installedPath,
-      loopbackOnly: true,
+      loopbackOnly: false,
     });
     expect(runCapture).toHaveBeenCalledTimes(3);
     expect(runCapture.mock.calls.map(([, options]) => options)).toEqual([
