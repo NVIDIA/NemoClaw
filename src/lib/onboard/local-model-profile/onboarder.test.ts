@@ -50,6 +50,7 @@ describe("dedicated local model profile onboarder", () => {
       return { ok: true };
     });
     const onboard = createLocalModelProfileOnboarder({
+      env: {},
       installVllm,
       handleVllmSelection,
       prompt: vi.fn(async () => ""),
