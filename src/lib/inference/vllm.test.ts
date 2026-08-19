@@ -100,6 +100,7 @@ import {
   mockSuccessfulVllmInstall,
   resetVllmInstallEnv,
   type VllmInstallSpies,
+  vllmInstallTestReadiness,
   vllmContainerRow,
 } from "./vllm-install.test-support";
 import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
@@ -130,6 +131,12 @@ function currentHostIdentity(): string | null {
 }
 
 describe("shared vLLM install setup", () => {
+  it("normalizes the host architecture when a test profile omits it", () => {
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+
+    expect(vllmInstallTestReadiness({ ...profile, architecture: undefined })).toHaveLength(1);
+  });
+
   it("setup helpers replace probe results and ownership responses (#8351)", () => {
     applyVllmInstallProbeDefaults(mocks);
     mocks.probeHostStorage().capacity.availableBytes = 0n;
@@ -898,6 +905,27 @@ describe("installVllm model resolution", () => {
     );
     expect(logSpy.mock.invocationCallOrder[guidanceCall]).toBeLessThan(
       promptFn.mock.invocationCallOrder[1],
+    );
+  });
+
+  it("preserves explicit extra arguments after an interactive model choice", async () => {
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(["--max-model-len", "32768"]);
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const queue = ["", "n"];
+    const promptFn = vi.fn<(q: string) => Promise<string>>(async () => queue.shift() ?? "");
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: false,
+      promptFn,
+    });
+
+    expect(result).toEqual({ ok: false });
+    const questions = promptFn.mock.calls.map((call: [string]) => call[0]);
+    expect(questions[0]).toContain("Choose model [1]");
+    expect(questions[1]).toContain("Continue?");
+    expect(errSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_VLLM_MODEL cannot be combined"),
     );
   });
 

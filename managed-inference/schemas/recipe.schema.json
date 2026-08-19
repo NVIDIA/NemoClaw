@@ -1302,6 +1302,11 @@
               "not": {
                 "enum": [
                   "downloadSizeBytes",
+                  "environmentValue",
+                  "displayName",
+                  "menuOrder",
+                  "capabilities",
+                  "probePolicyRef",
                   "gated",
                   "installFastSafetensors",
                   "preparation"
@@ -1338,6 +1343,9 @@
             "propertyNames": {
               "not": {
                 "enum": [
+                  "imageUnpackedSizeBytes",
+                  "minimumComputeCapability",
+                  "minimumGpuMemoryBytes",
                   "pullTimeoutSeconds",
                   "architecture",
                   "networkMode",
@@ -1369,6 +1377,8 @@
             "propertyNames": {
               "not": {
                 "enum": [
+                  "orchestrationRef",
+                  "stationPair",
                   "topologyBinding",
                   "nodeCount",
                   "tensorParallelSize",
@@ -1467,6 +1477,7 @@
             "propertyNames": {
               "not": {
                 "enum": [
+                  "directInstall",
                   "executable",
                   "arguments"
                 ]
@@ -1616,7 +1627,10 @@
         },
         "propertyNames": {
           "not": {
-            "const": "bindings"
+            "enum": [
+              "bindings",
+              "modelRef"
+            ]
           }
         }
       },

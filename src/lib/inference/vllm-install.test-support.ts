@@ -63,7 +63,8 @@ export function vllmInstallTestReadiness(
   profile: VllmProfile,
   modelIntent = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim(),
 ): readonly ManagedInferenceReadinessSource[] {
-  const expectedArchitecture = profile.architecture === "x64" ? "amd64" : profile.architecture;
+  const profileArchitecture = profile.architecture ?? process.arch;
+  const expectedArchitecture = profileArchitecture === "x64" ? "amd64" : profileArchitecture;
   const catalog = loadManagedInferenceCatalog();
   const candidates = catalog.presets.flatMap((preset) => {
     if (preset.spec.plan.backend !== "vllm" || preset.spec.plan.platform !== profile.platform) {
