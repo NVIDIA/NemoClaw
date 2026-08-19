@@ -246,8 +246,10 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
     return deps.legacyProbe(endpointUrl, model, apiKey, options);
   }
   // Custom-endpoint SSRF preflight pins approved addresses through curl's
-  // reviewed --resolve boundary. Keep that security path authoritative until
-  // native address pinning has equivalent end-to-end rebinding coverage.
+  // reviewed --resolve boundary. This #6661 migration fallback is bounded to
+  // the native-session rollout: remove it once the native transport can enforce
+  // the exact preflight address set and the caller-level rebinding test passes
+  // with legacyProbe unavailable.
   if (
     (options.pinnedAddresses && options.pinnedAddresses.length > 0) ||
     options.trustedPrivateCapability
@@ -263,6 +265,9 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
   if (!session) return deps.legacyProbe(endpointUrl, model, apiKey, options);
 
   const baseUrl = endpointUrl.replace(/\/+$/, "");
+  // Preserve curl diagnostics during the #6661 migration only. Remove this
+  // replay once native proxy, CA, streaming, and terminal-failure parity is
+  // complete and the public-helper migration tests pass without legacyProbe.
   const nativeFailureFallback = async (reason: string): Promise<OpenAiValidationResult> => {
     addTraceEvent("validation_transport_fallback", { reason });
     session.close();

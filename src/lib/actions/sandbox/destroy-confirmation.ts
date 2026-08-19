@@ -5,6 +5,7 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { R, YW } from "../../cli/terminal-style";
 import { prompt as askPrompt } from "../../credentials/store";
 import type { DestroySandboxOptions } from "../../domain/lifecycle/options";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
@@ -19,6 +20,10 @@ function countActiveSandboxSessions(sandboxName: string): number {
   } catch {
     return 0;
   }
+}
+
+export function assertSandboxDestroyCommandAvailable(sandboxName: string): void {
+  assertHermesPortableCommandUnavailable(sandboxName, "sandbox:destroy");
 }
 
 export async function confirmSandboxDestroy(

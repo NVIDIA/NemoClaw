@@ -26,6 +26,13 @@ function runRefresh(
   });
 }
 
+function installRootOwnerStat(binDir: string): void {
+  const statCommand = path.join(binDir, "stat");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(statCommand, "#!/bin/sh\nprintf '%s\\n' root\n");
+  fs.chmodSync(statCommand, 0o755);
+}
+
 describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refresh", () => {
   it("refreshes .config-hash for the current openclaw.json", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-hash-"));
@@ -42,6 +49,55 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
       expect(result.stderr).toBe("");
       expect(result.status).toBe(0);
       expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${sha256Hex(configPath)}  openclaw.json\n`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      title: "rejects a stale hash when the config directory is root-owned (#9530)",
+      initialHash: () => `${"0".repeat(64)}  openclaw.json\n`,
+      expectedStatus: 15,
+      expectedStderr: "root-owned OpenClaw config hash does not match openclaw.json\n",
+    },
+    {
+      title: "accepts a matching hash when the config directory is root-owned (#9530)",
+      initialHash: (configPath: string) => `${sha256Hex(configPath)}  openclaw.json\n`,
+      expectedStatus: 0,
+      expectedStderr: "",
+    },
+    {
+      title: "rejects a valid hash that names another file in a root-owned directory (#9530)",
+      initialHash: (configPath: string) => {
+        const decoyPath = path.join(path.dirname(configPath), "decoy.json");
+        fs.writeFileSync(decoyPath, '{"decoy":true}\n');
+        return `${sha256Hex(decoyPath)}  decoy.json\n`;
+      },
+      expectedStatus: 15,
+      expectedStderr: "root-owned OpenClaw config hash does not match openclaw.json\n",
+    },
+  ])("$title", ({ initialHash, expectedStatus, expectedStderr }) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-root-hash-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    const binDir = path.join(tmpDir, "bin");
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(configPath, '{"gateway":{"auth":{"token":"fresh"}}}\n');
+      const expectedHash = initialHash(configPath);
+      fs.writeFileSync(hashPath, expectedHash);
+      installRootOwnerStat(binDir);
+
+      const result = runRefresh(configDir, {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      });
+
+      expect(result.status).toBe(expectedStatus);
+      expect(result.stderr).toBe(expectedStderr);
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe(expectedHash);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

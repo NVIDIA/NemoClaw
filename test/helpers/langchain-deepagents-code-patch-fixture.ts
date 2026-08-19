@@ -53,11 +53,24 @@ export function writeFixtureFile(root: string, relativePath: string, content: st
   fs.writeFileSync(target, `${content.trim()}\n`, "utf8");
 }
 
-export function createPackageFixture(version = "0.1.34"): string {
+export function createPackageFixture(version = "0.1.55"): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
   packageFixtureDirs.add(tempDir);
   const packageDir = path.join(tempDir, "deepagents_code");
   writeFixtureFile(packageDir, "__init__.py", '"""Test package."""');
+  writeFixtureFile(
+    packageDir,
+    "approval_mode.py",
+    `
+from enum import Enum
+
+
+class ApprovalMode(str, Enum):
+    MANUAL = "manual"
+    AUTO = "auto"
+    YOLO = "yolo"
+`,
+  );
   writeFixtureFile(
     tempDir,
     "httpx/__init__.py",
@@ -215,6 +228,9 @@ class Parser:
             ),
             interpreter=(True if "--interpreter" in argv else None),
             auto_approve=any(arg in {"-y", "--auto-approve"} for arg in argv),
+            yolo="--yolo" in argv,
+            startup_mode="auto",
+            approval_mode="auto",
             acp="--acp" in argv,
             startup_cmd=("touch /tmp/unsafe" if any(arg.startswith("--startup") for arg in argv) else None),
             sandbox="docker",
@@ -276,7 +292,11 @@ def cli_main():
             )
         )
         raise SystemExit(exit_code)
-    print(f"managed-posture-ok auto_approve={args.auto_approve}")
+    print(
+        f"managed-posture-ok auto_approve={args.auto_approve} "
+        f"yolo={getattr(args, 'yolo', False)} "
+        f"startup_mode={args.startup_mode} approval_mode={args.approval_mode}"
+    )
 `,
   );
   writeFixtureFile(
@@ -298,18 +318,27 @@ def should_run_onboarding(state_dir=None):
     )
     .replace(
       "class DeepAgentsApp:\n",
-      `class _StatusBar:
+      `from deepagents_code.approval_mode import ApprovalMode
+
+
+class _StatusBar:
     def __init__(self):
         self.auto_approve = True
+        self.approval_mode = "yolo"
 
     def set_auto_approve(self, *, enabled):
         self.auto_approve = enabled
+
+    def set_approval_mode(self, mode):
+        self.approval_mode = mode
+        self.auto_approve = mode == "yolo"
 
 
 class _SessionState:
     def __init__(self):
         self.thread_id = "thread-1"
         self.auto_approve = True
+        self.approval_mode = ApprovalMode.YOLO
         self.approval_mode_key = "approval/thread-1"
 
 
@@ -318,7 +347,8 @@ class DeepAgentsApp:
     )
     .replace(
       "        self._auto_approve = True\n        self._status_bar = None\n        self._session_state = None\n",
-      `        self._auto_approve = True
+      `        self._approval_mode = ApprovalMode.YOLO
+        self._auto_approve = True
         self._status_bar = _StatusBar()
         self._session_state = _SessionState()
         self._agent = object()
@@ -333,15 +363,24 @@ class DeepAgentsApp:
     )
     .replace(
       "    async def _on_auto_approve_enabled(self):\n        self._auto_approve = True\n\n    async def action_toggle_auto_approve(self):\n        self._auto_approve = not self._auto_approve\n",
-      `    async def _on_auto_approve_enabled(self):
-        self._auto_approve = True
-        self._status_bar.set_auto_approve(enabled=True)
-        self._session_state.auto_approve = True
+      `    async def _set_approval_mode(self, target):
+        self._approval_mode = target
+        self._auto_approve = target is ApprovalMode.YOLO
+        self._status_bar.set_approval_mode(target.value)
+        self._session_state.approval_mode = target
+        self._session_state.auto_approve = self._auto_approve
+        return True
+
+    async def _on_auto_approve_enabled(self):
+        return await self._set_approval_mode(ApprovalMode.AUTO)
 
     async def action_toggle_auto_approve(self):
-        self._auto_approve = not self._auto_approve
-        self._status_bar.set_auto_approve(enabled=self._auto_approve)
-        self._session_state.auto_approve = self._auto_approve
+        target = (
+            ApprovalMode.AUTO
+            if self._approval_mode is ApprovalMode.MANUAL
+            else ApprovalMode.MANUAL
+        )
+        await self._set_approval_mode(target)
 
     async def _resume_thread(self, thread_id):
         if self.resume_should_fail:
@@ -578,7 +617,16 @@ def _normalize_path(raw_path, project_context, label):
   );
   writeFixtureFile(
     packageDir,
-    "hooks.py",
+    "hooks/__init__.py",
+    `
+from deepagents_code.hooks.legacy import _load_hooks, _run_single_hook
+
+__all__ = ["_load_hooks", "_run_single_hook"]
+`,
+  );
+  writeFixtureFile(
+    packageDir,
+    "hooks/legacy.py",
     `
 from __future__ import annotations
 
@@ -873,11 +921,21 @@ from types import SimpleNamespace
 
 class ApprovalMenu:
     def __init__(self):
+        self._is_auto_fallback = False
+        self._show_auto_option = True
+        self._options = self._build_options()
         self.decisions = []
         self.notifications = []
         self.app = SimpleNamespace(
             notify=lambda *args, **kwargs: self.notifications.append((args, kwargs))
         )
+
+    def _build_options(self):
+        return [
+            ("Approve (y)", "approve"),
+            ("Enable Auto for this thread (a)", "auto_approve_all"),
+            ("Reject (n)", "reject"),
+        ]
 
     def _handle_selection(self, option, *, reject_message=None):
         decision_map = {0: "approve", 1: "auto_approve_all", 2: "reject"}

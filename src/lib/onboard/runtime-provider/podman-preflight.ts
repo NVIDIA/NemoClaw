@@ -19,6 +19,7 @@ const AUTHORITY_ID = /^[a-z][a-z0-9-]{0,62}:[A-Za-z0-9._:-]{1,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CDI_QUALIFIED_DEVICE =
   /^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\/[A-Za-z0-9][A-Za-z0-9._-]{0,62}=[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$/u;
+const PRODUCT_QUALIFIED_INFERENCE_AUTHORITY = Symbol("product-qualified-inference-authority");
 
 export interface PodmanHostPreflightReceipt {
   readonly providerId: "podman";
@@ -51,6 +52,23 @@ export interface PodmanInferenceAuthorityReceipt {
 export interface PodmanHostPreflightOptions {
   readonly platform?: NodeJS.Platform;
   readonly architecture?: NodeJS.Architecture;
+}
+
+export interface PodmanEndpointHostQualificationOptions extends PodmanHostPreflightOptions {
+  readonly expectedVersion: string;
+  readonly expectedNetworkBackend: string;
+}
+
+export interface PodmanInferenceQualificationOptions {
+  /** Exact server version accepted by a product-specific runtime matrix. */
+  readonly expectedVersion?: string;
+  /**
+   * Fresh authoritative CDI capture for a product-specific runtime matrix
+   * whose Podman release cannot report its inventory through `podman info`.
+   */
+  readonly captureCurrentCdiDevices?: (engine: ContainerEngine) => readonly string[];
+  /** Product-owned authority matrix that must stay current around every qualification. */
+  readonly assertCurrentAuthority?: () => void;
 }
 
 export class PodmanHostPreflightError extends Error {
@@ -150,6 +168,28 @@ interface InspectedServerVersion {
   readonly reportedVersion: unknown;
 }
 
+interface QualifiedPodmanHostIdentity {
+  readonly rootless: true;
+  readonly cgroupVersion: "v2";
+  readonly os: "linux";
+  readonly architecture: "amd64" | "arm64";
+  readonly networkBackend: string;
+}
+
+function requireSupportedHostPlatform(options: PodmanHostPreflightOptions): {
+  readonly platform: "linux";
+  readonly architecture: "x64" | "arm64";
+} {
+  const platform = options.platform ?? process.platform;
+  const architecture = options.architecture ?? process.arch;
+  if (platform !== "linux" || (architecture !== "x64" && architecture !== "arm64")) {
+    throw new PodmanHostPreflightError(
+      `basic native lifecycle requires Linux amd64 or arm64; detected ${platform} ${architecture}`,
+    );
+  }
+  return { platform, architecture };
+}
+
 function inspectServerVersion(engine: ContainerEngine, minimum: string): InspectedServerVersion {
   const result = requireSuccessful(
     "server version inspection",
@@ -171,6 +211,20 @@ function inspectInfo(engine: ContainerEngine, label: string): JsonRecord {
   return parsed;
 }
 
+function requireExactVersion(
+  value: unknown,
+  subject: "client" | "server",
+  expected: string,
+): string {
+  const actual = typeof value === "string" ? value.trim() : "";
+  if (actual !== expected) {
+    throw new PodmanHostPreflightError(
+      `Podman ${subject} version must be exactly ${expected}; detected '${actual || "unavailable"}'`,
+    );
+  }
+  return actual;
+}
+
 function normalizeArchitecture(value: string): "amd64" | "arm64" | null {
   if (value === "amd64" || value === "x86_64") return "amd64";
   if (value === "arm64" || value === "aarch64") return "arm64";
@@ -183,11 +237,7 @@ function requireSubordinateIdMappings(host: unknown): void {
   // authority than an explicitly bound service endpoint.
   const mappings = field(host, "idMappings", "IDMappings");
   for (const mapping of ["uidmap", "gidmap"] as const) {
-    const entries = field(
-      mappings,
-      mapping,
-      mapping === "uidmap" ? "UIDMap" : "GIDMap",
-    );
+    const entries = field(mappings, mapping, mapping === "uidmap" ? "UIDMap" : "GIDMap");
     if (!Array.isArray(entries) || entries.length === 0 || entries.length > 1_024) {
       throw new PodmanHostPreflightError(`the Podman API returned malformed ${mapping}`);
     }
@@ -216,6 +266,57 @@ function requireSubordinateIdMappings(host: unknown): void {
       );
     }
   }
+}
+
+function qualifyPodmanHostIdentity(
+  info: JsonRecord,
+  options: PodmanHostPreflightOptions,
+): QualifiedPodmanHostIdentity {
+  const { architecture } = requireSupportedHostPlatform(options);
+  const host = field(info, "host", "Host");
+  const security = field(host, "security", "Security");
+  if (booleanField(security, "rootless", "Rootless") !== true) {
+    throw new PodmanHostPreflightError("a rootless Podman API service is required");
+  }
+  const cgroupVersion = textField(
+    host,
+    "cgroupVersion",
+    "cgroupsVersion",
+    "CgroupVersion",
+    "CgroupsVersion",
+  ).toLowerCase();
+  if (cgroupVersion !== "v2") {
+    throw new PodmanHostPreflightError(
+      `cgroups v2 is required; detected '${cgroupVersion || "unknown"}'`,
+    );
+  }
+  const hostOs = textField(host, "os", "OS").toLowerCase();
+  if (hostOs !== "linux") {
+    throw new PodmanHostPreflightError(
+      `the Podman service must run Linux; detected '${hostOs || "unknown"}'`,
+    );
+  }
+  const reportedArchitecture = textField(host, "arch", "Arch").toLowerCase();
+  const normalizedArchitecture = normalizeArchitecture(reportedArchitecture);
+  if (!normalizedArchitecture) {
+    throw new PodmanHostPreflightError(
+      `the Podman service must report amd64 or arm64; detected '${reportedArchitecture || "unknown"}'`,
+    );
+  }
+  const expectedArchitecture = architecture === "x64" ? "amd64" : "arm64";
+  if (normalizedArchitecture !== expectedArchitecture) {
+    throw new PodmanHostPreflightError(
+      `the Podman service architecture '${normalizedArchitecture}' does not match host '${expectedArchitecture}'`,
+    );
+  }
+  requireSubordinateIdMappings(host);
+  return Object.freeze({
+    rootless: true,
+    cgroupVersion: "v2",
+    os: "linux",
+    architecture: normalizedArchitecture,
+    networkBackend: textField(host, "networkBackend", "NetworkBackend") || "unknown",
+  });
 }
 
 function safeSchemaText(value: unknown, label: string): string {
@@ -304,8 +405,9 @@ function inferenceAuthorityDigest(
   return createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
 }
 
-export function normalizePodmanInferenceAuthorityReceipt(
+function normalizeInferenceAuthorityReceipt(
   value: unknown,
+  minimumVersion: string,
 ): PodmanInferenceAuthorityReceipt {
   const receipt = record(value);
   if (
@@ -320,7 +422,7 @@ export function normalizePodmanInferenceAuthorityReceipt(
     !AUTHORITY_ID.test(receipt.authorityId) ||
     typeof receipt.serverVersion !== "string" ||
     receipt.serverVersion !== receipt.serverVersion.trim() ||
-    !isPodmanVersionSupported(receipt.serverVersion, MINIMUM_PODMAN_INFERENCE_VERSION) ||
+    !isPodmanVersionSupported(receipt.serverVersion, minimumVersion) ||
     receipt.rootless !== true ||
     receipt.cgroupVersion !== "v2" ||
     receipt.os !== "linux" ||
@@ -345,13 +447,51 @@ export function normalizePodmanInferenceAuthorityReceipt(
   return Object.freeze({ ...payload, receiptSha256 });
 }
 
+export function normalizePodmanInferenceAuthorityReceipt(
+  value: unknown,
+): PodmanInferenceAuthorityReceipt {
+  return normalizeInferenceAuthorityReceipt(value, MINIMUM_PODMAN_INFERENCE_VERSION);
+}
+
+export function normalizeQualifiedPodmanInferenceAuthorityReceipt(
+  value: unknown,
+): PodmanInferenceAuthorityReceipt {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { [PRODUCT_QUALIFIED_INFERENCE_AUTHORITY]?: unknown })[
+      PRODUCT_QUALIFIED_INFERENCE_AUTHORITY
+    ] === true
+  ) {
+    return normalizeInferenceAuthorityReceipt(value, MINIMUM_PODMAN_VERSION);
+  }
+  return normalizePodmanInferenceAuthorityReceipt(value);
+}
+
 /** Qualify the exact endpoint's authoritative NVIDIA CDI inventory, including empty. */
 export function qualifyPodmanInferenceAuthority(
   engine: ContainerEngine,
+  options: PodmanInferenceQualificationOptions = {},
 ): PodmanInferenceAuthorityReceipt {
+  options.assertCurrentAuthority?.();
   requireInferenceEngine(engine);
-  const { reportedVersion } = inspectServerVersion(engine, MINIMUM_PODMAN_INFERENCE_VERSION);
+  if (
+    (options.expectedVersion === undefined) !==
+    (options.captureCurrentCdiDevices === undefined)
+  ) {
+    throw new PodmanHostPreflightError(
+      "an exact inference version and CDI inventory must be supplied together",
+    );
+  }
+  const minimumVersion = options.expectedVersion ?? MINIMUM_PODMAN_INFERENCE_VERSION;
+  if (!isPodmanVersionSupported(minimumVersion, MINIMUM_PODMAN_VERSION)) {
+    throw new PodmanHostPreflightError("the exact inference version is unsupported");
+  }
+  const { reportedVersion } = inspectServerVersion(engine, minimumVersion);
   const serverVersion = safeSchemaText(reportedVersion, "Podman server version");
+  if (options.expectedVersion !== undefined && serverVersion !== options.expectedVersion) {
+    throw new PodmanHostPreflightError("the Podman server version changed after qualification");
+  }
   const info = inspectInfo(engine, "CDI inventory inspection");
   const host = record(info.host);
   const architecture = normalizeArchitecture(textField(host, "arch").toLowerCase());
@@ -370,24 +510,48 @@ export function qualifyPodmanInferenceAuthority(
     engine.authorityId,
     serverVersion,
     architecture,
-    exactNvidiaCdiInventory(info),
+    options.captureCurrentCdiDevices === undefined
+      ? exactNvidiaCdiInventory(info)
+      : normalizePodmanCdiInventory(options.captureCurrentCdiDevices(engine)),
   );
-  return Object.freeze({ ...payload, receiptSha256: inferenceAuthorityDigest(payload) });
+  const receipt = { ...payload, receiptSha256: inferenceAuthorityDigest(payload) };
+  if (options.expectedVersion !== undefined) {
+    Object.defineProperty(receipt, PRODUCT_QUALIFIED_INFERENCE_AUTHORITY, { value: true });
+  }
+  options.assertCurrentAuthority?.();
+  return Object.freeze(receipt);
 }
 
 /** Refresh endpoint-native CDI state and reject drift before one mutation. */
 export function revalidatePodmanInferenceAuthority(
   engine: ContainerEngine,
   expected: PodmanInferenceAuthorityReceipt,
+  options: PodmanInferenceQualificationOptions = {},
 ): PodmanInferenceAuthorityReceipt {
   requireInferenceEngine(engine);
-  const normalized = normalizePodmanInferenceAuthorityReceipt(expected);
+  const normalized = normalizeQualifiedPodmanInferenceAuthorityReceipt(expected);
   if (engine.authorityId !== normalized.authorityId) {
     throw new PodmanHostPreflightError(
       "the Podman endpoint authority changed before local-inference mutation",
     );
   }
-  const refreshed = qualifyPodmanInferenceAuthority(engine);
+  const refreshed =
+    options.captureCurrentCdiDevices === undefined &&
+    isPodmanVersionSupported(normalized.serverVersion, MINIMUM_PODMAN_INFERENCE_VERSION)
+      ? qualifyPodmanInferenceAuthority(engine, {
+          assertCurrentAuthority: options.assertCurrentAuthority,
+        })
+      : qualifyPodmanInferenceAuthority(engine, {
+          expectedVersion: normalized.serverVersion,
+          assertCurrentAuthority: options.assertCurrentAuthority,
+          captureCurrentCdiDevices:
+            options.captureCurrentCdiDevices ??
+            (() => {
+              throw new PodmanHostPreflightError(
+                "fresh CDI authority is required to revalidate this Podman release",
+              );
+            }),
+        });
   if (refreshed.receiptSha256 !== normalized.receiptSha256) {
     throw new PodmanHostPreflightError(
       "the Podman server or NVIDIA CDI authority changed before local-inference mutation",
@@ -403,14 +567,7 @@ export function qualifyPodmanHost(
   if (engine.operation !== "host-doctor" || engine.engineId !== "podman") {
     throw new PodmanHostPreflightError("host qualification requires a Podman host-doctor engine");
   }
-  const platform = options.platform ?? process.platform;
-  const architecture = options.architecture ?? process.arch;
-  if (platform !== "linux" || !["x64", "arm64"].includes(architecture)) {
-    throw new PodmanHostPreflightError(
-      `basic native lifecycle requires Linux amd64 or arm64; detected ${platform} ${architecture}`,
-    );
-  }
-
+  requireSupportedHostPlatform(options);
   const clientVersionResult = requireSuccessful(
     "client version inspection",
     engine.captureHost(["--version"], 10_000),
@@ -418,53 +575,56 @@ export function qualifyPodmanHost(
   const clientVersion = requireSupportedVersion(clientVersionResult.stdout, "client");
   const { canonicalVersion: serverVersion } = inspectServerVersion(engine, MINIMUM_PODMAN_VERSION);
   const info = inspectInfo(engine, "rootless API inspection");
-  const host = field(info, "host", "Host");
-  const security = field(host, "security", "Security");
-  if (booleanField(security, "rootless", "Rootless") !== true) {
-    throw new PodmanHostPreflightError("a rootless Podman API service is required");
-  }
-  const cgroupVersion = textField(
-    host,
-    "cgroupVersion",
-    "cgroupsVersion",
-    "CgroupVersion",
-    "CgroupsVersion",
-  ).toLowerCase();
-  if (cgroupVersion !== "v2") {
-    throw new PodmanHostPreflightError(
-      `cgroups v2 is required; detected '${cgroupVersion || "unknown"}'`,
-    );
-  }
-  const hostOs = textField(host, "os", "OS").toLowerCase();
-  if (hostOs !== "linux") {
-    throw new PodmanHostPreflightError(
-      `the Podman service must run Linux; detected '${hostOs || "unknown"}'`,
-    );
-  }
-  const reportedArchitecture = textField(host, "arch", "Arch").toLowerCase();
-  const normalizedArchitecture = normalizeArchitecture(reportedArchitecture);
-  if (!normalizedArchitecture) {
-    throw new PodmanHostPreflightError(
-      `the Podman service must report amd64 or arm64; detected '${reportedArchitecture || "unknown"}'`,
-    );
-  }
-  const expectedArchitecture = architecture === "x64" ? "amd64" : "arm64";
-  if (normalizedArchitecture !== expectedArchitecture) {
-    throw new PodmanHostPreflightError(
-      `the Podman service architecture '${normalizedArchitecture}' does not match host '${expectedArchitecture}'`,
-    );
-  }
-  requireSubordinateIdMappings(host);
+  const identity = qualifyPodmanHostIdentity(info, options);
 
   return Object.freeze({
     providerId: "podman",
     clientVersion,
     serverVersion,
-    rootless: true,
-    cgroupVersion: "v2",
-    os: "linux",
-    architecture: normalizedArchitecture,
-    networkBackend: textField(host, "networkBackend", "NetworkBackend") || "unknown",
+    ...identity,
+  });
+}
+
+/** Qualify one exact socket-bound Podman client and service for schema-specific authority. */
+export function qualifyPodmanEndpointHost(
+  engine: ContainerEngine,
+  options: PodmanEndpointHostQualificationOptions,
+): PodmanHostPreflightReceipt {
+  if (engine.operation !== "state-mutation" || engine.engineId !== "podman") {
+    throw new PodmanHostPreflightError(
+      "endpoint qualification requires a Podman state-mutation engine",
+    );
+  }
+  requireSupportedHostPlatform(options);
+  const versionResult = requireSuccessful(
+    "client and server version inspection",
+    engine.capture(["version", "--format", "json"], 10_000),
+  );
+  const versionInfo = parseJsonResult(versionResult, "version information");
+  const clientVersion = requireExactVersion(
+    field(field(versionInfo, "Client", "client"), "Version", "version"),
+    "client",
+    options.expectedVersion,
+  );
+  const serverVersion = requireExactVersion(
+    field(field(versionInfo, "Server", "server"), "Version", "version"),
+    "server",
+    options.expectedVersion,
+  );
+  const identity = qualifyPodmanHostIdentity(
+    inspectInfo(engine, "rootless API inspection"),
+    options,
+  );
+  if (identity.networkBackend !== options.expectedNetworkBackend) {
+    throw new PodmanHostPreflightError(
+      `network backend must be '${options.expectedNetworkBackend}'; detected '${identity.networkBackend}'`,
+    );
+  }
+  return Object.freeze({
+    providerId: "podman",
+    clientVersion,
+    serverVersion,
+    ...identity,
   });
 }
 

@@ -43,10 +43,6 @@ describe("PR Review Advisor writing guide", () => {
     const { artifactPaths, preparePromptArtifacts } = await import(
       "../tools/pr-review-advisor/analyze.mts"
     );
-    const { createReviewFindingLedger } = await import(
-      "../tools/pr-review-advisor/review-ledger.mts"
-    );
-    const { createTerminologyLedger } = await import("../tools/pr-review-advisor/terminology.mts");
     const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-rubric-failure-"));
     const headSha = "b".repeat(40);
     const realReadFileSync = fs.readFileSync.bind(fs);
@@ -91,8 +87,6 @@ describe("PR Review Advisor writing guide", () => {
           metadata,
           diff: "",
           schema: {},
-          findingLedger: createReviewFindingLedger(),
-          terminologyLedger: createTerminologyLedger(headSha),
         }),
       ).toThrow("Security rubric unavailable");
       readSpy.mockRestore();
@@ -122,10 +116,6 @@ describe("PR Review Advisor writing guide", () => {
     const { artifactPaths, preparePromptArtifacts, readTrustedSecurityRubric } = await import(
       "../tools/pr-review-advisor/analyze.mts"
     );
-    const { createReviewFindingLedger } = await import(
-      "../tools/pr-review-advisor/review-ledger.mts"
-    );
-    const { createTerminologyLedger } = await import("../tools/pr-review-advisor/terminology.mts");
     const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-prompt-failure-"));
     const headSha = "a".repeat(40);
     const securityRubric = readTrustedSecurityRubric();
@@ -169,8 +159,6 @@ describe("PR Review Advisor writing guide", () => {
           metadata,
           diff: "",
           schema: {},
-          findingLedger: createReviewFindingLedger(),
-          terminologyLedger: createTerminologyLedger(headSha),
         }),
       ).toThrow("Writing guide unavailable");
       readSpy.mockRestore();
