@@ -27,6 +27,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
+          LIMIT=5
+
           # Core maintainers are exempt from the PR limit.
           EXEMPT="ericksoa kjw3 jacobtomlinson cv jyaunches"
           for user in $EXEMPT; do
@@ -40,10 +42,10 @@ jobs:
 
           echo "Author $AUTHOR has $OPEN_COUNT open PR(s)"
 
-          if [ "$OPEN_COUNT" -gt 10 ]; then
+          if [ "$OPEN_COUNT" -gt "$LIMIT" ]; then
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
-              "This repository limits contributors to 10 open pull requests. Please close or merge existing PRs before opening new ones."
+              "This repository limits contributors to $LIMIT open pull requests. Please close or merge existing PRs before opening new ones."
             gh pr close "$PR_NUMBER" --repo "$REPO"
-            echo "::error::PR closed — author $AUTHOR exceeds the 10 open PR limit"
+            echo "::error::PR closed — author $AUTHOR exceeds the $LIMIT open PR limit"
             exit 1
           fi

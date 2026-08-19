@@ -16,6 +16,7 @@ const supervisorFailureMarkers: Array<
   [string, ReturnType<typeof classifyGatewayRestartFailure>["layer"]]
 > = [
   ["PRIVILEGED_CONTROL_UNAVAILABLE", "privileged control unavailable"],
+  ["MANAGED_CONTROL_IDENTITY_CHANGED", "container identity changed"],
   ["SUPERVISOR_UNAVAILABLE", "privileged control unavailable"],
   ["SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement", "supervisor unavailable"],
   ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
@@ -88,6 +89,25 @@ describe("gateway restart failure classification precedence", () => {
   it("applies the same precedence when markers split across stdout and stderr", () => {
     expect(classify("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_NOT_RUNNING")).toMatchObject({
       layer: "supervisor not running",
+    });
+  });
+
+  it("does not classify an embedded identity marker as a protocol marker", () => {
+    expect(classify("failure mentions MANAGED_CONTROL_IDENTITY_CHANGED inline")).toMatchObject({
+      layer: "launch failure",
+    });
+  });
+
+  it("removes every complete identity marker line from the failure detail", () => {
+    const output = [
+      " MANAGED_CONTROL_IDENTITY_CHANGED ",
+      "container changed once",
+      "MANAGED_CONTROL_IDENTITY_CHANGED",
+      "container changed again",
+    ].join("\n");
+    expect(classify(output)).toEqual({
+      layer: "container identity changed",
+      detail: "container changed once\ncontainer changed again",
     });
   });
 });
