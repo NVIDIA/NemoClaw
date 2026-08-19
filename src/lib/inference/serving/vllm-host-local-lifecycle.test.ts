@@ -72,7 +72,6 @@ function inspect(
   fingerprint = runtimeAuthFingerprint(key),
   labels: Record<string, string> = {},
   bridgeHost = "172.18.0.1",
-  hostPort = "8000",
 ) {
   return JSON.stringify([
     {
@@ -90,8 +89,8 @@ function inspect(
       NetworkSettings: {
         Ports: {
           "8000/tcp": [
-            { HostIp: "127.0.0.1", HostPort: hostPort },
-            { HostIp: bridgeHost, HostPort: hostPort },
+            { HostIp: "127.0.0.1", HostPort: "8000" },
+            { HostIp: bridgeHost, HostPort: "8000" },
           ],
         },
       },
@@ -100,26 +99,6 @@ function inspect(
 }
 
 describe("host-local managed vLLM recovery", () => {
-  it("recovers the actual configured host port from the owned bindings", () => {
-    const receiptStateDir = stateDir();
-    persistHostLocalVllmRuntimeReceipt(
-      {
-        containerId: "a".repeat(64),
-        authFingerprint: runtimeAuthFingerprint(API_KEY),
-        serving: IDENTITY,
-      },
-      receiptStateDir,
-    );
-
-    expect(
-      recoverHostLocalManagedVllmEndpoint({
-        dockerInspect: () => inspect(API_KEY, runtimeAuthFingerprint(API_KEY), PROFILE_LABELS, "172.18.0.1", "19000"),
-        loadApiKey: () => API_KEY,
-        stateDir: receiptStateDir,
-      }),
-    ).toEqual({ baseUrl: "http://127.0.0.1:19000", apiKey: API_KEY });
-  });
-
   it("pins inspection and bridge discovery to the physical default Docker daemon", () => {
     vi.stubEnv("DOCKER_CONTEXT", "remote-context");
     vi.stubEnv("DOCKER_HOST", "tcp://remote.example:2376");

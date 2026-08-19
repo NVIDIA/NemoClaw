@@ -244,7 +244,7 @@ _validate_port() {
       ;;
   esac
   if [[ "$value" =~ ^0*8081$ ]]; then
-    printf 'Invalid %s=%s (conflicts with reserved llama.cpp inference default port 8081)\n' \
+    printf 'Invalid %s=%s (conflicts with fixed llama.cpp inference port 8081)\n' \
       "$name" "$value" >&2
     return 1
   fi

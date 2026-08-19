@@ -52,7 +52,6 @@ export type LlamaCppAttachmentResult =
 export interface ProbeLlamaCppAttachmentOptions {
   requestedModel?: string | null;
   baseUrl?: string;
-  expectedPort?: number;
   runCurlProbeImpl?: (argv: string[], options?: CurlProbeOptions) => CurlProbeResult;
 }
 
@@ -176,7 +175,7 @@ function boundedProbeFailure(result: CurlProbeResult): LlamaCppAttachmentResult 
   return null;
 }
 
-function resolveFixedLoopbackBaseUrl(value: string, expectedPort: number): string | null {
+function resolveFixedLoopbackBaseUrl(value: string): string | null {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -187,7 +186,7 @@ function resolveFixedLoopbackBaseUrl(value: string, expectedPort: number): strin
   if (
     parsed.protocol !== "http:" ||
     !["127.0.0.1", "localhost", "::1"].includes(hostname) ||
-    parsed.port !== String(expectedPort) ||
+    parsed.port !== String(LLAMA_CPP_PORT) ||
     parsed.username ||
     parsed.password ||
     (parsed.pathname !== "/" && parsed.pathname !== "") ||
@@ -214,18 +213,11 @@ export function probeLlamaCppAttachment(
       "A native llama.cpp API key is required for existing-server attachment.",
     );
   }
-  const expectedPort = options.expectedPort ?? LLAMA_CPP_PORT;
-  if (!Number.isSafeInteger(expectedPort) || expectedPort < 1024 || expectedPort > 65_535) {
-    return failure("invalid-endpoint", "The expected llama.cpp port is invalid.");
-  }
-  const baseUrl = resolveFixedLoopbackBaseUrl(
-    options.baseUrl ?? LLAMA_CPP_HOST_BASE_URL,
-    expectedPort,
-  );
+  const baseUrl = resolveFixedLoopbackBaseUrl(options.baseUrl ?? LLAMA_CPP_HOST_BASE_URL);
   if (!baseUrl) {
     return failure(
       "invalid-endpoint",
-      `llama.cpp attachment is restricted to loopback port ${String(expectedPort)}.`,
+      `llama.cpp attachment is restricted to loopback port ${LLAMA_CPP_PORT}.`,
     );
   }
   const probe = options.runCurlProbeImpl ?? runCurlProbe;
@@ -237,7 +229,7 @@ export function probeLlamaCppAttachment(
   const anonymousBoundFailure = boundedProbeFailure(anonymousModels);
   if (anonymousBoundFailure) return anonymousBoundFailure;
   if (anonymousModels.curlStatus !== 0 || anonymousModels.httpStatus === 0) {
-    return failure("unreachable", `No llama.cpp server responded on port ${String(expectedPort)}.`);
+    return failure("unreachable", `No llama.cpp server responded on fixed port ${LLAMA_CPP_PORT}.`);
   }
   if (
     anonymousModels.httpStatus !== 200 &&

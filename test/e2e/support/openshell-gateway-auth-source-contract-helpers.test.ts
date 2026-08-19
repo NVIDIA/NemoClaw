@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { PORTABLE_HOST_GATEWAY_IP } from "../../../src/lib/onboard/experimental/portable-profile.ts";
 import {
   openShellGatewayAuthArtifactSafetyMarkerName,
   scanAndApproveOpenShellGatewayAuthArtifacts,
@@ -103,7 +102,7 @@ describe("OpenShell gateway auth source contract helpers", () => {
   it("uses an explicit portable host gateway on the selected network", () => {
     const { args } = buildSandboxTokenContainerProbeInvocation({
       dockerBin: "podman",
-      hostGatewayIp: PORTABLE_HOST_GATEWAY_IP,
+      hostGatewayIp: "169.254.1.2",
       networkName: "openshell-docker",
       payload: Buffer.from("sandbox request"),
       port: 8080,
@@ -111,9 +110,7 @@ describe("OpenShell gateway auth source contract helpers", () => {
     });
 
     expect(valuesAfterFlag(args, "--network")).toEqual(["openshell-docker"]);
-    expect(valuesAfterFlag(args, "--add-host")).toEqual([
-      `host.openshell.internal:${PORTABLE_HOST_GATEWAY_IP}`,
-    ]);
+    expect(valuesAfterFlag(args, "--add-host")).toEqual(["host.openshell.internal:169.254.1.2"]);
   });
 
   it("hard-fails unavailable Docker probe images on GitHub Actions", () => {

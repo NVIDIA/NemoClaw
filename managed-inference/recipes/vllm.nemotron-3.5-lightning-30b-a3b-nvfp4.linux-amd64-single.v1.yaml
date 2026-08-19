@@ -17,9 +17,9 @@ spec:
     # Linux amd64 manifest rather than the multi-platform tag.
     image: vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2
     imageDownloadSizeBytes: 9110652559
-    # NVIDIA's published hardware matrix supports Ampere through W4A16 kernels;
-    # native FP4 tensor cores are not required for this checkpoint.
-    minimumComputeCapability: 80
+    # NVIDIA's published vLLM recipe matrix starts at H100. Lower compute
+    # capabilities require separate qualification before they can use this profile.
+    minimumComputeCapability: 90
     minimumGpuMemoryBytes: 21561882284
     pullTimeoutSeconds: 3600
     architecture: amd64

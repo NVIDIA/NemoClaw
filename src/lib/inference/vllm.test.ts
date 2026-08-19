@@ -753,47 +753,6 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain("DeepSeek V4 Flash is not supported on Linux + NVIDIA GPU");
   });
 
-  it.each([
-    [
-      "muse-glimmer-30b",
-      "muse-glimmer",
-      "vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f",
-    ],
-    [
-      "nemotron-3.5-lightning-30b",
-      "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
-      "vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2",
-    ],
-  ])(
-    "accepts the explicit %s compatibility path on Linux x86_64",
-    async (slug, servedId, image) => {
-      process.env.NEMOCLAW_VLLM_MODEL = slug;
-      const profile = {
-        ...detectVllmProfile({ platform: "linux", type: "nvidia" })!,
-        architecture: "x64" as const,
-      };
-      const beforeInstall = vi.fn();
-      mockSuccessfulVllmInstall(mocks, profile.containerName);
-
-      const result = await installVllm(profile, {
-        hasImage: true,
-        nonInteractive: true,
-        promptFn: vi.fn(),
-        beforeInstall,
-      });
-
-      const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
-      // The shared fixture intentionally has no OpenShell bridge inspection
-      // response. Reaching that later boundary proves model/platform admission,
-      // image selection, storage checks, and the model download all proceeded.
-      expect(result).toEqual({ ok: false });
-      expect(beforeInstall).toHaveBeenCalledWith(servedId);
-      expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledWith(image, expect.any(Object));
-      expect(errors).toContain("could not inspect the OpenShell bridge");
-      expect(errors).not.toContain("is not supported on Linux + NVIDIA GPU");
-    },
-  );
-
   it("accepts the optimized Lightning recipe on DGX Spark", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3.5-lightning-30b";
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;

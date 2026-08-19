@@ -86,7 +86,7 @@ describe("probeLlamaCppAttachment", () => {
   });
 
   it.each(["http://127.0.0.1:8082", "http://192.0.2.10:8081"])(
-    "rejects attachment endpoint %s outside the configured loopback port (#8161)",
+    "rejects attachment endpoint %s outside fixed loopback port 8081 (#8161)",
     (baseUrl) => {
       const probe = vi.fn();
       expect(
@@ -108,19 +108,6 @@ describe("probeLlamaCppAttachment", () => {
       expect(argv).toEqual(expect.arrayContaining(["--max-time", "5", "--max-filesize", "262144"]));
       expect(options).toEqual(expect.objectContaining({ maxResponseBytes: 262144 }));
     });
-  });
-
-  it("accepts a receipt-selected loopback port for managed runtime recovery", () => {
-    const probe = scriptedProbe(nativeResponses());
-
-    expect(
-      probeLlamaCppAttachment("secret-token", {
-        baseUrl: "http://127.0.0.1:19081",
-        expectedPort: 19081,
-        runCurlProbeImpl: probe,
-      }),
-    ).toEqual({ ok: true, model: "team/model-alias" });
-    expect(probe.mock.calls[0]?.[0]).toContain("http://127.0.0.1:19081/v1/models");
   });
 
   it("accepts llama.cpp's native metrics-disabled response (#8161)", () => {

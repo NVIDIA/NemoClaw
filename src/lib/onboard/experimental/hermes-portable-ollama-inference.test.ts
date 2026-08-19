@@ -36,7 +36,6 @@ import {
 } from "../../../../test/helpers/hermes-portable-ollama-test-harness";
 import { hermesPortableOllamaAuthorityInternals } from "./hermes-portable-ollama-authority";
 import { createHermesPortableOllamaInferenceResolver } from "./hermes-portable-ollama-inference";
-import { PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
 
 const PODMAN_PATH = "/usr/bin/podman";
 const PODMAN_BYTES = Buffer.from("portable-podman-5.7.0", "utf8");
@@ -379,7 +378,7 @@ describe("Hermes Portable Ollama inference activation", () => {
           networkName: "openshell-docker",
           networkId: NETWORK_ID,
           networkGatewayIp: "169.254.1.1",
-          networkListenerIp: PORTABLE_HOST_GATEWAY_IP,
+          networkListenerIp: "169.254.1.2",
           gpuDevices: [GPU_DEVICE],
         },
       });
@@ -740,7 +739,7 @@ describe("Hermes Portable Ollama inference activation", () => {
     );
     fixture.gatewayProvider.setLookupFailure(false);
     const mutation = await selection.prepareGatewayMutation(gatewayMutationInput);
-    expect(() => createExactGatewayProvider(mutation, "http://192.0.2.2:11434/v1")).toThrow(
+    expect(() => createExactGatewayProvider(mutation, "http://169.254.1.2:11434/v1")).toThrow(
       "provider mutation authority changed",
     );
     createExactGatewayProvider(mutation);

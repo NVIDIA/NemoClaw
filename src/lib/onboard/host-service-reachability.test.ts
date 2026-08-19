@@ -8,8 +8,6 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
-
 // Mock the docker adapter so the test never loads runner.ts (which requires
 // the compiled ./platform artifact unavailable in the test environment).
 vi.mock("../adapters/docker/run", () => ({
@@ -126,7 +124,7 @@ describe("probeHostServiceSandboxReachability", () => {
     });
 
     expect(result).toMatchObject({ ok: true, reason: "ok" });
-    expect(capturedArgs).toContain(`host.openshell.internal:${PORTABLE_HOST_GATEWAY_IP}`);
+    expect(capturedArgs).toContain("host.openshell.internal:169.254.1.2");
     expect(capturedArgs).not.toContain("host.openshell.internal:host-gateway");
     expect(capturedArgs).not.toContain("host.openshell.internal:10.89.0.1");
   });

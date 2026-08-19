@@ -50,16 +50,13 @@ describe("dedicated local model profile onboarder", () => {
       return { ok: true };
     });
     const onboard = createLocalModelProfileOnboarder({
+      env: {},
       installVllm,
       handleVllmSelection,
       prompt: vi.fn(async () => ""),
       error: vi.fn(),
     });
-    const vllmProfile = {
-      name: "DGX Spark",
-      platform: "spark",
-      architecture: "arm64",
-    } as VllmProfile;
+    const vllmProfile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
 
     await expect(
       onboard(
@@ -80,14 +77,13 @@ describe("dedicated local model profile onboarder", () => {
     });
   });
 
-  it("accepts a vLLM host port override for the fixed serving recipe", async () => {
+  it("rejects a vLLM port override before installation", async () => {
     const installVllm = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
-    const handleVllmSelection = vi.fn(async () => "selected" as const);
     const onboard = createLocalModelProfileOnboarder({
       env: { NEMOCLAW_VLLM_PORT: "9000" },
       installVllm,
-      handleVllmSelection,
+      handleVllmSelection: vi.fn() as never,
       prompt: vi.fn(async () => ""),
       error,
     });
@@ -98,19 +94,14 @@ describe("dedicated local model profile onboarder", () => {
         {
           hasVllmImage: false,
           sparkHost: true,
-          vllmProfile: {
-            name: "DGX Spark",
-            platform: "spark",
-            architecture: "arm64",
-          } as VllmProfile,
+          vllmProfile: { name: "DGX Spark", platform: "spark" } as VllmProfile,
           vllmRunning: false,
         },
         state(),
       ),
-    ).resolves.toBe("selected");
-    expect(installVllm).toHaveBeenCalledOnce();
-    expect(handleVllmSelection).toHaveBeenCalledOnce();
-    expect(error).not.toHaveBeenCalled();
+    ).resolves.toBe("retry-selection");
+    expect(installVllm).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("port"));
   });
 
   it("reports invalid vLLM materialization through the retry path", async () => {
@@ -132,11 +123,7 @@ describe("dedicated local model profile onboarder", () => {
         {
           hasVllmImage: false,
           sparkHost: true,
-          vllmProfile: {
-            name: "DGX Spark",
-            platform: "spark",
-            architecture: "arm64",
-          } as VllmProfile,
+          vllmProfile: { name: "DGX Spark", platform: "spark" } as VllmProfile,
           vllmRunning: false,
         },
         state(),

@@ -17,7 +17,7 @@ Both paths are experimental and use OpenAI Chat Completions through `https://inf
 
 | Path | NemoClaw manages | You manage | Use it when |
 |---|---|---|---|
-| Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on the configured loopback port (`8081` by default). |
+| Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
 | Managed DGX Spark | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | The qualified Linux host, Docker Engine, NVIDIA runtime prerequisites, storage, and any required Hugging Face credential. | You want the experimental Muse Glimmer or NVIDIA Nemotron profile without managing `llama-server` directly. |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
@@ -30,7 +30,7 @@ Refer to [Choose a Local Inference Server](choose-local-inference-server) for th
 Use this path when you operate `llama-server` and want NemoClaw to register its authenticated endpoint without owning its process or model.
 The server must satisfy all of these requirements:
 
-- Listen over HTTP on `127.0.0.1:<configured-port>` and expose its OpenAI-compatible API under `/v1`.
+- Listen over HTTP on `127.0.0.1:8081` and expose its OpenAI-compatible API under `/v1`.
 - Require the same native bearer key supplied through `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`.
 - Expose bounded native llama.cpp evidence through `/v1/models`, `/health`, `/props`, and either `/metrics` or the native metrics-not-supported response.
 - Report a stable, non-path served model alias.
@@ -64,7 +64,6 @@ For non-interactive onboarding, export `NEMOCLAW_LLAMACPP_LOCAL_TOKEN` from your
 : "${NEMOCLAW_LLAMACPP_LOCAL_TOKEN:?Export the native llama.cpp API key first}"
 NEMOCLAW_PROVIDER=llama-cpp \
 NEMOCLAW_MODEL="<served-model-alias>" \
-NEMOCLAW_LLAMACPP_PORT=19081 \
 NEMOCLAW_SANDBOX_NAME=my-assistant \
   $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
@@ -73,10 +72,6 @@ NemoClaw reads `NEMOCLAW_LLAMACPP_LOCAL_TOKEN` from the environment for this com
 You can omit `NEMOCLAW_MODEL` only when the server exposes exactly one native model.
 It refuses unauthenticated, ambiguous, non-native, conflicting, or differently addressed servers instead of guessing their identity.
 It does not start, stop, upgrade, or remove an attached server.
-
-Set `NEMOCLAW_LLAMACPP_PORT` to the server's non-privileged loopback port.
-The variable defaults to `8081` and also controls the OpenShell gateway route and local-inference policy entry.
-For a managed runtime, NemoClaw persists the chosen bridge port and reuses it during later recovery.
 
 Verify the registered route:
 
@@ -110,7 +105,7 @@ Before you start, confirm these prerequisites:
 - Confirm that the NVIDIA Container Toolkit is operational.
 - Confirm that NVIDIA Container Device Interface support is healthy.
 - Use NVIDIA driver version `580.65.06` or later.
-- Stop any process that uses the configured host port (`8081` when `NEMOCLAW_LLAMACPP_PORT` is unset).
+- Stop any process that uses host port `8081`.
 - Allow capacity for the pinned images, the GGUF file, and same-filesystem download staging.
 - Export `HF_TOKEN` only when the YAML-declared Hugging Face source requires authentication.
 
@@ -121,7 +116,7 @@ Run `unset HF_TOKEN` after onboarding when no other process needs it.
 <Warning>
 When the exact artifacts are not already present, onboarding pulls digest-pinned images from external registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache.
 It reuses locally present pinned images and a cached GGUF only after their exact identities verify.
-It creates an owner-only API key, a host-loopback listener on the configured port, and a Docker internal network.
+It creates an owner-only API key, a host-loopback listener on port `8081`, and a Docker internal network.
 Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
 </Warning>
 
@@ -143,7 +138,6 @@ For non-interactive onboarding, select the repository-owned recipe explicitly:
 ```bash
 NEMOCLAW_PROVIDER=install-llama-cpp \
 NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.muse-glimmer-30b.spark-single.v1 \
-NEMOCLAW_LLAMACPP_PORT=19081 \
 NEMOCLAW_SANDBOX_NAME=my-assistant \
   $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
@@ -157,8 +151,7 @@ For non-interactive onboarding or an explicit provider request, set `NEMOCLAW_LL
 An unknown recipe, an incompatible host, or more than one compatible profile for the requested recipe stops onboarding before installation effects.
 Do not set `NEMOCLAW_MODEL` for this path.
 The repository YAML recipe is authoritative for the exact model file, revision, digest, image, launch settings, resource limits, readiness probes, and disabled surfaces.
-`NEMOCLAW_LLAMACPP_PORT` controls the host-owned private bridge; the recipe's internal server port remains fixed.
-NemoClaw does not provide hidden model, image, or launch-flag overrides for the managed path.
+NemoClaw does not provide hidden model, port, image, or launch-flag overrides for the managed path.
 
 The shipped NVIDIA Nemotron recipe continues to use the `nemotron-v3-embedded` chat template.
 A repository recipe that uses an image-owned Jinja template must declare this typed contract:
@@ -196,7 +189,7 @@ Onboarding performs these actions:
 - Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the exact file through the existing Hugging Face mechanism when it is absent or invalid.
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
-- Starts a host-owned private bridge on `127.0.0.1:<configured-port>` and connects the container to a Docker internal network without a Docker-published port.
+- Starts a host-owned private bridge on `127.0.0.1:8081` and connects the container to a Docker internal network without a Docker-published port.
 - Registers `llama-cpp-local` and routes agent traffic through `https://inference.local/v1`.
 
 The runtime cannot download a model and has no egress on its internal Docker network.
@@ -232,14 +225,14 @@ Refer to [CLI Commands](../../reference/commands) for complete command behavior.
 
 During managed installation, NemoClaw first checks internal runtime readiness and host-loopback health.
 It repeats these checks when onboarding resumes.
-It then runs the authoritative OpenShell Docker bridge probe on the configured host port.
+It then runs the authoritative OpenShell Docker bridge probe on fixed port `8081`.
 If that bridge probe cannot connect or times out after the earlier checks pass, onboarding stops without changing UFW.
 When the bridge reports a valid narrow subnet and a gateway IP address inside that subnet, the error reports these values:
 
 - The detected Docker network.
 - The source subnet.
 - The gateway IP address.
-- The configured port.
+- The fixed port `8081`.
 - The exact narrow UFW command.
 
 If the bridge topology is missing or invalid, onboarding fails closed without printing topology or a UFW command.
@@ -248,14 +241,14 @@ Inspect the OpenShell Docker bridge configuration before you retry onboarding.
 <Warning>
 The printed command changes UFW.
 Confirm that the reported Docker network, source subnet, and gateway IP address belong to the OpenShell Docker bridge before you run it.
-The rule allows TCP traffic only from that subnet to the configured port on that gateway IP address.
+The rule allows TCP traffic only from that subnet to port `8081` on that gateway IP address.
 </Warning>
 
 Run the exact command from the onboarding error.
 It has this form:
 
 ```bash
-sudo ufw allow from <subnet> to <gateway-ip> port <llama-cpp-port> proto tcp
+sudo ufw allow from <subnet> to <gateway-ip> port 8081 proto tcp
 ```
 
 After you apply the rule, rerun the same onboarding selection.
@@ -263,7 +256,7 @@ After you apply the rule, rerun the same onboarding selection.
 If onboarding still reports the bridge failure, or when the managed runtime no longer needs the rule, remove the exact rule that you added:
 
 ```bash
-sudo ufw --force delete allow from <subnet> to <gateway-ip> port <llama-cpp-port> proto tcp
+sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
 ```
 
 Use the same subnet and gateway IP address that appeared in the original command.

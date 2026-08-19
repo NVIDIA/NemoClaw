@@ -222,7 +222,7 @@ save_usage_notice_acceptance_shell "test-version"`,
     "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
     "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
     "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
-  ])("rejects %s on the reserved llama.cpp default port before writing selected state", (envName) => {
+  ])("rejects %s on fixed llama.cpp port 8081 before writing selected state", (envName) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-llamacpp-port-"));
     try {
       const result = runInstallerFunctions(
@@ -233,7 +233,7 @@ save_usage_notice_acceptance_shell "test-version"`,
 
       expect(result.status, result.output).not.toBe(0);
       expect(result.output).toContain(`${envName} must not overlap`);
-      expect(result.output).toContain("reserved llama.cpp inference default port (8081)");
+      expect(result.output).toContain("fixed llama.cpp inference port (8081)");
       expect(fs.existsSync(path.join(home, ".nemoclaw", "gateways", "9123"))).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

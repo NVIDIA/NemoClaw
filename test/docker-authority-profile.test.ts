@@ -71,6 +71,7 @@ describe("Docker authority readiness", () => {
           platform: "spark",
           type: "nvidia",
           totalMemoryMB: 128 * 1024,
+          availableMemoryMB: 128 * 1024,
           perGpuMB: 128 * 1024,
           unifiedMemory: true,
         }),

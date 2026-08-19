@@ -631,10 +631,7 @@ describe("managed llama.cpp installer", () => {
     );
     fs.mkdirSync(path.dirname(modelPath), { recursive: true, mode: 0o700 });
     fs.writeFileSync(modelPath, "status-fixture", { mode: 0o600 });
-    const receipt = {
-      schemaVersion: 1,
-      endpoint: { port: 19_081 },
-    } as HostLocalInferenceReceipt;
+    const receipt = { schemaVersion: 1 } as HostLocalInferenceReceipt;
     const inspectManaged = vi.fn(() => ({ running: true, receipt }));
     const createLifecycle = vi.fn(
       () =>
@@ -660,7 +657,6 @@ describe("managed llama.cpp installer", () => {
       expect.objectContaining({
         readinessTimeoutSeconds: selected.recipe.spec.readiness.timeoutSeconds,
         bindings: expect.objectContaining({
-          hostPort: 19_081,
           model: expect.objectContaining({
             digest: file.digest,
             hostPath: fs.realpathSync(modelPath),

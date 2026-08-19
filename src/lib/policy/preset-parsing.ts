@@ -4,16 +4,6 @@
 import YAML from "yaml";
 
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
-import {
-  DEFAULT_LLAMA_CPP_PORT,
-  DEFAULT_OLLAMA_PORT,
-  DEFAULT_OLLAMA_PROXY_PORT,
-  DEFAULT_VLLM_PORT,
-  LLAMA_CPP_PORT,
-  OLLAMA_PORT,
-  OLLAMA_PROXY_PORT,
-  VLLM_PORT,
-} from "../core/local-inference-ports";
 
 export type PolicyValue = JsonValue;
 export type PolicyObject = JsonObject;
@@ -47,34 +37,4 @@ export function parseNetworkPolicies(content: string | null | undefined): Policy
   } catch {
     return null;
   }
-}
-
-/** Apply configured host listener ports to the built-in local inference policy. */
-export function materializeLocalInferencePresetPorts(content: string): string {
-  if (
-    LLAMA_CPP_PORT === DEFAULT_LLAMA_CPP_PORT &&
-    OLLAMA_PORT === DEFAULT_OLLAMA_PORT &&
-    OLLAMA_PROXY_PORT === DEFAULT_OLLAMA_PROXY_PORT &&
-    VLLM_PORT === DEFAULT_VLLM_PORT
-  ) {
-    return content;
-  }
-  const document = YAML.parse(content) as {
-    network_policies?: { local_inference?: { endpoints?: Array<{ port?: unknown }> } };
-  } | null;
-  const endpoints = document?.network_policies?.local_inference?.endpoints;
-  if (!Array.isArray(endpoints)) {
-    throw new Error("Built-in local-inference policy is missing its endpoint list.");
-  }
-  const configuredPorts = new Map<number, number>([
-    [DEFAULT_LLAMA_CPP_PORT, LLAMA_CPP_PORT],
-    [DEFAULT_OLLAMA_PORT, OLLAMA_PORT],
-    [DEFAULT_OLLAMA_PROXY_PORT, OLLAMA_PROXY_PORT],
-    [DEFAULT_VLLM_PORT, VLLM_PORT],
-  ]);
-  for (const endpoint of endpoints) {
-    if (typeof endpoint.port !== "number") continue;
-    endpoint.port = configuredPorts.get(endpoint.port) ?? endpoint.port;
-  }
-  return YAML.stringify(document);
 }

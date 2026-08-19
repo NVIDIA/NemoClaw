@@ -300,7 +300,6 @@ describe("vllm model registry", () => {
       nodeRank: 0,
       masterAddr: "192.168.240.1",
       masterPort: 6379,
-      apiPort: 19000,
     });
 
     expect(cmd).toContain('python3 -m pip install --user --no-cache-dir "ray==2.56.0"');
@@ -317,7 +316,7 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--distributed-timeout-seconds 7200");
     expect(cmd).toContain("--served-model-name nemotron-ultra");
     expect(cmd).toContain("--host 192.168.240.1");
-    expect(cmd).toContain("--port 19000");
+    expect(cmd).toContain("--port 8000");
     expect(cmd).toContain("--max-num-seqs 256");
     expect(cmd).toContain("--gpu-memory-utilization 0.9");
     expect(cmd).not.toContain("--kernel-config");
@@ -331,14 +330,12 @@ describe("vllm model registry", () => {
       nodeRank: 0,
       masterAddr: "192.168.240.1",
       masterPort: 6379,
-      apiPort: 8000,
     });
     const worker = buildNemotronUltraDistributedServeCommand({
       nodeRank: 1,
       masterAddr: "192.168.240.1",
       masterPort: 6379,
       nodeAddr: "192.168.240.2",
-      apiPort: 8000,
     });
 
     expect(worker).toContain(
@@ -354,7 +351,6 @@ describe("vllm model registry", () => {
         nodeRank: 0,
         masterAddr: "station a",
         masterPort: 6379,
-        apiPort: 8000,
       }),
     ).toThrow(/masterAddr/);
     expect(() =>
@@ -362,7 +358,6 @@ describe("vllm model registry", () => {
         nodeRank: 1,
         masterAddr: "192.168.240.1",
         masterPort: 70000,
-        apiPort: 8000,
       }),
     ).toThrow(/masterPort/);
     expect(() =>
@@ -371,7 +366,6 @@ describe("vllm model registry", () => {
         masterAddr: "192.168.240.1",
         masterPort: 6379,
         nodeAddr: "worker.example.com",
-        apiPort: 8000,
       }),
     ).toThrow(/nodeAddr/);
   });
@@ -632,8 +626,8 @@ describe("vllm model registry", () => {
       revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
       servedModelId: "muse-glimmer",
       maxModelLen: 32768,
-      platforms: ["spark", "linux"],
-      minComputeCapability: 120,
+      platforms: ["spark"],
+      minComputeCapability: 121,
       gated: false,
       installFastSafetensors: false,
       trustRemoteCode: false,
@@ -659,23 +653,22 @@ describe("vllm model registry", () => {
     expect(command).not.toContain("pip install");
   });
 
-  it("uses the published hardware-neutral parser baseline for Lightning on Linux", () => {
+  it("pins the published Lightning parser baseline for DGX Spark", () => {
     const lightning = VLLM_MODELS.find((model) => model.envValue === "nemotron-3.5-lightning-30b");
 
     expect(lightning).toMatchObject({
       id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
-      platforms: ["spark", "linux"],
+      platforms: ["spark"],
       pickerPlatforms: [],
-      minComputeCapability: 80,
+      minComputeCapability: 121,
       requireRuntimeVariant: true,
     });
     const command = buildVllmServeCommand(lightning!);
     expect(command).toContain("--mamba-backend flashinfer");
-    expect(command).toContain("--tool-call-parser qwen3_coder");
-    expect(command).toContain("--reasoning-parser nemotron_v3");
-    expect(command).not.toContain("--moe-backend");
-    expect(command).not.toContain("--speculative-config");
-    expect(command).not.toContain("step3p5");
+    expect(command).toContain("--tool-call-parser step3p5");
+    expect(command).toContain("--reasoning-parser step3p5");
+    expect(command).toContain("--moe-backend marlin");
+    expect(command).toContain("--speculative-config");
   });
 });
 

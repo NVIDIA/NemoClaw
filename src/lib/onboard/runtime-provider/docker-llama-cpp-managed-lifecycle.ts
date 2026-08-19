@@ -816,7 +816,6 @@ function specificationDigest(
     apiKeyRootIdentitySha256: apiKeyRootIdentity,
     contract: options.contract,
     containerName: options.bindings.containerName,
-    hostPort: options.bindings.hostPort,
     imageReference: options.bindings.imageReference,
     model: {
       planDigest: options.plan.planDigest,
@@ -957,6 +956,9 @@ function privateBridgeAuthority(
 ): DockerLlamaCppPrivateBridgeAuthority {
   if (container.containerIp === null) {
     throw new Error("Docker llama.cpp running container lacks an internal address.");
+  }
+  if (options.bindings.hostPort !== options.contract.serve.port) {
+    throw new Error("Docker llama.cpp host bridge port differs from its declarative server port.");
   }
   return Object.freeze({
     transactionId: journal.transactionId,

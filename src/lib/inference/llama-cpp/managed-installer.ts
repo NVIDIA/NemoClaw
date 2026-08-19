@@ -24,7 +24,7 @@ import { isLlamaCppServingRecipe } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ResolvedLlamaCppInferenceSelection } from "../serving/types";
 import { buildVllmDockerEnv } from "../vllm-docker-env";
-import { LLAMA_CPP_CREDENTIAL_ENV, LLAMA_CPP_PORT } from "./contract";
+import { LLAMA_CPP_CREDENTIAL_ENV } from "./contract";
 import { acquireVerifiedLlamaCppGguf, verifyLlamaCppGgufCacheEntry } from "./gguf-acquisition";
 import { compileLlamaCppGgufCachePlan } from "./gguf-cache-plan";
 import type {
@@ -427,7 +427,6 @@ function lifecycleFor(input: {
   readonly cacheRoot: string;
   readonly artifact: VerifiedLocalModelArtifact;
   readonly operation: HostLocalInferenceOperation;
-  readonly hostPort: number;
 }): HostLocalLlamaCppLifecycle {
   const identity = runtimeIdentity();
   const recipe = input.selection.recipe;
@@ -438,7 +437,7 @@ function lifecycleFor(input: {
     bindings: {
       apiKeyHostPath: input.paths.apiKeyPath,
       containerName: MANAGED_LLAMA_CPP_CONTAINER_NAME,
-      hostPort: input.hostPort,
+      hostPort: recipe.spec.serve.port,
       imageReference: recipe.spec.runtime.image,
       model: input.artifact,
       network: { isolation: "docker-internal", name: MANAGED_LLAMA_CPP_NETWORK_NAME },
@@ -535,7 +534,6 @@ export function rehydrateManagedLlamaCppLifecycle(
       cacheRoot: current.cacheRoot,
       artifact: current.artifact,
       operation,
-      hostPort: receipt.endpoint.port,
     }),
     operation,
     owner,
@@ -556,7 +554,6 @@ export function inspectManagedLlamaCppRuntimeExact(
     cacheRoot: current.cacheRoot,
     artifact: current.artifact,
     operation: options.operation,
-    hostPort: options.receipt.endpoint.port,
   }).runtime.inspectManaged(options.receipt);
 }
 
@@ -574,7 +571,7 @@ export async function installManagedLlamaCpp(
   const checkPort = options.checkPort ?? checkPortAvailable;
   const log = options.log ?? ((message: string) => console.log(message));
   const recipe = selection.recipe;
-  let hostPort = LLAMA_CPP_PORT;
+  const hostPort = recipe.spec.serve.port;
   let engine: ContainerEngine | null = null;
   let operation: HostLocalInferenceOperation | null = null;
   let owner: ReturnType<typeof claimManagedLlamaCppOwner>["owner"] | null = null;
@@ -601,7 +598,6 @@ export async function installManagedLlamaCpp(
       createPersistedEngineAuthority(operation.providerId, engine, operation.bindingSha256),
     );
     const persistedReceipt = loadManagedLlamaCppReceipt(paths);
-    if (persistedReceipt !== null) hostPort = persistedReceipt.endpoint.port;
     const journalStore = createHostLocalCreateJournalStore(paths.stateDir);
     const pending = journalStore.list().filter(({ phase }) => phase !== "finalized");
     if (pending.length > 1) {
@@ -681,7 +677,6 @@ export async function installManagedLlamaCpp(
       cacheRoot,
       artifact,
       operation,
-      hostPort,
     });
 
     if (pending.length === 1) {
@@ -753,7 +748,7 @@ export async function resumeManagedLlamaCppRuntime(
   const engine = operation.engine;
   const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
   const checkPort = options.checkPort ?? checkPortAvailable;
-  let hostPort = LLAMA_CPP_PORT;
+  const hostPort = selection.recipe.spec.serve.port;
   const plan = compileLlamaCppGgufCachePlan(selection.recipe);
   const cacheRoot = ensureSharedHuggingFaceCache(homeDir);
   const artifact = await verify(plan, cacheRoot);
@@ -763,7 +758,6 @@ export async function resumeManagedLlamaCppRuntime(
     throw new Error("Managed llama.cpp has more than one unfinished create transaction.");
   }
   let receipt = loadManagedLlamaCppReceipt(paths);
-  if (receipt !== null) hostPort = receipt.endpoint.port;
   requireExactImagesPresent(
     engine,
     receipt === null
@@ -786,7 +780,6 @@ export async function resumeManagedLlamaCppRuntime(
     cacheRoot,
     artifact,
     operation,
-    hostPort,
   });
   if (pending.length === 1) {
     const recovery = lifecycle.recoverUnfinished(

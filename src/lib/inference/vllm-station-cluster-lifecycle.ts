@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerCapture, dockerForceRm, dockerRunDetached } from "../adapters/docker";
-import { VLLM_PORT } from "../core/local-inference-ports";
 import { DUAL_STATION_VLLM_API_KEY_PATTERN, loadDualStationVllmApiKey } from "./vllm-api-key";
 import { buildLocalDualStationDockerEnv, buildRemoteVllmDockerEnv } from "./vllm-docker-env";
 import { buildNemotronUltraDistributedServeCommand } from "./vllm-models";
@@ -37,7 +36,7 @@ export const DUAL_STATION_VLLM_TRANSACTION_LABEL = "com.nvidia.nemoclaw.vllm-tra
 export const DUAL_STATION_VLLM_GPU_SMOKE_LABEL = "com.nvidia.nemoclaw.gpu-smoke";
 export const DUAL_STATION_VLLM_MASTER_PORT = 6379;
 
-const HEAD_API_PORT = VLLM_PORT;
+const HEAD_API_PORT = 8000;
 // The pinned Station vLLM images ship a non-root-ready /home/vllm. Each Station
 // mounts an owner-only tmpfs there and runs as the probed model-cache owner.
 const VLLM_RUNTIME_HOME = "/home/vllm";
@@ -498,7 +497,6 @@ function buildDualStationVllmBaseRunArgs(
       masterAddr: plan.masterAddress,
       masterPort: DUAL_STATION_VLLM_MASTER_PORT,
       nodeAddr: endpoints[0].address,
-      apiPort: HEAD_API_PORT,
     }),
   );
   return args;

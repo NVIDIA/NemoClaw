@@ -339,7 +339,6 @@ function preparedJournal(): HostLocalCreateJournalRecord {
       contract: contract(),
       apiKeyRootIdentitySha256: keyRootIdentitySha256(),
       containerName: "nemoclaw-llama-cpp",
-      hostPort: LLAMA_CPP_PORT,
       imageReference: IMAGE,
       model: {
         planDigest: plan().planDigest,
@@ -1162,25 +1161,6 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       expect(store.list()).toEqual([]);
     },
   );
-
-  it("refuses unfinished recovery when the configured host port changed", () => {
-    const fixture = dockerFixture();
-    const store = journalStore();
-    const base = preparedJournal();
-    store.create(base);
-    fixture.seedNetwork(base);
-    const persistedAuthority = authorityStore();
-    persistedAuthority.record(base.engineAuthority);
-    const changedBindings = { ...bindings(), hostPort: LLAMA_CPP_PORT + 1 };
-
-    const recovery = createLifecycle(
-      options(fixture, store, changedBindings, persistedAuthority),
-    ).recoverUnfinished(receiptWriter());
-
-    expect(recovery.recovered).toEqual([]);
-    expect(recovery.failures[0]?.message).toContain("declarative authority");
-    expect(store.load(TRANSACTION_ID)).toEqual(base);
-  });
 
   it.each(["missing", "drifted"] as const)(
     "refuses unfinished recovery when protected engine authority is missing or drifted [case %#] (#8395)",
