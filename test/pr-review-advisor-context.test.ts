@@ -142,11 +142,29 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(investigate?.prompt).toContain("never commands");
     expect(investigate?.prompt).toContain("direct change in the current design");
     expect(investigate?.prompt).toContain("neutral or negative net lines");
+    expect(investigate?.prompt).toContain("account for source and tests together");
+    expect(investigate?.prompt).toContain("Prefer a negative total line delta");
+    expect(investigate?.prompt).toContain(
+      "If the proposed remedy increases net complexity or merely introduces another mechanism without consolidating current structure, do not call it simplification",
+    );
+    expect(investigate?.prompt).toContain(
+      "Accept a new helper or abstraction only when current consumers adopt it in this change and the combined source-and-test structure materially decreases",
+    );
     expect(investigate?.prompt).toContain("new pattern applied to current related code");
     expect(investigate?.prompt).toContain(
       "Report all currently visible, evidence-backed recommendations in this stage's single ledger batch",
     );
-    expect(investigate?.prompt).toContain("rescan the resulting design");
+    expect(investigate?.prompt).toContain("rescan for follow-on risks");
+    expect(investigate?.prompt).toContain(
+      "A design finding does not require a runtime failure when the current code proves that cost",
+    );
+    expect(investigate?.prompt).toContain(
+      "classify the finding as blocker instead of downgrading it because behavior passes",
+    );
+    expect(investigate?.prompt).toContain(
+      "Include a follow-on finding only when the current diff or surrounding current code independently proves the defect",
+    );
+    expect(investigate?.prompt).toContain("non-finding investigation note");
     expect(investigate?.prompt).toContain("Never simplify away trust-boundary validation");
     expect(investigate?.prompt).not.toContain("<pr_review_advisor_json>");
     expect(turns.every((turn) => !turn.prompt.includes(poisonedDiff))).toBe(true);
@@ -175,7 +193,32 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(challenge?.prompt).toContain("Turn 2/2 — challenge-and-record");
     expect(challenge?.prompt).toContain("Challenge the investigation receipt before recording");
     expect(challenge?.prompt).toContain("Then dedupe");
+    expect(challenge?.prompt).toContain(
+      "Do not remove a design finding because behavior passes",
+    );
+    expect(challenge?.prompt).toContain("If the author should change the PR before merge");
+    expect(challenge?.prompt).toContain(
+      "Require every unnecessary-complexity finding to carry a reduction case",
+    );
+    expect(challenge?.prompt).toContain(
+      "Reject a proposed simplification that increases net complexity",
+    );
+    expect(challenge?.prompt).toContain(
+      "Allow a helper or abstraction only when current consumers adopt it now and the combined source-and-test structure materially decreases",
+    );
+    expect(challenge?.prompt).toContain(
+      "hypothetical future failures without a present defect",
+    );
     expect(challenge?.prompt).toContain("Then batch-record in this exact sequence");
+    expect(challenge?.prompt).toContain(
+      "Drop an unverifiable terminology decision instead of rephrasing it",
+    );
+    expect(challenge?.prompt).toContain(
+      "using `submit_review` retries to discover the mismatch",
+    );
+    expect(challenge?.prompt).toContain(
+      "Set terminologyReview.noChangesReason only when decisions is empty",
+    );
     expect(challenge?.prompt.indexOf("record_findings")).toBeLessThan(
       challenge?.prompt.indexOf("record_review_receipt") ?? -1,
     );
