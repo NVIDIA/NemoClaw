@@ -80,8 +80,7 @@ FROM scratch AS hermes-agent-payload
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 # Channel-owned Google Chat runtime asset, loaded by the plugin beside its own
 # __init__.py.
-COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py \
-    /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
+COPY src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py /opt/nemoclaw-hermes-plugin/googlechat_adapter.py
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py
