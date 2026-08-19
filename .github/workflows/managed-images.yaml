@@ -1601,7 +1601,13 @@ jobs:
           fi
           contract_root="$RUNNER_TEMP/managed-base-contract"
           install -d -m 0700 "$contract_root"
-          printf '%s' "$contract_base64" | base64 --decode > "$contract_root/contract.json"
+          if ! printf '%s' "$contract_base64" |
+               base64 --decode > "$contract_root/contract.json" 2>/dev/null ||
+             [ "$(base64 < "$contract_root/contract.json" | tr -d '\n')" != "$contract_base64" ]; then
+            rm -f "$contract_root/contract.json"
+            echo "ERROR: exact base image producer output is not canonical base64." >&2
+            exit 1
+          fi
 
       - name: Validate exact base image contract
         id: base
@@ -2199,7 +2205,13 @@ jobs:
             local artifact="managed-image-candidate-${GITHUB_RUN_ID}-${producer_attempt}-${agent}-${platform}"
             local artifact_root="$candidate_root/$artifact"
             install -d -m 0700 "$artifact_root"
-            printf '%s' "$contract_base64" | base64 --decode > "$artifact_root/contract.json"
+            if ! printf '%s' "$contract_base64" |
+                 base64 --decode > "$artifact_root/contract.json" 2>/dev/null ||
+               [ "$(base64 < "$artifact_root/contract.json" | tr -d '\n')" != "$contract_base64" ]; then
+              rm -f "$artifact_root/contract.json"
+              echo "ERROR: managed image candidate producer output is not canonical base64." >&2
+              exit 1
+            fi
           }
           restore_candidate openclaw linux-amd64 "$OPENCLAW_AMD64_ATTEMPT" "$OPENCLAW_AMD64"
           restore_candidate openclaw linux-arm64 "$OPENCLAW_ARM64_ATTEMPT" "$OPENCLAW_ARM64"

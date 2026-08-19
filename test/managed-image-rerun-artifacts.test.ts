@@ -97,6 +97,33 @@ function runCandidateRestore(
   }
 }
 
+function runBaseRestore(
+  script: string,
+  contract: string,
+): { restored: boolean; status: number | null; stderr: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-base-restore-"));
+  try {
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AGENT: "openclaw",
+        DCODE_CONTRACT_BASE64: contract,
+        HERMES_CONTRACT_BASE64: contract,
+        OPENCLAW_CONTRACT_BASE64: contract,
+        RUNNER_TEMP: root,
+      },
+    });
+    return {
+      restored: fs.existsSync(path.join(root, "managed-base-contract", "contract.json")),
+      status: result.status,
+      stderr: result.stderr,
+    };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 describe("managed-image failed-job rerun artifacts", () => {
   // source-shape-contract: security -- Producer artifact identity must remain exact when GitHub reuses a successful job during a failed-job rerun
   it("retains exact producer outputs when successful jobs are reused on a failed-job rerun (#9529)", () => {
@@ -125,10 +152,20 @@ describe("managed-image failed-job rerun artifacts", () => {
     expect(managedCaller?.with?.["openclaw-base-contract-base64"]).toBe(
       "${{ needs.build-and-push-openclaw.outputs.contract-base64 }}",
     );
-    expect(
-      requiredStep(publisher?.steps, "Restore exact base image contract").env
-        ?.OPENCLAW_CONTRACT_BASE64,
-    ).toBe("${{ inputs.openclaw-base-contract-base64 }}");
+    const restoreBase = requiredStep(publisher?.steps, "Restore exact base image contract");
+    expect(restoreBase.env?.OPENCLAW_CONTRACT_BASE64).toBe(
+      "${{ inputs.openclaw-base-contract-base64 }}",
+    );
+    const canonicalBase = runBaseRestore(
+      restoreBase.run ?? "",
+      Buffer.from("{}\n").toString("base64"),
+    );
+    expect(canonicalBase.status, canonicalBase.stderr).toBe(0);
+    expect(canonicalBase.restored).toBe(true);
+    const noncanonicalBase = runBaseRestore(restoreBase.run ?? "", "TR==");
+    expect(noncanonicalBase.status).not.toBe(0);
+    expect(noncanonicalBase.restored).toBe(false);
+    expect(noncanonicalBase.stderr).not.toContain("TR==");
 
     expect(identity?.outputs).toEqual({
       cohort: "${{ steps.identity.outputs.cohort }}",
@@ -173,6 +210,11 @@ describe("managed-image failed-job rerun artifacts", () => {
     });
     expect(malformedContract.status).not.toBe(0);
     expect(malformedContract.stderr).not.toContain("not-base64");
+    const noncanonicalContract = runCandidateRestore(restoreCandidates.run ?? "", {
+      OPENCLAW_AMD64: "TR==",
+    });
+    expect(noncanonicalContract.status).not.toBe(0);
+    expect(noncanonicalContract.stderr).not.toContain("TR==");
 
     const barrier = requiredStep(promoter?.steps, "Validate complete managed image candidate set");
     const reusedKey = "openclaw|linux/amd64";
