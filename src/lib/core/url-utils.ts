@@ -189,6 +189,16 @@ export function isLoopbackHostname(hostname = ""): boolean {
   );
 }
 
+/**
+ * Classify a socket peer address as loopback. Dual-stack listeners report IPv4
+ * peers as IPv4-mapped IPv6 (`::ffff:127.0.0.1`), so strip that prefix first.
+ */
+export function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
+  if (!remoteAddress) return false;
+  const normalized = remoteAddress.replace(/^::ffff:/, "");
+  return normalized === "127.0.0.1" || normalized === "::1";
+}
+
 export function formatEnvAssignment(name: string, value: string): string {
   return `${name}=${value}`;
 }

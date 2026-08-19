@@ -4,9 +4,16 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import type { E2eExecutionMetadata } from "../../../tools/e2e/execution-coverage.mts";
+
 import { listTargets, requireTargets } from "./registry.ts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
-import { type LiveTargetSupport, liveTargetSupport } from "./runtime-support.ts";
+import {
+  liveTargetExecutionCoverage,
+  type LiveTargetSupport,
+  liveTargetSupport,
+  liveTargetTestTitle,
+} from "./runtime-support.ts";
 import type { TargetDefinition } from "./types.ts";
 
 interface Args {
@@ -15,8 +22,13 @@ interface Args {
   targets: string[];
 }
 
-export interface LiveTargetMatrixEntry {
+export interface LiveTargetInventoryEntry extends E2eExecutionMetadata {
   id: string;
+  supported: boolean;
+  supportReasons: string[];
+}
+
+export interface LiveTargetMatrixEntry extends LiveTargetInventoryEntry {
   runner: string;
   label: string;
   platform: string;
@@ -26,8 +38,6 @@ export interface LiveTargetMatrixEntry {
   expectedStateId: string;
   suites: string[];
   requiredSecrets: string[];
-  supported: boolean;
-  supportReasons: string[];
   pendingRuntimeSuites: string[];
 }
 
@@ -71,31 +81,15 @@ function printList() {
   }
 }
 
-function buildLabel(target: TargetDefinition): string {
-  const platform = target.environment?.platform ?? "unknown-platform";
-  const suites = target.suiteIds ?? [];
-  if (target.expectedFailure) {
-    const cls = target.expectedFailure.errorClass ?? "expected-failure";
-    return `${platform} · ${target.id} · expect-fail:${cls}`;
-  }
-  if (suites.length === 0) {
-    return `${platform} · ${target.id}`;
-  }
-  if (suites.length <= 3) {
-    return `${platform} · ${target.id} · ${suites.join("+")}`;
-  }
-  return `${platform} · ${target.id} · ${suites.length} suites`;
-}
-
 function liveMatrixEntry(
   target: TargetDefinition,
   support: LiveTargetSupport,
 ): LiveTargetMatrixEntry {
   const { runner } = resolveRunnerForTarget(target);
   return {
-    id: target.id,
+    ...liveTargetInventoryEntry(target, support),
     runner,
-    label: buildLabel(target),
+    label: liveTargetTestTitle(target, support),
     platform: target.environment?.platform ?? "unknown",
     install: target.environment?.install ?? "unknown",
     runtime: target.environment?.runtime ?? "unknown",
@@ -103,20 +97,34 @@ function liveMatrixEntry(
     expectedStateId: target.expectedStateId ?? "",
     suites: target.suiteIds ?? [],
     requiredSecrets: target.requiredSecrets ?? [],
-    supported: support.supported,
-    supportReasons: support.reasons,
     pendingRuntimeSuites: support.pendingRuntimeSuites,
   };
 }
 
+export function liveTargetInventoryEntry(
+  target: TargetDefinition,
+  support = liveTargetSupport(target),
+): LiveTargetInventoryEntry {
+  return {
+    id: target.id,
+    ...liveTargetExecutionCoverage(target, support),
+    supported: support.supported,
+    supportReasons: support.reasons,
+  };
+}
+
+export function buildLiveTargetInventory(): LiveTargetInventoryEntry[] {
+  return listTargets().map((target) => liveTargetInventoryEntry(target));
+}
+
 export function buildLiveTargetMatrix(ids: string[] = []): LiveTargetMatrixEntry[] {
-  const targetSupport = (ids.length > 0 ? requireTargets(ids) : listTargets()).map((target) => ({
-    target,
-    support: liveTargetSupport(target),
-  }));
-  const liveEntries =
-    ids.length > 0 ? targetSupport : targetSupport.filter(({ support }) => support.supported);
-  return liveEntries.map(({ target, support }) => liveMatrixEntry(target, support));
+  if (ids.length === 0) {
+    return listTargets().flatMap((target) => {
+      const support = liveTargetSupport(target);
+      return support.supported ? [liveMatrixEntry(target, support)] : [];
+    });
+  }
+  return requireTargets(ids).map((target) => liveMatrixEntry(target, liveTargetSupport(target)));
 }
 
 function emitLiveMatrix(ids: string[]) {

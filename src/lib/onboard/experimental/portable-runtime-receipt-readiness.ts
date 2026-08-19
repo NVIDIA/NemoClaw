@@ -11,6 +11,7 @@ import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { hardenPodmanSocketDirectory, type PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
+import { defaultPortableStateDir } from "../../state/portable-uninstall-retirement";
 import {
   inspectPortablePodmanReadiness,
   portablePodmanCommandEnvironment,
@@ -50,6 +51,18 @@ export type PortableLifecycleReceiptClassification =
     }
   | { readonly kind: "invalid-or-legacy" };
 
+/** Prove that a current Portable receipt owns the selected registry generation. */
+export function portableLifecycleReceiptMatchesGeneration(
+  receipt: PortableLifecycleReceiptClassification,
+  lifecycleGeneration: string | undefined,
+): receipt is Extract<PortableLifecycleReceiptClassification, { readonly kind: "current" }> {
+  return (
+    receipt.kind === "current" &&
+    typeof lifecycleGeneration === "string" &&
+    lifecycleGeneration === receipt.registryGeneration
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -64,15 +77,7 @@ export function portableDemoReceiptDirectory(stateDir: string): string {
 }
 
 export function defaultPortableDemoStateDir(env: NodeJS.ProcessEnv): string {
-  if (
-    env.VITEST === "true" &&
-    (env.HOME ?? "") === env.NEMOCLAW_TEST_BASE_HOME &&
-    env.NEMOCLAW_TEST_STATE_DIR &&
-    path.isAbsolute(env.NEMOCLAW_TEST_STATE_DIR)
-  ) {
-    return env.NEMOCLAW_TEST_STATE_DIR;
-  }
-  return path.join(env.HOME ?? os.homedir(), ".nemoclaw");
+  return defaultPortableStateDir(env);
 }
 
 function exactReceiptKeys(receipt: Record<string, unknown>): boolean {

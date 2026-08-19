@@ -68,6 +68,7 @@ const { createSandbox } = require(${onboardPath});
 createSandbox(
   null, "model", "provider", "openai-completions", "alpha", null, null, null,
   { name: "langchain-deepagents-code", policyAdditionsPath: ${dcodePolicyPath} }, null, null, null, [], null,
+  null,
   {
     recreate: true,
     toolDisclosure: "progressive",

@@ -18,29 +18,6 @@ import {
 describe("rebuildSandbox flow: recovery", () => {
   installRebuildFlowTestHooks();
 
-  it("restores a validated prepared manifest without taking a second backup (#6114)", async () => {
-    const harness = createRebuildFlowHarness({ sandboxListOutput: "alpha Error" });
-    const recoveryManifest = makePreparedRecoveryManifest();
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
-      "alpha",
-      recoveryManifest.backupPath,
-      { targetAgentType: "openclaw" },
-    );
-  });
-
   it("uses marked manifest provenance when the custom-image registry baseline is missing (#6108)", async () => {
     const customDockerfile = path.join(process.cwd(), "Dockerfile");
     const recoveryManifest = {
@@ -75,138 +52,6 @@ describe("rebuildSandbox flow: recovery", () => {
       recoveryManifest.backupPath,
       { targetAgentType: "openclaw", allowCustomImageWholeStateFileRestore: true },
     );
-  });
-
-  it("rejects a mismatched prepared manifest before deleting the sandbox (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      recoveryManifestValidation: () => ({
-        ok: false,
-        reason: "manifest sandbox 'beta' does not match 'alpha'",
-      }),
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Invalid recovery manifest");
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-  });
-
-  it("revalidates a prepared manifest immediately before deletion (#6114)", async () => {
-    let validationCount = 0;
-    const harness = createRebuildFlowHarness({
-      recoveryManifestValidation: (manifest) => {
-        validationCount++;
-        return validationCount === 1
-          ? { ok: true, manifest }
-          : { ok: false, reason: "persisted backup identity changed during validation" };
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Invalid recovery manifest");
-
-    expect(validationCount).toBe(2);
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
-  it("rejects registry configuration drift before prepared recovery deletion (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      preDeleteSandboxEntry: {
-        name: "alpha",
-        provider: "compatible-endpoint",
-        model: "new-model",
-        policies: ["npm", "github"],
-        agent: null,
-        agentVersion: "0.1.0",
-        nemoclawVersion: "0.0.71",
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Recovery registry configuration changed during preflight");
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
-  it("uses the refreshed registry snapshot for prepared-recovery rollback (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      defaultSandbox: "alpha",
-      preDeleteDefaultSandbox: "beta",
-      onboard: () => {
-        throw new Error("recreate failed");
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Recreate failed");
-
-    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-      {},
-    );
-  });
-
-  it("rejects a latest-backup change before prepared recovery deletion (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      preDeleteLatestManifest: {
-        ...makePreparedRecoveryManifest(),
-        timestamp: "2026-07-01T07-00-00-000Z",
-        backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T07-00-00-000Z",
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Recovery backup identity changed during preflight");
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
-  it("restores the registry entry when prepared-backup recreation fails (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      defaultSandbox: "alpha",
-      onboard: () => {
-        throw new Error("recreate failed");
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Recreate failed");
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-      {},
-    );
-    expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
   });
 
   it("keeps an explicit default choice made while the replacement was in flight (#7734)", async () => {
@@ -315,32 +160,34 @@ describe("rebuildSandbox flow: recovery", () => {
     return restarted;
   }
 
-  it.each(
-    POST_DELETE_PHASES,
-  )("keeps a registered replacement when a rebuild restarts from '%s' (#7734)", async (phase) => {
-    const restarted = restartRebuild(REPLACEMENT_PROBE, await interruptAfterCreate(phase));
+  it.each(POST_DELETE_PHASES)(
+    "keeps a registered replacement when a rebuild restarts from '%s' (#7734)",
+    async (phase) => {
+      const restarted = restartRebuild(REPLACEMENT_PROBE, await interruptAfterCreate(phase));
 
-    await restarted.rebuildSandbox("alpha", ["--yes"]);
+      await restarted.rebuildSandbox("alpha", ["--yes"]);
 
-    expectNoSandboxDelete(restarted.runOpenshellSpy);
-    expect(restarted.onboardSpy).not.toHaveBeenCalled();
-    expect(
-      (restarted.session.checkpoint as { sandboxRecreate: unknown }).sandboxRecreate,
-    ).toBeNull();
-  });
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+      expect(
+        (restarted.session.checkpoint as { sandboxRecreate: unknown }).sandboxRecreate,
+      ).toBeNull();
+    },
+  );
 
-  it.each(
-    POST_DELETE_PHASES,
-  )("refuses a foreign same-name sandbox when a rebuild restarts from '%s' (#7734)", async (phase) => {
-    const restarted = restartRebuild(FOREIGN_PROBE, await interruptAfterCreate(phase));
+  it.each(POST_DELETE_PHASES)(
+    "refuses a foreign same-name sandbox when a rebuild restarts from '%s' (#7734)",
+    async (phase) => {
+      const restarted = restartRebuild(FOREIGN_PROBE, await interruptAfterCreate(phase));
 
-    await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
-      /not the journaled replacement/,
-    );
+      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
+        /not the journaled replacement/,
+      );
 
-    expectNoSandboxDelete(restarted.runOpenshellSpy);
-    expect(restarted.onboardSpy).not.toHaveBeenCalled();
-  });
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    },
+  );
 
   const SOURCE_PROBE = "Name: alpha\nId: sbx-source\nPhase: Ready\n";
   const MISSING_SOURCE = {
@@ -390,65 +237,69 @@ describe("rebuildSandbox flow: recovery", () => {
     return restarted;
   }
 
-  it.each(
-    LIVE_SOURCE_PHASES,
-  )("deletes the journaled source when a rebuild restarts from '%s' (#7734)", async (phase) => {
-    const restarted = restartFromJournaledSource(
-      [SOURCE_PROBE, SOURCE_PROBE, null],
-      await interruptBeforeCreate(phase),
-    );
+  it.each(LIVE_SOURCE_PHASES)(
+    "deletes the journaled source when a rebuild restarts from '%s' (#7734)",
+    async (phase) => {
+      const restarted = restartFromJournaledSource(
+        [SOURCE_PROBE, SOURCE_PROBE, null],
+        await interruptBeforeCreate(phase),
+      );
 
-    await restarted.rebuildSandbox("alpha", ["--yes"]);
+      await restarted.rebuildSandbox("alpha", ["--yes"]);
 
-    expect(restarted.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(restarted.onboardSpy).toHaveBeenCalled();
-  });
+      expect(restarted.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(restarted.onboardSpy).toHaveBeenCalled();
+    },
+  );
 
-  it.each(
-    PRE_CREATE_PHASES,
-  )("creates the replacement without a second delete when a rebuild restarts from '%s' with the source already absent (#7734)", async (phase) => {
-    const restarted = restartFromJournaledSource([null], await interruptBeforeCreate(phase));
+  it.each(PRE_CREATE_PHASES)(
+    "creates the replacement without a second delete when a rebuild restarts from '%s' with the source already absent (#7734)",
+    async (phase) => {
+      const restarted = restartFromJournaledSource([null], await interruptBeforeCreate(phase));
 
-    await restarted.rebuildSandbox("alpha", ["--yes"]);
+      await restarted.rebuildSandbox("alpha", ["--yes"]);
 
-    expectNoSandboxDelete(restarted.runOpenshellSpy);
-    expect(restarted.onboardSpy).toHaveBeenCalled();
-  });
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).toHaveBeenCalled();
+    },
+  );
 
-  it.each(
-    LIVE_SOURCE_PHASES,
-  )("stops before deletion when a same-name sandbox appears after a '%s' restart probe (#7734)", async (phase) => {
-    const restarted = restartFromJournaledSource(
-      [null, FOREIGN_PROBE],
-      await interruptBeforeCreate(phase),
-    );
+  it.each(LIVE_SOURCE_PHASES)(
+    "stops before deletion when a same-name sandbox appears after a '%s' restart probe (#7734)",
+    async (phase) => {
+      const restarted = restartFromJournaledSource(
+        [null, FOREIGN_PROBE],
+        await interruptBeforeCreate(phase),
+      );
 
-    await expect(
-      restarted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow(/the live same-name sandbox is not the journaled source/);
+      await expect(
+        restarted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow(/the live same-name sandbox is not the journaled source/);
 
-    expectNoSandboxDelete(restarted.runOpenshellSpy);
-    expect(restarted.onboardSpy).not.toHaveBeenCalled();
-  });
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    },
+  );
 
-  it.each(
-    LIVE_SOURCE_PHASES,
-  )("refuses a changed same-name sandbox when a rebuild restarts from '%s' (#7734)", async (phase) => {
-    const restarted = restartFromJournaledSource(
-      [FOREIGN_PROBE, null],
-      await interruptBeforeCreate(phase),
-    );
+  it.each(LIVE_SOURCE_PHASES)(
+    "refuses a changed same-name sandbox when a rebuild restarts from '%s' (#7734)",
+    async (phase) => {
+      const restarted = restartFromJournaledSource(
+        [FOREIGN_PROBE, null],
+        await interruptBeforeCreate(phase),
+      );
 
-    await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
-      /no longer has the journaled source identity/,
-    );
+      await expect(restarted.rebuildSandbox("alpha", ["--yes"])).rejects.toThrow(
+        /no longer has the journaled source identity/,
+      );
 
-    expectNoSandboxDelete(restarted.runOpenshellSpy);
-    expect(restarted.onboardSpy).not.toHaveBeenCalled();
-  });
+      expectNoSandboxDelete(restarted.runOpenshellSpy);
+      expect(restarted.onboardSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses a live same-name sandbox when a rebuild restarts from 'deleted' (#7734)", async () => {
     const restarted = restartFromJournaledSource(
@@ -690,7 +541,7 @@ describe("rebuildSandbox flow: recovery", () => {
     ).toBeGreaterThan(harness.onboardSpy.mock.invocationCallOrder[0]);
   });
 
-  it("finishes the rebuild while surfacing incomplete post-restore work", async () => {
+  it("fails the rebuild while surfacing incomplete OpenClaw post-restore work", async () => {
     const harness = createRebuildFlowHarness({
       sandboxEntry: { policyPresetsFinalized: true, policyTier: "balanced" },
       executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
@@ -710,7 +561,7 @@ describe("rebuildSandbox flow: recovery", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("OpenClaw config integrity verification failed after rebuild");
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("rebuilt but some post-restore steps were incomplete");

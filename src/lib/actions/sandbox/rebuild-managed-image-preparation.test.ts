@@ -12,6 +12,7 @@ import {
   createPreparedDcodeImageFixture,
   dcodeInput,
   expectPreparedImage,
+  writeDcodeRebuildDockerfile,
 } from "../../../../test/helpers/rebuild-managed-image-preflight-harness";
 import { ROOT } from "../../runner";
 import {
@@ -72,7 +73,7 @@ describe("managed DCode rebuild image preparation", () => {
   it("retries retained-context cleanup after a transient removal failure (#6195)", async () => {
     const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-cleanup-"));
     const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    writeDcodeRebuildDockerfile(stagedDockerfile);
     const cleanupBuildCtx = vi
       .fn<() => boolean>()
       .mockReturnValueOnce(false)
@@ -106,7 +107,7 @@ describe("managed DCode rebuild image preparation", () => {
   it("redacts failed build output and cleans every temporary image input (#6195)", async () => {
     const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-failure-"));
     const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    writeDcodeRebuildDockerfile(stagedDockerfile);
     const cleanupBuildCtx = vi.fn(() => {
       fs.rmSync(buildCtx, { recursive: true, force: true });
       return true;

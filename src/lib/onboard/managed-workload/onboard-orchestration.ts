@@ -41,6 +41,10 @@ import type {
   SandboxCreateIntent,
 } from "../sandbox-create-intent-types";
 import {
+  materializeHermesPortableCreatePlan,
+  type SandboxCreatePlan,
+} from "../sandbox-create-plan-materialization";
+import {
   OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   prepareSandboxCreateLaunch,
   prepareSandboxCreateLaunchWithPrebuild,
@@ -50,6 +54,7 @@ import {
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import {
+  liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
@@ -59,6 +64,11 @@ import {
   prepareSandboxWorkloadSourceFromRebuildHandoff,
 } from "../workload/rebuild";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
+import {
+  prepareManagedHermesStateVolume,
+  type ManagedHermesStateVolumeContext,
+  type ManagedHermesStateVolumeDeps,
+} from "./hermes-state-volume";
 
 type ManagedProfileInput = Omit<
   ManagedStartupOnboardProfileInput,
@@ -68,6 +78,39 @@ type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
 type SupportedBootstrap = Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
 type BootstrapProvider = RuntimeProviderBundle & { readonly bootstrap: SupportedBootstrap };
+
+export type ManagedHermesStateVolumeOnboardLifecycle = {
+  materializeSandboxCreatePlan(
+    input: MaterializeSandboxCreatePlanInput,
+    materialize: (input: MaterializeSandboxCreatePlanInput) => SandboxCreatePlan,
+  ): SandboxCreatePlan;
+  commit(): void;
+};
+
+export function createManagedHermesStateVolumeOnboardLifecycle(
+  input: Omit<ManagedHermesStateVolumeContext, "runtimeProviderId"> & {
+    readonly runtimeProvider: RuntimeProviderBundle | null;
+  },
+  deps: ManagedHermesStateVolumeDeps = {},
+): ManagedHermesStateVolumeOnboardLifecycle {
+  const scope = prepareManagedHermesStateVolume(
+    {
+      agentName: input.agentName,
+      runtimeProviderId: input.runtimeProvider?.identity.id,
+      sandboxName: input.sandboxName,
+      workloadKind: input.workloadKind,
+    },
+    deps,
+  );
+  return {
+    materializeSandboxCreatePlan(input, materialize) {
+      return materialize({ ...input, managedStateMount: scope?.mount });
+    },
+    commit() {
+      scope?.commit();
+    },
+  };
+}
 
 export interface ManagedWorkloadOnboardDependencies {
   readonly resolveAgentInferenceApi: typeof import("../../inference/config").resolveAgentInferenceApi;
@@ -124,6 +167,28 @@ export async function prepareSandboxWorkloadForPortableLifecycle(
   return workload;
 }
 
+/** Select the existing legacy Hermes source without staging, profile, prebuild, or Docker work. */
+export async function prepareHermesPortableSandboxWorkloadForLifecycle(
+  runtime: ManagedWorkloadOnboardRuntime,
+  expectedDockerfilePath: string,
+): Promise<PreparedSandboxWorkloadSource> {
+  const workload = await runtime.ensurePreparedWorkload();
+  if (workload.source.kind === "managed-image") {
+    throw new Error(
+      "Hermes portable onboarding cannot use managed-image bootstrap because that path requires Docker lifecycle operations.",
+    );
+  }
+  if (
+    workload.source.reason !== "runtime-unsupported" ||
+    workload.source.dockerfilePath !== expectedDockerfilePath
+  ) {
+    throw new Error(
+      "Hermes portable onboarding requires the shipped Hermes Dockerfile source selected for the current runtime.",
+    );
+  }
+  return workload;
+}
+
 function requireBootstrapProvider(provider: RuntimeProviderBundle | null): BootstrapProvider {
   if (!provider || !provider.bootstrap.supported) {
     throw new Error("Selected runtime provider does not support managed bootstrap onboarding.");
@@ -157,6 +222,10 @@ export function createManagedWorkloadOnboardRuntime(
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
     const catalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
+    const liveCatalog = liveE2eManagedImageCatalog(input.startupProfile.environment);
+    if (catalogRevision && liveCatalog) {
+      throw new Error("live E2E managed-image revision and catalog authority conflict");
+    }
     preparedWorkloadPromise ??= input.managedWorkloadRebuild
       ? Promise.resolve(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
@@ -171,7 +240,8 @@ export function createManagedWorkloadOnboardRuntime(
           customDockerfilePath: input.customDockerfilePath,
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
-          catalogPath: input.tempManagedRuntimeCatalog,
+          catalogPath: input.tempManagedRuntimeCatalog ?? liveCatalog?.path ?? null,
+          ...(liveCatalog ? { expectedCatalogRevision: liveCatalog.revision } : {}),
           ...(catalogRevision ? { catalogRevision } : {}),
           acceptedCandidateContract: isCandidateAgent(input.agentName)
             ? readCandidateQualificationReceipt(input.agentName)
@@ -384,9 +454,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
     input.dependencies.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
-    const patch = await (
-      input.dependencies.resolveSandboxBuildPatch ?? resolveSandboxBuildPatch
-    )({
+    const patch = await (input.dependencies.resolveSandboxBuildPatch ?? resolveSandboxBuildPatch)({
       // Build-context staging resolves managed-agent base-image provenance.
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
@@ -420,6 +488,43 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     legacyBuildContext,
     launch,
   };
+}
+
+/** Build the complete schema-5 launch descriptor before any shared onboarding effect. */
+export function prepareHermesPortableOnboardSandboxLaunch(input: {
+  readonly intent: SandboxCreateIntent;
+  readonly fromRef: string;
+  readonly launchInput: Omit<SandboxCreateLaunchInput, "createArgs">;
+  readonly gpuConfig: SandboxGpuConfig;
+}): PreparedOnboardSandboxWorkloadLaunch {
+  const createPlan = materializeHermesPortableCreatePlan({
+    intent: input.intent,
+    fromRef: input.fromRef,
+  });
+  const launch = prepareSandboxCreateLaunch({
+    ...input.launchInput,
+    createArgs: createPlan.createArgs,
+  });
+  return {
+    ...createPlan,
+    initialGpuRoute: initialDockerGpuRoute(createPlan.gpuRoutePlan),
+    sandboxReadyTimeoutSecs: getSandboxReadyTimeoutSecs(input.gpuConfig),
+    buildId: "hermes-portable",
+    dashboardRemoteBindPrepared: false,
+    legacyBuildContext: null,
+    launch: {
+      ...launch,
+      prebuild: { createArgs: [...createPlan.createArgs], imageRef: null, imageId: null },
+    },
+  };
+}
+
+export async function prepareSelectedOnboardSandboxWorkloadLaunch(
+  hermesPortable: boolean,
+  prepareHermes: () => PreparedOnboardSandboxWorkloadLaunch,
+  prepareOrdinary: () => Promise<PreparedOnboardSandboxWorkloadLaunch>,
+): Promise<PreparedOnboardSandboxWorkloadLaunch> {
+  return hermesPortable ? prepareHermes() : await prepareOrdinary();
 }
 
 export function resolveOnboardManagedBootstrapLaunch(input: {

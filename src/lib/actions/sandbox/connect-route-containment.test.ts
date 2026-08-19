@@ -413,7 +413,7 @@ describe("connect route containment", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  async function verifyInferenceRouteGatewayContainment() {
+  it("scopes every inference read and repair write to the target non-default gateway", async () => {
     const alpha = {
       name: "alpha",
       agent: "openclaw",
@@ -469,10 +469,5 @@ describe("connect route containment", () => {
       expect.arrayContaining(["-g", "nemoclaw"]),
     );
     expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
-  }
-
-  it(
-    "scopes every inference read and repair write to the target non-default gateway",
-    verifyInferenceRouteGatewayContainment,
-  );
+  });
 });

@@ -122,12 +122,6 @@ function namedVitestProjects(): { name: string; setupFiles?: string[] }[] {
     .filter((test): test is { name: string; setupFiles?: string[] } => test?.name !== undefined);
 }
 
-function expectFixtureUmaskAbsent(projects: ReturnType<typeof namedVitestProjects>): void {
-  for (const project of projects) {
-    expect(project.setupFiles ?? [], project.name).not.toContain(FIXTURE_UMASK_SETUP);
-  }
-}
-
 it("derives npm test projects and keeps omitted live projects off the fixture umask (#6448)", () => {
   const npmCli = process.env.npm_execpath ?? "";
   expect(npmCli).not.toBe("");
@@ -186,9 +180,11 @@ it("derives npm test projects and keeps omitted live projects off the fixture um
       expect(setupFiles, name).toContain(FIXTURE_UMASK_SETUP);
       expect(setupFiles?.indexOf(FIXTURE_UMASK_SETUP), name).toBe(0);
     });
-    expectFixtureUmaskAbsent(
-      namedVitestProjects().filter((project) => !selectedProjectNames.has(project.name)),
-    );
+    for (const project of namedVitestProjects().filter(
+      ({ name }) => !selectedProjectNames.has(name),
+    )) {
+      expect(project.setupFiles ?? [], project.name).not.toContain(FIXTURE_UMASK_SETUP);
+    }
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }

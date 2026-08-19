@@ -184,9 +184,8 @@ describe("live E2E target gating", () => {
   it("rejects a TARGET_ID no registry target declares (#8286)", testTimeoutOptions(30_000), () => {
     const file = "registry-targets.test.ts";
 
-    // The workflow selects one target with `-t "^${TARGET_ID}$"`. An id no
-    // target declares matches nothing, and an empty id builds `-t "^$"`,
-    // which also matches nothing, so the run would collect no test and
+    // The workflow selects one target by its stable title prefix. An ID no
+    // target declares matches nothing, so the run would collect no test and
     // exit 0 having executed no target.
     const unknown = listLiveTests({
       enabled: true,

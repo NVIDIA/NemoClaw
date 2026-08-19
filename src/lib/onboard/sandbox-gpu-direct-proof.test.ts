@@ -13,6 +13,40 @@ import {
 } from "./sandbox-gpu-preflight";
 
 describe("direct sandbox GPU proof", () => {
+  it("uses the exact gateway and replacement environment for Hermes portable proof (#9203)", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const buildProofCommands = vi.fn(() => [
+      { id: "nvidia-smi", args: ["sandbox", "exec"], label: "nvidia-smi", optional: true },
+    ]);
+    const env = { HOME: "/home/test", XDG_RUNTIME_DIR: "/run/user/1000" };
+    const resolveOpenShellCommandAuthority = vi.fn(() => ({
+      env,
+      executablePath: "/usr/bin/openshell",
+    }));
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell,
+      buildDirectSandboxGpuProofCommands: buildProofCommands,
+      compactText: (value) => value,
+      redact: (value) => String(value),
+      detectNvidiaPlatform: () => "linux",
+      gatewayName: "nemoclaw",
+      subprocessEnv: env,
+      resolveOpenShellCommandAuthority,
+    });
+
+    expect(verifier("alpha").status).toBe("unverified");
+    expect(buildProofCommands).toHaveBeenCalledWith("alpha", "nemoclaw");
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec"],
+      expect.objectContaining({
+        env,
+        openshellBinary: "/usr/bin/openshell",
+        replaceEnv: true,
+      }),
+    );
+    expect(resolveOpenShellCommandAuthority).toHaveBeenCalledOnce();
+  });
+
   it("treats optional direct sandbox GPU proof failures as non-fatal and reports unverified", () => {
     const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "optional proof failed" }));
     const verifier = createDirectSandboxGpuVerifier({

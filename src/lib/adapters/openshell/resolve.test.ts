@@ -5,7 +5,65 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { PodmanExecutableStat } from "../podman/executable-authority";
 import { resolveOpenshell } from "./resolve";
+import {
+  assertHermesPortableOpenShellExecutableAuthority,
+  captureHermesPortableOpenShellExecutableAuthority,
+  type HermesPortableOpenShellExecutableAuthorityDeps,
+} from "./resolve-shared";
+
+const AUTHORITY_BINARY = "/opt/nemoclaw/bin/openshell";
+
+function executableAuthorityHarness() {
+  let executableInode = 10n;
+  let executableBytes = Buffer.from("openshell-binary");
+  let parentInode = 20n;
+  const stat = (
+    kind: "directory" | "file",
+    inode: bigint,
+    size = 0n,
+  ): PodmanExecutableStat => ({
+    dev: 1n,
+    ino: inode,
+    mode: kind === "file" ? 0o100755n : 0o40755n,
+    uid: kind === "file" ? 1000n : 0n,
+    size,
+    mtimeNs: 30n,
+    ctimeNs: 40n,
+    isDirectory: () => kind === "directory",
+    isFile: () => kind === "file",
+    isSymbolicLink: () => false,
+  });
+  const deps: HermesPortableOpenShellExecutableAuthorityDeps = {
+    uid: 1000,
+    realpath: (filePath) => filePath,
+    readFile: () => executableBytes,
+    lstat: (filePath) =>
+      filePath === AUTHORITY_BINARY
+        ? stat("file", executableInode, BigInt(executableBytes.byteLength))
+        : stat("directory", filePath === "/opt/nemoclaw/bin" ? parentInode : 21n),
+    resolve: (env) => env.NEMOCLAW_OPENSHELL_BIN ?? AUTHORITY_BINARY,
+    runVersion: () => ({
+      status: 0,
+      stdout: "openshell 0.0.101\n",
+      stderr: "",
+    }),
+  };
+  return {
+    deps,
+    replaceBinary: () => {
+      executableInode += 1n;
+      executableBytes = Buffer.from("replacement-binary");
+    },
+    changeDigest: () => {
+      executableBytes = Buffer.alloc(executableBytes.byteLength, 0x78);
+    },
+    rotateParent: () => {
+      parentInode += 1n;
+    },
+  };
+}
 
 describe("lib/resolve-openshell", () => {
   it("returns command -v result when absolute path", () => {
@@ -120,5 +178,139 @@ describe("lib/resolve-openshell", () => {
         home: "relative/path",
       }),
     ).toBeNull();
+  });
+});
+
+describe("Hermes portable OpenShell executable authority", () => {
+  const childEnv = { HOME: "/home/test", PATH: "/opt/nemoclaw/bin" };
+
+  it("captures and reuses the exact canonical OpenShell 0.0.101 generation (#9203)", () => {
+    const harness = executableAuthorityHarness();
+    const authority = captureHermesPortableOpenShellExecutableAuthority(
+      AUTHORITY_BINARY,
+      childEnv,
+      childEnv,
+      harness.deps,
+    );
+
+    expect(authority.version).toBe("0.0.101");
+    expect(authority.executable.executablePath).toBe(AUTHORITY_BINARY);
+    expect(
+      assertHermesPortableOpenShellExecutableAuthority(
+        authority,
+        childEnv,
+        childEnv,
+        harness.deps,
+      ),
+    ).toBe(AUTHORITY_BINARY);
+  });
+
+  it("rejects PATH or explicit binary selection drift before reuse (#9203)", () => {
+    const harness = executableAuthorityHarness();
+    const authority = captureHermesPortableOpenShellExecutableAuthority(
+      AUTHORITY_BINARY,
+      childEnv,
+      childEnv,
+      harness.deps,
+    );
+
+    expect(() =>
+      assertHermesPortableOpenShellExecutableAuthority(
+        authority,
+        childEnv,
+        { ...childEnv, NEMOCLAW_OPENSHELL_BIN: "/tmp/other-openshell" },
+        harness.deps,
+      ),
+    ).toThrow("disagrees with the current OpenShell resolution");
+  });
+
+  it("rejects binary replacement and parent rotation (#9203)", () => {
+    const binaryHarness = executableAuthorityHarness();
+    const binaryAuthority = captureHermesPortableOpenShellExecutableAuthority(
+      AUTHORITY_BINARY,
+      childEnv,
+      childEnv,
+      binaryHarness.deps,
+    );
+    binaryHarness.replaceBinary();
+    expect(() =>
+      assertHermesPortableOpenShellExecutableAuthority(
+        binaryAuthority,
+        childEnv,
+        childEnv,
+        binaryHarness.deps,
+      ),
+    ).toThrow("executable generation changed after reservation");
+
+    const parentHarness = executableAuthorityHarness();
+    const parentAuthority = captureHermesPortableOpenShellExecutableAuthority(
+      AUTHORITY_BINARY,
+      childEnv,
+      childEnv,
+      parentHarness.deps,
+    );
+    parentHarness.rotateParent();
+    expect(() =>
+      assertHermesPortableOpenShellExecutableAuthority(
+        parentAuthority,
+        childEnv,
+        childEnv,
+        parentHarness.deps,
+      ),
+    ).toThrow("executable generation changed after reservation");
+  });
+
+  it("rejects a same-generation content digest mismatch (#9203)", () => {
+    const harness = executableAuthorityHarness();
+    const authority = captureHermesPortableOpenShellExecutableAuthority(
+      AUTHORITY_BINARY,
+      childEnv,
+      childEnv,
+      harness.deps,
+    );
+    harness.changeDigest();
+
+    expect(() =>
+      assertHermesPortableOpenShellExecutableAuthority(
+        authority,
+        childEnv,
+        childEnv,
+        harness.deps,
+      ),
+    ).toThrow("executable generation changed after reservation");
+  });
+
+  it("rejects version mismatch before authority is captured or reused (#9203)", () => {
+    const harness = executableAuthorityHarness();
+    expect(() =>
+      captureHermesPortableOpenShellExecutableAuthority(
+        AUTHORITY_BINARY,
+        childEnv,
+        childEnv,
+        {
+          ...harness.deps,
+          runVersion: () => ({ status: 0, stdout: "openshell 0.0.102\n", stderr: "" }),
+        },
+      ),
+    ).toThrow("requires OpenShell 0.0.101");
+
+    const reuseHarness = executableAuthorityHarness();
+    const authority = captureHermesPortableOpenShellExecutableAuthority(
+      AUTHORITY_BINARY,
+      childEnv,
+      childEnv,
+      reuseHarness.deps,
+    );
+    expect(() =>
+      assertHermesPortableOpenShellExecutableAuthority(
+        authority,
+        childEnv,
+        childEnv,
+        {
+          ...reuseHarness.deps,
+          runVersion: () => ({ status: 0, stdout: "openshell 0.0.102\n", stderr: "" }),
+        },
+      ),
+    ).toThrow("requires OpenShell 0.0.101");
   });
 });
