@@ -42,6 +42,13 @@ const BUILD_SETTINGS = {
   toolDisclosure: "direct",
 } as const;
 
+function createPrivateFixtureRoot(): string {
+  const homeDir = fs.realpathSync(os.homedir());
+  const fixtureRoot = fs.mkdtempSync(path.join(homeDir, ".nemoclaw-hermes-admission-"));
+  fs.chmodSync(fixtureRoot, 0o700);
+  return fixtureRoot;
+}
+
 function cloneWithInstaller(
   installer: string,
   ref: string,
@@ -72,9 +79,41 @@ function cloneWithInstaller(
 }
 
 describe("Hermes portable installer admission", testTimeoutOptions(60_000), () => {
+  it.each([
+    { access: "group", mode: 0o720 },
+    { access: "other", mode: 0o702 },
+  ])(
+    "rejects a source beneath a $access-writable GitHub workspace ancestor (#9211)",
+    ({ mode }) => {
+      const fixtureRoot = createPrivateFixtureRoot();
+      const githubWorkRoot = path.join(fixtureRoot, "home", "runner", "work");
+      const workspaceRoot = path.join(githubWorkRoot, "NemoClaw", "NemoClaw");
+      const checkout = path.join(workspaceRoot, "source");
+
+      try {
+        fs.mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
+        const sourceRevision = spawnSync("git", ["rev-parse", "HEAD"], {
+          cwd: ROOT,
+          encoding: "utf8",
+        }).stdout.trim();
+        cloneWithInstaller(CURL_PIPE_INSTALLER, sourceRevision, checkout, "0077");
+        makeHermesPortableCheckoutPrivate(checkout);
+        const sourceRoot = fs.realpathSync(checkout);
+        expect(
+          createHermesPortableBuildContextPlan(sourceRoot, BUILD_SETTINGS).authority.sourceRevision,
+        ).toBe(sourceRevision);
+        fs.chmodSync(githubWorkRoot, mode);
+        expect(() => createHermesPortableBuildContextPlan(sourceRoot, BUILD_SETTINGS)).toThrow(
+          "Hermes portable build context source root directory chain is unsafe",
+        );
+      } finally {
+        fs.rmSync(fixtureRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("activates one schema-5 receipt from a private checkout and validates both installer sources (#9211)", async () => {
-    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-admission-"));
-    fs.chmodSync(fixtureRoot, 0o700);
+    const fixtureRoot = createPrivateFixtureRoot();
     const stateDir = path.join(fixtureRoot, "state");
     const homeDir = path.join(fixtureRoot, "home");
     fs.mkdirSync(stateDir, { mode: 0o700 });
