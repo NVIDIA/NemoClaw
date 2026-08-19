@@ -573,11 +573,12 @@ jobs:
       - name: Assemble reused a4f9b59 managed-image catalog
         if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          [[ "${{ inputs.checkout_sha }}" == "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e" ]] || {
+          [[ "$CHECKOUT_SHA" == "a4f9b59aa64f88532a3e64e949dd1b4068aa1f1e" ]] || {
             echo "::error::Temporary reused catalog is pinned to a4f9b59" >&2
             exit 1
           }

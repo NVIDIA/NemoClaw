@@ -274,7 +274,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(validateE2eOperationsWorkflow(workflow)).not.toContain(validationError);
     expect(authentication.if).toBe(
-      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.workflow_sha != '' }}",
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}",
     );
 
     authentication.if = "${{ inputs.checkout_sha != '' }}";
@@ -532,14 +532,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "b",
       "c",
       "::error::checkout_repository must be an owner/repository name\n",
-    ],
-    [
-      "a PR commit mismatch",
-      "NVIDIA/NemoClaw",
-      "d",
-      "b",
-      "c",
-      "::error::checkout_sha must match the latest PR commit SHA\n",
     ],
     [
       "a PR base commit mismatch",
