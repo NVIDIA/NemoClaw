@@ -380,8 +380,12 @@ describe("dashboard port reservation", () => {
 
     await withDashboardPortReservationScope(async (scope) => {
       scope.current = await reserveDashboardPort(port);
+      const blockedAttempt = listenOnLoopback(port).then(async (listener) => {
+        await closeServer(listener);
+        throw new Error("expected dashboard reservation to hold the port");
+      });
       await assert.rejects(
-        listenOnLoopback(port),
+        blockedAttempt,
         (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
       );
 
