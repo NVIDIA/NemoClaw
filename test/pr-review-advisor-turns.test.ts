@@ -77,18 +77,18 @@ describe("PR review advisor turn trace", () => {
       .flatMap((turn) => turn.contextToolResults ?? [])
       .filter((result) => result.contentType === "json" && result.content.includes('"riskPlan"'))
       .reduce((total, result) => total + Buffer.byteLength(result.content, "utf8"), 0);
-    const metadataToolContent = turns
-      .find((turn) => turn.name === "synthesize-json")
+    const investigationContext = turns
+      .find((turn) => turn.name === "investigate")
       ?.contextToolResults?.find((result) => result.toolName === "pr_review_metadata")?.content;
 
     expect(reviewContext.changedFiles).toMatchObject({ count: 3000, omitted: 2980 });
     expect(reviewContext.changedFiles.sample).toHaveLength(20);
     expect(reviewContext.changedFiles.sample.every((file) => file.length <= 240)).toBe(true);
     expect(riskBytes).toBeLessThan(192 * 1024);
-    expect(metadataToolContent).toContain(
+    expect(investigationContext).toContain(
       "runner restores all 3000 deterministic changed-file path(s)",
     );
-    expect(metadataToolContent).not.toContain(changedFiles[0]);
+    expect(investigationContext).not.toContain(changedFiles[0]);
   });
 
   it("derives ordered prompt artifact names from arbitrary stages (#6446)", () => {

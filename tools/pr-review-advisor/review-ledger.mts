@@ -58,9 +58,10 @@ export type ReviewFinding = Readonly<{
   }>;
 }>;
 
-type FindingInput = Omit<ReviewFinding, "id" | "status" | "supersededBy">;
+export type ReviewFindingInput = Omit<ReviewFinding, "id" | "status" | "supersededBy">;
+type FindingInput = ReviewFindingInput;
 type FindingPatch = Partial<Omit<FindingInput, "evidence">>;
-type CandidateFindingInput = FindingInput & {
+export type CandidateFindingInput = FindingInput & {
   basis: {
     kind: FindingBasisKind;
     observed: string;
@@ -295,6 +296,30 @@ export function createReviewFindingLedger(): ReviewFindingLedger {
   return new ReviewFindingLedger();
 }
 
+export function validateReviewFindingSubmission(
+  candidates: readonly CandidateFindingInput[],
+): ReviewFindingLedgerSnapshot {
+  const ledger = createReviewFindingLedger();
+  if (candidates.length > 0) {
+    const findings = candidates.map((candidate) => {
+      const policyEntry = Object.entries(ADDITION_POLICIES).find(
+        ([, policy]) =>
+          policy.categories.includes(candidate.category) &&
+          policy.basisKinds.includes(candidate.basis.kind),
+      );
+      const [stage, policy] = policyEntry ?? ["final-submission", undefined];
+      validateCandidateFinding(candidate, stage, policy);
+      const { basis: _basis, ...finding } = candidate;
+      return finding;
+    });
+    ledger.applyBatch(
+      findings.map((finding) => ({ operation: "add" as const, finding })),
+      "submit-review",
+    );
+  }
+  return ledger.snapshot();
+}
+
 const string = Type.String({ minLength: 1 });
 const severity = Type.Union(SEVERITIES.map((value) => Type.Literal(value)));
 const category = Type.Union(CATEGORIES.map((value) => Type.Literal(value)));
@@ -464,27 +489,21 @@ function ledgerCommitOperations(input: LedgerCommitInput, stage: string): Ledger
   });
   return [
     ...additions,
-    ...input.updates.map(
-      (update): LedgerOperation => ({
-        operation: "update",
-        ...update,
-        evidence: [...update.evidence],
-      }),
-    ),
-    ...input.resolutions.map(
-      (resolution): LedgerOperation => ({
-        operation: "resolve",
-        ...resolution,
-        evidence: [...resolution.evidence],
-      }),
-    ),
-    ...input.supersessions.map(
-      (supersession): LedgerOperation => ({
-        operation: "supersede",
-        ...supersession,
-        evidence: [...supersession.evidence],
-      }),
-    ),
+    ...input.updates.map((update): LedgerOperation => ({
+      operation: "update",
+      ...update,
+      evidence: [...update.evidence],
+    })),
+    ...input.resolutions.map((resolution): LedgerOperation => ({
+      operation: "resolve",
+      ...resolution,
+      evidence: [...resolution.evidence],
+    })),
+    ...input.supersessions.map((supersession): LedgerOperation => ({
+      operation: "supersede",
+      ...supersession,
+      evidence: [...supersession.evidence],
+    })),
   ];
 }
 

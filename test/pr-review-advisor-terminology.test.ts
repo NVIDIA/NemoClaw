@@ -228,7 +228,7 @@ describe("PR review advisor terminology evidence", () => {
         undefined,
         undefined as never,
       ),
-    ).rejects.toThrow("available only during terminology analysis");
+    ).rejects.toThrow("available only during review investigation");
     await expect(
       update.execute(
         "update-wrong-stage",

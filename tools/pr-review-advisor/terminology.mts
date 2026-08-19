@@ -93,12 +93,12 @@ export type TerminologyLedgerSnapshot = Readonly<{
   review: TerminologyReview;
 }>;
 
-type DecisionInput = Omit<TerminologyDecision, "id" | "source"> & {
+export type TerminologyDecisionInput = Omit<TerminologyDecision, "id" | "source"> & {
   source: { file: string; line: number };
 };
 
-type TerminologyCommitInput = Readonly<{
-  decisions: readonly DecisionInput[];
+export type TerminologyCommitInput = Readonly<{
+  decisions: readonly TerminologyDecisionInput[];
   noChangesReason: string | null;
 }>;
 
@@ -234,6 +234,7 @@ const commitSchema = Type.Object(
 export type TerminologyToolController = {
   tools: ToolDefinition[];
   setStage(stage: string): void;
+  traces(): ReadonlyMap<string, TerminologyTrace>;
 };
 
 export function createTerminologyToolController({
@@ -261,8 +262,8 @@ export function createTerminologyToolController({
     ),
     executionMode: "sequential",
     execute: async (_id, input) => {
-      if (stage !== "terminology-review-analysis") {
-        throw new Error(`${TERMINOLOGY_TRACE_TOOL} is available only during terminology analysis`);
+      if (stage !== "investigate" && stage !== "terminology-review-analysis") {
+        throw new Error(`${TERMINOLOGY_TRACE_TOOL} is available only during review investigation`);
       }
       const term = normalizeTerm((input as { term: string }).term);
       const key = term.toLocaleLowerCase();
@@ -307,6 +308,9 @@ export function createTerminologyToolController({
     tools: [trace, update, read],
     setStage(value: string) {
       stage = nonempty(value, "stage");
+    },
+    traces() {
+      return new Map(traces);
     },
   };
 }
@@ -547,7 +551,7 @@ function createChangedLocationParser(variants: readonly string[]): {
     write(chunk: string) {
       sawOutput ||= chunk.length > 0;
       let offset = 0;
-      for (let newline = chunk.indexOf("\n", offset); newline !== -1; ) {
+      for (let newline = chunk.indexOf("\n", offset); newline !== -1;) {
         appendFragment(chunk.slice(offset, newline));
         finishLine();
         offset = newline + 1;
