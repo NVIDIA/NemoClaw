@@ -93,8 +93,7 @@ export interface PublicationRun {
 
 export type PublicationSelection =
   | { state: "missing" }
-  | { state: "pending"; run: PublicationRun }
-  | { state: "ready"; run: PublicationRun };
+  | { state: "selected"; run: PublicationRun };
 
 export interface PublicationWaitOptions {
   history: FirstParentHistory;
@@ -435,16 +434,10 @@ export function selectPublicationRun(
     );
   }
   const run = nearest[0].run;
-  if (run.status !== "completed") return { state: "pending", run };
-  if (run.conclusion !== "success") {
-    throw new Error(
-      `base-image workflow for ${run.headSha} concluded ${run.conclusion}; ${run.url}`,
-    );
-  }
-  return { state: "ready", run };
+  return { state: "selected", run };
 }
 
-export function validatePublisherJobs(payload: unknown, run: PublicationRun): void {
+export function validatePublisherJobs(payload: unknown, run: PublicationRun): "pending" | "ready" {
   const response = asRecord(payload);
   const totalCount = Number(response.total_count);
   if (!Number.isSafeInteger(totalCount) || totalCount < 0) {
@@ -454,52 +447,68 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): vo
     throw new Error("publisher job listing is incomplete");
   }
 
-  const jobsByName = new Map<
-    string,
-    Array<{ attempt: number; status: string; conclusion: string }>
-  >();
+  const jobsByName = new Map<string, { status: string; conclusion: string | null }>();
   for (const [index, value] of response.jobs.entries()) {
     const job = asRecord(value);
     positiveSafeInteger(job.id, `publisher job ${index} id`);
     const attempt = positiveSafeInteger(job.run_attempt, `publisher job ${index} attempt`);
-    if (job.run_id !== run.id || attempt > run.attempt || job.head_sha !== run.headSha) {
+    if (job.run_id !== run.id || attempt !== run.attempt || job.head_sha !== run.headSha) {
       throw new Error(`publisher job ${index} provenance does not match the selected run`);
     }
     if (typeof job.name !== "string" || job.name.length === 0) {
       throw new Error(`publisher job ${index} name is invalid`);
     }
-    if (
-      job.status !== "completed" ||
-      typeof job.conclusion !== "string" ||
-      !COMPLETED_CONCLUSIONS.has(job.conclusion)
-    ) {
-      throw new Error(`publisher job ${job.name} completion evidence is invalid; ${run.url}`);
+    const requiredName = REQUIRED_PUBLISHER_JOBS.find((name) => name === job.name);
+    if (!requiredName) continue;
+    if (typeof job.status !== "string") {
+      throw new Error(`publisher job ${requiredName} status is invalid; ${run.url}`);
     }
-    const occurrences = jobsByName.get(job.name) ?? [];
-    if (occurrences.some((occurrence) => occurrence.attempt === attempt)) {
-      throw new Error(`publisher job ${job.name} is duplicated in attempt ${attempt}; ${run.url}`);
+    const status = job.status;
+    let conclusion: string | null = null;
+    if (status === "completed") {
+      if (typeof job.conclusion !== "string" || !COMPLETED_CONCLUSIONS.has(job.conclusion)) {
+        throw new Error(`publisher job ${requiredName} conclusion is invalid; ${run.url}`);
+      }
+      conclusion = job.conclusion;
+    } else if (!PENDING_RUN_STATUSES.has(status) || job.conclusion !== null) {
+      throw new Error(`publisher job ${requiredName} pending state is invalid; ${run.url}`);
     }
-    occurrences.push({
-      attempt,
-      status: job.status,
-      conclusion: job.conclusion,
-    });
-    jobsByName.set(job.name, occurrences);
+    if (jobsByName.has(requiredName)) {
+      throw new Error(
+        `publisher job ${requiredName} is duplicated in attempt ${run.attempt}; ${run.url}`,
+      );
+    }
+    jobsByName.set(requiredName, { status, conclusion });
   }
 
+  let pending = false;
   for (const requiredName of REQUIRED_PUBLISHER_JOBS) {
-    const occurrences = jobsByName.get(requiredName) ?? [];
-    if (occurrences.length === 0) {
-      throw new Error(`missing required ${requiredName} job; ${run.url}`);
+    const current = jobsByName.get(requiredName);
+    if (!current) {
+      if (run.status === "completed") {
+        throw new Error(
+          `missing required ${requiredName} job in attempt ${run.attempt}; ${run.url}`,
+        );
+      }
+      pending = true;
+      continue;
     }
-    const latestAttempt = Math.max(...occurrences.map((occurrence) => occurrence.attempt));
-    const latest = occurrences.find((occurrence) => occurrence.attempt === latestAttempt);
-    if (!latest || latest.status !== "completed" || latest.conclusion !== "success") {
+    if (current.status !== "completed") {
+      if (run.status === "completed") {
+        throw new Error(
+          `${requiredName} job is not complete in terminal attempt ${run.attempt}; ${run.url}`,
+        );
+      }
+      pending = true;
+      continue;
+    }
+    if (current.conclusion !== "success") {
       throw new Error(
-        `latest ${requiredName} job did not complete successfully in attempt ${latestAttempt}; ${run.url}`,
+        `${requiredName} job did not complete successfully in attempt ${run.attempt}; ${run.url}`,
       );
     }
   }
+  return pending ? "pending" : "ready";
 }
 
 export function validateBoundRun(payload: unknown, expected: PublicationRun): void {
@@ -507,9 +516,7 @@ export function validateBoundRun(payload: unknown, expected: PublicationRun): vo
   if (
     actual.id !== expected.id ||
     actual.attempt !== expected.attempt ||
-    actual.headSha !== expected.headSha ||
-    actual.status !== "completed" ||
-    actual.conclusion !== "success"
+    actual.headSha !== expected.headSha
   ) {
     throw new Error(
       `selected base-image workflow changed while evidence was verified; ${expected.url}`,
@@ -619,40 +626,45 @@ export async function waitForBaseImagePublication(
   while (true) {
     const runs = await collectPaginated(options.request, runsPath, "workflow_runs");
     const selection = selectPublicationRun(runs, options.history, workflowId);
-    if (selection.state === "ready") {
-      const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/jobs?filter=all&per_page=100`;
+    if (selection.state === "selected") {
+      const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/attempts/${selection.run.attempt}/jobs?per_page=100`;
       if (now() > deadline) {
         throw new Error(
           `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
         );
       }
+      let publisherState: "pending" | "ready";
       try {
         const jobs = await collectPaginated(options.request, jobsPath, "jobs");
-        validatePublisherJobs(jobs, selection.run);
-        validateBoundRun(
-          await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
-          selection.run,
-        );
+        publisherState = validatePublisherJobs(jobs, selection.run);
+        if (publisherState === "ready") {
+          validateBoundRun(
+            await options.request(`/repos/${REPOSITORY}/actions/runs/${selection.run.id}`),
+            selection.run,
+          );
+        }
       } catch (error) {
         throw publicationEvidenceError(error, selection.run);
       }
-      if (now() > deadline) {
-        throw new Error(
-          `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
-        );
+      if (publisherState === "ready") {
+        if (now() > deadline) {
+          throw new Error(
+            `timed out validating base-image publication for ${selection.run.headSha}; ${selection.run.url}`,
+          );
+        }
+        return selection.run;
       }
-      return selection.run;
     }
 
     if (now() >= deadline) {
-      const pending = selection.state === "pending" ? `; ${selection.run.url}` : "";
+      const pending = selection.state === "selected" ? `; ${selection.run.url}` : "";
       throw new Error(
         `timed out waiting for base-image publication covering ${options.history.relevantSha}${pending}`,
       );
     }
     notice(
-      selection.state === "pending"
-        ? `Base-image publication is ${selection.run.status} for ${selection.run.headSha}; ${selection.run.url}`
+      selection.state === "selected"
+        ? `Required base image publishers are not complete for ${selection.run.headSha}; selected workflow run status ${selection.run.status}; ${selection.run.url}`
         : `Waiting for a trusted base-image push run covering ${options.history.relevantSha}`,
     );
     await sleep(Math.min(options.pollMs, Math.max(1, deadline - now())));

@@ -10,6 +10,7 @@ import { run, runWithInput } from "./helpers";
 
 vi.mock("../../src/lib/actions/global", () => ({
   forgetExtraProvider: vi.fn(),
+  listManagedMcpCredentialReservations: vi.fn(() => []),
   recordExtraProvider: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn().mockResolvedValue({ recovered: true }),
 }));

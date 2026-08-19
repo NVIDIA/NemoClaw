@@ -344,4 +344,4 @@ If the command trace contains no reviewer-request write, report the event as an 
 - Direct PRs follow `.github/PULL_REQUEST_TEMPLATE.md`; the managed documentation workflow uses its generated body
 - PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed
-- Apply the 10-open-PR limit from `.github/workflows/pr-limit.yaml` only to accounts that the workflow does not exempt
+- Check `.github/pr-limits.json` for the contributor's open PR limit.

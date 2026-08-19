@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 import { redactSensitiveText } from "../security/redact";
@@ -116,8 +118,17 @@ interface PreviousEnvironmentValue {
 
 export interface PortableOnboardEnvironmentScope {
   readonly env: NodeJS.ProcessEnv;
+  createHermesPortablePodmanSourceEnvironment(
+    runtimeAuthority: CheckpointPortableRuntimeAuthority,
+  ): NodeJS.ProcessEnv;
   installRuntime(input: { containersConf: string; socketPath: string }): void;
   restore(): void;
+}
+
+/** Keep one prepared portable runtime authority with the environment scope that installed it. */
+export interface PortableOnboardRuntimeContext {
+  readonly authority: CheckpointPortableRuntimeAuthority;
+  readonly environmentScope: PortableOnboardEnvironmentScope | null;
 }
 
 export function createDefaultResumeProfileEnvironmentScope(
@@ -129,6 +140,9 @@ export function createDefaultResumeProfileEnvironmentScope(
   let restored = false;
   return {
     env,
+    createHermesPortablePodmanSourceEnvironment() {
+      throw new Error("Default onboarding has no portable Podman environment authority.");
+    },
     installRuntime() {
       throw new Error("Default onboarding resume cannot install portable runtime authority.");
     },
@@ -247,13 +261,40 @@ export function createPortableOnboardEnvironmentScope(
     }
   }
 
+  let installedRuntime: { readonly containersConf: string; readonly dockerHost: string } | null =
+    null;
   let restored = false;
   return {
     env,
+    createHermesPortablePodmanSourceEnvironment(runtimeAuthority) {
+      if (restored || !installedRuntime) {
+        throw new Error("Hermes portable Podman environment authority is not active.");
+      }
+      const expectedContainersConf = path.join(
+        runtimeAuthority.configHome,
+        "nemoclaw",
+        "portable",
+        "containers.conf",
+      );
+      const expectedDockerHost = `unix://${runtimeAuthority.socketPath}`;
+      if (
+        installedRuntime.containersConf !== expectedContainersConf ||
+        installedRuntime.dockerHost !== expectedDockerHost
+      ) {
+        throw new Error("Hermes portable Podman environment disagrees with runtime authority.");
+      }
+      const source = { ...env };
+      if (source.CONTAINERS_CONF === installedRuntime.containersConf) {
+        delete source.CONTAINERS_CONF;
+      }
+      if (source.DOCKER_HOST === installedRuntime.dockerHost) delete source.DOCKER_HOST;
+      return source;
+    },
     installRuntime({ containersConf, socketPath }) {
       env.NETAVARK_FW = "iptables";
       env.CONTAINERS_CONF = containersConf;
       env.DOCKER_HOST = `unix://${socketPath}`;
+      installedRuntime = { containersConf, dockerHost: env.DOCKER_HOST };
     },
     restore() {
       if (restored) return;

@@ -84,6 +84,11 @@ export interface SandboxCreateIntent {
   readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
 }
 
+/** Durable onboarding-session identity that owns the pending inference route. */
+export interface InferenceRouteReservationAuthority {
+  readonly sessionId: string;
+}
+
 export type OnboardOptions = {
   /** Hidden temporary opt-in for new managed-image runtime activation. */
   tempManagedRuntime?: boolean;
