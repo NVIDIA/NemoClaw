@@ -19,7 +19,7 @@ import {
   validateReviewFindingSubmission,
   type ReviewFinding,
   type CandidateFindingInput,
-  type ReviewFindingLedgerSnapshot,
+  type ReviewFindingSnapshot,
 } from "./review-ledger.mts";
 import {
   createTerminologyLedger,
@@ -96,28 +96,13 @@ const terminologyDecisionSchema = Type.Object(
 const summarySchema = Type.Object(
   {
     recommendation: Type.Union(
-      [
-        "merge_as_is",
-        "merge_after_fixes",
-        "needs_rework",
-        "blocked",
-        "superseded",
-        "info_only",
-      ].map((value) => Type.Literal(value)),
+      ["merge_as_is", "merge_after_fixes", "superseded", "info_only"].map((value) =>
+        Type.Literal(value),
+      ),
     ),
     confidence,
     oneLine: text,
     topItem: Type.Optional(text),
-    sinceLastReview: Type.Optional(
-      Type.Object(
-        {
-          resolved: Type.Integer({ minimum: 0 }),
-          stillApplies: Type.Integer({ minimum: 0 }),
-          newItems: Type.Integer({ minimum: 0 }),
-        },
-        { additionalProperties: false },
-      ),
-    ),
   },
   { additionalProperties: false },
 );
@@ -259,7 +244,10 @@ export type ReviewSubmissionMetadata = Readonly<{
   headRef: string;
   headSha: string;
   changedFiles: readonly string[];
-  deterministic: Readonly<{ testDepth: ReviewTestDepth }>;
+  deterministic: Readonly<{
+    testDepth: ReviewTestDepth;
+    hasOpenPrOverlap: boolean;
+  }>;
 }>;
 export type NormalizeReviewE2e = (
   draft: Record<string, unknown>,
@@ -269,7 +257,7 @@ export type NormalizeReviewE2e = (
 export type ReviewSubmissionController = Readonly<{
   tools: ToolDefinition[];
   result(): unknown | null;
-  findingSnapshot(): ReviewFindingLedgerSnapshot;
+  findingSnapshot(): ReviewFindingSnapshot;
   terminologySnapshot(): TerminologyLedgerSnapshot;
   finalize(): void;
   discard(): void;
@@ -318,14 +306,16 @@ export function createReviewSubmissionController({
   let e2eDraft: Record<string, unknown> | null = null;
   let pending: Readonly<{
     result: unknown;
-    findingSnapshot: ReviewFindingLedgerSnapshot;
+    findingSnapshot: ReviewFindingSnapshot;
     terminologySnapshot: TerminologyLedgerSnapshot;
   }> | null = null;
   let submitted: unknown | null = null;
   let findingSnapshot = validateReviewFindingSubmission([], repositoryRoot);
   let terminologySnapshot = createTerminologyLedger(metadata.headSha).snapshot();
   const reviewReceiptSchema = createReviewReceiptSchema(securityCategoryNames);
-  const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  const validateReceipt = ajv.compile(reviewReceiptSchema);
+  const validate = ajv.compile(schema);
 
   const recordFindings = defineTool({
     name: RECORD_FINDINGS_TOOL,
@@ -364,6 +354,10 @@ export function createReviewSubmissionController({
       ensureOpen(pending ?? submitted);
       if (findingsDraft === null) {
         throw new Error("record_review_receipt requires record_findings first");
+      }
+      if (!validateReceipt(input)) {
+        const detail = ajv.errorsText(validateReceipt.errors);
+        throw new Error("record_review_receipt failed schema validation: " + detail);
       }
       receiptDraft = structuredClone(input as DraftReceipt);
       receiptFindingsRevision = findingsRevision;
@@ -408,11 +402,13 @@ export function createReviewSubmissionController({
         findingsDraft!,
         repositoryRoot,
       );
-      const openFindings = candidateFindingSnapshot.findings.filter(
-        (finding) => finding.status === "open",
-      );
+      const openFindings = candidateFindingSnapshot.findings;
       validateSecurityCategories(receiptDraft!.securityCategories, securityCategoryNames);
-      const summary = canonicalSummary(receiptDraft!.summary, openFindings);
+      const summary = canonicalSummary(
+        receiptDraft!.summary,
+        openFindings,
+        metadata.deterministic.hasOpenPrOverlap,
+      );
       const normalizedE2e = await normalizeE2e(structuredClone(e2eDraft!), metadata);
       const candidateTerminology = createTerminologyLedger(metadata.headSha);
       const traces =
@@ -614,15 +610,22 @@ function stripDraftFindingId(value: unknown): Record<string, unknown> {
 function canonicalSummary(
   input: Record<string, unknown>,
   findings: readonly ReviewFinding[],
+  hasOpenPrOverlap: boolean,
 ): Record<string, unknown> {
   const confidence = input.confidence;
+  const requestedRecommendation = input.recommendation;
+  if (findings.length === 0 && requestedRecommendation === "superseded" && !hasOpenPrOverlap) {
+    throw new Error(
+      "submit_review cannot use summary.recommendation superseded without deterministic open-PR overlap evidence",
+    );
+  }
   const recommendation =
-    input.recommendation === "superseded"
-      ? "superseded"
-      : findings.length > 0
-        ? "merge_after_fixes"
-        : confidence === "low"
-          ? "info_only"
+    findings.length > 0
+      ? "merge_after_fixes"
+      : confidence === "low"
+        ? "info_only"
+        : requestedRecommendation === "superseded"
+          ? "superseded"
           : "merge_as_is";
   const orderedFindings = REVIEW_FINDING_SEVERITIES.flatMap((severity) =>
     findings.filter((finding) => finding.severity === severity),
@@ -636,14 +639,14 @@ function canonicalSummary(
     recommendation,
     oneLine:
       findings.length > 0
-        ? `Canonical ledger: ${counts[0]} blocker(s), ${counts[1]} warning(s), ${counts[2]} suggestion(s).`
-        : "No actionable findings remain in the canonical review ledger.",
+        ? `Canonical findings: ${counts[0]} blocker(s), ${counts[1]} warning(s), ${counts[2]} suggestion(s).`
+        : "No actionable findings remain in the canonical finding snapshot.",
     ...(topItem ? { topItem } : { topItem: undefined }),
   };
 }
 
 function publicFinding(finding: ReviewFinding): Record<string, unknown> {
-  const { id: _id, status: _status, supersededBy: _supersededBy, evidence, ...rest } = finding;
+  const { id: _id, evidence, ...rest } = finding;
   return {
     ...rest,
     evidence: evidence.join("\n"),

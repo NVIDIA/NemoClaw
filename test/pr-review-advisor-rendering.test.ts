@@ -3,7 +3,8 @@
 
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { normalizeReviewResult, renderSummary } from "../tools/pr-review-advisor/analyze.mts";
+import { normalizeCombinedE2eResult } from "../tools/pr-review-advisor/analyze.mts";
+import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import {
   loadAdvisorSchema,
@@ -17,8 +18,7 @@ describe("PR review advisor", () => {
   });
 
   it("renders simplification opportunities without weakening safety boundaries", () => {
-    const result = normalizeReviewResult(
-      validResult({
+    const result = validResult({
         findings: [
           {
             severity: "suggestion",
@@ -41,9 +41,7 @@ describe("PR review advisor", () => {
             },
           },
         ],
-      }),
-      metadata(),
-    );
+      });
 
     const comment = buildComment({ summary: renderSummary(result), result });
 
@@ -56,8 +54,7 @@ describe("PR review advisor", () => {
   });
 
   it("keeps blocker evidence separate from brief refactoring guidance", () => {
-    const result = normalizeReviewResult(
-      validResult({
+    const result = validResult({
         findings: [
           {
             severity: "blocker",
@@ -80,9 +77,7 @@ describe("PR review advisor", () => {
             },
           },
         ],
-      }),
-      metadata(),
-    );
+      });
 
     const comment = buildComment({ summary: renderSummary(result), result });
     const blockers = comment.indexOf("### Blockers");
@@ -101,8 +96,7 @@ describe("PR review advisor", () => {
   });
 
   it("keeps refactoring guidance within the visible blocker cap", () => {
-    const result = normalizeReviewResult(
-      validResult({
+    const result = validResult({
         findings: Array.from({ length: 21 }, (_, index) => ({
           severity: "blocker",
           category: "architecture",
@@ -124,9 +118,7 @@ describe("PR review advisor", () => {
               }
             : {}),
         })),
-      }),
-      metadata(),
-    );
+      });
 
     const comment = buildComment({ summary: renderSummary(result), result });
 
@@ -136,8 +128,7 @@ describe("PR review advisor", () => {
   });
 
   it("keeps warning-only reviews non-blocking without synthetic test tasks", () => {
-    const result = normalizeReviewResult(
-      validResult({
+    const result = validResult({
         findings: [
           {
             severity: "warning",
@@ -150,9 +141,7 @@ describe("PR review advisor", () => {
               "Resolve or justify this warning before working through test follow-ups.",
           },
         ],
-      }),
-      metadata(),
-    );
+      });
 
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("## PR Review Advisor — No blocking findings reported");
@@ -166,8 +155,7 @@ describe("PR review advisor", () => {
   });
 
   it("renders suggestions with no required response", () => {
-    const result = normalizeReviewResult(
-      validResult({
+    const result = validResult({
         findings: [
           {
             severity: "suggestion",
@@ -184,9 +172,7 @@ describe("PR review advisor", () => {
             evidence: "Diff adds a duplicate branch next to the helper call.",
           },
         ],
-      }),
-      metadata(),
-    );
+      });
 
     const comment = buildComment({ summary: renderSummary(result), result });
 
@@ -203,8 +189,7 @@ describe("PR review advisor", () => {
   });
 
   it("keeps test-depth advice out of the public comment", () => {
-    const result = normalizeReviewResult(
-      validResult({
+    const result = validResult({
         findings: [],
         summary: {
           recommendation: "merge_as_is",
@@ -216,9 +201,7 @@ describe("PR review advisor", () => {
           rationale: "check </details> and @team",
           suggestedTests: ["probe **bold** [link](https://bad.invalid)"],
         },
-      }),
-      metadata(),
-    );
+      });
     const summary = renderSummary(result);
     const comment = buildComment({ summary, result });
 
@@ -231,8 +214,7 @@ describe("PR review advisor", () => {
   });
 
   it("renders concrete test coverage inside a non-tests finding", () => {
-    const result = normalizeReviewResult(
-      validResult({
+    const result = validResult({
         findings: [
           {
             severity: "warning",
@@ -248,9 +230,7 @@ describe("PR review advisor", () => {
             evidence: "The diff changes the branch without a matching test.",
           },
         ],
-      }),
-      metadata(),
-    );
+      });
     const comment = buildComment({ summary: renderSummary(result), result });
 
     expect(comment).toContain("#### `PRA-1` Warning — Failure path is untested");
@@ -264,8 +244,7 @@ describe("PR review advisor", () => {
   it.each(["PRA-1", "PRA-2", "PRA-3"])(
     "keeps hostile file locations inside finding fields [%s]",
     (id) => {
-      const result = normalizeReviewResult(
-        validResult({
+      const result = validResult({
           findings: [
             {
               severity: "blocker",
@@ -292,9 +271,7 @@ describe("PR review advisor", () => {
               description: "Location should not break a Markdown code span.",
             },
           ],
-        }),
-        metadata(),
-      );
+        });
       const comment = buildComment({ summary: renderSummary(result), result });
 
       expect(comment).toContain("- **Location:** <code>src/a&#124;b.ts:7</code>");
@@ -308,8 +285,7 @@ describe("PR review advisor", () => {
   );
 
   it("escapes advisor finding text before rendering sticky comments", () => {
-    const result = normalizeReviewResult(
-      validResult({
+    const result = validResult({
         summary: {
           recommendation: "merge_after_fixes",
           confidence: "high",
@@ -328,9 +304,7 @@ describe("PR review advisor", () => {
             evidence: "`code` <tag>",
           },
         ],
-      }),
-      metadata(),
-    );
+      });
     const comment = buildComment({ summary: renderSummary(result), result });
 
     expect(comment).not.toContain("**Top item:**");
@@ -345,11 +319,23 @@ describe("PR review advisor", () => {
     expect(comment).not.toContain("### injected <script>");
   });
 
+  it.each(["needs_rework", "blocked"])(
+    "keeps legacy public recommendation %s schema-compatible",
+    (recommendation) => {
+      const schema = loadAdvisorSchema();
+      const validate = new Ajv2020({ strict: false }).compile(schema);
+
+      expect(validate(validResult({ summary: { ...validResult().summary, recommendation } }))).toBe(
+        true,
+      );
+    },
+  );
+
   it("normalizes output that validates against the JSON schema", () => {
     const schema = loadAdvisorSchema();
     const ajv = new Ajv2020({ strict: false });
     const validate = ajv.compile(schema);
-    const result = normalizeReviewResult(validResult(), metadata());
+    const result = validResult();
 
     expect(schema["SPDX-License-Identifier"]).toBe("Apache-2.0");
     expect(validate(result)).toBe(true);

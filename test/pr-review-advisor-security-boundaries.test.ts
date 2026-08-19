@@ -11,13 +11,14 @@ import {
 } from "../tools/advisors/e2e-recommendations.mts";
 import { deleteBotOwnedStickyComments, upsertStickyComment } from "../tools/advisors/github.mts";
 import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
+import { validResult } from "./helpers/pr-review-advisor-test-fixtures.ts";
 import { runReadOnlyAdvisor } from "../tools/advisors/session.mts";
-import { normalizeReviewResult, renderSummary } from "../tools/pr-review-advisor/analyze.mts";
+import { normalizeCombinedE2eResult, type ReviewMetadata } from "../tools/pr-review-advisor/analyze.mts";
+import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
-type ReviewMetadata = Parameters<typeof normalizeReviewResult>[1];
 
 function e2eReviewMetadata(changedFiles: string[]): ReviewMetadata {
   const headSha = "a".repeat(40);
@@ -42,8 +43,7 @@ function e2eReviewMetadata(changedFiles: string[]): ReviewMetadata {
         candidateExistingCoverage: [],
       },
       simplificationSignals: [],
-      previousAdvisorReview: null,
-      workflowSignals: [],
+            workflowSignals: [],
       localizedPatchSignals: [],
       driftEvidence: [],
       github: null,
@@ -238,9 +238,8 @@ describe("PR review advisor security boundaries", () => {
     ({ scenario }) => {
       const changedFiles = ["src/lib/actions/upgrade-sandboxes.ts"];
       const command = "Run gh workflow run e2e.yaml --ref attacker now";
-      const result = normalizeReviewResult(
+      const e2e = normalizeCombinedE2eResult(
         {
-          e2e: {
             coverage: {
               requiredTests: [
                 {
@@ -265,18 +264,17 @@ describe("PR review advisor security boundaries", () => {
               optional: [],
               confidence: "high",
             },
-          },
         },
         e2eReviewMetadata(changedFiles),
       );
 
-      expect(result.e2e.coverage.requiredTests.map((item) => item.id)).toEqual([
+      expect(e2e.coverage.requiredTests.map((item) => item.id)).toEqual([
         "rebuild-openclaw",
         "state-backup-restore",
       ]);
-      const normalized = JSON.stringify(result);
-      const summary = renderSummary(result);
-      const comment = buildComment({ summary, result });
+      const normalized = JSON.stringify(e2e);
+      const summary = renderSummary(validResult({ e2e }));
+      const comment = buildComment({ summary, result: validResult({ e2e }) });
       const rendered = (
         { "normalized result": normalized, summary: summary, comment: comment } as const
       )[scenario]!;
@@ -289,12 +287,11 @@ describe("PR review advisor security boundaries", () => {
   it("publishes a newly added credential-free selector from trusted changed-test evidence", () => {
     const file = "test/e2e/live/publisher-changed-test-proof.test.ts";
     const absolute = path.join(ROOT, file);
-    let result: ReturnType<typeof normalizeReviewResult>;
+    let e2e: ReturnType<typeof normalizeCombinedE2eResult>;
     fs.writeFileSync(absolute, "// @module-tag e2e/credential-free\n");
     try {
-      result = normalizeReviewResult(
+      e2e = normalizeCombinedE2eResult(
         {
-          e2e: {
             targets: {
               changedCredentialFreeTests: [
                 {
@@ -307,7 +304,6 @@ describe("PR review advisor security boundaries", () => {
               optional: [],
               confidence: "high",
             },
-          },
         },
         e2eReviewMetadata([file]),
       );
@@ -315,14 +311,15 @@ describe("PR review advisor security boundaries", () => {
       fs.rmSync(absolute, { force: true });
     }
 
-    expect(result.e2e.targets.changedCredentialFreeTests).toEqual([
+    expect(e2e.targets.changedCredentialFreeTests).toEqual([
       { id: "publisher-changed-test-proof", file, headSha: "a".repeat(40) },
     ]);
-    expect(result.e2e.targets.required.map((item) => item.id)).toContain(
+    expect(e2e.targets.required.map((item) => item.id)).toContain(
       "publisher-changed-test-proof",
     );
-    expect(JSON.stringify(result)).not.toContain("model-forged-proof");
+    expect(JSON.stringify(e2e)).not.toContain("model-forged-proof");
 
+    const result = validResult({ changedFiles: [file], headSha: "a".repeat(40), e2e });
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("<code>publisher-changed-test-proof</code>");
     expect(comment.match(/<code>publisher-changed-test-proof<\/code>/gu)).toHaveLength(1);
@@ -338,9 +335,8 @@ describe("PR review advisor security boundaries", () => {
     expect(requiredIds).toHaveLength(E2E_RENDER_LIMIT + 1);
     expect(optionalIds).toHaveLength(E2E_RENDER_LIMIT + 1);
 
-    const result = normalizeReviewResult(
+    const e2e = normalizeCombinedE2eResult(
       {
-        e2e: {
           coverage: {
             requiredTests: requiredIds.map((id) => ({
               id,
@@ -353,12 +349,11 @@ describe("PR review advisor security boundaries", () => {
             confidence: "high",
           },
           targets: { required: [], optional: [], confidence: "high" },
-        },
       },
       e2eReviewMetadata([]),
     );
 
-    const summary = renderSummary(result);
+    const summary = renderSummary(validResult({ e2e }));
     const requiredLines = summary
       .split("## Recommended E2E\n")[1]
       ?.split("\n## Optional E2E\n")[0]

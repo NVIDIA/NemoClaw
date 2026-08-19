@@ -11,6 +11,8 @@ import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   advisorInferenceBaseUrl,
+  DEFAULT_ADVISOR_MODEL,
+  NEMOTRON_ULTRA_ADVISOR_MODEL,
   openAiAdvisorProviderConfig,
 } from "../tools/advisors/session.mts";
 import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
@@ -139,11 +141,42 @@ describe("PR review advisor OpenShell wrapper", () => {
     ).toThrow("must use an approved advisor inference endpoint");
   });
 
-  it("recognizes advisor models declared in the extracted provider constants", () => {
+  it.each([DEFAULT_ADVISOR_MODEL, NEMOTRON_ULTRA_ADVISOR_MODEL])(
+    "preserves hosted provider compatibility for %s",
+    (modelId) => {
+      const config = openAiAdvisorProviderConfig("PR_REVIEW_ADVISOR_API_KEY") as {
+        apiKey: string;
+        baseUrl: string;
+        models: Array<{
+          id: string;
+          compat?: Record<string, unknown>;
+          reasoning: boolean;
+        }>;
+      };
+
+      expect(config.apiKey).toBe("PR_REVIEW_ADVISOR_API_KEY");
+      expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
+      expect(config.models).toContainEqual(
+        expect.objectContaining({
+          id: modelId,
+          reasoning: false,
+          compat: expect.objectContaining({
+            supportsDeveloperRole: false,
+            supportsReasoningEffort: false,
+            supportsStore: false,
+            supportsStrictMode: false,
+            supportsUsageInStreaming: false,
+            maxTokensField: "max_tokens",
+          }),
+        }),
+      );
+    },
+  );
+
+  it("runs the Nemotron matrix model through the analyzer directly", () => {
     const runNode = vi.fn(
       (_script: string, _args: string[], _env: NodeJS.ProcessEnv, _cwd: string) => 0,
     );
-    const appendEnv = vi.fn();
 
     runPrReviewAdvisorAnalysis(
       {
@@ -152,15 +185,17 @@ describe("PR review advisor OpenShell wrapper", () => {
         outDir: path.join(temporaryDirectory(), "artifacts"),
         baseRef: "origin/main",
         headRef: "HEAD",
-        model: "nvidia/nvidia/nemotron-3-ultra",
+        model: NEMOTRON_ULTRA_ADVISOR_MODEL,
         title: "PR Review Advisor",
         runAnalysis: "0",
       },
-      { appendEnv, runNode },
+      { runNode },
     );
 
-    expect(appendEnv).toHaveBeenCalledWith("PR_REVIEW_ADVISOR_SUPPORTED", "1");
     expect(runNode).toHaveBeenCalledTimes(1);
+    expect(runNode.mock.calls[0]?.[2]).toMatchObject({
+      PR_REVIEW_ADVISOR_MODEL: NEMOTRON_ULTRA_ADVISOR_MODEL,
+    });
     expect(runNode.mock.calls[0]?.[2].PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBeUndefined();
   });
 
@@ -211,8 +246,7 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
-    });
+          });
     const pullRequest = context?.pullRequest as Record<string, unknown>;
     expect(pullRequest.author_association).toBe("MEMBER");
     expect(pullRequest).not.toHaveProperty("authorAssociation");
@@ -273,8 +307,7 @@ describe("PR review advisor OpenShell wrapper", () => {
       GH_TOKEN: "host-token",
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       PR_NUMBER: "7542",
-      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false",
-    });
+          });
     expect(context?.openPrOverlaps).toHaveLength(5);
     (context?.openPrOverlaps ?? []).forEach((overlap) => {
       expect(overlap.sameFileCount).toBe(300);

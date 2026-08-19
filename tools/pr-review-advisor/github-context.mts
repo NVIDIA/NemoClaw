@@ -21,11 +21,6 @@ const OVERLAP_PATH_CHARACTER_LIMIT = 300;
 const BODY_CHARACTER_LIMIT = 20_000;
 const COMMENT_BODY_CHARACTER_LIMIT = 4_000;
 
-export type PreviousAdvisorReview = {
-  headSha?: string;
-  body: string;
-};
-
 type OpenPrOverlap = {
   number: number;
   title: string;
@@ -52,21 +47,6 @@ export type GitHubReviewContext = {
   issueReferenceLines?: string[];
   linkedIssues?: LinkedIssue[];
   openPrOverlaps?: OpenPrOverlap[];
-  previousAdvisorReview?: PreviousAdvisorReview | null;
-};
-
-type PreviousReviewCollectorInput = {
-  currentBaseSha?: string;
-  issueComments: unknown[];
-  prNumber: number;
-  repo: string;
-  token: string;
-};
-
-type CollectGitHubReviewContextOptions = {
-  collectPreviousReview?: (
-    input: PreviousReviewCollectorInput,
-  ) => Promise<PreviousAdvisorReview | null>;
 };
 
 export function serializePreparedGitHubContext(context: GitHubReviewContext | null): string {
@@ -139,7 +119,6 @@ export function readPreparedGitHubContext(
 
 export async function collectGitHubReviewContext(
   env: NodeJS.ProcessEnv,
-  options: CollectGitHubReviewContextOptions = {},
 ): Promise<GitHubReviewContext | null> {
   const repo = env.TARGET_REPO || env.GITHUB_REPOSITORY;
   const prNumber = Number.parseInt(
@@ -157,18 +136,10 @@ export async function collectGitHubReviewContext(
   const token = env.GH_TOKEN || env.GITHUB_TOKEN;
   if (!repo || !Number.isFinite(prNumber) || prNumber <= 0 || !token) return null;
 
-  const loadPreviousReview = env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW === "true";
-  if (loadPreviousReview && !options.collectPreviousReview) {
-    throw new Error("Prepared GitHub context cannot load a previous review without provenance");
-  }
-
   const context: GitHubReviewContext = { repo, prNumber };
   try {
-    const [rawPullRequest, issueComments, openPulls] = await Promise.all([
+    const [rawPullRequest, openPulls] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
-      loadPreviousReview
-        ? githubRestPaginated<unknown>(`repos/${repo}/issues/${prNumber}/comments`, token, 100)
-        : Promise.resolve([]),
       githubRestPaginated<unknown>(
         `repos/${repo}/pulls?state=open&sort=updated&direction=desc`,
         token,
@@ -176,15 +147,6 @@ export async function collectGitHubReviewContext(
       ),
     ]);
     context.pullRequest = summarizePullRequest(rawPullRequest);
-    context.previousAdvisorReview = loadPreviousReview
-      ? await options.collectPreviousReview?.({
-          repo,
-          token,
-          issueComments,
-          prNumber,
-          currentBaseSha: stringOrUndefined(getPath<unknown>(rawPullRequest, ["base", "sha"])),
-        })
-      : null;
     const prTitle = stringOrUndefined(getPath<unknown>(rawPullRequest, ["title"])) || "";
     const prBody = stringOrUndefined(getPath<unknown>(rawPullRequest, ["body"])) || "";
     const prText = [
