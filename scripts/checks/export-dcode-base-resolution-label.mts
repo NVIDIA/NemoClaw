@@ -50,6 +50,10 @@ export function createDcodeBaseResolutionMetadata(input: DcodeBaseResolutionInpu
   if (!DIGEST_PATTERN.test(input.imageId)) fail("local image identity is invalid");
   if (!REVISION_PATTERN.test(input.sourceRevision)) fail("source revision is invalid");
   if (!GLIBC_PATTERN.test(input.glibcVersion)) fail("glibc version is invalid");
+  const [glibcMajor, glibcMinor] = input.glibcVersion.split(".").map(BigInt);
+  if (glibcMajor < 2n || (glibcMajor === 2n && glibcMinor < 39n)) {
+    fail("glibc version is below the required minimum");
+  }
 
   const authority = {
     imageName: input.imageName,
