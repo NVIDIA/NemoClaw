@@ -344,11 +344,24 @@ export async function runSandboxGpuCreateFlow(
         );
         if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
       },
-      cleanupNativeFailure: () =>
-        sandboxGpuCreateAttempt.cleanupNativeGpuAttemptForFallback(input.sandboxName, {
+      cleanupNativeFailure: (failure) => {
+        if (
+          failure.nativeCleanupHandoff &&
+          failure.nativeCleanupHandoff.sandboxName !== input.sandboxName
+        ) {
+          return {
+            safe: false,
+            reason: "managed bootstrap owner-cleanup handoff named another sandbox",
+            deleteStatus: null,
+            sandboxPresent: null,
+            containerIds: null,
+          };
+        }
+        return sandboxGpuCreateAttempt.cleanupNativeGpuAttemptForFallback(input.sandboxName, {
           runOpenshell: deps.runOpenshell,
           sleep: deps.sleep,
-        }),
+        });
+      },
       prepareCompatibilityAttempt: async () => {
         if (!input.compatibilityPolicyPath) {
           throw new Error("Compatibility retry policy was not materialized.");

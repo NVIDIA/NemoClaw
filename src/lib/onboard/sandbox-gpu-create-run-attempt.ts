@@ -20,6 +20,7 @@ import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
 import type {
+  ManagedBootstrapNativeGpuFallbackRollbackOutcome,
   ManagedBootstrapRuntimePatch,
   ManagedBootstrapRuntimeSnapshot,
 } from "./managed-bootstrap/runtime-create";
@@ -652,7 +653,20 @@ export function createSandboxGpuCreateAttemptRunner(
           const snapshot = inspectNativeRuntime();
           if (snapshot?.nativeGpuAttachmentState === "absent") {
             state.nativeRuntimeSnapshot = snapshot;
-            await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+            let nativeCleanupHandoff: Extract<
+              ManagedBootstrapNativeGpuFallbackRollbackOutcome,
+              { readonly kind: "openshell-owner-cleanup-required" }
+            > | null = null;
+            if (managedLifecycle) {
+              const rollback = await runtimePatch.rollbackManagedStartupAfterCreateFailure({
+                ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment",
+              });
+              if (rollback?.kind === "openshell-owner-cleanup-required") {
+                nativeCleanupHandoff = rollback;
+              }
+            } else {
+              await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+            }
             return {
               ok: false,
               route,
@@ -661,6 +675,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 "Native OpenShell GPU proof failed and the host confirms no GPU attachment.",
               ),
               fallbackEligible: true,
+              ...(nativeCleanupHandoff ? { nativeCleanupHandoff } : {}),
             } as const;
           }
         }

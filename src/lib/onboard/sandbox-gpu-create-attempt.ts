@@ -8,6 +8,7 @@ import {
   initialDockerGpuRoute,
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
+import type { ManagedBootstrapNativeGpuFallbackRollbackOutcome } from "./managed-bootstrap/runtime-create";
 import {
   type OpenShellDockerSandboxContainerQuery,
   queryOpenShellDockerSandboxContainers,
@@ -32,6 +33,10 @@ export type SandboxGpuCreateAttemptFailure = {
   stage: SandboxGpuCreateFailureStage;
   error: unknown;
   fallbackEligible: boolean;
+  nativeCleanupHandoff?: Extract<
+    ManagedBootstrapNativeGpuFallbackRollbackOutcome,
+    { readonly kind: "openshell-owner-cleanup-required" }
+  >;
 };
 
 export type SandboxGpuCreateAttemptResult<T> =
@@ -225,7 +230,9 @@ export function cleanupNativeGpuAttemptForFallback(
 export type SandboxGpuCreatePlanDeps<T> = {
   runAttempt(route: SelectedDockerGpuRoute): Promise<SandboxGpuCreateAttemptResult<T>>;
   captureNativeFailure?(failure: SandboxGpuCreateAttemptFailure): void;
-  cleanupNativeFailure(): NativeGpuFallbackCleanupResult | Promise<NativeGpuFallbackCleanupResult>;
+  cleanupNativeFailure(
+    failure: SandboxGpuCreateAttemptFailure,
+  ): NativeGpuFallbackCleanupResult | Promise<NativeGpuFallbackCleanupResult>;
   /** Validate and render the retry without mutating host or process state. */
   prepareCompatibilityAttempt(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
   /** Apply compatibility side effects only after native cleanup is proven safe. */
@@ -267,7 +274,7 @@ export async function executeSandboxGpuCreatePlan<T>(
       preparationRefused: error instanceof Error ? error.message : String(error),
     };
   }
-  const cleanup = await deps.cleanupNativeFailure();
+  const cleanup = await deps.cleanupNativeFailure(first);
   if (!cleanup.safe) {
     return {
       ...first,

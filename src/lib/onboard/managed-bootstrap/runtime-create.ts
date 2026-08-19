@@ -37,6 +37,19 @@ export interface ManagedBootstrapRuntimeLimit {
   readonly hard: number;
 }
 
+export type ManagedBootstrapNativeGpuFallbackRollbackRequest = Readonly<{
+  ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment";
+}>;
+
+export type ManagedBootstrapNativeGpuFallbackRollbackOutcome =
+  | Readonly<{ kind: "rolled-back" }>
+  | Readonly<{
+      kind: "openshell-owner-cleanup-required";
+      sandboxName: string;
+      sandboxId: string;
+      runtimeId: string;
+    }>;
+
 /** Provider-neutral lifecycle surface consumed by sandbox-create coordinators. */
 export interface ManagedBootstrapRuntimePatch {
   maybeApplyDuringCreate(): void | Promise<void>;
@@ -44,7 +57,12 @@ export interface ManagedBootstrapRuntimePatch {
   replacementRuntimeId?(): string | null;
   createFailureMessage(): string | null;
   exitOnPatchError(): void | Promise<void>;
-  rollbackManagedStartupAfterCreateFailure(): void | Promise<void>;
+  rollbackManagedStartupAfterCreateFailure(
+    request?: ManagedBootstrapNativeGpuFallbackRollbackRequest,
+  ):
+    | void
+    | ManagedBootstrapNativeGpuFallbackRollbackOutcome
+    | Promise<void | ManagedBootstrapNativeGpuFallbackRollbackOutcome>;
   ensureApplied(): void | Promise<void>;
   waitForSupervisorReconnectIfNeeded(): void | Promise<void>;
   commitAfterReady(): void | Promise<void>;
