@@ -1041,6 +1041,14 @@ export function probeLocalProviderHealth(
 }
 
 export function getLocalProviderContainerReachabilityCheck(
+  provider: "ollama-local",
+  responseMode: "body",
+): string[] | null;
+export function getLocalProviderContainerReachabilityCheck(
+  provider: string,
+  responseMode?: "status",
+): string[] | null;
+export function getLocalProviderContainerReachabilityCheck(
   provider: string,
   responseMode: "status" | "body" = "status",
 ): string[] | null {
@@ -1072,8 +1080,8 @@ export function getLocalProviderContainerReachabilityCheck(
       ];
     }
     case "ollama-local":
-      // Check the auth proxy port, not Ollama directly. The proxy listens
-      // on 0.0.0.0 and is reachable from containers; Ollama is on 127.0.0.1.
+      // Check the host port reachable from containers: raw Ollama when host
+      // loopback is reachable, otherwise the auth proxy.
       // Use -w %{http_code} (instead of -sf) so an authenticated-but-401
       // response still proves the network path works — the proxy now
       // requires a Bearer token on every endpoint (#3338) and the ephemeral
@@ -1430,17 +1438,6 @@ export function parseOllamaList(output: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
-export function parseOllamaTags(output: string | null | undefined): string[] {
-  try {
-    const parsed = JSON.parse(String(output || ""));
-    return Array.isArray(parsed?.models)
-      ? parsed.models.map((model: { name?: string }) => model && model.name).filter(Boolean)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 export {
   getOllamaContextWindowFloorForAgent,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
@@ -1514,10 +1511,12 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
     ],
     { ignoreError: true },
   );
-  const tagsParsed = parseOllamaTags(tagsOutput);
-  if (tagsParsed.length > 0) {
-    return tagsParsed;
-  }
+  const tagsParsed = parseOllamaModelInventory(String(tagsOutput || ""));
+  // Do not select a model from a different discovery path after the endpoint
+  // returned a malformed inventory. A valid empty inventory may still use the
+  // local CLI fallback below.
+  if (tagsParsed === null) return [];
+  if (tagsParsed.length > 0) return tagsParsed;
 
   // The `ollama list` CLI fallback talks to the local daemon. Skip it when
   // the resolved host is not loopback (e.g. host.docker.internal pointing
