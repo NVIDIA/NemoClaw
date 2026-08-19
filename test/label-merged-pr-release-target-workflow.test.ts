@@ -241,6 +241,31 @@ describe("merged PR release target workflow", () => {
     });
   });
 
+  it("does not label a merged PR when the repository has no release tag boundary (#9533)", async () => {
+    const harness = createHarness([{ name: "latest" }]);
+
+    await runScript(harness);
+
+    expect(harness.addLabels).not.toHaveBeenCalled();
+    expect(harness.getRef).not.toHaveBeenCalled();
+    expect(harness.info).toHaveBeenCalledWith(
+      "No strict semver release tags were found; no release target label added to PR #123",
+    );
+  });
+
+  it("does not fail scheduled reconciliation when the repository has no release tag boundary (#9533)", async () => {
+    const harness = createHarness([{ name: "latest" }]);
+    harness.context.eventName = "schedule";
+
+    await runScript(harness);
+
+    expect(harness.addLabels).not.toHaveBeenCalled();
+    expect(harness.getBranch).not.toHaveBeenCalled();
+    expect(harness.info).toHaveBeenCalledWith(
+      "No strict semver release tags were found; no release target labels reconciled",
+    );
+  });
+
   it("does not label a PR already captured at the latest tag boundary", async () => {
     const harness = createHarness([
       { name: "v0.0.10", status: "identical" },
