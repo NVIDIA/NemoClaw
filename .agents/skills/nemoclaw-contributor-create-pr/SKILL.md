@@ -67,6 +67,12 @@ This workflow owns the push gate. After the routed repair returns, follow the nu
 validation, the commit, the final collection, evidence removal, and the push. Push after no
 unresolved finding requires a change.
 
+Keep one automated-review remediation-push count for the complete PR task. Routing a finding to
+another workflow does not reset the count. The shared follow-up workflow permits at most two such
+pushes without new user approval. When the count is two or more, stop before another repair, commit,
+or push. Report the latest complete review cycle. Ask the user to approve one named finding group
+and one additional push. Record the approval before editing. The approval does not reset the count.
+
 Immediately before pushing, repeat the complete collection. Confirm that its initial and final `headRefOid` values match.
 
 Apply these push conditions:
@@ -78,6 +84,7 @@ Apply these push conditions:
 - If the host retained no artifact, record `retained evidence: none`.
 - If the user tells you to stop, stop without pushing.
 - The user may defer only a non-blocking suggestion. Record that disposition before pushing.
+- Apply the shared automated-review remediation-push limit before every review-driven push.
 
 ### Hook Evidence
 

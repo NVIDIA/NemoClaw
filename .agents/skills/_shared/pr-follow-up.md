@@ -95,6 +95,36 @@ Before editing, collect and classify all review signals for the latest PR commit
 
 Do not create a separate commit or push for each finding. Apply all findings in the same root-cause group as one coherent change set. Classify every finding collected for the unchanged latest PR commit before beginning that change set. If the user tells you to stop, remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. Then stop without further edits, commits, or pushes. The user may explicitly defer a non-blocking suggestion or allow work to proceed without an optional pending review. Record that decision before editing. Do not proceed without a required review. Deferral does not authorize a push with an unresolved blocking, correctness, security, data safety, supported-contract, required-review, or required-check finding.
 
+## Limit automated-review remediation pushes
+
+An automated-review remediation push changes a PR after a repository-produced automated review
+reports a finding. The initial push that creates the PR does not count.
+
+Before the first remediation, record `automated-review remediation pushes: 0` in the task progress.
+One agent task may make at most two automated-review remediation pushes without new user approval.
+Increment the count only after each push succeeds. Routing a repair, restarting evidence collection,
+creating another commit, updating the base branch, or receiving another review does not reset the
+count.
+
+After the first automated-review remediation push, require another change only for one of these
+conditions:
+
+- An accepted earlier finding remains unresolved.
+- The previous remediation introduced a regression.
+- A new blocking finding identifies a correctness, security, data-safety, supported-contract,
+  required-review, or required-check failure.
+
+Treat a new non-blocking finding against code that the previous remediation did not change as a
+suggestion. Record it as deferred unless the user approves that finding as added scope.
+
+Before each automated-review remediation push after the second, stop. Collect one complete review
+cycle for the latest PR commit. Report the fixed, unresolved, and deferred finding groups,
+required-check results, and remediation-push count. Ask the user whether to authorize one named
+finding group and one additional push. Record the approval before editing.
+The approval does not reset the count.
+The limit does not change a blocking finding into a non-blocking finding.
+It does not authorize merge with an unresolved required finding.
+
 ## Handle results
 
 - Follow the shared [Documentation Writing and Review](documentation-writing-review.md) contract
@@ -127,10 +157,15 @@ After editing:
     - Rerun affected validation.
     - Commit the corrections.
     - Repeat the final collection.
-8. Push once when no unresolved finding requires a change.
-9. Monitor the latest PR commit for new findings that require a change.
+8. Before an automated-review remediation push, apply one condition:
+    - If the recorded count is less than two, proceed without new user approval.
+    - If the recorded count is two or more, require recorded approval for one named finding group and one additional push.
+9. Push once when no unresolved finding requires a change.
+10. If step 9 was an automated-review remediation push, increment the count after the push succeeds.
+11. Monitor the latest PR commit for new findings that require a change.
 
-Repeat the applicable steps whenever an unresolved finding requires a change. Stop if the user tells you to stop.
+When a new finding requires a change, apply the remediation-push limit before another edit, commit,
+or push. Stop if the user tells you to stop.
 
 If a push or GitHub query has an access error, follow [Git and GitHub Access Hard Stop](git-github-hard-stop.md).
 Resolve merge conflicts and dirty-worktree problems in the PR workflow.

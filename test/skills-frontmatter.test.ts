@@ -158,6 +158,37 @@ describe("repo skill markdown files", () => {
     }
   });
 
+  it("limits automated-review remediation pushes and preserves blocking findings", () => {
+    const followUp = fs.readFileSync(
+      path.join(skillsRoot, "_shared", "pr-follow-up.md"),
+      "utf8",
+    );
+    const createPr = fs.readFileSync(
+      path.join(skillsRoot, "nemoclaw-contributor-create-pr", "SKILL.md"),
+      "utf8",
+    );
+
+    expect(followUp).toContain("at most two automated-review remediation pushes");
+    expect(followUp).toContain("initial push that creates the PR does not count");
+    expect(followUp).toContain("does not reset the");
+    expect(followUp).toContain("previous remediation introduced a regression");
+    expect(followUp).toContain(
+      "Before each automated-review remediation push after the second, stop",
+    );
+    expect(followUp).toContain("new non-blocking finding");
+    expect(followUp).toContain("fixed, unresolved, and deferred finding groups");
+    expect(followUp).toContain("require recorded approval for one named finding group");
+    expect(followUp).toContain("The approval does not reset the count");
+    expect(followUp).toContain("does not change a blocking finding into a non-blocking finding");
+    expect(followUp).not.toContain(
+      "Repeat the applicable steps whenever an unresolved finding requires a change",
+    );
+    expect(createPr).toContain("Keep one automated-review remediation-push count");
+    expect(createPr).toContain("does not reset the count");
+    expect(createPr).toContain("permits at most two such");
+    expect(createPr).toContain("When the count is two or more");
+  });
+
   it.each(
     [
         "unauthorized-github-write",
