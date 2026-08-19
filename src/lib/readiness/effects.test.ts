@@ -36,6 +36,7 @@ const FILE_CONTENTS: Record<string, string> = {
   "/proc/version": "Linux version 6.8",
   "/etc/docker/daemon.json": "{}",
   "/home/rootless/.config/docker/daemon.json": "{}",
+  "/etc/docker-client/config.json": "{}",
 };
 
 describe("readiness process effects (#7412)", () => {
@@ -57,6 +58,7 @@ describe("readiness process effects (#7412)", () => {
     });
     const assess = vi.fn(() =>
       assessHost({
+        env: { DOCKER_CONFIG: "/etc/docker-client" },
         gpuProbeImpl: () => false,
         platform: "linux",
         readFileImpl,
@@ -128,6 +130,7 @@ describe("readiness process effects (#7412)", () => {
           "/proc/version",
           "/etc/docker/daemon.json",
           "/home/rootless/.config/docker/daemon.json",
+          "/etc/docker-client/config.json",
         ].includes(path),
       ),
     ).toBe(true);
