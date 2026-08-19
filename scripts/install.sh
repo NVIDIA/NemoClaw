@@ -12,6 +12,10 @@ set -euo pipefail
 # are removed on any exit path (set -e, unhandled signal, unexpected error).
 _cleanup_pids=()
 _cleanup_files=()
+# Bind the portable installer's temporary Docker CLI selector so only that
+# exact value can be removed from the Hermes onboarding child.
+unset _PORTABLE_INSTALLER_DOCKER_HOST
+_PORTABLE_INSTALLER_DOCKER_HOST=""
 # #4414: When re-launched as a staged copy via `curl | bash`, queue the
 # staged tmpfile for removal on EXIT. NEMOCLAW_INSTALLER_STAGED carries
 # the staged path forward so both the loop guard and cleanup use one var.
@@ -173,12 +177,16 @@ resolve_stamped_version() {
 clone_nemoclaw_ref() {
   local ref="$1" dest="$2"
 
-  git init --quiet "$dest"
-  git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-  if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
-    error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
-  fi
-  git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
+  (
+    # Git applies the process umask when it creates the authoritative source checkout.
+    umask 022
+    git init --quiet "$dest"
+    git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
+    if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
+      error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+    fi
+    git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
+  )
 }
 
 # ---------------------------------------------------------------------------
@@ -3937,15 +3945,28 @@ run_onboard() {
     # forward --yes so the Ollama size-confirmation gate does not abort
     # the unattended download (the size is still printed to logs).
     onboard_cmd+=(--yes)
+  fi
+
+  local invoke_bin="$cli_invoke"
+  local -a invoke_args=("${onboard_cmd[@]}")
+  if [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" &&
+    "${NEMOCLAW_AGENT:-openclaw}" == "hermes" &&
+    -n "$_PORTABLE_INSTALLER_DOCKER_HOST" &&
+    "${DOCKER_HOST:-}" == "$_PORTABLE_INSTALLER_DOCKER_HOST" ]]; then
+    invoke_bin="/usr/bin/env"
+    invoke_args=(-u DOCKER_HOST "$cli_invoke" "${onboard_cmd[@]}")
+  fi
+
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
-      "$cli_invoke" "${onboard_cmd[@]}" || status=$?
+      "$invoke_bin" "${invoke_args[@]}" || status=$?
   elif [ -t 0 ]; then
     NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
-      "$cli_invoke" "${onboard_cmd[@]}" || status=$?
+      "$invoke_bin" "${invoke_args[@]}" || status=$?
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
     NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
-      "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
+      "$invoke_bin" "${invoke_args[@]}" <&3 || status=$?
     exec 3<&-
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
@@ -4164,6 +4185,7 @@ prepare_portable_experimental_runtime_override() {
     /*) export DOCKER_HOST="unix://${podman_socket}" ;;
     *) error "Podman reported an invalid rootless API socket path: ${podman_socket:-empty}" ;;
   esac
+  _PORTABLE_INSTALLER_DOCKER_HOST="$DOCKER_HOST"
 
   info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
 }

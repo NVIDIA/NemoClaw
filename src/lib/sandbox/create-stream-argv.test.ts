@@ -62,4 +62,23 @@ describe("sandbox-create-stream argv boundary", () => {
       expect.objectContaining({ env: process.env }),
     );
   });
+
+  it("uses the exact schema-owned build context without changing argv dispatch (#9203)", async () => {
+    const child = new FakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const promise = streamSandboxCreate(
+      "openshell",
+      ["sandbox", "create", "--from", "/private/context/Dockerfile"],
+      dockerEnv,
+      { cwd: "/private/context", spawnImpl, logLine: vi.fn() },
+    );
+
+    child.emit("close", 0);
+    await expect(promise).resolves.toMatchObject({ status: 0 });
+    expect(spawnImpl).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "create", "--from", "/private/context/Dockerfile"],
+      expect.objectContaining({ cwd: "/private/context" }),
+    );
+  });
 });

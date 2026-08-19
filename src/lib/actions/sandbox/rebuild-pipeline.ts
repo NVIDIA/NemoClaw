@@ -33,6 +33,7 @@ import {
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   blockRebuildOnPendingBaselineTransition,
+  assertSandboxRebuildCommandAvailable,
   revalidateManagedWorkloadRebuildBeforeDelete,
   revalidateRebuildRouteBeforeDelete,
 } from "./rebuild-preflight-guards";
@@ -85,6 +86,7 @@ export async function rebuildSandbox(
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<void> {
   const homeDir = process.env.HOME || os.homedir();
+  assertSandboxRebuildCommandAvailable(sandboxName);
   return withPortableOnboardRetirementBoundary(
     {
       homeDir,
@@ -93,6 +95,7 @@ export async function rebuildSandbox(
       stateDir: path.dirname(onboardSession.SESSION_FILE),
     },
     () => withMcpLifecycleLock(sandboxName, async () => {
+    assertSandboxRebuildCommandAvailable(sandboxName);
     const scopedEnvKeys = [
       BRAVE_API_KEY_ENV,
       TAVILY_API_KEY_ENV,

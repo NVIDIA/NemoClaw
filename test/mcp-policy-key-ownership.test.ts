@@ -295,6 +295,10 @@ if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'
   exit 0
 fi
+if [ "$1 $2 $3" = "sandbox provider list" ]; then
+  printf '%s\n' 'No providers attached to sandbox alpha.'
+  exit 0
+fi
 if [ "$1 $2" = "provider get" ]; then
   printf 'Provider not found\n' >&2
   exit 1

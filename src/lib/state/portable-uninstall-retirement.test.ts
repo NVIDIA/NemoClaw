@@ -9,6 +9,9 @@ import path from "node:path";
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
 
 import {
+  assertNoHermesPortableHostAuthority,
+  defaultPortableStateDir,
+  getHermesPortableHostAuthorityEntryCount,
   hasPortableRetirementRecord,
   inspectPortableRetirementRecovery,
   portableRetirementFingerprint,
@@ -85,6 +88,54 @@ afterEach(() => {
 });
 
 describe("portable uninstall retirement state", () => {
+  it("shares the guarded portable state root across host admission owners (#9203)", () => {
+    const homeDir = "/home/nemoclaw-test";
+    const stateDir = "/private/nemoclaw-test-state";
+
+    expect(
+      defaultPortableStateDir({
+        HOME: homeDir,
+        NEMOCLAW_TEST_STATE_DIR: stateDir,
+      }),
+    ).toBe(path.join(homeDir, ".nemoclaw"));
+    expect(
+      defaultPortableStateDir({
+        HOME: homeDir,
+        VITEST: "true",
+        NEMOCLAW_TEST_BASE_HOME: homeDir,
+        NEMOCLAW_TEST_STATE_DIR: stateDir,
+      }),
+    ).toBe(stateDir);
+    expect(defaultPortableStateDir({ HOME: "" })).toBe(path.join(os.homedir(), ".nemoclaw"));
+    expect(defaultPortableStateDir({})).toBe(path.join(os.homedir(), ".nemoclaw"));
+  });
+
+  it.each([1, 2])(
+    "fails closed on %i malformed or ambiguous schema-5 authority entries (#9203)",
+    (entryCount) => {
+      const test = fixture();
+      const authorityRoot = path.join(test.stateDir, "hermes-portable-lifecycle");
+      fs.mkdirSync(authorityRoot, { mode: 0o700 });
+      Array.from({ length: entryCount }, (_unused, index) =>
+        fs.writeFileSync(path.join(authorityRoot, `ambiguous-${index}`), "not-a-receipt\n", {
+          mode: 0o600,
+        }),
+      );
+
+      expect(getHermesPortableHostAuthorityEntryCount(test.stateDir)).toBe(entryCount);
+      expect(() => assertNoHermesPortableHostAuthority(test.stateDir, "list")).toThrow(
+        "Command 'list' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.",
+      );
+    },
+  );
+
+  it("preserves ordinary host command admission when schema-5 authority is absent (#9203)", () => {
+    const test = fixture();
+
+    expect(getHermesPortableHostAuthorityEntryCount(test.stateDir)).toBe(0);
+    expect(() => assertNoHermesPortableHostAuthority(test.stateDir, "list")).not.toThrow();
+  });
+
   it("publishes the sole private retry record without raw cleanup authority (#9189)", () => {
     const test = fixture();
     const prepared = prepareFixture(test);
@@ -113,33 +164,40 @@ describe("portable uninstall retirement state", () => {
         Buffer.from("bc"),
       ),
     );
-    expect(([
+    expect(
+      (
+        [
           [255, "09adecb5bfc2c496d9e1f4e737b4973699fa3f6f4a9027c0633bda893f7d9cfb"],
           [256, "a62d83f4aa319e94abbccbb75d1dea277e450e5167be6872d87eb52d2e7a8b30"],
           [65_535, "ab48f19398e2af46d86be80dea98e8326b67360e6cd8d3a171cc8c1a2b67a1b7"],
           [65_536, "e868451822f03cecc74591d7785d6799f01d6742a83082d45d9f033c970afdbd"],
-        ] as const).every(([size, vector]) =>
-          Object.is(
-            portableRetirementFingerprint(
-              "a".repeat(64),
-              "config",
-              "containers.conf",
-              Buffer.alloc(size, 1),
-            ),
-            vector,
-          ))).toBe(true);
-    ([
-      ["", "config", "containers.conf", Buffer.from("x")],
-      [new String("a".repeat(64)), "config", "containers.conf", Buffer.from("x")],
-      ["A".repeat(64), "config", "containers.conf", Buffer.from("x")],
-      ["a".repeat(64), "invalid", "containers.conf", Buffer.from("x")],
-      ["a".repeat(64), "config", "containers.conf\0", Buffer.from("x")],
-      ["a".repeat(64), "receipt", "../receipt.json", Buffer.from("x")],
-      ["a".repeat(64), "registry", "sandboxes.json", Buffer.alloc(0)],
-      ["a".repeat(64), "receipt", `${"b".repeat(64)}.json`, Buffer.alloc(4_097)],
-      ["a".repeat(64), "config", "containers.conf", Buffer.alloc(65_537)],
-      ["a".repeat(64), "registry", "sandboxes.json", Buffer.alloc(1_048_577)],
-    ] as const).forEach((input) => {
+        ] as const
+      ).every(([size, vector]) =>
+        Object.is(
+          portableRetirementFingerprint(
+            "a".repeat(64),
+            "config",
+            "containers.conf",
+            Buffer.alloc(size, 1),
+          ),
+          vector,
+        ),
+      ),
+    ).toBe(true);
+    (
+      [
+        ["", "config", "containers.conf", Buffer.from("x")],
+        [new String("a".repeat(64)), "config", "containers.conf", Buffer.from("x")],
+        ["A".repeat(64), "config", "containers.conf", Buffer.from("x")],
+        ["a".repeat(64), "invalid", "containers.conf", Buffer.from("x")],
+        ["a".repeat(64), "config", "containers.conf\0", Buffer.from("x")],
+        ["a".repeat(64), "receipt", "../receipt.json", Buffer.from("x")],
+        ["a".repeat(64), "registry", "sandboxes.json", Buffer.alloc(0)],
+        ["a".repeat(64), "receipt", `${"b".repeat(64)}.json`, Buffer.alloc(4_097)],
+        ["a".repeat(64), "config", "containers.conf", Buffer.alloc(65_537)],
+        ["a".repeat(64), "registry", "sandboxes.json", Buffer.alloc(1_048_577)],
+      ] as const
+    ).forEach((input) => {
       expect(() =>
         portableRetirementFingerprint(
           ...(input as unknown as Parameters<typeof portableRetirementFingerprint>),

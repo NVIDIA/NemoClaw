@@ -46,9 +46,9 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const hasPortableLifecycleReceipt = vi.fn<
     DockerRuntimeProviderDependencies["hasPortableLifecycleReceipt"]
   >(() => false);
-  const recoverPortableSandbox = vi.fn<
-    DockerRuntimeProviderDependencies["recoverPortableSandbox"]
-  >(() => ({ kind: "not-installed" }));
+  const recoverPortableSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverPortableSandbox"]>(
+    () => ({ kind: "not-installed" }),
+  );
   const recoverDockerDriverSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverSandbox"]>(
     () => ({
       recovered: true,
@@ -91,6 +91,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     waitForManagedGatewaySupervisor,
     verifyGateway,
     log,
+    withLifecycleLock: async (_sandboxName, operation) => operation(),
     ...overrides,
   };
   return {
@@ -457,6 +458,32 @@ describe("startSandbox", () => {
     );
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+  });
+
+  it("keeps active Hermes start out of every Docker path (#9203)", async () => {
+    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-alpha",
+        lifecycleLiveIdentityFingerprint: "identity-alpha",
+        openshellDriver: "docker",
+      }),
+    );
+    h.hasPortableLifecycleReceipt.mockReturnValue(true);
+    h.recoverPortableSandbox.mockReturnValue({ kind: "recovered" });
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.isDockerRuntimeDown).not.toHaveBeenCalled();
+    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.dockerUnpause).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
   it("still probes when the container was already running (#6026)", async () => {

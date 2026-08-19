@@ -12,7 +12,11 @@ import {
 } from "./sandbox-create-intent";
 import type { SandboxCreateIntent } from "./sandbox-create-intent-types";
 import { resolveSandboxCreatePolicyTier } from "./sandbox-create-plan";
-import { validateSandboxCreateIntentBindings } from "./sandbox-create-plan-materialization";
+import {
+  selectHermesPortableExtraProviderPlan,
+  selectHermesPortableMessagingCapabilities,
+  validateSandboxCreateIntentBindings,
+} from "./sandbox-create-plan-materialization";
 import { buildSandboxGpuCreateArgs, type SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 import {
   prepareSandboxMessagingPreflight,
@@ -45,7 +49,10 @@ export interface SandboxCreateIntentResolverDeps<Agent, ResourceProfile> {
   filterEnabledChannelsByAgent(enabledChannels: string[] | null, agent: Agent): string[] | null;
   defaultPolicyPath: string;
   getAgentPolicyPath(agent: Agent): string | null;
-  resolveGpuPlan(config: SandboxGpuCreateConfig): {
+  resolveGpuPlan(
+    config: SandboxGpuCreateConfig,
+    agent: Agent,
+  ): {
     gpuRoutePlan: DockerGpuRoutePlan;
     logMessage: string | null;
   };
@@ -116,6 +123,7 @@ export function createSandboxCreateIntentResolver<
     const messaging = await prepareMessagingCapabilities(input);
     const { gpuRoutePlan, logMessage: sandboxGpuLogMessage } = deps.resolveGpuPlan(
       input.sandboxGpuConfig,
+      input.agent,
     );
     const resourceCreateArgs: string[] = [];
     deps.appendResourceCreateArgs(resourceCreateArgs, input.resourceProfile);
@@ -150,8 +158,43 @@ export function createSandboxCreateIntentResolver<
     });
   }
 
+  async function resolvePortableLifecycle(
+    input: Omit<
+      CompleteSandboxCreateIntentInput<Agent, ResourceProfile>,
+      "extraProviders" | "staleExtraProviders"
+    >,
+    options: {
+      readonly hermesPortable: boolean;
+      readonly requestedExtraProviders?: readonly string[];
+      readonly resolvedIntent?: SandboxCreateIntent;
+      readonly planOrdinaryExtraProviders: () => {
+        readonly extraProviders: readonly string[];
+        readonly staleExtraProviders: readonly string[];
+      };
+    },
+  ) {
+    const extraProviderPlan = selectHermesPortableExtraProviderPlan(
+      options.hermesPortable,
+      options.requestedExtraProviders,
+      options.planOrdinaryExtraProviders,
+    );
+    const intent =
+      options.resolvedIntent ??
+      (await resolve({
+        ...input,
+        extraProviders: extraProviderPlan.extraProviders,
+        staleExtraProviders: extraProviderPlan.staleExtraProviders,
+      }));
+    const messagingCapabilities = await selectHermesPortableMessagingCapabilities(
+      options.hermesPortable,
+      () => prepareMessagingCapabilities(input, intent),
+    );
+    return { intent, messagingCapabilities };
+  }
+
   return {
     resolve,
+    resolvePortableLifecycle,
     rebind: prepareMessagingCapabilities,
     prepareCredentialProviders: (
       input: Pick<
