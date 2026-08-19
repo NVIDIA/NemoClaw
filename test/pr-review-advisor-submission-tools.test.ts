@@ -13,16 +13,18 @@ import {
   RECORD_FINDINGS_TOOL,
   RECORD_REVIEW_RECEIPT_TOOL,
   RECOMMEND_E2E_TOOL,
-  SECURITY_CATEGORY_NAMES,
   SUBMIT_REVIEW_TOOL,
 } from "../tools/pr-review-advisor/review-submission.mts";
 import type { TerminologyTrace } from "../tools/pr-review-advisor/terminology.mts";
+import { readParsedTrustedSecurityRubric } from "../tools/pr-review-advisor/trusted-guidance.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HEAD = "a".repeat(40);
+const SECURITY_CATEGORY_NAMES = readParsedTrustedSecurityRubric().categories;
 function controller(
   traces = new Map<string, TerminologyTrace>(),
   normalizeE2e = (draft: Record<string, unknown>) => draft,
+  securityCategoryNames: readonly string[] = SECURITY_CATEGORY_NAMES,
 ) {
   return createReviewSubmissionController({
     metadata: {
@@ -40,6 +42,7 @@ function controller(
     },
     schema: reviewSchema,
     repositoryRoot: ROOT,
+    securityCategoryNames,
     terminologyTraces: traces,
     normalizeE2e,
   });
@@ -204,6 +207,7 @@ describe("PR review advisor submission tools", () => {
       findings: [
         {
           ...finding("Acceptance behavior is missing"),
+          severity: "blocker",
           category: "correctness",
           basis: { ...finding().basis, kind: "behavior_mismatch" },
         },
@@ -239,7 +243,7 @@ describe("PR review advisor submission tools", () => {
     draft.acceptanceCoverage = [
       {
         clause: "Propagate refusal",
-        status: "missing",
+        status: "partial",
         evidence: "tools/pr-review-advisor/review-submission.mts:7",
         findingId: returnedFindings[0]!.id,
       },
@@ -392,6 +396,7 @@ describe("PR review advisor submission tools", () => {
       findings: [
         {
           ...finding(),
+          severity: "blocker",
           category: "acceptance",
           basis: { ...finding().basis, kind: "unmet_acceptance" },
         },
@@ -689,7 +694,7 @@ describe("PR review advisor submission tools", () => {
         value.acceptanceCoverage = [
           {
             clause: "Propagate refusal",
-            status: "missing",
+            status: "partial",
             evidence: "tools/pr-review-advisor/review-submission.mts:7",
             findingId: "F-001",
           },
@@ -713,7 +718,7 @@ describe("PR review advisor submission tools", () => {
         value.sourceOfTruthReview = [
           {
             surface: "config",
-            status: "missing",
+            status: "needs_followup",
             findingId: "F-001",
             invalidState: "stale",
             sourceBoundary: "config",
@@ -773,7 +778,7 @@ describe("PR review advisor submission tools", () => {
       draft.acceptanceCoverage = [
         {
           clause: "Propagate refusal",
-          status: "missing",
+          status: "partial",
           evidence: "tools/pr-review-advisor/review-submission.mts:7",
           findingId: "F-001",
         },
@@ -799,7 +804,7 @@ describe("PR review advisor submission tools", () => {
     draft.sourceOfTruthReview = [
       {
         surface: "config",
-        status: "missing",
+        status: "needs_followup",
         findingId: "F-001",
         invalidState: "stale",
         sourceBoundary: "config",
@@ -864,6 +869,148 @@ describe("PR review advisor submission tools", () => {
     },
   );
 
+  it("uses the injected security inventory for receipt schema and validation", async () => {
+    const injected = ["Injected Security Category"];
+    const submission = controller(new Map(), (draft) => draft, injected);
+    const draft = receipt();
+    draft.securityCategories = [
+      {
+        category: injected[0]!,
+        verdict: "pass",
+        justification: "The injected category passed.",
+        findingId: null,
+      },
+    ];
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await expect(execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft)).resolves.toBeDefined();
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toBeDefined();
+
+    const rejected = controller(new Map(), (value) => value, injected);
+    await execute(rejected, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(rejected, RECORD_REVIEW_RECEIPT_TOOL, receipt());
+    await execute(rejected, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(rejected, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "securityCategories must contain each named category exactly once",
+    );
+    expect(rejected.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+  });
+
+  const acceptanceMissing = (draft: ReturnType<typeof receipt>) => {
+    draft.acceptanceCoverage = [
+      { clause: "Clause", status: "missing", evidence: "evidence", findingId: "F-001" },
+    ];
+  };
+  const acceptancePartial = (draft: ReturnType<typeof receipt>) => {
+    draft.acceptanceCoverage = [
+      { clause: "Clause", status: "partial", evidence: "evidence", findingId: "F-001" },
+    ];
+  };
+  const securityFail = (draft: ReturnType<typeof receipt>) => {
+    draft.acceptanceCoverage = [];
+    draft.securityCategories[0] = {
+      ...draft.securityCategories[0],
+      verdict: "fail",
+      findingId: "F-001",
+    };
+  };
+  const securityWarning = (draft: ReturnType<typeof receipt>) => {
+    draft.acceptanceCoverage = [];
+    draft.securityCategories[0] = {
+      ...draft.securityCategories[0],
+      verdict: "warning",
+      findingId: "F-001",
+    };
+  };
+  const sourceMissing = (draft: ReturnType<typeof receipt>) => {
+    draft.acceptanceCoverage = [];
+    draft.sourceOfTruthReview = [
+      {
+        surface: "config",
+        status: "missing",
+        findingId: "F-001",
+        invalidState: "stale",
+        sourceBoundary: "source",
+        whyNotSourceFix: "none",
+        regressionTest: "test",
+        removalCondition: "fixed",
+        evidence: "evidence",
+      },
+    ];
+  };
+  const sourceFollowup = (draft: ReturnType<typeof receipt>) => {
+    draft.acceptanceCoverage = [];
+    draft.sourceOfTruthReview = [
+      {
+        surface: "config",
+        status: "needs_followup",
+        findingId: "F-001",
+        invalidState: "stale",
+        sourceBoundary: "source",
+        whyNotSourceFix: "none",
+        regressionTest: "test",
+        removalCondition: "fixed",
+        evidence: "evidence",
+      },
+    ];
+  };
+
+  it.each([
+    ["acceptance missing", "acceptance", "unmet_acceptance", "blocker", acceptanceMissing],
+    ["acceptance partial minimum", "acceptance", "unmet_acceptance", "warning", acceptancePartial],
+    ["acceptance partial blocker", "acceptance", "unmet_acceptance", "blocker", acceptancePartial],
+    ["security fail", "security", "security_violation", "blocker", securityFail],
+    ["security warning minimum", "security", "security_violation", "warning", securityWarning],
+    ["security warning blocker", "security", "security_violation", "blocker", securityWarning],
+    ["source missing suggestion", "architecture", "behavior_mismatch", "suggestion", sourceMissing],
+    [
+      "source follow-up suggestion",
+      "architecture",
+      "behavior_mismatch",
+      "suggestion",
+      sourceFollowup,
+    ],
+  ] as const)(
+    "accepts %s linked finding severity",
+    async (_name, category, basisKind, severity, mutateReceipt) => {
+      const accepted = controller();
+      const draft = receipt();
+      mutateReceipt(draft);
+      await execute(accepted, RECORD_FINDINGS_TOOL, {
+        findings: [
+          { ...finding(), severity, category, basis: { ...finding().basis, kind: basisKind } },
+        ],
+      });
+      await execute(accepted, RECORD_REVIEW_RECEIPT_TOOL, draft);
+      await execute(accepted, RECOMMEND_E2E_TOOL, e2e());
+      await expect(execute(accepted, SUBMIT_REVIEW_TOOL, {})).resolves.toBeDefined();
+    },
+  );
+
+  it.each([
+    ["acceptance missing", "acceptance", "unmet_acceptance", "warning", acceptanceMissing],
+    ["acceptance partial", "acceptance", "unmet_acceptance", "suggestion", acceptancePartial],
+    ["security fail", "security", "security_violation", "warning", securityFail],
+    ["security warning", "security", "security_violation", "suggestion", securityWarning],
+  ] as const)(
+    "rejects weaker %s linked finding severity atomically",
+    async (_name, category, basisKind, severity, mutateReceipt) => {
+      const rejected = controller();
+      const draft = receipt();
+      mutateReceipt(draft);
+      await execute(rejected, RECORD_FINDINGS_TOOL, {
+        findings: [
+          { ...finding(), severity, category, basis: { ...finding().basis, kind: basisKind } },
+        ],
+      });
+      await execute(rejected, RECORD_REVIEW_RECEIPT_TOOL, draft);
+      await execute(rejected, RECOMMEND_E2E_TOOL, e2e());
+      await expect(execute(rejected, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow("requires");
+      expect(rejected.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+      expect(rejected.result()).toBeNull();
+    },
+  );
+
   it("resolves terminology traces lazily at submission time", async () => {
     let traces = new Map<string, TerminologyTrace>();
     const submission = createReviewSubmissionController({
@@ -882,6 +1029,7 @@ describe("PR review advisor submission tools", () => {
       },
       schema: reviewSchema,
       repositoryRoot: ROOT,
+      securityCategoryNames: SECURITY_CATEGORY_NAMES,
       terminologyTraces: () => traces,
       normalizeE2e: (draft) => draft,
     });

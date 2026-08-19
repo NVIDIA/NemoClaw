@@ -121,80 +121,88 @@ const summarySchema = Type.Object(
   },
   { additionalProperties: false },
 );
-const reviewReceiptSchema = Type.Object(
-  {
-    summary: summarySchema,
-    terminologyReview: Type.Object(
-      {
-        decisions: Type.Array(terminologyDecisionSchema, { maxItems: 20 }),
-        noChangesReason: Type.Union([text, Type.Null()]),
-      },
-      { additionalProperties: false },
-    ),
-    acceptanceCoverage: Type.Array(
-      Type.Object(
+function createReviewReceiptSchema(securityCategoryNames: readonly string[]) {
+  if (securityCategoryNames.length === 0) {
+    throw new Error("securityCategoryNames must not be empty");
+  }
+  return Type.Object(
+    {
+      summary: summarySchema,
+      terminologyReview: Type.Object(
         {
-          clause: text,
-          status: Type.Union(
-            ["met", "partial", "missing", "unknown"].map((value) => Type.Literal(value)),
-          ),
-          evidence: text,
-          findingId: Type.Union([text, Type.Null()]),
+          decisions: Type.Array(terminologyDecisionSchema, { maxItems: 20 }),
+          noChangesReason: Type.Union([text, Type.Null()]),
         },
         { additionalProperties: false },
       ),
-    ),
-    securityCategories: Type.Array(
-      Type.Object(
-        {
-          category: text,
-          verdict: Type.Union(["pass", "warning", "fail"].map((value) => Type.Literal(value))),
-          justification: text,
-          findingId: Type.Union([text, Type.Null()]),
-        },
-        { additionalProperties: false },
-      ),
-    ),
-    sourceOfTruthReview: Type.Array(
-      Type.Object(
-        {
-          surface: text,
-          status: Type.Union(
-            ["not_applicable", "satisfied", "needs_followup", "missing"].map((value) =>
-              Type.Literal(value),
+      acceptanceCoverage: Type.Array(
+        Type.Object(
+          {
+            clause: text,
+            status: Type.Union(
+              ["met", "partial", "missing", "unknown"].map((value) => Type.Literal(value)),
             ),
+            evidence: text,
+            findingId: Type.Union([text, Type.Null()]),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+      securityCategories: Type.Array(
+        Type.Object(
+          {
+            category: Type.Union(securityCategoryNames.map((value) => Type.Literal(value))),
+            verdict: Type.Union(["pass", "warning", "fail"].map((value) => Type.Literal(value))),
+            justification: text,
+            findingId: Type.Union([text, Type.Null()]),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+      sourceOfTruthReview: Type.Array(
+        Type.Object(
+          {
+            surface: text,
+            status: Type.Union(
+              ["not_applicable", "satisfied", "needs_followup", "missing"].map((value) =>
+                Type.Literal(value),
+              ),
+            ),
+            findingId: Type.Union([text, Type.Null()]),
+            invalidState: Type.String(),
+            sourceBoundary: Type.String(),
+            whyNotSourceFix: Type.String(),
+            regressionTest: Type.String(),
+            removalCondition: Type.String(),
+            evidence: Type.String(),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+      testDepth: Type.Object(
+        {
+          verdict: Type.Union(
+            [
+              "unit_sufficient",
+              "mocks_recommended",
+              "runtime_validation_recommended",
+              "unknown",
+            ].map((value) => Type.Literal(value)),
           ),
-          findingId: Type.Union([text, Type.Null()]),
-          invalidState: Type.String(),
-          sourceBoundary: Type.String(),
-          whyNotSourceFix: Type.String(),
-          regressionTest: Type.String(),
-          removalCondition: Type.String(),
-          evidence: Type.String(),
+          rationale: text,
+          suggestedTests: Type.Array(Type.String()),
         },
         { additionalProperties: false },
       ),
-    ),
-    testDepth: Type.Object(
-      {
-        verdict: Type.Union(
-          ["unit_sufficient", "mocks_recommended", "runtime_validation_recommended", "unknown"].map(
-            (value) => Type.Literal(value),
-          ),
-        ),
-        rationale: text,
-        suggestedTests: Type.Array(Type.String()),
-      },
-      { additionalProperties: false },
-    ),
-    positives: Type.Array(Type.String()),
-    reviewCompleteness: Type.Object(
-      { limitations: Type.Array(Type.String()), requiresHumanReview: Type.Literal(true) },
-      { additionalProperties: false },
-    ),
-  },
-  { additionalProperties: false },
-);
+      positives: Type.Array(Type.String()),
+      reviewCompleteness: Type.Object(
+        { limitations: Type.Array(Type.String()), requiresHumanReview: Type.Literal(true) },
+        { additionalProperties: false },
+      ),
+    },
+    { additionalProperties: false },
+  );
+}
 const e2eTest = Type.Object({ id: text, reason: text }, { additionalProperties: false });
 const targetRecommendation = Type.Object(
   {
@@ -258,18 +266,6 @@ export type NormalizeReviewE2e = (
   metadata: ReviewSubmissionMetadata,
 ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
-export const SECURITY_CATEGORY_NAMES = [
-  "Secrets and Credentials",
-  "Input Validation and Data Sanitization",
-  "Authentication and Authorization",
-  "Dependencies and Third-Party Libraries",
-  "Error Handling and Logging",
-  "Cryptography and Data Protection",
-  "Configuration and Security Headers",
-  "Security Testing",
-  "System Security",
-] as const;
-
 export type ReviewSubmissionController = Readonly<{
   tools: ToolDefinition[];
   result(): unknown | null;
@@ -304,6 +300,7 @@ export function createReviewSubmissionController({
   terminologyTraces = new Map(),
   normalizeE2e,
   repositoryRoot,
+  securityCategoryNames,
 }: {
   metadata: ReviewSubmissionMetadata;
   schema: Record<string, unknown>;
@@ -312,6 +309,7 @@ export function createReviewSubmissionController({
     | (() => ReadonlyMap<string, TerminologyTrace>);
   normalizeE2e: NormalizeReviewE2e;
   repositoryRoot: string;
+  securityCategoryNames: readonly string[];
 }): ReviewSubmissionController {
   let findingsDraft: ModelFindingInput[] | null = null;
   let findingsRevision = 0;
@@ -326,6 +324,7 @@ export function createReviewSubmissionController({
   let submitted: unknown | null = null;
   let findingSnapshot = validateReviewFindingSubmission([], repositoryRoot);
   let terminologySnapshot = createTerminologyLedger(metadata.headSha).snapshot();
+  const reviewReceiptSchema = createReviewReceiptSchema(securityCategoryNames);
   const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
 
   const recordFindings = defineTool({
@@ -412,7 +411,7 @@ export function createReviewSubmissionController({
       const openFindings = candidateFindingSnapshot.findings.filter(
         (finding) => finding.status === "open",
       );
-      validateSecurityCategories(receiptDraft!.securityCategories);
+      validateSecurityCategories(receiptDraft!.securityCategories, securityCategoryNames);
       const summary = canonicalSummary(receiptDraft!.summary, openFindings);
       const normalizedE2e = await normalizeE2e(structuredClone(e2eDraft!), metadata);
       const candidateTerminology = createTerminologyLedger(metadata.headSha);
@@ -478,14 +477,17 @@ export function createReviewSubmissionController({
   };
 }
 
-function validateSecurityCategories(categories: unknown[]): void {
+function validateSecurityCategories(
+  categories: unknown[],
+  securityCategoryNames: readonly string[],
+): void {
   const names = categories.map((value) => (value as { category?: unknown }).category);
-  const missing = SECURITY_CATEGORY_NAMES.filter((name) => !names.includes(name));
+  const missing = securityCategoryNames.filter((name) => !names.includes(name));
   const seen = new Set<unknown>();
   const extras = names.filter((name) => {
     const duplicate = seen.has(name);
     seen.add(name);
-    return !SECURITY_CATEGORY_NAMES.includes(name as never) || duplicate;
+    return !securityCategoryNames.includes(String(name)) || duplicate;
   });
   if (missing.length > 0 || extras.length > 0) {
     throw new Error(
@@ -537,6 +539,7 @@ function validateReceiptFindingReferences(
     findingsById,
     (entry) => entry.status === "partial" || entry.status === "missing",
     (finding) => ACCEPTANCE_FINDING_PAIRS.has(findingPair(finding)),
+    (entry) => (entry.status === "missing" ? "blocker" : "warning"),
   );
   validateConcernEntries(
     "securityCategories",
@@ -544,6 +547,7 @@ function validateReceiptFindingReferences(
     findingsById,
     (entry) => entry.verdict === "warning" || entry.verdict === "fail",
     (finding) => SECURITY_FINDING_PAIRS.has(findingPair(finding)),
+    (entry) => (entry.verdict === "fail" ? "blocker" : "warning"),
   );
   validateConcernEntries(
     "sourceOfTruthReview",
@@ -560,6 +564,7 @@ function validateConcernEntries(
   findingsById: ReadonlyMap<string, CandidateFindingInput>,
   requiresFinding: (entry: Record<string, unknown>) => boolean,
   fitsConcern: (finding: CandidateFindingInput) => boolean,
+  minimumSeverity?: (entry: Record<string, unknown>) => (typeof REVIEW_FINDING_SEVERITIES)[number],
 ): void {
   for (const [index, rawEntry] of entries.entries()) {
     const entry = rawEntry as Record<string, unknown>;
@@ -577,6 +582,15 @@ function validateConcernEntries(
       throw new Error(
         `${section}[${index + 1}] references finding ${findingId}, which does not fit this concern`,
       );
+    if (!minimumSeverity) continue;
+    const requiredSeverity = minimumSeverity(entry);
+    const actualRank = REVIEW_FINDING_SEVERITIES.indexOf(finding.severity);
+    const requiredRank = REVIEW_FINDING_SEVERITIES.indexOf(requiredSeverity);
+    if (actualRank > requiredRank) {
+      throw new Error(
+        `${section}[${index + 1}] references ${findingId} with severity ${finding.severity}; ${String(entry.status ?? entry.verdict)} requires ${requiredSeverity}${requiredSeverity === "warning" ? " or blocker" : ""}`,
+      );
+    }
   }
 }
 

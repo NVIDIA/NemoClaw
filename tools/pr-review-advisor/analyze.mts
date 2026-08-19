@@ -69,6 +69,7 @@ import {
 export { buildRiskPlanReviewContext } from "./turn-context.mts";
 import {
   buildSystemPrompt,
+  readParsedTrustedSecurityRubric,
   readSecurityCategoryNames,
   readTrustedControlledWords,
 } from "./trusted-guidance.mts";
@@ -373,7 +374,7 @@ async function main(): Promise<void> {
   delete process.env.GH_TOKEN;
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const { systemPrompt, promptTurns } = preparePromptArtifacts({
+  const { systemPrompt, promptTurns, securityCategoryNames } = preparePromptArtifacts({
     artifacts,
     metadata,
     diff,
@@ -413,6 +414,7 @@ async function main(): Promise<void> {
       headRef,
       metadata,
       schema,
+      securityCategoryNames,
     });
     sdkResult = conversation.run;
     submission = conversation.submission;
@@ -469,13 +471,14 @@ export function preparePromptArtifacts({
   metadata: ReviewMetadata;
   diff: string;
   schema: Record<string, unknown>;
-}): { systemPrompt: string; promptTurns: AdvisorPromptTurn[] } {
+}): { systemPrompt: string; promptTurns: AdvisorPromptTurn[]; securityCategoryNames: string[] } {
   writeJson(artifacts.findingLedger, EMPTY_REVIEW_FINDING_LEDGER_SNAPSHOT);
   writeJson(artifacts.terminologyLedger, emptyTerminologyLedgerSnapshot(metadata.headSha));
   try {
-    const systemPrompt = buildSystemPrompt();
+    const securityRubric = readParsedTrustedSecurityRubric();
+    const systemPrompt = buildSystemPrompt(securityRubric);
     const promptTurns = buildPromptTurns({ metadata, diff, schema });
-    return { systemPrompt, promptTurns };
+    return { systemPrompt, promptTurns, securityCategoryNames: securityRubric.categories };
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     writeFailureArtifacts(artifacts, metadata, reason);
@@ -526,6 +529,7 @@ type AdvisorConversationOptions = {
   headRef: string;
   metadata: ReviewMetadata;
   schema: Record<string, unknown>;
+  securityCategoryNames: readonly string[];
 };
 
 type AdvisorConversationResult = {
@@ -550,6 +554,7 @@ async function runAdvisorConversation(
     },
     schema: options.schema,
     repositoryRoot: root,
+    securityCategoryNames: options.securityCategoryNames,
     terminologyTraces: () => terminologyTools.traces(),
     normalizeE2e: (value) => normalizeCombinedE2eResult(value, options.metadata),
   });

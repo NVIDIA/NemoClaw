@@ -80,13 +80,18 @@ function readTrustedFile(filePath: string, label: string): string {
   }
 }
 
+export type ParsedSecurityRubric = { content: string; categories: string[] };
+
+export function readParsedTrustedSecurityRubric(): ParsedSecurityRubric {
+  return parseSecurityRubric(readTrustedFile(TRUSTED_SECURITY_RUBRIC_PATH, "Security rubric"));
+}
+
 export function readTrustedSecurityRubric(): string {
-  return parseSecurityRubric(readTrustedFile(TRUSTED_SECURITY_RUBRIC_PATH, "Security rubric"))
-    .content;
+  return readParsedTrustedSecurityRubric().content;
 }
 
 export function readSecurityCategoryNames(): string[] {
-  return parseSecurityRubric(readTrustedSecurityRubric()).categories;
+  return readParsedTrustedSecurityRubric().categories;
 }
 
 export function readTrustedWritingGuide(): string {
@@ -130,8 +135,10 @@ function fencedBlock(content: string, language = ""): string {
   return `${fence}${language}\n${content}\n${fence}`;
 }
 
-export function buildSystemPrompt(): string {
-  const securityRubric = readTrustedSecurityRubric();
+export function buildSystemPrompt(
+  parsedSecurityRubric: ParsedSecurityRubric = readParsedTrustedSecurityRubric(),
+): string {
+  const securityRubric = parsedSecurityRubric.content;
   const writingGuide = readTrustedWritingGuide();
   const codeChangeConsiderations = readTrustedCodeChangeConsiderations();
   return [
