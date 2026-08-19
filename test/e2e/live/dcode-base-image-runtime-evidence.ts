@@ -91,6 +91,15 @@ export function dcodeBaseImageReferenceForContract(contract: DcodeBaseImageContr
   return contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
 }
 
+function requireDcodeSourceRevision(metadata: SandboxBaseImageResolutionMetadata): string {
+  if (!metadata.sourceRevision || !REVISION_PATTERN.test(metadata.sourceRevision)) {
+    throw new Error(
+      `Deep Agents Code sandbox image does not match the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base-image contract (mismatched fields: source revision)`,
+    );
+  }
+  return metadata.sourceRevision;
+}
+
 export function loadDcodeBaseImagePublicationEvidence(
   targetId: string,
   evidencePath: string,
@@ -128,6 +137,7 @@ export function verifyDcodeBaseImageRuntimeEvidence(
   }
   const expectedDigest = contract.platformDigests[DCODE_BASE_IMAGE_TARGET_PLATFORM];
   const expectedReference = dcodeBaseImageReferenceForContract(contract);
+  const sourceRevision = requireDcodeSourceRevision(metadata);
   const mismatchedFields = [
     metadata.schema !== 1 ? "schema" : null,
     metadata.imageName !== contract.image ? "image" : null,
@@ -136,6 +146,7 @@ export function verifyDcodeBaseImageRuntimeEvidence(
     metadata.digest !== expectedDigest ? "digest" : null,
     metadata.ref !== expectedReference ? "reference" : null,
     metadata.ref !== `${metadata.imageName}@${metadata.digest}` ? "reference binding" : null,
+    sourceRevision !== contract.sourceRevision ? "source revision" : null,
   ].filter((field): field is string => field !== null);
   if (mismatchedFields.length > 0) {
     throw new Error(
@@ -151,7 +162,7 @@ export function verifyDcodeBaseImageRuntimeEvidence(
     reference: expectedReference,
     sandboxImage,
     source: "override",
-    sourceRevision: contract.sourceRevision,
+    sourceRevision,
   };
 }
 

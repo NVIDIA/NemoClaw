@@ -842,6 +842,7 @@ fi
         encoding: "utf8",
         env: {
           ...process.env,
+          AGENT: "openclaw",
           ALIAS_RAW: aliasRaw,
           BASE_ALIAS: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
           BASE_DOCKERFILE: "Dockerfile.base",

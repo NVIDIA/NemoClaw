@@ -411,6 +411,7 @@ jobs:
         id: base
         shell: bash
         env:
+          AGENT: ${{ matrix.agent }}
           BASE_DOCKERFILE: ${{ matrix.base_dockerfile }}
           BASE_ALIAS: ${{ matrix.base_alias }}
           BASE_REPOSITORY: ${{ matrix.base_repository }}
@@ -418,8 +419,55 @@ jobs:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DISPLAY_NAME: ${{ matrix.display_name }}
           LOCAL_BASE_REFERENCE: nemoclaw-managed-pr/${{ matrix.agent }}-base:${{ github.event.pull_request.head.sha }}
+          PLATFORM: linux/amd64
         run: |
           set -euo pipefail
+          write_dcode_resolution() {
+            [ "$AGENT" = "langchain-deepagents-code" ] || return 0
+            local identity_ref="$1" inspect_ref="$2" expected_revision="$3"
+            local digest="${identity_ref##*@}"
+            if [ "$identity_ref" != "${BASE_REPOSITORY}@${digest}" ] ||
+               [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "ERROR: DCode base reference is not an exact platform digest." >&2
+              exit 1
+            fi
+            if [ "$identity_ref" = "$inspect_ref" ]; then
+              docker pull --platform "$PLATFORM" "$identity_ref" >/dev/null
+            fi
+            local image_json source_revision image_id os architecture glibc_output glibc metadata key
+            image_json="$(docker image inspect "$inspect_ref")"
+            source_revision="$(jq -er 'if length == 1 then .[0].Config.Labels["org.opencontainers.image.revision"] else error("not one image") end' <<< "$image_json")"
+            image_id="$(jq -er '.[0].Id' <<< "$image_json")"
+            os="$(jq -er '.[0].Os' <<< "$image_json")"
+            architecture="$(jq -er '.[0].Architecture' <<< "$image_json")"
+            if [[ ! "$source_revision" =~ ^[0-9a-f]{40}$ ]] ||
+               { [ -n "$expected_revision" ] && [ "$source_revision" != "$expected_revision" ]; } ||
+               [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+               [ "${os}/${architecture}" != "$PLATFORM" ]; then
+              echo "ERROR: DCode base image does not match its immutable receipt." >&2
+              exit 1
+            fi
+            glibc_output="$(docker run --rm --platform "$PLATFORM" --entrypoint getconf "$inspect_ref" GNU_LIBC_VERSION)"
+            [[ "$glibc_output" =~ ^glibc\ ([0-9]+[.][0-9]+)$ ]] || {
+              echo "ERROR: DCode base image returned malformed glibc metadata." >&2
+              exit 1
+            }
+            glibc="${BASH_REMATCH[1]}"
+            [ "$(printf '%s\n' 2.39 "$glibc" | sort -V | head -n 1)" = "2.39" ] || {
+              echo "ERROR: DCode base image is below glibc 2.39." >&2
+              exit 1
+            }
+            metadata="$(jq -cn \
+              --arg architecture "$architecture" --arg digest "$digest" \
+              --arg glibc "$glibc" --arg image "$BASE_REPOSITORY" \
+              --arg imageId "$image_id" --arg os "$os" --arg ref "$identity_ref" \
+              --arg revision "$source_revision" \
+              '{schema:1,key:"",imageName:$image,ref:$ref,digest:$digest,source:"override",sourceRevision:$revision,imageId:$imageId,os:$os,architecture:$architecture,glibcVersion:$glibc,requireOpenshellSandboxAbi:true,minGlibcVersion:"2.39"}')"
+            key="$(printf '%s' "$metadata" | sha256sum | awk '{print $1}')"
+            metadata="$(jq -c --arg key "$key" '.key = $key' <<< "$metadata")"
+            printf 'resolution_key=%s\n' "$key" >> "$GITHUB_OUTPUT"
+            printf 'resolution_label=%s\n' "$(printf '%s' "$metadata" | base64 -w0 | tr '+/' '-_' | tr -d '=')" >> "$GITHUB_OUTPUT"
+          }
           if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
             exit 1
@@ -438,12 +486,17 @@ jobs:
             local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
             local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
             local_base_oci="$RUNNER_TEMP/pr-base.oci"
+            base_labels=()
+            if [ "$AGENT" = "langchain-deepagents-code" ]; then
+              base_labels+=(--label "org.opencontainers.image.revision=${CANDIDATE_SHA}")
+            fi
             docker buildx build \
               --platform linux/amd64 \
               --provenance=false \
               --sbom=false \
               --file "$BASE_DOCKERFILE" \
               --tag "$LOCAL_BASE_REFERENCE" \
+              "${base_labels[@]}" \
               --output "type=docker,dest=${local_base_archive}" \
               --output "type=oci,dest=${local_base_oci_archive}" \
               .
@@ -463,6 +516,10 @@ jobs:
             printf 'ref=%s\n' "$LOCAL_BASE_REFERENCE" >> "$GITHUB_OUTPUT"
             printf 'local=true\n' >> "$GITHUB_OUTPUT"
             printf 'oci=%s@%s\n' "$local_base_oci" "$local_base_oci_digest" >> "$GITHUB_OUTPUT"
+            write_dcode_resolution \
+              "${BASE_REPOSITORY}@${local_base_oci_digest}" \
+              "$LOCAL_BASE_REFERENCE" \
+              "$CANDIDATE_SHA"
             printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
               "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
               >> "$GITHUB_STEP_SUMMARY"
@@ -506,6 +563,7 @@ jobs:
           fi
           printf 'ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
           printf 'local=false\n' >> "$GITHUB_OUTPUT"
+          write_dcode_resolution "$reference" "$reference" ""
           printf '### %s PR base\n\n`%s`\n' "$DISPLAY_NAME" "$reference" \
             >> "$GITHUB_STEP_SUMMARY"
 
@@ -526,15 +584,25 @@ jobs:
         if: steps.base.outputs.local == 'true'
         shell: bash
         env:
+          AGENT: ${{ matrix.agent }}
           BASE_IMAGE: ${{ steps.base.outputs.ref }}
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
           DOCKERFILE: ${{ matrix.dockerfile }}
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
+          RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
+          RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
         run: |
           set -euo pipefail
           # The base resolver loads a changed base into Docker's local image
           # store. Keep this consumer on that same store: a Buildx container
           # builder otherwise treats the local-only reference as Docker Hub.
+          resolution_labels=()
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            resolution_labels+=(
+              --label "com.nvidia.nemoclaw.base-resolution-key=${RESOLUTION_KEY}"
+              --label "com.nvidia.nemoclaw.base-resolution=${RESOLUTION_LABEL}"
+            )
+          fi
           docker build \
             --platform linux/amd64 \
             --file "$DOCKERFILE" \
@@ -547,6 +615,7 @@ jobs:
             --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
             --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
             --label "io.nvidia.nemoclaw.managed-image.cohort=ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            "${resolution_labels[@]}" \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
@@ -571,6 +640,8 @@ jobs:
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.base.outputs.resolution_key) || '' }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.base.outputs.resolution_label) || '' }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -587,6 +658,8 @@ jobs:
           IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
           PLATFORM: linux/amd64
           PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
+          RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
         run: |
           set -euo pipefail
           image_json="$(docker image inspect "$IMAGE_REFERENCE")"
@@ -627,6 +700,14 @@ jobs:
                  .[0].Config.Labels["org.opencontainers.image.revision"] == $revision
                ' <<< "$image_json" >/dev/null; then
             echo "ERROR: PR managed image contract does not match the exact build identity." >&2
+            exit 1
+          fi
+          if [ "$AGENT" = "langchain-deepagents-code" ] &&
+             ! jq -e --arg key "$RESOLUTION_KEY" --arg label "$RESOLUTION_LABEL" '
+               .[0].Config.Labels["com.nvidia.nemoclaw.base-resolution-key"] == $key and
+               .[0].Config.Labels["com.nvidia.nemoclaw.base-resolution"] == $label
+             ' <<< "$image_json" >/dev/null; then
+            echo "ERROR: Deep Agents Code managed image lost base resolution metadata." >&2
             exit 1
           fi
 
@@ -755,6 +836,8 @@ jobs:
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.base.outputs.resolution_key) || '' }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.base.outputs.resolution_label) || '' }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -776,6 +859,8 @@ jobs:
           COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
           DIGEST: ${{ steps.publish.outputs.digest }}
           IMAGE: ${{ matrix.repository }}
+          RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
+          RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
         run: |
           set -euo pipefail
           [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
@@ -794,6 +879,12 @@ jobs:
             exit 1
           }
           scripts/checks/pull-public-exact-digest.sh "$reference" linux/amd64
+          if [ "$AGENT" = "langchain-deepagents-code" ] &&
+             { [ "$(docker image inspect --format '{{index .Config.Labels "com.nvidia.nemoclaw.base-resolution-key"}}' "$reference")" != "$RESOLUTION_KEY" ] ||
+               [ "$(docker image inspect --format '{{index .Config.Labels "com.nvidia.nemoclaw.base-resolution"}}' "$reference")" != "$RESOLUTION_LABEL" ]; }; then
+            echo "ERROR: published Deep Agents Code image lost base resolution metadata." >&2
+            exit 1
+          fi
           release="$(git describe --tags --match 'v*' "$CANDIDATE_SHA")"
           contract_dir="$RUNNER_TEMP/managed-pr-contract"
           mkdir -p "$contract_dir"
@@ -1657,6 +1748,41 @@ jobs:
           )"
           docker buildx imagetools inspect "$platform_reference" >/dev/null
           printf 'ref=%s\n' "$platform_reference" >> "$GITHUB_OUTPUT"
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            digest="$(jq -er --arg platform "$PLATFORM" '.platformDigests[$platform]' "$CONTRACT")"
+            source_revision="$(jq -er '.sourceRevision' "$CONTRACT")"
+            docker pull --platform "$PLATFORM" "$platform_reference" >/dev/null
+            image_json="$(docker image inspect "$platform_reference")"
+            image_id="$(jq -er 'if length == 1 then .[0].Id else error("not one image") end' <<< "$image_json")"
+            os="$(jq -er '.[0].Os' <<< "$image_json")"
+            architecture="$(jq -er '.[0].Architecture' <<< "$image_json")"
+            image_revision="$(jq -er '.[0].Config.Labels["org.opencontainers.image.revision"]' <<< "$image_json")"
+            if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+               [ "${os}/${architecture}" != "$PLATFORM" ] ||
+               [ "$image_revision" != "$source_revision" ]; then
+              echo "ERROR: DCode base image does not match its immutable contract." >&2
+              exit 1
+            fi
+            glibc_output="$(docker run --rm --platform "$PLATFORM" --entrypoint getconf "$platform_reference" GNU_LIBC_VERSION)"
+            [[ "$glibc_output" =~ ^glibc\ ([0-9]+[.][0-9]+)$ ]] || {
+              echo "ERROR: DCode base image returned malformed glibc metadata." >&2
+              exit 1
+            }
+            glibc="${BASH_REMATCH[1]}"
+            [ "$(printf '%s\n' 2.39 "$glibc" | sort -V | head -n 1)" = "2.39" ] || {
+              echo "ERROR: DCode base image is below glibc 2.39." >&2
+              exit 1
+            }
+            metadata="$(jq -cn \
+              --arg architecture "$architecture" --arg digest "$digest" \
+              --arg glibc "$glibc" --arg image "$BASE_IMAGE" --arg imageId "$image_id" \
+              --arg os "$os" --arg ref "$platform_reference" --arg revision "$source_revision" \
+              '{schema:1,key:"",imageName:$image,ref:$ref,digest:$digest,source:"override",sourceRevision:$revision,imageId:$imageId,os:$os,architecture:$architecture,glibcVersion:$glibc,requireOpenshellSandboxAbi:true,minGlibcVersion:"2.39"}')"
+            key="$(printf '%s' "$metadata" | sha256sum | awk '{print $1}')"
+            metadata="$(jq -c --arg key "$key" '.key = $key' <<< "$metadata")"
+            printf 'resolution_key=%s\n' "$key" >> "$GITHUB_OUTPUT"
+            printf 'resolution_label=%s\n' "$(printf '%s' "$metadata" | base64 -w0 | tr '+/' '-_' | tr -d '=')" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -1698,6 +1824,8 @@ jobs:
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution-key={0}', steps.base.outputs.resolution_key) || '' }}
+            ${{ matrix.agent == 'langchain-deepagents-code' && format('com.nvidia.nemoclaw.base-resolution={0}', steps.base.outputs.resolution_label) || '' }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -1722,6 +1850,8 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           REQUIRED_BINARY: ${{ matrix.required_binary }}
+          RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
+          RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
         run: |
           set -euo pipefail
           if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -1747,6 +1877,12 @@ jobs:
           image_user="$(docker image inspect --format '{{.Config.User}}' "$reference")"
           if [ -n "$image_user" ] && [ "$image_user" != "root" ] && [ "$image_user" != "0" ]; then
             echo "ERROR: managed image OCI user must be uid 0 for OpenShell supervisor initialization: $image_user" >&2
+            exit 1
+          fi
+          if [ "$AGENT" = "langchain-deepagents-code" ] &&
+             { [ "$(docker image inspect --format '{{index .Config.Labels "com.nvidia.nemoclaw.base-resolution-key"}}' "$reference")" != "$RESOLUTION_KEY" ] ||
+               [ "$(docker image inspect --format '{{index .Config.Labels "com.nvidia.nemoclaw.base-resolution"}}' "$reference")" != "$RESOLUTION_LABEL" ]; }; then
+            echo "ERROR: Deep Agents Code image lost base resolution metadata." >&2
             exit 1
           fi
 
