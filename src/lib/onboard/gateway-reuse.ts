@@ -56,11 +56,66 @@ export interface DockerDriverGatewayReuseApplicationDeps {
   buildDockerDriverGatewayRuntimeIdentity?: typeof dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity;
   resolveDriftGatewayBin?: typeof dockerDriverGatewayLaunch.resolveDriftGatewayBin;
   getTrustedActiveOpenShellGatewayUserServicePid?: typeof gatewayService.getTrustedActiveOpenShellGatewayUserServicePid;
+  runDockerNetworkInspect: DockerDriverNetworkInspectRunner;
+  inspectDockerDriverNetwork?: (networkName: string) => DockerDriverNetworkInspection;
   log?(message: string): void;
 }
 
+export type DockerDriverNetworkInspection =
+  | { kind: "present" }
+  | { kind: "absent" }
+  | { kind: "inconclusive" };
+
+export interface DockerDriverNetworkInspectCommandResult {
+  error?: unknown;
+  status: number | null;
+  stderr?: unknown;
+  stdout?: unknown;
+}
+
+export type DockerDriverNetworkInspectRunner = (
+  args: readonly string[],
+  options: { ignoreError: true; suppressOutput: true; timeout: number },
+) => DockerDriverNetworkInspectCommandResult;
+
 export interface DockerDriverGatewayReuseApplication {
   refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
+}
+
+function outputText(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  return (Buffer.isBuffer(value) ? value.toString("utf8") : String(value)).trim();
+}
+
+export function classifyDockerDriverNetworkInspection(
+  networkName: string,
+  result: DockerDriverNetworkInspectCommandResult,
+): DockerDriverNetworkInspection {
+  if (!result.error && result.status === 0 && outputText(result.stdout) === networkName) {
+    return { kind: "present" };
+  }
+
+  const escapedName = networkName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const exactAbsent = new RegExp(
+    `^(?:Error response from daemon:\\s*)?(?:No such network: ${escapedName}|network ${escapedName} not found)$`,
+    "iu",
+  );
+  if (!result.error && result.status === 1 && exactAbsent.test(outputText(result.stderr))) {
+    return { kind: "absent" };
+  }
+  return { kind: "inconclusive" };
+}
+
+export function inspectDockerDriverNetwork(
+  networkName: string,
+  runDocker: DockerDriverNetworkInspectRunner,
+): DockerDriverNetworkInspection {
+  const result = runDocker(["network", "inspect", "--format", "{{.Name}}", networkName], {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  return classifyDockerDriverNetworkInspection(networkName, result);
 }
 
 export function createDockerDriverGatewayReuseApplication(
@@ -74,6 +129,9 @@ export function createDockerDriverGatewayReuseApplication(
   const getTrustedServicePid =
     deps.getTrustedActiveOpenShellGatewayUserServicePid ??
     gatewayService.getTrustedActiveOpenShellGatewayUserServicePid;
+  const inspectNetwork =
+    deps.inspectDockerDriverNetwork ??
+    ((networkName) => inspectDockerDriverNetwork(networkName, deps.runDockerNetworkInspect));
   const log = deps.log ?? console.log;
 
   async function refreshDockerDriverGatewayReuseState(
@@ -98,6 +156,40 @@ export function createDockerDriverGatewayReuseApplication(
     const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
     const driftBin = resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
     const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
+    const networkName = desiredEnv.OPENSHELL_DOCKER_NETWORK_NAME;
+    if (!networkName) {
+      throw new Error(
+        "NemoClaw cannot verify the OpenShell Docker network because the managed gateway configuration has no network name.",
+      );
+    }
+
+    function reconcileManagedGatewayNetwork(): GatewayReuseState {
+      const network = inspectNetwork(networkName);
+      if (network.kind === "present") return state;
+      if (network.kind === "absent") {
+        log(
+          `  Existing OpenShell Docker-driver gateway network ${JSON.stringify(networkName)} is absent; the gateway will be recreated.`,
+        );
+        return "stale";
+      }
+      throw new Error(
+        `NemoClaw could not verify Docker network ${JSON.stringify(networkName)} before reusing the managed gateway. Restart Docker, then rerun \`nemoclaw onboard\`.`,
+      );
+    }
+
+    function verifyNetworkWithoutLifecycleAuthority(): GatewayReuseState {
+      const network = inspectNetwork(networkName);
+      if (network.kind === "present") return state;
+      if (network.kind === "absent") {
+        throw new Error(
+          `Docker network ${JSON.stringify(networkName)} is absent, but NemoClaw could not verify the running gateway's lifecycle authority. Restart the gateway through its lifecycle authority, then rerun \`nemoclaw onboard\`.`,
+        );
+      }
+      throw new Error(
+        `NemoClaw could not verify Docker network ${JSON.stringify(networkName)} before reusing the managed gateway. Restart Docker, then rerun \`nemoclaw onboard\`.`,
+      );
+    }
+
     const managedServicePid = getTrustedServicePid();
     const pid = deps.getDockerDriverGatewayPid();
     if (pid !== null && deps.isDockerDriverGatewayProcessAlive()) {
@@ -113,7 +205,7 @@ export function createDockerDriverGatewayReuseApplication(
         );
         return "stale";
       }
-      return state;
+      return reconcileManagedGatewayNetwork();
     }
 
     const portCheck = await deps.checkGatewayPortAvailable();
@@ -127,21 +219,25 @@ export function createDockerDriverGatewayReuseApplication(
         driftBin,
         managedServicePid,
       );
-      if (dockerGatewayPid !== managedServicePid) {
-        deps.rememberDockerDriverGatewayPid(dockerGatewayPid);
-      }
       if (drift) {
+        if (dockerGatewayPid !== managedServicePid) {
+          deps.rememberDockerDriverGatewayPid(dockerGatewayPid);
+        }
         log(
           `  Existing OpenShell Docker-driver gateway is stale (${drift.reason}); it will be recreated.`,
         );
         return "stale";
       }
-      return "healthy";
+      const reconciledState = reconcileManagedGatewayNetwork();
+      if (dockerGatewayPid !== managedServicePid) {
+        deps.rememberDockerDriverGatewayPid(dockerGatewayPid);
+      }
+      return reconciledState;
     }
 
     // OpenShell status already proved the selected gateway is reachable. Preserve it when
     // the port probe cannot identify an owner, instead of deleting a potentially live gateway.
-    if (!portCheck.ok && !portCheck.pid) return "healthy";
+    if (!portCheck.ok && !portCheck.pid) return verifyNetworkWithoutLifecycleAuthority();
 
     return "stale";
   }
