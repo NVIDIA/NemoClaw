@@ -121,6 +121,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/base-image-platform\.yaml$/,
+    testsToRun: runTests(
+      "test/dcode-base-image-workflow.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/perl-critical-cve-remediation.test.ts",
+      "test/pi-candidate-runtime-artifacts.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)scripts\/checks\/validate-managed-base-index\.sh$/,
     testsToRun: runTests("test/validate-managed-base-index.test.ts"),
   },

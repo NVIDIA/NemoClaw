@@ -19,6 +19,16 @@ name: Images / Managed Images
 
 on:
   workflow_call:
+    inputs:
+      dcode-base-contract-base64:
+        required: true
+        type: string
+      hermes-base-contract-base64:
+        required: true
+        type: string
+      openclaw-base-contract-base64:
+        required: true
+        type: string
   pull_request:
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
@@ -1456,9 +1466,27 @@ jobs:
     env: *pi_candidate_env
     steps: *pi_candidate_steps
 
+  publication-identity:
+    name: Record managed image publication identity
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      cohort: ${{ steps.identity.outputs.cohort }}
+    steps:
+      - name: Record publication identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]]
+          printf 'cohort=ghrun-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
     if: github.event_name != 'pull_request'
+    needs: publication-identity
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -1534,11 +1562,39 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Download exact base image contract
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}
-          path: ${{ runner.temp }}/managed-base-contract
+      - name: Restore exact base image contract
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          DCODE_CONTRACT_BASE64: ${{ inputs.dcode-base-contract-base64 }}
+          HERMES_CONTRACT_BASE64: ${{ inputs.hermes-base-contract-base64 }}
+          OPENCLAW_CONTRACT_BASE64: ${{ inputs.openclaw-base-contract-base64 }}
+        run: |
+          set -euo pipefail
+          case "$AGENT" in
+            openclaw) contract_base64="$OPENCLAW_CONTRACT_BASE64" ;;
+            hermes) contract_base64="$HERMES_CONTRACT_BASE64" ;;
+            langchain-deepagents-code) contract_base64="$DCODE_CONTRACT_BASE64" ;;
+            *) echo "ERROR: unsupported managed agent: $AGENT" >&2; exit 1 ;;
+          esac
+          if [ -z "$contract_base64" ] || [ "${#contract_base64}" -gt 131072 ]; then
+            echo "ERROR: exact base image producer output is missing or oversized." >&2
+            exit 1
+          fi
+          if [[ ! "$contract_base64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] ||
+             [ $(( ${#contract_base64} % 4 )) -ne 0 ]; then
+            echo "ERROR: exact base image producer output is not canonical base64." >&2
+            exit 1
+          fi
+          contract_root="$RUNNER_TEMP/managed-base-contract"
+          install -d -m 0700 "$contract_root"
+          if ! printf '%s' "$contract_base64" |
+               base64 --decode > "$contract_root/contract.json" 2>/dev/null ||
+             [ "$(base64 < "$contract_root/contract.json" | tr -d '\n')" != "$contract_base64" ]; then
+            rm -f "$contract_root/contract.json"
+            echo "ERROR: exact base image producer output is not canonical base64." >&2
+            exit 1
+          fi
 
       - name: Validate exact base image contract
         id: base
@@ -1586,7 +1642,10 @@ jobs:
               and .platformReferences[$platform] ==
                 (.image + "@" + .platformDigests[$platform])
               and .sourceRevision == $revision
-              and .run == {id: $runId, attempt: $runAttempt}
+              and .run.id == $runId
+              and (.run.attempt | type) == "number"
+              and .run.attempt >= 1
+              and .run.attempt <= $runAttempt
             ' "$CONTRACT" >/dev/null
           then
             echo "ERROR: exact base image contract failed closed validation." >&2
@@ -1637,7 +1696,7 @@ jobs:
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
             io.nvidia.nemoclaw.managed-image.startup-profile=1
             io.nvidia.nemoclaw.managed-image.capabilities=1
-            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+            io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}
           build-args: |
             BASE_IMAGE=${{ steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
@@ -1660,7 +1719,7 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
           PLATFORM: ${{ matrix.platform }}
-          PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           REQUIRED_BINARY: ${{ matrix.required_binary }}
         run: |
           set -euo pipefail
@@ -1725,7 +1784,13 @@ jobs:
               --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
               "$reference"
           )"
-          if [[ ! "$PUBLICATION_COHORT" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
+          cohort_prefix="ghrun-${GITHUB_RUN_ID}-"
+          cohort_attempt="${PUBLICATION_COHORT#"$cohort_prefix"}"
+          if [[ ! "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] ||
+             [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]] ||
+             [[ "$PUBLICATION_COHORT" != "${cohort_prefix}"* ]] ||
+             [[ ! "$cohort_attempt" =~ ^[1-9][0-9]{0,9}$ ]] ||
+             [ "$cohort_attempt" -gt "$GITHUB_RUN_ATTEMPT" ] ||
              [ "$agent_label" != "$AGENT" ] ||
              [ "$contract_label" != "1" ] ||
              [ "$startup_profile_label" != "1" ] ||
@@ -1876,7 +1941,7 @@ jobs:
         env:
           AGENT: ${{ matrix.agent }}
           BASE_REFERENCE: ${{ steps.base.outputs.ref }}
-          COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          COHORT: ${{ needs.publication-identity.outputs.cohort }}
           DIGEST: ${{ steps.build.outputs.digest }}
           PLATFORM: ${{ matrix.platform }}
           REFERENCE: ${{ steps.validate.outputs.reference }}
@@ -1906,7 +1971,7 @@ jobs:
           EVIDENCE: ${{ steps.evidence.outputs.path }}
           IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
           PLATFORM: ${{ matrix.platform }}
-          PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
           REFERENCE: ${{ steps.validate.outputs.reference }}
         run: |
           set -euo pipefail
@@ -2047,26 +2112,30 @@ jobs:
       - name: Upload validated managed image candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}
+          # A failed-job rerun keeps successful lanes and replaces only the
+          # stable artifact owned by each retried agent/platform lane.
+          name: managed-image-candidate-${{ github.run_id }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}
           path: ${{ runner.temp }}/managed-image-candidate/contract.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
   promote:
     name: Promote complete multi-platform managed image cohort
-    needs: build-and-validate
+    needs:
+      - publication-identity
+      - build-and-validate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Download all validated managed image candidates
+      - name: Restore all validated managed image candidates
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-*
+          pattern: managed-image-candidate-${{ github.run_id }}-*
           path: ${{ runner.temp }}/managed-image-candidates
-          merge-multiple: false
 
       # This is the all-agent/all-architecture publication barrier. It fails
       # closed before registry authentication or any alias operation.
@@ -2075,14 +2144,21 @@ jobs:
         shell: bash
         env:
           CANDIDATE_ROOT: ${{ runner.temp }}/managed-image-candidates
+          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
         run: |
           set -euo pipefail
           if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "ERROR: source revision must be a full 40-character SHA." >&2
             exit 1
           fi
-          expected_cohort="ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          if [[ ! "$expected_cohort" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]]; then
+          expected_cohort="$PUBLICATION_COHORT"
+          expected_cohort_prefix="ghrun-${GITHUB_RUN_ID}-"
+          cohort_attempt="${expected_cohort#"$expected_cohort_prefix"}"
+          if [[ ! "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] ||
+             [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]] ||
+             [[ "$expected_cohort" != "${expected_cohort_prefix}"* ]] ||
+             [[ ! "$cohort_attempt" =~ ^[1-9][0-9]{0,9}$ ]] ||
+             [ "$cohort_attempt" -gt "$GITHUB_RUN_ATTEMPT" ]; then
             echo "ERROR: publication cohort is invalid: $expected_cohort" >&2
             exit 1
           fi
@@ -2098,14 +2174,13 @@ jobs:
             exit 1
           fi
 
-          artifact_prefix="managed-image-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           expected_artifacts=(
-            "${artifact_prefix}-openclaw-linux-amd64"
-            "${artifact_prefix}-openclaw-linux-arm64"
-            "${artifact_prefix}-hermes-linux-amd64"
-            "${artifact_prefix}-hermes-linux-arm64"
-            "${artifact_prefix}-langchain-deepagents-code-linux-amd64"
-            "${artifact_prefix}-langchain-deepagents-code-linux-arm64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-openclaw-linux-amd64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-openclaw-linux-arm64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-hermes-linux-amd64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-hermes-linux-arm64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-langchain-deepagents-code-linux-amd64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-langchain-deepagents-code-linux-arm64"
           )
           expected_agents=(
             openclaw
@@ -2137,6 +2212,7 @@ jobs:
           fi
 
           candidate_files=()
+          expected_attempts=()
           for index in "${!expected_artifacts[@]}"; do
             artifact="${expected_artifacts[$index]}"
             expected_agent="${expected_agents[$index]}"
@@ -2152,21 +2228,54 @@ jobs:
               find "$artifact_dir" ! -path "$artifact_dir" -prune -print |
                 wc -l | tr -d '[:space:]'
             )"
+            expected_attempt="$(
+              jq -er '.run.attempt | select(type == "number" and . >= 1 and floor == .)' \
+                "$contract"
+            )" || {
+              echo "ERROR: managed image candidate producer attempt is invalid: $artifact" >&2
+              exit 1
+            }
+            if [ "$expected_attempt" -gt "$GITHUB_RUN_ATTEMPT" ]; then
+              echo "ERROR: managed image candidate producer attempt is invalid: $artifact" >&2
+              exit 1
+            fi
             if [ "$artifact_entry_count" != "1" ] ||
                ! jq -e \
                  --arg agent "$expected_agent" \
                  --arg platform "$expected_platform" \
-                 '.agent == $agent and .platform == $platform' \
+                 --argjson attempt "$expected_attempt" \
+                 --argjson runId "$GITHUB_RUN_ID" \
+                 '.agent == $agent and .platform == $platform and
+                  .run == {id: $runId, attempt: $attempt}' \
                  "$contract" >/dev/null; then
               echo "ERROR: managed image candidate artifact identity is invalid: $artifact" >&2
               exit 1
             fi
             candidate_files+=("$contract")
+            expected_attempts+=("$expected_attempt")
           done
 
           candidate_set="$RUNNER_TEMP/managed-image-candidate-set.json"
           jq -s 'sort_by(.agent, .platform)' "${candidate_files[@]}" > "$candidate_set"
+          expected_attempts_json="$(
+            jq -cn \
+              --argjson openclawAmd64 "${expected_attempts[0]}" \
+              --argjson openclawArm64 "${expected_attempts[1]}" \
+              --argjson hermesAmd64 "${expected_attempts[2]}" \
+              --argjson hermesArm64 "${expected_attempts[3]}" \
+              --argjson dcodeAmd64 "${expected_attempts[4]}" \
+              --argjson dcodeArm64 "${expected_attempts[5]}" \
+              '{
+                "openclaw|linux/amd64": $openclawAmd64,
+                "openclaw|linux/arm64": $openclawArm64,
+                "hermes|linux/amd64": $hermesAmd64,
+                "hermes|linux/arm64": $hermesArm64,
+                "langchain-deepagents-code|linux/amd64": $dcodeAmd64,
+                "langchain-deepagents-code|linux/arm64": $dcodeArm64
+              }'
+          )"
           if ! jq -e \
+            --argjson attempts "$expected_attempts_json" \
             --arg ref "$GITHUB_REF" \
             --arg release "$expected_release" \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -2310,7 +2419,8 @@ jobs:
                   and .bindings.source == ("https://github.com/" + $repository)
                   and .builderId ==
                     ("https://github.com/" + $repository + "/actions/runs/" +
-                     ($runId | tostring) + "/attempts/" + ($runAttempt | tostring))
+                     ($runId | tostring) + "/attempts/" +
+                     ($attempts[$candidateAgent + "|" + $candidatePlatform] | tostring))
                 )
                 and (.publicationEvidence.attestations.spdx | keys | sort) == [
                   "descriptor",
@@ -2339,7 +2449,10 @@ jobs:
                   ref: $ref,
                   cohort: $cohort
                 }
-                and .run == {id: $runId, attempt: $runAttempt}
+                and .run == {
+                  id: $runId,
+                  attempt: $attempts[.agent + "|" + .platform]
+                }
                 and .release == (if $release == "" then null else $release end)
                 and (has("aliases") | not)
               )
@@ -2480,11 +2593,12 @@ jobs:
         shell: bash
         env:
           CANDIDATE_SET: ${{ steps.candidates.outputs.candidate_set }}
+          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
         run: |
           set -euo pipefail
           contract_root="$RUNNER_TEMP/managed-image-contracts"
           mkdir -p "$contract_root"
-          cohort="ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cohort="$PUBLICATION_COHORT"
           if [[ ! "$cohort" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]]; then
             echo "ERROR: publication cohort is invalid: $cohort" >&2
             exit 1
@@ -2678,6 +2792,7 @@ jobs:
           while IFS= read -r candidate; do
             agent="$(jq -r '.agent' <<<"$candidate")"
             platform="$(jq -r '.platform' <<<"$candidate")"
+            candidate_run="$(jq -ce '.run' <<<"$candidate")"
             artifact_platform="${platform//\//-}"
             cohort_manifest="$(jq -ce --arg agent "$agent" '.[] | select(.agent == $agent)' "$cohort_manifests")"
             cohort_alias="$(jq -r '.alias' <<<"$cohort_manifest")"
@@ -2718,6 +2833,7 @@ jobs:
               --arg platform "$platform" \
               --arg cohort "$cohort" \
               --argjson aliases "$aliases_json" \
+              --argjson candidateRun "$candidate_run" \
               '(keys | sort) == [
                  "agent",
                  "aliases",
@@ -2754,10 +2870,7 @@ jobs:
                and .stagedCohort.descriptor.size > 0
                and .source.revision == $ENV.GITHUB_SHA
                and .source.cohort == $cohort
-               and .run == {
-                 id: ($ENV.GITHUB_RUN_ID | tonumber),
-                 attempt: ($ENV.GITHUB_RUN_ATTEMPT | tonumber)
-               }
+               and .run == $candidateRun
                and .aliases == $aliases
                and (
                  (.image + ":cohort-" + $cohort) as $cohortAlias
@@ -2892,6 +3005,8 @@ jobs:
       # consumer root pointing at a cohort without its durable v2 contracts.
       - name: Promote durable managed image cohort pointers
         shell: bash
+        env:
+          PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
         run: |
           set -euo pipefail
           cohort_contract="$RUNNER_TEMP/managed-image-contracts/cohort.json"
@@ -2899,7 +3014,7 @@ jobs:
             echo "ERROR: durable managed image cohort contract is missing or unsafe." >&2
             exit 1
           fi
-          cohort="ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cohort="$PUBLICATION_COHORT"
           if ! jq -e \
             --arg cohort "$cohort" \
             --arg repository "$GITHUB_REPOSITORY" \
