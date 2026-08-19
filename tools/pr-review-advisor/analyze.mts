@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import {
   E2E_RENDER_LIMIT,
   type E2eChangedCredentialFreeTest,
@@ -84,6 +84,7 @@ import {
 } from "./trusted-guidance.mts";
 export {
   buildSystemPrompt,
+  parseSecurityRubric,
   readSecurityCategoryNames,
   readTrustedCodeChangeConsiderations,
   readTrustedControlledWords,
@@ -98,11 +99,10 @@ import {
   readPreparedGitHubContext,
 } from "./github-context.mts";
 import {
-  createReviewFindingLedger,
+  EMPTY_REVIEW_FINDING_LEDGER_SNAPSHOT,
   REVIEW_FINDING_CATEGORIES,
   REVIEW_FINDING_SEVERITIES,
   REVIEW_FINDING_SIMPLIFICATION_TAGS,
-  type ReviewFindingLedger,
 } from "./review-ledger.mts";
 import {
   createReviewSubmissionController,
@@ -113,13 +113,11 @@ import {
   type ReviewSubmissionController,
 } from "./review-submission.mts";
 import {
-  createTerminologyLedger,
   createTerminologyToolController,
   TERMINOLOGY_CHANGES,
   TERMINOLOGY_DISPOSITIONS,
   TERMINOLOGY_SEMANTIC_IMPACTS,
   TERMINOLOGY_TRACE_TOOL,
-  type TerminologyLedger,
   type TerminologyReview,
 } from "./terminology.mts";
 
@@ -143,31 +141,6 @@ const RISK_CONTEXT_PATH_SAMPLE_LIMIT = 20;
 const RISK_CONTEXT_PATH_CHARACTER_LIMIT = 240;
 const METADATA_CHANGED_FILE_LIMIT = 20;
 const METADATA_CHANGED_FILE_BYTE_LIMIT = 8192;
-const SECURITY_RUBRIC_PATH = ".agents/skills/_shared/security-rubric.md";
-const TRUSTED_SECURITY_RUBRIC_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  SECURITY_RUBRIC_PATH,
-);
-const TRUSTED_WRITING_GUIDE_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "WRITING.md",
-);
-const TRUSTED_CONTROLLED_WORDS_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  ".agents/skills/_shared/controlled-words.md",
-);
-const TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  ".agents/skills/_shared/code-change-considerations.md",
-);
 const CONFIDENCES = ["low", "medium", "high"] as const;
 const SUMMARY_RECOMMENDATIONS = [
   "merge_as_is",
@@ -187,8 +160,6 @@ const ACCEPTANCE_STATUSES = ["satisfied", "partial", "missing", "unknown"] as co
 const SECURITY_VERDICTS = ["pass", "warning", "fail", "not_applicable"] as const;
 const SOURCE_OF_TRUTH_STATUSES = ["sound", "needs_followup", "missing", "not_applicable"] as const;
 const TERMINOLOGY_STATUSES = ["clear", "candidates", "limited"] as const;
-const SECURITY_CATEGORY_COUNT = 9;
-const SECURITY_CATEGORY_SECTION_NAMES = ["Meaning", "Questions", "Expected evidence"] as const;
 const FINDING_CATEGORIES = REVIEW_FINDING_CATEGORIES;
 const SIMPLIFICATION_TAGS = REVIEW_FINDING_SIMPLIFICATION_TAGS;
 type FindingSeverity = (typeof REVIEW_FINDING_SEVERITIES)[number];
@@ -412,15 +383,11 @@ async function main(): Promise<void> {
   delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
   writeDeterministicContextArtifacts(artifacts, deterministic, diff);
-  const findingLedger = createReviewFindingLedger();
-  const terminologyLedger = createTerminologyLedger(headSha);
   const { systemPrompt, promptTurns } = preparePromptArtifacts({
     artifacts,
     metadata,
     diff,
     schema,
-    findingLedger,
-    terminologyLedger,
   });
 
   const writeFailure = (reason: string): void => writeFailureArtifacts(artifacts, metadata, reason);
@@ -450,9 +417,7 @@ async function main(): Promise<void> {
       heartbeatMs,
       maxCaptureBytes,
       logPrefix: "pr-review-advisor",
-      findingLedger,
       findingLedgerPath: artifacts.findingLedger,
-      terminologyLedger,
       terminologyLedgerPath: artifacts.terminologyLedger,
       baseRef,
       headRef,
@@ -498,23 +463,32 @@ async function main(): Promise<void> {
   console.log(summary);
 }
 
+function emptyTerminologyLedgerSnapshot(headSha: string) {
+  return {
+    version: 1 as const,
+    revision: 0,
+    headSha,
+    review: {
+      status: "limited" as const,
+      decisions: [],
+      noChangesReason: "Terminology review did not complete.",
+    },
+  };
+}
+
 export function preparePromptArtifacts({
   artifacts,
   metadata,
   diff,
   schema,
-  findingLedger,
-  terminologyLedger,
 }: {
   artifacts: ArtifactPaths;
   metadata: ReviewMetadata;
   diff: string;
   schema: Record<string, unknown>;
-  findingLedger: ReviewFindingLedger;
-  terminologyLedger: TerminologyLedger;
 }): { systemPrompt: string; promptTurns: AdvisorPromptTurn[] } {
-  writeJson(artifacts.findingLedger, findingLedger.snapshot());
-  writeJson(artifacts.terminologyLedger, terminologyLedger.snapshot());
+  writeJson(artifacts.findingLedger, EMPTY_REVIEW_FINDING_LEDGER_SNAPSHOT);
+  writeJson(artifacts.terminologyLedger, emptyTerminologyLedgerSnapshot(metadata.headSha));
   try {
     const systemPrompt = buildSystemPrompt();
     const promptTurns = buildPromptTurns({ metadata, diff, schema });
@@ -594,9 +568,7 @@ type AdvisorConversationOptions = {
   heartbeatMs: number;
   maxCaptureBytes: number;
   logPrefix: string;
-  findingLedger: ReviewFindingLedger;
   findingLedgerPath: string;
-  terminologyLedger: TerminologyLedger;
   terminologyLedgerPath: string;
   baseRef: string;
   headRef: string;
@@ -615,7 +587,6 @@ async function runAdvisorConversation(
   fs.rmSync(options.turnDir, { recursive: true, force: true });
   fs.mkdirSync(options.turnDir, { recursive: true });
   const terminologyTools = createTerminologyToolController({
-    ledger: options.terminologyLedger,
     baseRef: options.baseRef,
     headRef: options.headRef,
   });
@@ -645,9 +616,6 @@ async function runAdvisorConversation(
     logPrefix: options.logPrefix,
     logProgress,
     customTools: [...submission.tools, ...terminologyTools.tools],
-    onTurnStart: (turn) => {
-      terminologyTools.setStage(turn.name);
-    },
     onTurnComplete: (turn) => {
       writeTurnArtifact(options.turnDir, turn);
       writeJson(options.findingLedgerPath, submission.findingSnapshot());
@@ -1000,58 +968,6 @@ function isTimestampWithin(value: string, start: string, end: string): boolean {
   const endTime = Date.parse(end);
   if (![valueTime, startTime, endTime].every(Number.isFinite)) return false;
   return valueTime >= startTime && valueTime <= endTime;
-}
-
-export function parseSecurityRubric(rubric: string): {
-  content: string;
-  categories: string[];
-} {
-  const headings = [...rubric.matchAll(/^## Category (\d+): (.+)$/gmu)];
-  if (headings.length !== SECURITY_CATEGORY_COUNT) {
-    throw new Error(
-      `Security rubric must define exactly ${SECURITY_CATEGORY_COUNT} categories; found ${headings.length}`,
-    );
-  }
-
-  const categories = headings.map((heading, index) => {
-    const number = Number(heading[1]);
-    const name = heading[2]?.trim() ?? "";
-    if (number !== index + 1 || !name) {
-      throw new Error(`Security rubric category ${index + 1} has a malformed heading`);
-    }
-    const sectionStart = heading.index ?? 0;
-    const sectionEnd = headings[index + 1]?.index ?? rubric.length;
-    const section = rubric.slice(sectionStart, sectionEnd);
-    const subsectionMatches = [...section.matchAll(/^### (.+)$/gmu)];
-    const subsectionNames = subsectionMatches.map((match) => match[1]?.trim() ?? "");
-    if (
-      subsectionNames.length !== SECURITY_CATEGORY_SECTION_NAMES.length ||
-      !SECURITY_CATEGORY_SECTION_NAMES.every(
-        (sectionName, index) => sectionName === subsectionNames[index],
-      )
-    ) {
-      throw new Error(
-        `Security rubric category ${number} must define Meaning, Questions, and Expected evidence in order`,
-      );
-    }
-    for (const [sectionIndex, sectionName] of SECURITY_CATEGORY_SECTION_NAMES.entries()) {
-      const contentStart =
-        (subsectionMatches[sectionIndex]?.index ?? section.length) + `### ${sectionName}`.length;
-      const contentEnd = subsectionMatches[sectionIndex + 1]?.index ?? section.length;
-      if (!section.slice(contentStart, contentEnd).trim()) {
-        throw new Error(`Security rubric category ${number} has empty ${sectionName}`);
-      }
-    }
-    return name;
-  });
-
-  if (new Set(categories).size !== categories.length) {
-    throw new Error("Security rubric category names must be unique");
-  }
-  if (categories.at(-1) !== "System Security") {
-    throw new Error("Security rubric category 9 must be System Security");
-  }
-  return { content: rubric, categories };
 }
 
 export function buildPromptTurns({

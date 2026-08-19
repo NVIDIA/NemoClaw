@@ -8,8 +8,6 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { Type } from "typebox";
 
 export const TERMINOLOGY_TRACE_TOOL = "pr_review_trace_term";
-export const TERMINOLOGY_UPDATE_TOOL = "pr_review_update_terminology";
-export const TERMINOLOGY_READ_TOOL = "pr_review_read_terminology";
 
 export const TERMINOLOGY_CHANGES = ["introduced", "expanded", "redefined"] as const;
 export const TERMINOLOGY_DISPOSITIONS = [
@@ -200,55 +198,20 @@ export function createTerminologyLedger(headSha: string): TerminologyLedger {
   return new TerminologyLedger(headSha);
 }
 
-const text = Type.String({ minLength: 1, maxLength: 2000 });
-const nullableTextSchema = Type.Union([text, Type.Null()]);
-const decisionSchema = Type.Object(
-  {
-    term: Type.String({ minLength: 1, maxLength: TERM_LIMIT }),
-    change: Type.Union(TERMINOLOGY_CHANGES.map((value) => Type.Literal(value))),
-    disposition: Type.Union(TERMINOLOGY_DISPOSITIONS.map((value) => Type.Literal(value))),
-    meaning: text,
-    contrast: nullableTextSchema,
-    existingTerm: nullableTextSchema,
-    semanticImpact: Type.Union(TERMINOLOGY_SEMANTIC_IMPACTS.map((value) => Type.Literal(value))),
-    recommendation: text,
-    traceId: Type.String({ minLength: 1, maxLength: 80 }),
-    source: Type.Object(
-      {
-        file: Type.String({ minLength: 1, maxLength: 500 }),
-        line: Type.Integer({ minimum: 1 }),
-      },
-      { additionalProperties: false },
-    ),
-  },
-  { additionalProperties: false },
-);
-const commitSchema = Type.Object(
-  {
-    decisions: Type.Array(decisionSchema, { maxItems: DECISION_LIMIT }),
-    noChangesReason: nullableTextSchema,
-  },
-  { additionalProperties: false },
-);
-
 export type TerminologyToolController = {
   tools: ToolDefinition[];
-  setStage(stage: string): void;
   traces(): ReadonlyMap<string, TerminologyTrace>;
 };
 
 export function createTerminologyToolController({
-  ledger,
   baseRef,
   headRef,
   cwd = process.cwd(),
 }: {
-  ledger: TerminologyLedger;
   baseRef: string;
   headRef: string;
   cwd?: string;
 }): TerminologyToolController {
-  let stage = "";
   const traces = new Map<string, TerminologyTrace>();
   const selectedTerms = new Set<string>();
   const trace = defineTool({
@@ -262,53 +225,19 @@ export function createTerminologyToolController({
     ),
     executionMode: "sequential",
     execute: async (_id, input) => {
-      if (stage !== "investigate" && stage !== "terminology-review-analysis") {
-        throw new Error(`${TERMINOLOGY_TRACE_TOOL} is available only during review investigation`);
-      }
       const term = normalizeTerm((input as { term: string }).term);
       const key = term.toLocaleLowerCase();
       if (!selectedTerms.has(key) && selectedTerms.size >= TRACE_LIMIT) {
         throw new Error(`Terminology analysis accepts at most ${TRACE_LIMIT} selected terms`);
       }
-      const result = await traceTerminology({
-        term,
-        baseRef,
-        headRef,
-        cwd,
-      });
+      const result = await traceTerminology({ term, baseRef, headRef, cwd });
       selectedTerms.add(key);
       traces.set(result.id, result);
       return toolResult(result);
     },
   });
-  const update = defineTool({
-    name: TERMINOLOGY_UPDATE_TOOL,
-    label: "Commit terminology review",
-    description:
-      "Commit the complete terminology review from traced changed occurrences, or an explicit reason that no candidate requires a decision.",
-    parameters: commitSchema,
-    executionMode: "sequential",
-    execute: async (_id, input) => {
-      if (stage !== "terminology-review") {
-        throw new Error(`${TERMINOLOGY_UPDATE_TOOL} is available only during terminology commit`);
-      }
-      ledger.commit(input as TerminologyCommitInput, traces);
-      return toolResult(ledger.snapshot(), true);
-    },
-  });
-  const read = defineTool({
-    name: TERMINOLOGY_READ_TOOL,
-    label: "Read terminology review",
-    description: "Read the canonical terminology receipt for later review stages and synthesis.",
-    parameters: Type.Object({}, { additionalProperties: false }),
-    executionMode: "sequential",
-    execute: async () => toolResult(ledger.snapshot()),
-  });
   return {
-    tools: [trace, update, read],
-    setStage(value: string) {
-      stage = nonempty(value, "stage");
-    },
+    tools: [trace],
     traces() {
       return new Map(traces);
     },
