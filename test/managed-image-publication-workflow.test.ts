@@ -90,7 +90,6 @@ function managedPrActivation(workflow: Workflow): Job {
 function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
   return required(workflow.jobs?.["pr-openclaw-mcp-discovery"], "missing exact PR MCP gate");
 }
-
 describe("complete managed-image publication workflow", () => {
   it("rejects managed package paths redirected outside node_modules", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-plugin-"));
@@ -102,7 +101,6 @@ describe("complete managed-image publication workflow", () => {
       fs.mkdirSync(installedPackageRoot, { recursive: true });
       fs.mkdirSync(path.join(outsideScope, "plugin"), { recursive: true });
       fs.symlinkSync(outsideScope, path.join(nodeModulesRoot, "@scope"));
-
       expect(isStrictChildPath(nodeModulesRoot, installedPackageRoot)).toBe(true);
       expect(isStrictChildPath(nodeModulesRoot, escapedPackageRoot)).toBe(false);
     } finally {
@@ -117,7 +115,8 @@ describe("complete managed-image publication workflow", () => {
       displayName: "Hermes",
       image: "nvidia/nemoclaw/hermes-sandbox-base",
       job: "build-and-push-hermes",
-      platformsJob: "build-hermes-platforms",
+      amd64Job: "build-hermes-amd64",
+      arm64Job: "build-hermes-arm64",
     },
     {
       agent: "langchain-deepagents-code",
@@ -125,7 +124,8 @@ describe("complete managed-image publication workflow", () => {
       displayName: "Deep Agents Code",
       image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
       job: "build-and-push-dcode",
-      platformsJob: "build-dcode-platforms",
+      amd64Job: "build-dcode-amd64",
+      arm64Job: "build-dcode-arm64",
     },
     {
       agent: "openclaw",
@@ -133,7 +133,8 @@ describe("complete managed-image publication workflow", () => {
       displayName: "OpenClaw",
       image: "nvidia/nemoclaw/sandbox-base",
       job: "build-and-push-openclaw",
-      platformsJob: "build-openclaw-platforms",
+      amd64Job: "build-openclaw-amd64",
+      arm64Job: "build-openclaw-arm64",
     },
   ] as const)(
     "starts the $agent publisher after exact base contracts without canceling release tags (#7744)",
@@ -144,7 +145,6 @@ describe("complete managed-image publication workflow", () => {
         baseWorkflow.jobs?.["publish-managed-images"],
         "base-image workflow is missing the managed-image publisher",
       );
-
       expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
       expect(JSON.stringify(managedWorkflow)).not.toContain("config.plugins?.installs?.[id]");
       const validationRun =
@@ -195,7 +195,6 @@ describe("complete managed-image publication workflow", () => {
       expect(publisher.if).toContain("github.repository == 'NVIDIA/NemoClaw'");
       expect(publisher.if).toContain("github.ref == 'refs/heads/main'");
       expect(publisher.if).toContain("startsWith(github.ref, 'refs/tags/v')");
-
       const reviewedAudit = required(
         baseWorkflow.jobs?.["reviewed-npm-audit"],
         "base-image workflow is missing the reviewed npm audit",
@@ -214,12 +213,15 @@ describe("complete managed-image publication workflow", () => {
           "target-root": "${{ github.workspace }}",
         },
       });
-
       const basePublisher = required(
         baseWorkflow.jobs?.[expectedPublisher.job],
         `base-image workflow is missing ${expectedPublisher.agent} manifest publisher`,
       );
-      expect(basePublisher.needs).toEqual([expectedPublisher.platformsJob, "reviewed-npm-audit"]);
+      expect(basePublisher.needs).toEqual([
+        expectedPublisher.amd64Job,
+        expectedPublisher.arm64Job,
+        "reviewed-npm-audit",
+      ]);
       const manifest = step(
         basePublisher,
         "Publish validated multi-platform manifest",
@@ -229,8 +231,8 @@ describe("complete managed-image publication workflow", () => {
         uses: "./.github/actions/publish-base-image-manifest",
         with: {
           agent: expectedPublisher.agent,
-          "amd64-digest": needsOutput(expectedPublisher.platformsJob, "amd64-digest"),
-          "arm64-digest": needsOutput(expectedPublisher.platformsJob, "arm64-digest"),
+          "amd64-digest": needsOutput(expectedPublisher.amd64Job, "digest"),
+          "arm64-digest": needsOutput(expectedPublisher.arm64Job, "digest"),
           "display-name": expectedPublisher.displayName,
           image: expectedPublisher.image,
           registry: "${{ env.REGISTRY }}",
@@ -247,54 +249,63 @@ describe("complete managed-image publication workflow", () => {
       expect(
         step(basePublisher, "Checkout", "base-image workflow").with?.["persist-credentials"],
       ).toBe(false);
-
-      const nativePlatforms = required(
-        baseWorkflow.jobs?.[expectedPublisher.platformsJob],
-        `base-image workflow is missing native ${expectedPublisher.agent} platforms`,
+      const amd64Job = required(
+        baseWorkflow.jobs?.[expectedPublisher.amd64Job],
+        `base-image workflow is missing native ${expectedPublisher.agent} amd64`,
       );
-      expect(nativePlatforms.needs).toEqual(["reviewed-npm-audit"]);
-      expect(nativePlatforms.outputs).toEqual({
-        "amd64-digest": "${{ steps.platform.outputs.amd64-digest }}",
-        "arm64-digest": "${{ steps.platform.outputs.arm64-digest }}",
+      expect(amd64Job).toMatchObject({
+        needs: ["reviewed-npm-audit"],
+        outputs: { digest: "${{ steps.platform.outputs.amd64-digest }}" },
+        "runs-on": "ubuntu-24.04",
       });
-      const platformLanes = nativePlatforms.strategy?.matrix?.include ?? [];
-      expect(platformLanes.map(({ arch }) => `${arch}-digest`).sort()).toEqual(
-        Object.keys(nativePlatforms.outputs ?? {}).sort(),
+      expect(amd64Job.strategy).toBeUndefined();
+      expect(
+        step(amd64Job, "Build and publish platform digest", "base-image workflow").with,
+      ).toMatchObject({
+        agent: expectedPublisher.agent,
+        arch: "amd64",
+        platform: "linux/amd64",
+      });
+      const arm64Job = required(
+        baseWorkflow.jobs?.[expectedPublisher.arm64Job],
+        `base-image workflow is missing native ${expectedPublisher.agent} arm64`,
       );
-      expect(new Set(Object.values(nativePlatforms.outputs ?? {})).size).toBe(platformLanes.length);
-      expect(nativePlatforms.strategy?.matrix?.include).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            arch: "amd64",
-            platform: "linux/amd64",
-            runner: "ubuntu-24.04",
-          }),
-          expect.objectContaining({
-            arch: "arm64",
-            platform: "linux/arm64",
-            runner: "ubuntu-24.04-arm",
-          }),
-        ]),
-      );
+      expect(arm64Job).toMatchObject({
+        needs: ["reviewed-npm-audit"],
+        outputs: { digest: "${{ steps.platform.outputs.arm64-digest }}" },
+        "runs-on": "ubuntu-24.04-arm",
+      });
+      expect(arm64Job.strategy).toBeUndefined();
+      expect(
+        step(arm64Job, "Build and publish platform digest", "base-image workflow").with,
+      ).toMatchObject({
+        agent: expectedPublisher.agent,
+        arch: "arm64",
+        platform: "linux/arm64",
+      });
     },
   );
-
-  it("exports one unique base digest output for every native matrix lane (#9529)", () => {
+  it("exports one architecture-specific digest from every native platform action (#9529)", () => {
     const action = readAction("build-base-image-platform");
     expect(action.outputs).toMatchObject({
       "amd64-digest": { value: "${{ steps.job-output.outputs.amd64_digest }}" },
       "arm64-digest": { value: "${{ steps.job-output.outputs.arm64_digest }}" },
     });
     expect(new Set(Object.values(action.outputs ?? {}).map(({ value }) => value)).size).toBe(2);
-
-    const exportDigest = step(
-      { steps: action.runs?.steps },
-      "Export platform digest",
-      "build-base-image-platform action",
-    );
+    const exportDigest = step({ steps: action.runs?.steps }, "Export platform digest", "build-base-image-platform action");
     expect(exportDigest.run).toContain('printf \'%s_digest=%s\\n\' "$ARCH" "$DIGEST"');
   });
-
+  it("binds each Pi digest to its non-matrix producer (#9529)", () => {
+    const publisher = required(
+      readWorkflow("base-image.yaml").jobs?.["build-and-push-pi"],
+      "base-image workflow is missing the Pi manifest publisher",
+    );
+    expect(publisher.needs).toEqual(["build-pi-amd64", "build-pi-arm64", "reviewed-npm-audit"]);
+    expect(step(publisher, "Publish validated multi-platform manifest").with).toMatchObject({
+      "amd64-digest": needsOutput("build-pi-amd64", "digest"),
+      "arm64-digest": needsOutput("build-pi-arm64", "digest"),
+    });
+  });
   it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const reviewedAudit = managedPrReviewedAudit(workflow);
@@ -305,7 +316,6 @@ describe("complete managed-image publication workflow", () => {
     const localBaseBuild = step(prBuilder, "Build PR managed image from local base");
     const registryBaseBuild = step(prBuilder, "Build PR managed image from registry base");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
-
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
