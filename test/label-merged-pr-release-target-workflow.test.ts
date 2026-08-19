@@ -521,6 +521,26 @@ describe("merged PR release target workflow", () => {
     );
   });
 
+  it("restarts reconciliation when the last release tag disappears during the audit (#9533)", async () => {
+    const harness = createHarness([{ name: "v0.0.10" }]);
+    const [v10] = harness.fixtures;
+    harness.context.eventName = "schedule";
+    harness.listTags
+      .mockResolvedValueOnce({ data: [{ name: v10.name }] })
+      .mockResolvedValue({ data: [] });
+
+    await runScript(harness);
+
+    expect(harness.warning).toHaveBeenCalledWith(
+      "Newest release tag changed; restarting reconciliation",
+    );
+    expect(harness.info).toHaveBeenCalledWith(
+      "No strict semver release tags were found; no release target labels reconciled",
+    );
+    expect(harness.listTags).toHaveBeenCalledTimes(3);
+    expect(harness.addLabels).not.toHaveBeenCalled();
+  });
+
   it("stops after two reconciliation restarts when release tags keep changing", async () => {
     const harness = createHarness(
       ["v0.0.13", "v0.0.12", "v0.0.11", "v0.0.10", "v0.0.9"].map((name) => ({ name })),

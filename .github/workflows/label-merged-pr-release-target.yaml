@@ -289,6 +289,7 @@ jobs:
             async function refreshLatestRelease(expectedName, expectedCommit) {
               const releaseTags = await loadReleaseTags();
               const latest = releaseTags[0];
+              if (!latest) return { changed: true };
               const latestCommit = await peelReleaseTag(latest);
               return {
                 changed: latest.name !== expectedName || latestCommit !== expectedCommit,
