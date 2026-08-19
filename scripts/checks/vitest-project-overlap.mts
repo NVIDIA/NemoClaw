@@ -44,6 +44,7 @@ const INSTALLER_INTEGRATION_TESTS = new Set([
   "test/install-express-prompt.test.ts",
   "test/install-express-wsl-ollama.test.ts",
   "test/install-forward-restore-diagnostics.test.ts",
+  "test/install-hermes-portable-active.test.ts",
   "test/install-hermes-forward-restore.test.ts",
   "test/install-managed-cli-reuse.test.ts",
   "test/install-openshell-e2e-artifact.test.ts",
