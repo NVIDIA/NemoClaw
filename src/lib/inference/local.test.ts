@@ -782,16 +782,19 @@ describe("local inference helpers", () => {
   // /api/tags should not register as healthy when the response body is not the
   // Ollama wire format — a captive HTTP_PROXY or stale listener can otherwise
   // answer with arbitrary 2xx that the curl-status-only check accepts.
-  it("rejects a backend 200 whose body is not the Ollama /api/tags JSON shape", () => {
+  it.each([
+    ["an HTML body", "<html><body>Privoxy</body></html>"],
+    ["a null model entry", '{"models":[null]}'],
+    ["a primitive model entry", '{"models":[1]}'],
+    ["a nested-array model entry", '{"models":[[]]}'],
+  ])("rejects a backend 200 with %s", (_label, body) => {
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => null,
       runCurlProbeImpl: () => ({
         ok: true,
         httpStatus: 200,
         curlStatus: 0,
-        // E.g. a corporate HTTP proxy that intercepts loopback and serves an
-        // HTML landing page on every URL, or a stale unrelated listener.
-        body: "<html><body>Privoxy</body></html>",
+        body,
         stderr: "",
         message: "HTTP 200",
       }),
@@ -802,7 +805,12 @@ describe("local inference helpers", () => {
     expect(result?.detail).toContain("HTTP_PROXY");
   });
 
-  it("rejects an auth-proxy 200 whose body is not the Ollama /api/tags JSON shape", () => {
+  it.each([
+    ["an invalid object", '{"error":"backend unreachable"}'],
+    ["a null model entry", '{"models":[null]}'],
+    ["a primitive model entry", '{"models":[1]}'],
+    ["a nested-array model entry", '{"models":[[]]}'],
+  ])("rejects an auth-proxy 200 with %s", (_label, body) => {
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "token",
       runCurlProbeImpl: (argv: string[]) => {
@@ -811,9 +819,7 @@ describe("local inference helpers", () => {
           ok: true,
           httpStatus: 200,
           curlStatus: 0,
-          // Proxy is up but its upstream Ollama backend is gone; the proxy
-          // returns a stub 200 with no models array.
-          body: isProxy ? '{"error":"backend unreachable"}' : '{"models":[]}',
+          body: isProxy ? body : '{"models":[]}',
           stderr: "",
           message: "HTTP 200",
         };
