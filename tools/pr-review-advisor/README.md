@@ -43,7 +43,13 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 4. Opens one Pi session per model lane and performs exactly two normal turns.
 5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, prior findings, positives, and limitations in one coherent pass.
 6. The `challenge-and-record` turn keeps repository reads and adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The first three replace complete in-memory draft sections. They do not update canonical state.
-7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema. A successful call validates and assembles pending state, then ends the turn. The session runner atomically commits that state only after accepting the complete terminal flow. Failed validation does not mutate canonical state. A settled invalid call permits one bounded repair; omission, provider failure, unsettled calls, or activity after success fail closed and discard pending state.
+7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema.
+   A successful call validates and assembles pending state, then ends the turn.
+   The session runner atomically commits that state only after accepting the complete terminal flow.
+   Failed validation does not mutate canonical state.
+   The `challenge-and-record` turn accepts one failed call followed by one successful call in one SDK response.
+   If the first response settles after the failed call, the controller can request one tool-only continuation.
+   Omission, provider failure, unsettled calls, extra attempts, or activity after success fail closed and discard pending state.
 8. Trusted code writes the session transcript, finding, terminology, result, summary, and detailed-review artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
 9. The primary GPT-5.6 Terra lane publishes the sticky comment. The Nemotron Ultra lane remains an artifact-only evaluation lane.
     The evaluation lane does not publish another review.
