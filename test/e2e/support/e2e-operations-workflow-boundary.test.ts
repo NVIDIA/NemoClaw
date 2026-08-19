@@ -274,7 +274,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
     expect(validateE2eOperationsWorkflow(workflow)).not.toContain(validationError);
     expect(authentication.if).toBe(
-      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.workflow_sha != '' }}",
+      "${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}",
     );
 
     authentication.if = "${{ inputs.checkout_sha != '' }}";
