@@ -338,6 +338,7 @@ describe("runtime identity contract", () => {
       "provider profile import --file",
       "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
       "provider refresh configure acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN --strategy oauth2-refresh-token --material client_id=client-id --secret-material-env refresh_token=OKTA_REFRESH_TOKEN --secret-material-env client_secret=OKTA_CLIENT_SECRET",
+      "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
     ]);
     expect(calls.flatMap(({ args }) => args)).not.toContain("refresh-secret");
     expect(calls.flatMap(({ args }) => args)).not.toContain("client-secret");
@@ -752,7 +753,7 @@ describe("runtime identity contract", () => {
     await expect(prepareRuntimeIdentity(configWithoutSecret, deps)).resolves.toEqual(
       createdReceipt,
     );
-    expect(calls.at(-1)?.env).toEqual({ OKTA_REFRESH_TOKEN: "refresh-secret" });
+    expect(calls.at(-2)?.env).toEqual({ OKTA_REFRESH_TOKEN: "refresh-secret" });
   });
 
   it("imports the validated bytes when the original profile is replaced before import", async () => {

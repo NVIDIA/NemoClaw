@@ -31,7 +31,6 @@ import {
   compensateRuntimeIdentityApply,
   isRuntimeIdentityConfig,
   isRuntimeIdentityReceipt,
-  mintRuntimeIdentityCredential,
   parseRuntimeIdentityProviderMetadata,
   prepareRuntimeIdentity,
   type RuntimeIdentityCommandDeps,
@@ -1218,7 +1217,6 @@ export async function actionApply(
         attachment_created: attachmentCreated,
       };
       persistRunPlan();
-      await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
     }
 
     if (Object.keys(policyAdditions).length > 0) {
