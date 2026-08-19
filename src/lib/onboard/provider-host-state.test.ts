@@ -261,7 +261,12 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.ollamaInstallMenu.entry?.label).toBe("Install Ollama (WSL Linux)");
   });
 
-  it("does not treat a non-Ollama body from host.docker.internal as a live Windows daemon (#9348)", () => {
+  it.each([
+    ["an HTML response", "<html>captive portal</html>"],
+    ["a null model entry", '{"models":[null]}'],
+    ["a primitive model entry", '{"models":[1]}'],
+    ["a nested-array model entry", '{"models":[[]]}'],
+  ])("does not treat %s as a live Windows daemon (#9348)", (_label, body) => {
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
       getContainerRuntime: vi.fn<DetectInferenceProviderHostStateDeps["getContainerRuntime"]>(
@@ -272,9 +277,7 @@ describe("detectInferenceProviderHostState", () => {
         installedPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
         loopbackOnly: false,
       })),
-      dockerCapture: vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() =>
-        "<html>captive portal</html>",
-      ),
+      dockerCapture: vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() => body),
     });
 
     const state = detectWithDeps(deps);

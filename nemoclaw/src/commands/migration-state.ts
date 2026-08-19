@@ -20,6 +20,7 @@ import path from "node:path";
 import JSON5 from "json5";
 import { create as createTar } from "tar";
 import type { PluginLogger } from "../index.js";
+import { reserveSnapshotDir } from "../blueprint/snapshot-directory.js";
 import {
   CREDENTIAL_SENSITIVE_BASENAMES,
   isSensitiveFile,
@@ -75,6 +76,7 @@ export interface HostOpenClawState {
 
 export interface SnapshotManifest {
   version: number;
+  timestamp?: string;
   createdAt: string;
   homeDir: string;
   stateDir: string;
@@ -577,6 +579,7 @@ function isSnapshotManifest(value: unknown): value is SnapshotManifest {
   return (
     isObjectRecord(value) &&
     typeof value.version === "number" &&
+    (value.timestamp === undefined || typeof value.timestamp === "string") &&
     typeof value.createdAt === "string" &&
     typeof value.homeDir === "string" &&
     typeof value.stateDir === "string" &&
@@ -762,16 +765,17 @@ export function createSnapshotBundle(
     return null;
   }
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const parentDir = path.join(
+  const snapshotsDir = path.join(
     hostState.homeDir,
     ".nemoclaw",
     options.persist ? "snapshots" : "staging",
-    timestamp,
   );
+  // Empty until this operation owns a directory, so failure cleanup can never remove another one.
+  let parentDir = "";
 
   try {
-    mkdirSync(parentDir, { recursive: true });
+    parentDir = reserveSnapshotDir(snapshotsDir, Date.now());
+    const timestamp = path.basename(parentDir);
     const snapshotStateDir = path.join(parentDir, "openclaw");
     copyDirectory(hostState.stateDir, snapshotStateDir, { stripCredentials: true });
     sanitizeMigrationDirectory(snapshotStateDir);
@@ -808,6 +812,7 @@ export function createSnapshotBundle(
 
     const manifest: SnapshotManifest = {
       version: SNAPSHOT_VERSION,
+      timestamp,
       createdAt: new Date().toISOString(),
       homeDir: hostState.homeDir,
       stateDir: hostState.stateDir,

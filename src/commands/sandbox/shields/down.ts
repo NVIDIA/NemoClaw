@@ -3,10 +3,13 @@
 
 import { Flags } from "@oclif/core";
 import { shieldsTimeoutDurationFlag } from "../../../lib/cli/duration-flags";
-import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
+import {
+  assertHermesPortableCommandUnavailable,
+  NemoClawCommand,
+  withSandboxCommandLifecycleLock,
+} from "../../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 import * as shields from "../../../lib/shields/index";
-import { withSandboxMutationLock } from "../../../lib/state/mcp-lifecycle-lock";
 
 export default class ShieldsDownCommand extends NemoClawCommand {
   static id = "sandbox:shields:down";
@@ -24,13 +27,14 @@ export default class ShieldsDownCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(ShieldsDownCommand);
-    await withSandboxMutationLock(args.sandboxName, () =>
-      shields.shieldsDown(args.sandboxName, {
+    await withSandboxCommandLifecycleLock(args.sandboxName, () => {
+      assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:down");
+      return shields.shieldsDown(args.sandboxName, {
         timeout: flags.timeout ?? null,
         reason: flags.reason ?? null,
         policy: flags.policy ?? "permissive",
         throwOnError: true,
-      }),
-    );
+      });
+    });
   }
 }

@@ -3,49 +3,88 @@
 
 name: Automation / PR Limit
 
-# pull_request_target runs in the base repo context, giving the token write
-# access even for fork PRs. This is safe here because this workflow never
-# checks out or executes code from the PR — it only counts open PRs and
-# closes excess ones. Do NOT add a checkout step or run PR-sourced code
-# in this workflow to prevent injection attacks.
+# pull_request_target runs in the base repository context. This workflow never
+# checks out or executes pull request code.
 on:
   pull_request_target:
     types: [opened, reopened]
 
 permissions:
+  contents: read
   pull-requests: write
 
 jobs:
   check-pr-limit:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: pr-limit-${{ github.repository }}-${{ github.event.pull_request.user.login }}
+      queue: max
+      cancel-in-progress: false
     steps:
       - name: Check open PR count for author
-        env:
-          GH_TOKEN: ${{ github.token }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          LIMIT=5
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const pull = context.payload.pull_request;
+            const author = pull.user.login;
+            const response = await github.rest.repos.getContent({
+              ...context.repo,
+              path: ".github/pr-limits.json",
+              ref: pull.base.sha,
+            });
+            if (Array.isArray(response.data) || response.data.type !== "file") {
+              throw new Error("Invalid PR limit policy file");
+            }
+            const policy = JSON.parse(Buffer.from(response.data.content, "base64").toString());
+            if (
+              typeof policy !== "object" ||
+              policy === null ||
+              Array.isArray(policy) ||
+              !("*" in policy) ||
+              !Object.entries(policy).every(
+                ([login, value]) =>
+                  (login === "*" ||
+                    /^(?=.{1,39}$)[a-z\d](?:(?:[a-z\d]|-(?!-))*[a-z\d])?$/.test(login)) &&
+                  typeof value === "string" &&
+                  /^(0|[1-9]\d*)$/.test(value) &&
+                  Number.isSafeInteger(Number(value)),
+              )
+            ) {
+              throw new Error("Invalid PR limit policy values");
+            }
+            const normalizedAuthor = author.toLowerCase();
+            const limit = Number(
+              Object.hasOwn(policy, normalizedAuthor) ? policy[normalizedAuthor] : policy["*"],
+            );
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,
+              state: "open",
+              creator: author,
+              sort: "created",
+              direction: "asc",
+              per_page: 100,
+            });
+            const openCount = issues.filter(
+              (issue) =>
+                issue.pull_request &&
+                (context.payload.action === "reopened" || issue.number <= pull.number),
+            ).length;
 
-          # Core maintainers are exempt from the PR limit.
-          EXEMPT="ericksoa kjw3 jacobtomlinson cv jyaunches"
-          for user in $EXEMPT; do
-            if [ "$AUTHOR" = "$user" ]; then
-              echo "Author $AUTHOR is a core maintainer — exempt from PR limit"
-              exit 0
-            fi
-          done
+            core.info(`Author ${author} has ${openCount} open PR(s); limit is ${limit}`);
+            if (openCount <= limit) return;
 
-          OPEN_COUNT=$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open --json number --jq 'length')
-
-          echo "Author $AUTHOR has $OPEN_COUNT open PR(s)"
-
-          if [ "$OPEN_COUNT" -gt "$LIMIT" ]; then
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
-              "This repository limits contributors to $LIMIT open pull requests. Please close or merge existing PRs before opening new ones."
-            gh pr close "$PR_NUMBER" --repo "$REPO"
-            echo "::error::PR closed — author $AUTHOR exceeds the $LIMIT open PR limit"
-            exit 1
-          fi
+            const body = limit === 0
+              ? "This account cannot have open pull requests under the repository policy."
+              : `This repository limits you to ${limit} open pull requests. Please close or merge an existing PR before opening another one.`;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pull.number,
+              body,
+            });
+            await github.rest.pulls.update({
+              ...context.repo,
+              pull_number: pull.number,
+              state: "closed",
+            });
+            core.setFailed(`PR closed because ${author} exceeds the ${limit}-open-PR limit`);
