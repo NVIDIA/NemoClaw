@@ -85,6 +85,7 @@ import {
   type UninstallPlan,
 } from "./plan";
 import {
+  assertHermesPortableUninstallAvailable,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   portableRetirementPreservationEntries,
@@ -1669,26 +1670,87 @@ function removeAliases(paths: UninstallPaths, runtime: UninstallRuntime): void {
   }
 }
 
+/** Direct entries of `dir`, or none when it is absent or unreadable. */
+function dirEntries(dir: string): fs.Dirent[] {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function nvmPackageBinTargets(packageDir: string): Map<string, string> {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8")) as {
+      bin?: unknown;
+    };
+    if (!manifest.bin || typeof manifest.bin !== "object" || Array.isArray(manifest.bin)) {
+      return new Map();
+    }
+    const packageRoot = `${path.resolve(packageDir)}${path.sep}`;
+    return new Map(
+      Object.entries(manifest.bin).flatMap(([binName, rawTarget]) => {
+        if (typeof rawTarget !== "string") return [];
+        const target = path.resolve(packageDir, rawTarget);
+        return target.startsWith(packageRoot) ? ([[binName, target]] as const) : [];
+      }),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function nvmBinBelongsToPackage(target: string, expectedTarget: string): boolean {
+  try {
+    if (fs.realpathSync(target) === fs.realpathSync(expectedTarget)) return true;
+    const targetStat = fs.statSync(target);
+    const expectedStat = fs.statSync(expectedTarget);
+    return targetStat.dev === expectedStat.dev && targetStat.ino === expectedStat.ino;
+  } catch {
+    try {
+      return (
+        path.resolve(path.dirname(target), fs.readlinkSync(target)) === path.resolve(expectedTarget)
+      );
+    } catch {
+      return false;
+    }
+  }
+}
+
 function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const nodeVersionsDir = path.join(paths.nvmDir, "versions", "node");
   if (!runtime.existsSync(nodeVersionsDir)) return;
-  const stack = [nodeVersionsDir];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const target = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        if (target.endsWith(path.join("lib", "node_modules", "nemoclaw"))) {
-          runtime.rmSync(target, { force: true, recursive: true });
-          runtime.log(`Removed leftover nemoclaw module at ${target}`);
-        } else {
-          stack.push(target);
-        }
-      } else if (entry.isFile() && target.endsWith(path.join("bin", "nemoclaw"))) {
-        runtime.rmSync(target, { force: true });
-        runtime.log(`Removed leftover nemoclaw binary at ${target}`);
+  // npm publishes every declared bin as a symlink, so an `isFile()` test never matched them.
+  const cliBinNames = ["nemoclaw", ...paths.agentAliasShimPaths.map((shim) => shim.binName)];
+  for (const version of dirEntries(nodeVersionsDir)) {
+    if (!version.isDirectory()) continue;
+    const versionDir = path.join(nodeVersionsDir, version.name);
+    const modulesDir = path.join(versionDir, "lib", "node_modules");
+    const packageEntry = dirEntries(modulesDir).find(
+      (entry) =>
+        (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
+    );
+    const packageDir = packageEntry ? path.join(modulesDir, packageEntry.name) : null;
+    const packageBins = packageDir ? nvmPackageBinTargets(packageDir) : new Map<string, string>();
+    const binDir = path.join(versionDir, "bin");
+    for (const entry of dirEntries(binDir)) {
+      const removable = entry.isFile() || entry.isSymbolicLink();
+      const target = path.join(binDir, entry.name);
+      const expectedTarget = packageBins.get(entry.name);
+      if (
+        !removable ||
+        !cliBinNames.includes(entry.name) ||
+        !expectedTarget ||
+        !nvmBinBelongsToPackage(target, expectedTarget)
+      ) {
+        continue;
       }
+      runtime.rmSync(target, { force: true });
+      runtime.log(`Removed leftover ${entry.name} binary at ${target}`);
+    }
+    if (packageDir && packageEntry?.isDirectory()) {
+      runtime.rmSync(packageDir, { force: true, recursive: true });
+      runtime.log(`Removed leftover nemoclaw module at ${packageDir}`);
     }
   }
 }
@@ -3156,9 +3218,10 @@ export async function runUninstallPlanProduction(
   const env = { ...process.env, ...(deps.env ?? {}) };
   const home = env.HOME || os.homedir();
   try {
-    return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () =>
-      runUninstallPlan(options, { ...deps, env }),
-    );
+    return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () => {
+      assertHermesPortableUninstallAvailable(env);
+      return runUninstallPlan(options, { ...deps, env });
+    });
   } catch (error) {
     (deps.error ?? ((message: string) => console.error(message)))(
       `Uninstall could not acquire or release portable host authority: ${formatError(error)}`,

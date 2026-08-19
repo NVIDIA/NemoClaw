@@ -4280,6 +4280,9 @@ $$nemoclaw credentials list
 Register a provider credential with the OpenShell gateway by name and type.
 Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv.
 Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them.
+`--from-existing` is available only when no managed MCP server reserves credential keys.
+The command fails before gateway work when a reservation exists because `--from-existing` does not expose credential keys before provider creation.
+Rerun with explicit `--credential <ENV_NAME>` input, or remove every managed MCP server that reserves credential keys before retrying.
 After the gateway accepts the provider, rebuild the target sandbox so the new provider is attached.
 
 Registered providers attach to every sandbox you build or rebuild after the call (the gateway is one process serving all sandboxes).
@@ -4294,7 +4297,7 @@ $$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_K
 | `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
 | `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
 | `--config <K=V>` | Provider configuration pair. Repeatable |
-| `--from-existing` | Load credentials and config from existing local state |
+| `--from-existing` | Load credentials and config from existing local state when no managed MCP server reserves credential keys |
 
 ### `$$nemoclaw credentials reset <PROVIDER>`
 

@@ -3,6 +3,13 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const spawnMock = vi.hoisted(() => vi.fn());
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: spawnMock,
+}));
+
 // Multi-line command argv dispatch and field-specific rejection coverage lives
 // in exec.multiline-argv.test.ts so this file stays focused on argv construction
 // and the workdir probe.
@@ -12,10 +19,85 @@ import {
   computeExitCode,
   evaluateWorkdirProbe,
   execSandbox,
+  runSandboxExecChild,
+  type SandboxExecChild,
   type SandboxExecCleanupDeps,
+  type SandboxExecSignalSource,
   validateWorkdirOrFail,
   workdirMissingMessage,
 } from "./exec";
+
+function completedSpawnChild(status = 0): SandboxExecChild {
+  const child = {
+    exitCode: null,
+    signalCode: null,
+    kill: vi.fn(() => true),
+    once: vi.fn((event: "error" | "close", listener: (...args: unknown[]) => void) => {
+      const notify = {
+        error: () => undefined,
+        close: () => queueMicrotask(() => listener(status, null)),
+      }[event];
+      notify();
+      return child;
+    }),
+  };
+  return child as unknown as SandboxExecChild;
+}
+
+const signalSource: SandboxExecSignalSource = {
+  add: vi.fn(),
+  remove: vi.fn(),
+};
+
+describe("runSandboxExecChild spawn options", () => {
+  afterEach(() => {
+    spawnMock.mockReset();
+    vi.mocked(signalSource.add).mockClear();
+    vi.mocked(signalSource.remove).mockClear();
+  });
+
+  it("forwards a supplied subprocess environment to spawn unchanged", async () => {
+    const subprocessEnv = { HOME: "/home/test", PATH: "/usr/bin" };
+    spawnMock.mockReturnValueOnce(completedSpawnChild());
+
+    const result = await runSandboxExecChild(
+      "/usr/bin/openshell",
+      ["sandbox", "list"],
+      { stdin: false, subprocessEnv },
+      undefined,
+      signalSource,
+    );
+    result.releaseSignals?.();
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "/usr/bin/openshell",
+      ["sandbox", "list"],
+      expect.objectContaining({
+        env: subprocessEnv,
+        stdio: ["ignore", "inherit", "inherit"],
+      }),
+    );
+    expect(spawnMock.mock.calls[0]?.[2]?.env).toBe(subprocessEnv);
+  });
+
+  it("preserves the existing spawn options when subprocessEnv is absent", async () => {
+    spawnMock.mockReturnValueOnce(completedSpawnChild());
+
+    const result = await runSandboxExecChild(
+      "/usr/bin/openshell",
+      ["sandbox", "list"],
+      { stdin: false },
+      undefined,
+      signalSource,
+    );
+    result.releaseSignals?.();
+
+    expect(spawnMock).toHaveBeenCalledWith("/usr/bin/openshell", ["sandbox", "list"], {
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    expect(spawnMock.mock.calls[0]?.[2]).not.toHaveProperty("env");
+  });
+});
 
 describe("buildOpenshellExecArgs", () => {
   it("targets the sandbox by name and forwards the user command after --", () => {
@@ -262,10 +344,10 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
     );
     const enableAudit = vi.fn(() => {});
     let exitCode = Number.NaN;
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    const exit = ((code?: number) => {
       exitCode = code ?? 0;
       throw new Error("__exec_exit__");
-    }) as never);
+    }) as (code: number) => never;
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await execSandbox(
       "wire-sbx",
@@ -273,11 +355,13 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       {},
       {
         resolveBinary: () => "openshell",
+        selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
         run: async () => {
           options.onRun?.();
           return { status, ...(options.error ? { error: options.error } : {}) };
         },
         cleanupDeps: options.cleanupDeps ?? cleanupSkipped,
+        exit,
         policyHint: {
           now: options.now ?? (() => START_MS),
           env: {},
@@ -289,7 +373,6 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
         },
       },
     ).catch(() => {});
-    exitSpy.mockRestore();
     errSpy.mockRestore();
     return { enableAudit, exitCode, probeLogs, stderr };
   };

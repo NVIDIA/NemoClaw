@@ -4,6 +4,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { isErrnoException } from "../core/errno";
@@ -99,6 +100,34 @@ const tails = new Map<string, Promise<void>>();
 export const portableHostFencePath = (homeDir: string): string =>
   path.join(homeDir, ".nemoclaw-portable-host.lock");
 
+/** Resolve the portable state root while admitting only the isolated Vitest override. */
+export function defaultPortableStateDir(env: NodeJS.ProcessEnv): string {
+  if (
+    env.VITEST === "true" &&
+    (env.HOME ?? "") === env.NEMOCLAW_TEST_BASE_HOME &&
+    env.NEMOCLAW_TEST_STATE_DIR &&
+    path.isAbsolute(env.NEMOCLAW_TEST_STATE_DIR)
+  ) {
+    return env.NEMOCLAW_TEST_STATE_DIR;
+  }
+  return path.join(env.HOME || os.homedir(), ".nemoclaw");
+}
+
+/** Count bounded schema-5 authority leaves while the caller holds the host fence. */
+export function getHermesPortableHostAuthorityEntryCount(stateDir: string): number {
+  return readPortableAuthorityDirectory(path.join(stateDir, "hermes-portable-lifecycle"), false)
+    .entries.length;
+}
+
+/** Reject host-wide legacy work while schema-5 receipt authority exists. */
+export function assertNoHermesPortableHostAuthority(stateDir: string, commandId: string): void {
+  if (getHermesPortableHostAuthorityEntryCount(stateDir) > 0) {
+    throw new Error(
+      `Command '${commandId}' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.`,
+    );
+  }
+}
+
 function releaseFenceReference(owner: FenceOwner): void {
   owner.references -= 1;
   if (owner.references === 0) owner.resolveDrained();
@@ -170,6 +199,11 @@ export async function withPortableHostFence<T>(
       if (tails.get(lockPath) === tail) tails.delete(lockPath);
     }
   }
+}
+
+/** Hold the portable host fence for the current process home without a second state owner. */
+export function withCurrentPortableHostFence<T>(operation: () => Promise<T> | T): Promise<T> {
+  return withPortableHostFence(process.env.HOME || os.homedir(), operation);
 }
 
 const root = (homeDir: string): string => path.join(homeDir, ".nemoclaw");
