@@ -165,6 +165,8 @@ export interface PersistedEngineLifecycleExactCommand {
   readonly args: readonly string[];
   /** Index containing the command's one exact persisted runtime target. */
   readonly targetIndex: number;
+  /** Fixed absolute container path when the command targets `runtimeId:path`. */
+  readonly targetPath?: string;
 }
 
 export interface AuthorizedPersistedEngineLifecycle {
@@ -1958,11 +1960,12 @@ function exactArguments(
   command: PersistedEngineLifecycleExactCommand,
   runtimeId: string,
 ): readonly string[] {
+  if (typeof command !== "object" || command === null || Array.isArray(command)) {
+    throw new Error("Exact runtime command has an invalid argument count.");
+  }
+  const commandKeys = Object.keys(command).sort().join(",");
   if (
-    typeof command !== "object" ||
-    command === null ||
-    Array.isArray(command) ||
-    Object.keys(command).sort().join(",") !== "args,targetIndex" ||
+    (commandKeys !== "args,targetIndex" && commandKeys !== "args,targetIndex,targetPath") ||
     !Array.isArray(command.args) ||
     command.args.length === 0 ||
     command.args.length > MAX_ARGUMENTS ||
@@ -1972,6 +1975,19 @@ function exactArguments(
   ) {
     throw new Error("Exact runtime command has an invalid argument count.");
   }
+  const targetPath = command.targetPath;
+  if (
+    targetPath !== undefined &&
+    (typeof targetPath !== "string" ||
+      !targetPath.startsWith("/") ||
+      path.posix.normalize(targetPath) !== targetPath ||
+      targetPath.includes(":") ||
+      CONTROL_CHARACTERS.test(targetPath) ||
+      Buffer.byteLength(targetPath, "utf8") > MAX_ARGUMENT_BYTES)
+  ) {
+    throw new Error("Exact runtime command container path is invalid.");
+  }
+  const exactTarget = targetPath === undefined ? runtimeId : `${runtimeId}:${targetPath}`;
   let exactRuntimeReferences = 0;
   const normalized = command.args.map((value, index) => {
     if (
@@ -1981,13 +1997,18 @@ function exactArguments(
     ) {
       throw new Error(`Exact runtime command argument ${String(index)} is invalid.`);
     }
-    if (value === runtimeId) exactRuntimeReferences += 1;
+    if (value === runtimeId || value.startsWith(`${runtimeId}:`)) {
+      if (value !== exactTarget) {
+        throw new Error("Exact runtime command contains another persisted runtime target.");
+      }
+      exactRuntimeReferences += 1;
+    }
     return value;
   });
   if (exactRuntimeReferences !== 1) {
     throw new Error("Exact runtime command must contain its persisted runtime ID exactly once.");
   }
-  if (normalized[command.targetIndex] !== runtimeId) {
+  if (normalized[command.targetIndex] !== exactTarget) {
     throw new Error("Exact runtime command target must be its persisted runtime ID.");
   }
   return Object.freeze(normalized);

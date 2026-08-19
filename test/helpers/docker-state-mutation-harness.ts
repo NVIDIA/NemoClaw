@@ -187,6 +187,7 @@ function createContainerStateMutationHarness(
   let marker: Record<string, unknown> | null = null;
   let releasedMarker: Record<string, unknown> | null = null;
   let deferredAcquireRequest: string | null = null;
+  const transportFiles = new Map<string, Buffer>();
 
   const acquireMarker = (request: Record<string, unknown>) => {
     const candidate = {
@@ -291,8 +292,88 @@ function createContainerStateMutationHarness(
       state.supervisorStopped = requestedSignal === "SIGSTOP";
       return { status: 0, stdout: `${DOCKER_STATE_MUTATION_RUNTIME_ID}\n`, stderr: "" };
     }
+    if (command[0] === "container" && command[1] === "cp") {
+      const source = command[2] ?? "";
+      const destination = command[3] ?? "";
+      const containerPrefix = `${DOCKER_STATE_MUTATION_RUNTIME_ID}:`;
+      if (destination.startsWith(containerPrefix)) {
+        const containerPath = destination.slice(containerPrefix.length);
+        const payload = fs.readFileSync(source);
+        transportFiles.set(containerPath, payload);
+        if (containerPath.endsWith(".ready")) {
+          const identity = path.posix.basename(containerPath, ".ready");
+          if (/^[a-f0-9]{64}$/u.test(identity)) {
+            const requestPath = `${containerPath.slice(0, -6)}.request`;
+            const request = transportFiles.get(requestPath);
+            if (request) {
+              const envelope = JSON.parse(request.toString("utf8")) as { action?: string };
+              const action = envelope.action ?? "";
+              const helperTimeout =
+                action === "acquire" || action === "assert"
+                  ? 30_000
+                  : action === "activate" || action === "release"
+                    ? 5 * 60_000
+                    : 15 * 60_000;
+              const helperResult = capture(
+                "docker",
+                [
+                  "container",
+                  "exec",
+                  "--nemoclaw-broker",
+                  DOCKER_STATE_MUTATION_RUNTIME_ID,
+                  "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+                  action,
+                ],
+                helperTimeout,
+                request,
+              );
+              transportFiles.set(
+                `${containerPath.slice(0, -6)}.response`,
+                Buffer.from(
+                  `${JSON.stringify({
+                    schemaVersion: 1,
+                    action,
+                    identity,
+                    status: helperResult.status,
+                    stdout: helperResult.stdout,
+                    stderr: helperResult.stderr,
+                  })}\n`,
+                  "utf8",
+                ),
+              );
+            }
+          }
+        } else if (containerPath.endsWith(".ack")) {
+          const base = containerPath.slice(0, -4);
+          for (const suffix of [".request", ".ready", ".response", ".ack"]) {
+            transportFiles.delete(`${base}${suffix}`);
+          }
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      if (source.startsWith(containerPrefix)) {
+        const containerPath = source.slice(containerPrefix.length);
+        const payload = transportFiles.get(containerPath);
+        if (!payload) return { status: 1, stdout: "", stderr: "transport file unavailable" };
+        fs.writeFileSync(destination, payload, { mode: 0o600 });
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unauthorized transport copy" };
+    }
     if (command[0] !== "container" || command[1] !== "exec") {
       return { status: 1, stdout: "", stderr: "unexpected command" };
+    }
+    if (command[2] === "--detach") {
+      const transactionId = command.at(-1) ?? "";
+      transportFiles.set(
+        `/run/nemoclaw/runtime-state-mutation/${transactionId}/ready`,
+        Buffer.from(`${transactionId}\n`, "ascii"),
+      );
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    const brokerInvocation = command[2] === "--nemoclaw-broker";
+    if (providerId === "docker" && state.supervisorStopped && !brokerInvocation) {
+      return { status: 1, stdout: "", stderr: "docker exec blocked after supervisor stop" };
     }
     const action = command.at(-1) ?? "";
     helperActions.push(action);
@@ -425,6 +506,7 @@ function createContainerStateMutationHarness(
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: DOCKER_STATE_MUTATION_SANDBOX_FINGERPRINT,
     runtimeId: DOCKER_STATE_MUTATION_RUNTIME_ID,
+    hostTransportRoot: root,
     authority,
     engineAuthorityStore,
     lifecycleStore,

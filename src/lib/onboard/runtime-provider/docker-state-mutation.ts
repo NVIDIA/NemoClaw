@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash, randomBytes } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 
 import type {
   ContainerEngine,
   ContainerEngineCommandCapture,
+  ContainerEngineCommandResult,
   ContainerEngineOperationScope,
 } from "../../adapters/container-engine";
 import { resolveShieldsStateDir, withShieldsTransitionLock } from "../../shields/transition-lock";
@@ -38,6 +40,7 @@ import {
   hasActivePersistedEngineStateMutationTarget,
   loadPersistedEngineStateMutationIntent,
   type PersistedEngineLifecycleExecutionInput,
+  type PersistedEngineLifecycleExactCommand,
   type PersistedEngineLifecycleRecord,
   type PersistedEngineLifecycleStore,
   type PersistedEngineStateMutationIntent,
@@ -55,6 +58,9 @@ const HELPER_ACTIVATION_TIMEOUT_MS = 5 * 60_000;
 const HELPER_GUARD_TIMEOUT_MS = 15 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
+const HELPER_TRANSPORT_COMMAND_TIMEOUT_MS = 15_000;
+const HELPER_TRANSPORT_POLL_MS = 250;
+const HELPER_TRANSPORT_ROOT = "/run/nemoclaw/runtime-state-mutation";
 const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
 const MAX_INSPECTION_BYTES = 1024 * 1024;
 const MAX_MOUNTS = 256;
@@ -69,6 +75,153 @@ const LIFECYCLE_GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:/=+-]{0,511}$/u;
 const MOUNT_NAMESPACE = /^mnt:\[[1-9][0-9]*\]$/u;
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
+const helperTransportPoll = new Int32Array(new SharedArrayBuffer(4));
+
+const HELPER_TRANSPORT_BROKER = String.raw`
+import fcntl
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import time
+
+ROOT = "/run/nemoclaw/runtime-state-mutation"
+MAXIMUM = 128 * 1024
+ACTIONS = frozenset(("acquire", "assert", "publish", "recover", "rollback", "activate", "release"))
+TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": 300, "release": 300}
+IDENTITY = re.compile(r"[a-f0-9]{64}\Z")
+
+def fail(code):
+    raise RuntimeError(code)
+
+def directory(path):
+    metadata = os.lstat(path)
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or
+        stat.S_IMODE(metadata.st_mode) != 0o700):
+        fail("transport-directory-invalid")
+
+def atomic(path, payload):
+    temporary = path + ".tmp-" + str(os.getpid())
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
+    try:
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                fail("transport-write-failed")
+            offset += written
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, path)
+
+def private_file(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        before = os.fstat(descriptor)
+        payload = os.read(descriptor, MAXIMUM + 1)
+        after = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0 or
+            stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1 or
+            len(payload) > MAXIMUM or os.read(descriptor, 1) or
+            (before.st_dev, before.st_ino, before.st_mode, before.st_nlink, before.st_uid,
+             before.st_gid, before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
+            (after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_uid,
+             after.st_gid, after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+            fail("transport-file-invalid")
+        return payload
+    finally:
+        os.close(descriptor)
+
+def response_payload(action, identity, status, stdout, stderr):
+    return json.dumps({"schemaVersion": 1, "action": action, "identity": identity,
+        "status": status, "stdout": stdout, "stderr": stderr},
+        ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
+
+helper = sys.argv[1]
+transaction = sys.argv[2]
+if IDENTITY.fullmatch(transaction) is None:
+    fail("transport-transaction-invalid")
+os.makedirs(ROOT, mode=0o700, exist_ok=True)
+directory(ROOT)
+session = os.path.join(ROOT, transaction)
+os.makedirs(session, mode=0o700, exist_ok=True)
+directory(session)
+lock = os.open(os.path.join(session, "broker.lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+try:
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    raise SystemExit(0)
+atomic(os.path.join(session, "ready"), (transaction + "\n").encode("ascii"))
+
+while True:
+    names = sorted(os.listdir(session))
+    for name in names:
+        if not name.endswith(".ready"):
+            continue
+        identity = name[:-6]
+        if IDENTITY.fullmatch(identity) is None:
+            continue
+        request_path = os.path.join(session, identity + ".request")
+        response_path = os.path.join(session, identity + ".response")
+        if os.path.exists(response_path) or not os.path.exists(request_path):
+            continue
+        action = "invalid"
+        try:
+            if private_file(os.path.join(session, name)) != (identity + "\n").encode("ascii"):
+                fail("transport-ready-invalid")
+            request = private_file(request_path)
+            if not request.endswith(b"\n") or hashlib.sha256(request).hexdigest() != identity:
+                fail("transport-request-invalid")
+            envelope = json.loads(request.decode("utf-8", "strict"))
+            action = envelope.get("action") if isinstance(envelope, dict) else "invalid"
+            if action not in ACTIONS or envelope.get("transactionId") != transaction:
+                fail("transport-request-invalid")
+            completed = subprocess.run([sys.executable, "-I", helper, action], input=request,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=TIMEOUTS[action], check=False)
+            if len(completed.stdout) > MAXIMUM or len(completed.stderr) > MAXIMUM:
+                fail("transport-response-too-large")
+            response = response_payload(action, identity, completed.returncode,
+                completed.stdout.decode("utf-8", "strict"), completed.stderr.decode("utf-8", "strict"))
+        except subprocess.TimeoutExpired:
+            response = response_payload(action, identity, 1, "", "helper-timeout")
+        except (OSError, RuntimeError, UnicodeError, ValueError):
+            response = response_payload(action, identity, 1, "", "transport-failed")
+        atomic(response_path, response)
+    for name in names:
+        if not name.endswith(".ack"):
+            continue
+        identity = name[:-4]
+        if IDENTITY.fullmatch(identity) is None:
+            continue
+        response_path = os.path.join(session, identity + ".response")
+        if not os.path.exists(response_path):
+            continue
+        try:
+            response = json.loads(private_file(response_path).decode("utf-8", "strict"))
+            if private_file(os.path.join(session, name)) != (identity + "\n").encode("ascii"):
+                fail("transport-ack-invalid")
+            successful_release = response.get("action") == "release" and response.get("status") == 0
+            for suffix in (".request", ".ready", ".response", ".ack"):
+                try:
+                    os.unlink(os.path.join(session, identity + suffix))
+                except FileNotFoundError:
+                    pass
+            if successful_release:
+                try:
+                    os.unlink(os.path.join(session, "ready"))
+                    os.unlink(os.path.join(session, "broker.lock"))
+                    os.rmdir(session)
+                except OSError:
+                    pass
+                raise SystemExit(0)
+        except (OSError, RuntimeError, UnicodeError, ValueError):
+            pass
+    time.sleep(0.05)
+`;
 
 type HelperAction =
   | "acquire"
@@ -165,6 +318,8 @@ export interface ContainerStateMutationOwnerOptions {
   readonly lifecycleLiveIdentityFingerprint?: string;
   /** Full immutable container ID. Names and short IDs are not accepted. */
   readonly runtimeId: string;
+  /** Trusted host directory for bounded Docker copy transport files. */
+  readonly hostTransportRoot: string;
   readonly authority: ContainerStateMutationAuthority;
   readonly engineAuthorityStore: PersistedEngineAuthorityStore;
   readonly lifecycleStore: PersistedEngineLifecycleStore;
@@ -1017,6 +1172,289 @@ function helperCommand(runtimeId: string, action: HelperAction) {
   });
 }
 
+type HelperTransportCapture = (
+  command: PersistedEngineLifecycleExactCommand,
+  timeoutMs: number,
+) => ContainerEngineCommandResult;
+
+function helperTransportSessionPath(transactionId: string): string {
+  return `${HELPER_TRANSPORT_ROOT}/${transactionId}`;
+}
+
+function helperTransportBrokerCommand(
+  runtimeId: string,
+  transactionId: string,
+): PersistedEngineLifecycleExactCommand {
+  return Object.freeze({
+    args: Object.freeze([
+      "container",
+      "exec",
+      "--detach",
+      "--user",
+      "root",
+      runtimeId,
+      HELPER_PYTHON_PATH,
+      "-I",
+      "-c",
+      "import base64,sys;source=base64.b64decode(sys.argv.pop(1));exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))",
+      Buffer.from(HELPER_TRANSPORT_BROKER, "utf8").toString("base64"),
+      HELPER_PATH,
+      transactionId,
+    ]),
+    targetIndex: 5,
+  });
+}
+
+function helperTransportCopyToCommand(
+  runtimeId: string,
+  hostPath: string,
+  containerPath: string,
+): PersistedEngineLifecycleExactCommand {
+  return Object.freeze({
+    args: Object.freeze(["container", "cp", hostPath, `${runtimeId}:${containerPath}`]),
+    targetIndex: 3,
+    targetPath: containerPath,
+  });
+}
+
+function helperTransportCopyFromCommand(
+  runtimeId: string,
+  containerPath: string,
+  hostPath: string,
+): PersistedEngineLifecycleExactCommand {
+  return Object.freeze({
+    args: Object.freeze(["container", "cp", `${runtimeId}:${containerPath}`, hostPath]),
+    targetIndex: 2,
+    targetPath: containerPath,
+  });
+}
+
+function helperTransportHostParent(hostRoot: string): string {
+  const parent = path.join(hostRoot, "runtime-state-mutation-transport");
+  fs.mkdirSync(parent, { mode: 0o700, recursive: true });
+  const metadata = fs.lstatSync(parent);
+  const expectedUid = process.getuid?.();
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    (metadata.mode & 0o777) !== 0o700 ||
+    (expectedUid !== undefined && metadata.uid !== expectedUid)
+  ) {
+    fail("host helper transport directory is not private");
+  }
+  return parent;
+}
+
+function withHelperTransportHostDirectory<T>(hostRoot: string, run: (root: string) => T): T {
+  const temporary = fs.mkdtempSync(path.join(helperTransportHostParent(hostRoot), "operation-"));
+  fs.chmodSync(temporary, 0o700);
+  try {
+    return run(temporary);
+  } finally {
+    fs.rmSync(temporary, { force: true, recursive: true });
+  }
+}
+
+function writePrivateTransportFile(filePath: string, value: Buffer): void {
+  const descriptor = fs.openSync(filePath, "wx", 0o600);
+  try {
+    fs.writeFileSync(descriptor, value);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function copyHelperTransportFile(
+  capture: HelperTransportCapture,
+  command: PersistedEngineLifecycleExactCommand,
+): ContainerEngineCommandResult {
+  return capture(command, HELPER_TRANSPORT_COMMAND_TIMEOUT_MS);
+}
+
+function readHelperTransportFile(
+  capture: HelperTransportCapture,
+  runtimeId: string,
+  containerPath: string,
+  hostRoot: string,
+  timeoutMs: number,
+): Buffer {
+  return withHelperTransportHostDirectory(hostRoot, (temporary) => {
+    const destination = path.join(temporary, "response");
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      fs.rmSync(destination, { force: true });
+      const result = copyHelperTransportFile(
+        capture,
+        helperTransportCopyFromCommand(runtimeId, containerPath, destination),
+      );
+      if (!result.error && result.status === 0 && result.stderr.length === 0) {
+        const value = fs.readFileSync(destination);
+        if (value.byteLength > MAX_HELPER_TRANSPORT_BYTES) {
+          fail("root helper transport response exceeds its byte bound");
+        }
+        return value;
+      }
+      if (Date.now() >= deadline) fail("root helper transport response did not arrive");
+      Atomics.wait(helperTransportPoll, 0, 0, HELPER_TRANSPORT_POLL_MS);
+    }
+  });
+}
+
+function probeHelperTransport(
+  capture: HelperTransportCapture,
+  options: ContainerStateMutationOwnerOptions,
+  transactionId: string,
+): boolean {
+  return withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
+    const destination = path.join(temporary, "ready");
+    const result = copyHelperTransportFile(
+      capture,
+      helperTransportCopyFromCommand(
+        options.runtimeId,
+        `${helperTransportSessionPath(transactionId)}/ready`,
+        destination,
+      ),
+    );
+    if (result.error || result.status !== 0 || result.stderr.length !== 0) return false;
+    const ready = fs.readFileSync(destination);
+    if (ready.byteLength > MAX_HELPER_TRANSPORT_BYTES) {
+      fail("root helper transport readiness response exceeds its byte bound");
+    }
+    return ready.equals(Buffer.from(`${transactionId}\n`, "ascii"));
+  });
+}
+
+function ensureHelperTransportAuthorized(
+  scope: AuthorizedPersistedEngineLifecycle,
+  options: ContainerStateMutationOwnerOptions,
+  transactionId: string,
+): void {
+  const capture: HelperTransportCapture = (command, timeoutMs) =>
+    scope.captureExact("target", () => command, timeoutMs);
+  if (probeHelperTransport(capture, options, transactionId)) return;
+  requireCommandSuccess(
+    capture(
+      helperTransportBrokerCommand(options.runtimeId, transactionId),
+      HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+    ),
+    "root helper transport startup",
+  );
+  let ready: Buffer;
+  try {
+    ready = readHelperTransportFile(
+      capture,
+      options.runtimeId,
+      `${helperTransportSessionPath(transactionId)}/ready`,
+      options.hostTransportRoot,
+      HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+    );
+  } catch {
+    fail("root helper transport did not become available");
+  }
+  if (!ready.equals(Buffer.from(`${transactionId}\n`, "ascii"))) {
+    fail("root helper transport identity changed");
+  }
+}
+
+function parseHelperTransportResult(
+  value: Buffer,
+  action: HelperAction,
+  identity: string,
+): ContainerEngineCommandResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value.toString("utf8"));
+  } catch {
+    fail("root helper transport response is malformed");
+  }
+  const response = record(parsed, "root helper transport response");
+  exactKeys(
+    response,
+    ["schemaVersion", "action", "identity", "status", "stdout", "stderr"],
+    "root helper transport response",
+  );
+  if (
+    response.schemaVersion !== 1 ||
+    response.action !== action ||
+    response.identity !== identity ||
+    !Number.isSafeInteger(response.status) ||
+    (response.status as number) < 0 ||
+    typeof response.stdout !== "string" ||
+    typeof response.stderr !== "string" ||
+    Buffer.byteLength(response.stdout, "utf8") > MAX_HELPER_TRANSPORT_BYTES ||
+    Buffer.byteLength(response.stderr, "utf8") > MAX_HELPER_TRANSPORT_BYTES
+  ) {
+    fail("root helper transport response is malformed");
+  }
+  return {
+    status: response.status as number,
+    stdout: response.stdout,
+    stderr: response.stderr,
+  };
+}
+
+function invokeHelperTransport(
+  capture: HelperTransportCapture,
+  options: ContainerStateMutationOwnerOptions,
+  transactionId: string,
+  action: HelperAction,
+  input: Buffer,
+): DockerStateMutationHelperReceipt {
+  const identity = createHash("sha256").update(input).digest("hex");
+  const sessionPath = helperTransportSessionPath(transactionId);
+  const result = withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
+    const request = path.join(temporary, "request");
+    const ready = path.join(temporary, "ready");
+    writePrivateTransportFile(request, input);
+    writePrivateTransportFile(ready, Buffer.from(`${identity}\n`, "ascii"));
+    requireCommandSuccess(
+      copyHelperTransportFile(
+        capture,
+        helperTransportCopyToCommand(
+          options.runtimeId,
+          request,
+          `${sessionPath}/${identity}.request`,
+        ),
+      ),
+      "root helper transport request",
+    );
+    requireCommandSuccess(
+      copyHelperTransportFile(
+        capture,
+        helperTransportCopyToCommand(options.runtimeId, ready, `${sessionPath}/${identity}.ready`),
+      ),
+      "root helper transport request publication",
+    );
+    const response = readHelperTransportFile(
+      capture,
+      options.runtimeId,
+      `${sessionPath}/${identity}.response`,
+      options.hostTransportRoot,
+      helperTimeoutMs(action) + HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+    );
+    const parsed = parseHelperTransportResult(response, action, identity);
+    const acknowledgement = path.join(temporary, "ack");
+    writePrivateTransportFile(acknowledgement, Buffer.from(`${identity}\n`, "ascii"));
+    requireCommandSuccess(
+      copyHelperTransportFile(
+        capture,
+        helperTransportCopyToCommand(
+          options.runtimeId,
+          acknowledgement,
+          `${sessionPath}/${identity}.ack`,
+        ),
+      ),
+      "root helper transport response acknowledgement",
+    );
+    return parsed;
+  });
+  return parseHelperReceipt(
+    requireCommandSuccess(result, `root helper ${action}`),
+    options.providerId,
+  );
+}
+
 function supervisorSignalCommand(runtimeId: string, requestedSignal: "SIGSTOP" | "SIGCONT") {
   return Object.freeze({
     args: Object.freeze(["container", "kill", "--signal", requestedSignal, runtimeId]),
@@ -1121,17 +1559,25 @@ function helperInput(fields: readonly (readonly [string, unknown])[]): Buffer {
 
 function invokeHelperAuthorized(
   scope: AuthorizedPersistedEngineLifecycle,
-  providerId: string,
+  options: ContainerStateMutationOwnerOptions,
   action: HelperAction,
   input: Buffer,
 ): DockerStateMutationHelperReceipt {
+  if (options.providerId === DOCKER_PROVIDER_ID) {
+    const capture: HelperTransportCapture = (command, timeoutMs) =>
+      scope.captureExact("target", () => command, timeoutMs);
+    return invokeHelperTransport(capture, options, scope.record.transactionId, action, input);
+  }
   const result = scope.captureExact(
     "target",
     (runtimeId) => helperCommand(runtimeId, action),
     helperTimeoutMs(action),
     input,
   );
-  return parseHelperReceipt(requireCommandSuccess(result, `root helper ${action}`), providerId);
+  return parseHelperReceipt(
+    requireCommandSuccess(result, `root helper ${action}`),
+    options.providerId,
+  );
 }
 
 function lifecycleInput(
@@ -1534,10 +1980,13 @@ function acquireAuthorizedReceipt(
   ) {
     fail("persisted state mutation intent does not match the lifecycle transaction");
   }
+  if (options.providerId === DOCKER_PROVIDER_ID) {
+    ensureHelperTransportAuthorized(scope, options, exactTransactionId);
+  }
   signalSupervisorAuthorized(scope, options, "SIGSTOP");
   const receipt = invokeHelperAuthorized(
     scope,
-    options.providerId,
+    options,
     "acquire",
     acquireRequest(options, bindingSha256, observation, stateRoot, plan, nonce, exactTransactionId),
   );
@@ -1579,23 +2028,41 @@ function queryEstablishedReceipt(
       }
     }
     guard();
-    const result = options.authority.engine.capture(
-      helperCommand(options.runtimeId, action).args,
-      helperTimeoutMs(action),
-      statusRequest(
-        action,
-        options,
-        bindingSha256,
-        before,
-        execution.transactionId,
-        expectedFence?.providerHandle,
-      ),
+    const request = statusRequest(
+      action,
+      options,
+      bindingSha256,
+      before,
+      execution.transactionId,
+      expectedFence?.providerHandle,
     );
+    const result =
+      options.providerId === DOCKER_PROVIDER_ID
+        ? invokeHelperTransport(
+            (command, timeoutMs) => {
+              guard();
+              const captured = options.authority.engine.capture(command.args, timeoutMs);
+              guard();
+              return captured;
+            },
+            options,
+            execution.transactionId,
+            action,
+            request,
+          )
+        : parseHelperReceipt(
+            requireCommandSuccess(
+              options.authority.engine.capture(
+                helperCommand(options.runtimeId, action).args,
+                helperTimeoutMs(action),
+                request,
+              ),
+              `root helper ${action}`,
+            ),
+            options.providerId,
+          );
     guard();
-    const receipt = parseHelperReceipt(
-      requireCommandSuccess(result, `root helper ${action}`),
-      options.providerId,
-    );
+    const receipt = result;
     validateReceipt(receipt, options, bindingSha256, before, currentRecord);
     if (expectedFence) requireFenceReceipt(expectedFence, receipt);
     const after = inspectDirect(options, bindingSha256);
@@ -1668,7 +2135,7 @@ function releaseAuthorizedFence(
   const before = inspectAuthorized(scope, options);
   const receipt = invokeHelperAuthorized(
     scope,
-    options.providerId,
+    options,
     "release",
     statusRequest(
       "release",
@@ -1905,7 +2372,7 @@ export function createContainerStateMutationOwner(
           const before = inspectAuthorized(scope, options);
           const receipt = invokeHelperAuthorized(
             scope,
-            options.providerId,
+            options,
             "activate",
             statusRequest(
               "activate",
@@ -1954,7 +2421,7 @@ export function createContainerStateMutationOwner(
           const before = inspectAuthorized(scope, options);
           const recovered = invokeHelperAuthorized(
             scope,
-            options.providerId,
+            options,
             "recover",
             statusRequest("recover", options, bindingSha256, before, record.transactionId),
           );
@@ -2124,6 +2591,7 @@ function createSurfaceOwner(
           lifecycleLiveIdentityFingerprint: input.sandbox.lifecycleLiveIdentityFingerprint,
         }),
     runtimeId,
+    hostTransportRoot: stateDir,
     authority,
     engineAuthorityStore,
     lifecycleStore: createFilePersistedEngineLifecycleStore(stateDir),
