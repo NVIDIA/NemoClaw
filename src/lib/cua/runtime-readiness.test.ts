@@ -204,7 +204,7 @@ describe("current CUA runtime readiness", () => {
     ).toThrow(/through 4096 bytes/);
   });
 
-  it("rejects live inference drift and credential-shaped serialized selectors (#7755)", () => {
+  it("rejects live inference drift and runtime identity changes (#7755)", () => {
     const runtime = fixture();
     const env = { ...runtime.env, NEMOCLAW_CUA_QUALIFICATION: "1" };
     const readiness = buildCurrentCuaRuntimeReadiness({
@@ -256,35 +256,6 @@ describe("current CUA runtime readiness", () => {
       }),
     ).toThrow(/current runtime identity/);
 
-    for (const provider of [
-      "ghp_example",
-      "sk-test",
-      "https://provider.invalid",
-      "provider.example.xyz",
-      "2001:db8::1",
-      "user@host",
-      "localhost",
-      "127.0.0.1",
-    ]) {
-      expect(() => getCuaInferenceRouteIdentity({ provider, model: "safe-model" })).toThrow(
-        /coordinate- and credential-free/,
-      );
-    }
-    for (const model of [
-      "ghp_example",
-      "sk-test",
-      "https://models.invalid/value",
-      "user@host/model",
-      "model?query",
-      "model#fragment",
-      "model\nother",
-      "localhost/model",
-      "127.0.0.1/model",
-    ]) {
-      expect(() => getCuaInferenceRouteIdentity({ provider: "nvidia", model })).toThrow(
-        /coordinate- and credential-free/,
-      );
-    }
     expect(
       getCuaInferenceRouteIdentity({
         provider: "nvidia",
@@ -292,6 +263,43 @@ describe("current CUA runtime readiness", () => {
       }).model,
     ).toBe("nvidia/nvidia/nemotron-3-ultra");
   });
+
+  it.each([
+    "ghp_example",
+    "sk-test",
+    "https://provider.invalid",
+    "provider.example.xyz",
+    "2001:db8::1",
+    "user@host",
+    "localhost",
+    "127.0.0.1",
+  ])(
+    "rejects a provider selector that violates the printable coordinate- and credential-free identity contract [case %#] (#7755)",
+    (provider) => {
+      expect(() => getCuaInferenceRouteIdentity({ provider, model: "safe-model" })).toThrow(
+        /coordinate- and credential-free/,
+      );
+    },
+  );
+
+  it.each([
+    "ghp_example",
+    "sk-test",
+    "https://models.invalid/value",
+    "user@host/model",
+    "model?query",
+    "model#fragment",
+    "model\nother",
+    "localhost/model",
+    "127.0.0.1/model",
+  ])(
+    "rejects a model selector that violates the printable coordinate- and credential-free identity contract [case %#] (#7755)",
+    (model) => {
+      expect(() => getCuaInferenceRouteIdentity({ provider: "nvidia", model })).toThrow(
+        /coordinate- and credential-free/,
+      );
+    },
+  );
 
   it("invalidates candidate readiness when the selected OpenShell executable changes (#7755)", () => {
     const runtime = fixture();

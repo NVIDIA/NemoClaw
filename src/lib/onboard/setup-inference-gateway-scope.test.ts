@@ -171,9 +171,9 @@ describe("gateway-scoped inference route readers", () => {
     expect(route.isInferenceRouteReady(GATEWAY, "openai-api", "gpt-test")).toBe(true);
     expect(route.isInferenceRouteReady(GATEWAY, "openai-api", "other")).toBe(false);
     expect(capture).toHaveBeenCalledTimes(3);
-    for (const call of capture.mock.calls) {
+    capture.mock.calls.forEach((call) => {
       expect(call).toEqual([["inference", "get", "-g", GATEWAY], { ignoreError: true }]);
-    }
+    });
   });
 
   it("reads compatibility peers through the injected registry boundary", () => {

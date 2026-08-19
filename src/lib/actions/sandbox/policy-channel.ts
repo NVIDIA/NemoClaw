@@ -1207,7 +1207,6 @@ function buildCredentialAvailability(channelIds: readonly string[]): Record<stri
     for (const input of manifest.inputs) {
       if (input.kind !== "secret" || !input.envKey) continue;
       if (!getMessagingToken(input.envKey)) continue;
-      availability[input.id] = true;
       availability[`${manifest.id}.${input.id}`] = true;
       availability[input.envKey] = true;
     }
@@ -1981,7 +1980,15 @@ async function removeSandboxPolicyUnlocked(
   const builtinPresets = policies.listPresets();
   const customPresets = policies.listCustomPresets(sandboxName);
   const allPresets = [...builtinPresets, ...customPresets];
+  // `policy list` reports a preset as active when either the registry or the
+  // gateway holds it, so removal has to accept the same set. A preset the
+  // gateway enforces but the registry never recorded is exactly the state
+  // `policy list` flags as "active on gateway, missing from local state", and
+  // removePreset() reconciles it without needing the registry entry. Null means
+  // the gateway could not be queried, which is not evidence of absence. (#9295)
   const applied = policies.getAppliedPresets(sandboxName);
+  const gatewayPresets = policies.getGatewayPresets(sandboxName);
+  const removable = gatewayPresets ? [...new Set([...applied, ...gatewayPresets])] : applied;
 
   const presetArg = options.preset;
   let answer = null;
@@ -1995,8 +2002,11 @@ async function removeSandboxPolicyUnlocked(
       );
       process.exit(1);
     }
-    if (!applied.includes(preset.name)) {
+    if (!removable.includes(preset.name)) {
       console.error(`  Preset '${preset.name}' is not applied.`);
+      if (gatewayPresets === null) {
+        console.error("  Could not query the gateway, so only local state was checked.");
+      }
       process.exit(1);
     }
     answer = preset.name;
@@ -2009,7 +2019,7 @@ async function removeSandboxPolicyUnlocked(
       exitPromptStdinClosed(usage);
     }
     answer = await pickPresetOrExit(
-      () => policies.selectForRemoval(allPresets, { applied }),
+      () => policies.selectForRemoval(allPresets, { applied: removable }),
       usage,
     );
   }

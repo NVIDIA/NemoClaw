@@ -7,6 +7,7 @@ import {
   getActiveChannelsFromPlan,
   getDisabledChannelsFromPlan,
 } from "../../messaging-plan-session";
+import { messagingChannelsForPolicyPresets } from "../../messaging-policy-presets";
 import type { HostLocalInferenceSandboxProofAuthority } from "../../runtime-provider/host-local-inference-routing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -26,6 +27,8 @@ export interface PolicyPresetEntry {
 export interface ActiveSandboxPolicyState {
   messaging?: { plan: SandboxMessagingPlan } | null;
   policyTier?: string | null;
+  /** Preset names already applied to the sandbox, as recorded in the registry. */
+  policies?: string[] | null;
 }
 
 export interface PolicyResumeSelection {
@@ -177,8 +180,16 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   // run re-applies its egress preset. Adding it to `disabledChannels` here lets
   // the existing disabled-channel pruning drop the preset from both the merged
   // selection and the previously-applied set.
+  //
+  // The applied preset list is the third candidate source because it outlives
+  // the plans: a sandbox can carry a channel's egress in `policies` after every
+  // plan that named the channel is gone, and only a candidate here can retire
+  // it.
+  const appliedPresetMessagingChannels = messagingChannelsForPolicyPresets(
+    activeSandbox?.policies,
+  );
   const unconfiguredMessagingChannels = deps.detectUnconfiguredMessagingChannels(
-    [...recordedMessagingChannels, ...activeMessagingChannels],
+    [...recordedMessagingChannels, ...activeMessagingChannels, ...appliedPresetMessagingChannels],
     selectedMessagingChannels,
     agent,
   );
@@ -240,8 +251,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   // runs syncPresetSelection (signalled by onSelection firing) qualifies:
   //   - the ordinary skip path (NEMOCLAW_POLICY_MODE=skip/none/no) returns []
   //     without touching the live set, so persisting [] would wipe real
-  //     policies. A skip with excluded presets instead reconciles and persists
-  //     the retained live set;
+  //     policies. A skip with exclusions or a missing tier-defining preset
+  //     instead reconciles and persists the retained live set;
   //   - the resume path only checks recorded presets are a *subset* of what's
   //     applied (arePolicyPresetsApplied), not that the live set matches — an
   //     interrupted prior run may still have extra applied presets (e.g. an
@@ -308,8 +319,9 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     // interruption can't leave a completed-resumable session without the
     // finalized marker (--resume would then skip the persist permanently).
     // Skipped only when no reconciliation occurred (including ordinary skip
-    // without exclusions), which leaves the live applied set untouched and
-    // would otherwise be clobbered with []. See #4621.
+    // without exclusions or a missing tier requirement), which leaves the live
+    // applied set untouched and would otherwise be clobbered with []. See
+    // #4621.
     if (reflectsLiveAppliedSet) {
       deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets);
     }

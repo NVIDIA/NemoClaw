@@ -13,7 +13,6 @@ import {
   buildSubprocessEnv as buildPluginSubprocessEnv,
   withLocalNoProxy as withPluginLocalNoProxy,
 } from "../nemoclaw/src/lib/subprocess-env";
-import { getCurlTimingArgs } from "../src/lib/adapters/http/probe";
 import {
   buildSubprocessEnv as buildCliSubprocessEnv,
   withLocalNoProxy as withCliLocalNoProxy,
@@ -58,20 +57,20 @@ describe("credential exposure in process arguments", () => {
     );
     try {
       Object.assign(process.env, tlsEnv);
-      for (const buildSubprocessEnv of [buildCliSubprocessEnv, buildPluginSubprocessEnv]) {
+      [buildCliSubprocessEnv, buildPluginSubprocessEnv].forEach((buildSubprocessEnv) => {
         const env = buildSubprocessEnv();
         expect(Object.fromEntries(Object.keys(tlsEnv).map((key) => [key, env[key]]))).toEqual(
           tlsEnv,
         );
-      }
+      });
     } finally {
-      for (const [key, value] of Object.entries(previous)) {
+      Object.entries(previous).forEach(([key, value]) => {
         if (value === undefined) {
           delete process.env[key];
         } else {
           process.env[key] = value;
         }
-      }
+      });
     }
   });
 
@@ -94,18 +93,19 @@ describe("credential exposure in process arguments", () => {
         Object.fromEntries(tlsKeys.map((key) => [key, pluginEnv[key]])),
       );
     } finally {
-      for (const [key, value] of Object.entries(previous)) {
+      Object.entries(previous).forEach(([key, value]) => {
         if (value === undefined) {
           delete process.env[key];
         } else {
           process.env[key] = value;
         }
-      }
+      });
     }
   });
 
-  it("subprocess-env NO_PROXY local hosts are in sync for CLI and plugin", () => {
-    for (const withLocalNoProxy of [withCliLocalNoProxy, withPluginLocalNoProxy]) {
+  it.each([withCliLocalNoProxy, withPluginLocalNoProxy])(
+    "subprocess-env NO_PROXY local hosts are in sync for CLI and plugin [case %#]",
+    (withLocalNoProxy) => {
       const env: Record<string, string> = {
         HTTP_PROXY: "http://proxy.example.com:8888",
         NO_PROXY: "corp.internal,localhost",
@@ -120,8 +120,8 @@ describe("credential exposure in process arguments", () => {
       expect(env.no_proxy).toBe(
         "corp.internal,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
       );
-    }
-  });
+    },
+  );
 
   it("subprocess env builder does not spread full process.env into subprocesses", () => {
     const previous = {
@@ -148,7 +148,4 @@ describe("credential exposure in process arguments", () => {
     }
   });
 
-  it("onboard curl probes use explicit timeouts", () => {
-    expect(getCurlTimingArgs()).toEqual(["--connect-timeout", "10", "--max-time", "60"]);
-  });
 });

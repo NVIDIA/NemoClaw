@@ -3,6 +3,8 @@
 
 import type { SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { addCustomPolicy, getSandbox, resolveOpenshell, run, runCapture, updateSandbox } =
@@ -128,13 +130,8 @@ function applyWeatherPreset(): unknown {
   }
 }
 
-function removeTemporaryDirectories(
-  directories: readonly string[],
-  removeDirectory: typeof fs.rmSync,
-): void {
-  for (const directory of directories) {
-    removeDirectory(directory, { recursive: true, force: true });
-  }
+function removeTemporaryDirectory(directory: string, removeDirectory: typeof fs.rmSync): void {
+  removeDirectory(directory, { recursive: true, force: true });
 }
 
 describe("applyPresets finality when openshell rejects the composed policy", () => {
@@ -298,8 +295,11 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
     const created: string[] = [];
     const realMkdtemp = fs.mkdtempSync;
     const realRmSync = fs.rmSync;
+    const cleanupRoot = realMkdtemp(path.join(os.tmpdir(), "nemoclaw-policy-test-"));
     vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
-      const dir = (realMkdtemp as (p: string) => string)(prefix);
+      const dir = (realMkdtemp as (p: string) => string)(
+        path.join(cleanupRoot, path.basename(prefix)),
+      );
       created.push(dir);
       return dir;
     }) as unknown as typeof fs.mkdtempSync);
@@ -315,7 +315,7 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
       expect((error as Error).message).toContain("EPERM: operation not permitted");
     } finally {
       vi.restoreAllMocks();
-      removeTemporaryDirectories(created, realRmSync);
+      removeTemporaryDirectory(cleanupRoot, realRmSync);
     }
   });
 
@@ -323,8 +323,11 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
     const created: string[] = [];
     const realMkdtemp = fs.mkdtempSync;
     const realRmSync = fs.rmSync;
+    const cleanupRoot = realMkdtemp(path.join(os.tmpdir(), "nemoclaw-policy-test-"));
     vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
-      const dir = (realMkdtemp as (p: string) => string)(prefix);
+      const dir = (realMkdtemp as (p: string) => string)(
+        path.join(cleanupRoot, path.basename(prefix)),
+      );
       created.push(dir);
       return dir;
     }) as unknown as typeof fs.mkdtempSync);
@@ -339,7 +342,7 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
       expect((error as Error).message).toContain("the path still exists");
     } finally {
       vi.restoreAllMocks();
-      removeTemporaryDirectories(created, realRmSync);
+      removeTemporaryDirectory(cleanupRoot, realRmSync);
     }
   });
 
@@ -347,8 +350,11 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
     const created: string[] = [];
     const realMkdtemp = fs.mkdtempSync;
     const realRmSync = fs.rmSync;
+    const cleanupRoot = realMkdtemp(path.join(os.tmpdir(), "nemoclaw-policy-test-"));
     vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
-      const dir = (realMkdtemp as (p: string) => string)(prefix);
+      const dir = (realMkdtemp as (p: string) => string)(
+        path.join(cleanupRoot, path.basename(prefix)),
+      );
       created.push(dir);
       return dir;
     }) as unknown as typeof fs.mkdtempSync);
@@ -366,7 +372,7 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
       expect((error as Error).message).toMatch(/still holds the composed sandbox policy/iu);
     } finally {
       vi.restoreAllMocks();
-      removeTemporaryDirectories(created, realRmSync);
+      removeTemporaryDirectory(cleanupRoot, realRmSync);
     }
   });
 });

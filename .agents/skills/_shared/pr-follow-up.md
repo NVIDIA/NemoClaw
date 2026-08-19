@@ -118,21 +118,17 @@ After editing:
 
 1. Run targeted validation.
 2. Commit the candidate change set after validation passes.
-3. Run the independent documentation writer review against that commit.
-4. If the review reports valid findings, apply them and rerun affected validation.
-5. Commit the corrections and review the new `HEAD`.
-6. Run one final complete collection for the latest PR commit. Restart the collection if `headRefOid` changes.
-7. Classify every finding.
-8. After classification, remove retained collection evidence by its exact artifact path or identifier. Verify its absence.
-9. Determine which unresolved findings require a change. If the user explicitly defers a non-blocking suggestion, that suggestion does not require a change in this review cycle.
-10. If any unresolved finding requires a change, do not push. Complete these actions:
+3. Run one final complete collection for the latest PR commit. Restart the collection if `headRefOid` changes.
+4. Classify every finding.
+5. After classification, remove retained collection evidence by its exact artifact path or identifier. Verify its absence.
+6. Determine which unresolved findings require a change. If the user explicitly defers a non-blocking suggestion, that suggestion does not require a change in this review cycle.
+7. If any unresolved finding requires a change, do not push. Complete these actions:
     - Repair each unresolved finding that requires a change.
     - Rerun affected validation.
     - Commit the corrections.
-    - Run the independent documentation writer review with that commit as the commit under review.
     - Repeat the final collection.
-11. Push once when the receipt identifies the reviewed `HEAD` and no unresolved finding requires a change.
-12. Monitor the latest PR commit for new findings that require a change.
+8. Push once when no unresolved finding requires a change.
+9. Monitor the latest PR commit for new findings that require a change.
 
 Repeat the applicable steps whenever an unresolved finding requires a change. Stop if the user tells you to stop.
 

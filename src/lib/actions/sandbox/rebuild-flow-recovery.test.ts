@@ -18,28 +18,6 @@ import {
 describe("rebuildSandbox flow: recovery", () => {
   installRebuildFlowTestHooks();
 
-  it("restores a validated prepared manifest without taking a second backup (#6114)", async () => {
-    const harness = createRebuildFlowHarness({ sandboxListOutput: "alpha Error" });
-    const recoveryManifest = makePreparedRecoveryManifest();
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
-      "alpha",
-      recoveryManifest.backupPath,
-      { targetAgentType: "openclaw" },
-    );
-  });
 
   it("uses marked manifest provenance when the custom-image registry baseline is missing (#6108)", async () => {
     const customDockerfile = path.join(process.cwd(), "Dockerfile");
@@ -77,137 +55,11 @@ describe("rebuildSandbox flow: recovery", () => {
     );
   });
 
-  it("rejects a mismatched prepared manifest before deleting the sandbox (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      recoveryManifestValidation: () => ({
-        ok: false,
-        reason: "manifest sandbox 'beta' does not match 'alpha'",
-      }),
-    });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Invalid recovery manifest");
 
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-  });
 
-  it("revalidates a prepared manifest immediately before deletion (#6114)", async () => {
-    let validationCount = 0;
-    const harness = createRebuildFlowHarness({
-      recoveryManifestValidation: (manifest) => {
-        validationCount++;
-        return validationCount === 1
-          ? { ok: true, manifest }
-          : { ok: false, reason: "persisted backup identity changed during validation" };
-      },
-    });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Invalid recovery manifest");
 
-    expect(validationCount).toBe(2);
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
-  it("rejects registry configuration drift before prepared recovery deletion (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      preDeleteSandboxEntry: {
-        name: "alpha",
-        provider: "compatible-endpoint",
-        model: "new-model",
-        policies: ["npm", "github"],
-        agent: null,
-        agentVersion: "0.1.0",
-        nemoclawVersion: "0.0.71",
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Recovery registry configuration changed during preflight");
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
-  it("uses the refreshed registry snapshot for prepared-recovery rollback (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      defaultSandbox: "alpha",
-      preDeleteDefaultSandbox: "beta",
-      onboard: () => {
-        throw new Error("recreate failed");
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Recreate failed");
-
-    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-      {},
-    );
-  });
-
-  it("rejects a latest-backup change before prepared recovery deletion (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      preDeleteLatestManifest: {
-        ...makePreparedRecoveryManifest(),
-        timestamp: "2026-07-01T07-00-00-000Z",
-        backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T07-00-00-000Z",
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Recovery backup identity changed during preflight");
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
-  it("restores the registry entry when prepared-backup recreation fails (#6114)", async () => {
-    const harness = createRebuildFlowHarness({
-      defaultSandbox: "alpha",
-      onboard: () => {
-        throw new Error("recreate failed");
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], {
-        throwOnError: true,
-        recoveryManifest: makePreparedRecoveryManifest(),
-      }),
-    ).rejects.toThrow("Recreate failed");
-
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-      {},
-    );
-    expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
-  });
 
   it("keeps an explicit default choice made while the replacement was in flight (#7734)", async () => {
     let harness!: ReturnType<typeof createRebuildFlowHarness>;

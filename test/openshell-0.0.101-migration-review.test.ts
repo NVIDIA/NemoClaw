@@ -164,63 +164,68 @@ function parseTableIds(pattern: RegExp): string[] {
 }
 
 describe("OpenShell 0.0.101 migration review", () => {
-  it("binds the complete source and artifact review to exact v0.0.101 identities (#8599)", () => {
-    const commitRows = parseTableIds(/^\| `([0-9a-f]{40})` \|/gmu);
-    expect(commitRows).toEqual(NEW_COMMITS);
-    expect(new Set(commitRows).size).toBe(9);
-    expect(review).toContain("9 commits and 170 changed paths");
-    expect(review).toContain("126 commits, 628 distinct");
-    expect(review).toMatch(/all 20\s+checksum-manifest entries were/u);
-    expect(review).toContain("all 11 archives passed path-safety inspection");
-    expect(review).toContain("This was a high-severity");
-    expect(review).toContain("canonical GitHub release URL, and SHA-256 tuple");
-    expect(review).toContain("second candidate-controlled identity binding");
-    expect(review).toContain("selected release's complete trusted set");
-    expect(review).toContain("Both findings are closed with no new blocker");
-    expect(review).toContain("this prerequisite is satisfied");
-    expect(review).toContain("parent epic `#8590`");
-    for (const identity of RELEASE_IDENTITIES) expect(review).toContain(identity);
+  it.each(RELEASE_IDENTITIES)(
+    "binds the complete source and artifact review to exact v0.0.101 identities [case %#] (#8599)",
+    (identity) => {
+      const commitRows = parseTableIds(/^\| `([0-9a-f]{40})` \|/gmu);
+      expect(commitRows).toEqual(NEW_COMMITS);
+      expect(new Set(commitRows).size).toBe(9);
+      expect(review).toContain("9 commits and 170 changed paths");
+      expect(review).toContain("126 commits, 628 distinct");
+      expect(review).toMatch(/all 20\s+checksum-manifest entries were/u);
+      expect(review).toContain("all 11 archives passed path-safety inspection");
+      expect(review).toContain("This was a high-severity");
+      expect(review).toContain("canonical GitHub release URL, and SHA-256 tuple");
+      expect(review).toContain("second candidate-controlled identity binding");
+      expect(review).toContain("selected release's complete trusted set");
+      expect(review).toContain("Both findings are closed with no new blocker");
+      expect(review).toContain("this prerequisite is satisfied");
+      expect(review).toContain("parent epic `#8590`");
+      expect(review).toContain(identity);
 
-    const ranges = parseRangeTable();
-    expect([...ranges]).toEqual(RANGES.map(([name, commits, paths]) => [name, [commits, paths]]));
-    expect([...ranges.values()].reduce((sum, [commits]) => sum + commits, 0)).toBe(126);
-  });
+      const ranges = parseRangeTable();
+      expect([...ranges]).toEqual(RANGES.map(([name, commits, paths]) => [name, [commits, paths]]));
+      expect([...ranges.values()].reduce((sum, [commits]) => sum + commits, 0)).toBe(126);
+    },
+  );
 
-  it("selects only Docker or Podman without configuring new v0.0.101 surfaces (#8599)", () => {
-    const untrustedNewSurfaceInputs = {
-      OPENSHELL_CREDENTIAL_DRIVERS: "vault",
-      OPENSHELL_CREDENTIAL_STORAGE: "/untrusted/store",
-      OPENSHELL_DEFAULT_CREDENTIAL_DRIVER: "vault",
-      OPENSHELL_EGRESS_ADAPTER: "unreviewed",
-      OPENSHELL_VM_RUNTIME: "unreviewed",
-    };
-    const dockerToml = buildDockerDriverGatewayConfigToml({
-      ...untrustedNewSurfaceInputs,
-      OPENSHELL_DRIVERS: "vm",
-      OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
-      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
-    });
-    const podmanToml = buildDockerDriverGatewayConfigToml({
-      ...untrustedNewSurfaceInputs,
-      OPENSHELL_DRIVERS: "podman",
-      OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
-      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-podman",
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
-      OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
-    });
+  it.each([{ scenario: "Docker" }, { scenario: "Podman" }])(
+    "selects only Docker or Podman without configuring new v0.0.101 surfaces [$scenario] (#8599)",
+    ({ scenario }) => {
+      const untrustedNewSurfaceInputs = {
+        OPENSHELL_CREDENTIAL_DRIVERS: "vault",
+        OPENSHELL_CREDENTIAL_STORAGE: "/untrusted/store",
+        OPENSHELL_DEFAULT_CREDENTIAL_DRIVER: "vault",
+        OPENSHELL_EGRESS_ADAPTER: "unreviewed",
+        OPENSHELL_VM_RUNTIME: "unreviewed",
+      };
+      const dockerToml = buildDockerDriverGatewayConfigToml({
+        ...untrustedNewSurfaceInputs,
+        OPENSHELL_DRIVERS: "vm",
+        OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      });
+      const podmanToml = buildDockerDriverGatewayConfigToml({
+        ...untrustedNewSurfaceInputs,
+        OPENSHELL_DRIVERS: "podman",
+        OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-podman",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+        OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",
+      });
 
-    expect(dockerToml).toContain('compute_drivers = ["docker"]');
-    expect(dockerToml).toContain("[openshell.drivers.docker]");
-    expect(podmanToml).toContain('compute_drivers = ["podman"]');
-    expect(podmanToml).toContain("[openshell.drivers.podman]");
-    expect(podmanToml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
-    for (const toml of [dockerToml, podmanToml]) {
+      expect(dockerToml).toContain('compute_drivers = ["docker"]');
+      expect(dockerToml).toContain("[openshell.drivers.docker]");
+      expect(podmanToml).toContain('compute_drivers = ["podman"]');
+      expect(podmanToml).toContain("[openshell.drivers.podman]");
+      expect(podmanToml).toContain('socket_path = "/run/user/1001/podman/podman.sock"');
+      const toml = ({ Docker: dockerToml, Podman: podmanToml } as const)[scenario]!;
       expect(toml).not.toMatch(/credential_(?:drivers|storage)|default_credential_driver/iu);
       expect(toml).not.toContain("[openshell.drivers.vm]");
       expect(toml).not.toMatch(/egress_adapter|sdk\/go/iu);
-    }
-  });
+    },
+  );
 
   it("retains every inherited invariant and assigns each correction once (#8599)", () => {
     expect(parseTableIds(/^\| `(OS101-I\d{2})` \|/gmu)).toEqual(

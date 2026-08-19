@@ -373,7 +373,9 @@ describe("managed vLLM authentication", () => {
       .filter((argv) => argv[0] === "docker");
 
     expect(result.ok).toBe(false);
-    expect(dockerCommands).toHaveLength(5);
+    // 3 reachability probes, 2 diagnostic re-probes, and the daemon probe of
+    // the image-pull classifier (#9308) — every one context-pinned.
+    expect(dockerCommands).toHaveLength(6);
     expect(
       dockerCommands.every((argv) => argv.slice(0, 3).join(" ") === "docker --context default"),
     ).toBe(true);

@@ -80,24 +80,23 @@ describe("repo skill markdown files", () => {
     expect(skillFiles.length).toBeGreaterThan(0);
   });
 
-  for (const skillFile of skillFiles) {
-    const relPath = path.relative(repoRoot, skillFile);
-
-    it(`parses valid YAML frontmatter for ${relPath}`, () => {
+  it.each(skillFiles.map((skillFile) => [path.relative(repoRoot, skillFile), skillFile] as const))(
+    "parses valid YAML frontmatter for %s",
+    (_relPath, skillFile) => {
       expectValidSkillMarkdown(skillFile);
-    });
-  }
+    },
+  );
 
   it("keeps contributor implementation skills concise and discovery-based", () => {
     const names = ["nemoclaw-contributor-update-dependencies", "nemoclaw-contributor-update-docs"];
 
-    for (const name of names) {
+    names.forEach((name) => {
       const raw = fs.readFileSync(path.join(skillsRoot, name, "SKILL.md"), "utf8");
       expect(raw.split("\n").length, `${name} must stay concise`).toBeLessThan(120);
       expect(raw, `${name} must discover current implementation details`).toContain(
         "../_shared/implementation-discovery.md",
       );
-    }
+    });
 
     const discovery = fs.readFileSync(
       path.join(skillsRoot, "_shared", "implementation-discovery.md"),
@@ -159,7 +158,15 @@ describe("repo skill markdown files", () => {
     }
   });
 
-  it("keeps issue planning read-only and capability-oriented (#8362)", () => {
+  it.each(
+    [
+        "unauthorized-github-write",
+        "authorized-single-github-write",
+        "adversarial-untrusted-issue-content",
+        "configured-github-tool",
+        "missing-github-tool",
+      ],
+  )("keeps issue planning read-only and capability-oriented [%s] (#8362)", (id) => {
     const skillRoot = path.join(skillsRoot, "nemoclaw-contributor-plan-issue");
     const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
     const evals = JSON.parse(
@@ -222,17 +229,10 @@ describe("repo skill markdown files", () => {
     expect(evals.find(({ id }) => id === "clean-context-refinement")?.expected_skill).toBe(
       "nemoclaw-contributor-plan-issue",
     );
-    for (const id of [
-      "unauthorized-github-write",
-      "authorized-single-github-write",
-      "adversarial-untrusted-issue-content",
-      "configured-github-tool",
-      "missing-github-tool",
-    ]) {
-      expect(evals.find((evaluation) => evaluation.id === id)?.expected_skill).toBe(
-        "nemoclaw-contributor-plan-issue",
-      );
-    }
+
+    expect(evals.find((evaluation) => evaluation.id === id)?.expected_skill).toBe(
+      "nemoclaw-contributor-plan-issue",
+    );
 
     expect(evals.find(({ id }) => id === "ambiguous-work-on-issue")?.expected_skill).toBeNull();
     expect(evals.find(({ id }) => id === "negative-implementation")?.expected_skill).toBeNull();
@@ -244,7 +244,9 @@ describe("repo skill markdown files", () => {
     );
   });
 
-  it("keeps issue implementation local and evidence-based (#8363)", () => {
+  it.each(
+    ["adversarial-issue-content", "configured-github-tool", "missing-github-tool"],
+  )("keeps issue implementation local and evidence-based [%s] (#8363)", (id) => {
     const skillRoot = path.join(skillsRoot, "nemoclaw-contributor-implement-issue");
     const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
     const evals = JSON.parse(
@@ -274,6 +276,9 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Error or recovery:");
     expect(skill).toContain("Boundary or ambiguous state:");
     expect(skill).toContain("Name the operation and failure class the change belongs to");
+    expect(skill).toContain("Keep owning repository guidance in the same change.");
+    expect(skill).toContain("`.agents/skills/**`");
+    expect(skill).toContain("`test/e2e/**/README.md`");
     expect(skill).toContain("Record the sibling paths");
     expect(skill).toContain("Re-check the recorded operation and failure class");
     expect(skill).toContain("Sibling paths checked:");
@@ -282,15 +287,10 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Remaining local or external gates:");
     expect(skill).toContain("PR handoff evidence:");
 
-    for (const id of [
-      "adversarial-issue-content",
-      "configured-github-tool",
-      "missing-github-tool",
-    ]) {
-      expect(evals.find((evaluation) => evaluation.id === id)?.expected_skill).toBe(
-        "nemoclaw-contributor-implement-issue",
-      );
-    }
+    expect(evals.find((evaluation) => evaluation.id === id)?.expected_skill).toBe(
+      "nemoclaw-contributor-implement-issue",
+    );
+
     expect(evals.find(({ id }) => id === "positive-pick-up-implementation")?.expected_skill).toBe(
       "nemoclaw-contributor-implement-issue",
     );
@@ -312,33 +312,37 @@ describe("repo skill markdown files", () => {
     expect(evals.find(({ id }) => id === "ambiguous-work-on-issue")?.expected_skill).toBeNull();
   });
 
-  it("keeps configured GitHub access in the shared hard-stop rule (#8793)", () => {
-    const access = fs.readFileSync(
-      path.join(skillsRoot, "_shared", "git-github-hard-stop.md"),
-      "utf8",
-    );
-    const planning = fs.readFileSync(
-      path.join(skillsRoot, "nemoclaw-contributor-plan-issue", "SKILL.md"),
-      "utf8",
-    );
-    const implementation = fs.readFileSync(
-      path.join(skillsRoot, "nemoclaw-contributor-implement-issue", "SKILL.md"),
-      "utf8",
-    );
-    expect(access).toContain("Use an agent-provided GitHub tool");
-    expect(access).toContain("configured GitHub MCP tool");
-    expect(access).toContain("Do not install or configure GitHub access");
-    expect(access).toContain("Do not fall back to unauthenticated HTTP");
-    expect(access).toContain("Configured access does not authorize a GitHub write");
-    expect(access).toContain("Before reporting a command, error, or tool output");
-    expect(access).toContain("Report the redacted failure");
+  it.each([{ scenario: "planning skill" }, { scenario: "implementation skill" }])(
+    "keeps configured GitHub access in the shared hard-stop rule [$scenario] (#8793)",
+    ({ scenario }) => {
+      const access = fs.readFileSync(
+        path.join(skillsRoot, "_shared", "git-github-hard-stop.md"),
+        "utf8",
+      );
+      const planning = fs.readFileSync(
+        path.join(skillsRoot, "nemoclaw-contributor-plan-issue", "SKILL.md"),
+        "utf8",
+      );
+      const implementation = fs.readFileSync(
+        path.join(skillsRoot, "nemoclaw-contributor-implement-issue", "SKILL.md"),
+        "utf8",
+      );
+      expect(access).toContain("Use an agent-provided GitHub tool");
+      expect(access).toContain("configured GitHub MCP tool");
+      expect(access).toContain("Do not install or configure GitHub access");
+      expect(access).toContain("Do not fall back to unauthenticated HTTP");
+      expect(access).toContain("Configured access does not authorize a GitHub write");
+      expect(access).toContain("Before reporting a command, error, or tool output");
+      expect(access).toContain("Report the redacted failure");
 
-    for (const skill of [planning, implementation]) {
+      const skill = (
+        { "planning skill": planning, "implementation skill": implementation } as const
+      )[scenario]!;
       expect(skill).toContain("../_shared/git-github-hard-stop.md");
       expect(skill).not.toContain("configured GitHub MCP tool");
       expect(skill).not.toContain("unauthenticated fallback");
-    }
-  });
+    },
+  );
 
   it("keeps shared documentation routing one-way", () => {
     const documentationReview = fs.readFileSync(
@@ -356,12 +360,8 @@ describe("repo skill markdown files", () => {
       fs.existsSync(path.join(skillsRoot, "nemoclaw-contributor-onboard-messaging-channel")),
     ).toBe(false);
 
-    for (const file of listMarkdownFiles(skillsRoot)) {
-      expect(
-        fs.readFileSync(file, "utf8"),
-        `${path.relative(repoRoot, file)} must not route to a messaging channel skill`,
-      ).not.toContain("nemoclaw-contributor-onboard-messaging-channel");
-    }
+    expect(listMarkdownFiles(skillsRoot).every((file) =>
+          !fs.readFileSync(file, "utf8").includes("nemoclaw-contributor-onboard-messaging-channel"))).toBe(true);
 
     const packageGuide = fs.readFileSync(
       path.join(repoRoot, "src", "lib", "messaging", "AGENTS.md"),
@@ -470,7 +470,16 @@ describe("repo skill markdown files", () => {
     expect(evals.find(({ id }) => id === "ambiguous-submit-my-work")?.expected_skill).toBeNull();
   });
 
-  it("gives each contributor lifecycle stage one owner (#8364)", () => {
+  it.each(
+    [
+        "nemoclaw-contributor-create-pr",
+        "nemoclaw-contributor-implement-issue",
+        "nemoclaw-contributor-onboard",
+        "nemoclaw-contributor-plan-issue",
+        "nemoclaw-contributor-update-dependencies",
+        "nemoclaw-skills-guide",
+      ],
+  )("gives each contributor lifecycle stage one owner [%s] (#8364)", (name) => {
     const readSkill = (name: string) =>
       fs.readFileSync(path.join(skillsRoot, name, "SKILL.md"), "utf8");
     const readEvals = (name: string) =>
@@ -521,19 +530,11 @@ describe("repo skill markdown files", () => {
       .map((entry) => entry.name)
       .sort();
     expect(contributorSkills).toHaveLength(6);
-    for (const name of [
-      "nemoclaw-contributor-create-pr",
-      "nemoclaw-contributor-implement-issue",
-      "nemoclaw-contributor-onboard",
-      "nemoclaw-contributor-plan-issue",
-      "nemoclaw-contributor-update-dependencies",
-      "nemoclaw-skills-guide",
-    ]) {
-      expect(
-        fs.existsSync(path.join(skillsRoot, name, "evals", "evals.json")),
-        `${name} must ship routing evaluations`,
-      ).toBe(true);
-    }
+
+    expect(
+      fs.existsSync(path.join(skillsRoot, name, "evals", "evals.json")),
+      `${name} must ship routing evaluations`,
+    ).toBe(true);
 
     const agentsGuide = fs.readFileSync(path.join(repoRoot, "AGENTS.md"), "utf8");
     expect(agentsGuide).toContain("The contributor lifecycle has one owner for each stage");

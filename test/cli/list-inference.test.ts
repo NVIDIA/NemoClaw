@@ -19,27 +19,27 @@ import {
 } from "./helpers";
 
 describe("CLI dispatch", () => {
-  it(
-    "keeps `inference set` inside NemoClaw when provider or model is missing",
-    () => {
-      for (const argv of [
+  it.each(
+    [
         "inference set 2>&1",
         "inference set --provider nvidia-prod 2>&1",
         "inference set --model nvidia/model 2>&1",
-      ]) {
-        const r = run(argv);
-        expect(r.code, `nemoclaw ${argv}`).toBe(1);
-        expect(r.out, `nemoclaw ${argv}`).toContain(
-          "nemoclaw inference set requires --provider and --model",
-        );
-        expect(r.out, `nemoclaw ${argv}`).toContain(
-          "Run: nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>]",
-        );
-        expect(r.out, `nemoclaw ${argv}`).not.toContain("openshell inference set");
-        expect(r.out, `nemoclaw ${argv}`).not.toContain("Missing required flag");
-        expect(r.out, `nemoclaw ${argv}`).not.toContain("FailedFlagValidationError");
-        expect(r.out, `nemoclaw ${argv}`).not.toContain("node_modules/@oclif/core");
-      }
+      ],
+  )(
+    "keeps `inference set` inside NemoClaw when provider or model is missing [%s]",
+    (argv) => {
+      const r = run(argv);
+      expect(r.code, `nemoclaw ${argv}`).toBe(1);
+      expect(r.out, `nemoclaw ${argv}`).toContain(
+        "nemoclaw inference set requires --provider and --model",
+      );
+      expect(r.out, `nemoclaw ${argv}`).toContain(
+        "Run: nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>]",
+      );
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("openshell inference set");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("Missing required flag");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("FailedFlagValidationError");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("node_modules/@oclif/core");
 
       let hermesOut = "";
       let hermesCode = 0;

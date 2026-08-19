@@ -26,6 +26,10 @@ const DEFAULT_PROFILE_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-standa
 const PROFILE_WORKFLOW = "./.github/workflows/e2e-standard-profile.yaml";
 const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const EXECUTION_PLAN_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
+const TRUSTED_CALLER_CREDENTIAL_PREDICATE =
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true')";
+const guardedCallerSecret = (name: string): string =>
+  `\${{ ${TRUSTED_CALLER_CREDENTIAL_PREDICATE} && secrets.${name} || '' }}`;
 const SKILL_AGENT_UPLOAD_PATH = `${[
   "e2e-artifacts/live/skill-agent/evidence-manifest.json",
   "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
@@ -184,7 +188,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     const callerSecrets = record(job.secrets);
     if (
       Object.keys(callerSecrets).sort().join(",") !== [...contract.secrets].sort().join(",") ||
-      contract.secrets.some((name) => callerSecrets[name] !== `\${{ secrets.${name} }}`)
+      contract.secrets.some((name) => callerSecrets[name] !== guardedCallerSecret(name))
     ) {
       errors.push(`${contract.job} must receive only its profile secrets`);
     }

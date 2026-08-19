@@ -35,15 +35,13 @@
       "fast": [
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
-        "src/lib/onboard/setup-nim-flow.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts"
+        "src/lib/onboard/setup-nim-flow.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
         "test/managed-image-publication-workflow.test.ts",
         "test/pr-risk-plan.test.ts",
@@ -79,6 +77,15 @@
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
         "test/e2e/support/podman-cpu-proof-workflow.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
+      "fast": [
+        "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
+        "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
+        "test/e2e/support/native-runtime-qualification.test.ts",
+        "test/install-native-runtime-qualification.test.ts"
       ]
     },
     {
@@ -248,7 +255,6 @@
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
       "fast": [
-        "test/e2e/support/e2e-workflow.test.ts",
         "test/e2e/support/snapshot-commands-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -280,6 +286,7 @@
     {
       "live": "test/e2e/live/channels-add-remove.test.ts",
       "fast": [
+        "test/e2e/support/channels-add-remove-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -302,7 +309,8 @@
       "live": "test/e2e/live/common-egress-agent.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/common-egress-agent-helpers.test.ts"
       ]
     },
     {

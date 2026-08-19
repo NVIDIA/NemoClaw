@@ -12,10 +12,14 @@ import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 type ConnectSandbox = (typeof import("../../src/lib/actions/sandbox/connect"))["connectSandbox"];
+type RestoreSandboxStartupState =
+  (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
 type GatewayRouteMutationLock =
   (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
   import("../../src/lib/actions/sandbox/launch-readiness").LaunchReadinessPublicationResult;
+type PortablePairingSettlementResult =
+  import("../../src/lib/actions/sandbox/launch-readiness").PortableOpenClawPairingSettlementResult;
 
 export const requireDist = createRequire(import.meta.url);
 export const connectModulePath = "../../src/lib/actions/sandbox/connect.js";
@@ -40,6 +44,7 @@ export type ConnectHarness = {
   inspectLaunchReadinessSpy: MockInstance;
   launchReadinessMutationGateSpy: MockInstance;
   publishLaunchReadinessSpy: MockInstance;
+  settlePortablePairingSpy: MockInstance;
   preflightVllmSpy: MockInstance;
   probeLocalProviderHealthSpy: MockInstance;
   probeOllamaAuthProxyHealthSpy: MockInstance;
@@ -47,7 +52,9 @@ export type ConnectHarness = {
   recoverPortableDemoLifecycleSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
+  restoreSandboxStartupState: RestoreSandboxStartupState;
   runAutoPairSpy: MockInstance;
+  runSandboxExecChildSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
@@ -76,6 +83,7 @@ export type ConnectHarnessOptions = {
     forwardRecovered?: boolean;
     forwardRecoveryFailed?: boolean;
     forwardRecoveryFailureDetail?: string;
+    recoveryFailureDetail?: string;
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: SecretBoundaryRefusalReason;
     mcpReconciliationRefused?: boolean;
@@ -106,6 +114,7 @@ export type ConnectHarnessOptions = {
         authorityUnsupported?: true;
       };
   readinessPublicationResult?: LaunchReadinessPublicationResult;
+  portablePairingSettlementResult?: PortablePairingSettlementResult;
 };
 
 function throwSttyFailure(): never {
@@ -160,6 +169,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
   const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
+  const sandboxExec = requireDist("../../src/lib/actions/sandbox/exec.js");
+  const runSandboxExecChildSpy = vi
+    .spyOn(sandboxExec, "runSandboxExecChild")
+    .mockResolvedValue({
+      status: spawnStatusFromOptions(options),
+      signal: options.spawnSignal ?? null,
+    });
 
   const inspectLaunchReadinessSpy = vi
     .spyOn(launchReadiness, "inspectLaunchReadiness")
@@ -340,6 +356,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const runAutoPairSpy = vi
     .spyOn(autoPairApproval, "runConnectAutoPairApprovalPass")
     .mockImplementation(() => undefined);
+  const settlePortablePairingSpy = vi
+    .spyOn(launchReadiness, "settlePortableOpenClawPairing")
+    .mockResolvedValue(options.portablePairingSettlementResult ?? { kind: "not-portable" });
 
   logSpy.mockClear();
   errorSpy.mockClear();
@@ -367,7 +386,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     recoverPortableDemoLifecycleSpy,
     registryEntries,
     resolveAgentConfigSpy,
+    restoreSandboxStartupState: requireDist(connectModulePath).restoreSandboxStartupState,
     runAutoPairSpy,
+    runSandboxExecChildSpy,
+    settlePortablePairingSpy,
     runOpenshellSpy,
     runSetupDnsProxySpy,
     spawnSyncSpy,

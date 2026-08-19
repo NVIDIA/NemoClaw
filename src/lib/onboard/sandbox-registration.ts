@@ -26,6 +26,7 @@ import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import { cloneSandboxHostMounts } from "../state/registry/host-mount";
 import { resolveOnboardHermesApiPort } from "./hermes-api-port";
+import { isManagedImageAgent, MANAGED_IMAGE_REPOSITORIES } from "./managed-image/contract";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -37,7 +38,11 @@ import {
   requireRuntimeProviderBundleForSandbox,
   requireRuntimeProviderMutationAuthority,
 } from "./runtime-provider/access";
-import { getSandboxAgentRegistryFields } from "./sandbox-agent";
+import { getRequestedSandboxAgentName, getSandboxAgentRegistryFields } from "./sandbox-agent";
+import {
+  classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
+} from "./experimental/portable-runtime-receipt-readiness";
 
 export type CreatedSandboxRuntimeFields = Pick<
   SandboxEntry,
@@ -92,6 +97,9 @@ export interface CreatedSandboxRegistryEntryInput {
 }
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
+  portableLifecycle?: boolean;
+  environment?: NodeJS.ProcessEnv;
+  classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
   registerSandbox?(entry: SandboxEntry): void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
 }
@@ -224,13 +232,26 @@ export function buildCreatedSandboxRegistryEntry(
       hostLocalInferenceReceipt,
     );
   }
+  const agentFields = getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown);
+  if (workload?.kind === "managed-image") {
+    const requestedAgent = getRequestedSandboxAgentName(input.agent);
+    if (
+      !isManagedImageAgent(requestedAgent) ||
+      !workload.reference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[requestedAgent]}@sha256:`)
+    ) {
+      throw new RuntimeProviderSelectionError(
+        "Sandbox agent identity does not match its managed workload receipt.",
+      );
+    }
+    agentFields.agent = requestedAgent;
+  }
 
   return {
     name: input.sandboxName,
     servingProfileProvenance,
     ...inferenceSelectionRegistryFields(input.inferenceSelection),
     ...input.runtimeFields,
-    ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
+    ...agentFields,
     imageTag: input.imageTag,
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
@@ -308,6 +329,23 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       ? {}
       : { hostLocalInferenceProvenance: pendingHostLocalInferenceProvenance }),
   });
+  if (input.portableLifecycle === true) {
+    if (getRequestedSandboxAgentName(input.agent) !== "openclaw") {
+      throw new RuntimeProviderSelectionError(
+        "Portable lifecycle registration requires the OpenClaw agent.",
+      );
+    }
+    const receipt = (input.classifyPortableLifecycleReceipt ?? classifyPortableLifecycleReceipt)(
+      input.sandboxName,
+      { env: input.environment ?? process.env },
+    );
+    if (!portableLifecycleReceiptMatchesGeneration(receipt, input.lifecycleGeneration)) {
+      throw new RuntimeProviderSelectionError(
+        "Portable OpenClaw registration requires a current lifecycle receipt that matches the registry generation.",
+      );
+    }
+    entry.agent = "openclaw";
+  }
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,
     input.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,

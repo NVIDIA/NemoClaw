@@ -180,7 +180,10 @@ const paths = (homeDir: string) =>
     [Key in keyof typeof NAMES]: string;
   };
 function fsyncDirectory(directory: string): void {
-  const descriptor = fs.openSync(directory, fs.constants.O_RDONLY);
+  const descriptor = fs.openSync(
+    directory,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
+  );
   try {
     fs.fsyncSync(descriptor);
   } finally {
@@ -593,6 +596,125 @@ function detachDelete(
       throw new Error(`Portable uninstall survivor changed: ${survivor.path}`);
   }
 }
+interface OwnedDirectoryHandle {
+  readonly descriptor: number;
+  readonly identity: fs.BigIntStats;
+  readonly path: string;
+}
+function sameDirectoryIdentity(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return (
+    left.isDirectory() &&
+    right.isDirectory() &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.uid === right.uid
+  );
+}
+function assertOwnedDirectory(handle: OwnedDirectoryHandle): void {
+  const descriptorStat = fs.fstatSync(handle.descriptor, { bigint: true });
+  const namedStat = fs.lstatSync(handle.path, { bigint: true });
+  if (
+    namedStat.isSymbolicLink() ||
+    !sameDirectoryIdentity(handle.identity, descriptorStat) ||
+    !sameDirectoryIdentity(handle.identity, namedStat)
+  )
+    throw new Error(`Portable uninstall directory changed: ${handle.path}`);
+}
+function openOwnedDirectory(
+  directory: string,
+  required: boolean,
+  requirePrivateMode = false,
+): OwnedDirectoryHandle | null {
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(
+      directory,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
+    );
+    const identity = fs.fstatSync(descriptor, { bigint: true });
+    const named = fs.lstatSync(directory, { bigint: true });
+    const uid = process.getuid?.();
+    const permissions = identity.mode & 0o777n;
+    if (
+      uid === undefined ||
+      named.isSymbolicLink() ||
+      !sameStat(identity, named) ||
+      identity.uid !== BigInt(uid) ||
+      identity.nlink < 1n ||
+      (requirePrivateMode ? permissions !== 0o700n : (permissions & 0o022n) !== 0n)
+    )
+      throw new Error(`Unsafe portable uninstall directory: ${directory}`);
+    return { descriptor, identity, path: directory };
+  } catch (error) {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    if (isErrnoException(error) && error.code === "ENOENT" && !required) return null;
+    throw error;
+  }
+}
+function ownedDirectoryIsEmpty(handle: OwnedDirectoryHandle): boolean {
+  assertOwnedDirectory(handle);
+  const isEmpty = fs.readdirSync(handle.path).length === 0;
+  assertOwnedDirectory(handle);
+  return isEmpty;
+}
+function removeOwnedEmptyDirectory(
+  handle: OwnedDirectoryHandle,
+  parent: OwnedDirectoryHandle,
+): boolean {
+  if (!ownedDirectoryIsEmpty(handle)) return false;
+  assertOwnedDirectory(parent);
+  assertOwnedDirectory(handle);
+  try {
+    fs.rmdirSync(handle.path);
+  } catch (error) {
+    if (isErrnoException(error) && (error.code === "ENOTEMPTY" || error.code === "EEXIST")) {
+      assertOwnedDirectory(parent);
+      assertOwnedDirectory(handle);
+      return false;
+    }
+    if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+  }
+  fs.fsyncSync(parent.descriptor);
+  assertOwnedDirectory(parent);
+  if (entryExists(handle.path))
+    throw new Error(`Portable uninstall directory was replaced: ${handle.path}`);
+  return true;
+}
+function removeRetiredPortableConfigDirectories(homeDir: string): void {
+  const home = openOwnedDirectory(homeDir, true)!;
+  const configHomePath = path.join(homeDir, ".config");
+  const configDir = path.join(homeDir, ".config", "nemoclaw");
+  let configHome: OwnedDirectoryHandle | null = null;
+  let nemoclawConfig: OwnedDirectoryHandle | null = null;
+  let portableConfig: OwnedDirectoryHandle | null = null;
+  try {
+    configHome = openOwnedDirectory(configHomePath, true)!;
+    assertOwnedDirectory(home);
+    nemoclawConfig = openOwnedDirectory(configDir, false);
+    assertOwnedDirectory(configHome);
+    assertOwnedDirectory(home);
+    if (!nemoclawConfig) {
+      fs.fsyncSync(configHome.descriptor);
+      assertOwnedDirectory(configHome);
+      return;
+    }
+    portableConfig = openOwnedDirectory(path.join(configDir, "portable"), false, true);
+    assertOwnedDirectory(nemoclawConfig);
+    assertOwnedDirectory(configHome);
+    if (portableConfig && !removeOwnedEmptyDirectory(portableConfig, nemoclawConfig)) return;
+    assertOwnedDirectory(nemoclawConfig);
+    if (!ownedDirectoryIsEmpty(nemoclawConfig)) return;
+    removeOwnedEmptyDirectory(nemoclawConfig, configHome);
+    assertOwnedDirectory(configHome);
+    assertOwnedDirectory(home);
+  } finally {
+    if (portableConfig) fs.closeSync(portableConfig.descriptor);
+    if (nemoclawConfig) fs.closeSync(nemoclawConfig.descriptor);
+    if (configHome) fs.closeSync(configHome.descriptor);
+    fs.closeSync(home.descriptor);
+  }
+}
 function recoverTemp(homeDir: string): ExactFile | null {
   const state = paths(homeDir);
   const pendingPaths = [state.T, state.TC].filter(entryExists);
@@ -654,7 +776,10 @@ function retireTargets(
     const target = record.targets[index]!;
     const state = states[index]!;
     if (state === "retired") {
-      fsyncDirectory(path.dirname(canonical(homeDir, target)));
+      const parent = path.dirname(canonical(homeDir, target));
+      if (target[0] === "config" && !entryExists(parent))
+        fsyncDirectory(path.join(homeDir, ".config"));
+      else fsyncDirectory(parent);
       continue;
     }
     const source = canonical(homeDir, target);
@@ -669,11 +794,15 @@ function retireTargets(
     detachDelete(replacement ? null : source, staged, exact, roleLimit(target[0]), undefined, true);
   }
 }
+function finishPortableEvidenceRetirement(homeDir: string, record: RecordState): void {
+  retireTargets(homeDir, record);
+  removeRetiredPortableConfigDirectories(homeDir);
+}
 export function publishAndRetirePortableEvidence(prepared: PreparedPortableRetirement): void {
   if (!allTargetsExact(prepared.homeDir, prepared.record))
     throw new Error("Portable uninstall authority changed before publication");
   publish(prepared);
-  retireTargets(prepared.homeDir, prepared.record);
+  finishPortableEvidenceRetirement(prepared.homeDir, prepared.record);
 }
 
 function load(homeDir: string): { file: ExactFile; record: RecordState } | null {
@@ -727,7 +856,7 @@ export function resumePortableOnboardReplacementEvidence(homeDir: string): void 
 export function resumePortableEvidenceRetirement(homeDir: string): void {
   const recorded = load(homeDir);
   if (!recorded) throw new Error("Portable uninstall retirement record is missing");
-  retireTargets(homeDir, recorded.record);
+  finishPortableEvidenceRetirement(homeDir, recorded.record);
 }
 
 function durableFile(target: string): ExactFile {

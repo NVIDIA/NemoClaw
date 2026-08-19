@@ -14,6 +14,7 @@ import { runCapture as defaultRunCapture } from "../runner";
 import {
   ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent,
   replaceUrlPort,
+  resolveVerifyAgentApiPort,
 } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
@@ -74,6 +75,8 @@ export interface OnboardDashboardDeps {
   listSandboxes?: ListSandboxesFn;
   /** Host-listener probe injected by forward release race tests. */
   isPortBoundOnHost?: typeof isPortBoundOnHost;
+  /** Sandbox lookup used to resolve the per-sandbox Hermes API port. */
+  getSandbox?(name: string): { hermesApiPort?: number | null } | null | undefined;
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -86,8 +89,20 @@ export interface OnboardDashboardDeps {
   ): void;
 }
 
+/** Agent fields the deployment-verification chain reads. */
+export type VerifyChainAgent = {
+  name?: string;
+  dashboard?: { healthPath?: string } | null;
+  healthProbe?: { url?: string; port?: number } | null;
+};
+
 export interface OnboardDashboardHelpers {
   buildChain: typeof buildChain;
+  buildAgentVerifyChain(
+    chatUiUrl: string,
+    sandboxName: string,
+    agent: VerifyChainAgent | null | undefined,
+  ): ReturnType<typeof buildChain>;
   buildControlUiUrls: typeof buildControlUiUrls;
   buildOrphanedSandboxRollbackMessage(
     sandboxName: string,
@@ -221,6 +236,33 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     return dashboardAccess.getWslHostAddress({
       ...options,
       runCapture: options.runCapture || runCapture,
+    });
+  }
+
+  /**
+   * Build the delivery chain deployment verification probes for `sandboxName`.
+   *
+   * Resolves the agent's OpenAI-compatible API port for this sandbox rather
+   * than the agent manifest default, so verification probes the port this
+   * sandbox actually publishes on the host (#9290).
+   */
+  function buildAgentVerifyChain(
+    chatUiUrl: string,
+    sandboxName: string,
+    agent: VerifyChainAgent | null | undefined,
+  ): ReturnType<typeof buildChain> {
+    // Resolve WSL once: `buildChain` and the host-address lookup must agree, or
+    // the chain can claim WSL while dropping the fallback URL that pairs with it.
+    const isWsl = deps.isWsl();
+    return buildChain({
+      chatUiUrl,
+      isWsl,
+      wslHostAddress: getWslHostAddress({ isWsl }),
+      dashboardHealthEndpoint: agent?.dashboard?.healthPath,
+      gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent, {
+        getSandbox: deps.getSandbox,
+      }),
+      gatewayHealthEndpoint: agent?.healthProbe?.url,
     });
   }
 
@@ -630,6 +672,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
   return {
     buildChain,
+    buildAgentVerifyChain,
     buildControlUiUrls,
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,

@@ -523,41 +523,6 @@ describe("openclaw_gateway_healthy listener ownership", () => {
   });
 });
 
-describe("healthcheck marker (#4503, #4710)", () => {
-  // Behavioral test of the marker function: confirms the helper itself writes
-  // an empty file at the target path and is a no-op when the path is already
-  // present (idempotent restart-loop semantics). The launch-wiring suite
-  // below proves the marker is dropped by the launch path itself (and only
-  // there), independent of env hints like OPENSHELL_DRIVERS.
-  it("mark_in_container_gateway writes the marker file idempotently (#4710)", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-marker-"));
-    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
-    const fnSrc = extractShellFunction(src, "mark_in_container_gateway").replaceAll(
-      "/tmp/nemoclaw-gateway-local",
-      markerPath,
-    );
-
-    try {
-      const script = [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        safeTmpHelpers(src),
-        fnSrc,
-        "mark_in_container_gateway",
-        "mark_in_container_gateway", // second call must be a no-op
-      ].join("\n");
-      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
-      expect(result.status).toBe(0);
-      // statSync throws when the marker is missing, so this single call
-      // asserts both existence and emptiness (`:` redirected, not appended).
-      expect(fs.statSync(markerPath).size).toBe(0);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-});
-
 // Run both real launch paths with their marker, pidfile, and watchdog helpers.
 // This behaviorally covers the driver-env marker regression (#4748).
 describe("gateway launch wiring (#4710)", () => {

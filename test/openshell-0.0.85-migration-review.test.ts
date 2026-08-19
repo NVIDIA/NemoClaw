@@ -100,14 +100,9 @@ const auditedCommits = [
 describe("OpenShell 0.0.85 migration review", () => {
   it("records every adjacent release range and all 67 audited commits", () => {
     expect(adjacentRanges.reduce((total, range) => total + range.commits, 0)).toBe(67);
-    for (const range of adjacentRanges) {
-      expect(review).toContain(
-        `| \`${range.from} -> ${range.to}\` | ${range.commits} | ${range.paths} |`,
-      );
-    }
-    for (const commit of auditedCommits) {
-      expect(review, `missing audited OpenShell commit ${commit}`).toContain(commit);
-    }
+    expect(adjacentRanges.every((range) =>
+        review.includes(`| \`${range.from} -> ${range.to}\` | ${range.commits} | ${range.paths} |`))).toBe(true);
+    expect(auditedCommits.every((commit) => review.includes(commit))).toBe(true);
     expect(review).toContain("283 distinct changed paths");
   });
 
@@ -145,11 +140,15 @@ describe("OpenShell 0.0.85 migration review", () => {
     expect(review).toContain("stable release was audited anew");
   });
 
-  it("tracks every material migration concern and refuses false-green evidence", () => {
-    for (let number = 1; number <= 17; number += 1) {
+  it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])(
+    "tracks material migration concern OS85-%i",
+    (number) => {
       const id = `OS85-${String(number).padStart(2, "0")}`;
       expect(review.split(`| \`${id}\` |`), `${id} concern row`).toHaveLength(2);
-    }
+    },
+  );
+
+  it("refuses false-green migration evidence", () => {
     expect(review).toContain("An unresolved critical or high concern blocks");
     expect(review).toContain("full managed MCP lifecycle");
     expect(review).toContain("without a conditional skip or expected failure");
@@ -328,14 +327,10 @@ describe("OpenShell 0.0.85 migration review", () => {
       ],
     ] as const;
 
-    for (const [relativePath, forbidden] of migratedConsumers) {
+    migratedConsumers.forEach(([relativePath, forbidden]) => {
       const source = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
-      for (const obsoleteTransport of forbidden) {
-        expect(source, `${relativePath} still contains ${obsoleteTransport}`).not.toContain(
-          obsoleteTransport,
-        );
-      }
-    }
+      expect(forbidden.every((obsoleteTransport) => !source.includes(obsoleteTransport))).toBe(true);
+    });
 
     const phase6 = fs.readFileSync(
       path.join(repoRoot, "test/e2e/live/phase6-messaging-helpers.ts"),
@@ -354,7 +349,9 @@ describe("OpenShell 0.0.85 migration review", () => {
     expect(pythonEgress).toContain("NATIVE_MULTILINE_ARGV");
   });
 
-  it("treats OpenShell TLS identity as supervisor-only in every managed agent", () => {
+  it.each(
+    ["OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"],
+  )("treats OpenShell TLS identity as supervisor-only in every managed agent [%s]", (name) => {
     const hermesBoundary = fs.readFileSync(
       path.join(repoRoot, "agents", "hermes", "validate-env-secret-boundary.py"),
       "utf8",
@@ -369,12 +366,11 @@ describe("OpenShell 0.0.85 migration review", () => {
     );
     const boundaries = [hermesBoundary, dcodeWrapper, dcodeRuntime];
 
-    for (const name of ["OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"]) {
-      expect(
-        boundaries.every((source) => source.includes(name)),
-        name,
-      ).toBe(true);
-    }
+    expect(
+      boundaries.every((source) => source.includes(name)),
+      name,
+    ).toBe(true);
+
     expect(hermesBoundary).not.toContain("RUNTIME_ALLOWED_PLATFORM_PATH_VALUES");
     expect(dcodeWrapper).not.toContain("is_allowed_openshell_runtime_value");
     expect(dcodeRuntime).not.toContain("/etc/openshell/tls/client/tls.key");

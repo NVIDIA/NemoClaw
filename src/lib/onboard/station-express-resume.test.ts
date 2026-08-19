@@ -121,16 +121,17 @@ describe("DGX Station Express resume (#7048)", () => {
     });
   });
 
-  it("rejects the dual-Station served alias without both qualified pair signals", () => {
-    for (const missing of ["NEMOCLAW_DGX_STATION_PEER", "NEMOCLAW_DGX_STATION_SSH_BINDING"]) {
+  it.each(["NEMOCLAW_DGX_STATION_PEER", "NEMOCLAW_DGX_STATION_SSH_BINDING"])(
+    "rejects the dual-Station served alias without both qualified pair signals [case %#]",
+    (missing) => {
       const env = dualExpressEnv();
       delete env[missing];
       expect(getStationExpressResumeIntent(env, "my-assistant")).toEqual({
         ok: false,
         message: "DGX Station Express has a conflicting NEMOCLAW_MODEL value.",
       });
-    }
-  });
+    },
+  );
 
   it("carries the installer receipt generation in the persisted intent", () => {
     const env = expressEnv();
@@ -241,6 +242,40 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(env).toEqual({});
   });
 
+  it("replays an interrupted Station Express provider setup from its sealed intent (#9522)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const interrupted = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: ultraIntent,
+      provider: "vllm-local",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      steps: {
+        provider_selection: {
+          status: "in_progress",
+          startedAt: "2026-08-18T19:17:55.000Z",
+          completedAt: null,
+          error: null,
+        },
+      },
+    });
+    interrupted.status = "failed";
+    const deps = resumeDeps(interrupted);
+    const run = vi.fn(async () => {
+      expect(env).toMatchObject({
+        NEMOCLAW_STATION_EXPRESS: "1",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
+        NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+      });
+    });
+
+    await withStationExpressResumeEnvironment(run, deps, env)({ resume: true });
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(env).toEqual({});
+  });
+
   it("reuses a completed provider selection without replaying managed installation", async () => {
     const completeProviderStep = {
       status: "complete" as const,
@@ -282,38 +317,37 @@ describe("DGX Station Express resume (#7048)", () => {
       model: "nvidia/nemotron-3-ultra-550b-a55b",
       sandboxName: "other-assistant",
     },
-  ])("fails closed when recorded state conflicts with Station Express intent", async ({
-    provider,
-    model,
-    sandboxName = "my-assistant",
-  }) => {
-    const session = createSession({
-      mode: "non-interactive",
-      stationExpressIntent: boundUltraIntent,
-      sandboxName,
-      provider,
-      model,
-      steps: {
-        provider_selection: {
-          status: "complete",
-          startedAt: "2026-07-16T00:00:00.000Z",
-          completedAt: "2026-07-16T00:01:00.000Z",
-          error: null,
+  ])(
+    "fails closed when recorded state conflicts with Station Express intent",
+    async ({ provider, model, sandboxName = "my-assistant" }) => {
+      const session = createSession({
+        mode: "non-interactive",
+        stationExpressIntent: boundUltraIntent,
+        sandboxName,
+        provider,
+        model,
+        steps: {
+          provider_selection: {
+            status: "complete",
+            startedAt: "2026-07-16T00:00:00.000Z",
+            completedAt: "2026-07-16T00:01:00.000Z",
+            error: null,
+          },
         },
-      },
-    });
-    session.status = "failed";
-    const env: NodeJS.ProcessEnv = {};
-    const deps = resumeDeps(session);
-    const run = vi.fn(async () => undefined);
+      });
+      session.status = "failed";
+      const env: NodeJS.ProcessEnv = {};
+      const deps = resumeDeps(session);
+      const run = vi.fn(async () => undefined);
 
-    await expect(
-      withStationExpressResumeEnvironment(run, deps, env)({ resume: true }),
-    ).rejects.toThrow("exit 1");
+      await expect(
+        withStationExpressResumeEnvironment(run, deps, env)({ resume: true }),
+      ).rejects.toThrow("exit 1");
 
-    expect(run).not.toHaveBeenCalled();
-    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("state is invalid"));
-  });
+      expect(run).not.toHaveBeenCalled();
+      expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("state is invalid"));
+    },
+  );
 
   it.each([
     {

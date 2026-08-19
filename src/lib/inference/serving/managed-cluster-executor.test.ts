@@ -743,12 +743,12 @@ describe("managed-cluster vLLM executor", () => {
         baseUrl: `http://attacker.invalid:${String(plan.apiPort)}`,
       }),
     ).resolves.toBe(false);
-    for (const [argv, options] of runCurlProbe.mock.calls) {
+    runCurlProbe.mock.calls.forEach(([argv, options]) => {
       expect(JSON.stringify(argv)).not.toContain(API_KEY);
       expect(argv).toContain("--config");
       expect(options.pinnedAddresses).toEqual([]);
       expect(options.timeoutMs).toBeLessThanOrEqual(35_000);
-    }
+    });
     expect(createBearerAuthConfig).toHaveBeenCalledWith(API_KEY, expect.any(Object));
     expect(cleanup).toHaveBeenCalledTimes(2);
     expect(runCurlProbe).toHaveBeenCalledTimes(2);

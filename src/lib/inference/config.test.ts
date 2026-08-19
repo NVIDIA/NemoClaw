@@ -32,18 +32,21 @@ import {
 } from "./config";
 
 describe("resolveAgentDefaultCloudModel", () => {
-  it("uses the Deep Agents manifest default without changing shared agent defaults", () => {
+  it("uses the Deep Agents manifest default", () => {
     expect(
       resolveAgentDefaultCloudModel({
         name: "langchain-deepagents-code",
         inference: { default_model: "nvidia/nemotron-3-ultra-550b-a55b" },
       }),
     ).toBe("nvidia/nemotron-3-ultra-550b-a55b");
-
-    for (const agent of [null, { name: "openclaw" }, { name: "hermes" }]) {
-      expect(resolveAgentDefaultCloudModel(agent)).toBe(DEFAULT_CLOUD_MODEL);
-    }
   });
+
+  it.each([[null], [{ name: "openclaw" }], [{ name: "hermes" }]])(
+    "keeps the shared default for %j",
+    (agent) => {
+      expect(resolveAgentDefaultCloudModel(agent)).toBe(DEFAULT_CLOUD_MODEL);
+    },
+  );
 });
 
 describe("resolveAgentInferenceApi", () => {
@@ -137,13 +140,13 @@ describe("inference selection config", () => {
     expect(HERMES_PROVIDER_MODEL_OPTIONS.length).toBeGreaterThan(10);
   });
 
-  it.each([
-    "z-ai/glm-5.1",
-    "moonshotai/kimi-k2.6",
-  ])("retires %s only from the NVIDIA Endpoints picker", (model) => {
-    expect(CLOUD_MODEL_OPTIONS.map((option) => option.id)).not.toContain(model);
-    expect(HERMES_PROVIDER_MODEL_OPTIONS).toContain(model);
-  });
+  it.each(["z-ai/glm-5.1", "moonshotai/kimi-k2.6"])(
+    "retires %s only from the NVIDIA Endpoints picker",
+    (model) => {
+      expect(CLOUD_MODEL_OPTIONS.map((option) => option.id)).not.toContain(model);
+      expect(HERMES_PROVIDER_MODEL_OPTIONS).toContain(model);
+    },
+  );
 
   it("maps ollama-local to the sandbox inference route and default model", () => {
     // Local Ollama uses a dedicated credential env so the sandbox-side
@@ -293,42 +296,39 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("bogus-provider")).toBe(null);
   });
 
-  it("does not grow beyond the approved provider set", () => {
-    const APPROVED_PROVIDERS = [
-      "nvidia-prod",
-      "nvidia-nim",
-      "openai-api",
-      "openrouter-api",
-      "anthropic-prod",
-      "compatible-anthropic-endpoint",
-      "gemini-api",
-      "compatible-endpoint",
-      "hermes-provider",
-      "vllm-local",
-      "ollama-local",
-    ];
-    for (const key of APPROVED_PROVIDERS) {
-      expect(getProviderSelectionConfig(key)).not.toBe(null);
-    }
-    const CANDIDATES = [
-      "bedrock",
-      "vertex",
-      "azure",
-      "azure-openai",
-      "deepseek",
-      "mistral",
-      "cohere",
-      "fireworks",
-      "together",
-      "groq",
-      "lambda",
-      "replicate",
-      "perplexity",
-      "sambanova",
-    ];
-    for (const key of CANDIDATES) {
-      expect(getProviderSelectionConfig(key)).toBe(null);
-    }
+  it.each([
+    "nvidia-prod",
+    "nvidia-nim",
+    "openai-api",
+    "openrouter-api",
+    "anthropic-prod",
+    "compatible-anthropic-endpoint",
+    "gemini-api",
+    "compatible-endpoint",
+    "hermes-provider",
+    "vllm-local",
+    "ollama-local",
+  ])("keeps the approved %s provider", (key) => {
+    expect(getProviderSelectionConfig(key)).not.toBe(null);
+  });
+
+  it.each([
+    "bedrock",
+    "vertex",
+    "azure",
+    "azure-openai",
+    "deepseek",
+    "mistral",
+    "cohere",
+    "fireworks",
+    "together",
+    "groq",
+    "lambda",
+    "replicate",
+    "perplexity",
+    "sambanova",
+  ])("keeps the unapproved %s candidate out", (key) => {
+    expect(getProviderSelectionConfig(key)).toBe(null);
   });
 
   it("falls back to provider defaults when model is omitted", () => {

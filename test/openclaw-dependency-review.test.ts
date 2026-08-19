@@ -772,28 +772,30 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(source).toContain("#4533");
   });
 
-  it("keeps production Docker build workflows behind the build-arg guard", () => {
-    const workflows = workflowContracts();
-    const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
-      findProductionBuildGuardCoverage(name, workflow),
-    );
+  it.each([
+    "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
+    "OPENCLAW_VERSION=2026.3.11",
+    "OPENCLAW_VERSION=2026.4.24",
+    "OPENCLAW_2026_3_11_INTEGRITY",
+    "OPENCLAW_2026_3_11_TARBALL",
+    "OPENCLAW_2026_4_24_INTEGRITY",
+    "OPENCLAW_2026_4_24_TARBALL",
+  ])(
+    "keeps production Docker build workflows behind the build-arg guard [%s]",
+    (fixtureSelector) => {
+      const workflows = workflowContracts();
+      const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
+        findProductionBuildGuardCoverage(name, workflow),
+      );
 
-    expect(discoveredBuilds.length).toBeGreaterThan(0);
-    expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
+      expect(discoveredBuilds.length).toBeGreaterThan(0);
+      expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
 
-    const productionWorkflowContract = JSON.stringify(workflows);
-    for (const fixtureSelector of [
-      "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
-      "OPENCLAW_VERSION=2026.3.11",
-      "OPENCLAW_VERSION=2026.4.24",
-      "OPENCLAW_2026_3_11_INTEGRITY",
-      "OPENCLAW_2026_3_11_TARBALL",
-      "OPENCLAW_2026_4_24_INTEGRITY",
-      "OPENCLAW_2026_4_24_TARBALL",
-    ]) {
+      const productionWorkflowContract = JSON.stringify(workflows);
+
       expect(productionWorkflowContract).not.toContain(fixtureSelector);
-    }
-  });
+    },
+  );
 
   it("accepts reviewed base-image versions and rejects injected build arguments", () => {
     const action = readYaml<{ runs: { steps: WorkflowStep[] } }>(

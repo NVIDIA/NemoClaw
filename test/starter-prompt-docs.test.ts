@@ -444,26 +444,27 @@ function runCredentialForm(
 }
 
 describe("starter prompt docs CTA", () => {
-  it("generates one visible Fern Prompt from the shared Markdown source (#5048)", () => {
-    const prompt = readStarterPrompt();
-    const generatedSnippet = renderStarterPromptSnippet(prompt);
+  it.each(Array.from(starterPromptPages, (value) => [value]))(
+    "generates one visible Fern Prompt from the shared Markdown source [case %#] (#5048)",
+    (page) => {
+      const prompt = readStarterPrompt();
+      const generatedSnippet = renderStarterPromptSnippet(prompt);
 
-    expect(prompt).toMatch(/^# NemoClaw Instructions for a Non-Technical User$/m);
-    expect(STARTER_PROMPT_GENERATED_PATH).toBe("docs/_build/StarterPrompt.generated.mdx");
-    expect(generatedSnippet).toContain(
-      '<Prompt\n  title="Install NemoClaw with your coding agent"',
-    );
-    expect(generatedSnippet).not.toContain("hidePrompt");
-    expect(generatedSnippet).not.toContain("actions=");
-    expect(generatedSnippet).toContain(`>\n${prompt}\n</Prompt>`);
-    expect(generatedSnippet).not.toContain("<!--");
-    expect(prompt).not.toMatch(/<https?:\/\//);
-    expect(prompt).toContain("Use redacted placeholders such as `<PASTE_YOUR_API_KEY_HERE>`");
-    expect(read("docs/index.mdx")).toContain(
-      'import { CommandTerminal } from "./_components/CommandTerminal";\n\n<BadgeLinks',
-    );
+      expect(prompt).toMatch(/^# NemoClaw Instructions for a Non-Technical User$/m);
+      expect(STARTER_PROMPT_GENERATED_PATH).toBe("docs/_build/StarterPrompt.generated.mdx");
+      expect(generatedSnippet).toContain(
+        '<Prompt\n  title="Install NemoClaw with your coding agent"',
+      );
+      expect(generatedSnippet).not.toContain("hidePrompt");
+      expect(generatedSnippet).not.toContain("actions=");
+      expect(generatedSnippet).toContain(`>\n${prompt}\n</Prompt>`);
+      expect(generatedSnippet).not.toContain("<!--");
+      expect(prompt).not.toMatch(/<https?:\/\//);
+      expect(prompt).toContain("Use redacted placeholders such as `<PASTE_YOUR_API_KEY_HERE>`");
+      expect(read("docs/index.mdx")).toContain(
+        'import { CommandTerminal } from "./_components/CommandTerminal";\n\n<BadgeLinks',
+      );
 
-    for (const page of starterPromptPages) {
       const content = read(page);
       expect(content, `${page} includes the generated Fern Prompt`).toContain(
         '<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />',
@@ -471,8 +472,8 @@ describe("starter prompt docs CTA", () => {
       expect(content, `${page} does not use the retired custom components`).not.toMatch(
         /StarterPrompt(?:Button|Fallback)/,
       );
-    }
-  });
+    },
+  );
 
   it("rejects prompt Markdown that cannot generate one stable payload (#5048)", () => {
     const source = fs.readFileSync(starterPromptMarkdownSource, "utf8");
@@ -589,9 +590,11 @@ describe("starter prompt docs CTA", () => {
     expect(formSource).not.toContain("sessionStorage");
   });
 
-  it("keeps local prompt assets byte-aligned with their pinned revision blobs (#6990)", () => {
-    resolvePromptAssetRevision(promptAssetRevision, runGit);
-    for (const asset of Object.values(promptAssets)) {
+  it.each(Array.from(Object.values(promptAssets), (value) => [value]))(
+    "keeps local prompt assets byte-aligned with their pinned revision blobs [case %#] (#6990)",
+    (asset) => {
+      resolvePromptAssetRevision(promptAssetRevision, runGit);
+
       const localBytes = fs.readFileSync(path.join(repoRoot, asset.path));
       const pinnedBytes = readPinnedPromptAssetBlob(promptAssetRevision, asset, runGit);
       const pinnedSha256 = createHash("sha256").update(pinnedBytes).digest("hex");
@@ -602,8 +605,8 @@ describe("starter prompt docs CTA", () => {
         `${asset.path} does not byte-match its Git blob at ${promptAssetRevision}; commit the asset content, then repin every platform URL, promptAssetRevision, and digest to that content commit`,
       ).toBe(true);
       expect(pinnedSha256, `${asset.path} has a stale pinned SHA-256`).toBe(asset.pinnedSha256);
-    }
-  });
+    },
+  );
 
   it("fails closed when the immutable prompt asset revision or blobs cannot be resolved (#6990)", () => {
     expect(() => resolvePromptAssetRevision("main", () => fail("git must not run"))).toThrow(
@@ -1109,11 +1112,12 @@ describe("starter prompt checkout line endings", () => {
     "docs/resources/local-credential-form.html",
   ];
 
-  it.each(
-    bytePinnedPaths,
-  )("checks out %s with LF so an autocrlf clone keeps the bytes this suite asserts (#8648)", (relativePath) => {
-    expect(readCheckoutEol(relativePath)).toContain(`${relativePath}: eol: lf`);
-  });
+  it.each(bytePinnedPaths)(
+    "checks out %s with LF so an autocrlf clone keeps the bytes this suite asserts (#8648)",
+    (relativePath) => {
+      expect(readCheckoutEol(relativePath)).toContain(`${relativePath}: eol: lf`);
+    },
+  );
 
   it("checks out a representative tracked text file with LF (#8648)", () => {
     const relativePath = "docs/resources/agent-skills.mdx";

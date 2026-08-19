@@ -117,7 +117,7 @@ describe("retired E2E selector compatibility", () => {
         "npx vitest run --project package-contract test/package-contract/cli/debug-cli-command.test.ts test/package-contract/cli/public-cli-contracts.test.ts test/package-contract/onboard/invalid-nvidia-key.test.ts",
       ]);
       expect(fs.readFileSync(target.output, "utf8")).toBe("selected=true\n");
-      for (const id of selected) {
+      selected.forEach((id) => {
         const signalPath = path.join(target.artifactRoot, id, "risk-signal.json");
         expect(JSON.parse(fs.readFileSync(signalPath, "utf8"))).toEqual({
           version: 1,
@@ -134,7 +134,7 @@ describe("retired E2E selector compatibility", () => {
           runReason: "passed",
         });
         expect(fs.statSync(signalPath).mode & 0o777).toBe(0o600);
-      }
+      });
       expect(
         JSON.parse(
           fs.readFileSync(
@@ -167,7 +167,7 @@ describe("retired E2E selector compatibility", () => {
         "npx vitest run --project cli src/lib/actions/sandbox/rebuild-flow-helpers.test.ts src/lib/actions/sandbox/rebuild-post-restore-phase.test.ts src/lib/actions/sandbox/rebuild-recreate-observability.test.ts src/lib/actions/sandbox/rebuild-route-preflight.test.ts src/lib/actions/upgrade-sandboxes-recovery.test.ts src/lib/sandbox/version.test.ts",
         "npx vitest run --project integration test/cli/list-share-live-inference.test.ts test/rebuild-stale-recovery.test.ts",
       ]);
-      for (const id of selected) {
+      selected.forEach((id) => {
         const signalPath = path.join(target.artifactRoot, id, "risk-signal.json");
         expect(JSON.parse(fs.readFileSync(signalPath, "utf8"))).toMatchObject({
           jobId: id,
@@ -176,7 +176,7 @@ describe("retired E2E selector compatibility", () => {
           passed: 1,
           failed: 0,
         });
-      }
+      });
     } finally {
       fs.rmSync(target.root, { force: true, recursive: true });
     }

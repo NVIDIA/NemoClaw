@@ -3,9 +3,12 @@
 
 import { spawnSync } from "node:child_process";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import {
-
+  captureOpenshell,
+  getOpenshellBinary,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
+import {
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -53,6 +56,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
+import { runConnectChildWithShieldsRelockNotice } from "./agent/connect-shields-relock-notice";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
@@ -82,8 +86,10 @@ import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
   inspectLaunchReadiness,
+  portableOpenClawPairingIncompleteMessage,
   publicationFromDecision,
   publishLaunchReadiness,
+  settlePortableOpenClawPairing,
   withLaunchReadinessMutationGate,
 } from "./launch-readiness";
 import {
@@ -126,7 +132,6 @@ type SandboxListProbe = {
   status: number | null;
   output: string;
 };
-
 
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
@@ -258,6 +263,30 @@ function exitOnForwardRecoveryFailure(
   process.exit(1);
 }
 
+function exitOnGatewayRecoveryFailure(
+  sandboxName: string,
+  agentName: string,
+  detail: string,
+): never {
+  const safeDetail = sanitizeSandboxStartupRecoveryDetail(detail);
+  const terminalPunctuation = /[.!?]$/u.test(safeDetail) ? "" : ".";
+  console.error("");
+  console.error(
+    `  Probe failed: NemoClaw could not recover the ${agentName} gateway in '${sandboxName}'.`,
+  );
+  console.error(`  Recovery detail: ${safeDetail}${terminalPunctuation}`);
+  process.exit(1);
+}
+
+async function settlePortablePairingOrExit(sandboxName: string): Promise<boolean> {
+  const result = await settlePortableOpenClawPairing(sandboxName);
+  if (result.kind === "incomplete") {
+    console.error(`  ${portableOpenClawPairingIncompleteMessage(sandboxName, result.reason)}`);
+    process.exit(1);
+  }
+  return result.kind === "settled";
+}
+
 async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
@@ -307,12 +336,21 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
       detail,
     );
   }
+  if ("recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail) {
+    exitOnGatewayRecoveryFailure(
+      sandboxName,
+      agentName,
+      String(processCheck.recoveryFailureDetail),
+    );
+  }
   if (processCheck.wasRunning) {
     await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
-    runConnectAutoPairApprovalPass(sandboxName);
+    if (!(await settlePortablePairingOrExit(sandboxName))) {
+      runConnectAutoPairApprovalPass(sandboxName);
+    }
     if (processCheck.forwardRecovered) {
       console.log(
         `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
@@ -325,7 +363,9 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   if (processCheck.recovered) {
     await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
-    runConnectAutoPairApprovalPass(sandboxName);
+    if (!(await settlePortablePairingOrExit(sandboxName))) {
+      runConnectAutoPairApprovalPass(sandboxName);
+    }
     const managedControlCompletion =
       "managedControlCompletion" in processCheck
         ? (processCheck.managedControlCompletion as ManagedGatewayControlCompletion)
@@ -403,7 +443,6 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
   }
 }
 
-
 function sleepSync(milliseconds: number): void {
   if (milliseconds <= 0) return;
   if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
@@ -444,7 +483,6 @@ export function probeSandboxInferenceRoute(
     },
   );
 }
-
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`
@@ -943,16 +981,20 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
 }
 
 export function restoreSandboxStartupState(sandboxName: string): SandboxStartupRecoveryResult {
-  let recoveryFailureDetail: string | null = null;
-  let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
+  let reportedRecoveryFailureDetail: string | null = null;
+  let reportedRecoveryFailureLayer: GatewayRestartFailureLayer | null = null;
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
     onRecoveryFailureLayer: (layer, detail) => {
-      recoveryFailureLayer = layer;
-      recoveryFailureDetail = detail ?? null;
+      reportedRecoveryFailureLayer = layer;
+      reportedRecoveryFailureDetail = detail ?? null;
     },
   });
-  return { ...processCheck, recoveryFailureDetail, recoveryFailureLayer };
+  const directRecoveryFailureDetail =
+    "recoveryFailureDetail" in processCheck ? processCheck.recoveryFailureDetail : null;
+  const recoveryFailureDetail = directRecoveryFailureDetail ?? reportedRecoveryFailureDetail;
+  const recoveryFailureLayer = directRecoveryFailureDetail ? null : reportedRecoveryFailureLayer;
+  return Object.assign(processCheck, { recoveryFailureDetail, recoveryFailureLayer });
 }
 
 function restoreInteractiveTerminal(): void {
@@ -1268,7 +1310,9 @@ export async function prepareInteractiveSession(
   // After the sandbox is Ready, verify and recover the route before SSH.
   const agent = agentRuntime.getSessionAgent(sandboxName);
   sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
-  completeInteractiveSessionSetup(sandboxName, sb);
+  if (!(await settlePortablePairingOrExit(sandboxName))) {
+    completeInteractiveSessionSetup(sandboxName, sb);
+  }
 
   return { agent, sb };
 }
@@ -1285,11 +1329,19 @@ export async function connectSandbox(
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
         return;
       }
-      if (readiness.fenceFailed && readiness.authorityUnsupported !== true) {
+      // Refuse recovery only when a prior epoch might exist and could not be
+      // durably rotated. When the authority and receipt are both securely
+      // absent but new authority creation fails (fenceFailed without
+      // recoveryBlocked), the documented contract runs the complete preflight
+      // and recovery and reports the publication failure afterwards, exactly
+      // as `launch` does for the same decision (#9280).
+      if (
+        readiness.fenceFailed &&
+        readiness.authorityUnsupported !== true &&
+        readiness.recoveryBlocked
+      ) {
         console.error(
-          readiness.recoveryBlocked
-            ? "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry."
-            : "  Probe failed: no prior launch-readiness evidence can be accepted, but new launch-readiness authority could not be created. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+          "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
         );
         process.exit(1);
       }
@@ -1382,10 +1434,13 @@ export async function connectSandbox(
     console.log("");
   }
   prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
-  const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
-    stdio: "inherit",
-    cwd: ROOT,
-    env: { ...process.env },
-  });
+  const result = await runConnectChildWithShieldsRelockNotice(
+    getOpenshellBinary(),
+    ["sandbox", "connect", sandboxName],
+    { hostCwd: ROOT, stdin: true },
+    sandboxName,
+    agent?.name === "openclaw" || sb?.agent === "openclaw",
+  );
+  result.releaseSignals?.();
   exitWithConnectSpawnResult(sandboxName, result);
 }

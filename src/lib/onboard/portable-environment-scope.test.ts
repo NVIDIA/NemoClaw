@@ -51,6 +51,47 @@ describe("portable onboarding environment scope", () => {
     expect(env).toEqual({ NEMOCLAW_MODEL: "" });
   });
 
+  it("uses the Personal tier suggestions when fresh policy intent is absent (#9206)", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
+    expect(env.NEMOCLAW_POLICY_MODE).toBe("suggested");
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBeUndefined();
+
+    scope.restore();
+    expect(env).toEqual({});
+  });
+
+  it.each(["", "  \t "])(
+    "uses the Personal tier suggestions and restores blank fresh intent %# (#9206)",
+    (policyPresets) => {
+      const env: NodeJS.ProcessEnv = { NEMOCLAW_POLICY_PRESETS: policyPresets };
+      const scope = createPortableOnboardEnvironmentScope(env, null);
+
+      expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
+      expect(env.NEMOCLAW_POLICY_MODE).toBe("suggested");
+      expect(env.NEMOCLAW_POLICY_PRESETS).toBeUndefined();
+
+      scope.restore();
+      expect(env).toEqual({ NEMOCLAW_POLICY_PRESETS: policyPresets });
+    },
+  );
+
+  it("adds required Personal access to explicit Portable presets (#9206)", () => {
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_POLICY_PRESETS: "github,weather",
+    };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
+    expect(env.NEMOCLAW_POLICY_MODE).toBe("custom");
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("personal-open-internet,github,weather");
+
+    scope.restore();
+    expect(env).toEqual({ NEMOCLAW_POLICY_PRESETS: "github,weather" });
+  });
+
   it("uses the activation model instead of ambient fresh model intent (#9200)", () => {
     const env: NodeJS.ProcessEnv = { NEMOCLAW_MODEL: "ambient/model" };
     const scope = createPortableOnboardEnvironmentScope(env, {
@@ -97,41 +138,43 @@ describe("portable onboarding environment scope", () => {
     expect(env.NEMOCLAW_EXPERIMENTAL_PROFILE).toBe("portable");
   });
 
-  it("clears hostile runtime selectors and installs only canonical derived authority", () => {
-    const env: NodeJS.ProcessEnv = {
-      DOCKER_HOST: "tcp://attacker.test:2375",
-      DOCKER_CONTEXT: "hostile-context",
-      DOCKER_CONFIG: "/tmp/hostile-docker-config",
-      DOCKER_TLS: "1",
-      DOCKER_TLS_VERIFY: "1",
-      DOCKER_CERT_PATH: "/tmp/hostile-docker-certs",
-      XDG_CONFIG_HOME: "/tmp/hostile-xdg-config",
-      CONTAINERS_CONF: "/tmp/hostile-containers.conf",
-      NETAVARK_FW: "firewalld",
-      CONTAINER_HOST: "ssh://attacker.test",
-      CONTAINER_CONNECTION: "attacker",
-      CONTAINER_SSHKEY: "/tmp/attacker-key",
-    };
+  it.each(CLEARED_PORTABLE_RUNTIME_ENV_KEYS)(
+    "clears hostile runtime selectors and installs only canonical derived authority [case %#]",
+    (key) => {
+      const env: NodeJS.ProcessEnv = {
+        DOCKER_HOST: "tcp://attacker.test:2375",
+        DOCKER_CONTEXT: "hostile-context",
+        DOCKER_CONFIG: "/tmp/hostile-docker-config",
+        DOCKER_TLS: "1",
+        DOCKER_TLS_VERIFY: "1",
+        DOCKER_CERT_PATH: "/tmp/hostile-docker-certs",
+        XDG_CONFIG_HOME: "/tmp/hostile-xdg-config",
+        CONTAINERS_CONF: "/tmp/hostile-containers.conf",
+        NETAVARK_FW: "firewalld",
+        CONTAINER_HOST: "ssh://attacker.test",
+        CONTAINER_CONNECTION: "attacker",
+        CONTAINER_SSHKEY: "/tmp/attacker-key",
+      };
 
-    const scope = createPortableOnboardEnvironmentScope(env, null);
+      const scope = createPortableOnboardEnvironmentScope(env, null);
 
-    for (const key of CLEARED_PORTABLE_RUNTIME_ENV_KEYS) {
       expect(env).not.toHaveProperty(key);
-    }
-    expect(env.NEMOCLAW_EXPERIMENTAL_PROFILE).toBe("portable");
-    scope.installRuntime({
-      containersConf: "/home/alice/.config/nemoclaw/portable/containers.conf",
-      socketPath: "/run/user/1000/podman/podman.sock",
-    });
-    expect(env).toMatchObject({
-      DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock",
-      CONTAINERS_CONF: "/home/alice/.config/nemoclaw/portable/containers.conf",
-      NETAVARK_FW: "iptables",
-    });
-    expect(env.CONTAINER_HOST).toBeUndefined();
-    expect(env.CONTAINER_CONNECTION).toBeUndefined();
-    expect(env.CONTAINER_SSHKEY).toBeUndefined();
-  });
+
+      expect(env.NEMOCLAW_EXPERIMENTAL_PROFILE).toBe("portable");
+      scope.installRuntime({
+        containersConf: "/home/alice/.config/nemoclaw/portable/containers.conf",
+        socketPath: "/run/user/1000/podman/podman.sock",
+      });
+      expect(env).toMatchObject({
+        DOCKER_HOST: "unix:///run/user/1000/podman/podman.sock",
+        CONTAINERS_CONF: "/home/alice/.config/nemoclaw/portable/containers.conf",
+        NETAVARK_FW: "iptables",
+      });
+      expect(env.CONTAINER_HOST).toBeUndefined();
+      expect(env.CONTAINER_CONNECTION).toBeUndefined();
+      expect(env.CONTAINER_SSHKEY).toBeUndefined();
+    },
+  );
 
   it("restores absent, empty, and valued keys exactly after success or failure", () => {
     const env: NodeJS.ProcessEnv = {
@@ -173,70 +216,44 @@ describe("portable onboarding environment scope", () => {
     expect(env).toEqual(before);
   });
 
-  it("fresh portable onboarding selects only the default open-internet preset when no preset list is set (#9206)", () => {
-    const env: NodeJS.ProcessEnv = { HOME: "/home/alice" };
-    const before = { ...env };
-    const scope = createPortableOnboardEnvironmentScope(env, null);
+  it.each(
+    [
+        "NEMOCLAW_PROVIDER",
+        "NEMOCLAW_MODEL",
+        "NEMOCLAW_PROVIDER_MODEL",
+        "NEMOCLAW_ENDPOINT_URL",
+        "NEMOCLAW_PREFERRED_API",
+        "NEMOCLAW_POLICY_TIER",
+        "NEMOCLAW_TOOL_DISCLOSURE",
+      ],
+  )(
+    "clears ambient inference selectors while preserving an explicit resume policy list [%s] (#9035)",
+    (key) => {
+      const env: NodeJS.ProcessEnv = {
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "hostile-model",
+        NEMOCLAW_PROVIDER_MODEL: "hostile-fallback-model",
+        NEMOCLAW_ENDPOINT_URL: "https://attacker.test/v1",
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+        NEMOCLAW_POLICY_MODE: "custom",
+        NEMOCLAW_POLICY_PRESETS: "github,npm,pypi,public-reference,weather",
+        NEMOCLAW_POLICY_TIER: "personal",
+        NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+      };
+      const before = { ...env };
+      const scope = createPortableOnboardEnvironmentScope(env, null, { resume: true });
 
-    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("personal-open-internet");
-    expect(env.NEMOCLAW_POLICY_MODE).toBe("custom");
-    expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
+      expect(env).toMatchObject({
+        NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+        NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
+        NEMOCLAW_POLICY_MODE: "custom",
+        NEMOCLAW_POLICY_PRESETS: "github,npm,pypi,public-reference,weather",
+      });
 
-    scope.restore();
-    expect(env).not.toHaveProperty("NEMOCLAW_POLICY_PRESETS");
-    expect(env).toEqual(before);
-  });
-
-  it("fresh portable onboarding preserves an explicit preset list instead of the default (#9206)", () => {
-    const env: NodeJS.ProcessEnv = {
-      HOME: "/home/alice",
-      NEMOCLAW_POLICY_PRESETS: "weather,github",
-    };
-    const before = { ...env };
-    const scope = createPortableOnboardEnvironmentScope(env, null);
-
-    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("weather,github");
-    expect(env.NEMOCLAW_POLICY_MODE).toBe("custom");
-    expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
-
-    scope.restore();
-    expect(env).toEqual(before);
-  });
-
-  it("clears ambient inference selectors while preserving an explicit resume policy list (#9035)", () => {
-    const env: NodeJS.ProcessEnv = {
-      NEMOCLAW_PROVIDER: "ollama",
-      NEMOCLAW_MODEL: "hostile-model",
-      NEMOCLAW_PROVIDER_MODEL: "hostile-fallback-model",
-      NEMOCLAW_ENDPOINT_URL: "https://attacker.test/v1",
-      NEMOCLAW_PREFERRED_API: "openai-completions",
-      NEMOCLAW_POLICY_MODE: "custom",
-      NEMOCLAW_POLICY_PRESETS: "github,npm,pypi,public-reference,weather",
-      NEMOCLAW_POLICY_TIER: "personal",
-      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
-    };
-    const before = { ...env };
-    const scope = createPortableOnboardEnvironmentScope(env, null, { resume: true });
-
-    expect(env).toMatchObject({
-      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
-      NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
-      NEMOCLAW_POLICY_MODE: "custom",
-      NEMOCLAW_POLICY_PRESETS: "github,npm,pypi,public-reference,weather",
-    });
-    for (const key of [
-      "NEMOCLAW_PROVIDER",
-      "NEMOCLAW_MODEL",
-      "NEMOCLAW_PROVIDER_MODEL",
-      "NEMOCLAW_ENDPOINT_URL",
-      "NEMOCLAW_PREFERRED_API",
-      "NEMOCLAW_POLICY_TIER",
-      "NEMOCLAW_TOOL_DISCLOSURE",
-    ]) {
       expect(env).not.toHaveProperty(key);
-    }
 
-    scope.restore();
-    expect(env).toEqual(before);
-  });
+      scope.restore();
+      expect(env).toEqual(before);
+    },
+  );
 });

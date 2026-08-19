@@ -37,16 +37,18 @@ describe("googlechat runtime security contract", () => {
     expect(renderFragmentValue("gateway.reload")).toEqual({ mode: "off" });
   });
 
-  it("requires both outbound-security boot preloads and marks them non-optional", () => {
-    const preloads = googlechatManifest.runtime?.openclaw?.nodePreloads;
-    expect(preloads).toBeDefined();
-    for (const module of ["googlechat-trusted-proxy-fetch", "googlechat-outbound-auth"]) {
+  it.each(["googlechat-trusted-proxy-fetch", "googlechat-outbound-auth"])(
+    "requires both outbound-security boot preloads and marks them non-optional [%s]",
+    (module) => {
+      const preloads = googlechatManifest.runtime?.openclaw?.nodePreloads;
+      expect(preloads).toBeDefined();
+
       const preload = preloads?.find((entry) => entry.module === module);
       expect(preload, `missing required preload ${module}`).toBeDefined();
       expect(preload?.optional).toBe(false);
       expect(preload?.injectInto).toContain("boot");
-    }
-  });
+    },
+  );
 
   it("keeps credential rewriting out of Google Chat request bodies", () => {
     expect(googlechatPolicy).not.toContain("request_body_credential_rewrite");

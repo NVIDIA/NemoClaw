@@ -28,11 +28,12 @@ describe("validateLiveProject (#6961)", () => {
     expect(validateLiveProject(undefined)).toBe(LIVE_VITEST_PROJECT);
   });
 
-  it("rejects any other project", () => {
-    for (const project of ["cli", "e2e-support", "e2e-live-extra", "integration"]) {
+  it.each(["cli", "e2e-support", "e2e-live-extra", "integration"])(
+    "rejects any other project [case %#]",
+    (project) => {
       expect(() => validateLiveProject(project)).toThrow(/unsupported vitest project/);
-    }
-  });
+    },
+  );
 });
 
 describe("validateLiveTestPath (#6961)", () => {
@@ -57,16 +58,14 @@ describe("validateLiveTestPath (#6961)", () => {
     expect(() => validateLiveTestPath("/etc/passwd")).toThrow(/unsupported character|absolute/);
   });
 
-  it("rejects shell metacharacters", () => {
-    for (const bad of [
-      "test/e2e/live/x.test.ts; rm -rf /",
-      "test/e2e/live/$(whoami).test.ts",
-      "test/e2e/live/x.test.ts && curl evil",
-      "test/e2e/live/`id`.test.ts",
-      "test/e2e/live/x.test.ts|cat",
-    ]) {
-      expect(() => validateLiveTestPath(bad)).toThrow(/unsupported character/);
-    }
+  it.each([
+    "test/e2e/live/x.test.ts; rm -rf /",
+    "test/e2e/live/$(whoami).test.ts",
+    "test/e2e/live/x.test.ts && curl evil",
+    "test/e2e/live/`id`.test.ts",
+    "test/e2e/live/x.test.ts|cat",
+  ])("rejects shell metacharacters [case %#]", (bad) => {
+    expect(() => validateLiveTestPath(bad)).toThrow(/unsupported character/);
   });
 
   it("requires a .test.ts file", () => {
@@ -93,18 +92,12 @@ describe("validateLiveSelector (#6961)", () => {
     expect(validateLiveSelector("   ")).toBeUndefined();
   });
 
-  it("rejects shell metacharacters in the expanded selector", () => {
-    for (const bad of [
-      "^$(touch pwned)$",
-      "^x$; rm -rf /",
-      "^x$ && evil",
-      "^`id`$",
-      "^x|y$",
-      "^x>out$",
-    ]) {
+  it.each(["^$(touch pwned)$", "^x$; rm -rf /", "^x$ && evil", "^`id`$", "^x|y$", "^x>out$"])(
+    "rejects shell metacharacters in the expanded selector [case %#]",
+    (bad) => {
       expect(() => validateLiveSelector(bad)).toThrow(/unsupported character/);
-    }
-  });
+    },
+  );
 });
 
 describe("resolveLiveSelector (#6901)", () => {
@@ -112,18 +105,21 @@ describe("resolveLiveSelector (#6901)", () => {
     ["openclaw", "^mcp-bridge$"],
     ["hermes", "^mcp-bridge-hermes$"],
     ["deepagents", "^mcp-bridge-deepagents$"],
-  ])("infers the reviewed %s selector for trusted base-workflow compatibility", (agent, expected) => {
-    expect(
-      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, undefined, {
-        NEMOCLAW_MCP_BRIDGE_AGENT: agent,
-      }),
-    ).toBe(expected);
-    expect(
-      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, expected, {
-        NEMOCLAW_MCP_BRIDGE_AGENT: agent,
-      }),
-    ).toBe(expected);
-  });
+  ])(
+    "infers the reviewed %s selector for trusted base-workflow compatibility",
+    (agent, expected) => {
+      expect(
+        resolveLiveSelector(MCP_BRIDGE_TEST_PATH, undefined, {
+          NEMOCLAW_MCP_BRIDGE_AGENT: agent,
+        }),
+      ).toBe(expected);
+      expect(
+        resolveLiveSelector(MCP_BRIDGE_TEST_PATH, expected, {
+          NEMOCLAW_MCP_BRIDGE_AGENT: agent,
+        }),
+      ).toBe(expected);
+    },
+  );
 
   it("keeps the existing OpenClaw default for local MCP runs", () => {
     expect(resolveLiveSelector(MCP_BRIDGE_TEST_PATH, undefined, {})).toBe("^mcp-bridge$");
@@ -156,7 +152,7 @@ describe("buildLiveVitestArgs (#6961)", () => {
     expect(
       buildLiveVitestArgs({
         testPath: "test/e2e/live/registry-targets.test.ts",
-        selector: "^ubuntu-repo-cloud-openclaw$",
+        selector: "^ubuntu-repo-cloud-openclaw:",
       }),
     ).toEqual([
       "vitest",
@@ -165,7 +161,7 @@ describe("buildLiveVitestArgs (#6961)", () => {
       "e2e-live",
       "test/e2e/live/registry-targets.test.ts",
       "-t",
-      "^ubuntu-repo-cloud-openclaw$",
+      "^ubuntu-repo-cloud-openclaw:",
       "--silent=false",
       "--reporter=default",
       `--reporter=${RISK_SIGNAL_REPORTER}`,

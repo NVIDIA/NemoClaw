@@ -144,7 +144,7 @@ describe("Hermes doctor and config hash boundary", () => {
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(nestedDir, { recursive: true, mode: 0o777 });
       fs.mkdirSync(profileDir, { recursive: true });
-      for (const relativePath of [
+      for (const fixturePath of [
         path.join(binDir, "nemoclaw-start"),
         path.join(binDir, "nemoclaw-managed-startup-hold"),
         path.join(binDir, "nemoclaw-managed-bootstrap"),
@@ -178,9 +178,10 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(nestedDir, "ciao-preload.js"),
         bashrcPath,
       ]) {
-        fs.mkdirSync(path.dirname(relativePath), { recursive: true });
-        fs.writeFileSync(relativePath, "test\n", { mode: 0o666 });
+        fs.mkdirSync(path.dirname(fixturePath), { recursive: true });
+        fs.writeFileSync(fixturePath, "test\n", { mode: 0o666 });
       }
+
       fs.writeFileSync(runtimeStateMutationControlPath, "# controller fixture\n");
       fs.writeFileSync(runtimeStateMutationStartupGatePath, "# startup gate fixture\n");
       fs.writeFileSync(runtimeStateMutationPublisherPath, "# publisher fixture\n");

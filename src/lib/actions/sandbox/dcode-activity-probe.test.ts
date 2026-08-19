@@ -121,10 +121,8 @@ describe("dcode activity probe", () => {
     );
   });
 
-  it("parses every declared probe state", () => {
-    for (const state of Object.values(DCODE_PROBE_STATE)) {
-      expect(parseDcodeProbeState(`${DCODE_PROBE_PREFIX}${state}\n`)).toBe(state);
-    }
+  it.each(Object.values(DCODE_PROBE_STATE))("parses declared probe state %s", (state) => {
+    expect(parseDcodeProbeState(`${DCODE_PROBE_PREFIX}${state}\n`)).toBe(state);
   });
 
   it("parses exactly one probe sentinel from sandbox exec output", () => {

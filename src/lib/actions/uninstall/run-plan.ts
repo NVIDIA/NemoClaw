@@ -284,10 +284,11 @@ function removeGlob(
 function removePath(
   target: string,
   deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>,
-): void {
-  if (!deps.existsSync(target)) return;
+): boolean {
+  if (!deps.existsSync(target)) return false;
   deps.rmSync(target, { force: true, recursive: true });
   deps.log(`Removed ${target}`);
+  return true;
 }
 
 // Entries under `nemoclawStateDir` (~/.nemoclaw/) that survive uninstall by
@@ -756,6 +757,28 @@ function runOptional(
   return false;
 }
 
+// Homebrew owns its formula and executable links. NemoClaw can report the
+// removal command, but it must not infer that it installed the formula. (#8882)
+const OPENSHELL_HOMEBREW_FORMULA = "nvidia/openshell/openshell";
+
+function reportRetainedMacOsOpenShell(runtime: UninstallRuntime): void {
+  if (!runtime.commandExists("brew")) {
+    runtime.log(
+      `Kept OpenShell executables because Homebrew is unavailable. If Homebrew manages OpenShell, make brew available through PATH, then run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`,
+    );
+    return;
+  }
+  const installed = runtime.run("brew", ["list", "--formula", OPENSHELL_HOMEBREW_FORMULA], {
+    env: runtime.env,
+    stdio: "ignore",
+  });
+  runtime.log(
+    installed.status === 0
+      ? `Kept Homebrew-managed OpenShell. To remove it, run: brew uninstall ${OPENSHELL_HOMEBREW_FORMULA}`
+      : `Kept OpenShell executables because Homebrew did not confirm ${OPENSHELL_HOMEBREW_FORMULA}. Check the formula before removing OpenShell.`,
+  );
+}
+
 function deleteSelectedGatewaySandbox(
   runtime: UninstallRuntime,
   gatewayName: string,
@@ -809,12 +832,12 @@ function deletePortableOpenShellSandbox(
   const result = runtime.run("openshell", ["sandbox", "delete", "-g", gatewayName, sandboxName], {
     env: runtime.env,
   });
-  if (result.status !== 0 && !isExplicitPortableSandboxAbsence(result, sandboxName)) {
+  const deleteReportedAbsence = isExplicitPortableSandboxAbsence(result, sandboxName);
+  if (result.status !== 0 && !deleteReportedAbsence) {
     runtime.warn(sandboxDeleteFailureMessage(sandboxName));
-    return false;
   }
   if (result.status === 0) runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
-  else {
+  else if (deleteReportedAbsence) {
     runtime.warn(sandboxDeleteAbsentMessage(sandboxName));
   }
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -1670,6 +1693,36 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
   }
 }
 
+/**
+ * Remove installer-managed user-local CLI shims (`~/.local/bin/nemoclaw` and
+ * agent-alias siblings). Classification still preserves foreign files of those
+ * names. Shared npm global package removal stays in `removeNemoclawCli`.
+ * Returns how many shim paths `removePath` actually deleted.
+ */
+function removeManagedCliShims(paths: UninstallPaths, runtime: UninstallRuntime): number {
+  let removed = 0;
+  const shim = classifyShimPath(paths.nemoclawShimPath);
+  if (shim.remove) {
+    if (removePath(paths.nemoclawShimPath, runtime)) removed += 1;
+  } else if (shim.kind === "preserve-foreign-file") {
+    runtime.warn(
+      `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
+    );
+  }
+  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
+  // installer creates; uninstall previously left them resolving on PATH (#6098).
+  // The same classification guard preserves any non-managed file of that name.
+  for (const alias of paths.agentAliasShimPaths) {
+    const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
+    if (aliasShim.remove) {
+      if (removePath(alias.path, runtime)) removed += 1;
+    } else if (aliasShim.kind === "preserve-foreign-file") {
+      runtime.warn(`Leaving ${alias.path} in place because it is not an installer-managed shim.`);
+    }
+  }
+  return removed;
+}
+
 function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const branding = runtimeBranding(runtime);
   if (runtime.commandExists("npm")) {
@@ -1684,25 +1737,41 @@ function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): vo
     runtime.warn(`npm not found; skipping ${branding.display} CLI uninstall.`);
   }
 
-  const shim = classifyShimPath(paths.nemoclawShimPath);
-  if (shim.remove) removePath(paths.nemoclawShimPath, runtime);
-  else if (shim.kind === "preserve-foreign-file") {
-    runtime.warn(
-      `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
-    );
-  }
-  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
-  // installer creates; uninstall previously left them resolving on PATH (#6098).
-  // The same classification guard preserves any non-managed file of that name.
-  for (const alias of paths.agentAliasShimPaths) {
-    const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
-    if (aliasShim.remove) removePath(alias.path, runtime);
-    else if (aliasShim.kind === "preserve-foreign-file") {
-      runtime.warn(`Leaving ${alias.path} in place because it is not an installer-managed shim.`);
-    }
-  }
+  removeManagedCliShims(paths, runtime);
   removeNvmLeftovers(paths, runtime);
   removeAliases(paths, runtime);
+}
+
+/**
+ * CLI uninstall step for `executePlan`. Extracted so the plan loop stays under
+ * the run-plan cognitive-complexity budget when scoped destroy needs the
+ * confirmed-sibling vs unidentified shim split (#9277).
+ */
+function runNemoclawCliUninstallStep(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+  otherGatewayPorts: readonly number[],
+): void {
+  if (!scopedToSelectedGateway) {
+    removeNemoclawCli(paths, runtime);
+    return;
+  }
+  // Confirmed sibling gateway ports share ~/.local/bin shims. Only the
+  // unidentified / unproven scoped path (#9277 false positives: odd
+  // gateways/ entries, unreadable gateway list, etc.) may drop managed
+  // shims on `--destroy-user-data` while keeping the shared npm package.
+  const confirmedSiblingPortsRemain = otherGatewayPorts.length > 0;
+  if (options.destroyUserData && !confirmedSiblingPortsRemain) {
+    runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI package.");
+    const removedShims = removeManagedCliShims(paths, runtime);
+    if (removedShims > 0) {
+      runtime.log("Removed managed user-local CLI shims because --destroy-user-data was set.");
+    }
+    return;
+  }
+  runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI and shell shims.");
 }
 
 function dockerIsAvailable(runtime: UninstallRuntime): boolean {
@@ -2602,6 +2671,7 @@ function executePlan(
   preserveUnderStateDir: readonly string[],
   scopedToSelectedGateway: boolean,
   sharedRegistryMustBePreserved: boolean,
+  otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -2743,11 +2813,24 @@ function executePlan(
         return { ok: false };
       }
     } else if (step.name === "NemoClaw CLI") {
-      if (scopedToSelectedGateway) {
-        runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI and shell shims.");
-      } else {
-        removeNemoclawCli(paths, runtime);
-      }
+      const completion = completePortablePlan(
+        ok,
+        portableRuntimeCleanup,
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        sandboxNames,
+        teardownAuthority,
+      );
+      if (!completion.ok) return completion;
+      runNemoclawCliUninstallStep(
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        otherGatewayPorts,
+      );
     } else if (step.name === "Docker resources") {
       if (externallySupervised) {
         runtime.log(
@@ -2780,6 +2863,8 @@ function executePlan(
           runtime.log(binaryKeepMessage);
         } else if (GATEWAY_PORT !== DEFAULT_GATEWAY_PORT) {
           runtime.log("Keeping OpenShell binaries used by the default gateway service.");
+        } else if (runtime.platform === "darwin") {
+          reportRetainedMacOsOpenShell(runtime);
         } else {
           for (const target of paths.openshellInstallPaths)
             removeFileWithOptionalSudo(target, runtime);
@@ -2865,16 +2950,7 @@ function executePlan(
       }
     }
   }
-  return completePortablePlan(
-    ok,
-    portableRuntimeCleanup,
-    paths,
-    options,
-    runtime,
-    scopedToSelectedGateway,
-    sandboxNames,
-    teardownAuthority,
-  );
+  return { ok };
 }
 
 function completePortablePlan(
@@ -2887,7 +2963,8 @@ function completePortablePlan(
   sandboxNames: readonly string[],
   authority: GatewayOwner,
 ): { ok: boolean } {
-  if (!ok || !portable) return { ok };
+  if (!portable) return { ok: true };
+  if (!ok) return { ok };
   if (
     !executeOpenShellResourceCleanup(paths, options, runtime, scoped, sandboxNames, authority, true)
   )
@@ -3052,6 +3129,7 @@ export function runUninstallPlan(
       preserveUnderStateDir,
       scopedToSelectedGateway,
       gatewayInspection.sharedRegistryMustBePreserved,
+      gatewayInspection.otherGatewayPorts,
       sandboxNames,
       teardownAuthority,
       portableRuntimeCleanup,

@@ -19,7 +19,10 @@ import {
   isStaleBuiltinWebSearchPolicyPreset,
   mergeRequiredSetupPolicyPresets,
 } from "./policy-preset-reconciliation";
-import { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
+import {
+  ensureRequiredTierPolicyPresets,
+  suppressedAgentRequiredPresets,
+} from "./policy-tier-suppression";
 
 type Preset = { name: string; access?: string };
 
@@ -183,6 +186,7 @@ export function preparePolicyPresetResumeSelection(
       policyPresets.push(activeWebSearchPreset);
     }
   }
+  policyPresets = ensureRequiredTierPolicyPresets(options.tierName, policyPresets);
   const recordedPolicyPresetsNeedReconcile =
     Array.isArray(options.recordedPolicyPresets) &&
     (policyPresets.length !== options.recordedPolicyPresets.length ||

@@ -360,6 +360,25 @@ async function waitForFileText(filePath: string, text: string): Promise<void> {
   });
 }
 
+function readGatewayCommands(scope: FixtureScope): Record<string, unknown>[] {
+  return fs
+    .readFileSync(scope.gatewayCommandLog, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+async function waitForGatewayCommands(
+  scope: FixtureScope,
+  expectedKinds: string[],
+): Promise<Record<string, unknown>[]> {
+  return vi.waitFor(() => {
+    const commands = readGatewayCommands(scope);
+    expect(commands.map((command) => command.kind)).toEqual(expectedKinds);
+    return commands;
+  }, { timeout: 5_000 });
+}
+
 function pidIsActive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -655,12 +674,7 @@ describe("portable profile systemctl fixture", () => {
         expect(activeIdentity.stdout).toContain("ActiveState=active\n");
         expect(activeIdentity.stdout).toContain(`MainPID=${String(gatewayProcess.pid)}\n`);
 
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+        const commands = await waitForGatewayCommands(scope, ["generate-certs", "serve"]);
         expect(commands[0]).toMatchObject({
           args: [
             "generate-certs",
@@ -747,12 +761,7 @@ describe("portable profile systemctl fixture", () => {
         );
         expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
         expect(fs.existsSync(gatewayLaunchPidFile)).toBe(true);
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+        const commands = await waitForGatewayCommands(scope, ["generate-certs", "serve"]);
         const gatewayPid = commands[1]!.pid as number;
         expect(readFixtureProcessRecord(gatewayLaunchPidFile).pid).toBe(gatewayPid);
         expect(pidIsActive(gatewayPid)).toBe(true);
@@ -805,12 +814,7 @@ describe("portable profile systemctl fixture", () => {
         expect(launchedPid).not.toBeNull();
         const gatewayPid = Number(launchedPid![1]);
         await vi.waitFor(() => expect(pidIsActive(gatewayPid)).toBe(false));
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs"]);
+        await waitForGatewayCommands(scope, ["generate-certs"]);
       } finally {
         await cleanFixture(scope);
       }
@@ -939,10 +943,15 @@ describe("portable profile systemctl fixture", () => {
     },
   );
 
-  it(
-    "serializes try-restart with a public-socket request and leaves only the recorded backend process active (#9006)",
+  it.each([
+    { scenario: "activator PID" },
+    { scenario: "service PID" },
+    { scenario: "public socket" },
+    { scenario: "backend socket" },
+  ])(
+    "serializes try-restart with a public-socket request and leaves only the recorded backend process active [$scenario] (#9006)",
     { timeout: 30_000 },
-    async () => {
+    async ({ scenario }) => {
       const scope = createFixture();
       const refreshGate = path.join(scope.directory, "refresh-gate");
       const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
@@ -985,14 +994,15 @@ describe("portable profile systemctl fixture", () => {
 
         await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
         expect(backendPids.every((pid) => !pidIsActive(pid))).toBe(true);
-        for (const artifact of [
-          activatorPidFile,
-          servicePidFile,
-          scope.socketPath,
-          backendSocketPath,
-        ]) {
-          expect(fs.existsSync(artifact), artifact).toBe(false);
-        }
+        const artifact = (
+          {
+            "activator PID": activatorPidFile,
+            "service PID": servicePidFile,
+            "public socket": scope.socketPath,
+            "backend socket": backendSocketPath,
+          } as const
+        )[scenario]!;
+        expect(fs.existsSync(artifact), artifact).toBe(false);
       } finally {
         await cleanFixture(scope);
       }
@@ -1029,10 +1039,15 @@ describe("portable profile systemctl fixture", () => {
     },
   );
 
-  it(
-    "stops both fixture processes and removes both sockets during cleanup (#9006)",
+  it.each([
+    { scenario: "activator PID" },
+    { scenario: "service PID" },
+    { scenario: "public socket" },
+    { scenario: "backend socket" },
+  ])(
+    "stops both fixture processes and removes both sockets during cleanup [$scenario] (#9006)",
     { timeout: 30_000 },
-    async () => {
+    async ({ scenario }) => {
       const scope = createFixture();
       const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
       const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
@@ -1056,14 +1071,15 @@ describe("portable profile systemctl fixture", () => {
         await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
 
         expect(pids.every((pid) => !pidIsActive(pid))).toBe(true);
-        for (const artifact of [
-          activatorPidFile,
-          servicePidFile,
-          scope.socketPath,
-          backendSocketPath,
-        ]) {
-          expect(fs.existsSync(artifact), artifact).toBe(false);
-        }
+        const artifact = (
+          {
+            "activator PID": activatorPidFile,
+            "service PID": servicePidFile,
+            "public socket": scope.socketPath,
+            "backend socket": backendSocketPath,
+          } as const
+        )[scenario]!;
+        expect(fs.existsSync(artifact), artifact).toBe(false);
       } finally {
         await cleanFixture(scope);
       }
@@ -1335,11 +1351,11 @@ describe("portable profile systemctl fixture", () => {
         ["--user", "start", "podman.socket", "trailing"],
         ["--user", "enable", "podman.socket"],
       ];
-      for (const args of driftedCommands) {
+      driftedCommands.forEach((args) => {
         const result = systemctl(scope, args);
         expect(result.status, args.join(" ")).toBe(64);
         expect(result.stderr).toContain("unexpected user-service command:");
-      }
+      });
     } finally {
       fs.rmSync(scope.directory, { force: true, recursive: true });
     }
@@ -1355,11 +1371,11 @@ describe("portable profile systemctl fixture", () => {
         ["--user", "enable", "--now", "nemoclaw-openshell-gateway"],
         ["--user", "is-active", "nemoclaw-openshell-gateway", "--quiet"],
       ];
-      for (const args of driftedCommands) {
+      driftedCommands.forEach((args) => {
         const result = systemctl(scope, args);
         expect(result.status, args.join(" ")).toBe(64);
         expect(result.stderr).toContain("unexpected user-service command:");
-      }
+      });
     } finally {
       fs.rmSync(scope.directory, { force: true, recursive: true });
     }

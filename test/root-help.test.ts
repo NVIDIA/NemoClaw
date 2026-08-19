@@ -49,19 +49,21 @@ describe("root help", () => {
     expect(output).toContain("List available agent runtimes for onboard --agent");
   });
 
-  it("shows channel as a required positional argument in channel command signatures", () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  it.each(["add", "remove", "start", "stop"])(
+    "shows channel as a required positional argument in channel command signatures [%s]",
+    (action) => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    renderRootHelp();
+      renderRootHelp();
 
-    const output = log.mock.calls.map(([line]) => String(line)).join("\n");
-    for (const action of ["add", "remove", "start", "stop"]) {
+      const output = log.mock.calls.map(([line]) => String(line)).join("\n");
+
       expect(output).toContain(`nemoclaw <name> channels ${action} <channel>`);
       expect(output).not.toMatch(
         new RegExp(`nemoclaw <name> channels ${action}\\\\s{2,}[^\\n]*<channel>`),
       );
-    }
-  });
+    },
+  );
 
   it("shows the supported policy acknowledgement flags", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});

@@ -42,7 +42,9 @@ vi.mock("../sandbox-base-image/source-identity", async (importOriginal) => ({
 }));
 
 import {
+  bindLocalAgentBaseImageToPinnedProvenance,
   createAgentSandbox,
+  ensureAgentBaseImage,
   pinTrustedAgentRemoteBaseImageOverrideForOperation,
 } from "./base-image";
 
@@ -143,6 +145,69 @@ describe("Hermes base-image resolver integration", () => {
     );
   });
 
+  it("reuses an explicit digest resolution only during its trusted rebuild lease (#9386)", () => {
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+    const exactInspection = new Map([
+      [`{{json .RepoDigests}}\0${trackedRef}`, JSON.stringify([trackedRef])],
+      [
+        `{{json .}}\0${trackedRef}`,
+        JSON.stringify({
+          Architecture: "arm64",
+          Id: imageId,
+          Os: "linux",
+          RepoDigests: [trackedRef],
+        }),
+      ],
+    ]);
+    dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
+      (exactInspection.get(`${format}\0${ref}`) ?? "").trim(),
+    );
+    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", trackedRef);
+
+    const outer = ensureAgentBaseImage(makeAgent());
+    const resolutionMetadata = outer.resolutionMetadata;
+    expect(resolutionMetadata).toMatchObject({ ref: trackedRef, source: "override" });
+    const restore = pinTrustedAgentRemoteBaseImageOverrideForOperation(
+      "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+      {
+        ref: trackedRef,
+        resolutionMetadata: resolutionMetadata as NonNullable<typeof resolutionMetadata>,
+      },
+    );
+
+    try {
+      const inner = ensureAgentBaseImage(makeAgent());
+      expect(inner.imageTag).toBe(trackedRef);
+      expect(inner.resolutionMetadata).toBe(resolutionMetadata);
+
+      const missingDigestInspection = new Map([
+        [
+          `{{json .}}\0${trackedRef}`,
+          JSON.stringify({
+            Architecture: "arm64",
+            Id: imageId,
+            Os: "linux",
+            RepoDigests: [],
+          }),
+        ],
+      ]);
+      dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
+        (missingDigestInspection.get(`${format}\0${ref}`) ?? "").trim(),
+      );
+      const sparse = ensureAgentBaseImage(makeAgent());
+      expect(sparse.imageTag).toBe(trackedRef);
+      expect(sparse.resolutionMetadata).toBe(resolutionMetadata);
+      expect(dockerMocks.pull).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+
+    const afterRestore = ensureAgentBaseImage(makeAgent());
+    expect(afterRestore.imageTag).toBe(trackedRef);
+    expect(afterRestore.resolutionMetadata).not.toBe(resolutionMetadata);
+    expect(afterRestore.resolutionMetadata).toMatchObject({ ref: trackedRef, source: "override" });
+  }, 30_000);
+
   it("reuses an outer resolver's pinned platform digest only during its rebuild lease (#7144)", () => {
     const outer = createAgentSandbox(makeAgent());
     createdBuildContexts.push(outer.buildCtx);
@@ -163,13 +228,62 @@ describe("Hermes base-image resolver integration", () => {
       expect(fs.readFileSync(inner.stagedDockerfile, "utf8")).toContain(
         `ARG BASE_IMAGE=${platformRef}`,
       );
-      expect(inner.baseImageResolutionMetadata).toEqual(resolutionMetadata);
+      expect(inner.baseImageResolutionMetadata).toBe(resolutionMetadata);
     } finally {
       restore();
     }
 
     expect(() => createAgentSandbox(makeAgent())).toThrow(
       `Hermes final image does not accept base image ref '${platformRef}'`,
+    );
+  }, 30_000);
+
+  it("uses a proven local Hermes base-image alias only to select its remote digest during a rebuild lease (#7144)", () => {
+    const localAlias = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+    const inspectStatusByRef = new Map([
+      [localAlias, 0],
+      [trackedRef, 0],
+      [platformRef, 0],
+    ]);
+    const inspectedImage = JSON.stringify({
+      Architecture: "arm64",
+      Id: imageId,
+      Os: "linux",
+      RepoDigests: [platformRef],
+    });
+    const inspectOutputByKey = new Map([
+      [`{{json .}}\0${localAlias}`, inspectedImage],
+      [`{{json .}}\0${trackedRef}`, inspectedImage],
+      [`{{json .}}\0${platformRef}`, inspectedImage],
+    ]);
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: inspectStatusByRef.get(ref) ?? 1,
+    }));
+    dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
+      (inspectOutputByKey.get(`${format}\0${ref}`) ?? "").trim(),
+    );
+    const agent = makeAgent();
+    const resolutionMetadata = bindLocalAgentBaseImageToPinnedProvenance(agent, localAlias);
+    expect(resolutionMetadata).toMatchObject({ ref: platformRef, source: "pinned" });
+    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", localAlias);
+    const restore = pinTrustedAgentRemoteBaseImageOverrideForOperation(
+      "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+      {
+        ref: localAlias,
+        resolutionMetadata: resolutionMetadata as NonNullable<typeof resolutionMetadata>,
+      },
+    );
+
+    try {
+      const inner = ensureAgentBaseImage(agent);
+      expect(inner.imageTag).toBe(platformRef);
+      expect(inner.resolutionMetadata).toBe(resolutionMetadata);
+    } finally {
+      restore();
+    }
+
+    expect(() => ensureAgentBaseImage(agent)).toThrow(
+      `Hermes Agent sandbox base image override '${localAlias}' is outside the trusted repository 'ghcr.io/nvidia/nemoclaw/hermes-sandbox-base'.`,
     );
   }, 30_000);
 });

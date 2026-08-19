@@ -12,7 +12,7 @@ import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundar
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 type E2eWorkflow = {
-  jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+  jobs: Record<string, { name?: string; steps: Array<Record<string, unknown>> }>;
 };
 
 function validateMutatedWorkflow(mutator: (workflow: E2eWorkflow) => void): string[] {
@@ -34,7 +34,15 @@ function liveStep(workflow: E2eWorkflow, name: string): Record<string, unknown> 
   return step!;
 }
 
-describe("e2e workflow live trace boundary", () => {
+describe("e2e workflow live job boundary", () => {
+  it("rejects a live job that hides the semantic matrix label (#9167)", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      workflow.jobs.live.name = "Live E2E";
+    });
+
+    expect(errors).toContain("live job name must expose the semantic matrix label");
+  });
+
   it.each([
     "Configure live E2E trace directory",
     "Build trusted live E2E timing summary",

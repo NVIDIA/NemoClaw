@@ -49,6 +49,14 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the optimized build-context source check", () => {
+    expect(CHECKS).toContainEqual({
+      name: "optimized-build-context-copy-sources",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
+    });
+  });
+
   it("runs Windows command shims through cmd.exe", () => {
     expect(
       buildCheckSpawnInvocation(sampleCheck, "win32", {

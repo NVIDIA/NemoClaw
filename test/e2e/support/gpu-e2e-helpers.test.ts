@@ -52,6 +52,17 @@ async function unusedLoopbackPort(): Promise<number> {
   return port;
 }
 
+function writeShellCommands(
+  bin: string,
+  commands: ReadonlyArray<readonly [command: string, body: string]>,
+): void {
+  for (const [command, body] of commands) {
+    const commandPath = path.join(bin, command);
+    writeFileSync(commandPath, `#!/bin/sh\n${body}`);
+    chmodSync(commandPath, 0o755);
+  }
+}
+
 interface AgentOutputOverrides {
   status?: string;
   summary?: string;
@@ -158,17 +169,13 @@ describe("GPU E2E helpers", () => {
       const bin = path.join(root, "bin");
       const calls = path.join(root, "calls.log");
       mkdirSync(bin);
-      for (const [command, body] of [
+      writeShellCommands(bin, [
         ["id", 'printf "1000\\n"\n'],
         ["sudo", 'printf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
         ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
         ["pkill", "exit 1\n"],
         ["pgrep", "exit 1\n"],
-      ] as const) {
-        const commandPath = path.join(bin, command);
-        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
-        chmodSync(commandPath, 0o755);
-      }
+      ]);
 
       execFileSync("bash", ["-c", ollamaCleanupScript(listenerPort)], {
         ...SYNC_E2E_CHILD_OPTIONS,
@@ -192,15 +199,11 @@ describe("GPU E2E helpers", () => {
     try {
       const bin = path.join(root, "bin");
       mkdirSync(bin);
-      for (const [command, body] of [
+      writeShellCommands(bin, [
         ["systemctl", "exit 1\n"],
         ["pkill", "exit 1\n"],
         ["pgrep", "exit 1\n"],
-      ] as const) {
-        const commandPath = path.join(bin, command);
-        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
-        chmodSync(commandPath, 0o755);
-      }
+      ]);
 
       expect(() =>
         execFileSync("bash", ["-c", ollamaCleanupScript(listenerPort)], {
@@ -274,7 +277,7 @@ describe("GPU E2E helpers", () => {
       const calls = path.join(root, "calls.log");
       const logPath = path.join(root, "ollama.log");
       mkdirSync(bin);
-      for (const [command, body] of [
+      writeShellCommands(bin, [
         ["id", 'printf "1000\\n"\n'],
         [
           "sudo",
@@ -283,11 +286,7 @@ describe("GPU E2E helpers", () => {
         ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
         ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
         ["curl", "exit 0\n"],
-      ] as const) {
-        const commandPath = path.join(bin, command);
-        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
-        chmodSync(commandPath, 0o755);
-      }
+      ]);
 
       expect(() =>
         execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
@@ -313,7 +312,7 @@ describe("GPU E2E helpers", () => {
       const calls = path.join(root, "calls.log");
       const logPath = path.join(root, "ollama.log");
       mkdirSync(bin);
-      for (const [command, body] of [
+      writeShellCommands(bin, [
         ["id", 'printf "1000\\n"\n'],
         [
           "sudo",
@@ -322,11 +321,7 @@ describe("GPU E2E helpers", () => {
         ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
         ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
         ["curl", "exit 1\n"],
-      ] as const) {
-        const commandPath = path.join(bin, command);
-        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
-        chmodSync(commandPath, 0o755);
-      }
+      ]);
 
       expect(() =>
         execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
@@ -352,7 +347,7 @@ describe("GPU E2E helpers", () => {
       const calls = path.join(root, "calls.log");
       const logPath = path.join(root, "ollama.log");
       mkdirSync(bin);
-      for (const [command, body] of [
+      writeShellCommands(bin, [
         ["id", 'printf "id %s\\n" "$*" >>"$FAKE_CALLS"\nprintf "1000\\n"\n'],
         ["sudo", 'printf "sudo %s\\n" "$*" >>"$FAKE_CALLS"\nexit 1\n'],
         [
@@ -361,11 +356,7 @@ describe("GPU E2E helpers", () => {
         ],
         ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
         ["curl", "exit 0\n"],
-      ] as const) {
-        const commandPath = path.join(bin, command);
-        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
-        chmodSync(commandPath, 0o755);
-      }
+      ]);
 
       expect(() =>
         execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
@@ -391,7 +382,7 @@ describe("GPU E2E helpers", () => {
       const calls = path.join(root, "calls.log");
       const logPath = path.join(root, "ollama.log");
       mkdirSync(bin);
-      for (const [command, body] of [
+      writeShellCommands(bin, [
         ["id", 'printf "1000\\n"\n'],
         ["sudo", "exit 1\n"],
         [
@@ -400,11 +391,7 @@ describe("GPU E2E helpers", () => {
         ],
         ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nexit 0\n'],
         ["curl", "exit 0\n"],
-      ] as const) {
-        const commandPath = path.join(bin, command);
-        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
-        chmodSync(commandPath, 0o755);
-      }
+      ]);
 
       const stdout = execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
         ...SYNC_E2E_CHILD_OPTIONS,
@@ -429,18 +416,14 @@ describe("GPU E2E helpers", () => {
       const logPath = path.join(root, "ollama.log");
       const readyPath = path.join(root, "ollama-ready");
       mkdirSync(bin);
-      for (const [command, body] of [
+      writeShellCommands(bin, [
         ["id", 'printf "1000\\n"\n'],
         ["sudo", "exit 1\n"],
         ["systemctl", 'printf "systemctl %s\\n" "$*" >>"$FAKE_CALLS"\nexit 1\n'],
         ["setsid", 'printf "setsid %s\\n" "$*" >>"$FAKE_CALLS"\nshift\nexec "$@"\n'],
         ["ollama", 'printf "ollama-executed %s\\n" "$*" >>"$FAKE_CALLS"\n: >"$FAKE_READY"\n'],
         ["curl", 'printf "curl-probe %s\\n" "$*" >>"$FAKE_CALLS"\ntest -f "$FAKE_READY"\n'],
-      ] as const) {
-        const commandPath = path.join(bin, command);
-        writeFileSync(commandPath, `#!/bin/sh\n${body}`);
-        chmodSync(commandPath, 0o755);
-      }
+      ]);
 
       const stdout = execFileSync("bash", ["-c", protectedOllamaStartScript(logPath)], {
         ...SYNC_E2E_CHILD_OPTIONS,
@@ -662,14 +645,14 @@ describe("GPU E2E helpers", () => {
     ).toThrow("execution trace must contain a successful assistant attempt");
   });
 
-  it.each(invalidExecutionProofs)("rejects invalid $name execution proof", ({
-    overrides,
-    message,
-  }) => {
-    expect(() =>
-      assertAgentExecutionSucceeded(agentOutput(overrides), "inference", GPU_MODEL),
-    ).toThrow(message);
-  });
+  it.each(invalidExecutionProofs)(
+    "rejects invalid $name execution proof",
+    ({ overrides, message }) => {
+      expect(() =>
+        assertAgentExecutionSucceeded(agentOutput(overrides), "inference", GPU_MODEL),
+      ).toThrow(message);
+    },
+  );
 
   it("projects only model evidence before OpenClaw config crosses the artifact boundary", () => {
     const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-gpu-config-"));

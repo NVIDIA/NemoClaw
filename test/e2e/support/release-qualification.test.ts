@@ -25,17 +25,14 @@ describe("release qualification", () => {
     ).toEqual([]);
   });
 
-  it("accepts recorded failures only for planner-waived E2E jobs", () => {
+  it("rejects a failure in any release-required E2E job", () => {
     const needs = {
       ...successfulNeeds,
       "staging-brev-launchable": { result: "failure" },
     };
 
     expect(() =>
-      assertReleaseQualification(JSON.stringify(needs), '["live"]', '["staging-brev-launchable"]'),
-    ).not.toThrow();
-    expect(() =>
-      assertReleaseQualification(JSON.stringify(needs), '["live","staging-brev-launchable"]', "[]"),
+      assertReleaseQualification(JSON.stringify(needs), '["live","staging-brev-launchable"]'),
     ).toThrow("Release qualification did not pass: staging-brev-launchable");
   });
 
@@ -69,47 +66,6 @@ describe("release qualification", () => {
       assertReleaseQualification(JSON.stringify(successfulNeeds), '["live","bad job"]'),
     ).toThrow("Invalid release-required job IDs: bad job");
   });
-
-  it("rejects controller, overlapping, duplicate, and missing waiver evidence", () => {
-    expect(() =>
-      assertReleaseQualification(
-        JSON.stringify(successfulNeeds),
-        '["live"]',
-        '["generate-matrix"]',
-      ),
-    ).toThrow("Release controller jobs cannot be waived: generate-matrix");
-    expect(() =>
-      assertReleaseQualification(JSON.stringify(successfulNeeds), '["live"]', '["live"]'),
-    ).toThrow("Waived jobs remain release-required: live");
-    expect(() =>
-      assertReleaseQualification(
-        JSON.stringify(successfulNeeds),
-        '["live"]',
-        '["staging-brev-launchable","staging-brev-launchable"]',
-      ),
-    ).toThrow("Release qualification waived jobs must not contain duplicates");
-    expect(() =>
-      assertReleaseQualification(JSON.stringify(successfulNeeds), '["live"]', '["hermes-e2e"]'),
-    ).toThrow("Waived jobs must finish with success or failure: hermes-e2e");
-  });
-
-  it.each(["cancelled", "skipped"])(
-    "rejects a %s waived job because the execution did not complete",
-    (result) => {
-      const needs = {
-        ...successfulNeeds,
-        "staging-brev-launchable": { result },
-      };
-
-      expect(() =>
-        assertReleaseQualification(
-          JSON.stringify(needs),
-          '["live"]',
-          '["staging-brev-launchable"]',
-        ),
-      ).toThrow("Waived jobs must finish with success or failure: staging-brev-launchable");
-    },
-  );
 
   it("exits with status 1 when a required job fails (#7912)", () => {
     const result = spawnSync(

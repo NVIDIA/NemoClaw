@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  e2eExecutionTitle,
+  type E2eExecutionMetadata,
+  validateE2eExecutionMetadata,
+} from "../../../tools/e2e/execution-coverage.mts";
 import type { TargetDefinition } from "./types.ts";
 
 const SUPPORTED_PLATFORMS = new Set(["ubuntu-local"]);
@@ -11,6 +16,7 @@ const SUPPORTED_ONBOARDING = new Set([
   "cloud-openclaw-policy-custom-missing-presets",
   "cloud-langchain-deepagents-code",
 ]);
+const SUPPORTED_POLICY_TIERS = new Set(["balanced", "open", "personal"]);
 // Lifecycle profiles wired into the live Vitest driver. A profile is
 // supported only after both (a) `LifecyclePhaseFixture.simulate(profile)`
 // dispatches it, and (b) at least one expected-state declares the post-
@@ -22,17 +28,6 @@ export interface LiveTargetSupport {
   supported: boolean;
   reasons: string[];
   pendingRuntimeSuites: string[];
-}
-
-/**
- * Canonical name under which a target is registered with Vitest in the
- * live registry-targets test file. The workflow filters by exact ID via
- * `-t "^${TARGET_ID}$"`, so both supported and unsupported targets MUST
- * be registered under this exact name. Skip reasons are surfaced via the
- * job log instead of the test name suffix.
- */
-export function liveTargetTestName(target: TargetDefinition): string {
-  return target.id;
 }
 
 export function liveTargetSupport(target: TargetDefinition): LiveTargetSupport {
@@ -53,6 +48,9 @@ export function liveTargetSupport(target: TargetDefinition): LiveTargetSupport {
     if (!SUPPORTED_ONBOARDING.has(environment.onboarding)) {
       reasons.push(`onboarding '${environment.onboarding}' is not wired for live fixtures`);
     }
+    if (environment.policyTier && !SUPPORTED_POLICY_TIERS.has(environment.policyTier)) {
+      reasons.push(`policyTier '${environment.policyTier}' is not wired for live fixtures`);
+    }
     if (environment.lifecycle && !SUPPORTED_LIFECYCLES.has(environment.lifecycle)) {
       reasons.push(`lifecycle '${environment.lifecycle}' is not wired for live fixtures`);
     }
@@ -66,4 +64,35 @@ export function liveTargetSupport(target: TargetDefinition): LiveTargetSupport {
     reasons,
     pendingRuntimeSuites: target.suiteIds ?? [],
   };
+}
+
+export function liveTargetExecutionCoverage(
+  target: TargetDefinition,
+  support = liveTargetSupport(target),
+): E2eExecutionMetadata {
+  if (support.supported && !target.executionCoverage) {
+    throw new Error(
+      `Executable typed E2E target ${target.id} requires execution coverage metadata`,
+    );
+  }
+  return validateE2eExecutionMetadata(
+    target.executionCoverage ?? {
+      agentRuntime: "unresolved",
+      observableOutcome: "unresolved",
+      environmentOrInferenceEndpoint: "unresolved",
+      unresolvedReason: "This typed registry declaration has no executable owner",
+    },
+    `Typed E2E target ${target.id}`,
+  );
+}
+
+/**
+ * The stable target ID remains the workflow selector. The semantic tuple
+ * supplies the human-visible Vitest title without changing target identity.
+ */
+export function liveTargetTestTitle(
+  target: TargetDefinition,
+  support = liveTargetSupport(target),
+): string {
+  return `${target.id}: ${e2eExecutionTitle(liveTargetExecutionCoverage(target, support))}`;
 }

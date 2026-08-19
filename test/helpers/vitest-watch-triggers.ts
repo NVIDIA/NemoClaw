@@ -12,7 +12,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
   "test/e2e/support/e2e-operations-workflow-boundary.test.ts",
   "test/e2e/support/e2e-report-to-pr-workflow-boundary.test.ts",
-  "test/e2e/support/e2e-workflow.test.ts",
   "test/e2e/support/e2e-workflow-trace.test.ts",
   "test/e2e/support/hermes-dashboard-workflow-boundary.test.ts",
   "test/e2e/support/hermes-workflow-boundary.test.ts",
@@ -54,8 +53,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
-    testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
+    pattern: /(?:^|\/)(agents\/(?:hermes|langchain-deepagents-code)\/)?Dockerfile$/,
+    testsToRun: (_file, match) =>
+      match[1]
+        ? ["src/lib/onboard/managed-startup-profile.test.ts"]
+        : [
+            "src/lib/onboard/managed-startup-profile.test.ts",
+            "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+          ],
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,
@@ -178,6 +183,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,
     testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/post-merge-docs\.yaml|tools\/post-merge-docs\/(?:review-policy\.yaml|[^/]+\.mts))$/,
+    testsToRun: runTests("test/post-merge-docs.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,

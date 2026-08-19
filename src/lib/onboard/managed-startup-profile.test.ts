@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { HERMES_API_PORT_RANGE_END, HERMES_API_PORT_RANGE_START } from "../core/ports";
+import { listMessagingCredentialEnvAssignments } from "../messaging/channels/metadata.ts";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
@@ -28,6 +29,9 @@ import {
 } from "./managed-startup/profile";
 
 const CA_SHA256 = "a".repeat(64);
+const HERMES_RESERVED_API_PORTS = [
+  8_642, 8_643, 8_644, 8_645, 8_646, 8_647, 8_648, 8_649, 8_650, 8_651, 8_652, 18_642,
+];
 
 const MESSAGING_PLAN = {
   schemaVersion: 1,
@@ -347,17 +351,18 @@ const STOCK_RUNTIME_INPUT_AGENTS = {
 } as const satisfies Record<string, readonly ManagedStartupAgent[]>;
 
 describe("managed startup profile", () => {
-  it.each(
-    VALID_PROFILES,
-  )("round-trips each $agent profile through canonical encoding", (profile) => {
-    const validated = validateManagedStartupProfile(profile);
-    const encoded = encodeManagedStartupProfile(profile);
+  it.each(VALID_PROFILES)(
+    "round-trips each $agent profile through canonical encoding",
+    (profile) => {
+      const validated = validateManagedStartupProfile(profile);
+      const encoded = encodeManagedStartupProfile(profile);
 
-    const decoded = decodeManagedStartupProfile(encoded);
-    expect(decoded).toEqual(validated);
-    expect(decoded.inference.model).toBe(profile.inference.model);
-    expect(fingerprintManagedStartupProfile(profile)).toMatch(/^[a-f0-9]{64}$/);
-  });
+      const decoded = decodeManagedStartupProfile(encoded);
+      expect(decoded).toEqual(validated);
+      expect(decoded.inference.model).toBe(profile.inference.model);
+      expect(fingerprintManagedStartupProfile(profile)).toMatch(/^[a-f0-9]{64}$/);
+    },
+  );
 
   it("round-trips all OpenClaw-only startup settings", () => {
     const profile = decodeManagedStartupProfile(encodeManagedStartupProfile(OPENCLAW_PROFILE));
@@ -507,34 +512,36 @@ describe("managed startup profile", () => {
     ).toThrow(/not supported/);
   });
 
-  it("records generic cross-agent emissions as cleanup obligations, not supported semantics", () => {
-    expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS).toHaveLength(2);
-    for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
+  it.each(Array.from(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS, (value) => [value]))(
+    "records $input cross-agent emissions as cleanup obligations, not supported semantics",
+    (obligation) => {
+      expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS).toHaveLength(2);
+
       const supportedAgents =
         STOCK_RUNTIME_INPUT_AGENTS[obligation.input as keyof typeof STOCK_RUNTIME_INPUT_AGENTS];
       expect(obligation.owner).toBe("application-environment");
-      for (const agent of obligation.emittedFor) {
+      obligation.emittedFor.forEach((agent) => {
         expect(supportedAgents).not.toContain(agent);
         expect(
           MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
         ).not.toContain(obligation.input);
-      }
-      for (const agent of obligation.supportedFor) {
-        expect(supportedAgents).toContain(agent);
-      }
-    }
-  });
+      });
+      expect(obligation.supportedFor.every((agent) =>
+          supportedAgents.some((supportedAgent) => supportedAgent === agent))).toBe(true);
+    },
+  );
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("keeps deferred %s runtime inputs separate from typed profile intent", (agent) => {
-    const deferredInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent];
-    const profileInputs = new Set(
-      MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
-    );
-    expect(deferredInputs.filter(({ input }) => profileInputs.has(input))).toEqual([]);
-    expect(new Set(deferredInputs.map(({ input }) => input)).size).toBe(deferredInputs.length);
-  });
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "keeps deferred %s runtime inputs separate from typed profile intent",
+    (agent) => {
+      const deferredInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent];
+      const profileInputs = new Set(
+        MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
+      );
+      expect(deferredInputs.filter(({ input }) => profileInputs.has(input))).toEqual([]);
+      expect(new Set(deferredInputs.map(({ input }) => input)).size).toBe(deferredInputs.length);
+    },
+  );
 
   it.each(MANAGED_STARTUP_AGENTS)("keeps the %s affordance inventory unambiguous", (agent) => {
     const inventory = MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent];
@@ -551,19 +558,20 @@ describe("managed startup profile", () => {
     });
   });
 
-  it.each(
-    VALID_PROFILES,
-  )("maps every $agent inventory entry to an explicit profile field", (profile) => {
-    for (const { profilePath } of MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent]) {
-      let current: unknown = profile;
-      for (const segment of profilePath.split(".")) {
+  it.each(VALID_PROFILES)(
+    "maps every $agent inventory entry to an explicit profile field",
+    (profile) => {
+      MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent].forEach(({ profilePath }) => {
+        let current: unknown = profile;
+      profilePath.split(".").forEach((segment) => {
         expect(current).not.toBeNull();
         expect(typeof current).toBe("object");
         expect(Object.hasOwn(current as object, segment)).toBe(true);
         current = (current as Record<string, unknown>)[segment];
-      }
-    }
-  });
+      });
+      });
+    },
+  );
 
   it("rejects non-canonical transports instead of accepting ambiguous fingerprints", () => {
     const raw = JSON.stringify(OPENCLAW_PROFILE);
@@ -676,21 +684,20 @@ describe("managed startup profile", () => {
     ).toThrow(/credential-shaped/);
   });
 
-  it.each([
-    "publicKey",
-    "public_key",
-    "public-key",
-  ])("does not classify exact %s metadata as credential material", (field) => {
-    expect(
-      validateManagedStartupProfile({
-        ...OPENCLAW_PROFILE,
-        inference: {
-          ...OPENCLAW_PROFILE.inference,
-          compatibility: { [field]: "non-secret metadata" },
-        },
-      }).inference.compatibility,
-    ).toEqual({ [field]: "non-secret metadata" });
-  });
+  it.each(["publicKey", "public_key", "public-key"])(
+    "does not classify exact %s metadata as credential material",
+    (field) => {
+      expect(
+        validateManagedStartupProfile({
+          ...OPENCLAW_PROFILE,
+          inference: {
+            ...OPENCLAW_PROFILE.inference,
+            compatibility: { [field]: "non-secret metadata" },
+          },
+        }).inference.compatibility,
+      ).toEqual({ [field]: "non-secret metadata" });
+    },
+  );
 
   it("rejects raw credentials nested inside an otherwise opaque messaging plan", () => {
     expect(() =>
@@ -723,6 +730,132 @@ describe("managed startup profile", () => {
         },
       }),
     ).toThrow(/credential-shaped field name/);
+  });
+
+  it("accepts schema-owned messaging pins, placeholders, and credential environment aliases (#9355)", () => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...HERMES_PROFILE,
+        messaging: {
+          plan: {
+            ...HERMES_PROFILE.messaging.plan,
+            buildSteps: [
+              {
+                channelId: "slack",
+                kind: "package-install",
+                outputId: "slack-openclaw-plugin",
+                required: true,
+                value: {
+                  manager: "npm",
+                  spec: "@slack/web-api@7.9.3",
+                  pin: true,
+                },
+              },
+            ],
+            agentRender: [
+              {
+                channelId: "slack",
+                agent: "hermes",
+                target: "~/.hermes/.env",
+                kind: "env-lines",
+                lines: [
+                  "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                  "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+                  "TELEGRAM_BOT_TOKEN=openshell:resolve:env:v1_TELEGRAM_BOT_TOKEN",
+                  ...listMessagingCredentialEnvAssignments({ agent: "hermes" })
+                    .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+                    .map(({ targetEnvKey, placeholder }) => `${targetEnvKey}=${placeholder}`),
+                ],
+                templateRefs: ["credential.slackBotToken.placeholder"],
+              },
+            ],
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ...listMessagingCredentialEnvAssignments({ agent: "hermes" })
+      .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+      .map(({ targetEnvKey, placeholder }) => [
+        "a cross-agent credential environment alias",
+        `${targetEnvKey}=${placeholder}`,
+      ] as const),
+    ["a raw credential", `SLACK_BOT_TOKEN=xoxb-${"a".repeat(32)}`],
+    ["a malformed assignment", "SLACK_BOT_TOKEN =openshell:resolve:env:SLACK_BOT_TOKEN"],
+    ["more than one assignment", "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN=FORGED"],
+    [
+      "a placeholder assigned to a non-credential environment key",
+      "CHANNEL_NAME=openshell:resolve:env:SLACK_BOT_TOKEN",
+    ],
+    [
+      "a placeholder with a noncanonical provider environment key",
+      "SLACK_BOT_TOKEN=openshell:resolve:env:slack_bot_token",
+    ],
+    [
+      "a placeholder assigned to an unapproved credential environment key",
+      "AWS_SECRET_ACCESS_KEY=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+    ],
+  ] as const)("rejects %s in messaging environment lines (#9355)", (_label, line) => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        messaging: {
+          plan: {
+            ...OPENCLAW_PROFILE.messaging.plan,
+            agentRender: [
+              {
+                channelId: "slack",
+                agent: "openclaw",
+                target: "~/.hermes/.env",
+                kind: "env-lines",
+                lines: [line],
+                templateRefs: ["credential.slackBotToken.placeholder"],
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow(/credential-shaped string data/);
+  });
+
+  it.each([
+    [
+      "a package pin outside buildSteps[*].value",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        buildSteps: [{ pin: true }],
+      },
+    ],
+    [
+      "a non-boolean package pin",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        buildSteps: [{ value: { pin: "true" } }],
+      },
+    ],
+    [
+      "a credential placeholder assignment outside agentRender[*].lines[*]",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        note: "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+    ],
+    [
+      "a direct credential placeholder outside schema-owned fields",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        note: "openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+    ],
+  ])("rejects %s (#9355)", (_label, plan) => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...OPENCLAW_PROFILE,
+        messaging: { plan },
+      }),
+    ).toThrow(/credential-shaped/);
   });
 
   it.each([
@@ -763,40 +896,39 @@ describe("managed startup profile", () => {
     );
   });
 
-  it.each([
-    "token",
-    "api_key",
-  ])("rejects credential-shaped query parameter %s in an opaque URL", (credentialField) => {
-    expect(() =>
-      validateManagedStartupProfile({
-        ...OPENCLAW_PROFILE,
-        inference: {
-          ...OPENCLAW_PROFILE.inference,
-          compatibility: {
-            note: `https://example.test/hook?${credentialField}=opaque-secret`,
+  it.each(["token", "api_key"])(
+    "rejects credential-shaped query parameter %s in an opaque URL",
+    (credentialField) => {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...OPENCLAW_PROFILE,
+          inference: {
+            ...OPENCLAW_PROFILE.inference,
+            compatibility: {
+              note: `https://example.test/hook?${credentialField}=opaque-secret`,
+            },
           },
-        },
-      }),
-    ).toThrow(/URL with embedded credentials/);
-  });
+        }),
+      ).toThrow(/URL with embedded credentials/);
+    },
+  );
 
-  it.each([
-    "#access_token=opaque-secret",
-    "#token=opaque-secret",
-    "#/route?api_key=opaque-secret",
-  ])("rejects credential-shaped parameters in an opaque URL fragment", (fragment) => {
-    expect(() =>
-      validateManagedStartupProfile({
-        ...OPENCLAW_PROFILE,
-        inference: {
-          ...OPENCLAW_PROFILE.inference,
-          compatibility: {
-            note: `https://example.test/callback${fragment}`,
+  it.each(["#access_token=opaque-secret", "#token=opaque-secret", "#/route?api_key=opaque-secret"])(
+    "rejects credential-shaped parameters in an opaque URL fragment",
+    (fragment) => {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...OPENCLAW_PROFILE,
+          inference: {
+            ...OPENCLAW_PROFILE.inference,
+            compatibility: {
+              note: `https://example.test/callback${fragment}`,
+            },
           },
-        },
-      }),
-    ).toThrow(/URL with embedded credentials/);
-  });
+        }),
+      ).toThrow(/URL with embedded credentials/);
+    },
+  );
 
   it("accepts an HTTP CONNECT origin for host HTTPS proxy intent", () => {
     expect(validateManagedStartupProfile(OPENCLAW_PROFILE).proxy.hostHttpsUrl).toBe(
@@ -1023,29 +1155,30 @@ describe("managed startup profile", () => {
     ).toThrow(/reserved API ports 8642-8652 or 18642/);
   });
 
-  it("reserves exactly the Hermes API port range the port module declares", () => {
-    for (let port = HERMES_API_PORT_RANGE_START; port <= HERMES_API_PORT_RANGE_END; port += 1) {
+  it.each(HERMES_RESERVED_API_PORTS)("rejects reserved Hermes API port %s", (port) => {
       expect(() =>
         validateManagedStartupProfile({
           ...HERMES_PROFILE,
           dashboard: { ...HERMES_PROFILE.dashboard, publicPort: port },
         }),
       ).toThrow(/reserved API ports/);
-    }
-
-    for (const port of [HERMES_API_PORT_RANGE_START - 1, HERMES_API_PORT_RANGE_END + 1]) {
-      expect(() =>
-        validateManagedStartupProfile({
-          ...HERMES_PROFILE,
-          dashboard: {
-            ...HERMES_PROFILE.dashboard,
-            url: `http://127.0.0.1:${port}`,
-            publicPort: port,
-          },
-        }),
-      ).not.toThrow();
-    }
   });
+
+  it.each([HERMES_API_PORT_RANGE_START - 1, HERMES_API_PORT_RANGE_END + 1])(
+    "accepts dashboard port %s outside the reserved Hermes API port range",
+    (port) => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...HERMES_PROFILE,
+        dashboard: {
+          ...HERMES_PROFILE.dashboard,
+          url: `http://127.0.0.1:${port}`,
+          publicPort: port,
+        },
+      }),
+    ).not.toThrow();
+    },
+  );
 
   it.each([
     "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
