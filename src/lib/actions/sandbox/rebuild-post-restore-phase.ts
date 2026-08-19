@@ -465,6 +465,10 @@ export async function runRebuildPostRestorePhase(
     bail(`Rebuild completed with unverified live policy reconciliation for '${sandboxName}'.`);
     return;
   }
+  if (targetAgentName === "openclaw" && mutableConfigHashRefreshUnverified) {
+    bail("OpenClaw config integrity verification failed after rebuild.");
+    return;
+  }
   if (
     targetAgentName === "hermes" &&
     (hermesGatewayRestoreUnverified || mcpBridgeRestoreUnverified)
