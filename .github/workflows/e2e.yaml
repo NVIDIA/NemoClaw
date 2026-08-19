@@ -2570,6 +2570,7 @@ jobs:
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
 
   live:
+    name: ${{ matrix.label }}
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
@@ -2683,7 +2684,7 @@ jobs:
           TARGET_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/registry-targets.test.ts --selector "^${TARGET_ID}$"
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/registry-targets.test.ts --selector "^${TARGET_ID}:"
 
       # The sanitizer reads raw traces only after checking the workflow-owned
       # runner-temp path, then writes the timing-only file into upload roots.
