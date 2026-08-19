@@ -152,6 +152,7 @@ export interface DockerStateMutationHarnessState {
   pidMode: string;
   privileged: boolean;
   overlayProc: boolean;
+  supervisorStopped: boolean;
 }
 
 function createContainerStateMutationHarness(
@@ -174,8 +175,10 @@ function createContainerStateMutationHarness(
     pidMode: "",
     privileged: false,
     overlayProc: false,
+    supervisorStopped: false,
   };
   const helperActions: string[] = [];
+  const supervisorSignals: string[] = [];
   const acquireRequests: string[] = [];
   let acquireDeferralsRemaining = options.deferAcquireOnce ? 1 : 0;
   let lostAcquireResponsesRemaining = options.loseAcquireResponseOnce ? 1 : 0;
@@ -274,6 +277,20 @@ function createContainerStateMutationHarness(
         stderr: "",
       };
     }
+    if (command[0] === "container" && command[1] === "kill") {
+      if (
+        command.length !== 5 ||
+        command[2] !== "--signal" ||
+        !["SIGSTOP", "SIGCONT"].includes(command[3] ?? "") ||
+        command[4] !== DOCKER_STATE_MUTATION_RUNTIME_ID
+      ) {
+        return { status: 1, stdout: "", stderr: "unauthorized supervisor command" };
+      }
+      const requestedSignal = command[3] as "SIGSTOP" | "SIGCONT";
+      supervisorSignals.push(requestedSignal);
+      state.supervisorStopped = requestedSignal === "SIGSTOP";
+      return { status: 0, stdout: `${DOCKER_STATE_MUTATION_RUNTIME_ID}\n`, stderr: "" };
+    }
     if (command[0] !== "container" || command[1] !== "exec") {
       return { status: 1, stdout: "", stderr: "unexpected command" };
     }
@@ -282,6 +299,9 @@ function createContainerStateMutationHarness(
     const serializedRequest = input?.toString("utf8") ?? "null";
     const request = JSON.parse(serializedRequest) as Record<string, unknown>;
     if (action === "acquire") {
+      if (!state.supervisorStopped) {
+        return { status: 1, stdout: "", stderr: "supervisor-not-host-stopped" };
+      }
       acquireRequests.push(serializedRequest);
       if (options.failAcquire) {
         return { status: 1, stdout: "", stderr: "helper marker unavailable" };
@@ -447,6 +467,7 @@ function createContainerStateMutationHarness(
     context,
     engineAuthorityStore,
     helperActions,
+    supervisorSignals,
     lifecycleStore,
     lifecycleGeneration,
     owner,

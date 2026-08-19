@@ -265,6 +265,7 @@ describe("Docker state mutation owner", () => {
       "activate",
       "release",
     ]);
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP", "SIGCONT"]);
     expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
     const helperCalls = runtime.capture.mock.calls.filter(([, args]) =>
       args.includes("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"),
@@ -534,6 +535,46 @@ describe("Docker state mutation owner", () => {
     expect(runtime.lifecycleStore.listUnfinished()[0]?.phase).toBe("fence-established");
   });
 
+  it("host-stops the exact managed Hermes durable-volume runtime before helper acquire (#9485)", () => {
+    const runtime = harness({ stateMountType: "volume" });
+
+    const acquired = runtime.owner.acquire({ ...runtime.context, plan: plan() });
+
+    expect(acquired.providerHandle).toMatch(/^docker-state-mutation-v1:/u);
+    expect(runtime.state).toMatchObject({
+      mountDriver: "local",
+      mountName: "nemoclaw-hermes-alpha-state",
+      mountType: "volume",
+      supervisorStopped: true,
+    });
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP"]);
+    const commands = runtime.capture.mock.calls.map(([, args]) => {
+      const start = args.findIndex((value) => value === "container");
+      return start < 0 ? [] : args.slice(start);
+    });
+    const stop = commands.findIndex((args) => args[1] === "kill");
+    const acquire = commands.findIndex(
+      (args) =>
+        args[1] === "exec" &&
+        args.at(-2) === "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py" &&
+        args.at(-1) === "acquire",
+    );
+    expect(commands[stop]).toEqual(["container", "kill", "--signal", "SIGSTOP", RUNTIME_ID]);
+    expect(runtime.capture.mock.calls.find(([, args]) => args[5] === "kill")?.[1]).toEqual([
+      "--config",
+      "/tmp/nemoclaw-docker",
+      "--host",
+      "unix:///tmp/nemoclaw-docker.sock",
+      "container",
+      "kill",
+      "--signal",
+      "SIGSTOP",
+      RUNTIME_ID,
+    ]);
+    expect(stop).toBeGreaterThanOrEqual(0);
+    expect(acquire).toBeGreaterThan(stop);
+  });
+
   it("recovers a durable-volume fence when acquire succeeds after its response is lost (#9485)", () => {
     const runtime = harness({ loseAcquireResponseOnce: true, stateMountType: "volume" });
     expect(runtime.state).toMatchObject({
@@ -551,6 +592,8 @@ describe("Docker state mutation owner", () => {
 
     expect(recovered?.providerHandle).toMatch(/^docker-state-mutation-v1:/u);
     expect(runtime.helperActions).toEqual(["acquire", "acquire"]);
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP", "SIGSTOP"]);
+    expect(runtime.state.supervisorStopped).toBe(true);
     expect(runtime.acquireRequests[1]).toBe(runtime.acquireRequests[0]);
     expect(runtime.lifecycleStore.listUnfinished()[0]?.phase).toBe("fence-established");
   });
