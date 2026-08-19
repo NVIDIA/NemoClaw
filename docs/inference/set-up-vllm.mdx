@@ -135,7 +135,10 @@ Legacy sessions that predate profile provenance still resume with their original
 In an interactive run, the managed path lists the supported model registry for your host profile.
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
-The single-host path pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, and starts the `nemoclaw-vllm` container on `localhost:<port>` (`8000` by default).
+The single-host path pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, and starts the `nemoclaw-vllm` container with the configured host port (`8000` by default).
+For a bearer-protected profile, Docker publishes that port only on `127.0.0.1` and the exact private IPv4 gateway of the `openshell-docker` bridge.
+For a bearerless profile, Docker publishes the host port on all host interfaces and vLLM does not require NemoClaw's managed bearer key.
+Before starting a bearerless profile, configure the host firewall to allow the port only from the OpenShell Docker subnet and loopback, and deny it on management, LAN, and internet-facing interfaces.
 The distributed DGX pages document their separate container names, endpoints, and lifecycle checks.
 The container carries NemoClaw ownership and immutable catalog labels so later onboarding, recovery, and uninstall runs can distinguish it from a bring-your-own server without trusting the container name alone.
 NemoClaw also records an owner-only, credential-free runtime receipt that binds those labels to the exact container ID and API-key fingerprint.

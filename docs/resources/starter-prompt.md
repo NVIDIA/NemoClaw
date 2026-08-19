@@ -92,13 +92,13 @@ If the readiness check confirms N1x, do not show the generic provider menu.
 Offer only the Deferred managed-vLLM preview with `NEMOCLAW_PROVIDER=install-vllm`.
 Explain that N1x remains outside the supported-platform set pending complete physical NemoClaw Express E2E validation, accepting this path is explicit preview intent, and the preview uses one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 Do not offer or reuse an existing vLLM server on N1x.
-If port `8000` is occupied, stop and ask the user to stop that server before trying the Deferred preview again.
+If the configured vLLM port, `${NEMOCLAW_VLLM_PORT:-8000}`, is occupied, stop and ask the user to stop that server before trying the Deferred preview again.
 If the user declines the preview, stop before installation.
 
 For a computer other than N1x, if no platform asset applies or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
 Choices:
 
-1. Existing vLLM, only when the computer is not N1x and a ready server is detected on `localhost:8000`.
+1. Existing vLLM, only when the computer is not N1x and a ready server is detected on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`.
 2. Managed vLLM, optimized local inference with a large download.
 3. Local Ollama, only when the selected agent and platform support it.
 4. NVIDIA Endpoints, which requires an NVIDIA API key.

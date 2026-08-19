@@ -81,7 +81,7 @@ Before you start, confirm these prerequisites:
 
 - Use a DGX Spark host with Linux on Arm64.
 - Confirm that Docker, the NVIDIA Container Toolkit, and the NVIDIA GPU driver are operational.
-- Stop any server that already uses port `8000`.
+- Stop any server that already uses the configured host port, `${NEMOCLAW_VLLM_PORT:-8000}`.
 - Allow capacity for container images, model artifacts, and same-filesystem download staging.
 - Export `HF_TOKEN` only if the configured artifact source requires Hugging Face authentication.
 
@@ -141,17 +141,18 @@ The `healthy` state means the route served one inference request; it does not es
 Verify the bounded host publication:
 
 ```bash
-VLLM_PORT="${NEMOCLAW_VLLM_PORT:-8000}"
+VLLM_HOST_PORT="${NEMOCLAW_VLLM_PORT:-8000}"
 docker network inspect \
   --format '{{json .IPAM.Config}}' \
   openshell-docker
 docker container inspect \
-  --format "{{json (index .NetworkSettings.Ports \"${VLLM_PORT}/tcp\")}}" \
+  --format '{{json (index .NetworkSettings.Ports "8000/tcp")}}' \
   nemoclaw-vllm
 ```
 
 The bridge result must contain exactly one private IPv4 `Gateway` value.
-The container result must contain exactly two bindings with `HostPort` set to `${NEMOCLAW_VLLM_PORT:-8000}`: one `HostIp` value of `127.0.0.1` and one that exactly matches the private bridge gateway.
+Docker indexes these bindings under the recipe-owned container port, `8000/tcp`, even when `VLLM_HOST_PORT` selects another host port.
+The container result must contain exactly two bindings with `HostPort` equal to `VLLM_HOST_PORT`: one `HostIp` value of `127.0.0.1` and one that exactly matches the private bridge gateway.
 Reject the runtime if a binding uses `0.0.0.0`, `::`, an empty address, another host address, or an additional entry.
 
 If installation stops after a model download, rerun the same installer command.
