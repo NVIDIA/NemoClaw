@@ -6,7 +6,7 @@ import path from "node:path";
 
 import YAML from "yaml";
 
-import type { Job, Step, Workflow } from "./managed-image-publication-workflow-types";
+import type { Action, Job, Step, Workflow } from "./managed-image-publication-workflow-types";
 
 export const repoRoot = path.resolve(import.meta.dirname, "../..");
 
@@ -14,6 +14,12 @@ export function readWorkflow(file: string): Workflow {
   return YAML.parse(
     fs.readFileSync(path.join(repoRoot, ".github", "workflows", file), "utf8"),
   ) as Workflow;
+}
+
+export function readAction(directory: string): Action {
+  return YAML.parse(
+    fs.readFileSync(path.join(repoRoot, ".github", "actions", directory, "action.yaml"), "utf8"),
+  ) as Action;
 }
 
 export function required<T>(value: T | undefined, message: string): T {

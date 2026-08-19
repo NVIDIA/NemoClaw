@@ -22,6 +22,7 @@ import { publicationBoundaryErrors } from "./helpers/managed-image-publication-w
 import {
   managedPromoter,
   managedPublisher,
+  readAction,
   readWorkflow,
   repoRoot,
   required,
@@ -250,6 +251,11 @@ describe("complete managed-image publication workflow", () => {
         "amd64-digest": "${{ steps.platform.outputs.amd64-digest }}",
         "arm64-digest": "${{ steps.platform.outputs.arm64-digest }}",
       });
+      const platformLanes = nativePlatforms.strategy?.matrix?.include ?? [];
+      expect(platformLanes.map(({ arch }) => `${arch}-digest`).sort()).toEqual(
+        Object.keys(nativePlatforms.outputs ?? {}).sort(),
+      );
+      expect(new Set(Object.values(nativePlatforms.outputs ?? {})).size).toBe(platformLanes.length);
       expect(nativePlatforms.strategy?.matrix?.include).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -266,6 +272,18 @@ describe("complete managed-image publication workflow", () => {
       );
     },
   );
+
+  it("exports one unique base digest output for every native matrix lane (#9529)", () => {
+    const action = readAction("build-base-image-platform");
+    expect(action.outputs).toMatchObject({
+      "amd64-digest": { value: "${{ steps.job-output.outputs.amd64_digest }}" },
+      "arm64-digest": { value: "${{ steps.job-output.outputs.arm64_digest }}" },
+    });
+    expect(new Set(Object.values(action.outputs ?? {}).map(({ value }) => value)).size).toBe(2);
+
+    const exportDigest = step({ steps: action.runs?.steps }, "Export platform digest");
+    expect(exportDigest.run).toContain('printf \'%s_digest=%s\\n\' "$ARCH" "$DIGEST"');
+  });
 
   it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
@@ -1071,12 +1089,27 @@ fi
 
     expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
     expect(publisher.needs).toBe("publication-identity");
-    expect(publisher.outputs?.["openclaw-linux-amd64"]).toBe(
-      "${{ steps.candidate-output.outputs.openclaw_linux_amd64 }}",
+    const candidateOutputs = Object.fromEntries(
+      (publisher.strategy?.matrix?.include ?? []).flatMap(({ agent, artifact_platform }) => {
+        const requiredAgent = required(agent, "managed image lane is missing its agent");
+        const requiredPlatform = required(
+          artifact_platform,
+          "managed image lane is missing its artifact platform",
+        );
+        const lane = `${requiredAgent === "langchain-deepagents-code" ? "dcode" : requiredAgent}-${requiredPlatform}`;
+        const stepOutput = `${requiredAgent}_${requiredPlatform}`.replaceAll("-", "_");
+        return [
+          [lane, `\${{ steps.candidate-output.outputs.${stepOutput} }}`],
+          [`${lane}-attempt`, `\${{ steps.candidate-output.outputs.${stepOutput}_attempt }}`],
+        ];
+      }),
     );
-    expect(publisher.outputs?.["openclaw-linux-amd64-attempt"]).toBe(
-      "${{ steps.candidate-output.outputs.openclaw_linux_amd64_attempt }}",
-    );
+    expect(publisher.outputs).toEqual(candidateOutputs);
+    expect(new Set(Object.values(publisher.outputs ?? {})).size).toBe(12);
+    const candidateOutput = step(publisher, "Export validated managed image candidate output");
+    expect(candidateOutput.run).toContain('output_name="${AGENT//-/_}_${ARTIFACT_PLATFORM//-/_}"');
+    expect(candidateOutput.run).toContain("printf '%s=%s\\n' \"$output_name\"");
+    expect(candidateOutput.run).toContain("printf '%s_attempt=%s\\n' \"$output_name\"");
     expect(promoter.needs).toEqual(["publication-identity", "build-and-validate"]);
     expect(restoreCandidates.run).toContain("restore_candidate()");
     expect(restoreCandidates.env).toMatchObject({
