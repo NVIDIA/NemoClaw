@@ -56,6 +56,9 @@ import {
 } from "./github-context.mts";
 import {
   createReviewFindingLedger,
+  REVIEW_FINDING_CATEGORIES,
+  REVIEW_FINDING_SEVERITIES,
+  REVIEW_FINDING_SIMPLIFICATION_TAGS,
   type ReviewFinding,
   type ReviewFindingLedger,
   type ReviewFindingLedgerSnapshot,
@@ -128,18 +131,7 @@ const TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH = path.resolve(
   "..",
   ".agents/skills/_shared/code-change-considerations.md",
 );
-const SECURITY_CATEGORY_COUNT = 9;
-const SECURITY_CATEGORY_SECTION_NAMES = ["Meaning", "Questions", "Expected evidence"] as const;
-const FINDING_CATEGORIES = [
-  "security",
-  "correctness",
-  "tests",
-  "architecture",
-  "workflow",
-  "docs",
-  "scope",
-  "acceptance",
-] as const;
+const CONFIDENCES = ["low", "medium", "high"] as const;
 const SUMMARY_RECOMMENDATIONS = [
   "merge_as_is",
   "merge_after_fixes",
@@ -148,24 +140,21 @@ const SUMMARY_RECOMMENDATIONS = [
   "superseded",
   "info_only",
 ] as const;
-const CONFIDENCES = ["low", "medium", "high"] as const;
 const TEST_DEPTH_VERDICTS = [
+  "unknown",
   "unit_sufficient",
   "mocks_recommended",
   "runtime_validation_recommended",
-  "unknown",
 ] as const;
-const ACCEPTANCE_STATUSES = ["met", "partial", "missing", "unknown"] as const;
-const SECURITY_VERDICTS = ["pass", "warning", "fail"] as const;
-const SOURCE_OF_TRUTH_STATUSES = [
-  "not_applicable",
-  "satisfied",
-  "needs_followup",
-  "missing",
-] as const;
-const SIMPLIFICATION_TAGS = ["delete", "stdlib", "native", "yagni", "shrink"] as const;
+const ACCEPTANCE_STATUSES = ["satisfied", "partial", "missing", "unknown"] as const;
+const SECURITY_VERDICTS = ["pass", "warning", "fail", "not_applicable"] as const;
+const SOURCE_OF_TRUTH_STATUSES = ["sound", "needs_followup", "missing", "not_applicable"] as const;
 const TERMINOLOGY_STATUSES = ["clear", "candidates", "limited"] as const;
-
+const SECURITY_CATEGORY_COUNT = 9;
+const SECURITY_CATEGORY_SECTION_NAMES = ["Meaning", "Questions", "Expected evidence"] as const;
+const FINDING_CATEGORIES = REVIEW_FINDING_CATEGORIES;
+const SIMPLIFICATION_TAGS = REVIEW_FINDING_SIMPLIFICATION_TAGS;
+type FindingSeverity = (typeof REVIEW_FINDING_SEVERITIES)[number];
 type Confidence = (typeof CONFIDENCES)[number];
 type SummaryRecommendation = (typeof SUMMARY_RECOMMENDATIONS)[number];
 type FindingCategory = (typeof FINDING_CATEGORIES)[number];
@@ -1914,68 +1903,70 @@ export function buildPromptTurns({
   const jsonContext = (value: unknown) => JSON.stringify(value, null, 2);
 
   const investigateContextToolResults = [
-      createAdvisorContextToolResult(
-        "pr_review_scope_risk_context",
-        jsonContext(buildScopeRiskTurnContext(context)),
-        "json",
-        "scope and risk context",
-      ),
-      createAdvisorContextToolResult(
-        "pr_review_git_diff",
-        diff || "<no diff available>",
-        "diff",
-        "complete git diff",
-      ),
-      createAdvisorContextToolResult(
-        "pr_review_controlled_words",
-        readTrustedControlledWords(),
-        "text",
-        "trusted controlled word list",
-      ),
-      createAdvisorContextToolResult(
-        "pr_review_terminology_pr_context",
-        jsonContext({ pullRequest: context.github?.pullRequest ?? null }),
-        "json",
-        "untrusted PR terminology context",
-      ),
-      createAdvisorContextToolResult(
-        "pr_review_correctness_state_context",
-        jsonContext(buildCorrectnessTurnContext(context)),
-        "json",
-        "correctness and state context",
-      ),
-      createAdvisorContextToolResult(
-        "pr_review_security_trust_context",
-        jsonContext(buildSecurityTurnContext(context)),
-        "json",
-        "security and trust context",
-      ),
-      createAdvisorContextToolResult(
-        "pr_review_tests_regressions_context",
-        jsonContext(buildTestsTurnContext(context)),
-        "json",
-        "tests and regression context",
-      ),
-      createAdvisorContextToolResult(
-        "pr_review_ci_operations_context",
-        jsonContext(buildOperationsTurnContext(context)),
-        "json",
-        "CI and operations context",
-      ),
-      createAdvisorContextToolResult(
-        "pr_review_reconciliation_context",
-        jsonContext(buildReconciliationTurnContext(context)),
-        "json",
-        "finding reconciliation context",
-      ),
-      createAdvisorContextToolResult(
-        "pr_review_metadata",
-        metadataFields(metadata),
-        "text",
-        "metadata fields",
-      ),
+    createAdvisorContextToolResult(
+      "pr_review_scope_risk_context",
+      jsonContext(buildScopeRiskTurnContext(context)),
+      "json",
+      "scope and risk context",
+    ),
+    createAdvisorContextToolResult(
+      "pr_review_git_diff",
+      diff || "<no diff available>",
+      "diff",
+      "complete git diff",
+    ),
+    createAdvisorContextToolResult(
+      "pr_review_controlled_words",
+      readTrustedControlledWords(),
+      "text",
+      "trusted controlled word list",
+    ),
+    createAdvisorContextToolResult(
+      "pr_review_terminology_pr_context",
+      jsonContext({ pullRequest: context.github?.pullRequest ?? null }),
+      "json",
+      "untrusted PR terminology context",
+    ),
+    createAdvisorContextToolResult(
+      "pr_review_correctness_state_context",
+      jsonContext(buildCorrectnessTurnContext(context)),
+      "json",
+      "correctness and state context",
+    ),
+    createAdvisorContextToolResult(
+      "pr_review_security_trust_context",
+      jsonContext(buildSecurityTurnContext(context)),
+      "json",
+      "security and trust context",
+    ),
+    createAdvisorContextToolResult(
+      "pr_review_tests_regressions_context",
+      jsonContext(buildTestsTurnContext(context)),
+      "json",
+      "tests and regression context",
+    ),
+    createAdvisorContextToolResult(
+      "pr_review_ci_operations_context",
+      jsonContext(buildOperationsTurnContext(context)),
+      "json",
+      "CI and operations context",
+    ),
+    createAdvisorContextToolResult(
+      "pr_review_reconciliation_context",
+      jsonContext(buildReconciliationTurnContext(context)),
+      "json",
+      "finding reconciliation context",
+    ),
+    createAdvisorContextToolResult(
+      "pr_review_metadata",
+      metadataFields(metadata),
+      "text",
+      "metadata fields",
+    ),
   ];
-  const investigateContextToolNames = investigateContextToolResults.map((result) => result.toolName);
+  const investigateContextToolNames = investigateContextToolResults.map(
+    (result) => result.toolName,
+  );
   const investigate: AdvisorPromptTurn = {
     name: "investigate",
     activeToolNames: ["read", "grep", "find", "ls", TERMINOLOGY_TRACE_TOOL],

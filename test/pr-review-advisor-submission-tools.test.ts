@@ -362,7 +362,7 @@ describe("PR review advisor submission tools", () => {
   });
 
   it("resolves terminology traces lazily at submission time", async () => {
-    const traces = new Map<string, TerminologyTrace>();
+    let traces = new Map<string, TerminologyTrace>();
     const submission = createReviewSubmissionController({
       metadata: {
         baseRef: "origin/main",
@@ -389,7 +389,7 @@ describe("PR review advisor submission tools", () => {
       headSamples: [],
       firstCommitSha: HEAD,
     };
-    traces.set(trace.id, trace);
+    traces = new Map([[trace.id, trace]]);
     await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
     await execute(
       submission,
