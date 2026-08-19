@@ -56,6 +56,22 @@ function dcodeLocalMetadata(
   };
 }
 
+type DcodeMetadataMutator = (
+  stable: DcodeSandboxBaseImageResolutionMetadata,
+  staged: DcodeSandboxBaseImageResolutionMetadata,
+) => void;
+
+const INVALID_DCODE_SOURCE_REVISION_CASES: ReadonlyArray<readonly [string, DcodeMetadataMutator]> =
+  [
+    ["missing stable", (stable) => Reflect.deleteProperty(stable, "sourceRevision")],
+    ["malformed stable", (stable) => Object.assign(stable, { sourceRevision: "not-a-revision" })],
+    ["missing staged", (_stable, staged) => Reflect.deleteProperty(staged, "sourceRevision")],
+    [
+      "malformed staged",
+      (_stable, staged) => Object.assign(staged, { sourceRevision: "not-a-revision" }),
+    ],
+  ];
+
 describe("base image resolution flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -291,4 +307,38 @@ describe("base image resolution flow", () => {
     ).toThrow("did not match the stable outer resolution");
     expect(context.preResolvedMetadata).toBe(stableMetadata);
   });
+
+  it.each(INVALID_DCODE_SOURCE_REVISION_CASES)(
+    "rejects a DCode disposable handoff with a %s source revision (#9386)",
+    (_scenario, mutateMetadata) => {
+      const sourceRevision = "c".repeat(40);
+      const stableMetadata = dcodeLocalMetadata(
+        "nemoclaw-langchain-deepagents-code-sandbox-base-local:3ef2ca87",
+        sourceRevision,
+      );
+      const stagedMetadata = dcodeLocalMetadata(
+        `nemoclaw-langchain-deepagents-code-sandbox-base-local:rebuild-123-${"b".repeat(16)}-image-${"a".repeat(64)}`,
+        sourceRevision,
+      );
+      const context = createBaseImageResolutionContext({
+        fresh: false,
+        initialPreResolvedMetadata: stableMetadata,
+        env: {},
+      });
+      mutateMetadata(stableMetadata, stagedMetadata);
+
+      expect(() =>
+        createAgentSandboxWithResolution(
+          context,
+          { name: "langchain-deepagents-code" } as AgentDefinition,
+          vi.fn(() => ({
+            buildCtx: "/tmp/dcode-build",
+            stagedDockerfile: "/tmp/dcode-build/Dockerfile",
+            baseImageResolutionMetadata: stagedMetadata,
+          })),
+        ),
+      ).toThrow("did not match the stable outer resolution");
+      expect(context.preResolvedMetadata).toBe(stableMetadata);
+    },
+  );
 });
