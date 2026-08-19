@@ -25,7 +25,6 @@ type Candidate = {
 export type CandidateMutation = (candidates: Candidate[]) => Candidate[];
 
 type BarrierOptions = {
-  expectedAttempts?: Partial<Record<`${Candidate["agent"]}|${Candidate["platform"]}`, string>>;
   publicationCohort?: string;
 };
 
@@ -64,7 +63,7 @@ function candidates(): Candidate[] {
       return {
         agent,
         platform,
-        artifact: `managed-image-candidate-${runId}-${runAttempt}-${agent}-${platform.replaceAll("/", "-")}`,
+        artifact: `managed-image-candidate-${runId}-${agent}-${platform.replaceAll("/", "-")}`,
         contract: {
           contractVersion: 2,
           phase: "candidate",
@@ -180,52 +179,9 @@ export const reuseOpenclawAmd64FromAttemptOne: CandidateMutation = (candidateSet
     (statement.bindings as Record<string, unknown>).cohort = "ghrun-7744-1";
     return {
       ...candidate,
-      artifact: candidate.artifact.replace("-7744-2-", `-7744-${producerAttempt}-`),
       contract,
     };
   });
-
-export function runManagedImageCandidateRestore(
-  script: string,
-  overrides: Record<string, string> = {},
-): { files: string[]; status: number | null; stderr: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-restore-"));
-  const contract = Buffer.from("{}\n").toString("base64");
-  try {
-    const result = spawnSync("bash", ["-c", script], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        DCODE_AMD64: contract,
-        DCODE_AMD64_ATTEMPT: "1",
-        DCODE_ARM64: contract,
-        DCODE_ARM64_ATTEMPT: "2",
-        GITHUB_RUN_ID: runId,
-        GITHUB_RUN_ATTEMPT: runAttempt,
-        HERMES_AMD64: contract,
-        HERMES_AMD64_ATTEMPT: "1",
-        HERMES_ARM64: contract,
-        HERMES_ARM64_ATTEMPT: "2",
-        OPENCLAW_AMD64: contract,
-        OPENCLAW_AMD64_ATTEMPT: "1",
-        OPENCLAW_ARM64: contract,
-        OPENCLAW_ARM64_ATTEMPT: "2",
-        RUNNER_TEMP: root,
-        ...overrides,
-      },
-    });
-    const candidateRoot = path.join(root, "managed-image-candidates");
-    return {
-      files: fs.existsSync(candidateRoot)
-        ? fs.readdirSync(candidateRoot, { recursive: true }).map(String).sort()
-        : [],
-      status: result.status,
-      stderr: result.stderr,
-    };
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-}
 
 export function runManagedImageBaseRestore(
   script: string,
@@ -300,14 +256,6 @@ export function runPublicationBarrier(
         GITHUB_RUN_ATTEMPT: runAttempt,
         GITHUB_RUN_ID: runId,
         GITHUB_SHA: revision,
-        DCODE_AMD64_ATTEMPT:
-          options.expectedAttempts?.["langchain-deepagents-code|linux/amd64"] ?? runAttempt,
-        DCODE_ARM64_ATTEMPT:
-          options.expectedAttempts?.["langchain-deepagents-code|linux/arm64"] ?? runAttempt,
-        HERMES_AMD64_ATTEMPT: options.expectedAttempts?.["hermes|linux/amd64"] ?? runAttempt,
-        HERMES_ARM64_ATTEMPT: options.expectedAttempts?.["hermes|linux/arm64"] ?? runAttempt,
-        OPENCLAW_AMD64_ATTEMPT: options.expectedAttempts?.["openclaw|linux/amd64"] ?? runAttempt,
-        OPENCLAW_ARM64_ATTEMPT: options.expectedAttempts?.["openclaw|linux/arm64"] ?? runAttempt,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         PUBLICATION_COHORT: options.publicationCohort ?? cohort,
         RUNNER_TEMP: root,

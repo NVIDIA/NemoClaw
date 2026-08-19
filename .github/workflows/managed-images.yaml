@@ -1489,19 +1489,6 @@ jobs:
     needs: publication-identity
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
-    outputs:
-      openclaw-linux-amd64: ${{ steps.candidate-output.outputs.openclaw_linux_amd64 }}
-      openclaw-linux-amd64-attempt: ${{ steps.candidate-output.outputs.openclaw_linux_amd64_attempt }}
-      openclaw-linux-arm64: ${{ steps.candidate-output.outputs.openclaw_linux_arm64 }}
-      openclaw-linux-arm64-attempt: ${{ steps.candidate-output.outputs.openclaw_linux_arm64_attempt }}
-      hermes-linux-amd64: ${{ steps.candidate-output.outputs.hermes_linux_amd64 }}
-      hermes-linux-amd64-attempt: ${{ steps.candidate-output.outputs.hermes_linux_amd64_attempt }}
-      hermes-linux-arm64: ${{ steps.candidate-output.outputs.hermes_linux_arm64 }}
-      hermes-linux-arm64-attempt: ${{ steps.candidate-output.outputs.hermes_linux_arm64_attempt }}
-      dcode-linux-amd64: ${{ steps.candidate-output.outputs.langchain_deepagents_code_linux_amd64 }}
-      dcode-linux-amd64-attempt: ${{ steps.candidate-output.outputs.langchain_deepagents_code_linux_amd64_attempt }}
-      dcode-linux-arm64: ${{ steps.candidate-output.outputs.langchain_deepagents_code_linux_arm64 }}
-      dcode-linux-arm64-attempt: ${{ steps.candidate-output.outputs.langchain_deepagents_code_linux_arm64_attempt }}
     strategy:
       fail-fast: false
       matrix:
@@ -2125,32 +2112,13 @@ jobs:
       - name: Upload validated managed image candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}
+          # A failed-job rerun keeps successful lanes and replaces only the
+          # stable artifact owned by each retried agent/platform lane.
+          name: managed-image-candidate-${{ github.run_id }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}
           path: ${{ runner.temp }}/managed-image-candidate/contract.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
-
-      - name: Export validated managed image candidate output
-        id: candidate-output
-        shell: bash
-        env:
-          AGENT: ${{ matrix.agent }}
-          ARTIFACT_PLATFORM: ${{ matrix.artifact_platform }}
-        run: |
-          set -euo pipefail
-          contract="$RUNNER_TEMP/managed-image-candidate/contract.json"
-          if [ ! -f "$contract" ] || [ -L "$contract" ]; then
-            echo "ERROR: managed image candidate contract is missing or unsafe." >&2
-            exit 1
-          fi
-          contract_size="$(wc -c < "$contract" | tr -d '[:space:]')"
-          if [[ ! "$contract_size" =~ ^[1-9][0-9]{0,6}$ ]] || [ "$contract_size" -gt 262144 ]; then
-            echo "ERROR: managed image candidate contract is empty or oversized." >&2
-            exit 1
-          fi
-          output_name="${AGENT//-/_}_${ARTIFACT_PLATFORM//-/_}"
-          printf '%s=%s\n' "$output_name" "$(base64 -w 0 "$contract")" >> "$GITHUB_OUTPUT"
-          printf '%s_attempt=%s\n' "$output_name" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   promote:
     name: Promote complete multi-platform managed image cohort
@@ -2164,61 +2132,10 @@ jobs:
       packages: write
     steps:
       - name: Restore all validated managed image candidates
-        shell: bash
-        env:
-          DCODE_AMD64: ${{ needs.build-and-validate.outputs.dcode-linux-amd64 }}
-          DCODE_AMD64_ATTEMPT: ${{ needs.build-and-validate.outputs.dcode-linux-amd64-attempt }}
-          DCODE_ARM64: ${{ needs.build-and-validate.outputs.dcode-linux-arm64 }}
-          DCODE_ARM64_ATTEMPT: ${{ needs.build-and-validate.outputs.dcode-linux-arm64-attempt }}
-          HERMES_AMD64: ${{ needs.build-and-validate.outputs.hermes-linux-amd64 }}
-          HERMES_AMD64_ATTEMPT: ${{ needs.build-and-validate.outputs.hermes-linux-amd64-attempt }}
-          HERMES_ARM64: ${{ needs.build-and-validate.outputs.hermes-linux-arm64 }}
-          HERMES_ARM64_ATTEMPT: ${{ needs.build-and-validate.outputs.hermes-linux-arm64-attempt }}
-          OPENCLAW_AMD64: ${{ needs.build-and-validate.outputs.openclaw-linux-amd64 }}
-          OPENCLAW_AMD64_ATTEMPT: ${{ needs.build-and-validate.outputs.openclaw-linux-amd64-attempt }}
-          OPENCLAW_ARM64: ${{ needs.build-and-validate.outputs.openclaw-linux-arm64 }}
-          OPENCLAW_ARM64_ATTEMPT: ${{ needs.build-and-validate.outputs.openclaw-linux-arm64-attempt }}
-        run: |
-          set -euo pipefail
-          candidate_root="$RUNNER_TEMP/managed-image-candidates"
-          install -d -m 0700 "$candidate_root"
-          restore_candidate() {
-            local agent="$1"
-            local platform="$2"
-            local producer_attempt="$3"
-            local contract_base64="$4"
-            if [[ ! "$producer_attempt" =~ ^[1-9][0-9]{0,9}$ ]] ||
-               [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]{0,9}$ ]] ||
-               [ "$producer_attempt" -gt "$GITHUB_RUN_ATTEMPT" ]; then
-              echo "ERROR: managed image candidate producer attempt is invalid." >&2
-              exit 1
-            fi
-            if [ -z "$contract_base64" ] || [ "${#contract_base64}" -gt 524288 ]; then
-              echo "ERROR: managed image candidate producer output is missing or oversized." >&2
-              exit 1
-            fi
-            if [[ ! "$contract_base64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] ||
-               [ $(( ${#contract_base64} % 4 )) -ne 0 ]; then
-              echo "ERROR: managed image candidate producer output is not canonical base64." >&2
-              exit 1
-            fi
-            local artifact="managed-image-candidate-${GITHUB_RUN_ID}-${producer_attempt}-${agent}-${platform}"
-            local artifact_root="$candidate_root/$artifact"
-            install -d -m 0700 "$artifact_root"
-            if ! printf '%s' "$contract_base64" |
-                 base64 --decode > "$artifact_root/contract.json" 2>/dev/null ||
-               [ "$(base64 < "$artifact_root/contract.json" | tr -d '\n')" != "$contract_base64" ]; then
-              rm -f "$artifact_root/contract.json"
-              echo "ERROR: managed image candidate producer output is not canonical base64." >&2
-              exit 1
-            fi
-          }
-          restore_candidate openclaw linux-amd64 "$OPENCLAW_AMD64_ATTEMPT" "$OPENCLAW_AMD64"
-          restore_candidate openclaw linux-arm64 "$OPENCLAW_ARM64_ATTEMPT" "$OPENCLAW_ARM64"
-          restore_candidate hermes linux-amd64 "$HERMES_AMD64_ATTEMPT" "$HERMES_AMD64"
-          restore_candidate hermes linux-arm64 "$HERMES_ARM64_ATTEMPT" "$HERMES_ARM64"
-          restore_candidate langchain-deepagents-code linux-amd64 "$DCODE_AMD64_ATTEMPT" "$DCODE_AMD64"
-          restore_candidate langchain-deepagents-code linux-arm64 "$DCODE_ARM64_ATTEMPT" "$DCODE_ARM64"
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: managed-image-candidate-${{ github.run_id }}-*
+          path: ${{ runner.temp }}/managed-image-candidates
 
       # This is the all-agent/all-architecture publication barrier. It fails
       # closed before registry authentication or any alias operation.
@@ -2227,12 +2144,6 @@ jobs:
         shell: bash
         env:
           CANDIDATE_ROOT: ${{ runner.temp }}/managed-image-candidates
-          DCODE_AMD64_ATTEMPT: ${{ needs.build-and-validate.outputs.dcode-linux-amd64-attempt }}
-          DCODE_ARM64_ATTEMPT: ${{ needs.build-and-validate.outputs.dcode-linux-arm64-attempt }}
-          HERMES_AMD64_ATTEMPT: ${{ needs.build-and-validate.outputs.hermes-linux-amd64-attempt }}
-          HERMES_ARM64_ATTEMPT: ${{ needs.build-and-validate.outputs.hermes-linux-arm64-attempt }}
-          OPENCLAW_AMD64_ATTEMPT: ${{ needs.build-and-validate.outputs.openclaw-linux-amd64-attempt }}
-          OPENCLAW_ARM64_ATTEMPT: ${{ needs.build-and-validate.outputs.openclaw-linux-arm64-attempt }}
           PUBLICATION_COHORT: ${{ needs.publication-identity.outputs.cohort }}
         run: |
           set -euo pipefail
@@ -2264,20 +2175,12 @@ jobs:
           fi
 
           expected_artifacts=(
-            "managed-image-candidate-${GITHUB_RUN_ID}-${OPENCLAW_AMD64_ATTEMPT}-openclaw-linux-amd64"
-            "managed-image-candidate-${GITHUB_RUN_ID}-${OPENCLAW_ARM64_ATTEMPT}-openclaw-linux-arm64"
-            "managed-image-candidate-${GITHUB_RUN_ID}-${HERMES_AMD64_ATTEMPT}-hermes-linux-amd64"
-            "managed-image-candidate-${GITHUB_RUN_ID}-${HERMES_ARM64_ATTEMPT}-hermes-linux-arm64"
-            "managed-image-candidate-${GITHUB_RUN_ID}-${DCODE_AMD64_ATTEMPT}-langchain-deepagents-code-linux-amd64"
-            "managed-image-candidate-${GITHUB_RUN_ID}-${DCODE_ARM64_ATTEMPT}-langchain-deepagents-code-linux-arm64"
-          )
-          expected_attempts=(
-            "$OPENCLAW_AMD64_ATTEMPT"
-            "$OPENCLAW_ARM64_ATTEMPT"
-            "$HERMES_AMD64_ATTEMPT"
-            "$HERMES_ARM64_ATTEMPT"
-            "$DCODE_AMD64_ATTEMPT"
-            "$DCODE_ARM64_ATTEMPT"
+            "managed-image-candidate-${GITHUB_RUN_ID}-openclaw-linux-amd64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-openclaw-linux-arm64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-hermes-linux-amd64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-hermes-linux-arm64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-langchain-deepagents-code-linux-amd64"
+            "managed-image-candidate-${GITHUB_RUN_ID}-langchain-deepagents-code-linux-arm64"
           )
           expected_agents=(
             openclaw
@@ -2309,11 +2212,11 @@ jobs:
           fi
 
           candidate_files=()
+          expected_attempts=()
           for index in "${!expected_artifacts[@]}"; do
             artifact="${expected_artifacts[$index]}"
             expected_agent="${expected_agents[$index]}"
             expected_platform="${expected_platforms[$index]}"
-            expected_attempt="${expected_attempts[$index]}"
             artifact_dir="$CANDIDATE_ROOT/$artifact"
             contract="$artifact_dir/contract.json"
             if [ ! -d "$artifact_dir" ] || [ -L "$artifact_dir" ] ||
@@ -2325,6 +2228,17 @@ jobs:
               find "$artifact_dir" ! -path "$artifact_dir" -prune -print |
                 wc -l | tr -d '[:space:]'
             )"
+            expected_attempt="$(
+              jq -er '.run.attempt | select(type == "number" and . >= 1 and floor == .)' \
+                "$contract"
+            )" || {
+              echo "ERROR: managed image candidate producer attempt is invalid: $artifact" >&2
+              exit 1
+            }
+            if [ "$expected_attempt" -gt "$GITHUB_RUN_ATTEMPT" ]; then
+              echo "ERROR: managed image candidate producer attempt is invalid: $artifact" >&2
+              exit 1
+            fi
             if [ "$artifact_entry_count" != "1" ] ||
                ! jq -e \
                  --arg agent "$expected_agent" \
@@ -2338,18 +2252,19 @@ jobs:
               exit 1
             fi
             candidate_files+=("$contract")
+            expected_attempts+=("$expected_attempt")
           done
 
           candidate_set="$RUNNER_TEMP/managed-image-candidate-set.json"
           jq -s 'sort_by(.agent, .platform)' "${candidate_files[@]}" > "$candidate_set"
           expected_attempts_json="$(
             jq -cn \
-              --argjson openclawAmd64 "$OPENCLAW_AMD64_ATTEMPT" \
-              --argjson openclawArm64 "$OPENCLAW_ARM64_ATTEMPT" \
-              --argjson hermesAmd64 "$HERMES_AMD64_ATTEMPT" \
-              --argjson hermesArm64 "$HERMES_ARM64_ATTEMPT" \
-              --argjson dcodeAmd64 "$DCODE_AMD64_ATTEMPT" \
-              --argjson dcodeArm64 "$DCODE_ARM64_ATTEMPT" \
+              --argjson openclawAmd64 "${expected_attempts[0]}" \
+              --argjson openclawArm64 "${expected_attempts[1]}" \
+              --argjson hermesAmd64 "${expected_attempts[2]}" \
+              --argjson hermesArm64 "${expected_attempts[3]}" \
+              --argjson dcodeAmd64 "${expected_attempts[4]}" \
+              --argjson dcodeArm64 "${expected_attempts[5]}" \
               '{
                 "openclaw|linux/amd64": $openclawAmd64,
                 "openclaw|linux/arm64": $openclawArm64,

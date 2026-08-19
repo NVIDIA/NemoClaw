@@ -14,7 +14,6 @@ import {
   publicationPlatforms,
   reuseOpenclawAmd64FromAttemptOne,
   runManagedImageBaseRestore,
-  runManagedImageCandidateRestore,
   runManagedImagePromotion,
   runPublicationBarrier,
 } from "./helpers/managed-image-publication-barrier";
@@ -1041,9 +1040,10 @@ fi
     ];
     expect(contractMarkers.filter((marker) => contract.run?.includes(marker) !== true)).toEqual([]);
     expect(step(publisher, "Upload validated managed image candidate").with).toMatchObject({
-      name: "managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}",
+      name: "managed-image-candidate-${{ github.run_id }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}",
       path: "${{ runner.temp }}/managed-image-candidate/contract.json",
       "if-no-files-found": "error",
+      overwrite: true,
       "retention-days": 1,
     });
     const validation = required(validate.run, "managed image validation script is missing");
@@ -1112,68 +1112,24 @@ fi
 
     expect(identity?.outputs).toEqual({ cohort: "${{ steps.identity.outputs.cohort }}" });
     expect(publisher.needs).toBe("publication-identity");
-    const candidateOutputs = Object.fromEntries(
-      (publisher.strategy?.matrix?.include ?? []).flatMap(({ agent, artifact_platform }) => {
-        const requiredAgent = required(agent, "managed image lane is missing its agent");
-        const requiredPlatform = required(
-          artifact_platform,
-          "managed image lane is missing its artifact platform",
-        );
-        const lane = `${requiredAgent === "langchain-deepagents-code" ? "dcode" : requiredAgent}-${requiredPlatform}`;
-        const stepOutput = `${requiredAgent}_${requiredPlatform}`.replaceAll("-", "_");
-        return [
-          [lane, `\${{ steps.candidate-output.outputs.${stepOutput} }}`],
-          [`${lane}-attempt`, `\${{ steps.candidate-output.outputs.${stepOutput}_attempt }}`],
-        ];
-      }),
+    expect(publisher.outputs).toBeUndefined();
+    expect(publisher.steps?.map((candidate) => candidate.name)).not.toContain(
+      "Export validated managed image candidate output",
     );
-    expect(publisher.outputs).toEqual(candidateOutputs);
-    expect(new Set(Object.values(publisher.outputs ?? {})).size).toBe(12);
-    const candidateOutput = step(publisher, "Export validated managed image candidate output");
-    expect(candidateOutput.run).toContain('output_name="${AGENT//-/_}_${ARTIFACT_PLATFORM//-/_}"');
-    expect(candidateOutput.run).toContain("printf '%s=%s\\n' \"$output_name\"");
-    expect(candidateOutput.run).toContain("printf '%s_attempt=%s\\n' \"$output_name\"");
     expect(promoter.needs).toEqual(["publication-identity", "build-and-validate"]);
-    expect(restoreCandidates.run).toContain("restore_candidate()");
-    expect(restoreCandidates.env).toMatchObject({
-      OPENCLAW_AMD64: "${{ needs.build-and-validate.outputs.openclaw-linux-amd64 }}",
-      OPENCLAW_AMD64_ATTEMPT:
-        "${{ needs.build-and-validate.outputs.openclaw-linux-amd64-attempt }}",
+    expect(restoreCandidates).toMatchObject({
+      uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      with: {
+        pattern: "managed-image-candidate-${{ github.run_id }}-*",
+        path: "${{ runner.temp }}/managed-image-candidates",
+      },
     });
     expect(barrier.env?.PUBLICATION_COHORT).toBe(
       "${{ needs.publication-identity.outputs.cohort }}",
     );
-
-    const acceptedRestore = runManagedImageCandidateRestore(restoreCandidates.run ?? "");
-    expect(acceptedRestore.status, acceptedRestore.stderr).toBe(0);
-    expect(acceptedRestore.files.filter((file) => file.endsWith("contract.json"))).toHaveLength(6);
-    const invalidAttempt = runManagedImageCandidateRestore(restoreCandidates.run ?? "", {
-      OPENCLAW_AMD64_ATTEMPT: "0",
-    });
-    expect(invalidAttempt.status).not.toBe(0);
-    expect(invalidAttempt.stderr).toContain("producer attempt is invalid");
-    const futureAttempt = runManagedImageCandidateRestore(restoreCandidates.run ?? "", {
-      OPENCLAW_AMD64_ATTEMPT: "3",
-    });
-    expect(futureAttempt.status).not.toBe(0);
-    expect(futureAttempt.stderr).toContain("producer attempt is invalid");
-    const malformedContract = runManagedImageCandidateRestore(restoreCandidates.run ?? "", {
-      OPENCLAW_AMD64: "not-base64",
-    });
-    expect(malformedContract.status).not.toBe(0);
-    expect(malformedContract.stderr).toContain(
-      "managed image candidate producer output is not canonical base64",
-    );
-    expect(malformedContract.stderr).not.toContain("not-base64");
-    const noncanonicalContract = runManagedImageCandidateRestore(restoreCandidates.run ?? "", {
-      OPENCLAW_AMD64: "TR==",
-    });
-    expect(noncanonicalContract.status).not.toBe(0);
-    expect(noncanonicalContract.stderr).toContain(
-      "managed image candidate producer output is not canonical base64",
-    );
-    expect(noncanonicalContract.stderr).not.toContain("TR==");
     expect(barrier.run).toContain("expected exactly six managed image candidate artifacts");
+    expect(barrier.run).toContain("managed image candidate producer attempt is invalid");
+    expect(barrier.run).toContain("expected_attempts+=(\"$expected_attempt\")");
     expect(barrier.run).toContain("length == 6");
     expect(barrier.run).toContain('([.[].platform] | sort) == ["linux/amd64", "linux/arm64"]');
     expect(barrier.run).toContain("([.[].reference] | unique | length) == 6");
@@ -1261,7 +1217,7 @@ fi
       barrier.run ?? "",
       (candidates) =>
         candidates.map((candidate) =>
-          candidate.artifact === "managed-image-candidate-7744-2-openclaw-linux-arm64"
+          candidate.artifact === "managed-image-candidate-7744-openclaw-linux-arm64"
             ? {
                 ...candidate,
                 contract: { ...candidate.contract, platform: "linux/amd64" },
@@ -1375,13 +1331,11 @@ fi
     );
 
     expect(runPublicationBarrier(barrier.run ?? "").status).toBe(0);
-    const reusedKey = "openclaw|linux/amd64";
     const mixedAttempts = runPublicationBarrier(
       barrier.run ?? "",
       reuseOpenclawAmd64FromAttemptOne,
       "",
       {
-        expectedAttempts: { [reusedKey]: "1" },
         publicationCohort: "ghrun-7744-1",
       },
     );
@@ -1399,6 +1353,33 @@ fi
     expect(wrongRunCohort.stderr).toContain("publication cohort is invalid");
     expect(wrongRunCohort.dockerCalls).toEqual([]);
   });
+
+  it.each([0, 3])(
+    "fails before alias code on producer attempt %s",
+    (producerAttempt) => {
+      const barrier = step(
+        managedPromoter(readWorkflow("managed-images.yaml")),
+        "Validate complete managed image candidate set",
+      );
+      const invalidAttempt = runPublicationBarrier(barrier.run ?? "", (candidates) => {
+        const candidate = candidates[0]!;
+        return [
+          {
+            ...candidate,
+            contract: {
+              ...candidate.contract,
+              run: { id: 7744, attempt: producerAttempt },
+            },
+          },
+          ...candidates.slice(1),
+        ];
+      });
+
+      expect(invalidAttempt.status).not.toBe(0);
+      expect(invalidAttempt.stderr).toContain("candidate producer attempt is invalid");
+      expect(invalidAttempt.dockerCalls).toEqual([]);
+    },
+  );
 
   it("stages all multi-platform cohort aliases before moving the sole root pointer (#7744)", () => {
     const promotion = required(
