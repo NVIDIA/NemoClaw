@@ -41,6 +41,7 @@ import { ShellProbe } from "./shell-probe.ts";
 
 declare module "@vitest/runner" {
   interface TaskMeta {
+    e2eArtifactRootId?: string;
     e2ePhases?: readonly string[];
   }
 }
@@ -140,7 +141,11 @@ export const test = base.extend<E2ETargetFixtures>({
     await use(new SecretStore(process.env, skip));
   },
   artifacts: async ({ task, secrets }, use) => {
-    const artifacts = createArtifactSink(task.name, process.cwd(), secrets.redactionValues());
+    const artifacts = createArtifactSink(
+      task.meta.e2eArtifactRootId ?? task.name,
+      process.cwd(),
+      secrets.redactionValues(),
+    );
     await artifacts.ensureRoot();
     try {
       await use(artifacts);
