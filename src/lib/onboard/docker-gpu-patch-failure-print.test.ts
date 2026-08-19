@@ -146,6 +146,7 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
 
   it.each([
     "sandbox_error_phase",
+    "sandbox_deleting_phase",
     "supervisor_unreachable",
     "proof_failure",
   ] as const)("ignores a saved %s verdict after rollback", (kind) => {

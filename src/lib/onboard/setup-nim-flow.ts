@@ -25,6 +25,10 @@ import {
   resolveManagedLlamaCppSelection,
 } from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
+import {
+  type RequestedServingProfileModel,
+  resolveRequestedServingProfileModel,
+} from "../inference/serving/requested-profile-model";
 import type { VllmProfile } from "../inference/vllm";
 import { promptManualModelId } from "../inference/model-prompts";
 import { isBackToSelection } from "../navigation";
@@ -204,8 +208,15 @@ export interface SetupNimFlowDeps {
   ): Promise<{ ok: boolean }>;
   handleVllmSelection(
     state: SetupNimSelectionState,
-    options?: { managedInstall?: boolean; sparkHost?: boolean },
+    options?: {
+      managedInstall?: boolean;
+      sparkHost?: boolean;
+      servingProfileModel?: RequestedServingProfileModel | null;
+    },
   ): Promise<SetupNimSelectionResult>;
+  resolveRequestedServingProfileModel?(
+    env?: NodeJS.ProcessEnv,
+  ): RequestedServingProfileModel | null;
   handleRoutedSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   coerceAgentInferenceApi(
     agent: AgentDefinition | null,
@@ -519,6 +530,19 @@ function vllmPortConflictMessage(
     return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the existing server, then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
   }
   return "vLLM is already running on this host. Select Local vLLM, or stop the existing server before selecting the managed install path.";
+}
+
+/**
+ * Model a requested serving profile declares, when a vLLM selection can serve it.
+ *
+ * A preset for another backend reaches this selection through the environment,
+ * and no vLLM server can answer it, so it is left out rather than compared.
+ */
+function requestedVllmServingProfileModel(
+  resolve: SetupNimFlowDeps["resolveRequestedServingProfileModel"],
+): RequestedServingProfileModel | null {
+  const requested = (resolve ?? resolveRequestedServingProfileModel)();
+  return requested?.backend === "vllm" ? requested : null;
 }
 
 async function resolveFreshHermesPortableOllamaSelection(input: {
@@ -1082,9 +1106,18 @@ export function createSetupNim(
         if (selected.key === "vllm") {
           const state = preparedVllmState ?? createSelectionState();
           state.model = preparedVllmState?.model ?? requestedModel ?? recoveredModel;
+          // A requested profile reaches this branch two ways: its own install
+          // finished, or `install-vllm` collapsed onto a server that was already
+          // listening. The second path runs no install, so nothing seeds a
+          // required model and the endpoint's own report becomes the route.
+          // Comparing the profile's model is the only check that the server
+          // serves what the profile declares.
           const result = await deps.handleVllmSelection(state, {
             managedInstall: preparedVllmState !== null,
             sparkHost: gpu?.spark === true,
+            servingProfileModel: requestedVllmServingProfileModel(
+              deps.resolveRequestedServingProfileModel,
+            ),
           });
           ({
             model,

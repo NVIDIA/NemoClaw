@@ -26,6 +26,7 @@ const {
   hasResponsesToolCall,
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
+  probeOpenAiLikeEndpointOptimized,
   RETRIABLE_HTTP_PROBE_STATUSES,
   verifyOnboardInferenceSmoke,
 } = require("./onboard-probes");
@@ -679,6 +680,25 @@ exit 0
   });
 
   describe("private-address SSRF guard (#6293)", () => {
+    it("rejects a private endpoint in the optimized probe before spawning curl", async () => {
+      const apiKey = "nvapi-optimized-private-endpoint-secret";
+      const spawnSyncImpl = vi.fn(() => {
+        throw new Error("curl must not run for a private endpoint");
+      });
+
+      const result = await probeOpenAiLikeEndpointOptimized(
+        "http://192.168.1.50:8000/v1",
+        "openai/model",
+        apiKey,
+        { skipResponsesProbe: true, spawnSyncImpl },
+      );
+
+      expect(result).toMatchObject({ ok: false });
+      expect(result.message).toMatch(/private\/internal address/i);
+      expect(JSON.stringify(result)).not.toContain(apiKey);
+      expect(spawnSyncImpl).not.toHaveBeenCalled();
+    });
+
     it("rejects a non-loopback private LAN endpoint before issuing any probe (#6293)", () => {
       const result = probeOpenAiLikeEndpoint(
         "http://192.168.1.50:8000/v1",
