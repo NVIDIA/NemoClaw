@@ -4,9 +4,20 @@
 name: publish-base-image-manifest
 description: Validate platform digests and publish one multi-platform base image manifest.
 
+outputs:
+  contract-base64:
+    description: Exact validated base-image contract for dependent jobs.
+    value: ${{ steps.contract-output.outputs.contract_base64 }}
+
 inputs:
   agent:
     description: Agent identifier stored in the managed base image contract.
+    required: true
+  amd64-digest:
+    description: Exact amd64 platform digest from the producer job.
+    required: true
+  arm64-digest:
+    description: Exact arm64 platform digest from the producer job.
     required: true
   display-name:
     description: Agent name used in validation errors.
@@ -27,12 +38,23 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Download platform digests
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-      with:
-        pattern: ${{ inputs.agent }}-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
-        path: ${{ runner.temp }}/digests
-        merge-multiple: true
+    - name: Restore exact platform digests
+      shell: bash
+      env:
+        AMD64_DIGEST: ${{ inputs.amd64-digest }}
+        ARM64_DIGEST: ${{ inputs.arm64-digest }}
+      run: |
+        set -euo pipefail
+        for digest in "$AMD64_DIGEST" "$ARM64_DIGEST"; do
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "ERROR: base-image producer output has an invalid digest." >&2
+            exit 1
+          }
+        done
+        digest_root="$RUNNER_TEMP/digests"
+        install -d -m 0700 "$digest_root"
+        touch "$digest_root/amd64-${AMD64_DIGEST#sha256:}"
+        touch "$digest_root/arm64-${ARM64_DIGEST#sha256:}"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -65,6 +87,22 @@ runs:
         IMAGE: ${{ inputs.registry }}/${{ inputs.image }}
         TAGS: ${{ steps.meta.outputs.tags }}
       run: bash "$GITHUB_ACTION_PATH/publish.sh"
+    - name: Export managed base image contract
+      id: contract-output
+      shell: bash
+      run: |
+        set -euo pipefail
+        contract="$RUNNER_TEMP/managed-base-contract/contract.json"
+        if [ ! -f "$contract" ] || [ -L "$contract" ]; then
+          echo "ERROR: managed base image contract is missing or is a symbolic link." >&2
+          exit 1
+        fi
+        contract_size="$(wc -c < "$contract" | tr -d '[:space:]')"
+        if [[ ! "$contract_size" =~ ^[1-9][0-9]{0,5}$ ]] || [ "$contract_size" -gt 65536 ]; then
+          echo "ERROR: managed base image contract is empty or oversized." >&2
+          exit 1
+        fi
+        printf 'contract_base64=%s\n' "$(base64 -w 0 "$contract")" >> "$GITHUB_OUTPUT"
     - name: Upload managed base image contract
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
