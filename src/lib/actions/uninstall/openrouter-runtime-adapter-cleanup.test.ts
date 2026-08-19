@@ -38,6 +38,8 @@ function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) 
   });
 }
 
+const BEDROCK_RUNTIME_ADAPTER_CMDLINE =
+  "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/bedrock-runtime-adapter.js\n";
 const OPENROUTER_RUNTIME_ADAPTER_CMDLINE =
   "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/openrouter-runtime-adapter-entry.js\n";
 const HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE =
@@ -212,6 +214,121 @@ describe("OpenRouter Runtime adapter uninstall cleanup", () => {
     expect(result.exitCode).toBe(0);
     expect(killed).not.toContain(99998);
     expect(logs).toContain("No OpenRouter Runtime adapter processes found");
+  });
+});
+
+describe("Bedrock Runtime adapter uninstall cleanup", () => {
+  it("stops the adapter from its verified persisted PID before state removal (#9552)", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const exited = new Set<number>();
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bedrock-pid-"));
+    const pidFile = path.join(tmpHome, ".nemoclaw", "bedrock-runtime-adapter.pid");
+    fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+    fs.writeFileSync(pidFile, "44325\n");
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          kill: (pid) => {
+            killed.push(pid);
+            exited.add(pid);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          rmSync: fs.rmSync,
+          run: runStub({
+            ps: psStub("44325", { exited, cmdline: BEDROCK_RUNTIME_ADAPTER_CMDLINE }),
+          }),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(killed).toContain(44325);
+      expect(logs).toContain("Stopped Bedrock Runtime adapter 44325");
+      expect(fs.existsSync(pidFile)).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("scans the configured port for an owned orphan adapter during full uninstall (#9552)", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const exited = new Set<number>();
+    const lsofPorts: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-bedrock-orphan",
+          LOGNAME: "testuser",
+          NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "12036",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          exited.add(pid);
+          return true;
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: runStub({
+          lsof: lsofPortStub(lsofPorts, new Map([[":12036", ok("33336\n")]])),
+          ps: psStub("33336", { exited, cmdline: BEDROCK_RUNTIME_ADAPTER_CMDLINE }),
+        }),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(lsofPorts).toContain(":12036");
+    expect(lsofPorts).not.toContain(":11436");
+    expect(killed).toContain(33336);
+    expect(logs).toContain("Stopped Bedrock Runtime adapter 33336");
+  });
+
+  it("does not signal an unrelated process on the Bedrock adapter port (#9552)", () => {
+    const killed: number[] = [];
+    const lsofPorts: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-bedrock-foreign",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          return true;
+        },
+        log: vi.fn(),
+        rmSync: vi.fn(),
+        run: runStub({
+          lsof: lsofPortStub(lsofPorts, new Map([[":11436", ok("99996\n")]])),
+          ps: psStub("99996", {
+            exited: new Set(),
+            cmdline: "/usr/sbin/nginx -g daemon off;\n",
+          }),
+        }),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(lsofPorts).toContain(":11436");
+    expect(killed).not.toContain(99996);
   });
 });
 
