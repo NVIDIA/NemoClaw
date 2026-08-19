@@ -423,6 +423,56 @@ describe("preparePortableExperimentalHost", () => {
     expect(sudo).not.toHaveBeenCalled();
   });
 
+  it("creates the portable network before adding its host gateway address (#9577)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    let hostGatewayConfigured = false;
+    const commands: string[] = [];
+    const docker = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(
+      (args) => {
+        switch (args.slice(0, 2).join(" ")) {
+          case "--version":
+            return result();
+          case "network inspect":
+            return result(1);
+          case "network create":
+            commands.push("create network");
+            return hostGatewayConfigured
+              ? result(125, `subnet ${PORTABLE_DOCKER_NETWORK_SUBNET} is already used on the host`)
+              : result();
+          case "inspect --format":
+            return result(1);
+          case "run -d":
+            return result();
+          default:
+            return result(1, `unexpected docker command: ${args.join(" ")}`);
+        }
+      },
+    );
+    const ip = vi.fn(() =>
+      result(
+        0,
+        hostGatewayConfigured
+          ? `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`
+          : "1: lo    inet 127.0.0.1/8 scope host lo\n",
+      ),
+    );
+    const sudo = vi.fn(() => {
+      commands.push("add host gateway");
+      hostGatewayConfigured = true;
+      return result();
+    });
+
+    preparePortableExperimentalHost(
+      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      portablePreparationDeps(home, docker, { ip, sudo }),
+      undefined,
+      { simulateExistingPortableNetwork: false },
+    );
+
+    expect(commands).toEqual(["create network", "add host gateway"]);
+  });
+
   it("configures and verifies the portable gateway loopback alias before registry mutation (#9461)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);

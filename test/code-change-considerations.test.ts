@@ -12,8 +12,6 @@ import {
   preparePromptArtifacts,
   readTrustedCodeChangeConsiderations,
 } from "../tools/pr-review-advisor/analyze.mts";
-import { createReviewFindingLedger } from "../tools/pr-review-advisor/review-ledger.mts";
-import { createTerminologyLedger } from "../tools/pr-review-advisor/terminology.mts";
 import { loadAdvisorSchema, metadata } from "./helpers/pr-review-advisor-test-fixtures";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -115,8 +113,6 @@ describe("shared code change considerations", () => {
           metadata: reviewMetadata,
           diff: "",
           schema: loadAdvisorSchema(),
-          findingLedger: createReviewFindingLedger(),
-          terminologyLedger: createTerminologyLedger(reviewMetadata.headSha),
         }),
       ).toThrow("Code change considerations malformed");
       expect(
