@@ -32,47 +32,25 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 
 `.github/workflows/pr-review-advisor.yaml`:
 
-1. Runs on `pull_request_target` for internal and fork PRs, plus `workflow_dispatch`.
-2. Checks out advisor implementation code at the immutable trusted `github.workflow_sha` into `advisor/`.
-3. Fetches the event's PR base and head SHAs into an isolated analysis workspace without running PR-controlled actions, hooks, submodules, LFS filters, package setup, scripts, or tests.
-4. Installs and verifies pinned `ripgrep` and `fd-find` packages on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
-5. Materializes deterministic GitHub context on the trusted host before sandbox creation. This is the only analysis-phase step that receives `github.token`, and it receives no model credential.
-6. Installs OpenShell, starts a loopback-only gateway, and registers the selected model provider in a dedicated trusted-host step. Only that provider-configuration step receives the upstream model credential.
-7. Creates a sandbox from a digest-pinned Pi image under a no-egress, hard-Landlock policy. The trusted advisor checkout, PR workspace, prepared GitHub context, and verified search binaries enter through advisor-only read-only Docker bind mounts before the first sandbox process starts. A capped tmpfs is the only writable application-data subtree. Before model code runs, a trusted probe reads every input canary, resolves the mounted checkout and `HEAD` through an explicit `GIT_DIR` and `GIT_WORK_TREE`, verifies that chmod, overwrite, replacement, and creation fail in every input, and exercises the complete runtime write lifecycle.
-8. Runs the trusted `tools/pr-review-advisor/run-analysis.mts` entrypoint inside the sandbox. The unchanged multi-turn Pi SDK session reaches the host-configured model only through `https://inference.local/v1`; the sandbox receives an inert SDK key and neither the upstream model credential nor a GitHub token.
-9. Runs the same advisor conversation in parallel for the primary GPT-5.6 Terra lane and an artifact-only Nemotron Ultra evaluation lane.
-10. Opens one Pi session per model variant and reviews the PR in 16 bounded turns: seven analysis/commit pairs for scope/risk, terminology, correctness/state, security/trust, tests/regressions, CI/operations, and reconciliation, followed by draft and validation JSON synthesis turns in that same session. The scope/risk turn completes the simplicity sweep before it commits findings. It considers whether the touched area can use fewer lines or concepts, remove existing code, or apply an existing or new pattern across current related code. It batches related recommendations and rescans the proposed end state before continuing. The terminology turn selects candidates semantically from changed explanatory text. Trusted code then traces each selected term across the base and head commits, including hyphen and space variants, changed source locations, and available history. Changed-location tracing streams the complete Git diff with bounded per-line memory, so selected terms remain traceable beyond 4 MiB of diff output. Repository occurrence counts and samples still use bounded `git grep` output and report when evidence is truncated. The tests/regressions turn analyzes E2E coverage and new-test gaps, while the CI/operations turn selects supported E2E jobs, targets, or fan-out. Only trusted identifiers from these receipts reach normalized E2E output; free-form model E2E prose is discarded. No second advisor session is opened, including for synthesis repair.
-11. Gives each commit turn one job: apply one successful atomic commit for the preceding analysis. Finding commit turns update the finding ledger with one flat object containing homogeneous additions, updates, resolutions, and supersessions arrays plus a no-change reason. The terminology commit turn writes one separate canonical receipt through `pr_review_update_terminology`. A terminology decision must reference a trusted trace and changed file and line bound to the head commit. The commit tool is the turn's only active tool, and the runner rejects prose, other tool calls, or activity after the successful commit. Rejected attempts do not mutate either canonical store and can be corrected before one success. If a commit turn ends with no successful call and every attempt settled without mutating state, the runner permits one tool-only retry and then fails closed. Finding additions require a structured observed-versus-expected basis, a file and line, and eligibility for the active stage. Ledger findings receive stable `F-...` IDs, terminology decisions receive stable `T-...` IDs, and conclusion changes require a reason plus new evidence.
-12. Treats open finding-ledger records and the terminology receipt as separate canonical results. Final synthesis cannot silently add, drop, merge, reword, or reclassify either result. Unresolved source-of-truth review entries must reference their covering open finding ID structurally rather than relying on prose matching. A terminology decision does not affect the merge recommendation by itself. A later correctness or security stage can create an ordinary finding only when terminology ambiguity has a concrete effect on behavior, security, data safety, a supported surface, evidence, test meaning, or release meaning.
-13. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript. If trusted prompt inputs are unavailable before the model session starts, the runner writes failed analysis and schema-valid final-result artifacts. If a later stage fails, already-committed canonical findings and terminology decisions remain in the low-confidence incomplete result instead of being replaced by a generic unavailable finding.
-14. Retries transient provider failures such as HTTP 429 within the same session using one bounded exponential-backoff layer. GPT waits 6s, 12s, 24s, and 48s; Nemotron waits 9s, 18s, 36s, and 72s so parallel lanes do not retry in lockstep. The workflow still publishes the primary comment and lane artifacts after an incomplete analysis. An incomplete primary review fails its outcome step; the artifact-only evaluation lane does not affect the workflow result.
-15. Validates and repairs the draft synthesis in the final turn of the same session. If that turn fails or emits malformed output, the runner preserves a schema-valid canonical draft with a limitation. A post-validation mismatch with the finding ledger or terminology receipt still fails closed.
-16. Writes artifacts under the model-specific artifact directory in the writable runtime subtree, downloads them to the trusted host, and uploads them from the read-only analysis job. Example directories are `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
-17. Uses a separate publisher job with no model credential or untrusted worktree.
-    It validates the primary artifact and live PR head/base.
-    It then posts or updates one combined sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`.
-    The primary lane remains authoritative for the assessment and recommended E2E guidance.
-    The publisher compares normalized findings, terminology decisions, and E2E selections from the completed lanes.
-    For terminology, it can show decisions that only the second-opinion lane selected and cases where the lanes assigned different dispositions to the same term and changed location.
-    When the completed second-opinion lane includes a trusted E2E selector that the primary lane omits, the publisher shows an optional disagreement.
-    The disagreement includes the selector and a publisher-authored coverage-gap reason in the same comment.
-    A missing, malformed, or incomplete second-opinion result cannot suppress the primary result.
+1. Runs on `pull_request_target` for internal and fork PRs, plus trusted manual dispatch.
+2. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
+3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
+4. Opens one Pi session per model lane and performs exactly two normal turns.
+5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, prior findings, positives, and limitations in one coherent pass.
+6. The `challenge-and-record` turn keeps repository reads and adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The first three replace complete in-memory draft sections. They do not update canonical state.
+7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema. A successful call validates and assembles pending state, then ends the turn. The session runner atomically commits that state only after accepting the complete terminal flow. Failed validation does not mutate canonical state. A settled invalid call permits one bounded repair; omission, provider failure, unsettled calls, or activity after success fail closed and discard pending state.
+8. Trusted code writes the session transcript, finding, terminology, result, summary, and detailed-review artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
+9. The primary GPT-5.6 Terra lane publishes the sticky comment. The Nemotron Ultra lane remains an artifact-only evaluation lane.
     The evaluation lane does not publish another review.
     Previous sticky-comment ingestion is disabled for both lanes.
 
-The ordered stage array in `buildPromptTurns` is the source of truth for stage order, evidence, and
-prompt text. Runtime numbering and prompt artifact names derive from that array, so adding or
-reordering a stage does not require parallel orchestration changes.
+`investigate-turn.mts` and `challenge-and-record-turn.mts` own the two normal turn contracts, including their prompts and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `artifacts.mts` owns artifact paths, and `render-result.mts` owns human-readable result output. `analyze.mts` composes these modules and runs the session.
 
 `tools/pr-review-advisor/openshell.mts` owns the advisor-specific prepare, create, run, download, and
 cleanup sequence. It uses the shared lifecycle and credential-boundary helpers in
 `tools/openshell-agent/runtime.mts`, which are also used by the merge-conflict fixer.
 
-Provider failures and timeouts settle the active turn before the analysis fails, so its status and
-partial response remain available beside the raw transcript. Turn-artifact persistence failures are
-also fatal. A finding mismatch after same-session synthesis validation is fatal as well. Fatal runs remain
-visibly incomplete, but their final-result artifact preserves any open canonical findings committed
-before the failure so later runs and reviewers do not lose substantive review history.
+Provider failures, timeouts, and invalid or missing atomic submission fail closed and leave canonical state unchanged. Failure results retain the reason, and workflow logs retain orchestration diagnostics.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its combined
 comment lists trusted E2E recommendations, but does not dispatch or report pass/fail for E2E jobs.
@@ -95,7 +73,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - Static analysis only.
 - PR-provided scripts, tests, package lifecycle hooks, and build tools are never executed.
 - The model session runs in a digest-pinned OpenShell sandbox under a hard-required Landlock policy with no direct network policy and no ambient workdir. Four canonical host inputs are mounted read-only through the advisor's ephemeral Docker gateway outside `/sandbox`, so OpenShell v0.0.99 applies the final immutable boundary before the first process starts. Landlock independently grants those inputs read-only access. It grants application-data writes only to a bounded runtime tmpfs; required device access remains writable under `/dev`. The sandbox pins Git to `/pr-workdir/.git` and `/pr-workdir` instead of relying on cross-UID repository discovery. A startup proof must read every input canary, resolve the checkout and `HEAD`, fail chmod, overwrite, replacement, and creation in each input, and complete runtime writes. The model-facing Advisor tools remain repository-confined and read-only; generated configuration and artifacts use the dedicated runtime subtree.
-- The advisor receives repo-confined read-only repository tools plus deterministic context tools. Repository paths must remain inside the checked-out analysis workspace after lexical and symlink resolution. Its only mutation tools update the in-memory finding ledger and terminology receipt; they cannot change repository or GitHub state.
+- The advisor receives repo-confined read-only repository tools plus deterministic context tools. Repository paths must remain inside the checked-out analysis workspace after lexical and symlink resolution. The record tools replace transaction-local draft sections only; an accepted successful terminal submission atomically commits canonical finding and terminology snapshots; failed validation and rejected terminal flows do not mutate them. None of these tools can change repository or GitHub state.
 - PR bodies, comments, titles, branch names, and diffs are treated as untrusted evidence, never as instructions.
 - Manual target analysis validates the repository token, decimal PR number, and base-ref token before running any `git` command.
 - Generated Pi configuration is written under the sandbox's runtime-only configuration directory, not uploaded artifacts.
@@ -106,7 +84,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target.
   The rendered comment preserves its hidden identity metadata while enforcing a 60 KiB UTF-8 limit, and publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
-- Previous sticky-comment ingestion is disabled because issue comments are mutable and GitHub does not expose a durable comment-to-workflow ownership binding. Any future follow-up context must come from a verified immutable run artifact rather than comment metadata.
+- Both analysis lanes currently set `PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW=false`. The primary lane publishes a sticky comment; the Nemotron lane is artifact-only. `collectGitHubContext` loads previous Advisor comments only when that setting is `true` and a provenance collector is available. Otherwise it sets `previousAdvisorReview` to `null`. Any future enablement must validate comment provenance before previous review content becomes model context; marker text or mutable comment metadata alone is not sufficient.
 - During rollout, non-default advisor lanes may see an older trusted `main` checkout that has the workflow matrix but not the matching model support. The workflow treats that as trusted-main rollout skew and writes low-confidence skip artifacts in the lane-specific artifact directory. Do not run PR-controlled advisor code to bypass this gate; remove the gate only after the trusted `main` implementation always supports the parallel advisor lane.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed
   invariant and required job for missing evidence. The trusted E2E normalizer restores any listed
@@ -164,25 +142,13 @@ instead of failing closed without artifacts.
 
 ## Artifacts
 
-- `prompts/00-system.md` — system prompt sent to the advisor.
-- `prompts/01-scope-risk-map-analysis.md` through `prompts/16-validate-synthesis-json.md` — seven alternating analysis/commit pairs followed by draft and validation synthesis turns in the same session, in execution order.
-- `prompts/*.tool-results/` — deterministic, domain-specific context payloads exposed as real tools after the matching user turn. The complete untrusted diff appears only in the first turn, and repeated risk-plan projections use capped path samples.
-- `turns/01-scope-risk-map-analysis.txt` through `turns/16-validate-synthesis-json.txt` — assistant output and completed/failed/timed-out status written as each turn settles.
-- `context/drift-context.json` — deterministic drift and overlap context.
-- `context/security-context.json` — deterministic security-risk context and the risk plan for the
-  PR SHA.
-- `context/validation-context.json` — deterministic acceptance, source-of-truth, static
-  test-inventory, simplification-signal, and risk plan for the PR SHA, including the
-  regression invariants reviewed for the PR.
-- `context/pr.diff` — complete PR diff used by the advisor.
-- `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.
 - `pr-review-advisor-result.json` — normalized advisor result with findings projected from the canonical open ledger records, or execution metadata when analysis is unavailable.
 - `pr-review-advisor-final-result.json` — normalized canonical result used for comments.
-- `pr-review-advisor-finding-ledger.json` — all open, resolved, and superseded finding records with stable IDs and reasoned transition history, refreshed after every settled turn.
+- `pr-review-advisor-finding-ledger.json` — open submitted findings with stable IDs and their addition history, refreshed after every settled turn.
 - `pr-review-advisor-terminology-ledger.json` — the canonical terminology receipt for the head commit, including decisions that reference a trusted trace, refreshed after every settled turn.
 - `pr-review-advisor-summary.md` — markdown summary used in the job summary.
 - `pr-review-advisor-detailed-review.md` — expanded acceptance, security, and source-of-truth review details.
-- `pr-review-advisor-session.html` — exported advisor session transcript showing each user instruction before its context tools, the visible stage analysis before its canonical update, and the final read-only synthesis from both canonical stores.
+- `pr-review-advisor-session.html` — complete two-turn session transcript for debugging, including embedded session JSON, prompts, context reads, draft tools, validation, and bounded repair when used.
 
 The parallel Nemotron Ultra lane writes the same filenames under
 `artifacts/pr-review-advisor-nemotron-ultra/` and uploads them as the
@@ -212,7 +178,7 @@ as generic commentary. The required `terminologyReview` field contains the canon
 each candidate's change type, disposition, meaning, contrast, established alternative, semantic
 impact, recommendation, trace ID, and source bound to the head commit. The dispositions are `established`,
 `justified`, `define`, `replace`, and `conflict`. The trusted terminology tools are
-`pr_review_trace_term`, `pr_review_update_terminology`, and `pr_review_read_terminology`.
+`pr_review_trace_term` during investigation and `record_review_receipt` during atomic submission.
 Trusted tracing verifies repository evidence after the model selects a candidate; it does not scan
 or classify changed text to select terms. Every source-of-truth review item includes a `findingId`: unresolved items
 reference their covering open ledger finding, while satisfied and not-applicable items use `null`.
