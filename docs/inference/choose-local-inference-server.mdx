@@ -115,7 +115,7 @@ Selecting Express option 2 enables the same profile gate and selects the vLLM ru
 Do not combine this path with `NEMOCLAW_PROVIDER` or `NEMOCLAW_MODEL`.
 The profile rejects `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before installation.
 Set `NEMOCLAW_VLLM_PORT` before installation to use another host listener port.
-Before installation, ensure no other process owns `127.0.0.1:${NEMOCLAW_VLLM_PORT:-8000}`.
+Before installation, ensure no other process or container owns `${NEMOCLAW_VLLM_PORT:-8000}` on `127.0.0.1` or on the private IPv4 gateway of `openshell-docker`.
 
 The profile performs these actions:
 
