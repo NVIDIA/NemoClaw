@@ -77,6 +77,18 @@ describe("settleInferenceSetOpenClawPairing", () => {
     expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({ ok: true });
   });
 
+  it("rejects an ambiguous approval when final state stays pairing-only (#9527)", () => {
+    const deps = pairingDeps({
+      observePairing: vi.fn(() => observation("pairing-only")),
+      approval: "ambiguous",
+    });
+
+    expect(settleInferenceSetOpenClawPairing(TARGET, deps)).toEqual({
+      ok: false,
+      failureLayer: "approval-ambiguous",
+    });
+  });
+
   it("rejects unavailable initial state without exposing observer output (#9527)", () => {
     const deps = pairingDeps({
       observePairing: vi.fn(() => {

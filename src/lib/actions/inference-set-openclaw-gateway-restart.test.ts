@@ -102,7 +102,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       String(entry.reason),
     );
     expect(auditReasons).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart pending)",
+      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart and pairing convergence pending)",
     );
     expect(auditReasons).toContain(
       "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart and pairing convergence completed)",
@@ -215,7 +215,7 @@ describe("runInferenceSet OpenClaw gateway restart", () => {
       String(entry.reason),
     );
     expect(auditReasons).toContain(
-      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart pending)",
+      "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (gateway restart and pairing convergence pending)",
     );
     expect(auditReasons).toContain(
       "inference set openclaw:compatible-anthropic-endpoint:claude-sonnet-proxy (config committed; gateway restart failed: health timeout)",

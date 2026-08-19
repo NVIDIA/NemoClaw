@@ -211,11 +211,13 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
       !result.inSandboxConfigSynced
         ? " (in-sandbox sync incomplete)"
         : openClawGatewayRestartRequired
-          ? " (gateway restart pending)"
-          : ""
+          ? " (gateway restart and pairing convergence pending)"
+          : openClawPairingConvergenceRequired
+            ? " (pairing convergence pending)"
+            : ""
     }`,
   };
-  if (openClawGatewayRestartRequired) {
+  if (openClawGatewayRestartRequired || openClawPairingConvergenceRequired) {
     appendPostCommitInferenceAudit(deps, auditEntry);
   } else {
     deps.appendAuditEntry(auditEntry);
