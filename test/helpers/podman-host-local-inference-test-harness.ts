@@ -73,6 +73,7 @@ export interface PodmanHostLocalInferenceHarnessOptions {
   readonly gpuIdentities?: readonly string[];
   readonly authorityId?: string;
   readonly service?: "nim" | "vllm";
+  readonly probeImageRef?: string;
 }
 
 export interface PodmanHostLocalInferenceHarness {
@@ -158,10 +159,8 @@ function labelsFrom(args: readonly string[]): Record<string, string> {
   return labels;
 }
 
-function immutableManagedImage(args: readonly string[]): string {
-  const imageRef = args.find(
-    (arg) => arg.includes("@sha256:") && !arg.includes(`@sha256:${PROBE_DIGEST}`),
-  );
+function immutableManagedImage(args: readonly string[], probeImageRef: string): string {
+  const imageRef = args.find((arg) => arg.includes("@sha256:") && arg !== probeImageRef);
   if (!imageRef) throw new Error("test harness expected an immutable managed image reference");
   return imageRef;
 }
@@ -347,6 +346,7 @@ function discoveredDevicesAuthority(state: {
 export function createPodmanHostLocalInferenceTestHarness(
   options: PodmanHostLocalInferenceHarnessOptions = {},
 ): PodmanHostLocalInferenceHarness {
+  const probeImageRef = options.probeImageRef ?? `registry.test/curl@sha256:${PROBE_DIGEST}`;
   const events: string[] = [];
   const failures: PodmanInferenceFailureEvidence[] = [];
   const written: string[] = [];
@@ -520,8 +520,7 @@ export function createPodmanHostLocalInferenceTestHarness(
           if (state.probeInheritedImageLabel) {
             labels["org.opencontainers.image.source"] = "https://example.invalid/probe";
           }
-          const imageRef =
-            args.find((arg) => arg.includes(`@sha256:${PROBE_DIGEST}`)) ?? "missing-probe-image";
+          const imageRef = args.find((arg) => arg === probeImageRef) ?? "missing-probe-image";
           currentProbe = {
             id: PROBE_CONTAINER_ID,
             name,
@@ -539,7 +538,7 @@ export function createPodmanHostLocalInferenceTestHarness(
             : result(0, state.probeRunAcknowledgementText ?? `${PROBE_CONTAINER_ID}\n`);
         }
         // Locate the immutable workload reference independent of optional flags.
-        const immutableImage = immutableManagedImage(args);
+        const immutableImage = immutableManagedImage(args, probeImageRef);
         if (state.parentInheritedImageLabel) {
           labels["org.opencontainers.image.source"] = "https://example.invalid/managed";
         }
@@ -681,7 +680,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     networkId: NETWORK_ID,
     networkGatewayIp: NETWORK_GATEWAY_IP,
     hostPort: 18000,
-    probeImageRef: `registry.test/curl@sha256:${PROBE_DIGEST}`,
+    probeImageRef,
     model: `${service}-model`,
     requireToolCalling: true,
     environment: secretNames,
