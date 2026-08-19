@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { BlockList } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -135,6 +136,15 @@ describe("preparePortableExperimentalHost", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     for (const tempDir of tempDirs) fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("keeps the host gateway outside every Portable sandbox subnet (#9587)", () => {
+    const [networkAddress, prefixText] = PORTABLE_DOCKER_NETWORK_SUBNET.split("/");
+    const portableSandboxAddresses = new BlockList();
+    portableSandboxAddresses.addSubnet(networkAddress!, Number(prefixText), "ipv4");
+
+    expect(portableSandboxAddresses.check("169.254.1.2", "ipv4")).toBe(true);
+    expect(portableSandboxAddresses.check(PORTABLE_HOST_GATEWAY_IP, "ipv4")).toBe(false);
   });
 
   it("does nothing unless the portable profile is explicit", () => {
