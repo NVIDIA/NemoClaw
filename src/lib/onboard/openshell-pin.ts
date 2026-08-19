@@ -215,8 +215,10 @@ export function prependInstalledUserLocalOpenshellPath(
 ): string | null {
   const env = deps.env ?? process.env;
   const localBin = env.XDG_BIN_HOME || path.join(env.HOME || "", ".local", "bin");
+  const openshellPath = path.join(localBin, "openshell");
   try {
-    fs.accessSync(path.join(localBin, "openshell"), fs.constants.X_OK);
+    if (!fs.statSync(openshellPath).isFile()) return null;
+    fs.accessSync(openshellPath, fs.constants.X_OK);
   } catch {
     return null;
   }
