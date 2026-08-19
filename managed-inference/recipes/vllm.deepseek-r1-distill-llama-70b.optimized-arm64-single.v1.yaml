@@ -11,23 +11,13 @@ metadata:
 spec:
   backend: vllm
 
-  model:
-    id: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
-    revision: b1c0b44b4369b597ad119a196caf79a9c40e141e
-    environmentValue: deepseek-r1-distill-70b
-    displayName: DeepSeek-R1 Distill Llama 70B
-    menuOrder: 20
-    servedName: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
-    downloadSizeBytes: 141000000000
-    gated: true
-    installFastSafetensors: true
-    preparation:
-      ref: none/v1
-
+  modelRef: vllm.deepseek-r1-distill-llama-70b.v1
   runtime:
     image: nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2
     imageDownloadSizeBytes: 9603085145
+    imageUnpackedSizeBytes: 27658526720
     minimumComputeCapability: 0
+    minimumGpuMemoryBytes: 141000000000
     pullTimeoutSeconds: 43200
     architecture: arm64
     networkMode: bridge
@@ -47,6 +37,7 @@ spec:
   execution:
     materializerRef: vllm.host-local/v1
     lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
 
   serve:
     authentication: bearer
@@ -67,7 +58,6 @@ spec:
       - name: --enable-auto-tool-choice
       - name: --tool-call-parser
         value: hermes
-      - name: --trust-remote-code
 
   readiness:
     timeoutSeconds: 1800

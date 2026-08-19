@@ -8,6 +8,9 @@ metadata:
   id: vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4
   displayName: NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 on one Linux x86_64 NVIDIA GPU
   supportState: experimental
+  validation:
+    level: hardware
+    evidence: brev-rtx-pro-server-6000-2026-08-18
 
 spec:
   selection: explicit-only

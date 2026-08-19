@@ -50,6 +50,11 @@ describe("parsePort", () => {
     expect(parsePort(ENV_KEY, 8080)).toBe(expected);
   });
 
+  it("can parse an explicitly supplied environment snapshot", () => {
+    expect(parsePort(ENV_KEY, 8080, { [ENV_KEY]: "19000" })).toBe(19000);
+    expect(process.env[ENV_KEY]).toBeUndefined();
+  });
+
   it.each([
     ["non-numeric input", "abc", "Invalid port"],
     ["mixed alphanumeric input", "80a80", "Invalid port"],

@@ -8,6 +8,9 @@ metadata:
   id: vllm.linux-arm64-nvidia.single.qwen3-6-27b-fp8
   displayName: Qwen3.6 27B FP8 on one Linux arm64 NVIDIA GPU
   supportState: supported
+  validation:
+    level: hardware
+    evidence: preexisting-supported-profile-v0.0.109
 
 spec:
   selection: explicit-only

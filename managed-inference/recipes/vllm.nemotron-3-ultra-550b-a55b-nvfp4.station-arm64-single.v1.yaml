@@ -11,23 +11,12 @@ metadata:
 spec:
   backend: vllm
 
-  model:
-    id: nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4
-    revision: 183968f87ae4cedce3039313cac1fd43d112c578
-    environmentValue: nemotron-3-ultra-550b-a55b
-    displayName: NVIDIA Nemotron 3 Ultra 550B NVFP4
-    menuOrder: 50
-    servedName: nvidia/nemotron-3-ultra-550b-a55b
-    downloadSizeBytes: 352381245521
-    gated: false
-    installFastSafetensors: false
-    preparation:
-      ref: none/v1
-
+  modelRef: vllm.nemotron-3-ultra-550b-a55b-nvfp4.v1
   runtime:
     image: vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416
     imageDownloadSizeBytes: 10670087425
     minimumComputeCapability: 100
+    minimumGpuMemoryBytes: 352381245521
     pullTimeoutSeconds: 43200
     architecture: arm64
     networkMode: bridge
@@ -49,6 +38,15 @@ spec:
   execution:
     materializerRef: vllm.host-local/v1
     lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.station-pair-optional/v1
+    stationPair:
+      image: vllm/vllm-openai@sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37
+      imageDownloadSizeBytes: 10238912364
+      servedName: nemotron-ultra
+      nodeCount: 2
+      tensorParallelSize: 1
+      pipelineParallelSize: 2
+      loadTimeoutSeconds: 7200
 
   serve:
     authentication: bearer
@@ -79,7 +77,6 @@ spec:
         value: qwen3_coder
       - name: --default-chat-template-kwargs
         value: '{"enable_thinking":true,"force_nonempty_content":true}'
-      - name: --trust-remote-code
 
   readiness:
     timeoutSeconds: 3600

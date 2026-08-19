@@ -113,13 +113,14 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 The flag enables the dedicated vLLM profile gate, disables Express selection, and selects the matching catalog recipe.
 Selecting Express option 2 enables the same profile gate and selects the vLLM runtime.
 Do not combine this path with `NEMOCLAW_PROVIDER` or `NEMOCLAW_MODEL`.
-The profile rejects `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before installation.
+The profile rejects `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before installation.
+Set `NEMOCLAW_VLLM_PORT` to publish its fixed container listener on another unused host port.
 
 The profile performs these actions:
 
 - Uses the pinned runtime image and fixed serving command from the catalog.
 - Stores model files in the host Hugging Face cache.
-- Publishes the authenticated server on `127.0.0.1:8000` and the exact private IPv4 gateway of the `openshell-docker` bridge, such as `172.18.0.1:8000`.
+- Publishes the authenticated server on loopback and the exact private IPv4 gateway of the `openshell-docker` bridge at the configured `NEMOCLAW_VLLM_PORT` (`8000` by default).
 - Never publishes the Docker host port on `0.0.0.0` or `::`.
 - Reuses the owner-only host-global managed-vLLM API key.
 

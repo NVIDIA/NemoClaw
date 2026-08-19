@@ -62,8 +62,10 @@ import {
   computeCapabilityPreflight,
   detectVllmProfile,
   formatComputeCapability,
-  installVllm,
+  installVllm as installVllmProduction,
+  type InstallVllmOptions,
   readGpuComputeCapabilities,
+  type VllmProfile,
 } from "./vllm";
 import {
   applyVllmInstallProbeDefaults,
@@ -71,10 +73,15 @@ import {
   mockDockerSpawnSuccess,
   resetVllmInstallEnv,
   type VllmInstallSpies,
+  withVllmInstallTestReadiness,
 } from "./vllm-install.test-support";
 import { VLLM_MODELS } from "./vllm-models";
 
 const READY_MODELS_RESPONSE = '{"data":[]}';
+
+function installVllm(profile: VllmProfile, options: InstallVllmOptions) {
+  return installVllmProduction(profile, withVllmInstallTestReadiness(profile, options));
+}
 
 function mockHostCommands(options: { computeCap: string; curl?: string }): void {
   mocks.runCapture.mockImplementation((cmd: readonly string[]) => {

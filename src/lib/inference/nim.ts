@@ -576,6 +576,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
+          ...(platform === "spark" || platform === "n1x" || platform === "jetson"
+            ? { unifiedMemory: true }
+            : {}),
           // The proof-passed ARM64 N1X GPU is memory-shared like Jetson and
           // cannot serve a computeIntensive model in-loop, so tag it
           // computeConstrained to exclude those Ollama bootstrap models (#3707).

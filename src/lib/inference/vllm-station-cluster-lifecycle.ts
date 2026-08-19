@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerCapture, dockerForceRm, dockerRunDetached } from "../adapters/docker";
+import { VLLM_PORT } from "../core/local-inference-ports";
 import { DUAL_STATION_VLLM_API_KEY_PATTERN, loadDualStationVllmApiKey } from "./vllm-api-key";
 import { buildLocalDualStationDockerEnv, buildRemoteVllmDockerEnv } from "./vllm-docker-env";
 import { buildNemotronUltraDistributedServeCommand } from "./vllm-models";
@@ -36,7 +37,7 @@ export const DUAL_STATION_VLLM_TRANSACTION_LABEL = "com.nvidia.nemoclaw.vllm-tra
 export const DUAL_STATION_VLLM_GPU_SMOKE_LABEL = "com.nvidia.nemoclaw.gpu-smoke";
 export const DUAL_STATION_VLLM_MASTER_PORT = 6379;
 
-const HEAD_API_PORT = 8000;
+const HEAD_API_PORT = VLLM_PORT;
 // The pinned Station vLLM images ship a non-root-ready /home/vllm. Each Station
 // mounts an owner-only tmpfs there and runs as the probed model-cache owner.
 const VLLM_RUNTIME_HOME = "/home/vllm";
@@ -60,7 +61,7 @@ const SAFE_GPU_UUID_PATTERN = /^GPU-[A-Za-z0-9-]{8,123}$/;
 const GPU_SMOKE_NONCE_PATTERN = /^[a-f0-9]{32}$/;
 const TRANSACTION_ID_PATTERN = /^[a-f0-9]{32}$/;
 const GPU_SMOKE_CONTAINER_PREFIX = "nemoclaw-vllm-gpu-smoke";
-export const DUAL_STATION_VLLM_LAUNCH_SCHEMA = "2";
+export const DUAL_STATION_VLLM_LAUNCH_SCHEMA = "3";
 const VLLM_FINGERPRINT_CONTEXT = "nemoclaw-dual-station-vllm-api-key\0";
 // Compatibility bridge for schema-less single-Station Ultra containers from
 // the v0.0.86 rollback window before dual launch schema 1.
@@ -497,6 +498,7 @@ function buildDualStationVllmBaseRunArgs(
       masterAddr: plan.masterAddress,
       masterPort: DUAL_STATION_VLLM_MASTER_PORT,
       nodeAddr: endpoints[0].address,
+      apiPort: HEAD_API_PORT,
     }),
   );
   return args;

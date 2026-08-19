@@ -11,23 +11,13 @@ metadata:
 spec:
   backend: vllm
 
-  model:
-    id: deepseek-ai/DeepSeek-V4-Flash
-    revision: 60d8d70770c6776ff598c94bb586a859a38244f1
-    environmentValue: deepseek-v4-flash
-    displayName: DeepSeek V4 Flash
-    menuOrder: 40
-    servedName: deepseek-ai/DeepSeek-V4-Flash
-    downloadSizeBytes: 352381000000
-    gated: false
-    installFastSafetensors: true
-    preparation:
-      ref: none/v1
-
+  modelRef: vllm.deepseek-v4-flash.v1
   runtime:
     image: nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2
     imageDownloadSizeBytes: 9603085145
+    imageUnpackedSizeBytes: 27658526720
     minimumComputeCapability: 100
+    minimumGpuMemoryBytes: 352381000000
     pullTimeoutSeconds: 43200
     architecture: arm64
     networkMode: bridge
@@ -47,6 +37,7 @@ spec:
   execution:
     materializerRef: vllm.host-local/v1
     lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
 
   serve:
     authentication: bearer
@@ -88,7 +79,6 @@ spec:
         value: 16
       - name: --prefix-cache-retention-interval
         value: auto
-      - name: --trust-remote-code
 
   readiness:
     timeoutSeconds: 1800

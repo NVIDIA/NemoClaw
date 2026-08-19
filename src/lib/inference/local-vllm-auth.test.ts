@@ -86,7 +86,7 @@ function productionManagedBaseUrlResolver(
     BASE_URL,
     "b".repeat(64),
     "GPU-12345678",
-    "2",
+    actualLifecycle.DUAL_STATION_VLLM_LAUNCH_SCHEMA,
     "c".repeat(64),
     apiKeyFingerprint,
     "d".repeat(32),

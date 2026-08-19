@@ -11,23 +11,12 @@ metadata:
 spec:
   backend: vllm
 
-  model:
-    id: nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
-    revision: 3fe6dab75665a93884214ad4b1b95cf02717d081
-    environmentValue: nemotron-3-nano-4b
-    displayName: NVIDIA Nemotron-3 Nano 4B FP8
-    menuOrder: 30
-    servedName: nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
-    downloadSizeBytes: 5280000000
-    gated: false
-    installFastSafetensors: true
-    preparation:
-      ref: none/v1
-
+  modelRef: vllm.nemotron-3-nano-4b-fp8.v1
   runtime:
     image: nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773
     imageDownloadSizeBytes: 8928665752
     minimumComputeCapability: 89
+    minimumGpuMemoryBytes: 5280000000
     pullTimeoutSeconds: 43200
     architecture: amd64
     networkMode: bridge
@@ -47,6 +36,7 @@ spec:
   execution:
     materializerRef: vllm.host-local/v1
     lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
 
   serve:
     authentication: bearer
@@ -67,7 +57,6 @@ spec:
       - name: --enable-auto-tool-choice
       - name: --tool-call-parser
         value: qwen3_coder
-      - name: --trust-remote-code
 
   readiness:
     timeoutSeconds: 1800

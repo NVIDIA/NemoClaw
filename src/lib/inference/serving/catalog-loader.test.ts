@@ -20,10 +20,11 @@ import {
 import type { CompiledServingCatalog, ServingPreset, ServingRecipe } from "./types";
 
 const EMPTY_CATALOG: CompiledServingCatalog = {
-  schemaVersion: "1.0.0",
-  compilerVersion: "1.3.0",
+  schemaVersion: "1.1.0",
+  compilerVersion: "1.4.0",
   sourceRevision: "a".repeat(40),
   readinessSchemaRef: "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
+  models: [],
   recipes: [],
   presets: [],
   sources: [],
@@ -113,10 +114,14 @@ function expectManagedRuntimeDefinitions(
       MANAGED_LIFECYCLE_REFS.has(spec.execution.lifecycleRef),
   );
   const expectedRecipeIds = new Set(expectedRecipes.map(({ metadata }) => metadata.id));
+  const expectedModelIds = new Set(
+    expectedRecipes.flatMap(({ spec }) => (spec.modelRef ? [spec.modelRef] : [])),
+  );
   const expectedPresets = servingCatalog.presets.filter(({ spec }) =>
     expectedRecipeIds.has(spec.plan.recipeRef),
   );
   const expectedDefinitionIds = new Set([
+    ...expectedModelIds,
     ...expectedRecipeIds,
     ...expectedPresets.map(({ metadata }) => metadata.id),
   ]);

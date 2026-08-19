@@ -8,6 +8,9 @@ metadata:
   id: vllm.linux-amd64-nvidia.single.deepseek-r1-distill-llama-70b
   displayName: DeepSeek-R1 Distill Llama 70B on one Linux x86_64 NVIDIA GPU
   supportState: supported
+  validation:
+    level: hardware
+    evidence: preexisting-supported-profile-v0.0.109
 
 spec:
   selection: explicit-only

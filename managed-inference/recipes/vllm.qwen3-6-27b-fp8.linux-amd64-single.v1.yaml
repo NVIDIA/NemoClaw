@@ -11,23 +11,12 @@ metadata:
 spec:
   backend: vllm
 
-  model:
-    id: Qwen/Qwen3.6-27B-FP8
-    revision: e89b16ebf1988b3d6befa7de50abc2d76f26eb09
-    environmentValue: qwen3.6-27b
-    displayName: Qwen3.6 27B FP8
-    menuOrder: 10
-    servedName: Qwen/Qwen3.6-27B-FP8
-    downloadSizeBytes: 30900000000
-    gated: false
-    installFastSafetensors: true
-    preparation:
-      ref: none/v1
-
+  modelRef: vllm.qwen3-6-27b-fp8.v1
   runtime:
     image: nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773
     imageDownloadSizeBytes: 8928665752
     minimumComputeCapability: 89
+    minimumGpuMemoryBytes: 30900000000
     pullTimeoutSeconds: 43200
     architecture: amd64
     networkMode: bridge
@@ -47,6 +36,7 @@ spec:
   execution:
     materializerRef: vllm.host-local/v1
     lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
 
   serve:
     authentication: bearer
@@ -70,7 +60,6 @@ spec:
       - name: --load-format
         value: fastsafetensors
       - name: --enable-prefix-caching
-      - name: --trust-remote-code
 
   readiness:
     timeoutSeconds: 1800

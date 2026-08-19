@@ -133,12 +133,12 @@ The worker does not receive the serving key.
 
 Treat both Stations and their direct rails as one trusted runtime boundary.
 
-- Allow port `8000` from the OpenShell Docker subnet only to the selected rank-0 rail address.
-- Deny port `8000` on management and LAN interfaces.
+- Allow the configured `NEMOCLAW_VLLM_PORT` (`8000` by default) from the OpenShell Docker subnet only to the selected rank-0 rail address.
+- Deny that port on management and LAN interfaces.
 - Restrict Ray, NCCL, and serving traffic to the reciprocal addresses on the two qualified private rails.
 - Keep Ray TCP port `6379` and Ray worker ports off untrusted or routed networks.
 
-The single-Station fallback uses the bridge-networked managed-inference topology and publishes port `8000` through Docker.
+The single-Station fallback uses the bridge-networked managed-inference topology and publishes the configured host port through Docker to container port `8000`.
 Follow [Set Up vLLM](set-up-vllm) for that workflow.
 
 ## Preserve Cleanup Ownership

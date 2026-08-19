@@ -8,6 +8,9 @@ metadata:
   id: vllm.dgx-station-gb300.single.nemotron-3-nano-4b-fp8
   displayName: NVIDIA Nemotron-3 Nano 4B FP8 on one DGX Station
   supportState: supported
+  validation:
+    level: hardware
+    evidence: preexisting-supported-profile-v0.0.109
 
 spec:
   selection: explicit-only

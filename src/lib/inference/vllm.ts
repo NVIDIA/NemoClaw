@@ -58,11 +58,13 @@ import {
   assertGatedModelAccess,
   buildVllmServeCommand,
   defaultVllmModelForPlatform,
-  NEMOTRON_ULTRA_DUAL_STATION_IMAGE,
-  NEMOTRON_ULTRA_STATION_IMAGE,
+  defaultVllmRuntimeForPlatform,
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
   parseVllmExtraServeArgs,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
+  vllmModelForOrchestration,
+  vllmModelUsesOrchestration,
   vllmPlatformSpecificity,
   type VllmModelDef,
   type VllmPlatform,
@@ -74,6 +76,7 @@ import {
   NEMOCLAW_DGX_STATION_PEER_ENV,
   probeDualStationVllmCapability,
 } from "./vllm-station-cluster";
+import type { ManagedInferenceReadinessSource } from "./serving/types";
 import {
   areDualStationManagedVllmContainersRunning,
   cleanupDualStationManagedVllm,
@@ -156,40 +159,32 @@ export interface VllmProfile {
   };
 }
 
-interface VllmImageCatalogEntry {
-  downloadSizeBytes: number;
-  ref: string;
-  unpackedSizeBytes?: number;
-}
-
 const VLLM_WRITABLE_ALLOWANCE_BYTES = 816_000_000;
 
-// Platform manifests and decimal compressed sizes published by NGC for the
-// named release tags. Pinning the digest makes a cache hit authoritative: an
-// explicit pull cannot begin downloading different same-tag layers. Unpacked
-// sizes are digest-catalog values measured ahead of time because OCI metadata
-// does not publish exact uncompressed byte counts.
+// Compatibility export for image-boundary checks. Runtime image identity and
+// size are owned by catalog recipes, including optional orchestration images.
 export const VLLM_IMAGES = {
-  vllm022: NEMOTRON_ULTRA_STATION_IMAGE,
-  ngc2603Post1: {
-    tag: "nvcr.io/nvidia/vllm:26.03.post1-py3",
-    amd64: {
-      ref: "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
-      downloadSizeBytes: 8_928_665_752,
-    },
-    arm64: {
-      ref: "nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4",
-      downloadSizeBytes: 9_278_081_698,
-    },
-  },
-  ngc2605Post1: {
-    tag: "nvcr.io/nvidia/vllm:26.05.post1-py3",
-    arm64: {
-      ref: "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
-      downloadSizeBytes: 9_603_085_145,
-      unpackedSizeBytes: 27_658_526_720,
-    },
-  },
+  catalog: Object.fromEntries(
+    VLLM_MODELS.flatMap((model) =>
+      (model.runtimeVariants ?? []).flatMap((runtime, index) => [
+        [
+          `${model.envValue}-${String(index)}`,
+          { ref: runtime.image, downloadSizeBytes: runtime.imageDownloadSizeBytes },
+        ],
+        ...(runtime.stationPair
+          ? [
+              [
+                `${model.envValue}-${String(index)}-station-pair`,
+                {
+                  ref: runtime.stationPair.image,
+                  downloadSizeBytes: runtime.stationPair.imageDownloadSizeBytes,
+                },
+              ],
+            ]
+          : []),
+      ]),
+    ),
+  ),
 } as const;
 
 const HF_TOKEN_SETTINGS_URL = "https://huggingface.co/settings/tokens";
@@ -287,13 +282,14 @@ function printHfRateLimitRecovery(): void {
   );
 }
 
+const sparkDefaultRuntime = defaultVllmRuntimeForPlatform("spark", "arm64");
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
   platform: "spark",
   architecture: "arm64",
-  image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
-  imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
-  imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
+  image: sparkDefaultRuntime.image,
+  imageDownloadSizeBytes: sparkDefaultRuntime.imageDownloadSizeBytes,
+  imageUnpackedSizeBytes: sparkDefaultRuntime.imageUnpackedSizeBytes,
   defaultModel: defaultVllmModelForPlatform("spark", "arm64"),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: vllmDockerRunFlags(),
@@ -301,13 +297,14 @@ const SPARK_PROFILE: VllmProfile = {
   loadTimeoutSec: 1800,
 };
 
+const n1xDefaultRuntime = defaultVllmRuntimeForPlatform("n1x", "arm64");
 const N1X_PROFILE: VllmProfile = {
   name: "N1x",
   platform: "n1x",
   architecture: "arm64",
-  image: SPARK_PROFILE.image,
-  imageDownloadSizeBytes: SPARK_PROFILE.imageDownloadSizeBytes,
-  imageUnpackedSizeBytes: SPARK_PROFILE.imageUnpackedSizeBytes,
+  image: n1xDefaultRuntime.image,
+  imageDownloadSizeBytes: n1xDefaultRuntime.imageDownloadSizeBytes,
+  imageUnpackedSizeBytes: n1xDefaultRuntime.imageUnpackedSizeBytes,
   defaultModel: defaultVllmModelForPlatform("n1x", "arm64"),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -316,13 +313,14 @@ const N1X_PROFILE: VllmProfile = {
 };
 
 // DGX Station.
+const stationDefaultRuntime = defaultVllmRuntimeForPlatform("station", "arm64");
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
   platform: "station",
   architecture: "arm64",
-  image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
-  imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
-  imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
+  image: stationDefaultRuntime.image,
+  imageDownloadSizeBytes: stationDefaultRuntime.imageDownloadSizeBytes,
+  imageUnpackedSizeBytes: stationDefaultRuntime.imageUnpackedSizeBytes,
   defaultModel: defaultVllmModelForPlatform("station", "arm64"),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -344,21 +342,19 @@ const STATION_PROFILE: VllmProfile = {
 
 // Generic discrete-GPU Linux. Uses a small nemotron model that fits on
 // most GPUs.
-const genericLinuxImage: VllmImageCatalogEntry | null =
-  process.arch === "arm64"
-    ? VLLM_IMAGES.ngc2603Post1.arm64
-    : process.arch === "x64"
-      ? VLLM_IMAGES.ngc2603Post1.amd64
-      : null;
+const genericLinuxRuntime =
+  process.arch === "arm64" || process.arch === "x64"
+    ? defaultVllmRuntimeForPlatform("linux", process.arch)
+    : null;
 
-const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxImage
+const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxRuntime
   ? {
       name: "Linux + NVIDIA GPU",
       platform: "linux",
       architecture: process.arch,
-      image: genericLinuxImage.ref,
-      imageDownloadSizeBytes: genericLinuxImage.downloadSizeBytes,
-      imageUnpackedSizeBytes: genericLinuxImage.unpackedSizeBytes,
+      image: genericLinuxRuntime.image,
+      imageDownloadSizeBytes: genericLinuxRuntime.imageDownloadSizeBytes,
+      imageUnpackedSizeBytes: genericLinuxRuntime.imageUnpackedSizeBytes,
       defaultModel: defaultVllmModelForPlatform("linux", process.arch),
       containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
       dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -653,7 +649,8 @@ function applyVllmRuntimeProfile(
       image: runtime.image,
       imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
       imageUnpackedSizeBytes:
-        runtime.image === profile.image ? profile.imageUnpackedSizeBytes : undefined,
+        runtime.imageUnpackedSizeBytes ??
+        (runtime.image === profile.image ? profile.imageUnpackedSizeBytes : undefined),
       modelDownloadSizeBytes: runtime.modelDownloadSizeBytes ?? profile.modelDownloadSizeBytes,
       loadTimeoutSec: runtime.loadTimeoutSec ?? profile.loadTimeoutSec,
       dockerRunFlags:
@@ -1549,12 +1546,14 @@ function ensureHfCacheDir(model: VllmModelDef): { ok: true } | { ok: false; reas
   return { ok: true };
 }
 
-interface InstallVllmOptions {
+export interface InstallVllmOptions {
   hasImage: boolean;
   nonInteractive: boolean;
   promptFn: (q: string) => Promise<string>;
   beforeInstall?: (modelId: string) => void;
   resolveManagedBridgeHost?: (dockerEnv: Record<string, string>) => string;
+  /** Reuse an already-collected readiness snapshot instead of probing the host again. */
+  readinessReports?: readonly ManagedInferenceReadinessSource[];
   /**
    * Injected rather than imported so this module does not take a dependency on
    * the onboard preflight layer. onboard.ts supplies the same probe the gateway
@@ -1637,6 +1636,8 @@ async function runVllmInstall(
   opts: InstallVllmOptions,
   hostLocalSelection?: MaterializedHostLocalVllmSelection,
 ): Promise<{ ok: boolean }> {
+  const explicitModel = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim();
+  const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
   if (profile.defaultModel.fixedServeCommand) {
     if (String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
       console.error(
@@ -1663,8 +1664,11 @@ async function runVllmInstall(
       );
   if (managedCluster.kind === "handled") return managedCluster.result;
 
-  if (!hostLocalSelection) {
-    const selected = resolveHostLocalVllmSelection(profile);
+  if (!hostLocalSelection && !(profile.platform === "station" && configuredPeer)) {
+    const selected = resolveHostLocalVllmSelection(profile, process.env, {
+      automatic: opts.nonInteractive,
+      readinessReports: opts.readinessReports,
+    });
     if (selected.kind === "rejected") {
       console.error(`  vLLM install failed: ${selected.reason}`);
       return { ok: false };
@@ -1676,27 +1680,30 @@ async function runVllmInstall(
 
   let dualStationPlan: DualStationVllmPlan | null = null;
   let peerModelSnapshot: "ready" | "staging-required" | null = null;
-  const explicitModel = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim();
-  const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
-  const ultra =
+  const pairedModel =
     profile.platform === "station" && configuredPeer
-      ? VLLM_MODELS.find((candidate) => candidate.envValue === "nemotron-3-ultra-550b-a55b")
+      ? vllmModelForOrchestration(
+          STATION_PAIR_OPTIONAL_ORCHESTRATION,
+          "station",
+          profile.architecture ?? process.arch,
+        )
       : undefined;
 
   if (profile.platform === "station" && configuredPeer) {
-    if (!ultra) {
-      console.error("  vLLM install failed: Nemotron Ultra is missing from the model registry");
+    if (!pairedModel) {
+      console.error("  vLLM install failed: the Station-pair model is missing from the catalog");
       return { ok: false };
     }
     const normalizedExplicitModel = explicitModel.toLowerCase();
     if (
       normalizedExplicitModel &&
-      normalizedExplicitModel !== ultra.envValue.toLowerCase() &&
-      normalizedExplicitModel !== ultra.id.toLowerCase()
+      normalizedExplicitModel !== pairedModel.envValue.toLowerCase() &&
+      normalizedExplicitModel !== pairedModel.id.toLowerCase() &&
+      normalizedExplicitModel !== pairedModel.servedModelId?.toLowerCase()
     ) {
       console.error(
         `  vLLM install failed: ${NEMOCLAW_DGX_STATION_PEER_ENV} requires the DGX Station dual-serving model. ` +
-          "Unset NEMOCLAW_VLLM_MODEL or select nemotron-3-ultra-550b-a55b; the explicit model override remains authoritative.",
+          `Unset NEMOCLAW_VLLM_MODEL or select ${pairedModel.envValue}; the explicit model override remains authoritative.`,
       );
       return { ok: false };
     }
@@ -1705,7 +1712,7 @@ async function runVllmInstall(
   // stays focused on the docker side effects. Gated-model access is checked
   // there before any docker work happens.
   let resolved: Awaited<ReturnType<typeof resolveVllmInstallModel>>;
-  if (profile.platform === "station" && configuredPeer && !explicitModel && ultra) {
+  if (profile.platform === "station" && configuredPeer && !explicitModel && pairedModel) {
     const capability = probeDualStationVllmCapability();
     if (capability.kind !== "ready") {
       const reason =
@@ -1716,7 +1723,7 @@ async function runVllmInstall(
       return { ok: false };
     }
     resolved = await resolveVllmInstallModel(
-      { ...profile, defaultModel: ultra },
+      { ...profile, defaultModel: pairedModel },
       {
         // A qualified explicit peer is the model-selection signal. The normal
         // resolver still owns access validation, but no second model choice is
@@ -1743,6 +1750,21 @@ async function runVllmInstall(
     });
   }
   if (!resolved) return { ok: false };
+  if (!hostLocalSelection && resolved.source === "picker") {
+    const selected = resolveHostLocalVllmSelection(profile, {
+      ...process.env,
+      NEMOCLAW_VLLM_MODEL: resolved.model.envValue,
+    }, {
+      readinessReports: opts.readinessReports,
+    });
+    if (selected.kind === "rejected") {
+      console.error(`  vLLM install failed: ${selected.reason}`);
+      return { ok: false };
+    }
+    if (selected.kind === "selected") {
+      return await runVllmInstall(selected.profile, opts, selected);
+    }
+  }
   let { model } = resolved;
   const { source: modelSource } = resolved;
   // Platform-restricted models are filtered out of the interactive picker,
@@ -1752,6 +1774,12 @@ async function runVllmInstall(
   // NVFP4 Spark checkpoint or a 352 GB Station recipe cannot serve here and
   // must fail before the image pull and download (#7358).
   const architecture = profile.architecture ?? process.arch;
+  const usesStationPair = vllmModelUsesOrchestration(
+    model,
+    STATION_PAIR_OPTIONAL_ORCHESTRATION,
+    profile.platform,
+    architecture,
+  );
   const hasCompatibleRuntime = (model.runtimeVariants ?? []).some(
     (variant) =>
       vllmPlatformSpecificity(variant.platforms, profile.platform) >= 0 &&
@@ -1769,7 +1797,7 @@ async function runVllmInstall(
     hostLocalSelection ||
     (profile.platform === "station" &&
       configuredPeer.length > 0 &&
-      model.envValue === "nemotron-3-ultra-550b-a55b")
+      usesStationPair)
   ) {
     runtimeProfile = profile;
   } else {
@@ -1796,7 +1824,7 @@ async function runVllmInstall(
     return { ok: false };
   }
 
-  if (profile.platform === "station" && model.envValue === "nemotron-3-ultra-550b-a55b") {
+  if (profile.platform === "station" && usesStationPair) {
     if (!dualStationPlan) {
       const capability = probeDualStationVllmCapability();
       if (capability.kind === "unavailable") {
@@ -1813,16 +1841,10 @@ async function runVllmInstall(
       runtimeProfile = {
         ...runtimeProfile,
         image: dualStationPlan.runtime.image,
-        imageDownloadSizeBytes: NEMOTRON_ULTRA_DUAL_STATION_IMAGE.arm64.downloadSizeBytes,
+        imageDownloadSizeBytes: dualStationPlan.runtime.imageDownloadSizeBytes,
         imageUnpackedSizeBytes: undefined,
-        loadTimeoutSec: 7200,
+        loadTimeoutSec: dualStationPlan.runtime.loadTimeoutSeconds,
       };
-      if (VLLM_PORT !== 8000) {
-        console.error(
-          "  Dual DGX Station setup requires the default vLLM port 8000; unset NEMOCLAW_VLLM_PORT and retry.",
-        );
-        return { ok: false };
-      }
       if (extraServeArgs.length > 0) {
         console.error(
           `  Dual DGX Station setup does not accept ${VLLM_EXTRA_ARGS_ENV}; the verified distributed launch is fixed.`,

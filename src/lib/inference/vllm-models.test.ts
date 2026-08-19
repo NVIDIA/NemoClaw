@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { vllmProbePolicyForModel } from "./openai-probe-models";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
 import type { HostLocalInferenceServingRecipe } from "./serving/types";
 import {
@@ -15,9 +16,11 @@ import {
   parseVllmExtraServeArgs,
   preflightVllmModelEnv,
   selectVllmModelFromEnv,
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
   vllmModelsFromCatalog,
+  vllmModelForOrchestration,
 } from "./vllm-models";
 
 describe("vllm model registry", () => {
@@ -38,6 +41,8 @@ describe("vllm model registry", () => {
     );
     expect(new Set(VLLM_MODELS.map((model) => model.envValue)).size).toBe(VLLM_MODELS.length);
     for (const model of VLLM_MODELS) {
+      expect(model.capabilities).toMatchObject({ chatCompletions: true, toolCalls: true });
+      expect(model.probePolicyRef).toMatch(/^nvidia\.endpoint-validation\./u);
       expect(model.runtimeVariants?.length).toBeGreaterThan(0);
       for (const variant of model.runtimeVariants ?? []) {
         expect(variant.catalogPresetId).toMatch(/^vllm\./u);
@@ -45,6 +50,29 @@ describe("vllm model registry", () => {
         expect(variant.architectures).toHaveLength(1);
       }
     }
+  });
+
+  it("discovers special orchestration and probe behavior through catalog references", () => {
+    const stationPairModel = vllmModelForOrchestration(
+      STATION_PAIR_OPTIONAL_ORCHESTRATION,
+      "station",
+      "arm64",
+    );
+
+    expect(stationPairModel?.runtimeVariants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          orchestrationRef: STATION_PAIR_OPTIONAL_ORCHESTRATION,
+          stationPair: expect.objectContaining({ nodeCount: 2, pipelineParallelSize: 2 }),
+        }),
+      ]),
+    );
+    expect(vllmProbePolicyForModel("deepseek-ai/deepseek-v4-flash")).toBe(
+      "nvidia.endpoint-validation.extended/v1",
+    );
+    expect(vllmProbePolicyForModel("unknown/model")).toBe(
+      "nvidia.endpoint-validation.standard/v1",
+    );
   });
 
   it("adds a model through catalog data without a TypeScript registry edit", () => {
@@ -224,7 +252,7 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--revision 183968f87ae4cedce3039313cac1fd43d112c578");
     expect(cmd).toContain("--cpu-offload-gb 150");
     expect(cmd).toContain("--reasoning-parser nemotron_v3");
-    expect(cmd).toContain("--trust-remote-code");
+    expect(cmd).not.toContain("--trust-remote-code");
   });
 
   it("builds the pinned two-Station Nemotron Ultra vLLM v0.25.1 Ray head command", () => {
@@ -232,6 +260,7 @@ describe("vllm model registry", () => {
       nodeRank: 0,
       masterAddr: "192.168.240.1",
       masterPort: 6379,
+      apiPort: 19000,
     });
 
     expect(cmd).toContain('python3 -m pip install --user --no-cache-dir "ray==2.56.0"');
@@ -244,9 +273,11 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--distributed-executor-backend ray");
     expect(cmd).toContain("--kv-cache-dtype fp8");
     expect(cmd).toContain("--max-model-len 262144");
+    expect(cmd).not.toContain("--trust-remote-code");
     expect(cmd).toContain("--distributed-timeout-seconds 7200");
     expect(cmd).toContain("--served-model-name nemotron-ultra");
     expect(cmd).toContain("--host 192.168.240.1");
+    expect(cmd).toContain("--port 19000");
     expect(cmd).toContain("--max-num-seqs 256");
     expect(cmd).toContain("--gpu-memory-utilization 0.9");
     expect(cmd).not.toContain("--kernel_config");
@@ -259,12 +290,14 @@ describe("vllm model registry", () => {
       nodeRank: 0,
       masterAddr: "192.168.240.1",
       masterPort: 6379,
+      apiPort: 8000,
     });
     const worker = buildNemotronUltraDistributedServeCommand({
       nodeRank: 1,
       masterAddr: "192.168.240.1",
       masterPort: 6379,
       nodeAddr: "192.168.240.2",
+      apiPort: 8000,
     });
 
     expect(worker).toContain(
@@ -280,6 +313,7 @@ describe("vllm model registry", () => {
         nodeRank: 0,
         masterAddr: "station a",
         masterPort: 6379,
+        apiPort: 8000,
       }),
     ).toThrow(/masterAddr/);
     expect(() =>
@@ -287,6 +321,7 @@ describe("vllm model registry", () => {
         nodeRank: 1,
         masterAddr: "192.168.240.1",
         masterPort: 70000,
+        apiPort: 8000,
       }),
     ).toThrow(/masterPort/);
     expect(() =>
@@ -295,6 +330,7 @@ describe("vllm model registry", () => {
         masterAddr: "192.168.240.1",
         masterPort: 6379,
         nodeAddr: "worker.example.com",
+        apiPort: 8000,
       }),
     ).toThrow(/nodeAddr/);
   });
@@ -428,7 +464,7 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--data-parallel-size 1");
     expect(cmd).toContain("--port 8000");
     expect(cmd).toContain("--kv-cache-dtype fp8");
-    expect(cmd).toContain("--trust-remote-code");
+    expect(cmd).not.toContain("--trust-remote-code");
     expect(cmd).toContain("--block-size 256");
     expect(cmd).toContain("--enable-prefix-caching");
     expect(cmd).toContain("--gpu-memory-utilization 0.92");

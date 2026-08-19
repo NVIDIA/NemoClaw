@@ -8,6 +8,9 @@ metadata:
   id: vllm.dgx-station-gb300.single.qwen3-6-27b-fp8
   displayName: Qwen3.6 27B FP8 on one DGX Station
   supportState: supported
+  validation:
+    level: hardware
+    evidence: preexisting-supported-profile-v0.0.109
 
 spec:
   selection: explicit-only

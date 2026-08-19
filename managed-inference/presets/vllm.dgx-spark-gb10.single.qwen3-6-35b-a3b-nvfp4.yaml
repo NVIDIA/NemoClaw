@@ -8,6 +8,9 @@ metadata:
   id: vllm.dgx-spark-gb10.single.qwen3-6-35b-a3b-nvfp4
   displayName: Qwen3.6 35B-A3B NVFP4 on one DGX Spark
   supportState: supported
+  validation:
+    level: hardware
+    evidence: preexisting-supported-profile-v0.0.109
 
 spec:
   selection: automatic

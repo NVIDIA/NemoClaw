@@ -12,8 +12,12 @@ export const DEFAULT_OLLAMA_PORT = 11434;
 export const DEFAULT_OLLAMA_PROXY_PORT = 11435;
 
 /** Read one environment variable as a non-privileged TCP port. */
-export function parsePort(envVar: string, fallback: number): number {
-  const raw = process.env[envVar];
+export function parsePort(
+  envVar: string,
+  fallback: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env[envVar];
   if (raw === undefined || raw === "") return fallback;
   const trimmed = String(raw).trim();
   if (!/^\d+$/u.test(trimmed)) {

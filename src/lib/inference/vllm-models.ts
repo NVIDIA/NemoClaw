@@ -39,9 +39,12 @@ import type {
   HostLocalInferenceServingRecipe,
   ManagedInferenceServingPreset,
   ServingArgument,
+  ServingModelCapabilities,
+  ServingStationPairOrchestration,
 } from "./serving/types.js";
 
 export type VllmPlatform = "spark" | "station" | "n1x" | "linux";
+export const STATION_PAIR_OPTIONAL_ORCHESTRATION = "vllm.station-pair-optional/v1";
 
 export interface VllmServingCatalogIdentity {
   readonly catalogDigest: string;
@@ -56,6 +59,8 @@ export interface VllmRuntimeOverride {
   image: string;
   /** Compressed size of the selected platform manifest. */
   imageDownloadSizeBytes: number;
+  /** Measured uncompressed layer size for the exact image digest, when known. */
+  imageUnpackedSizeBytes?: number;
   /** Size of the pinned Hugging Face snapshot used for cache preflight. */
   modelDownloadSizeBytes?: number;
   /** Maximum time to wait for this model to become ready after launch. */
@@ -72,6 +77,10 @@ export interface VllmRuntimeOverride {
   servingCatalog?: VllmServingCatalogIdentity;
   /** Catalog preset that declared this runtime, independent of receipt ownership. */
   catalogPresetId?: string;
+  /** Allowlisted orchestration adapter selected by the catalog recipe. */
+  orchestrationRef?: string;
+  /** Typed data consumed only by the allowlisted Station-pair adapter. */
+  stationPair?: ServingStationPairOrchestration;
 }
 
 /**
@@ -114,23 +123,6 @@ export interface VllmRuntimeVariant extends VllmRuntimeOverride {
   /** Catalog preset that declared this runtime. */
   catalogPresetId: string;
 }
-
-export const NEMOTRON_ULTRA_STATION_IMAGE = {
-  tag: "vllm/vllm-openai:v0.22.0",
-  arm64: {
-    ref: "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
-    downloadSizeBytes: 10_670_087_425,
-  },
-} as const;
-
-/** Runtime pinned from the published dual-DGX-Station playbook. */
-export const NEMOTRON_ULTRA_DUAL_STATION_IMAGE = {
-  tag: "vllm/vllm-openai:v0.25.1-aarch64",
-  arm64: {
-    ref: "vllm/vllm-openai@sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37",
-    downloadSizeBytes: 10_238_912_364,
-  },
-} as const;
 
 export interface VllmModelDef {
   /** Hugging Face model id (also passed to `vllm serve`). */
@@ -185,6 +177,10 @@ export interface VllmModelDef {
   managedBearerAuth?: true;
   /** Reject environment-provided model and serving-argument overrides. */
   fixedServeCommand?: true;
+  /** Model behavior used by endpoint validation and agent compatibility checks. */
+  capabilities?: ServingModelCapabilities;
+  /** Allowlisted endpoint probe budget policy. */
+  probePolicyRef?: string;
 }
 
 const CATALOG_MATERIALIZER_OWNED_ARGUMENTS = new Set([
@@ -205,6 +201,8 @@ interface CatalogModelVariant {
   readonly menuOrder: number;
   readonly downloadSizeBytes: number;
   readonly gated: boolean;
+  readonly capabilities?: ServingModelCapabilities;
+  readonly probePolicyRef?: string;
   readonly platform: VllmPlatform;
   readonly variant: VllmRuntimeVariant;
 }
@@ -291,6 +289,8 @@ function catalogModelVariant(
     menuOrder: recipe.spec.model.menuOrder,
     downloadSizeBytes: recipe.spec.model.downloadSizeBytes,
     gated: recipe.spec.model.gated,
+    capabilities: recipe.spec.model.capabilities,
+    probePolicyRef: recipe.spec.model.probePolicyRef,
     platform,
     variant: {
       priority: preset.spec.priority,
@@ -298,6 +298,7 @@ function catalogModelVariant(
       architectures: [nodeArchitecture(recipe.spec.runtime.architecture)],
       image: recipe.spec.runtime.image,
       imageDownloadSizeBytes: recipe.spec.runtime.imageDownloadSizeBytes,
+      imageUnpackedSizeBytes: recipe.spec.runtime.imageUnpackedSizeBytes,
       modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
       loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
       pullTimeoutSec: recipe.spec.runtime.pullTimeoutSeconds,
@@ -321,17 +322,32 @@ function catalogModelVariant(
       selection: preset.spec.selection === "automatic" ? "automatic" : "explicit-only",
       interactive: preset.spec.plan.interactive !== false,
       catalogPresetId: preset.metadata.id,
+      orchestrationRef: recipe.spec.execution.orchestrationRef,
+      stationPair: recipe.spec.execution.stationPair,
       ...(directInstall.catalogReceipt ? { servingCatalog } : {}),
     },
   };
 }
 
 function assertSameCatalogModel(left: CatalogModelVariant, right: CatalogModelVariant): void {
-  const fields = ["id", "label", "envValue", "menuOrder", "downloadSizeBytes", "gated"] as const;
+  const fields = [
+    "id",
+    "label",
+    "envValue",
+    "menuOrder",
+    "downloadSizeBytes",
+    "gated",
+    "probePolicyRef",
+  ] as const;
   const mismatch = fields.find((field) => left[field] !== right[field]);
   if (mismatch) {
     throw new Error(
       `Managed vLLM recipes for ${left.envValue} disagree on model field ${mismatch}.`,
+    );
+  }
+  if (JSON.stringify(left.capabilities) !== JSON.stringify(right.capabilities)) {
+    throw new Error(
+      `Managed vLLM recipes for ${left.envValue} disagree on model field capabilities.`,
     );
   }
 }
@@ -377,12 +393,15 @@ export function vllmModelsFromCatalog(
           ? {
               image: base.variant.image,
               imageDownloadSizeBytes: base.variant.imageDownloadSizeBytes,
+              imageUnpackedSizeBytes: base.variant.imageUnpackedSizeBytes,
               modelDownloadSizeBytes: base.variant.modelDownloadSizeBytes,
               loadTimeoutSec: base.variant.loadTimeoutSec,
               dockerRunArgs: base.variant.dockerRunArgs,
               dockerRunArgsMode: base.variant.dockerRunArgsMode,
               pullTimeoutSec: base.variant.pullTimeoutSec,
               minComputeCapability: base.variant.minComputeCapability,
+              orchestrationRef: base.variant.orchestrationRef,
+              stationPair: base.variant.stationPair,
             }
           : undefined;
       const computeCapabilityFloors = ordered.flatMap(({ variant }) =>
@@ -410,6 +429,8 @@ export function vllmModelsFromCatalog(
         fixedServeCommand: base.variant.fixedServeCommand,
         managedBearerAuth: base.variant.managedBearerAuth,
         trustRemoteCode: base.variant.trustRemoteCode,
+        capabilities: base.capabilities,
+        probePolicyRef: base.probePolicyRef,
       };
     })
     .sort((left, right) => {
@@ -440,10 +461,65 @@ export function vllmPlatformSpecificity(
   return -1;
 }
 
-export function defaultVllmModelForPlatform(
+export function vllmModelForOrchestration(
+  orchestrationRef: string,
   platform: VllmPlatform,
   architecture: NodeJS.Architecture = process.arch,
-): VllmModelDef {
+): VllmModelDef | undefined {
+  const matches = VLLM_MODELS.filter((model) =>
+    (model.runtimeVariants ?? []).some(
+      (variant) =>
+        variant.orchestrationRef === orchestrationRef &&
+        vllmPlatformSpecificity(variant.platforms, platform) >= 0 &&
+        (!variant.architectures || variant.architectures.includes(architecture)),
+    ),
+  );
+  if (matches.length > 1) {
+    throw new Error(
+      `Managed vLLM catalog has ambiguous ${orchestrationRef} models for ${platform} on ${architecture}.`,
+    );
+  }
+  return matches[0];
+}
+
+export function vllmModelUsesOrchestration(
+  model: VllmModelDef,
+  orchestrationRef: string,
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): boolean {
+  return (model.runtimeVariants ?? []).some(
+    (variant) =>
+      variant.orchestrationRef === orchestrationRef &&
+      vllmPlatformSpecificity(variant.platforms, platform) >= 0 &&
+      (!variant.architectures || variant.architectures.includes(architecture)),
+  );
+}
+
+export function vllmStationPairForOrchestration(
+  model: VllmModelDef,
+  orchestrationRef: string,
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): ServingStationPairOrchestration | undefined {
+  const matches = (model.runtimeVariants ?? []).filter(
+    (variant) =>
+      variant.orchestrationRef === orchestrationRef &&
+      vllmPlatformSpecificity(variant.platforms, platform) >= 0 &&
+      (!variant.architectures || variant.architectures.includes(architecture)),
+  );
+  if (matches.length > 1) {
+    throw new Error(
+      `Managed vLLM catalog has ambiguous ${orchestrationRef} runtimes for ${model.envValue} on ${platform}/${architecture}.`,
+    );
+  }
+  return matches[0]?.stationPair;
+}
+
+function defaultVllmCandidateForPlatform(
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): { readonly model: VllmModelDef; readonly variant: VllmRuntimeVariant } {
   const candidates = VLLM_MODELS.flatMap((model) =>
     (model.runtimeVariants ?? [])
       .filter(
@@ -473,7 +549,21 @@ export function defaultVllmModelForPlatform(
       `Managed vLLM catalog has ambiguous automatic ${platform} models at priority ${String(candidates[0]!.variant.priority)}.`,
     );
   }
-  return candidates[0]!.model;
+  return candidates[0]!;
+}
+
+export function defaultVllmModelForPlatform(
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): VllmModelDef {
+  return defaultVllmCandidateForPlatform(platform, architecture).model;
+}
+
+export function defaultVllmRuntimeForPlatform(
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): VllmRuntimeVariant {
+  return defaultVllmCandidateForPlatform(platform, architecture).variant;
 }
 
 /**
@@ -676,6 +766,8 @@ export interface NemotronUltraDistributedServeOptions {
   masterPort: number;
   /** Routable address of the node running this command. */
   nodeAddr?: string;
+  /** Host-network API port for the head node. */
+  apiPort: number;
 }
 
 /**
@@ -700,6 +792,10 @@ export function buildNemotronUltraDistributedServeCommand(
   ) {
     throw new Error("Nemotron Ultra distributed masterPort must be an integer from 1 to 65535.");
   }
+  const apiPort = options.apiPort;
+  if (!Number.isInteger(apiPort) || apiPort < 1 || apiPort > 65535) {
+    throw new Error("Nemotron Ultra distributed apiPort must be an integer from 1 to 65535.");
+  }
   const nodeAddr = (options.nodeAddr ?? masterAddr).trim();
   if (net.isIP(nodeAddr) !== 4) {
     throw new Error("Nemotron Ultra distributed nodeAddr must be a canonical IPv4 address.");
@@ -708,18 +804,25 @@ export function buildNemotronUltraDistributedServeCommand(
     throw new Error("Nemotron Ultra Ray head nodeAddr must match masterAddr.");
   }
 
-  const model = VLLM_MODELS.find(
-    (candidate) => candidate.envValue === "nemotron-3-ultra-550b-a55b",
-  );
-  if (!model?.revision || !model.servedModelId) {
+  const model = vllmModelForOrchestration(STATION_PAIR_OPTIONAL_ORCHESTRATION, "station", "arm64");
+  const stationPair = model
+    ? vllmStationPairForOrchestration(
+        model,
+        STATION_PAIR_OPTIONAL_ORCHESTRATION,
+        "station",
+        "arm64",
+      )
+    : undefined;
+  if (!model?.revision || !stationPair) {
     throw new Error(
-      "Nemotron Ultra distributed serving requires a pinned revision and served model id.",
+      "Station-pair distributed serving requires a pinned revision and orchestration config.",
     );
   }
 
-  const sharedArgs = rewriteVllmArgs(SHARED_VLLM_ARGS, {
-    "--tensor-parallel-size": "1",
-    "--pipeline-parallel-size": "2",
+  const sharedArgs = rewriteVllmArgs(FIXED_HOST_LOCAL_VLLM_ARGS, {
+    "--tensor-parallel-size": String(stationPair.tensorParallelSize),
+    "--pipeline-parallel-size": String(stationPair.pipelineParallelSize),
+    "--port": String(apiPort),
   });
   const modelArgs = rewriteVllmArgs(
     model.modelArgs,
@@ -754,7 +857,7 @@ export function buildNemotronUltraDistributedServeCommand(
     "--revision",
     model.revision,
     "--served-model-name",
-    "nemotron-ultra",
+    stationPair.servedName,
     ...modelArgs,
   ];
   const bootstrap = [

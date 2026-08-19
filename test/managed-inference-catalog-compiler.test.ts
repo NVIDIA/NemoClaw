@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import catalogSchema from "../managed-inference/schemas/catalog.schema.json" with { type: "json" };
+import modelSchema from "../managed-inference/schemas/model.schema.json" with { type: "json" };
 import presetSchema from "../managed-inference/schemas/preset.schema.json" with { type: "json" };
 import recipeSchema from "../managed-inference/schemas/recipe.schema.json" with { type: "json" };
 import { getManagedInferenceServingCatalogRegistries } from "../src/lib/inference/serving/adapter-registry.js";
@@ -40,7 +41,7 @@ const LINUX_MUSE_PROFILE_ID =
 const LINUX_MUSE_RECIPE_ID = "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1";
 
 function catalogSources(): ServingCatalogSource[] {
-  return (["presets", "recipes"] as const).flatMap((kind) => {
+  return (["models", "presets", "recipes"] as const).flatMap((kind) => {
     const directory = path.join(REPOSITORY_ROOT, "managed-inference", kind);
     return readdirSync(directory)
       .filter((name) => name.endsWith(".yaml"))
@@ -57,6 +58,7 @@ function compile(sources: readonly ServingCatalogSource[]) {
     sourceRevision: "a".repeat(40),
     schemas: {
       catalog: catalogSchema,
+      model: modelSchema,
       preset: presetSchema,
       recipe: recipeSchema,
     },
