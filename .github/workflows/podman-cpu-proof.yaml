@@ -473,14 +473,15 @@ jobs:
             esac
           done < <(podman --url "$endpoint" secret ls --format '{{.Name}}' 2>/dev/null || true)
           podman --url "$endpoint" network rm openshell-docker 2>/dev/null || true
-          portable_host_gateway_ip="$(
+          portable_host_gateway_ip=""
+          if portable_host_gateway_ip="$(
             node --input-type=module --eval '
               const { PORTABLE_HOST_GATEWAY_IP } =
                 await import("./dist/lib/onboard/docker-driver-platform.js");
               process.stdout.write(PORTABLE_HOST_GATEWAY_IP);
             '
-          )"
-          if [ "${E2E_PORTABLE_HOST_GATEWAY_IP:-}" = "$portable_host_gateway_ip" ]; then
+          )" && [ -n "$portable_host_gateway_ip" ] \
+            && [ "${E2E_PORTABLE_HOST_GATEWAY_IP:-}" = "$portable_host_gateway_ip" ]; then
             sudo ip address delete "$portable_host_gateway_ip/32" dev lo 2>/dev/null || true
           fi
           service_pid="${E2E_PODMAN_SERVICE_PID:-}"
