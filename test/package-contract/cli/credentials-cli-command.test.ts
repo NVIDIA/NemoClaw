@@ -407,9 +407,10 @@ describe("credentials oclif commands", () => {
     }
   });
 
-  it("credentials add does not record an extra provider when the gateway rejects the call", async () => {
+  it("credentials add releases its provider reservation when the gateway rejects the call", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-12345";
     const extraProviderCalls: string[] = [];
+    const forgottenProviderCalls: string[] = [];
     installRuntimeBridge({
       runOpenshell: (args) =>
         args.includes("profile")
@@ -417,6 +418,10 @@ describe("credentials oclif commands", () => {
           : { status: 1, stderr: "gateway unavailable" },
       recordExtraProvider: (name) => {
         extraProviderCalls.push(name);
+        return true;
+      },
+      forgetExtraProvider: (name) => {
+        forgottenProviderCalls.push(name);
         return true;
       },
     });
@@ -437,7 +442,8 @@ describe("credentials oclif commands", () => {
         ),
       );
 
-      expect(extraProviderCalls).toEqual([]);
+      expect(extraProviderCalls).toEqual(["tavily-search"]);
+      expect(forgottenProviderCalls).toEqual(["tavily-search"]);
     } finally {
       delete process.env.TAVILY_API_KEY;
     }
