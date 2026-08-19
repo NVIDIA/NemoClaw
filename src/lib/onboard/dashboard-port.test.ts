@@ -40,6 +40,11 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
+async function listenAndCloseOnLoopback(port: number): Promise<void> {
+  const server = await listenOnLoopback(port);
+  await closeServer(server);
+}
+
 async function unusedLoopbackPort(): Promise<number> {
   const server = await listenOnLoopback(0);
   const address = server.address();
@@ -289,7 +294,7 @@ describe("dashboard port reservation", () => {
         return { fresh: false };
       },
       createSandboxWithBaseImageResolution,
-      resolvePortableRuntimeAuthority: () => ({ socketPath: "/run/user/1001/podman.sock" }),
+      resolvePortableRuntimeContext: () => ({ socketPath: "/run/user/1001/podman.sock" }),
       resolveComputePlan: () => {
         events.push("resolve compute plan");
         return { sequence: ++sequence };
@@ -343,7 +348,7 @@ describe("dashboard port reservation", () => {
     >({
       createBaseImageResolutionContext: () => ({ fresh: false }),
       createSandboxWithBaseImageResolution: async () => "unreachable",
-      resolvePortableRuntimeAuthority: () => null,
+      resolvePortableRuntimeContext: () => null,
       resolveComputePlan: () => {
         throw setupFailure;
       },
@@ -363,7 +368,7 @@ describe("dashboard port reservation", () => {
       withDashboardPortReservationScope(async (scope) => {
         scope.current = await reserveDashboardPort(port);
         await assert.rejects(
-          listenOnLoopback(port),
+          listenAndCloseOnLoopback(port),
           (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
         );
         throw new Error("sandbox build failed");
@@ -373,6 +378,29 @@ describe("dashboard port reservation", () => {
 
     const listener = await listenOnLoopback(port);
     await closeServer(listener);
+  });
+
+  it("releases the selected port when finalization calls the extracted scope callback (#9568)", async () => {
+    const port = await unusedLoopbackPort();
+
+    await withDashboardPortReservationScope(async (scope) => {
+      scope.current = await reserveDashboardPort(port);
+      await assert.rejects(
+        listenAndCloseOnLoopback(port),
+        (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
+      );
+
+      const finalizationDashboard = { releasePort: scope.release };
+      await finalizationDashboard.releasePort();
+
+      assert.equal(scope.current, null);
+      const listener = await listenOnLoopback(port);
+      try {
+        assert.equal(listener.listening, true);
+      } finally {
+        await closeServer(listener);
+      }
+    });
   });
 
   it("reselects before sandbox creation when a listener wins the allocation race (#8798)", async () => {

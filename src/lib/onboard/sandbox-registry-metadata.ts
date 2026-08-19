@@ -39,6 +39,23 @@ export interface SandboxRegistryMetadataHelpers {
   ): void;
 }
 
+/** Build schema-5 runtime fields without ambient driver or OpenShell discovery. */
+export function getHermesPortableSandboxRuntimeRegistryFields(
+  config: SandboxGpuConfig,
+  openshellVersion: "0.0.101",
+): ReturnType<SandboxRegistryMetadataHelpers["getSandboxRuntimeRegistryFields"]> {
+  return {
+    gpuEnabled: config.sandboxGpuEnabled,
+    hostGpuDetected: config.hostGpuDetected,
+    sandboxGpuEnabled: config.sandboxGpuEnabled,
+    sandboxGpuMode: config.mode,
+    sandboxGpuDevice: config.sandboxGpuDevice,
+    ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
+    openshellDriver: "docker",
+    openshellVersion,
+  };
+}
+
 export function createSandboxRegistryMetadataHelpers(
   deps: SandboxRegistryMetadataDeps,
 ): SandboxRegistryMetadataHelpers {

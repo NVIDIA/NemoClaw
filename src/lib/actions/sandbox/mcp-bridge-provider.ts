@@ -9,6 +9,8 @@ export type {
 export {
   assertMcpProviderRecoverable,
   assertNoAttachedProviderCredentialCollisions,
+  assertNoProviderCredentialCollisions,
+  assertNoRegisteredProviderCredentialCollisions,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   parseMcpProviderAttachmentNames,

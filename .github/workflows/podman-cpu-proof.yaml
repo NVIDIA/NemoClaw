@@ -28,6 +28,7 @@ on:
       - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
       - "src/lib/onboard/experimental/portable-host-preparation*.ts"
+      - "src/lib/onboard/experimental/portable-profile.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"
       - "scripts/install-openshell.sh"
       - "scripts/checks/run-portable-cpu-delegation-proof.mts"
@@ -334,6 +335,21 @@ jobs:
             printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
           } >>"$GITHUB_ENV"
 
+      - name: Configure exact Portable host gateway alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          portable_host_gateway_ip="$(
+            node --input-type=module --eval '
+              const { PORTABLE_HOST_GATEWAY_IP } =
+                await import("./dist/lib/onboard/docker-driver-platform.js");
+              process.stdout.write(PORTABLE_HOST_GATEWAY_IP);
+            '
+          )"
+          sudo ip address replace "$portable_host_gateway_ip/32" dev lo
+          ip -o -4 address show dev lo | awk '{print $4}' | grep -Fx "$portable_host_gateway_ip/32"
+          printf 'E2E_PORTABLE_HOST_GATEWAY_IP=%s\n' "$portable_host_gateway_ip" >>"$GITHUB_ENV"
+
       - name: Start the exact connected gateway required by portable retirement
         shell: bash
         run: |
@@ -458,6 +474,17 @@ jobs:
             esac
           done < <(podman --url "$endpoint" secret ls --format '{{.Name}}' 2>/dev/null || true)
           podman --url "$endpoint" network rm openshell-docker 2>/dev/null || true
+          portable_host_gateway_ip=""
+          if portable_host_gateway_ip="$(
+            node --input-type=module --eval '
+              const { PORTABLE_HOST_GATEWAY_IP } =
+                await import("./dist/lib/onboard/docker-driver-platform.js");
+              process.stdout.write(PORTABLE_HOST_GATEWAY_IP);
+            '
+          )" && [ -n "$portable_host_gateway_ip" ] \
+            && [ "${E2E_PORTABLE_HOST_GATEWAY_IP:-}" = "$portable_host_gateway_ip" ]; then
+            sudo ip address delete "$portable_host_gateway_ip/32" dev lo 2>/dev/null || true
+          fi
           service_pid="${E2E_PODMAN_SERVICE_PID:-}"
           if [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]; then
             kill "$service_pid" 2>/dev/null || true

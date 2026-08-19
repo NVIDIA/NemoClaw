@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
 
@@ -13,6 +15,14 @@ export function parseOpenShellSandboxId(output: string): string | null {
   return matches.length === 1 && SANDBOX_ID_RE.test(matches[0] as string)
     ? (matches[0] as string)
     : null;
+}
+
+/** Hash the one durable OpenShell ID without importing sandbox mutation owners. */
+export function fingerprintOpenShellSandboxLiveIdentity(output: string): string | null {
+  const clean = String(output).replace(ANSI_RE, "");
+  const match = clean.match(/^\s*Id:\s+(\S+)\s*$/im);
+  if (!match?.[1] || match[1].length > 512) return null;
+  return createHash("sha256").update(match[1]).digest("hex");
 }
 
 export function resolveOpenShellSandboxId(

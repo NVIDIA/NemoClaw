@@ -8,7 +8,9 @@ import {
   inspectPodmanHost,
   isPodmanVersionSupported,
   normalizePodmanInferenceAuthorityReceipt,
+  normalizeQualifiedPodmanInferenceAuthorityReceipt,
   PodmanHostPreflightError,
+  qualifyPodmanEndpointHost,
   qualifyPodmanHost,
   qualifyPodmanInferenceAuthority,
   revalidatePodmanInferenceAuthority,
@@ -105,6 +107,43 @@ describe("Podman host preflight", () => {
     expect(runtime.capture).toHaveBeenCalledWith(["version", "--format", "json"], 10_000);
     expect(runtime.captureHost).toHaveBeenCalledWith(["--version"], 10_000);
     expect(runtime.captureHost).toHaveBeenCalledTimes(1);
+  });
+
+  it("qualifies the exact socket-bound Hermes portable Podman matrix", () => {
+    const runtime = engine({ operation: "state-mutation", version: "5.7.0" });
+
+    expect(
+      qualifyPodmanEndpointHost(runtime, {
+        expectedVersion: "5.7.0",
+        expectedNetworkBackend: "netavark",
+        platform: "linux",
+        architecture: "x64",
+      }),
+    ).toEqual({
+      providerId: "podman",
+      clientVersion: "5.7.0",
+      serverVersion: "5.7.0",
+      rootless: true,
+      cgroupVersion: "v2",
+      os: "linux",
+      architecture: "amd64",
+      networkBackend: "netavark",
+    });
+    expect(runtime.captureHost).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["client mismatch", { version: "5.6.2", serverVersion: "5.7.0" }, "client version"],
+    ["server mismatch", { version: "5.7.0", serverVersion: "5.6.2" }, "server version"],
+  ])("rejects exact endpoint $0", (_label, versions, message) => {
+    expect(() =>
+      qualifyPodmanEndpointHost(engine({ operation: "state-mutation", ...versions }), {
+        expectedVersion: "5.7.0",
+        expectedNetworkBackend: "netavark",
+        platform: "linux",
+        architecture: "x64",
+      }),
+    ).toThrow(message);
   });
 
   it("keeps the CPU receipt server version canonical while preserving exact inference authority", () => {
@@ -305,6 +344,75 @@ describe("Podman host-local-inference authority", () => {
       "Podman 6.0.0 or newer is required on the server",
     );
     expect(runtime.capture).not.toHaveBeenCalledWith(["info", "--format", "json"], 15_000);
+  });
+
+  it("binds exact Portable Podman 5.7 to a fresh external CDI inventory (#9596)", () => {
+    const runtime = engine({
+      operation: "host-local-inference",
+      version: "5.7.0",
+      serverVersion: "5.7.0",
+    });
+    const cdiDevices = [
+      "nvidia.com/gpu=GPU-12345678-1234-1234-1234-123456789abc",
+      "nvidia.com/gpu=all",
+    ];
+    const captureCurrentCdiDevices = vi.fn(() => cdiDevices);
+    const options = { expectedVersion: "5.7.0", captureCurrentCdiDevices };
+
+    const receipt = qualifyPodmanInferenceAuthority(runtime, options);
+
+    expect(receipt).toMatchObject({ serverVersion: "5.7.0", cdiDevices });
+    expect(() => normalizePodmanInferenceAuthorityReceipt(receipt)).toThrow(
+      "inference authority receipt is malformed",
+    );
+    expect(normalizeQualifiedPodmanInferenceAuthorityReceipt(receipt)).toMatchObject({
+      serverVersion: "5.7.0",
+    });
+    expect(() => normalizeQualifiedPodmanInferenceAuthorityReceipt({ ...receipt })).toThrow(
+      "inference authority receipt is malformed",
+    );
+    expect(revalidatePodmanInferenceAuthority(runtime, receipt, options)).toEqual(receipt);
+    expect(captureCurrentCdiDevices).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects partial or changed Portable Podman 5.7 authority (#9596)", () => {
+    const runtime = engine({
+      operation: "host-local-inference",
+      version: "5.7.0",
+      serverVersion: "5.7.0",
+    });
+    expect(() => qualifyPodmanInferenceAuthority(runtime, { expectedVersion: "5.7.0" })).toThrow(
+      "version and CDI inventory must be supplied together",
+    );
+
+    const captureCurrentCdiDevices = vi
+      .fn<() => readonly string[]>()
+      .mockReturnValueOnce(["nvidia.com/gpu=all"])
+      .mockReturnValueOnce([
+        "nvidia.com/gpu=GPU-12345678-1234-1234-1234-123456789abc",
+        "nvidia.com/gpu=all",
+      ]);
+    const options = { expectedVersion: "5.7.0", captureCurrentCdiDevices };
+    const receipt = qualifyPodmanInferenceAuthority(runtime, options);
+
+    expect(() => revalidatePodmanInferenceAuthority(runtime, receipt, options)).toThrow(
+      "server or NVIDIA CDI authority changed before local-inference mutation",
+    );
+  });
+
+  it("revalidates current authority when it is the only Podman 6 option (#9596)", () => {
+    const runtime = engine({
+      operation: "host-local-inference",
+      version: "6.0.1",
+      serverVersion: "6.0.1",
+    });
+    const receipt = qualifyPodmanInferenceAuthority(runtime);
+    const assertCurrentAuthority = vi.fn();
+
+    expect(
+      revalidatePodmanInferenceAuthority(runtime, receipt, { assertCurrentAuthority }),
+    ).toEqual(receipt);
+    expect(assertCurrentAuthority).toHaveBeenCalledTimes(2);
   });
 
   it("treats Podman's omitted lowercase host.discoveredDevices field as exact empty authority", () => {

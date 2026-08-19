@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
 import * as agentRuntime from "../../agent/runtime";
+import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
 import * as registry from "../../state/registry";
 import { classifyGatewayRestartFailure } from "./gateway-restart";
 import { restartSandboxGateway } from "./process-recovery";
@@ -16,6 +17,7 @@ const supervisorFailureMarkers: Array<
   [string, ReturnType<typeof classifyGatewayRestartFailure>["layer"]]
 > = [
   ["PRIVILEGED_CONTROL_UNAVAILABLE", "privileged control unavailable"],
+  ["MANAGED_CONTROL_IDENTITY_CHANGED", "container identity changed"],
   ["SUPERVISOR_UNAVAILABLE", "privileged control unavailable"],
   ["SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement", "supervisor unavailable"],
   ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
@@ -90,6 +92,25 @@ describe("gateway restart failure classification precedence", () => {
       layer: "supervisor not running",
     });
   });
+
+  it("does not classify an embedded identity marker as a protocol marker", () => {
+    expect(classify("failure mentions MANAGED_CONTROL_IDENTITY_CHANGED inline")).toMatchObject({
+      layer: "launch failure",
+    });
+  });
+
+  it("removes every complete identity marker line from the failure detail", () => {
+    const output = [
+      " MANAGED_CONTROL_IDENTITY_CHANGED ",
+      "container changed once",
+      "MANAGED_CONTROL_IDENTITY_CHANGED",
+      "container changed again",
+    ].join("\n");
+    expect(classify(output)).toEqual({
+      layer: "container identity changed",
+      detail: "container changed once\ncontainer changed again",
+    });
+  });
 });
 
 describe("restartSandboxGateway — host-mediated gateway restart", () => {
@@ -123,6 +144,22 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       ...overrides,
     };
   }
+
+  it("rejects schema-5 inside the gateway restart lifecycle fence (#9203)", () => {
+    vi.spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable").mockImplementation(
+      () => {
+        throw new Error("schema-5 rejected");
+      },
+    );
+    const deps = baseDeps();
+
+    expect(() => restartSandboxGateway("alpha", { quiet: true, deps })).toThrow(
+      "schema-5 rejected",
+    );
+
+    expect(deps.requestGatewaySupervisorAction).not.toHaveBeenCalled();
+    expect(deps.executeSandboxExecCommand).not.toHaveBeenCalled();
+  });
 
   it("refuses supervisor output without a completion marker", () => {
     const deps = baseDeps({

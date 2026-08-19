@@ -19,14 +19,23 @@ vi.mock("../../../state/registry", () => ({
   getSandbox: vi.fn(() => null),
 }));
 
+const withLifecycleLockMock = vi.hoisted(() =>
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
+);
+vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
+  withMcpLifecycleLock: withLifecycleLockMock,
+}));
+
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import * as registry from "../../../state/registry";
+import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { isWarmupSessionId, WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
 import { buildSandboxTarArgv, exportSandboxSessions } from "./export";
 
 const captureMock = captureOpenshell as unknown as ReturnType<typeof vi.fn>;
 const runMock = runOpenshell as unknown as ReturnType<typeof vi.fn>;
 const getSandboxMock = registry.getSandbox as unknown as ReturnType<typeof vi.fn>;
+const ensureLiveMock = ensureLiveSandboxOrExit as unknown as ReturnType<typeof vi.fn>;
 
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 let consoleLogSpy: ReturnType<typeof vi.spyOn>;
@@ -34,6 +43,7 @@ let statSyncSpy: ReturnType<typeof vi.spyOn>;
 let stagingMkdtempSpy: ReturnType<typeof vi.spyOn>;
 let stagingRenameSpy: ReturnType<typeof vi.spyOn>;
 let stagingRmSpy: ReturnType<typeof vi.spyOn>;
+let processExitSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   captureMock.mockReset();
@@ -41,6 +51,12 @@ beforeEach(() => {
   runMock.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   getSandboxMock.mockReset();
   getSandboxMock.mockReturnValue(null);
+  ensureLiveMock.mockReset();
+  ensureLiveMock.mockResolvedValue(undefined);
+  withLifecycleLockMock.mockClear();
+  processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
+    throw new Error(`process.exit:${code ?? 0}`);
+  });
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   // Default to a present, non-empty regular file so the post-download artifact
@@ -66,6 +82,7 @@ afterEach(() => {
   stagingMkdtempSpy.mockRestore();
   stagingRenameSpy.mockRestore();
   stagingRmSpy.mockRestore();
+  processExitSpy.mockRestore();
 });
 
 function makeCapture(output: string, status = 0) {
@@ -111,6 +128,21 @@ describe("isWarmupSessionId", () => {
 });
 
 describe("exportSandboxSessions warm-up filtering", () => {
+  it("defers a readiness exit through lifecycle authority (#9203)", async () => {
+    ensureLiveMock.mockImplementationOnce(async (_sandboxName, options) => options.exit(1));
+
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      }),
+    ).rejects.toThrow(/process\.exit:1/);
+
+    expect(withLifecycleLockMock).toHaveBeenCalledOnce();
+    expect(captureMock).not.toHaveBeenCalled();
+  });
+
   it("excludes the onboard warm-up session from export-all but keeps real sessions (#5511)", async () => {
     captureMock.mockReturnValueOnce(
       makeCapture(

@@ -33,12 +33,12 @@ from langchain_openai import ChatOpenAI
 
 EXPECTED_VERSIONS = {
     "nemoclaw-deepagents-profile": "0.1.0",
-    "deepagents-code": "0.1.34",
-    "deepagents": "0.7.0a6",
-    "langchain": "1.3.11",
-    "langchain-core": "1.4.8",
-    "langgraph": "1.2.6",
-    "langchain-openai": "1.3.3",
+    "deepagents-code": "0.1.55",
+    "deepagents": "0.7.5",
+    "langchain": "1.3.14",
+    "langchain-core": "1.5.3",
+    "langgraph": "1.2.10",
+    "langchain-openai": "1.4.3",
 }
 EXPECTED_PROFILE_ENTRY_POINT = (
     "deepagents.harness_profiles",
@@ -47,10 +47,10 @@ EXPECTED_PROFILE_ENTRY_POINT = (
 )
 EXPECTED_PLUGIN_LICENSE_EXPRESSION = "Apache-2.0"
 EXPECTED_PLUGIN_SOURCE_SHA256 = (
-    "8fe85c62293c74147848732dc56c33e8ab60133fa41c071da4328ac60f2bf44f"
+    "6bb8dc8108c5dd7e7f71c39aacfb0da07d285b7a324eecd691177a9ca460cfc0"
 )
 EXPECTED_NATIVE_PROFILE_SHA256 = (
-    "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
+    "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a"
 )
 EXPECTED_BOOTSTRAP_SHA256 = (
     "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf"
@@ -434,7 +434,6 @@ def dispatch_execute_once(
             model,
             "nemoclaw-profile-validation",
             sandbox=backend,
-            sandbox_type="nemoclaw-validation",
             system_prompt="Use the execute tool once, then report the result.",
             interactive=False,
             auto_approve=not restrict_shell,

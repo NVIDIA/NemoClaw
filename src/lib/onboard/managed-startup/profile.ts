@@ -5,6 +5,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
+import { authorizeMessagingManagedStartupPlaceholders } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
@@ -999,7 +1000,11 @@ function valueLooksLikeSecret(value: string): boolean {
   return false;
 }
 
-function isMessagingCredentialPlaceholder(path: readonly string[], value: unknown): boolean {
+function isMessagingCredentialPlaceholder(
+  path: readonly string[],
+  value: unknown,
+  allowedBuildStepPlaceholders: ReadonlySet<string>,
+): boolean {
   if (typeof value !== "string" || !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) {
     return false;
   }
@@ -1017,7 +1022,18 @@ function isMessagingCredentialPlaceholder(path: readonly string[], value: unknow
     path[2] === "agentRender" &&
     JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
     path[4] === "value";
-  return isCredentialBindingPlaceholder || isAgentRenderValuePlaceholder;
+  const isAuthorizedBuildStepPlaceholder = allowedBuildStepPlaceholders.has(
+    buildStepPlaceholderKey(path, value),
+  );
+  return (
+    isCredentialBindingPlaceholder ||
+    isAgentRenderValuePlaceholder ||
+    isAuthorizedBuildStepPlaceholder
+  );
+}
+
+function buildStepPlaceholderKey(path: readonly string[], value: string): string {
+  return JSON.stringify([path, value]);
 }
 
 function messagingCredentialPlaceholderEnvKey(value: string): string | null {
@@ -1464,6 +1480,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
     path: readonly string[];
   }> = [{ value: root, depth: 0, path: [] }];
   const allowedRuntimeAliasIndexes = new Set<string>();
+  const allowedBuildStepPlaceholders = new Set<string>();
   const selectedAgent = isPlainObject(root) ? ownDataPropertyValue(root, "agent") : undefined;
   let discoveredNodes = 1;
   let observedBytes = 0;
@@ -1493,7 +1510,11 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       observeText(current.value);
       if (
         !isAllowedMessagingRuntimeAliasStringPath(current.path, allowedRuntimeAliasIndexes) &&
-        !isMessagingCredentialPlaceholder(current.path, current.value) &&
+        !isMessagingCredentialPlaceholder(
+          current.path,
+          current.value,
+          allowedBuildStepPlaceholders,
+        ) &&
         !isMessagingCredentialPlaceholderAssignment(
           selectedAgent,
           current.path,
@@ -1559,6 +1580,19 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       if (isCanonicalMessagingRuntimeEnvAlias(current.path, current.value)) {
         allowedRuntimeAliasIndexes.add(current.path[4] as string);
       }
+      if (
+        current.path.length === 4 &&
+        current.path[0] === "messaging" &&
+        current.path[1] === "plan" &&
+        current.path[2] === "buildSteps" &&
+        JSON_ARRAY_INDEX_SEGMENT_RE.test(current.path[3] ?? "")
+      ) {
+        for (const authorization of authorizeMessagingManagedStartupPlaceholders(current.value)) {
+          allowedBuildStepPlaceholders.add(
+            buildStepPlaceholderKey([...current.path, ...authorization.path], authorization.value),
+          );
+        }
+      }
       const keys = Object.getOwnPropertyNames(current.value);
       if (
         Object.getOwnPropertySymbols(current.value).length > 0 ||
@@ -1588,7 +1622,11 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         const child = descriptor.value;
         if (
           isCredentialShapedName(key) &&
-          !isMessagingCredentialPlaceholder([...current.path, key], child) &&
+          !isMessagingCredentialPlaceholder(
+            [...current.path, key],
+            child,
+            allowedBuildStepPlaceholders,
+          ) &&
           !isMessagingPackagePin([...current.path, key], child)
         ) {
           invalid(

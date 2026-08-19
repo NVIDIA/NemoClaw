@@ -40,7 +40,10 @@ import type {
   MaterializeSandboxCreatePlanInput,
   SandboxCreateIntent,
 } from "../sandbox-create-intent-types";
-import type { SandboxCreatePlan } from "../sandbox-create-plan-materialization";
+import {
+  materializeHermesPortableCreatePlan,
+  type SandboxCreatePlan,
+} from "../sandbox-create-plan-materialization";
 import {
   OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   prepareSandboxCreateLaunch,
@@ -161,6 +164,28 @@ export async function prepareSandboxWorkloadForPortableLifecycle(
     workload.source.kind === "managed-image",
   );
   runtime.ensurePreparedProfile(workload);
+  return workload;
+}
+
+/** Select the existing legacy Hermes source without staging, profile, prebuild, or Docker work. */
+export async function prepareHermesPortableSandboxWorkloadForLifecycle(
+  runtime: ManagedWorkloadOnboardRuntime,
+  expectedDockerfilePath: string,
+): Promise<PreparedSandboxWorkloadSource> {
+  const workload = await runtime.ensurePreparedWorkload();
+  if (workload.source.kind === "managed-image") {
+    throw new Error(
+      "Hermes portable onboarding cannot use managed-image bootstrap because that path requires Docker lifecycle operations.",
+    );
+  }
+  if (
+    workload.source.reason !== "runtime-unsupported" ||
+    workload.source.dockerfilePath !== expectedDockerfilePath
+  ) {
+    throw new Error(
+      "Hermes portable onboarding requires the shipped Hermes Dockerfile source selected for the current runtime.",
+    );
+  }
   return workload;
 }
 
@@ -463,6 +488,43 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     legacyBuildContext,
     launch,
   };
+}
+
+/** Build the complete schema-5 launch descriptor before any shared onboarding effect. */
+export function prepareHermesPortableOnboardSandboxLaunch(input: {
+  readonly intent: SandboxCreateIntent;
+  readonly fromRef: string;
+  readonly launchInput: Omit<SandboxCreateLaunchInput, "createArgs">;
+  readonly gpuConfig: SandboxGpuConfig;
+}): PreparedOnboardSandboxWorkloadLaunch {
+  const createPlan = materializeHermesPortableCreatePlan({
+    intent: input.intent,
+    fromRef: input.fromRef,
+  });
+  const launch = prepareSandboxCreateLaunch({
+    ...input.launchInput,
+    createArgs: createPlan.createArgs,
+  });
+  return {
+    ...createPlan,
+    initialGpuRoute: initialDockerGpuRoute(createPlan.gpuRoutePlan),
+    sandboxReadyTimeoutSecs: getSandboxReadyTimeoutSecs(input.gpuConfig),
+    buildId: "hermes-portable",
+    dashboardRemoteBindPrepared: false,
+    legacyBuildContext: null,
+    launch: {
+      ...launch,
+      prebuild: { createArgs: [...createPlan.createArgs], imageRef: null, imageId: null },
+    },
+  };
+}
+
+export async function prepareSelectedOnboardSandboxWorkloadLaunch(
+  hermesPortable: boolean,
+  prepareHermes: () => PreparedOnboardSandboxWorkloadLaunch,
+  prepareOrdinary: () => Promise<PreparedOnboardSandboxWorkloadLaunch>,
+): Promise<PreparedOnboardSandboxWorkloadLaunch> {
+  return hermesPortable ? prepareHermes() : await prepareOrdinary();
 }
 
 export function resolveOnboardManagedBootstrapLaunch(input: {

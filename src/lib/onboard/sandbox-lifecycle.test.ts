@@ -128,6 +128,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
       const before = JSON.stringify(registryState.sandbox);
       const helpers = createSandboxLifecycleHelpers({
         runCaptureOpenshell,
+        getGatewayName: () => "nemoclaw-18081",
         fetchGatewayAuthTokenFromSandbox: () => null,
         agentProductName: () => "OpenClaw",
         prompt: async () => "no",
@@ -154,6 +155,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     onboardSessionState.recreate = { sandboxName: "beta", phase: "deleting" };
     const helpers = createSandboxLifecycleHelpers({
       runCaptureOpenshell: () => null,
+      getGatewayName: () => "nemoclaw-18081",
       fetchGatewayAuthTokenFromSandbox: () => null,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
@@ -172,6 +174,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
     registryState.sandbox = { name: "alpha", agent: "openclaw" };
     const helpers = createSandboxLifecycleHelpers({
       runCaptureOpenshell,
+      getGatewayName: () => "nemoclaw-18081",
       fetchGatewayAuthTokenFromSandbox: () => null,
       agentProductName: () => "OpenClaw",
       prompt: async () => "no",
@@ -183,6 +186,10 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
       liveExists: false,
       preservedMcpState: undefined,
     });
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "--gateway", "nemoclaw-18081", "alpha"],
+      { ignoreError: true },
+    );
     expect(registryState.removeSandbox).not.toHaveBeenCalled();
   });
 });
