@@ -1172,8 +1172,12 @@ function renderFindingsDetails(records: FindingRecord[]): string {
   const suggestionFindings = records.filter((record) => record.finding.severity === "suggestion");
   const lines: string[] = [];
   if (blockerFindings.length > 0) {
+    const displayedBlockerFindings = blockerFindings.slice(0, 20);
     lines.push("", "### Blockers", "");
-    for (const record of blockerFindings.slice(0, 20)) lines.push(formatFinding(record), "");
+    for (const record of displayedBlockerFindings) {
+      lines.push(formatFinding(record, false), "");
+    }
+    appendRecommendedRefactoring(lines, displayedBlockerFindings);
   }
   if (warningFindings.length === 0 && suggestionFindings.length === 0)
     return `${lines.join("\n")}\n`;
@@ -1195,7 +1199,28 @@ function renderFindingsDetails(records: FindingRecord[]): string {
   return `${lines.join("\n")}\n`;
 }
 
-function formatFinding(record: FindingRecord): string {
+function appendRecommendedRefactoring(lines: string[], records: FindingRecord[]): void {
+  const recommendations = records.filter((record) => record.finding.simplification);
+  if (recommendations.length === 0) return;
+  lines.push(
+    "### Recommended refactoring",
+    "_Implementation guidance; a fix with equal or lower complexity is acceptable._",
+    "",
+  );
+  for (const record of recommendations) {
+    const item = record.finding.simplification;
+    if (!item) continue;
+    const net =
+      typeof item.estimatedNetLines === "number" ? ` Net: ${item.estimatedNetLines} lines.` : "";
+    const keep = item.safetyBoundary ? ` Keep: ${escapeCommentText(item.safetyBoundary)}` : "";
+    lines.push(
+      `- **\`${record.id}\`:** Remove ${escapeCommentText(item.cut || record.finding.title || "the custom path")}; use ${escapeCommentText(item.replacement || "the simpler existing path")}.${net}${keep}`,
+    );
+  }
+  lines.push("");
+}
+
+function formatFinding(record: FindingRecord, includeSimplification = true): string {
   const finding = record.finding;
   const title = escapeCommentText(findingTitle(finding));
   const lines = [`#### \`${record.id}\` ${severityLabel(finding.severity)} — ${title}`];
@@ -1214,7 +1239,7 @@ function formatFinding(record: FindingRecord): string {
   if (finding.missingRegressionTest) {
     lines.push(`- **Test coverage:** ${escapeCommentText(finding.missingRegressionTest)}`);
   }
-  if (finding.simplification) {
+  if (includeSimplification && finding.simplification) {
     const item = finding.simplification;
     const net =
       typeof item.estimatedNetLines === "number" ? ` Net: ${item.estimatedNetLines} lines.` : "";

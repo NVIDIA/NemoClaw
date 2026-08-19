@@ -75,6 +75,19 @@ function reportSandboxRecreateReason(
   }
 }
 
+export async function completeHermesPortableSandboxRegistration(input: {
+  readonly sandboxName: string;
+  readonly completeRegistration: () => Promise<unknown>;
+  readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
+}): Promise<SandboxEntry> {
+  await input.completeRegistration();
+  const registered = input.readRegistry(input.sandboxName);
+  if (!registered) {
+    throw new Error("Hermes portable sandbox registration returned no authority.");
+  }
+  return registered;
+}
+
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   return async function createSandboxWithBaseImageResolution(
     baseImageResolutionContext: import("../base-image-resolution-flow").BaseImageResolutionContext,
@@ -1119,19 +1132,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           liveIdentityFingerprint,
           revalidate,
           routeReservation,
-        ) => {
-          const registered = await completeCreatedSandboxRegistration(
-            created,
-            receipt,
-            liveIdentityFingerprint,
-            revalidate,
-            routeReservation,
-          );
-          if (!registered) {
-            throw new Error("Hermes portable sandbox registration returned no authority.");
-          }
-          return registered;
-        },
+        ) =>
+          completeHermesPortableSandboxRegistration({
+            sandboxName,
+            completeRegistration: () =>
+              completeCreatedSandboxRegistration(
+                created,
+                receipt,
+                liveIdentityFingerprint,
+                revalidate,
+                routeReservation,
+              ),
+            readRegistry: registry.getSandbox,
+          }),
         sourceRoot: ROOT,
         buildContextSettings: {
           model,
