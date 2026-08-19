@@ -1,8 +1,61 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
-import { spawnExitCode } from "./process-exit";
+import { describe, expect, it, vi } from "vitest";
+import {
+  deferSandboxLifecycleExit,
+  runWithDeferredSandboxLifecycleExit,
+  spawnExitCode,
+} from "./process-exit";
+
+describe("runWithDeferredSandboxLifecycleExit", () => {
+  it("returns a completed operation without exiting", async () => {
+    const exit = vi.fn((_exitCode: number): never => {
+      throw new Error("unexpected exit");
+    });
+
+    await expect(
+      runWithDeferredSandboxLifecycleExit(async () => "complete", exit),
+    ).resolves.toBe("complete");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("propagates an ordinary operation failure without exiting", async () => {
+    const exit = vi.fn((_exitCode: number): never => {
+      throw new Error("unexpected exit");
+    });
+
+    await expect(
+      runWithDeferredSandboxLifecycleExit(async () => {
+        throw new Error("operation failed");
+      }, exit),
+    ).rejects.toThrow("operation failed");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("exits only after async cleanup completes", async () => {
+    const events: string[] = [];
+    const exit = vi.fn((exitCode: number): never => {
+      events.push(`exit:${String(exitCode)}`);
+      throw new Error(`process.exit:${String(exitCode)}`);
+    });
+
+    await expect(
+      runWithDeferredSandboxLifecycleExit(async () => {
+        events.push("operation");
+        try {
+          deferSandboxLifecycleExit(7);
+        } finally {
+          await Promise.resolve();
+          events.push("cleanup");
+        }
+      }, exit),
+    ).rejects.toThrow("process.exit:7");
+
+    expect(events).toEqual(["operation", "cleanup", "exit:7"]);
+    expect(exit).toHaveBeenCalledWith(7);
+  });
+});
 
 describe("spawnExitCode", () => {
   it.each([

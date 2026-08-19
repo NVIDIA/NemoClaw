@@ -71,7 +71,6 @@ def sanitize_line(line: str) -> str:
         if value:
             line = line.replace(value, "[REDACTED]")
     if instance:
-        line = line.replace(f"{instance}-host", "[REDACTED HOST]")
         line = line.replace(instance, "[REDACTED HOST]")
     line = re.sub(
         r"(?i)\b(authorization)\b(\s*[:=]\s*)[^\r\n]+",
@@ -262,64 +261,50 @@ ssh_alias_status() {
 
 run_connectivity_diagnostics() {
   local refresh_status="$1" timeout_seconds="$2"
-  local container_error container_status host_exec_error host_exec_status
-  local default_ssh_error default_ssh_status host_ssh_error host_ssh_status
-  local plain_alias host_alias
+  local exec_error exec_status ssh_error ssh_status
+  local workspace_alias
   local deadline=$((SECONDS + timeout_seconds))
 
   log "Readiness diagnostics budget: up to $timeout_seconds seconds"
 
-  ssh_alias_status "$deadline" "$INSTANCE_NAME" plain_alias
-  ssh_alias_status "$deadline" "${INSTANCE_NAME}-host" host_alias
-  log "Readiness SSH alias $INSTANCE_NAME: $plain_alias"
-  log "Readiness SSH alias ${INSTANCE_NAME}-host: $host_alias"
+  ssh_alias_status "$deadline" "$INSTANCE_NAME" workspace_alias
+  log "Readiness SSH alias $INSTANCE_NAME: $workspace_alias"
 
-  run_budgeted_diagnostic_probe "$deadline" container_error container_status \
+  run_budgeted_diagnostic_probe "$deadline" exec_error exec_status \
     brev exec "$INSTANCE_NAME" true
-  run_budgeted_diagnostic_probe "$deadline" host_exec_error host_exec_status \
-    brev exec "$INSTANCE_NAME" true --host
-  run_budgeted_diagnostic_probe "$deadline" default_ssh_error default_ssh_status \
+  run_budgeted_diagnostic_probe "$deadline" ssh_error ssh_status \
     ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
-  run_budgeted_diagnostic_probe "$deadline" host_ssh_error host_ssh_status \
-    ssh "${SSH_PROBE_OPTIONS[@]}" "${INSTANCE_NAME}-host" true
 
-  report_probe "brev exec container" "$container_status" "$container_error"
-  report_probe "brev exec host" "$host_exec_status" "$host_exec_error"
-  report_probe "direct SSH container" "$default_ssh_status" "$default_ssh_error"
-  report_probe "direct SSH host" "$host_ssh_status" "$host_ssh_error"
+  report_probe "brev exec" "$exec_status" "$exec_error"
+  report_probe "direct SSH" "$ssh_status" "$ssh_error"
 
-  if [ "$container_status" = "not-run" ] || [ "$host_exec_status" = "not-run" ] \
-    || [ "$default_ssh_status" = "not-run" ] || [ "$host_ssh_status" = "not-run" ]; then
+  if [ "$exec_status" = "not-run" ] || [ "$ssh_status" = "not-run" ]; then
     log "Readiness classification: incomplete diagnostics; inspect available bounded probe results"
   elif [ "$refresh_status" -ne 0 ]; then
     log "Readiness classification: Brev refresh/configuration failure"
-  elif [ "$host_exec_status" -eq 0 ] && [ "$host_ssh_status" -ne 0 ]; then
-    log "Readiness classification: Brev host execution works but direct host SSH fails"
-  elif { [ "$container_status" -eq 0 ] || [ "$default_ssh_status" -eq 0 ]; } \
-    && [ "$host_exec_status" -ne 0 ] && [ "$host_ssh_status" -ne 0 ]; then
-    log "Readiness classification: default container reachable but host unreachable"
-  elif [ "$container_status" -ne 0 ] && [ "$host_exec_status" -ne 0 ] \
-    && [ "$default_ssh_status" -ne 0 ] && [ "$host_ssh_status" -ne 0 ]; then
-    log "Readiness classification: neither target reachable"
+  elif [ "$exec_status" -eq 0 ] && [ "$ssh_status" -ne 0 ]; then
+    log "Readiness classification: Brev execution works but direct SSH fails"
+  elif [ "$exec_status" -ne 0 ] && [ "$ssh_status" -ne 0 ]; then
+    log "Readiness classification: workspace shell is unreachable"
   else
-    log "Readiness classification: mixed connectivity failure; inspect bounded probe results"
+    log "Readiness classification: direct SSH recovered during diagnostics"
   fi
 }
 
-wait_for_host_ssh() {
-  local timeout_seconds="${BREV_HOST_SSH_TIMEOUT_SECONDS:-900}"
+wait_for_workspace_ssh() {
+  local timeout_seconds="${BREV_SSH_TIMEOUT_SECONDS:-900}"
   local diagnostic_timeout_seconds="${BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS:-30}"
   local poll_seconds="${POLL_SECONDS:-5}"
   local deadline=$((SECONDS + timeout_seconds))
-  local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error container_error
-  local container_probed=0 container_status=1 attempts=0
+  local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error
+  local attempts=0
   local refresh_status=1 ssh_status=1
   local last_refresh_error="" last_refresh_failure_status=""
   local last_ssh_error="" last_ssh_failure_status=""
-  log "Waiting up to $timeout_seconds seconds for host SSH access"
+  log "Waiting up to $timeout_seconds seconds for workspace SSH access"
 
   remaining=$((deadline - SECONDS))
-  [ "$remaining" -gt 0 ] || die "host SSH readiness timed out"
+  [ "$remaining" -gt 0 ] || die "workspace SSH readiness timed out"
   refresh_timeout=$((remaining < 60 ? remaining : 60))
   run_bounded_probe "$refresh_timeout" refresh_error refresh_status brev refresh
   if [ "$refresh_status" -ne 0 ]; then
@@ -327,22 +312,14 @@ wait_for_host_ssh() {
     last_refresh_failure_status="$refresh_status"
   fi
 
-  remaining=$((deadline - SECONDS))
-  if [ "$remaining" -gt 0 ]; then
-    ssh_timeout=$((remaining < 15 ? remaining : 15))
-    run_bounded_probe "$ssh_timeout" container_error container_status \
-      ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
-    container_probed=1
-  fi
-
   while [ "$SECONDS" -lt "$deadline" ]; do
     remaining=$((deadline - SECONDS))
     [ "$remaining" -gt 0 ] || break
     ssh_timeout=$((remaining < 15 ? remaining : 15))
     run_bounded_probe "$ssh_timeout" ssh_error ssh_status \
-      ssh "${SSH_PROBE_OPTIONS[@]}" "${INSTANCE_NAME}-host" true
+      ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
     if [ "$ssh_status" -eq 0 ]; then
-      log "SSH access to ${INSTANCE_NAME}-host succeeded"
+      log "SSH access to $INSTANCE_NAME succeeded"
       return 0
     fi
     attempts=$((attempts + 1))
@@ -371,17 +348,12 @@ wait_for_host_ssh() {
     log "Readiness Brev refresh last failure: none"
   fi
   if [ -n "$last_ssh_failure_status" ]; then
-    log "Readiness direct host SSH last failure: status $last_ssh_failure_status; error: $last_ssh_error"
+    log "Readiness direct SSH last failure: status $last_ssh_failure_status; error: $last_ssh_error"
   else
-    log "Readiness direct host SSH last failure: none"
-  fi
-  if [ "$container_probed" -eq 0 ]; then
-    log "Readiness initial default Brev container probe: not probed"
-  else
-    log "Readiness initial default Brev container probe: status $container_status; error: $container_error"
+    log "Readiness direct SSH last failure: none"
   fi
   run_connectivity_diagnostics "$refresh_status" "$diagnostic_timeout_seconds"
-  die "host SSH readiness timed out"
+  die "workspace SSH readiness timed out"
 }
 
 cleanup() {
@@ -449,9 +421,9 @@ if [ "$IMAGE_ONLY" -eq 0 ]; then
   done
   [[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "workspace name is unsafe"
   [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || die "Launchable ID is unsafe"
-  if [ "${BREV_HOST_SSH_TIMEOUT_SECONDS+x}" = x ] \
-    && ! [[ "$BREV_HOST_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
-    die "BREV_HOST_SSH_TIMEOUT_SECONDS must be a positive integer"
+  if [ "${BREV_SSH_TIMEOUT_SECONDS+x}" = x ] \
+    && ! [[ "$BREV_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "BREV_SSH_TIMEOUT_SECONDS must be a positive integer"
   fi
   if [ "${BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS+x}" = x ] \
     && ! [[ "$BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
@@ -577,7 +549,7 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
   <<<"${ready:-null}" >/dev/null || die "workspace readiness timed out"
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
-wait_for_host_ssh
+wait_for_workspace_ssh
 
 # Record the booted image before reading the baked runtime receipt so a stale
 # Launchable image remains visible when the receipt is absent.
@@ -586,7 +558,7 @@ wait_for_host_ssh
 boot_image="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
   boot_image=$(curl -fsS --max-time 10 -H "Metadata-Flavor: Google" \
     http://metadata.google.internal/computeMetadata/v1/instance/image)
-  printf "NEMOCLAW_BOOT_IMAGE=%s\n" "$boot_image"' --host \
+  printf "NEMOCLAW_BOOT_IMAGE=%s\n" "$boot_image"' \
   | sed -n 's/^NEMOCLAW_BOOT_IMAGE=//p' | tail -n 1)"
 [ -n "$boot_image" ] || die "booted image identity is missing"
 
@@ -623,7 +595,7 @@ identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
     --arg repoSha "$repo_sha" --arg provisionSha "$provision_sha" \
     --arg imageRepositorySha "$image_repository_sha" --argjson repoClean "$repo_clean" \
     --argjson runtimeOverrides "$runtime_overrides" \
-    "{schemaVersion:\$schemaVersion,sourceRepository:\$sourceRepository,sourcePath:\$sourcePath,repoSha:\$repoSha,provisionSha:\$provisionSha,imageRepositorySha:\$imageRepositorySha,repoClean:\$repoClean,runtimeOverrides:\$runtimeOverrides}"' --host \
+    "{schemaVersion:\$schemaVersion,sourceRepository:\$sourceRepository,sourcePath:\$sourcePath,repoSha:\$repoSha,provisionSha:\$provisionSha,imageRepositorySha:\$imageRepositorySha,repoClean:\$repoClean,runtimeOverrides:\$runtimeOverrides}"' \
   | sed -n 's/^NEMOCLAW_IDENTITY=//p' | tail -n 1)"
 jq -e --arg sha "$CANDIDATE_SHA" --arg imageRepositorySha "$image_repository_sha" '
   .schemaVersion == 1 and .sourceRepository == "NVIDIA/NemoClaw" and
@@ -660,7 +632,7 @@ export NEMOCLAW_SANDBOX_NAME=e2e-staging
 printf 'NEMOCLAW_FULL_E2E_PASSED\n'
 REMOTE
 } | timeout "${FULL_E2E_TIMEOUT_SECONDS:-3000}" ssh -T -o ConnectTimeout=10 -o LogLevel=ERROR \
-  "${INSTANCE_NAME}-host" 'bash -s' >"$raw_log" 2>&1
+  "$INSTANCE_NAME" 'bash -s' >"$raw_log" 2>&1
 e2e_status=$?
 set -e
 NEMOCLAW_REDACTION_SECRET="$NVIDIA_INFERENCE_API_KEY" \

@@ -25,13 +25,19 @@ export type SandboxExecOptions = {
   tty?: boolean | null;
   timeoutSeconds?: number;
   stdin?: boolean;
+  subprocessEnv?: NodeJS.ProcessEnv;
+};
+
+export type SandboxExecChildOptions = SandboxExecOptions & {
+  hostCwd?: string;
+  hostEnv?: NodeJS.ProcessEnv;
 };
 
 export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
 
 export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
 
-type SpawnLikeResult = {
+export type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
   error?: Error;
@@ -59,7 +65,7 @@ export type SandboxExecChild = {
 export type SandboxExecSpawner = (
   binary: string,
   args: readonly string[],
-  options: SandboxExecOptions,
+  options: SandboxExecChildOptions,
 ) => SandboxExecChild;
 
 export type SandboxExecSignalSource = {
@@ -238,7 +244,13 @@ export function cleanupOpenClawAfterExec(
 }
 
 const defaultSandboxExecSpawner: SandboxExecSpawner = (binary, args, options) =>
-  spawn(binary, [...args], { stdio: buildSandboxExecStdio(options) });
+  spawn(binary, [...args], {
+    stdio: buildSandboxExecStdio(options),
+    ...(options.hostCwd ? { cwd: options.hostCwd } : {}),
+    ...(options.hostEnv || options.subprocessEnv
+      ? { env: options.hostEnv ?? options.subprocessEnv }
+      : {}),
+  });
 
 const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
   add: (signal, listener) => process.on(signal, listener),
@@ -248,7 +260,7 @@ const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
 export async function runSandboxExecChild(
   binary: string,
   args: readonly string[],
-  options: SandboxExecOptions = {},
+  options: SandboxExecChildOptions = {},
   spawnChild: SandboxExecSpawner = defaultSandboxExecSpawner,
   signalSource: SandboxExecSignalSource = defaultSandboxExecSignalSource,
 ): Promise<SpawnLikeResult> {
@@ -336,20 +348,23 @@ export function validateWorkdirOrFail(
   workdir: string,
   run: WorkdirProbeRunner = defaultWorkdirProbeRunner,
   gatewayName?: string,
+  exit: (code: number) => never = process.exit,
 ): void {
   const outcome = evaluateWorkdirProbe(
     run(binary, buildWorkdirProbeArgs(sandboxName, workdir, gatewayName)),
   );
   if (outcome === "missing") {
     console.error(workdirMissingMessage(workdir));
-    process.exit(1);
+    exit(1);
   }
 }
 
-function defaultResolveBinary(): string {
+export function resolveSandboxExecBinary(): string {
   const { getOpenshellBinary } = require("../../adapters/openshell/runtime");
   return getOpenshellBinary();
 }
+
+const defaultResolveBinary = resolveSandboxExecBinary;
 
 function defaultSelectGateway(sandboxName: string): GatewaySelectResult {
   return (
@@ -374,6 +389,8 @@ export type ExecSandboxDeps = {
   resolveSandboxAgent?: SandboxExecAgentResolver;
   /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
   selectGateway?: (sandboxName: string) => GatewaySelectResult;
+  /** Defer terminal process exit until an outer lifecycle lock is released. */
+  exit?: (code: number) => never;
 };
 
 export function isGoogleChatPairingApproval(command: readonly string[]): boolean {
@@ -402,10 +419,7 @@ function defaultResolveSandboxAgent(sandboxName: string): string | null {
   return entry.agent ?? "openclaw";
 }
 
-function googleChatPairingActivationFailureMessage(
-  cliName: string,
-  sandboxName: string,
-): string {
+function googleChatPairingActivationFailureMessage(cliName: string, sandboxName: string): string {
   return (
     `  Google Chat pairing approval committed for '${sandboxName}', but managed gateway activation failed. ` +
     `The approval was not rolled back. Run '${cliName} ${sandboxName} gateway restart' before testing the next message.`
@@ -426,22 +440,23 @@ export async function execSandbox(
   deps: ExecSandboxDeps = {},
 ): Promise<void> {
   const { CLI_NAME } = require("../../cli/branding");
+  const exit = deps.exit ?? process.exit;
   if (command.length === 0) {
     console.error(
       `  Usage: ${CLI_NAME} ${sandboxName} exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]`,
     );
-    process.exit(2);
+    exit(2);
   }
   const inputError = execInputError(command, options.workdir);
   if (inputError) {
     console.error(inputError);
-    process.exit(2);
+    exit(2);
   }
   try {
     assertNoOpenShellGatewayEndpointOverride();
   } catch (error) {
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
+    exit(1);
   }
   const binary = (deps.resolveBinary ?? defaultResolveBinary)();
   const gatewaySelection = (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
@@ -449,12 +464,19 @@ export async function execSandbox(
     console.error(
       `  Failed to select gateway '${gatewaySelection.gatewayName}' for sandbox '${sandboxName}'.`,
     );
-    process.exit(1);
+    exit(1);
   }
   const gatewayName =
     gatewaySelection.outcome === "selected" ? gatewaySelection.gatewayName : undefined;
   if (options.workdir) {
-    validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir, gatewayName);
+    validateWorkdirOrFail(
+      binary,
+      sandboxName,
+      options.workdir,
+      deps.probeWorkdir,
+      gatewayName,
+      exit,
+    );
   }
   const emitPolicyDenialHint = preparePolicyHint(
     CLI_NAME,
@@ -501,12 +523,12 @@ export async function execSandbox(
     );
   }
   if (exitCode === 0 && managedGoogleChatApproval) {
-    let recordedAgent: string | null;
+    let recordedAgent: string | null = null;
     try {
       recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
     } catch {
       console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
-      process.exit(1);
+      exit(1);
     }
     if (recordedAgent === "openclaw") {
       let restartSucceeded = false;
@@ -522,5 +544,5 @@ export async function execSandbox(
       }
     }
   }
-  process.exit(exitCode);
+  exit(exitCode);
 }

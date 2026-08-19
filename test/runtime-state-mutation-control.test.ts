@@ -187,15 +187,14 @@ def process(pid, state, parent, start, uid, command, inode):
 
 root_uid = control.ROOT_UID
 pid1 = process(1, "S", 0, "100", root_uid, (control.OPENSHELL_ARGV0,), 101)
-start = process(
-    10,
-    "S",
-    1,
-    "200",
-    1001,
-    (b"/bin/bash", control.NEMOCLAW_START_PATH),
-    110,
-)
+def start_process(pid, command):
+    return process(pid, "S", 1, str(190 + pid), 1001, command, 100 + pid)
+
+start = start_process(10, (b"/bin/bash", control.NEMOCLAW_START_PATH, b"/bin/bash"))
+prefixed_start = start_process(11, (b"/bin/bash", b"--noprofile", control.NEMOCLAW_START_PATH))
+reordered_start = start_process(12, (b"/bin/bash", b"/bin/bash", control.NEMOCLAW_START_PATH))
+bare_direct_start = start_process(13, (b"nemoclaw-start", b"/bin/bash"))
+bare_interpreted_start = start_process(14, (b"/bin/bash", b"nemoclaw-start", b"/bin/bash"))
 gateway = process(
     77,
     "S",
@@ -483,6 +482,11 @@ control._supported_writer_uids = lambda: (1000, 1001)
 control._sandbox_uid = lambda: 1001
 control._capture_process = lambda pid: {1: pid1, 10: start}.get(pid)
 control._capture_writer_processes = lambda _uids: (start, gateway)
+results["managed_start_with_cmd"] = control._is_nemoclaw_start(start, 1001)
+results["prefixed_start"] = control._is_nemoclaw_start(prefixed_start, 1001)
+results["reordered_start"] = control._is_nemoclaw_start(reordered_start, 1001)
+results["bare_direct_start"] = control._is_nemoclaw_start(bare_direct_start, 1001)
+results["bare_interpreted_start"] = control._is_nemoclaw_start(bare_interpreted_start, 1001)
 real_readlink = os.readlink
 os.readlink = lambda selected: "mnt:[401]" if selected == control.MOUNT_NAMESPACE_PATH else real_readlink(selected)
 try:
@@ -1273,10 +1277,15 @@ describe("runtime state mutation controller", () => {
     });
   });
 
-  it("holds exact OpenShell and entrypoint identities through recovery (#7744)", () => {
+  it("holds exact OpenShell and managed-image entrypoint identities through recovery (#9485)", () => {
     expect(harnessResult).toMatchObject({
       acquire: "fenced",
       assert: "fenced",
+      managed_start_with_cmd: true,
+      prefixed_start: false,
+      reordered_start: false,
+      bare_direct_start: false,
+      bare_interpreted_start: false,
       acquire_fence: {
         supervisor: { pid: 1, startIdentity: "100" },
         start: { pid: 10, startIdentity: "200", parentPid: 1 },

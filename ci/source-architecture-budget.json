@@ -37,7 +37,7 @@
     "defaultMax": 20,
     "maxByFile": {
       "src/lib/actions/inference-set.ts": 32,
-      "src/lib/actions/sandbox/connect.ts": 41,
+      "src/lib/actions/sandbox/connect.ts": 42,
       "src/lib/actions/sandbox/destroy.ts": 29,
       "src/lib/actions/sandbox/doctor.ts": 30,
       "src/lib/actions/sandbox/status-snapshot.ts": 21,
@@ -49,7 +49,7 @@
       "src/lib/inference/local.ts": 21,
       "src/lib/inference/onboard-probes.ts": 21,
       "src/lib/inference/vllm.ts": 21,
-      "src/lib/onboard.ts": 203,
+      "src/lib/onboard.ts": 201,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/sandbox/config.ts": 22,
       "src/lib/shields/index.ts": 23

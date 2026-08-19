@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, assert, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import {
   withProvenManagedGatewayProcess,
   writeManagedGatewayRuntimeProof,
@@ -214,7 +215,7 @@ afterEach(() => {
   }
 });
 
-describe("portable runtime cleanup in the uninstall run plan", () => {
+describe("portable runtime cleanup in the uninstall run plan", testTimeoutOptions(15_000), () => {
   it.each<[string, EvidenceMutation]>([
     ["receipt without configuration", (home, state) => writeAdmissionReceipt(home, state)],
     [
@@ -366,6 +367,38 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     expect(scope.kill).not.toHaveBeenCalled();
     expect(scope.runPortableCleanup).not.toHaveBeenCalled();
     expect(fs.existsSync(evidence)).toBe(true);
+  });
+
+  it("rejects schema-5 Hermes authority under the host fence before uninstall effects (#9203)", async () => {
+    const scope = admissionFailureScope("nemoclaw-hermes-uninstall-");
+    const authority = path.join(scope.stateDir, "hermes-portable-lifecycle", "receipt-stem");
+    fs.mkdirSync(authority, { recursive: true, mode: 0o700 });
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await runUninstallPlanProduction(
+      { assumeYes: true, deleteModels: true, destroyUserData: true, keepOpenShell: false },
+      {
+        ...admissionFailureDeps(scope),
+        env: {
+          HOME: scope.homeDir,
+          VITEST: "true",
+          NEMOCLAW_TEST_BASE_HOME: scope.homeDir,
+          NEMOCLAW_TEST_STATE_DIR: scope.stateDir,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(stderr.mock.calls.flat().join("\n")).toContain(
+      "Command 'uninstall' is not supported while an experimental Hermes portable lifecycle receipt exists",
+    );
+    expect(scope.run).not.toHaveBeenCalled();
+    expect(scope.runDocker).not.toHaveBeenCalled();
+    expect(scope.runModelCleanup).not.toHaveBeenCalled();
+    expect(scope.rmSync).not.toHaveBeenCalled();
+    expect(scope.kill).not.toHaveBeenCalled();
+    expect(scope.runPortableCleanup).not.toHaveBeenCalled();
+    expect(fs.statSync(authority).isDirectory()).toBe(true);
   });
 
   it("uses exact receipt names without Docker or an all-sandbox mutation (#9189)", () => {
