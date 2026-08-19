@@ -936,8 +936,8 @@ const {
 const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawReady } =
   sandboxLifecycle.createSandboxLifecycleHelpers({
     runCaptureOpenshell,
-    fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
-      fetchGatewayAuthTokenFromSandbox(sandboxName),
+    getGatewayName: () => GATEWAY_NAME,
+    fetchGatewayAuthTokenFromSandbox: (name: string) => fetchGatewayAuthTokenFromSandbox(name),
     agentProductName,
     prompt,
     isAffirmativeAnswer,
@@ -1582,7 +1582,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
+  readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
   getHermesToolGatewayBroker,
@@ -3265,7 +3265,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             messagingChannelConfigsEqual,
             getSandboxReuseState,
             getSandboxRecreateObservation,
-            getDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
+            getDcodeSelectionDrift: sandboxCreateOrchestrationRuntime.readDcodeSelectionDrift,
             hasSandboxGpuDrift,
             getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
             getSandboxRegistryEntry: registry.getSandbox,

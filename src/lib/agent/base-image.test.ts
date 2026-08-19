@@ -16,6 +16,7 @@ import {
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import { loadAgent } from "./defs";
+import { loadManifestRecord, readString } from "./manifest-readers";
 
 function makeResolutionMetadata(
   overrides: Partial<SandboxBaseImageResolutionMetadata> = {},
@@ -62,6 +63,13 @@ function declaresCorporateCaBuildArg(dockerfilePath: string): boolean {
   );
 }
 
+function readManifestExpectedVersion(agentName: string): string {
+  const manifestPath = path.join(AGENTS_DIR, agentName, "manifest.yaml");
+  const expectedVersion = readString(loadManifestRecord(manifestPath), "expected_version");
+  expect(expectedVersion, `agent '${agentName}' must declare expected_version in ${manifestPath}`).toBeTruthy();
+  return expectedVersion ?? "";
+}
+
 // Read the agent names from the checked-in Dockerfiles so a base image that
 // starts consuming the corporate CA cannot ship without the build argument.
 const CORPORATE_CA_BASE_IMAGE_AGENTS = fs
@@ -69,6 +77,11 @@ const CORPORATE_CA_BASE_IMAGE_AGENTS = fs
   .filter((agentName) =>
     declaresCorporateCaBuildArg(path.join(AGENTS_DIR, agentName, "Dockerfile.base")),
   );
+
+expect(
+  CORPORATE_CA_BASE_IMAGE_AGENTS,
+  "expected at least one agent base image to declare the corporate CA build arg",
+).not.toHaveLength(0);
 
 describe("agent base image provisioning", () => {
   beforeEach(() => {
@@ -485,7 +498,7 @@ describe("agent base image provisioning", () => {
         makeAgent({
           name: "langchain-deepagents-code",
           displayName: "LangChain Deep Agents Code",
-          expectedVersion: "0.1.34",
+          expectedVersion: "0.1.55",
           dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
           dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
         }),
@@ -498,7 +511,7 @@ describe("agent base image provisioning", () => {
           ],
           validateImage: expect.any(Function),
           validationDescription:
-            "deepagents-code==0.1.34, dos2unix, and the immutable security package inventory",
+            "deepagents-code==0.1.55, dos2unix, and the immutable security package inventory",
         }),
       );
     });
@@ -507,7 +520,9 @@ describe("agent base image provisioning", () => {
   it.each(CORPORATE_CA_BASE_IMAGE_AGENTS)(
     "passes the resolved corporate CA into local %s base image builds (#8119)",
     (agentName) => {
-      vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
+      const corporateCaPath = writeCa(tmpDir());
+      const corporateCaContents = fs.readFileSync(corporateCaPath, "utf8");
+      vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", corporateCaPath);
       withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
         resolveSandboxBaseImageMock.mockReturnValue({
           ref: `nemoclaw-${agentName}-sandbox-base-local:compatible`,
@@ -520,7 +535,7 @@ describe("agent base image provisioning", () => {
           makeAgent({
             name: agentName,
             displayName: agentName,
-            expectedVersion: "0.1.34",
+            expectedVersion: readManifestExpectedVersion(agentName),
             dockerfileBasePath: `/test/root/agents/${agentName}/Dockerfile.base`,
             dockerfilePath: `/test/root/agents/${agentName}/Dockerfile`,
           }),
@@ -532,9 +547,7 @@ describe("agent base image provisioning", () => {
         };
         const encoded = options.buildArgs?.NEMOCLAW_CORPORATE_CA_B64;
         expect(encoded).toBeTypeOf("string");
-        expect(Buffer.from(encoded ?? "", "base64").toString("utf8")).toContain(
-          "BEGIN CERTIFICATE",
-        );
+        expect(Buffer.from(encoded ?? "", "base64").toString("utf8")).toBe(corporateCaContents);
       });
     },
   );
@@ -554,7 +567,7 @@ describe("agent base image provisioning", () => {
         makeAgent({
           name: "langchain-deepagents-code",
           displayName: "LangChain Deep Agents Code",
-          expectedVersion: "0.1.34",
+          expectedVersion: "0.1.55",
           dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
           dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
         }),
