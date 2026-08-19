@@ -10,6 +10,7 @@ on:
     types: [opened, reopened]
 
 permissions:
+  contents: read
   pull-requests: write
 
 jobs:
@@ -27,26 +28,29 @@ jobs:
           script: |
             const pull = context.payload.pull_request;
             const author = pull.user.login;
-            const elevatedAccounts = new Set([
-              "apurvvkumaria",
-              "chengjiew",
-              "cjagwani",
-              "cv",
-              "dongni-yang",
-              "ericksoa",
-              "jyaunches",
-              "laitingsheng",
-              "prekshivyas",
-              "rluo8",
-              "rsliter",
-              "sandl99",
-              "senthilr-nv",
-              "tedy-y",
-              "tonyluo-nv",
-              "wscurran",
-              "yimoj",
-            ]);
-            const limit = elevatedAccounts.has(author.toLowerCase()) ? 10 : 5;
+            const response = await github.rest.repos.getContent({
+              ...context.repo,
+              path: ".github/pr-limits.json",
+              ref: pull.base.sha,
+            });
+            if (Array.isArray(response.data) || response.data.type !== "file") {
+              throw new Error("Invalid PR limit policy file");
+            }
+            const policy = JSON.parse(Buffer.from(response.data.content, "base64").toString());
+            if (
+              !Array.isArray(policy.elevatedAccounts) ||
+              !policy.elevatedAccounts.every((login) => typeof login === "string") ||
+              !Number.isSafeInteger(policy.elevatedLimit) ||
+              policy.elevatedLimit < 0 ||
+              !Number.isSafeInteger(policy.defaultLimit) ||
+              policy.defaultLimit < 0
+            ) {
+              throw new Error("Invalid PR limit policy values");
+            }
+            const elevatedAccounts = new Set(policy.elevatedAccounts.map((login) => login.toLowerCase()));
+            const limit = elevatedAccounts.has(author.toLowerCase())
+              ? policy.elevatedLimit
+              : policy.defaultLimit;
             const issues = await github.paginate(github.rest.issues.listForRepo, {
               ...context.repo,
               state: "open",
