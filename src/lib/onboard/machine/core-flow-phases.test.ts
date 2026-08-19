@@ -322,7 +322,7 @@ function createPhases(
 }
 
 describe("core onboard flow phases", () => {
-  it("carries the fresh install-Ollama reservation into Hermes portable creation (#9203)", async () => {
+  it("preserves the fresh install-ollama reservation endpoint source for Hermes portable creation (#9203)", async () => {
     const durableSession = createSession();
     const sandboxName = `hermes-route-${durableSession.sessionId}`;
     const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {

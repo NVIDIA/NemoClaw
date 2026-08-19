@@ -67,7 +67,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   ResourceProfile = unknown,
 > {
   gatewayName: string;
-  /** Exact schema-5 route authority selected before sandbox create intent is rendered. */
+  /** Internal schema-5 lifecycle selection from the locked portable runtime. */
   hermesPortableLifecycle?: boolean;
   authoritativeResumeConfig?: boolean;
   authoritativePolicyTier?: string | null;
