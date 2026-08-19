@@ -51,12 +51,30 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)(agents\/(?:hermes|langchain-deepagents-code)\/)?Dockerfile$/,
     testsToRun: (_file, match) =>
-      match[1]
-        ? ["src/lib/onboard/managed-startup-profile.test.ts"]
-        : [
+      match[1] === "agents/hermes/"
+        ? [
             "src/lib/onboard/managed-startup-profile.test.ts",
-            "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
-          ],
+            "test/hermes-image-build-probes.test.ts",
+            "test/hermes-unattended-approval.test.ts",
+          ]
+        : match[1]
+          ? ["src/lib/onboard/managed-startup-profile.test.ts"]
+          : [
+              "src/lib/onboard/managed-startup-profile.test.ts",
+              "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+            ],
+  },
+  {
+    pattern:
+      /(?:^|\/)agents\/hermes\/(?:hermes-wikidata-reference-read|image-build-probes\.py|nemoclaw_unattended_approval\.py|patch-unattended-approval\.py|unattended-approval-policy\.json)$/,
+    testsToRun: runTests(
+      "test/hermes-image-build-probes.test.ts",
+      "test/hermes-unattended-approval.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)test\/e2e\/live\/hermes-tool-execution-proof\.py$/,
+    testsToRun: runTests("test/e2e/support/common-egress-agent-helpers.test.ts"),
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,

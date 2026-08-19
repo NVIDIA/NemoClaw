@@ -84,6 +84,21 @@ Python remains `>=3.11,<3.14`, and the JavaScript runtime remains Node.js `>=20`
 Hermes 0.19 changes an omitted approval mode from manual authorization to smart authorization, which can consult an auxiliary model before authorizing a flagged command.
 NemoClaw now writes `approvals.mode: manual` explicitly so an authorization-policy change requires its own product and security decision.
 
+Issue `#9528` adds one bounded exception for the existing Hermes public-reference E2E.
+The image applies an exact-source patch only when the pinned Hermes 0.19.0 `tools/approval.py` SHA-256 is `f35c78aa0b56c82cafe0242bb886c4f9679bf55219776a105131dceba2ce9672`.
+The patch recognizes the fixed `/usr/local/lib/nemoclaw/hermes-wikidata-reference-read` action before Hermes' isolated-container shortcut, then denies that action unless the request is a non-cron API gateway session using the local terminal backend without host access.
+Hardline, sudo-password, and user-defined deny rules still run before the bounded approval.
+SSH, Docker with or without host access, cron, non-API gateway platforms, ordinary local sessions, changed commands, extra arguments, and missing or untrusted policy state do not receive the exception.
+Other commands retain Hermes' existing approval behavior.
+
+The reviewed wrapper is root-owned, read-only to the sandbox user, accepts no arguments, and fetches only the fixed Wikidata `Q30` label endpoint.
+It rejects redirects and final URL changes, reads at most 65,536 response bytes before JSON parsing, validates the exact entity and label, and writes a fixed result record.
+The live E2E treats that record as secondary evidence.
+Its primary evidence is the Hermes API session database exposed by the session-messages endpoint, with API authentication when the gateway configures a key: a bounded in-sandbox reducer requires exactly one persisted `terminal` tool call with the fixed command, no other tool calls, and one matching successful tool result.
+Only the schema version, a three-digit HTTP status, four counts, and two Boolean match fields leave the sandbox; the session identifier, complete messages, tool arguments, tool output, and credentials do not.
+The E2E shell loads `API_SERVER_KEY` from the runtime-owned `/sandbox/.hermes/.env` file and uses it only for the two localhost API requests when the key is present.
+The credential remains inside the sandbox, the shell environment is discarded when the command exits, and the runtime-owned credential file is unchanged.
+
 Hermes 0.19 also makes the `browser_console(expression=...)` sensitive-primitive denylist opt-in through `browser.restrict_evaluate`, defaulting it to `false`.
 The outgoing release restricted cookies, storage, clipboard, form values, and network primitives unless a user explicitly enabled unsafe evaluation.
 Because NemoClaw exposes the browser toolset, generated configuration now writes `browser.restrict_evaluate: true` to preserve that fail-closed posture; broadening page-context JavaScript evaluation requires a separate security decision.

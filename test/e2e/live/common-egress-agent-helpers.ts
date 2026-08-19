@@ -139,6 +139,17 @@ interface HermesAgentAssertionResult extends OpenClawAgentAssertionResult {
   httpStatus: string;
 }
 
+export interface HermesToolExecutionProof {
+  schemaVersion: 1;
+  messagesHttpStatus: string;
+  sessionRecordFound: boolean;
+  exactTerminalCallCount: number;
+  otherToolCallCount: number;
+  matchingToolResultCount: number;
+  successfulToolResultCount: number;
+  passed: boolean;
+}
+
 interface AgentAssertionRetryOptions {
   attempts: number;
   delayMs: (attempt: number) => number;
@@ -1030,6 +1041,50 @@ export function parseChatContent(raw: string): string {
   const choice = doc.choices?.[0];
   const content = choice?.message?.content ?? choice?.message?.reasoning_content ?? choice?.text;
   return typeof content === "string" ? content.trim() : "";
+}
+
+export function parseHermesToolExecutionProof(raw: string): HermesToolExecutionProof | null {
+  const marker = "__NEMOCLAW_HERMES_TOOL_PROOF__=";
+  const encoded = raw
+    .split("\n")
+    .filter((line) => line.startsWith(marker))
+    .at(-1)
+    ?.slice(marker.length);
+  if (!encoded) return null;
+
+  try {
+    const proof = JSON.parse(encoded) as Record<string, unknown>;
+    const keys = [
+      "exactTerminalCallCount",
+      "matchingToolResultCount",
+      "messagesHttpStatus",
+      "otherToolCallCount",
+      "passed",
+      "schemaVersion",
+      "sessionRecordFound",
+      "successfulToolResultCount",
+    ];
+    const counts = [
+      proof.exactTerminalCallCount,
+      proof.otherToolCallCount,
+      proof.matchingToolResultCount,
+      proof.successfulToolResultCount,
+    ];
+    if (
+      Object.keys(proof).sort().join(",") !== keys.sort().join(",") ||
+      proof.schemaVersion !== 1 ||
+      typeof proof.messagesHttpStatus !== "string" ||
+      !/^\d{3}$/u.test(proof.messagesHttpStatus) ||
+      typeof proof.sessionRecordFound !== "boolean" ||
+      typeof proof.passed !== "boolean" ||
+      !counts.every((value) => Number.isInteger(value) && Number(value) >= 0)
+    ) {
+      return null;
+    }
+    return proof as unknown as HermesToolExecutionProof;
+  } catch {
+    return null;
+  }
 }
 
 function compactAgentReply(value: string): string {

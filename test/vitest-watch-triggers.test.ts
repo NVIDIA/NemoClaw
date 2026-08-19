@@ -44,6 +44,12 @@ const OPAQUE_INPUTS = [
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile",
+  "agents/hermes/hermes-wikidata-reference-read",
+  "agents/hermes/image-build-probes.py",
+  "agents/hermes/nemoclaw_unattended_approval.py",
+  "agents/hermes/patch-unattended-approval.py",
+  "agents/hermes/unattended-approval-policy.json",
+  "test/e2e/live/hermes-tool-execution-proof.py",
   "agents/langchain-deepagents-code/Dockerfile",
   "agents/hermes/policy-additions.yaml",
   "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
@@ -86,14 +92,12 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  it.each(
-    [
-        ".github/actions/docker-auth-setup/action.yaml",
-        ".github/actions/docker-auth-cleanup/action.yaml",
-        ".github/scripts/docker-auth-setup.sh",
-        ".github/scripts/docker-auth-cleanup.sh",
-      ],
-  )("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
+  it.each([
+    ".github/actions/docker-auth-setup/action.yaml",
+    ".github/actions/docker-auth-cleanup/action.yaml",
+    ".github/scripts/docker-auth-setup.sh",
+    ".github/scripts/docker-auth-cleanup.sh",
+  ])("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",
@@ -105,6 +109,8 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
+      "test/hermes-image-build-probes.test.ts",
+      "test/hermes-unattended-approval.test.ts",
     ]);
     expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
@@ -234,6 +240,25 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",
+    ]);
+  });
+
+  it.each([
+    "agents/hermes/hermes-wikidata-reference-read",
+    "agents/hermes/image-build-probes.py",
+    "agents/hermes/nemoclaw_unattended_approval.py",
+    "agents/hermes/patch-unattended-approval.py",
+    "agents/hermes/unattended-approval-policy.json",
+  ])("maps Hermes unattended approval input %s to its direct tests (#9528)", (approvalPath) => {
+    expect(triggeredBy(approvalPath)).toEqual([
+      "test/hermes-image-build-probes.test.ts",
+      "test/hermes-unattended-approval.test.ts",
+    ]);
+  });
+
+  it("maps the Hermes tool proof reducer to its direct E2E-support test (#9528)", () => {
+    expect(triggeredBy("test/e2e/live/hermes-tool-execution-proof.py")).toEqual([
+      "test/e2e/support/common-egress-agent-helpers.test.ts",
     ]);
   });
 

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "wikidataReferenceRead": {
+    "platform": "api_server",
+    "command": "/usr/local/lib/nemoclaw/hermes-wikidata-reference-read"
+  }
+}

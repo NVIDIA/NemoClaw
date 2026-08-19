@@ -86,6 +86,7 @@ COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
+COPY agents/hermes/patch-unattended-approval.py /opt/nemoclaw-hermes-config/patch-unattended-approval.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
@@ -114,6 +115,9 @@ COPY agents/hermes/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/pat
 COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py
 COPY agents/hermes/patch-profile-policy-defaults.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
 COPY agents/hermes/managed_policy.py /usr/local/lib/nemoclaw/managed_policy.py
+COPY --chmod=0555 agents/hermes/hermes-wikidata-reference-read /usr/local/lib/nemoclaw/hermes-wikidata-reference-read
+COPY --chmod=0444 agents/hermes/nemoclaw_unattended_approval.py /opt/hermes/tools/nemoclaw_unattended_approval.py
+COPY --chmod=0444 agents/hermes/unattended-approval-policy.json /usr/local/share/nemoclaw/hermes-unattended-approval-policy.json
 COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts
 COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
@@ -211,6 +215,7 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 
 # Cross-stage root copies are accepted by Docker's legacy builder and create
 # one final-image layer while preserving metadata on existing parent paths.
+# hadolint ignore=DL3067
 COPY --from=hermes-npm-patch-payload / /
 
 # A published base can lag the source patch in Dockerfile.base. Apply only the
@@ -362,6 +367,7 @@ RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(cer
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 ENV HERMES_TUI_DIR="/opt/hermes/ui-tui"
 
+# hadolint ignore=DL3067
 COPY --from=hermes-agent-payload / /
 
 # Ensure the NemoClaw plugin for Hermes is readable.
@@ -378,14 +384,41 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=89f530da6a8296c8bab449a2a324d8efedca1a90b04a5e0f57cf9203ed2011cd
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=aab93555dcf5250e675c32a44d532a7f1487a5bc6e38a0d92c746db32354035c
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
     | sha256sum -c - \
     || { echo "ERROR: image-build-probes.py hash mismatch (update NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256)" >&2; exit 1; }
 
+# hadolint ignore=DL3067
 COPY --from=hermes-runtime-payload / /
+
+# Hermes v0.19.0 classifies Python heredocs as script execution and waits for
+# terminal approval in API-server sessions. Install one root-owned, no-argument
+# Wikidata read and bypass approval only for its exact absolute invocation.
+# Hardline, sudo, and user-defined deny rules retain precedence. The upstream
+# source hash and exact patch anchors force review before a Hermes upgrade.
+ARG NEMOCLAW_HERMES_UNATTENDED_APPROVAL_PATCHER_SHA256=05f5a33788a73b1b41ea5e426e5097cfdea59d59db1af46b014b8cce40efd028
+ARG NEMOCLAW_HERMES_UNATTENDED_APPROVAL_HELPER_SHA256=3f89915a31ce0ed6092b8190f649310034eae58ce815b60b057cc09ad9c19b64
+ARG NEMOCLAW_HERMES_UNATTENDED_APPROVAL_POLICY_SHA256=bab6ce927534052dcbadbbf4a83010a439c5f2b6dd644c98942d1327fb37abe8
+ARG NEMOCLAW_HERMES_WIKIDATA_READ_SHA256=b9ea2f464028ffdf72c6086facb91568e13c23e7c36d6a2ce2c489d6b7a3ad73
+ARG NEMOCLAW_HERMES_APPROVAL_SOURCE_SHA256=f35c78aa0b56c82cafe0242bb886c4f9679bf55219776a105131dceba2ce9672
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_UNATTENDED_APPROVAL_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-unattended-approval.py \
+        "$NEMOCLAW_HERMES_UNATTENDED_APPROVAL_HELPER_SHA256" /opt/hermes/tools/nemoclaw_unattended_approval.py \
+        "$NEMOCLAW_HERMES_UNATTENDED_APPROVAL_POLICY_SHA256" /usr/local/share/nemoclaw/hermes-unattended-approval-policy.json \
+        "$NEMOCLAW_HERMES_WIKIDATA_READ_SHA256" /usr/local/lib/nemoclaw/hermes-wikidata-reference-read \
+        "$NEMOCLAW_HERMES_APPROVAL_SOURCE_SHA256" /opt/hermes/tools/approval.py \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes unattended approval source identity mismatch" >&2; exit 1; }
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-unattended-approval.py \
+        /opt/hermes/tools/approval.py \
+        --hermes-semver 0.19.0 \
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py unattended-approval-policy
 
 # Keep the root-owned managed-startup handoff in this image-only layer. The
 # following permissions block is replayed on the host by regression tests.
@@ -695,6 +728,7 @@ RUN printf '%s  %s\n' \
 # The wrapper's shebang pins `/usr/bin/python3 -I` (isolated mode); fail the
 # build if that absolute path is missing or non-executable so a base-image
 # upgrade that drops it cannot ship a wrapper that ENOEXECs at runtime.
+# hadolint ignore=DL3067
 COPY --from=hermes-wrapper-payload / /
 
 RUN test -x /usr/bin/python3 \
@@ -835,6 +869,7 @@ RUN --network=none --mount=from=hermes-managed-teams-wheels,target=/opt/nemoclaw
 
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:999:/sandbox"
+# hadolint ignore=DL3066
 USER sandbox
 
 # Set up blueprint for local resolution
@@ -856,6 +891,7 @@ RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
     fi \
     && rm -rf /sandbox/.cache
 
+# hadolint ignore=DL3066
 USER root
 
 # Install the generated policy manifest outside the mutable Hermes home. Python
@@ -920,6 +956,7 @@ RUN set -eu; \
         /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy
 
+# hadolint ignore=DL3066
 USER sandbox
 
 # Prove that the installed dashboard seeder carries every reviewed policy value
@@ -967,7 +1004,7 @@ ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox,
 # supplementary sandbox-group membership and create Hermes v0.14 runtime dirs
 # without being able to remove sticky-protected config files. Shields-up applies
 # 444 root:root + chattr +i.
-# hadolint ignore=DL3002
+# hadolint ignore=DL3002,DL3066
 USER root
 
 # Flatten stale published base images that still contain the old .hermes-data
@@ -1399,6 +1436,9 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/managed_policy.py 'root:root 444' \
     && check_metadata /usr/local/share/nemoclaw/hermes-managed-policy.json 'root:root 444' \
+    && check_metadata /opt/hermes/tools/nemoclaw_unattended_approval.py 'root:root 444' \
+    && check_metadata /usr/local/share/nemoclaw/hermes-unattended-approval-policy.json 'root:root 444' \
+    && check_metadata /usr/local/lib/nemoclaw/hermes-wikidata-reference-read 'root:root 555' \
     && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
     && check_metadata /usr/local/bin/nemoclaw-managed-bootstrap 'root:root 755' \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \

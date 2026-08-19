@@ -77,6 +77,16 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-unattended-approval.test.ts",
+      "test": "allows only the reviewed Wikidata read in an API-server session (#9528)",
+      "category": "security"
+    },
+    {
+      "file": "test/hermes-unattended-approval.test.ts",
+      "test": "fails closed when the reviewed policy file can be changed or redirected (#9528)",
+      "category": "security"
+    },
+    {
       "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "rejects %s",
       "category": "security"

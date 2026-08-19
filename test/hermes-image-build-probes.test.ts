@@ -27,6 +27,7 @@ const commands = [
   "neutral-platform-inertness",
   "profile-policy",
   "session-preview",
+  "unattended-approval-policy",
 ] as const;
 
 describe("Hermes image build probes", () => {

@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe } from "vitest";
+import hermesUnattendedApprovalPolicy from "../../../agents/hermes/unattended-approval-policy.json" with { type: "json" };
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -30,6 +31,7 @@ import {
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
   parseChatContent,
+  parseHermesToolExecutionProof,
   runHermesAgentAssertionRetry,
 } from "./common-egress-agent-helpers.ts";
 import {
@@ -57,6 +59,30 @@ const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const HERMES_AGENT_TIMEOUT_MS = 150_000;
 const HERMES_AGENT_ATTEMPTS = 3;
+const HERMES_WIKIDATA_RESULT_PATH = "/tmp/nemoclaw-hermes-wikidata-reference-read.json";
+const HERMES_TOOL_EXECUTION_PROOF_SCRIPT = fs.readFileSync(
+  path.join(import.meta.dirname, "hermes-tool-execution-proof.py"),
+  "utf8",
+);
+const HERMES_WIKIDATA_RESULT_CHECK = `\
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+with path.open("rb") as source:
+    raw = source.read(4097)
+if len(raw) > 4096:
+    raise SystemExit(1)
+observed = json.loads(raw)
+expected = {
+    "schemaVersion": 1,
+    "entity": "Q30",
+    "label": "United States",
+    "status": "ok",
+}
+raise SystemExit(0 if observed == expected else 1)
+`;
 const KEEP_SANDBOX =
   process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1" ||
   process.env.NEMOCLAW_COMMON_EGRESS_KEEP_SANDBOX === "1";
@@ -119,7 +145,11 @@ function httpStatusFromResponse(raw: string): string {
 function httpBodyFromResponse(raw: string): string {
   return raw
     .split("\n")
-    .filter((line) => !line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
+    .filter(
+      (line) =>
+        !line.startsWith("__NEMOCLAW_HTTP_STATUS__=") &&
+        !line.startsWith("__NEMOCLAW_HERMES_TOOL_PROOF__="),
+    )
     .join("\n")
     .trim();
 }
@@ -413,18 +443,10 @@ async function addPolicyPreset(
 }
 
 function buildHermesReferencePrompt(): string {
-  return String.raw`Use your terminal tool to run this Python check exactly once:
-python3 - <<'PY'
-import json
-import urllib.request
-
-url = "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q30&props=labels&languages=en&format=json"
-with urllib.request.urlopen(url, timeout=20) as response:
-    doc = json.load(response)
-ok = doc.get("success") == 1 and doc.get("entities", {}).get("Q30", {}).get("labels", {}).get("en", {}).get("value") == "United States"
-print("HERMES_REFERENCE_AGENT_OK" if ok else "HERMES_REFERENCE_AGENT_BAD")
-PY
-After the command completes, reply exactly HERMES_REFERENCE_AGENT_OK if that exact token appeared. Do not fetch any other URL.`;
+  const command = hermesUnattendedApprovalPolicy.wikidataReferenceRead.command;
+  return `Use your terminal tool to run this Python check exactly once:
+${command}
+Do not run any other command or fetch any other URL.`;
 }
 
 async function runHermesAgentAssertion(
@@ -433,8 +455,11 @@ async function runHermesAgentAssertion(
   args: {
     expected: string;
     label: string;
+    observeOutcome?: (attempt: number) => Promise<{ detail: string; passed: boolean }>;
     prompt: string;
+    requiredToolCommand?: string;
     sandboxName: string;
+    attempts?: number;
   },
 ): Promise<void> {
   const payload = JSON.stringify({
@@ -442,26 +467,42 @@ async function runHermesAgentAssertion(
     messages: [{ role: "user", content: args.prompt }],
     max_tokens: 300,
   });
+  const captureSession = args.requiredToolCommand !== undefined;
+  const responseHeaders = captureSession ? ' -D "$headers"' : "";
+  const proofCommands = args.requiredToolCommand
+    ? [
+        `session_id=$(awk 'tolower($1) == "x-hermes-session-id:" { gsub(/\\r/, "", $2); print $2 }' "$headers" | tail -n 1)`,
+        "messages_code=000",
+        `if printf '%s\\n' "$session_id" | grep -Eq '^api-[0-9a-f]{16}$'; then if [ -n "\${API_SERVER_KEY:-}" ]; then messages_code=$(curl -sS -o "$messages" -w '%{http_code}' --max-time 30 --max-filesize 2097152 "http://localhost:8642/api/sessions/\${session_id}/messages" -H "Authorization: Bearer \${API_SERVER_KEY}"); else messages_code=$(curl -sS -o "$messages" -w '%{http_code}' --max-time 30 --max-filesize 2097152 "http://localhost:8642/api/sessions/\${session_id}/messages"); fi; fi`,
+        `python3 -I -c ${shellQuote(HERMES_TOOL_EXECUTION_PROOF_SCRIPT)} "$messages" ${shellQuote(
+          args.requiredToolCommand,
+        )} "\${messages_code:-000}"`,
+        "proof_rc=$?",
+        'if [ "$proof_rc" -ne 0 ]; then rc="$proof_rc"; fi',
+      ]
+    : [];
   const remote = [
     "set -a",
     "[ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env",
     "set +a",
     "tmp=$(mktemp)",
-    `if [ -n "\${API_SERVER_KEY:-}" ]; then code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY}" -d ${shellQuote(
+    ...(captureSession ? ["headers=$(mktemp)", "messages=$(mktemp)"] : []),
+    `if [ -n "\${API_SERVER_KEY:-}" ]; then code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 120${responseHeaders} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H "Authorization: Bearer \${API_SERVER_KEY}" -d ${shellQuote(
       payload,
-    )}); else code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d ${shellQuote(
+    )}); else code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 120${responseHeaders} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d ${shellQuote(
       payload,
     )}); fi`,
     "rc=$?",
-    'cat "$tmp"',
-    'rm -f "$tmp"',
+    ...(captureSession ? [] : ['cat "$tmp"']),
+    ...proofCommands,
+    captureSession ? 'rm -f "$tmp" "$headers" "$messages"' : 'rm -f "$tmp"',
     `printf '\\n__NEMOCLAW_HTTP_STATUS__=%s\\n' "\${code:-000}"`,
     'exit "$rc"',
   ].join("; ");
 
   let lastFailure = "";
   const execution = await runHermesAgentAssertionRetry({
-    attempts: HERMES_AGENT_ATTEMPTS,
+    attempts: args.attempts ?? HERMES_AGENT_ATTEMPTS,
     delayMs: () => 5_000,
     onEvidence: async (evidence) => {
       await artifacts.writeJson(`retry/${args.label}-agent-retry-evidence.json`, evidence);
@@ -475,23 +516,55 @@ async function runHermesAgentAssertion(
       const response = text(agent);
       const httpStatus = httpStatusFromResponse(response);
       const body = httpBodyFromResponse(response);
+      const toolProof = args.requiredToolCommand
+        ? parseHermesToolExecutionProof(response)
+        : undefined;
       let reply = "";
       try {
         reply = parseChatContent(body);
       } catch {
         reply = "";
       }
-      lastFailure = `exit=${agent.exitCode} http=${httpStatus} reply='${reply.slice(
-        0,
-        240,
-      )}' body='${body.slice(0, 240)}'`;
-      return classifyHermesAgentAssertion({
-        exitCode: agent.exitCode,
-        expected: args.expected,
-        httpStatus,
-        reply,
-        response,
-      });
+      lastFailure = args.requiredToolCommand
+        ? await artifacts
+            .writeJson(
+              `${args.label}-hermes-tool-execution-attempt-${attempt}.json`,
+              toolProof ?? {
+                schemaVersion: 1,
+                messagesHttpStatus: "000",
+                sessionRecordFound: false,
+                exactTerminalCallCount: 0,
+                otherToolCallCount: 0,
+                matchingToolResultCount: 0,
+                successfulToolResultCount: 0,
+                passed: false,
+              },
+            )
+            .then(
+              () =>
+                `exit=${agent.exitCode} http=${httpStatus} toolProof=${JSON.stringify(toolProof)}`,
+            )
+        : `exit=${agent.exitCode} http=${httpStatus} reply='${reply.slice(
+            0,
+            240,
+          )}' body='${body.slice(0, 240)}'`;
+      const observation = args.observeOutcome ? await args.observeOutcome(attempt) : undefined;
+      lastFailure = observation ? `${lastFailure} outcome='${observation.detail}'` : lastFailure;
+      return observation
+        ? {
+            passed:
+              agent.exitCode === 0 &&
+              httpStatus === "200" &&
+              observation.passed &&
+              (toolProof?.passed ?? args.requiredToolCommand === undefined),
+          }
+        : classifyHermesAgentAssertion({
+            exitCode: agent.exitCode,
+            expected: args.expected,
+            httpStatus,
+            reply,
+            response,
+          });
     },
   });
   if (execution.outcome === "passed") return;
@@ -727,7 +800,8 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         contract: [
           "Hermes open onboarding applies public-reference common-egress endpoints",
           "Hermes open onboarding applies all Hermes Nous managed-tool policy presets",
-          "the Hermes API-server agent path fetches Wikidata through its terminal tool",
+          "the Hermes API session records one successful exact reviewed terminal action",
+          "the reviewed action produces the fixed Wikidata result artifact",
         ],
       });
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, HERMES_SANDBOX);
@@ -753,10 +827,37 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         "/modal",
       ]);
       progress.phase("fetch Wikidata with Hermes agent");
+      const staleResult = await sandbox.exec(
+        HERMES_SANDBOX,
+        ["rm", "-f", HERMES_WIKIDATA_RESULT_PATH],
+        {
+          artifactName: "c3-agent-reference-clear-result",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(staleResult.exitCode, text(staleResult)).toBe(0);
       await runHermesAgentAssertion(sandbox, artifacts, {
-        expected: "HERMES_REFERENCE_AGENT_OK",
+        attempts: 1,
+        expected: "validated Wikidata result artifact",
         label: "c3-agent-reference",
+        observeOutcome: async (attempt) => {
+          const result = await sandbox.exec(
+            HERMES_SANDBOX,
+            ["python3", "-I", "-c", HERMES_WIKIDATA_RESULT_CHECK, HERMES_WIKIDATA_RESULT_PATH],
+            {
+              artifactName: `c3-agent-reference-result-attempt-${attempt}`,
+              env: commandEnv(),
+              timeoutMs: 30_000,
+            },
+          );
+          return {
+            detail: `fixed-result-check-exit=${result.exitCode}`,
+            passed: result.exitCode === 0,
+          };
+        },
         prompt: buildHermesReferencePrompt(),
+        requiredToolCommand: hermesUnattendedApprovalPolicy.wikidataReferenceRead.command,
         sandboxName: HERMES_SANDBOX,
       });
       await artifacts.target.complete({

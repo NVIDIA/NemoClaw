@@ -1,0 +1,97 @@
+#!/usr/bin/python3 -I
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Perform the fixed Wikidata read reviewed for the Hermes reference E2E."""
+
+import json
+import os
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+URL = (
+    "https://www.wikidata.org/w/api.php?"
+    "action=wbgetentities&ids=Q30&props=labels&languages=en&format=json"
+)
+RESULT_PATH = Path("/tmp/nemoclaw-hermes-wikidata-reference-read.json")
+MAX_RESPONSE_BYTES = 65_536
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args, **_kwargs):
+        return None
+
+
+def _open_response():
+    opener = urllib.request.build_opener(_RejectRedirects())
+    return opener.open(URL, timeout=20)
+
+
+def _fetch_document() -> object:
+    with _open_response() as response:
+        if response.geturl() != URL:
+            raise ValueError("Wikidata response URL changed")
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError("Wikidata response exceeds the size limit")
+    return json.loads(raw)
+
+
+def _write_result() -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=RESULT_PATH.parent,
+        prefix=f".{RESULT_PATH.name}.",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+            json.dump(
+                {
+                    "schemaVersion": 1,
+                    "entity": "Q30",
+                    "label": "United States",
+                    "status": "ok",
+                },
+                target,
+                separators=(",", ":"),
+            )
+            target.write("\n")
+            target.flush()
+            os.fsync(target.fileno())
+        os.chmod(temporary_path, 0o600)
+        os.replace(temporary_path, RESULT_PATH)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def main() -> int:
+    if len(sys.argv) != 1:
+        print("HERMES_REFERENCE_AGENT_BAD")
+        return 2
+    try:
+        document = _fetch_document()
+    except (OSError, UnicodeDecodeError, urllib.error.URLError, ValueError):
+        print("HERMES_REFERENCE_AGENT_BAD")
+        return 1
+    if not isinstance(document, dict):
+        print("HERMES_REFERENCE_AGENT_BAD")
+        return 1
+    ok = (
+        document.get("success") == 1
+        and document.get("entities", {})
+        .get("Q30", {})
+        .get("labels", {})
+        .get("en", {})
+        .get("value")
+        == "United States"
+    )
+    if ok:
+        _write_result()
+    print("HERMES_REFERENCE_AGENT_OK" if ok else "HERMES_REFERENCE_AGENT_BAD")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

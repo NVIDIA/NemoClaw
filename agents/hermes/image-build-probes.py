@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -72,6 +73,82 @@ def verify_profile_policy() -> None:
         assert _resolve_pre_update_backup_mode(args) == expected_backup_mode
     finally:
         hermes_config.load_config = original_load_config
+
+
+def verify_unattended_approval_policy() -> None:
+    from tools import approval
+    from tools.nemoclaw_unattended_approval import (
+        POLICY_PATH,
+        _load_policy,
+        is_reviewed_unattended_command,
+        reviewed_unattended_action_decision,
+    )
+
+    platform, command = _load_policy(POLICY_PATH)
+    assert platform == "api_server"
+    assert command == "/usr/local/lib/nemoclaw/hermes-wikidata-reference-read"
+    assert is_reviewed_unattended_command(command, platform)
+    assert not is_reviewed_unattended_command(f"{command} --help", platform)
+    assert not is_reviewed_unattended_command(command, "local")
+    assert reviewed_unattended_action_decision(command, platform) == "allow"
+    assert reviewed_unattended_action_decision(command, "local") == "deny"
+    assert reviewed_unattended_action_decision(f"{command} --help", platform) is None
+
+    original_platform = approval._get_session_platform
+    original_gateway = approval._is_gateway_approval_context
+    original_deny = approval._match_user_deny_rule
+    original_cron = os.environ.get("HERMES_CRON_SESSION")
+    try:
+        approval._get_session_platform = lambda: platform
+        approval._is_gateway_approval_context = lambda: True
+        os.environ.pop("HERMES_CRON_SESSION", None)
+        decision = approval.check_all_command_guards(
+            command, "local", has_host_access=False
+        )
+        assert decision == {"approved": True, "message": None}
+
+        os.environ["HERMES_CRON_SESSION"] = "1"
+        assert not approval.check_all_command_guards(
+            command, "local", has_host_access=False
+        ).get("approved")
+        os.environ.pop("HERMES_CRON_SESSION")
+
+        for env_type, has_host_access in (
+            ("ssh", False),
+            ("docker", True),
+            ("docker", False),
+        ):
+            assert not approval.check_all_command_guards(
+                command, env_type, has_host_access=has_host_access
+            ).get("approved")
+
+        approval._get_session_platform = lambda: "slack"
+        assert not approval.check_all_command_guards(
+            command, "local", has_host_access=False
+        ).get("approved")
+        approval._get_session_platform = lambda: platform
+        approval._is_gateway_approval_context = lambda: False
+        assert not approval.check_all_command_guards(
+            command, "local", has_host_access=False
+        ).get("approved")
+        approval._is_gateway_approval_context = lambda: True
+
+        approval._match_user_deny_rule = lambda _command: "*"
+        denied = approval.check_all_command_guards(command, "local")
+        assert denied.get("approved") is False
+        assert denied.get("user_deny") is True
+        approval._match_user_deny_rule = original_deny
+
+        hardline = approval.check_all_command_guards("rm -rf /", "local")
+        assert hardline.get("approved") is False
+    finally:
+        approval._get_session_platform = original_platform
+        approval._is_gateway_approval_context = original_gateway
+        approval._match_user_deny_rule = original_deny
+        if original_cron is None:
+            os.environ.pop("HERMES_CRON_SESSION", None)
+        else:
+            os.environ["HERMES_CRON_SESSION"] = original_cron
 
 
 def verify_gateway_runtime_metadata() -> None:
@@ -405,6 +482,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "profile-policy": verify_profile_policy,
     "session-delete": verify_session_delete,
     "session-preview": verify_session_preview,
+    "unattended-approval-policy": verify_unattended_approval_policy,
 }
 
 
