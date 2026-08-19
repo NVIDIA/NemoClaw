@@ -6,8 +6,9 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  ONBOARD_COMMAND_TIMEOUT_MS,
-  ONBOARD_TEST_TIMEOUT_MS,
+  ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+  ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
+  ONBOARD_RESUME_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -45,8 +46,8 @@ import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 // prove the credential is hydrated from gateway/session state rather than hosted
 // repository secrets.
 //
-// This stays as a simple live Vitest test: assertions are inline, with no
-// registry, migration ledger, or new shared helper.
+// This remains one live Vitest test with inline behavior assertions. The shared
+// module adds timeout deadlines without adding a registry or migration ledger.
 
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-resume";
@@ -155,7 +156,7 @@ function expectHermeticCompatibleEndpointUsed(
 test(
   "onboard-resume: interrupted onboard then --resume can recreate with cached setup",
   {
-    timeout: ONBOARD_TEST_TIMEOUT_MS,
+    timeout: ONBOARD_RESUME_TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm runtime and compatible-endpoint prerequisites",
@@ -385,7 +386,7 @@ test(
       artifactName: "phase-2-onboard-interrupted",
       env: firstRunEnv,
       redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-      timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
+      timeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     });
     const firstText = `${firstRun.stdout}\n${firstRun.stderr}`;
 
@@ -488,7 +489,7 @@ test(
         artifactName: "phase-3-onboard-resume",
         env: resumeEnv,
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
+        timeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
       },
     );
     const resumeText = `${resumeRun.stdout}\n${resumeRun.stderr}`;
@@ -582,13 +583,17 @@ test(
         artifactName: "phase-3-5-onboard-resume-route-unavailable",
         env: resumeEnv,
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
+        timeoutMs: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
       },
     );
     const unavailableResumeText = `${unavailableResumeRun.stdout}\n${unavailableResumeRun.stderr}`;
     expect(unavailableResumeRun.exitCode, unavailableResumeText).not.toBe(0);
     expect(unavailableResumeText).toContain("is not ready");
     expect(unavailableResumeText).toContain("inference");
+    expect(unavailableResumeText).not.toContain(
+      `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
+    );
+    expect(unavailableResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
     const paused = readSession<SessionStatePostVerify>(SESSION_FILE);
     await artifacts.writeJson("phase-3-5-session-route-unavailable.json", {
@@ -619,12 +624,16 @@ test(
         artifactName: "phase-3-5-onboard-resume-route-restored",
         env: resumeEnv,
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
+        timeoutMs: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
       },
     );
     const repairedResumeText = `${repairedResumeRun.stdout}\n${repairedResumeRun.stderr}`;
     expect(repairedResumeRun.exitCode, repairedResumeText).toBe(0);
     expect(repairedResumeText).toContain("is ready");
+    expect(repairedResumeText).not.toContain(
+      `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
+    );
+    expect(repairedResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
     const repaired = readSession<SessionStateComplete>(SESSION_FILE);
     expect(repaired.status).toBe("complete");
 
@@ -646,7 +655,7 @@ test(
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         },
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
+        timeoutMs: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
       },
     );
     const implicitResumeText = `${implicitResumeRun.stdout}\n${implicitResumeRun.stderr}`;
@@ -657,6 +666,10 @@ test(
         implicitResumeText.includes("[reuse] Skipping"),
       implicitResumeText,
     ).toBe(true);
+    expect(implicitResumeText).not.toContain(
+      `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
+    );
+    expect(implicitResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
     markSessionInProgress(SESSION_FILE);
     const freshRun = await host.command(
@@ -673,13 +686,14 @@ test(
           NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "preflight",
         },
         redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
-        timeoutMs: ONBOARD_COMMAND_TIMEOUT_MS,
+        timeoutMs: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
       },
     );
     const freshText = `${freshRun.stdout}\n${freshRun.stderr}`;
     expect(freshRun.exitCode, freshText).not.toBe(0);
     expect(freshText).toContain("[e2e] Forced onboarding failure at step 'preflight'.");
     expect(freshText).not.toContain("(resume mode)");
+    expect(freshText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
     await artifacts.target.complete({ id: "onboard-resume", status: "passed" });
   },
 );

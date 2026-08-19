@@ -8,7 +8,10 @@ import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import { type E2eAgentRuntime, validateE2eExecutionMetadata } from "./execution-coverage.mts";
-import { ONBOARD_TARGET_TIMEOUT_MINUTES } from "./onboard-timeout-contract.mts";
+import {
+  INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+  ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+} from "./onboard-timeout-contract.mts";
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -892,7 +895,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw + langchain-deepagents-code",
     environmentOrInferenceEndpoint: "Ubuntu; local compatible and HTTPS inference fixtures",
     profile: "standard",
-    timeoutMinutes: ONBOARD_TARGET_TIMEOUT_MINUTES,
+    timeoutMinutes: INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: false,
@@ -1031,7 +1034,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu Docker host; local onboarding fixtures",
     profile: "standard",
-    timeoutMinutes: ONBOARD_TARGET_TIMEOUT_MINUTES,
+    timeoutMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,
