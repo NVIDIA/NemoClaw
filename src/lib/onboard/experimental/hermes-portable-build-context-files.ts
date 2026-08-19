@@ -268,6 +268,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/channels/slack/rendered-config-parser.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/slack/runtime/slack-channel-guard.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/slack/template-resolver.ts", mode: "100644" },
+  { path: "src/lib/messaging/channels/teams/contract.ts", mode: "100644" },
   {
     path: "src/lib/messaging/channels/teams/hooks/host-forward-port-conflict.test.ts",
     mode: "100644",
