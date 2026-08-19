@@ -620,13 +620,17 @@ describe("uninstall local model profile cleanup", () => {
     }
   });
 
-  it("preserves selected gateway authority when scoped cleanup leaves ownership state", () => {
+  it("continues unrelated uninstall after managed llama.cpp cleanup fails (#9575)", () => {
     const tmpHome = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-llama-fail-")),
     );
     const stateDir = publishManagedLlamaOwner(tmpHome, 8080, "selected-sandbox");
     writeScopedGatewayState(tmpHome);
+    const unrelatedState = path.join(tmpHome, ".nemoclaw", "unrelated-state.json");
+    fs.writeFileSync(unrelatedState, "{}\n", { mode: 0o600 });
     const errors: string[] = [];
+    const logs: string[] = [];
+    const runLocalModelRuntimeCleanup = vi.fn(() => ok());
     try {
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
@@ -637,19 +641,24 @@ describe("uninstall local model profile cleanup", () => {
           existsSync: fs.existsSync,
           isPortFree: () => true,
           isTty: false,
-          log: () => {},
-          run: vi.fn((command: string, args: string[]) =>
-            command === "openshell" && args[0] === "gateway" && args[1] === "list"
-              ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9000" }]))
-              : ok(),
-          ),
-          runManagedLlamaCppRuntimeCleanup: vi.fn(() => ok()),
+          log: (message) => logs.push(message),
+          run: vi.fn(okWithKnownGatewayList),
+          runLocalModelRuntimeCleanup,
+          runManagedLlamaCppRuntimeCleanup: vi.fn(() => ({
+            status: 1,
+            stdout: "",
+            stderr: "qualified endpoint changed",
+          })),
         }),
       );
 
       expect(result.exitCode).toBe(1);
       expect(fs.existsSync(stateDir)).toBe(true);
-      expect(errors.join("\n")).toContain("returned without retiring its ownership state");
+      expect(fs.existsSync(path.join(stateDir, "owner.json"))).toBe(true);
+      expect(fs.existsSync(unrelatedState)).toBe(false);
+      expect(runLocalModelRuntimeCleanup).not.toHaveBeenCalled();
+      expect(logs.some((message) => message.endsWith("State and binaries"))).toBe(true);
+      expect(errors.join("\n")).toContain("continue unrelated uninstall steps");
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

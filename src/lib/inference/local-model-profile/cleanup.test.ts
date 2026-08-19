@@ -582,17 +582,21 @@ describe("host-local model cleanup", () => {
     const homeDir = temporaryHome();
     const original = engineHarness({ authorityId: "docker:original" });
     const changed = engineHarness({ authorityId: "docker:changed" });
+    const privateBridge = privateBridgeFixture();
     createManagedState(homeDir, original.engine);
 
     const result = cleanupLocalModelRuntimes({
       homeDir,
       engine: changed.engine,
+      privateBridge,
     });
 
     expect(result).toMatchObject({
       ok: false,
       reason: expect.stringContaining("endpoint"),
     });
+    expect(privateBridge.stopTransaction).toHaveBeenCalledExactlyOnceWith(TRANSACTION_ID);
+    expect(privateBridge.assertStopped).toHaveBeenCalledExactlyOnceWith(TRANSACTION_ID);
     expect(changed.capture).not.toHaveBeenCalled();
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
   });

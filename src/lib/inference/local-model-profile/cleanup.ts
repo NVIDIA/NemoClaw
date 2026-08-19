@@ -79,6 +79,7 @@ export interface LocalModelRuntimeCleanupOptions {
   sandboxName?: string;
   env?: NodeJS.ProcessEnv;
   engine?: ContainerEngine;
+  privateBridge?: DockerLlamaCppPrivateBridgeController;
   deps?: Partial<CleanupDeps>;
 }
 
@@ -469,6 +470,7 @@ function cleanupLlamaCpp(
     sandboxName?: string;
     env?: NodeJS.ProcessEnv;
     engine?: ContainerEngine;
+    privateBridge?: DockerLlamaCppPrivateBridgeController;
   } = {},
 ): boolean {
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
@@ -547,6 +549,13 @@ function cleanupLlamaCpp(
     throw new Error("managed llama.cpp finalized receipt is missing");
   }
 
+  const privateBridge =
+    options.privateBridge ??
+    (process.platform === "linux" ? createDockerLlamaCppPrivateBridgeController() : undefined);
+  if (privateBridge) {
+    privateBridge.stopTransaction(journal.transactionId);
+    privateBridge.assertStopped(journal.transactionId);
+  }
   const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
   requireQualifiedEngine(receipt?.engineAuthority ?? journal.engineAuthority, engine);
   requireEngineSuccess(
@@ -627,6 +636,7 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
   readonly gatewayPort?: number;
   readonly env?: NodeJS.ProcessEnv;
   readonly engine?: ContainerEngine;
+  readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
   readonly deps?: Partial<CleanupDeps>;
 }
 
@@ -906,6 +916,7 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
       sandboxName,
       env: options.env,
       engine: options.engine,
+      privateBridge: options.privateBridge,
     });
     preserveSharedHuggingFaceCache(homeDir, preserved);
     return { ok: true, removed, preserved };
@@ -955,6 +966,7 @@ export function cleanupLocalModelRuntimes(
         sandboxName: options.sandboxName,
         env: options.env,
         engine: options.engine,
+        privateBridge: options.privateBridge,
       });
     }
     preserveSharedHuggingFaceCache(homeDir, preserved);
