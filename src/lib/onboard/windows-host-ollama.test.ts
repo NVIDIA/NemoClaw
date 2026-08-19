@@ -3,10 +3,13 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const runCapture = vi.fn<(cmd: readonly string[]) => string>(() => "");
+const runCapture = vi.fn<typeof import("../runner").runCapture>(() => "");
 
 vi.mock("../runner", () => ({
-  runCapture: (cmd: readonly string[]) => runCapture(cmd),
+  runCapture: (
+    cmd: readonly string[],
+    options?: Parameters<typeof import("../runner").runCapture>[1],
+  ) => runCapture(cmd, options),
 }));
 
 vi.mock("../platform", () => ({
@@ -60,5 +63,23 @@ describe("detectWindowsHostOllama", () => {
       installedPath: "",
       loopbackOnly: false,
     });
+  });
+
+  it("bounds each Windows-host PowerShell probe when the host does not respond (#9604)", () => {
+    const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
+    const outputs = [installedPath, "42", "127.0.0.1"];
+    runCapture.mockImplementation(() => outputs.shift() ?? "");
+
+    expect(detectWindowsHostOllama()).toEqual({
+      installed: true,
+      installedPath,
+      loopbackOnly: true,
+    });
+    expect(runCapture).toHaveBeenCalledTimes(3);
+    expect(runCapture.mock.calls.map(([, options]) => options)).toEqual([
+      { ignoreError: true, timeout: 5_000 },
+      { ignoreError: true, timeout: 5_000 },
+      { ignoreError: true, timeout: 5_000 },
+    ]);
   });
 });
