@@ -43,6 +43,14 @@ const PROBE_DIGEST = "2".repeat(64);
 const TRANSACTION_ID = "3".repeat(64);
 const TARGET_SHA256 = "4".repeat(64);
 const GPU_UUID = "GPU-12345678-1234-1234-1234-123456789abc";
+
+export function throwAfterPodmanEvent(
+  events: readonly string[],
+  fragment: string,
+  message: string,
+): void {
+  if (events.some((event) => event.includes(fragment))) throw new Error(message);
+}
 const NETWORK_ID = "6".repeat(64);
 const NETWORK_NAME = "nemoclaw-net";
 const NETWORK_GATEWAY_IP = "10.89.0.1";
@@ -73,6 +81,7 @@ export interface PodmanHostLocalInferenceHarnessOptions {
   readonly gpuIdentities?: readonly string[];
   readonly authorityId?: string;
   readonly service?: "nim" | "vllm";
+  readonly probeImageRef?: string;
 }
 
 export interface PodmanHostLocalInferenceHarness {
@@ -97,6 +106,7 @@ export interface PodmanHostLocalInferenceHarness {
     networkName: string;
     probeFailure: "ready" | "gpu" | "inference" | null;
     probeFailureText: string;
+    ollamaPullFailure: string | null;
     ollamaPsModels: unknown[];
     runLostAcknowledgement: boolean;
     runAcknowledgementText: string | null;
@@ -158,10 +168,8 @@ function labelsFrom(args: readonly string[]): Record<string, string> {
   return labels;
 }
 
-function immutableManagedImage(args: readonly string[]): string {
-  const imageRef = args.find(
-    (arg) => arg.includes("@sha256:") && !arg.includes(`@sha256:${PROBE_DIGEST}`),
-  );
+function immutableManagedImage(args: readonly string[], probeImageRef: string): string {
+  const imageRef = args.find((arg) => arg.includes("@sha256:") && arg !== probeImageRef);
   if (!imageRef) throw new Error("test harness expected an immutable managed image reference");
   return imageRef;
 }
@@ -347,6 +355,7 @@ function discoveredDevicesAuthority(state: {
 export function createPodmanHostLocalInferenceTestHarness(
   options: PodmanHostLocalInferenceHarnessOptions = {},
 ): PodmanHostLocalInferenceHarness {
+  const probeImageRef = options.probeImageRef ?? `registry.test/curl@sha256:${PROBE_DIGEST}`;
   const events: string[] = [];
   const failures: PodmanInferenceFailureEvidence[] = [];
   const written: string[] = [];
@@ -360,6 +369,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     probeFailure: null as "ready" | "gpu" | "inference" | null,
     probeFailureText:
       "provider\u0001failed\u0002 nvapi-1234567890abcdef Authorization: Bearer bearer-secret-1234 NGC_API_KEY=environment-secret https://user:pass@example.invalid/a?token=query-secret",
+    ollamaPullFailure: null as string | null,
     ollamaPsModels: [
       {
         name: "nemotron:latest",
@@ -520,8 +530,7 @@ export function createPodmanHostLocalInferenceTestHarness(
           if (state.probeInheritedImageLabel) {
             labels["org.opencontainers.image.source"] = "https://example.invalid/probe";
           }
-          const imageRef =
-            args.find((arg) => arg.includes(`@sha256:${PROBE_DIGEST}`)) ?? "missing-probe-image";
+          const imageRef = args.find((arg) => arg === probeImageRef) ?? "missing-probe-image";
           currentProbe = {
             id: PROBE_CONTAINER_ID,
             name,
@@ -539,7 +548,7 @@ export function createPodmanHostLocalInferenceTestHarness(
             : result(0, state.probeRunAcknowledgementText ?? `${PROBE_CONTAINER_ID}\n`);
         }
         // Locate the immutable workload reference independent of optional flags.
-        const immutableImage = immutableManagedImage(args);
+        const immutableImage = immutableManagedImage(args, probeImageRef);
         if (state.parentInheritedImageLabel) {
           labels["org.opencontainers.image.source"] = "https://example.invalid/managed";
         }
@@ -572,6 +581,9 @@ export function createPodmanHostLocalInferenceTestHarness(
         return result(0, currentProbe.logsStdout, currentProbe.logsStderr);
       }
       if (args[0] === "exec") {
+        if (args[2] === "ollama" && args[3] === "pull" && state.ollamaPullFailure !== null) {
+          return result(1, "", state.ollamaPullFailure);
+        }
         if (state.parentExitDuringProof === "gpu") {
           if (currentContainer) {
             currentContainer.running = false;
@@ -681,7 +693,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     networkId: NETWORK_ID,
     networkGatewayIp: NETWORK_GATEWAY_IP,
     hostPort: 18000,
-    probeImageRef: `registry.test/curl@sha256:${PROBE_DIGEST}`,
+    probeImageRef,
     model: `${service}-model`,
     requireToolCalling: true,
     environment: secretNames,
