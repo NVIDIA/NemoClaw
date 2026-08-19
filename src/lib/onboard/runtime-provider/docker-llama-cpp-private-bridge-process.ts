@@ -219,7 +219,9 @@ export function createLlamaCppPrivateBridgeRequestHandler(
       },
     );
     upstream.once("error", () => writeUpstreamUnavailable(response));
-    request.once("aborted", () => upstream.destroy());
+    request.once("close", () => {
+      if (!request.complete) upstream.destroy();
+    });
     request.once("error", () => upstream.destroy());
     response.once("close", () => {
       if (!response.writableEnded) upstream.destroy();

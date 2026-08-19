@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChildProcess, spawn } from "node:child_process";
+import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -58,6 +61,45 @@ function fixture() {
     signals,
     spawnProcess,
   };
+}
+
+function defaultCredentialOpenerFixture() {
+  let openedCredentialSize: number | null = null;
+  const spawnProcess = vi.fn(
+    (_file: string, _args: readonly string[], options: { readonly stdio: readonly unknown[] }) => {
+      const descriptor = options.stdio[3] as number;
+      expect(descriptor).toEqual(expect.any(Number));
+      openedCredentialSize = Number(fs.fstatSync(descriptor).size);
+      return { pid: 40_001, unref: vi.fn() } as unknown as ChildProcess;
+    },
+  ) as unknown as typeof spawn;
+  const controller = createDockerLlamaCppPrivateBridgeController({
+    spawnProcess,
+    processIsAlive: () => false,
+    signalProcess: vi.fn(),
+    listProcessIds: () => [],
+    readProcessArgv: () => null,
+    sleep: vi.fn(),
+  });
+  return {
+    controller,
+    openedCredentialSize: () => openedCredentialSize,
+    spawnProcess,
+  };
+}
+
+function privateCredentialFile(
+  size: number,
+  mode = 0o600,
+): {
+  readonly directory: string;
+  readonly file: string;
+} {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-bridge-key-"));
+  const file = path.join(directory, "api-key");
+  fs.writeFileSync(file, "a".repeat(size), { mode });
+  fs.chmodSync(file, mode);
+  return { directory, file };
 }
 
 describe("Docker llama.cpp private bridge controller", () => {
@@ -142,6 +184,66 @@ describe("Docker llama.cpp private bridge controller", () => {
     processes.set(50_000, [...processes.values()][0]!);
     expect(() => controller.assertRunning(authority)).toThrow("2 matching processes");
   });
+
+  it.each([64, 65])(
+    "starts with a private credential file containing %i bytes",
+    (credentialSize) => {
+      const credential = privateCredentialFile(credentialSize);
+      const runtime = defaultCredentialOpenerFixture();
+      try {
+        runtime.controller.start({ ...authority, apiKeyPath: credential.file });
+
+        expect(runtime.spawnProcess).toHaveBeenCalledOnce();
+        expect(runtime.openedCredentialSize()).toBe(credentialSize);
+      } finally {
+        fs.rmSync(credential.directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("rejects an insecure credential mode before spawning", () => {
+    const credential = privateCredentialFile(64, 0o644);
+    const runtime = defaultCredentialOpenerFixture();
+    try {
+      expect(() => runtime.controller.start({ ...authority, apiKeyPath: credential.file })).toThrow(
+        "API-key file is unavailable or invalid",
+      );
+      expect(runtime.spawnProcess).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(credential.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a credential symlink before spawning", () => {
+    const credential = privateCredentialFile(64);
+    const link = path.join(credential.directory, "api-key-link");
+    fs.symlinkSync(credential.file, link);
+    const runtime = defaultCredentialOpenerFixture();
+    try {
+      expect(() => runtime.controller.start({ ...authority, apiKeyPath: link })).toThrow(
+        "API-key file is unavailable or invalid",
+      );
+      expect(runtime.spawnProcess).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(credential.directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([63, 66])(
+    "rejects a credential file containing %i bytes before spawning",
+    (credentialSize) => {
+      const credential = privateCredentialFile(credentialSize);
+      const runtime = defaultCredentialOpenerFixture();
+      try {
+        expect(() =>
+          runtime.controller.start({ ...authority, apiKeyPath: credential.file }),
+        ).toThrow("API-key file is unavailable or invalid");
+        expect(runtime.spawnProcess).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(credential.directory, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("llama.cpp private bridge argument boundary", () => {
