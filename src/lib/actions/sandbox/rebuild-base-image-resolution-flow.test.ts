@@ -18,14 +18,13 @@ describe("rebuildSandbox base-image resolution flow", () => {
   it("passes the recorded Docker base-image hint and refresh env through ordinary preflight (#4680)", async () => {
     const restoreEnv = snapshotEnv(["NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH"]);
     process.env.NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH = "yes";
-    const resolutionHint: SandboxBaseImageResolutionMetadata & { sourceRevision: string } = {
+    const resolutionHint: SandboxBaseImageResolutionMetadata = {
       schema: 1,
       key: "hermes-base-key",
       imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
       ref: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:resolved",
       digest: "sha256:resolved",
       source: "latest",
-      sourceRevision: "b".repeat(40),
       imageId: "sha256:local-image",
       os: "linux",
       architecture: "amd64",

@@ -3,10 +3,7 @@
 
 import fs from "node:fs";
 
-import {
-  hasDcodeSourceRevision,
-  readDcodeSandboxBaseImageResolutionMetadata,
-} from "../../../src/lib/sandbox-base-image/label-codec.ts";
+import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/label-codec.ts";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
 import {
   DCODE_BASE_IMAGE_TARGET_PLATFORM,
@@ -56,15 +53,6 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[], 
   }
 }
 
-function requireImmutableSourceRevision(metadata: SandboxBaseImageResolutionMetadata): string {
-  if (!hasDcodeSourceRevision(metadata)) {
-    throw new Error(
-      `Deep Agents Code sandbox image does not match the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base-image contract (mismatched fields: source revision)`,
-    );
-  }
-  return metadata.sourceRevision;
-}
-
 export function parseDcodeBaseImagePublicationEvidence(
   value: unknown,
   environment: NodeJS.ProcessEnv = process.env,
@@ -103,6 +91,15 @@ export function dcodeBaseImageReferenceForContract(contract: DcodeBaseImageContr
   return contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];
 }
 
+function requireDcodeSourceRevision(metadata: SandboxBaseImageResolutionMetadata): string {
+  if (!metadata.sourceRevision || !REVISION_PATTERN.test(metadata.sourceRevision)) {
+    throw new Error(
+      `Deep Agents Code sandbox image does not match the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base-image contract (mismatched fields: source revision)`,
+    );
+  }
+  return metadata.sourceRevision;
+}
+
 export function loadDcodeBaseImagePublicationEvidence(
   targetId: string,
   evidencePath: string,
@@ -138,9 +135,9 @@ export function verifyDcodeBaseImageRuntimeEvidence(
       `Deep Agents Code sandbox image did not use the published ${DCODE_BASE_IMAGE_TARGET_PLATFORM} base digest`,
     );
   }
-  const sourceRevision = requireImmutableSourceRevision(metadata);
   const expectedDigest = contract.platformDigests[DCODE_BASE_IMAGE_TARGET_PLATFORM];
   const expectedReference = dcodeBaseImageReferenceForContract(contract);
+  const sourceRevision = requireDcodeSourceRevision(metadata);
   const mismatchedFields = [
     metadata.schema !== 1 ? "schema" : null,
     metadata.imageName !== contract.image ? "image" : null,
@@ -178,6 +175,6 @@ export function captureDcodeBaseImageRuntimeEvidence(
   return verifyDcodeBaseImageRuntimeEvidence(
     contract,
     sandboxImage,
-    readDcodeSandboxBaseImageResolutionMetadata(sandboxImage),
+    readSandboxBaseImageResolutionMetadata(sandboxImage),
   );
 }

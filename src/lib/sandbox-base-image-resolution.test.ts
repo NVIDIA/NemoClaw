@@ -45,7 +45,6 @@ vi.mock("./sandbox-base-image/source-identity", async (importOriginal) => ({
 import {
   createSandboxBaseImageBuildProvenanceKey,
   createSandboxBaseImageResolutionKey,
-  type DcodeSandboxBaseImageResolutionMetadata,
   OPENSHELL_SANDBOX_MIN_GLIBC,
   resolveSandboxBaseImage,
   SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
@@ -57,7 +56,6 @@ const IMAGE_NAME = "ghcr.io/nvidia/nemoclaw/sandbox-base";
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const REF = `${IMAGE_NAME}@${DIGEST}`;
 const IMAGE_ID = `sha256:${"b".repeat(64)}`;
-const SOURCE_REVISION_LABEL = "org.opencontainers.image.revision";
 
 function resolutionOptions() {
   return {
@@ -183,118 +181,6 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.pull).toHaveBeenCalled();
     expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_miss", {
       has_hint: true,
-    });
-  });
-
-  it("preserves receipt-owned source revision during forced DCode resolution (#9386)", () => {
-    const sourceRevision = "c".repeat(40);
-    const staleRevision = "d".repeat(40);
-    const options = {
-      ...resolutionOptions(),
-      label: "Deep Agents Code sandbox base image",
-      pinnedRemoteRef: REF,
-      preferPinnedRemoteRef: true,
-      sourceRevisionLabel: SOURCE_REVISION_LABEL,
-    };
-    const hint: DcodeSandboxBaseImageResolutionMetadata = {
-      schema: 1,
-      key: createSandboxBaseImageResolutionKey(options),
-      imageName: IMAGE_NAME,
-      ref: REF,
-      digest: DIGEST,
-      source: "pinned",
-      pinnedRemoteRef: REF,
-      imageId: IMAGE_ID,
-      os: "linux",
-      architecture: "amd64",
-      glibcVersion: null,
-      requireOpenshellSandboxAbi: false,
-      minGlibcVersion: OPENSHELL_SANDBOX_MIN_GLIBC,
-      sourceRevision: staleRevision,
-    };
-    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
-      status: ref === REF ? 0 : 1,
-    }));
-    dockerMocks.imageInspectFormat.mockReturnValue(
-      JSON.stringify({
-        Id: IMAGE_ID,
-        RepoDigests: [REF],
-        Os: "linux",
-        Architecture: "amd64",
-        Config: { Labels: { [SOURCE_REVISION_LABEL]: sourceRevision } },
-      }),
-    );
-
-    const resolved = resolveSandboxBaseImage({
-      ...options,
-      env: { ...options.env, GITHUB_SHA: staleRevision },
-      resolutionHint: hint,
-      forceRefresh: true,
-    });
-
-    expect(resolved).toMatchObject({
-      ref: REF,
-      digest: DIGEST,
-      source: "pinned",
-      metadata: { sourceRevision },
-    });
-    expect(resolved?.metadata).not.toMatchObject({ sourceRevision: staleRevision });
-  });
-
-  it("fails closed when forced DCode resolution lacks its source receipt (#9386)", () => {
-    const options = {
-      ...resolutionOptions(),
-      label: "Deep Agents Code sandbox base image",
-      pinnedRemoteRef: REF,
-      preferPinnedRemoteRef: true,
-      sourceRevisionLabel: SOURCE_REVISION_LABEL,
-    };
-    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
-      status: ref === REF ? 0 : 1,
-    }));
-
-    expect(() => resolveSandboxBaseImage({ ...options, forceRefresh: true })).toThrow(
-      "missing required immutable source revision metadata",
-    );
-  });
-
-  it("writes durable source authority onto a locally rebuilt DCode base (#9386)", () => {
-    const options = {
-      ...resolutionOptions(),
-      env: {
-        ...resolutionOptions().env,
-        GITHUB_SHA: "f".repeat(40),
-        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
-      },
-      label: "Deep Agents Code sandbox base image",
-      sourceRevisionLabel: SOURCE_REVISION_LABEL,
-    };
-    let builtLabels: Record<string, string> = {};
-    sourceMocks.inputsDirty.mockReturnValue(true);
-    dockerMocks.build.mockImplementation(
-      (_dockerfile: string, _imageRef: string, _rootDir: string, buildOptions: unknown) => {
-        builtLabels = (buildOptions as { labels: Record<string, string> }).labels;
-        return { status: 0 };
-      },
-    );
-    dockerMocks.imageInspectFormat.mockImplementation(() =>
-      JSON.stringify({
-        Id: IMAGE_ID,
-        RepoDigests: [],
-        Os: "linux",
-        Architecture: "amd64",
-        Config: { Labels: builtLabels },
-      }),
-    );
-
-    const resolved = resolveSandboxBaseImage(options);
-    const receiptRevision = builtLabels[SOURCE_REVISION_LABEL];
-
-    expect(receiptRevision).toMatch(/^[0-9a-f]{40}$/u);
-    expect(receiptRevision).not.toBe(options.env.GITHUB_SHA);
-    expect(resolved).toMatchObject({
-      source: "local",
-      metadata: { sourceRevision: receiptRevision },
     });
   });
 

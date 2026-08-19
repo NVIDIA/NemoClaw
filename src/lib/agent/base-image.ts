@@ -27,7 +27,7 @@ import { ROOT } from "../runner";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
   buildLocalBaseTag,
-  createSandboxBaseImageBuildLabels,
+  createSandboxBaseImageBuildProvenance,
   createSandboxBaseImageBuildProvenanceKey,
   createSandboxBaseImageResolutionKey,
   createSandboxBaseImageResolutionMetadata,
@@ -523,6 +523,17 @@ function createLocalResolutionMetadata(
   );
 }
 
+function localBaseImageBuildProvenance(options: ResolveBaseImageOptions): {
+  labels: Record<string, string>;
+  provenance: string;
+} {
+  const provenance = createSandboxBaseImageBuildProvenance(options);
+  return {
+    labels: { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance },
+    provenance,
+  };
+}
+
 /**
  * Ensure the agent-specific sandbox base image exists locally.
  * Rebuild callers can force this so local Dockerfile.base edits are applied.
@@ -565,7 +576,7 @@ export function ensureAgentBaseImage(
 
   if (options.forceBaseImageRebuild === true) {
     const forceBuildTag = `nemoclaw-${agent.name}-sandbox-base-local:build-${process.pid}-${crypto.randomBytes(8).toString("hex")}`;
-    const buildProvenance = createSandboxBaseImageBuildLabels(resolutionOptions);
+    const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     console.log(`  Rebuilding ${agent.displayName} base image...`);
     const buildResult = dockerBuild(baseDockerfile, forceBuildTag, ROOT, {
       buildArgs: resolutionOptions.buildArgs,
@@ -675,7 +686,7 @@ export function ensureAgentBaseImage(
   });
   if (inspectResult?.status !== 0) {
     console.log(`  Building ${agent.displayName} base image (first time only)...`);
-    const buildProvenance = createSandboxBaseImageBuildLabels(resolutionOptions);
+    const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
       buildArgs: resolutionOptions.buildArgs,
 

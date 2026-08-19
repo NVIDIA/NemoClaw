@@ -27,6 +27,7 @@ export type SandboxBaseImageResolutionMetadata = {
   ref: string;
   digest: string | null;
   source: SandboxBaseImageResolutionSource;
+  sourceRevision?: string;
   pinnedRemoteRef?: string;
   imageId: string;
   os: string;
@@ -34,10 +35,6 @@ export type SandboxBaseImageResolutionMetadata = {
   glibcVersion: string | null;
   requireOpenshellSandboxAbi: boolean;
   minGlibcVersion: string;
-};
-
-export type DcodeSandboxBaseImageResolutionMetadata = SandboxBaseImageResolutionMetadata & {
-  sourceRevision: string;
 };
 
 export type ResolveBaseImageOptions = {
@@ -57,7 +54,6 @@ export type ResolveBaseImageOptions = {
   preferPinnedRemoteRef?: boolean;
   validateImage?: (imageRef: string) => boolean;
   validationDescription?: string;
-  sourceRevisionLabel?: string;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceRefresh?: boolean;
   trustedLocalOverride?: TrustedLocalBaseImageOverride;
@@ -95,6 +91,5 @@ export type BaseImageResolutionValidation =
         | "requirements_changed"
         | "abi_incompatible"
         | "local_image_changed"
-        | "repo_digest_missing"
-        | "source_revision_mismatch";
+        | "repo_digest_missing";
     };

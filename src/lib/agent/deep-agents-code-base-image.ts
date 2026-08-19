@@ -9,7 +9,6 @@ import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/secu
 import type { AgentDefinition } from "./defs";
 
 const DEEPAGENTS_CODE_DISTRIBUTION = "deepagents-code";
-export const DEEPAGENTS_CODE_SOURCE_REVISION_LABEL = "org.opencontainers.image.revision";
 const DEEPAGENTS_CODE_DOS2UNIX_PROBE_OK = "nemoclaw-dcode-dos2unix-ok";
 const DEEPAGENTS_CODE_BASE_IMAGE_PROBE_GUARDS = [
   "--network",
@@ -23,7 +22,7 @@ const DEEPAGENTS_CODE_BASE_IMAGE_PROBE_GUARDS = [
 
 type DeepAgentsCodeResolutionOptions = Pick<
   ResolveBaseImageOptions,
-  "inputPaths" | "sourceRevisionLabel" | "validateImage" | "validationDescription"
+  "inputPaths" | "validateImage" | "validationDescription"
 >;
 
 /**
@@ -108,7 +107,6 @@ export function createDeepAgentsCodeBaseImageResolutionOptions(
     // Retain the resolver's pre-existing global inputs alongside these agent
     // inputs. Per-agent cache-policy isolation is a separate cross-agent change.
     inputPaths: [path.join(agentRoot, "manifest.yaml"), path.join(agentRoot, "requirements.lock")],
-    sourceRevisionLabel: DEEPAGENTS_CODE_SOURCE_REVISION_LABEL,
     validateImage: (imageRef) =>
       deepAgentsCodeBaseImageMatchesVersion(imageRef, expectedVersion) &&
       deepAgentsCodeBaseImageHasDos2Unix(imageRef) &&

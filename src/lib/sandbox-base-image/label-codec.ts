@@ -7,7 +7,6 @@ import {
   SANDBOX_BASE_RESOLUTION_KEY_LABEL,
   SANDBOX_BASE_RESOLUTION_LABEL,
   SANDBOX_BASE_RESOLUTION_SCHEMA,
-  type DcodeSandboxBaseImageResolutionMetadata,
   type SandboxBaseImageResolution,
   type SandboxBaseImageResolutionMetadata,
 } from "./types";
@@ -16,7 +15,6 @@ import {
 // growth room while limiting work performed on an untrusted Docker label.
 export const MAX_ENCODED_RESOLUTION_LABEL_LENGTH = 8_192;
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
-const SOURCE_REVISION_RE = /^[0-9a-f]{40}$/;
 const VALID_RESOLUTION_SOURCES = new Set<SandboxBaseImageResolution["source"]>(
   SANDBOX_BASE_IMAGE_RESOLUTION_SOURCES,
 );
@@ -31,21 +29,6 @@ export function readSandboxBaseImageResolutionMetadata(
   if (!labelsOutput) return null;
   try {
     return parseSandboxBaseImageResolutionLabels(JSON.parse(labelsOutput));
-  } catch {
-    return null;
-  }
-}
-
-export function readDcodeSandboxBaseImageResolutionMetadata(
-  sandboxImageRef: string | null | undefined,
-): DcodeSandboxBaseImageResolutionMetadata | null {
-  if (!sandboxImageRef) return null;
-  const labelsOutput = dockerImageInspectFormat("{{json .Config.Labels}}", sandboxImageRef, {
-    ignoreError: true,
-  });
-  if (!labelsOutput) return null;
-  try {
-    return parseDcodeSandboxBaseImageResolutionLabels(JSON.parse(labelsOutput));
   } catch {
     return null;
   }
@@ -90,21 +73,6 @@ export function parseSandboxBaseImageResolutionLabels(
   } catch {
     return null;
   }
-}
-
-export function parseDcodeSandboxBaseImageResolutionLabels(
-  labels: unknown,
-): DcodeSandboxBaseImageResolutionMetadata | null {
-  const metadata = parseSandboxBaseImageResolutionLabels(labels);
-  if (!metadata || !hasDcodeSourceRevision(metadata)) return null;
-  return metadata;
-}
-
-export function hasDcodeSourceRevision(
-  metadata: SandboxBaseImageResolutionMetadata,
-): metadata is DcodeSandboxBaseImageResolutionMetadata {
-  const sourceRevision = (metadata as unknown as Record<string, unknown>).sourceRevision;
-  return typeof sourceRevision === "string" && SOURCE_REVISION_RE.test(sourceRevision);
 }
 
 export function formatSandboxBaseImageResolutionLabels(

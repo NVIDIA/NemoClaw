@@ -23,7 +23,6 @@ import {
   reuseSandboxBaseImageResolutionHint,
 } from "./resolution-metadata";
 import type {
-  DcodeSandboxBaseImageResolutionMetadata,
   ResolveBaseImageOptions,
   SandboxBaseImageResolution,
   SandboxBaseImageResolutionMetadata,
@@ -33,8 +32,6 @@ const IMAGE_NAME = "ghcr.io/nvidia/nemoclaw/sandbox-base";
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const REF = `${IMAGE_NAME}@${DIGEST}`;
 const KEY = "resolution-key";
-const SOURCE_REVISION_LABEL = "org.opencontainers.image.revision";
-const SOURCE_REVISION = "c".repeat(40);
 
 const inspected = {
   Id: `sha256:${"b".repeat(64)}`,
@@ -92,14 +89,16 @@ describe("sandbox base-image resolution metadata lifecycle", () => {
     });
   });
 
-  it.each(["", "not JSON", "null", '"primitive"'])(
-    "ignores unusable Docker inspect output %# (#4680)",
-    (output) => {
-      mocks.dockerImageInspectFormat.mockReturnValue(output);
+  it.each([
+    "",
+    "not JSON",
+    "null",
+    '"primitive"',
+  ])("ignores unusable Docker inspect output %# (#4680)", (output) => {
+    mocks.dockerImageInspectFormat.mockReturnValue(output);
 
-      expect(inspectLocalImageMetadata(REF)).toBeNull();
-    },
-  );
+    expect(inspectLocalImageMetadata(REF)).toBeNull();
+  });
 
   it("creates metadata for a digest-pinned image with matching local identity (#4680)", () => {
     mocks.dockerImageInspectFormat.mockReturnValue(JSON.stringify(inspected));
@@ -122,45 +121,6 @@ describe("sandbox base-image resolution metadata lifecycle", () => {
       metadata,
     );
   });
-
-  it("copies a required source revision from the inspected immutable image (#9386)", () => {
-    mocks.dockerImageInspectFormat.mockReturnValue(
-      JSON.stringify({
-        ...inspected,
-        Config: { Labels: { [SOURCE_REVISION_LABEL]: SOURCE_REVISION } },
-      }),
-    );
-
-    expect(
-      createSandboxBaseImageResolutionMetadata(
-        { ...options, sourceRevisionLabel: SOURCE_REVISION_LABEL },
-        KEY,
-        publishedResolution,
-      ),
-    ).toEqual({ ...metadata, sourceRevision: SOURCE_REVISION });
-  });
-
-  it.each([undefined, "main", "D".repeat(40)])(
-    "rejects a missing or malformed required source revision %# (#9386)",
-    (sourceRevision) => {
-      mocks.dockerImageInspectFormat.mockReturnValue(
-        JSON.stringify({
-          ...inspected,
-          Config: {
-            Labels: sourceRevision === undefined ? {} : { [SOURCE_REVISION_LABEL]: sourceRevision },
-          },
-        }),
-      );
-
-      expect(
-        createSandboxBaseImageResolutionMetadata(
-          { ...options, sourceRevisionLabel: SOURCE_REVISION_LABEL },
-          KEY,
-          publishedResolution,
-        ),
-      ).toBeNull();
-    },
-  );
 
   it("rejects sparse RepoDigests when the resolved reference is not the exact digest", () => {
     mocks.dockerImageInspectFormat.mockReturnValue(
@@ -229,34 +189,6 @@ describe("sandbox base-image resolution metadata lifecycle", () => {
       "nemoclaw.sandbox_base_image.cache_hit",
       expect.anything(),
     );
-  });
-
-  it("rejects a hint whose source revision differs from the inspected image (#9386)", () => {
-    mocks.dockerImageInspectFormat.mockReturnValue(
-      JSON.stringify({
-        ...inspected,
-        Config: { Labels: { [SOURCE_REVISION_LABEL]: "d".repeat(40) } },
-      }),
-    );
-
-    const dcodeMetadata: DcodeSandboxBaseImageResolutionMetadata = {
-      ...metadata,
-      sourceRevision: SOURCE_REVISION,
-    };
-
-    expect(
-      reuseSandboxBaseImageResolutionHint(
-        {
-          ...options,
-          sourceRevisionLabel: SOURCE_REVISION_LABEL,
-          resolutionHint: dcodeMetadata,
-        },
-        KEY,
-      ),
-    ).toBeNull();
-    expect(mocks.addTraceEvent).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
-      reason: "source_revision_mismatch",
-    });
   });
 
   it("revalidates custom runtime requirements before reusing a hint (#4680)", () => {
