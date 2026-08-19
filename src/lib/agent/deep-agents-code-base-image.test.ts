@@ -15,6 +15,7 @@ vi.mock("../adapters/docker", () => ({
 
 import {
   createDeepAgentsCodeBaseImageResolutionOptions,
+  DEEPAGENTS_CODE_SOURCE_REVISION_LABEL,
   deepAgentsCodeBaseImageMatchesVersion,
 } from "./deep-agents-code-base-image";
 
@@ -51,6 +52,7 @@ describe("Deep Agents Code base image compatibility", () => {
       ],
       validationDescription:
         "deepagents-code==9.8.7, dos2unix, and the immutable security package inventory",
+      sourceRevisionLabel: DEEPAGENTS_CODE_SOURCE_REVISION_LABEL,
     });
     expect(options?.validateImage?.("dcode-base:manifest-version")).toBe(true);
   });
