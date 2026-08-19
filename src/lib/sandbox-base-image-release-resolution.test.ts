@@ -75,7 +75,7 @@ function versionedResolutionOptions(localBuild: "0" | "1" | undefined = undefine
       NEMOCLAW_INSTALL_REF: "v0.0.76",
       ...(localBuild === undefined ? {} : { NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: localBuild }),
     },
-    validationDescription: "deepagents-code==0.1.34",
+    validationDescription: "deepagents-code==0.1.55",
   };
 }
 

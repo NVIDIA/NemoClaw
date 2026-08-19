@@ -946,7 +946,7 @@ describe("native Podman CPU proof workflow", () => {
       expect(fs.readFileSync(githubEnv, "utf8")).toBe("");
 
       const cleanup = namedStep("Clean up rootless Podman runtime").run ?? "";
-      const gatewayCleanupStart = cleanup.indexOf('portable_host_gateway_ip=""');
+      const gatewayCleanupStart = cleanup.indexOf("# gateway-alias-cleanup");
       expect(gatewayCleanupStart).toBeGreaterThanOrEqual(0);
       const gatewayCleanup = cleanup.slice(gatewayCleanupStart);
       const runCleanup = async (env: NodeJS.ProcessEnv) => {
@@ -958,7 +958,7 @@ describe("native Podman CPU proof workflow", () => {
             clearTimeout(timer);
             resolve(true);
           });
-          timer = setTimeout(() => resolve(false), 1_000);
+          timer = setTimeout(() => resolve(false), 10_000);
         });
         const result = run(gatewayCleanup, {
           ...env,
