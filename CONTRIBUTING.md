@@ -91,7 +91,7 @@ The decision record must include these items:
 - **Accountable maintainer:** Name one maintainer when the decision is `Accept`. Use `Not applicable` when the decision is not `Accept`.
 - **Validation plan:** List the required validation evidence when the decision is `Accept`. Use `Not applicable` when the decision is not `Accept`.
 
-Contributors must not implement a substantive contribution with an `Accept` decision until the record names one accountable maintainer and an explicit validation plan.
+Contributors must not start implementing a substantive contribution until a maintainer records `Accept`, names one accountable maintainer, and states an explicit validation plan.
 Small documentation changes and low-risk fixes may continue directly to a pull request.
 
 ## Community Response Expectations
