@@ -168,6 +168,25 @@ describe("Docker operation authority", () => {
     expect(second.engine.capture(["version"]).stdout).toBe("unset\nunset\nunset\n");
   });
 
+  it("keeps host-local inference authority stable across terminal attachment changes (#9599)", () => {
+    const executableRoot = fakeDocker("qualified");
+    const environment = {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: executableRoot,
+    };
+    const interactive = createDockerOperationAuthority("host-local-inference", {
+      ...environment,
+      TERM: "xterm-256color",
+    });
+    const detached = createDockerOperationAuthority("host-local-inference", environment);
+
+    expect(detached.engine.authorityId).toBe(interactive.engine.authorityId);
+    expect(dockerOperationBindingSha256(detached.engine)).toBe(
+      dockerOperationBindingSha256(interactive.engine),
+    );
+  });
+
   it("fails closed when an earlier Docker credential helper appears", () => {
     const executableRoot = fakeDocker("qualified");
     const prefixRoot = fakeExecutableRoot();

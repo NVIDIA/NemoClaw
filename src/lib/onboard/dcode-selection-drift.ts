@@ -13,6 +13,7 @@ export type DcodeInferenceIdentity = {
 };
 
 export type DcodeSelectionDriftDeps = {
+  getGatewayName(): string;
   requestedEndpointUrl?: string | null;
   runCaptureOpenshell(
     args: string[],
@@ -127,7 +128,17 @@ export function getDcodeSelectionDrift(
   let output: string | null | undefined;
   try {
     output = deps.runCaptureOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "dcode", "identity"],
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        sandboxName,
+        "--gateway",
+        deps.getGatewayName(),
+        "--",
+        "/usr/local/bin/dcode",
+        "identity",
+      ],
       { ignoreError: true },
     );
   } catch {
@@ -154,6 +165,7 @@ export function getDcodeSelectionDrift(
 
 export function createDcodeSelectionDriftReader(
   runCaptureOpenshell: DcodeSelectionDriftDeps["runCaptureOpenshell"],
+  getGatewayName: DcodeSelectionDriftDeps["getGatewayName"],
 ): DcodeSelectionDriftReader {
   return (
     sandboxName,
@@ -163,6 +175,7 @@ export function createDcodeSelectionDriftReader(
     requestedEndpointUrl,
   ) =>
     getDcodeSelectionDrift(sandboxName, requestedProvider, requestedModel, preferredInferenceApi, {
+      getGatewayName,
       runCaptureOpenshell,
       requestedEndpointUrl,
     });

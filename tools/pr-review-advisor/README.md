@@ -19,7 +19,12 @@ It complements the existing PR surfaces by keeping a NemoClaw maintainer code-re
 - source-of-truth review for fallback, recovery, tolerant parsing, monkeypatching, and other localized workaround behavior;
 - static test-inventory context from changed test files and nearby test names;
 - a complete simplicity sweep that considers the changed code and its surrounding area, including
-  safe deletion, consolidation, existing or new patterns, and neutral or negative net-line outcomes;
+  safe deletion, consolidation, existing or new patterns, and neutral or negative net-line outcomes.
+  Present design defects can block when checked-in evidence shows duplicated ownership, unnecessary
+  machinery, substantial repeated setup, widened dependencies, or unrelated churn and the review
+  provides a concrete behavior-preserving reduction. The reduction case covers source and tests
+  together, defaults to a negative total line outcome, and may be line-neutral only when it
+  materially reduces owners, concepts, invalid combinations, or dependency width;
 - semantic terminology review for terms that changed explanatory text introduces, expands, or
   redefines, with repository evidence for each model-selected candidate;
 - E2E coverage, job, target, and fan-out selections normalized against the checked-in
@@ -214,5 +219,13 @@ It reserves `info_only` for skipped, unavailable, incomplete, or low-confidence 
 `superseded` when competing work replaces the PR.
 These recommendations describe advisor findings only.
 They never approve a PR, replace required human review, or change the repository's merge gates.
-Maintainers still decide whether a warning blocks, and suggestions do not require a response.
+Warnings identify concerns that maintainers can accept without author action. Suggestions identify
+optional improvements. Required design work must be a blocker instead of a warning.
+An unnecessary-complexity blocker must remove or consolidate current structure. A helper or
+abstraction is eligible only when current consumers adopt it and the combined source-and-test
+structure materially decreases. Other recommendations that increase net complexity or merely add a
+registry, configuration surface, compatibility layer, fallback, migration path, test framework, or
+fixture owner require an independent correctness, security, or accepted-scope defect; they are not
+presented as simplification. This keeps architecture feedback strong while preventing review-driven
+growth and serial refactoring layers.
 Every result includes limitations and requires maintainer review.
