@@ -86,6 +86,23 @@ After the checks pass, the action restores root `dist/` and `nemoclaw/dist/share
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
+For a same-repository PR that changes a managed-image workflow path, the trusted planner also
+requires one successful `Images / Managed Images` run for the candidate commit. Before candidate
+checkout, the planner downloads the three nonexpired contract artifacts by immutable artifact ID.
+It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
+missing, incomplete, or mixed all-agent publication before E2E jobs start.
+
+The planner adds the exact all-agent catalog to `dist/` after the candidate CLI build completes.
+Each live E2E consumer verifies that the catalog source revision matches `checkout_sha`. A PR that
+does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
+is available only to the trusted planner job and is not included in the candidate CLI artifact.
+
+The same-repository `Images / Managed Images` PR workflow also runs the complete OpenClaw
+`mcp-bridge` shard in two independent matrix jobs. Each job assembles one exact candidate catalog
+from the workflow's published contracts, uses a fresh runner and sandbox, records the existing
+trusted-private discovery diagnostics, scans the evidence for fixture credentials, and must pass.
+These are two required acceptance executions, not retries; either failure remains a failed check.
+
 #### Timing Baseline
 
 The pre-change baseline uses GitHub Actions `Build CLI` step timings from these workflow runs:
@@ -333,6 +350,12 @@ Each execution row declares three coverage fields:
 - `observableOutcome` names the behavior that produces the evidence. Catalogue targets use their outcome-oriented `displayName` as this value.
 - `environmentOrInferenceEndpoint` names the host boundary or inference endpoint that distinguishes the evidence.
 
+Typed registry tests derive each human-readable execution title as
+`<observableOutcome> [<agentRuntime>; <environmentOrInferenceEndpoint>]`.
+Typed registry tests prefix that title with the stable target ID. Workflows use
+the ID prefix for selection, while the semantic tuple makes the test purpose and
+evidence boundary visible in Vitest and GitHub Actions.
+
 Keep coverage metadata with the execution owner:
 
 - Catalogue targets declare it in `tools/e2e/target-catalogue.mts`.
@@ -348,7 +371,8 @@ multiple rows. `tools/e2e/workflow-plan.mts` composes and validates these source
 Do not add a separate hand-maintained execution list.
 
 The default coverage matrix excludes explicit-only jobs and inert typed-registry declarations.
-The rendered report lists those categories separately.
+The rendered report lists those categories separately and inventories every typed declaration,
+including declarations that have no executable matrix cell.
 Explicit-only rows keep their coverage dimensions but do not join the default release matrix.
 Inert declarations report unresolved coverage fields and the missing executable ownership.
 

@@ -61,6 +61,10 @@ describe("managed gateway recovery controller", () => {
     recovered: false,
     forwardRecovered: false,
   };
+  const timedOutGateway = {
+    ...unrecoveredGateway,
+    recoveryFailureDetail: "the recovered gateway did not become responsive before the recovery timeout",
+  };
   const controllerNonce = "a".repeat(64);
   const restartingContainerId = "b".repeat(64);
   const successfulControl = { status: 0, stdout: "GATEWAY_PID=123\n", stderr: "" };
@@ -165,7 +169,7 @@ describe("managed gateway recovery controller", () => {
       label: "persistent post-settle controller contention",
       recoverResults: [successfulControl],
       managedProbeResults: [{ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" }],
-      expectedResult: unrecoveredGateway,
+      expectedResult: timedOutGateway,
       expectedActions: ["recover", "probe", "probe"],
       settleSeconds: "1",
     },
@@ -176,7 +180,7 @@ describe("managed gateway recovery controller", () => {
         { status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" },
         { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" },
       ],
-      expectedResult: unrecoveredGateway,
+      expectedResult: timedOutGateway,
       expectedActions: ["recover", "probe", "probe"],
       settleSeconds: "1",
     },
@@ -293,7 +297,7 @@ describe("managed gateway recovery controller", () => {
       label: "OpenShell managed controller wedge",
       recoverResults: [successfulControl],
       managedProbeResult: { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" },
-      expectedResult: unrecoveredGateway,
+      expectedResult: timedOutGateway,
       expectedActions: ["recover", "probe"],
       settleSeconds: "1",
     },

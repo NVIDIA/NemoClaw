@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runCurlProbe } from "./adapters/http/probe";
+import { finishOnboardTrace, startOnboardTrace } from "./onboard/tracing";
 import {
   addTraceEvent,
   flushTrace,
@@ -206,11 +207,30 @@ describe("onboard trace artifacts", () => {
     }
   });
 
-  it("treats false-like NEMOCLAW_TRACE values as disabled", () => {
+  it("treats false-like NEMOCLAW_TRACE values as disabled and records the flag it acted on", () => {
     process.env[TRACE_ENABLED_ENV] = "false";
     resetTraceForTests();
-
     expect(getTraceCollector()).toBeNull();
+
+    // "2" enables the collector without being canonically truthy; the span must agree.
+    const originalCwd = process.cwd();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trace-noncanonical-"));
+    try {
+      process.chdir(tmpDir);
+      process.env[TRACE_ENABLED_ENV] = "2";
+      resetTraceForTests();
+
+      const handle = startOnboardTrace({}, process.env);
+      const traceFile = handle.collector?.outputPath ?? "";
+      expect(traceFile).toContain(path.join(".e2e", "traces", "nemoclaw-trace-"));
+      finishOnboardTrace(handle, true);
+
+      const root = readTraceArtifact(traceFile).resource_spans[0].scope_spans[0].spans[0];
+      expect(root.attributes.trace_enabled).toBe(true);
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tmpDir, { force: true, recursive: true });
+    }
   });
 
   it("removes the registered exit listener when resetting tests", () => {

@@ -218,11 +218,11 @@ function hasValidChatMessageFields(
   let recognizedField = false;
   for (const field of ["content", "reasoning_content", "refusal"] as const) {
     if (!(field in message)) continue;
-    recognizedField = true;
     const value = message[field];
     const valid =
       field === "content" ? isValidChatContent(value) : value === null || typeof value === "string";
     if (!valid) return false;
+    if (value !== null) recognizedField = true;
   }
   if ("tool_calls" in message) {
     const toolCalls = message.tool_calls;
