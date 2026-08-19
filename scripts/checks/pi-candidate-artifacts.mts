@@ -123,18 +123,8 @@ const APPROVED_STATE_DIRS: Readonly<
   tools: { shields: "read-only", backup: false },
 };
 
-const REQUIRED_START_DIRECTIVES: Readonly<Record<string, string>> = {
-  "export PI_OFFLINE=1": "the runtime runs no startup version check or package update check",
-  "export PI_TELEMETRY=0": "the runtime sends no install telemetry",
-  "umask 077": "Pi configuration and session files stay owner-only",
-};
-const ROOT_IDENTITY_BRANCH = 'if [ "$(id -u)" -eq 0 ]; then';
-const ROOT_PRIVILEGE_DROP_ENABLEMENT = "  _NEMOCLAW_PI_DROP_PRIVILEGES=1";
-const ROOT_STARTUP_CALL = "merge_corporate_proxy_ca";
-const ROOT_STARTUP_BRANCH = 'if [ "$_NEMOCLAW_PI_DROP_PRIVILEGES" -eq 1 ]; then';
-const APPROVED_PRIVILEGE_DROP_COMMAND =
-  "  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \\";
-const APPROVED_PRIVILEGE_DROP_TARGET = '    /usr/local/bin/nemoclaw-start "$@"';
+const APPROVED_START_SCRIPT_SHA256 =
+  "8d246d9988fd2fe4f61edce8498933cd6b37285c98746f3710058a2daae9dbb8";
 
 const REQUIRED_ARTIFACTS = [
   "agents/pi/Dockerfile",
@@ -370,78 +360,6 @@ function normalizeInferenceRule(rule: unknown): string | null {
     : null;
 }
 
-function rootBranchEnablesPrivilegeDrop(lines: readonly string[]): boolean {
-  const branchIndexes = lines.flatMap((line, index) =>
-    line === ROOT_IDENTITY_BRANCH ? [index] : [],
-  );
-  if (branchIndexes.length !== 1) return false;
-
-  let ifDepth = 1;
-  for (let index = branchIndexes[0] + 1; index < lines.length; index += 1) {
-    const trimmed = lines[index].trim();
-    if (/^if\b/u.test(trimmed)) {
-      ifDepth += 1;
-    } else if (trimmed === "fi") {
-      ifDepth -= 1;
-      if (ifDepth === 0) return false;
-    } else if (ifDepth === 1 && trimmed.startsWith("elif ")) {
-      return false;
-    } else if (ifDepth === 1 && lines[index] === ROOT_PRIVILEGE_DROP_ENABLEMENT) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function hasApprovedRootStartupBranch(startScript: string): boolean {
-  const lines = startScript.split("\n");
-  if (!rootBranchEnablesPrivilegeDrop(lines)) return false;
-  const callIndexes = lines.flatMap((line, index) =>
-    line === ROOT_STARTUP_CALL ? [index] : [],
-  );
-  if (callIndexes.length !== 1) return false;
-  const branchStart = callIndexes[0] + 2;
-  if (lines[branchStart] !== ROOT_STARTUP_BRANCH) return false;
-
-  let controlDepth = 1;
-  let foundPrivilegeDrop = false;
-  let heredocDelimiter: string | null = null;
-  for (let index = branchStart + 1; index < lines.length; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    if (heredocDelimiter !== null) {
-      if (trimmed === heredocDelimiter) heredocDelimiter = null;
-      continue;
-    }
-    const heredoc = trimmed.match(/<<-?\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?/u);
-    if (heredoc) {
-      heredocDelimiter = heredoc[1];
-      continue;
-    }
-    if (/^(?:fi|done|esac|\})$/u.test(trimmed)) {
-      controlDepth -= 1;
-      if (controlDepth === 0) return foundPrivilegeDrop;
-      continue;
-    }
-    if (
-      /^(?:if|for|while|until|select|case)\b/u.test(trimmed) ||
-      /(?:^|\s)\{\s*$/u.test(trimmed)
-    ) {
-      controlDepth += 1;
-      continue;
-    }
-    if (controlDepth !== 1 || trimmed.startsWith("#")) continue;
-    if (line === APPROVED_PRIVILEGE_DROP_COMMAND) {
-      if (lines[index + 1] !== APPROVED_PRIVILEGE_DROP_TARGET || foundPrivilegeDrop) return false;
-      foundPrivilegeDrop = true;
-      index += 1;
-      continue;
-    }
-    if (/^(?:exec|exit|false|return)\b/u.test(trimmed)) return false;
-  }
-  return false;
-}
-
 function verifyNetworkBoundary(policy: LooseRecord): string[] {
   const failures: string[] = [];
   const networkPolicies = asRecord(policy.network_policies);
@@ -595,21 +513,12 @@ function verifyExtensionBoundary(manifest: LooseRecord): string[] {
 }
 
 function verifyRuntimeHardeningBoundary(startScript: string): string[] {
-  const failures: string[] = [];
-  const lines = startScript.split("\n").map((line) => line.trimEnd());
-  for (const [directive, reason] of Object.entries(REQUIRED_START_DIRECTIVES)) {
-    if (!lines.includes(directive)) {
-      failures.push(
-        `${PI_START_SCRIPT_PATH}: the entrypoint must declare ${directive} so ${reason}`,
-      );
-    }
-  }
-  if (!hasApprovedRootStartupBranch(startScript)) {
-    failures.push(
-      `${PI_START_SCRIPT_PATH}: the active root startup branch must execute setpriv as the ${REQUIRED_SANDBOX_IDENTITY} user into /usr/local/bin/nemoclaw-start`,
-    );
-  }
-  return failures;
+  const digest = createHash("sha256").update(startScript).digest("hex");
+  return digest === APPROVED_START_SCRIPT_SHA256
+    ? []
+    : [
+        `${PI_START_SCRIPT_PATH}: entrypoint SHA-256 must stay ${APPROVED_START_SCRIPT_SHA256} so its complete startup-hardening contract cannot drift`,
+      ];
 }
 
 function verifyProjectTrustBoundary(manifest: LooseRecord): string[] {

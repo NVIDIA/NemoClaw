@@ -533,66 +533,29 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("rejects an entrypoint that stops keeping state owner-only (#7924)", () => {
-    const sources = withStartScript((startScript) =>
-      startScript.replace(/^umask 077$/mu, "umask 022"),
-    );
+  it.each([
+    ["owner-only state", /^umask 077$/mu, "umask 022"],
+    ["offline startup", /^export PI_OFFLINE=1$/mu, "export PI_OFFLINE=0"],
+    ["telemetry refusal", /^export PI_TELEMETRY=0$/mu, "export PI_TELEMETRY=1"],
+    [
+      "root privilege drop",
+      "  _NEMOCLAW_PI_DROP_PRIVILEGES=1",
+      "  _NEMOCLAW_PI_DROP_PRIVILEGES=0",
+    ],
+    [
+      "privilege-drop target",
+      '/usr/local/bin/nemoclaw-start "$@"',
+      '/usr/local/bin/nemoclaw-start-tampered "$@"',
+    ],
+    [
+      "any otherwise-harmless edit",
+      "# NemoClaw sandbox entrypoint for Pi.",
+      "# NemoClaw sandbox entrypoint for Pi.\n# unexpected drift",
+    ],
+  ])("rejects %s drift in the exact entrypoint contract (#7924)", (_name, match, replacement) => {
+    const sources = withStartScript((startScript) => startScript.replace(match, replacement));
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/start.sh: the entrypoint must declare umask 077 so Pi configuration and session files stay owner-only",
-    );
-  });
-
-  it("rejects an entrypoint that enables startup version and package update checks (#7924)", () => {
-    const sources = withStartScript((startScript) =>
-      startScript.replace(/^export PI_OFFLINE=1$/mu, "export PI_OFFLINE=0"),
-    );
-    expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/start.sh: the entrypoint must declare export PI_OFFLINE=1 so the runtime runs no startup version check or package update check",
-    );
-  });
-
-  it("rejects an entrypoint that re-enables install telemetry (#7924)", () => {
-    const sources = withStartScript((startScript) =>
-      startScript.replace(/^export PI_TELEMETRY=0$/mu, "export PI_TELEMETRY=1"),
-    );
-    expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/start.sh: the entrypoint must declare export PI_TELEMETRY=0 so the runtime sends no install telemetry",
-    );
-  });
-
-  it("rejects a disabled privilege drop when a comment retains the setpriv command (#7924)", () => {
-    const sources = withStartScript((startScript) =>
-      startScript.replace(
-        '  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \\\n    /usr/local/bin/nemoclaw-start "$@"',
-        '  # exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /usr/local/bin/nemoclaw-start\n  exec /usr/local/bin/nemoclaw-start "$@"',
-      ),
-    );
-    expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/start.sh: the active root startup branch must execute setpriv as the sandbox user into /usr/local/bin/nemoclaw-start",
-    );
-  });
-
-  it("rejects a setpriv command retained only in an unreachable branch (#7924)", () => {
-    const sources = withStartScript((startScript) =>
-      startScript.replace(
-        '  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \\\n    /usr/local/bin/nemoclaw-start "$@"',
-        '  if false; then\n    exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \\\n      /usr/local/bin/nemoclaw-start "$@"\n  fi\n  exec /usr/local/bin/nemoclaw-start "$@"',
-      ),
-    );
-    expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/start.sh: the active root startup branch must execute setpriv as the sandbox user into /usr/local/bin/nemoclaw-start",
-    );
-  });
-
-  it("rejects a setpriv branch that root startup cannot reach (#7924)", () => {
-    const sources = withStartScript((startScript) =>
-      startScript.replace(
-        "  _NEMOCLAW_PI_DROP_PRIVILEGES=1",
-        "  _NEMOCLAW_PI_DROP_PRIVILEGES=0",
-      ),
-    );
-    expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/start.sh: the active root startup branch must execute setpriv as the sandbox user into /usr/local/bin/nemoclaw-start",
+      "agents/pi/start.sh: entrypoint SHA-256 must stay 8d246d9988fd2fe4f61edce8498933cd6b37285c98746f3710058a2daae9dbb8 so its complete startup-hardening contract cannot drift",
     );
   });
 });
