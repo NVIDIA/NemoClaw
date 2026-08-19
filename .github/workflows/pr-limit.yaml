@@ -40,10 +40,10 @@ jobs:
 
           echo "Author $AUTHOR has $OPEN_COUNT open PR(s)"
 
-          if [ "$OPEN_COUNT" -gt 10 ]; then
+          if [ "$OPEN_COUNT" -gt 5 ]; then
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
-              "This repository limits contributors to 10 open pull requests. Please close or merge existing PRs before opening new ones."
+              "This repository limits contributors to 5 open pull requests. Please close or merge existing PRs before opening new ones."
             gh pr close "$PR_NUMBER" --repo "$REPO"
-            echo "::error::PR closed — author $AUTHOR exceeds the 10 open PR limit"
+            echo "::error::PR closed — author $AUTHOR exceeds the 5 open PR limit"
             exit 1
           fi
