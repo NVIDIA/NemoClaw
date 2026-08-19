@@ -5,34 +5,34 @@ apiVersion: nemoclaw.nvidia.com/managed-inference/v1
 kind: ServingRecipe
 
 metadata:
-  id: vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1
-  displayName: Muse Glimmer 30B NVFP4 W4A4 with vLLM
+  id: vllm.deepseek-r1-distill-llama-70b.linux-arm64-single.v1
+  displayName: DeepSeek-R1 Distill Llama 70B with vLLM on Linux arm64
 
 spec:
   backend: vllm
 
   model:
-    id: Inferact/Muse-Glimmer-30B-NVFP4-W4A4
-    revision: d35cb79050f419c457611b1cee5c5d15b176f285
-    environmentValue: muse-glimmer-30b
-    displayName: Muse Glimmer 30B NVFP4 W4A4 [Experimental]
-    menuOrder: 70
-    servedName: muse-glimmer
-    downloadSizeBytes: 25447097878
-    gated: false
-    installFastSafetensors: false
+    id: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+    revision: b1c0b44b4369b597ad119a196caf79a9c40e141e
+    environmentValue: deepseek-r1-distill-70b
+    displayName: DeepSeek-R1 Distill Llama 70B
+    menuOrder: 20
+    servedName: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+    downloadSizeBytes: 141000000000
+    gated: true
+    installFastSafetensors: true
     preparation:
       ref: none/v1
 
   runtime:
-    image: vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204
-    imageDownloadSizeBytes: 9699710136
-    minimumComputeCapability: 121
-    pullTimeoutSeconds: 3600
+    image: nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4
+    imageDownloadSizeBytes: 9278081698
+    minimumComputeCapability: 0
+    pullTimeoutSeconds: 43200
     architecture: arm64
     networkMode: bridge
     ipcMode: host
-    sharedMemoryBytes: 34359738368
+    sharedMemoryBytes: 68719476736
     gpuRequest: all
     devices: []
     ulimits:
@@ -51,27 +51,24 @@ spec:
   serve:
     authentication: bearer
     directInstall:
-      authentication: bearer
-      fixedArguments: true
-      catalogReceipt: true
+      authentication: none
+      fixedArguments: false
+      catalogReceipt: false
     executable: /usr/local/bin/vllm
     arguments:
       - name: --max-model-len
         value: 32768
       - name: --gpu-memory-utilization
-        value: 0.75
+        value: 0.7
       - name: --max-num-seqs
-        value: 1
-      - name: --max-num-batched-tokens
-        value: 4096
+        value: 4
+      - name: --reasoning-parser
+        value: deepseek_r1
       - name: --enable-auto-tool-choice
       - name: --tool-call-parser
-        value: muse_glimmer
-      - name: --reasoning-parser
-        value: muse_glimmer
-      - name: --generation-config
-        value: auto
+        value: hermes
+      - name: --trust-remote-code
 
   readiness:
     timeoutSeconds: 1800
-    expectedModel: muse-glimmer
+    expectedModel: deepseek-ai/DeepSeek-R1-Distill-Llama-70B

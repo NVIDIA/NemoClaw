@@ -93,4 +93,6 @@ spec:
 
   plan:
     backend: vllm
+    platform: linux
+    interactive: false
     recipeRef: vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1

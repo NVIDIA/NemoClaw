@@ -57,6 +57,20 @@
               "type": "string",
               "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$"
             },
+            "environmentValue": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "menuOrder": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
             "servedName": {
               "$ref": "#/$defs/stableId"
             },
@@ -128,6 +142,11 @@
             },
             "imageDownloadSizeBytes": {
               "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "minimumComputeCapability": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 999
             },
             "pullTimeoutSeconds": {
               "type": "integer",
@@ -391,6 +410,29 @@
             "authentication": {
               "$ref": "#/$defs/token"
             },
+            "directInstall": {
+              "type": "object",
+              "required": [
+                "authentication",
+                "fixedArguments",
+                "catalogReceipt"
+              ],
+              "properties": {
+                "authentication": {
+                  "enum": [
+                    "none",
+                    "bearer"
+                  ]
+                },
+                "fixedArguments": {
+                  "type": "boolean"
+                },
+                "catalogReceipt": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
             "executable": {
               "$ref": "#/$defs/absolutePath"
             },
@@ -405,7 +447,7 @@
                 "properties": {
                   "name": {
                     "type": "string",
-                    "pattern": "^--[a-z0-9][a-z0-9-]*$",
+                    "pattern": "^--[a-z0-9][a-z0-9._-]*$",
                     "maxLength": 128
                   },
                   "value": {

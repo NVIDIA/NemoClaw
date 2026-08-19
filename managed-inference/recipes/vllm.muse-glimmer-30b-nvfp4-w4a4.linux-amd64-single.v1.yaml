@@ -14,6 +14,9 @@ spec:
   model:
     id: Inferact/Muse-Glimmer-30B-NVFP4-W4A4
     revision: d35cb79050f419c457611b1cee5c5d15b176f285
+    environmentValue: muse-glimmer-30b
+    displayName: Muse Glimmer 30B NVFP4 W4A4 [Experimental]
+    menuOrder: 70
     servedName: muse-glimmer
     downloadSizeBytes: 25447097878
     gated: false
@@ -24,6 +27,7 @@ spec:
   runtime:
     image: vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f
     imageDownloadSizeBytes: 8632473449
+    minimumComputeCapability: 120
     pullTimeoutSeconds: 3600
     architecture: amd64
     networkMode: bridge
@@ -46,6 +50,10 @@ spec:
 
   serve:
     authentication: bearer
+    directInstall:
+      authentication: bearer
+      fixedArguments: true
+      catalogReceipt: true
     executable: /usr/local/bin/vllm
     arguments:
       - name: --tokenizer

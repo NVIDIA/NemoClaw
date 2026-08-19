@@ -5,13 +5,13 @@ apiVersion: nemoclaw.nvidia.com/managed-inference/v1
 kind: ServingPreset
 
 metadata:
-  id: vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4
-  displayName: Muse Glimmer 30B NVFP4 W4A4 on one DGX Spark
-  supportState: experimental
+  id: vllm.dgx-spark-gb10.single.deepseek-r1-distill-llama-70b
+  displayName: DeepSeek-R1 Distill Llama 70B on one DGX Spark
+  supportState: supported
 
 spec:
   selection: explicit-only
-  priority: 460
+  priority: 500
 
   requirements:
     all:
@@ -105,4 +105,4 @@ spec:
     backend: vllm
     platform: spark
     interactive: true
-    recipeRef: vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1
+    recipeRef: vllm.deepseek-r1-distill-llama-70b.optimized-arm64-single.v1

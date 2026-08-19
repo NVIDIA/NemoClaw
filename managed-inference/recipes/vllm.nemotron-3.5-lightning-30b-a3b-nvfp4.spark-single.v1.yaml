@@ -14,6 +14,9 @@ spec:
   model:
     id: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
     revision: 0dcd680e5585c791728c83342b311d0a0026dbeb
+    environmentValue: nemotron-3.5-lightning-30b
+    displayName: NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 [Experimental]
+    menuOrder: 80
     servedName: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
     downloadSizeBytes: 21561882284
     gated: false
@@ -24,6 +27,7 @@ spec:
   runtime:
     image: vllm/vllm-openai@sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78
     imageDownloadSizeBytes: 12691539532
+    minimumComputeCapability: 121
     pullTimeoutSeconds: 3600
     architecture: arm64
     networkMode: bridge
@@ -49,6 +53,10 @@ spec:
 
   serve:
     authentication: bearer
+    directInstall:
+      authentication: bearer
+      fixedArguments: true
+      catalogReceipt: true
     executable: /usr/local/bin/vllm
     arguments:
       - name: --max-model-len

@@ -93,4 +93,6 @@ spec:
 
   plan:
     backend: vllm
+    platform: linux
+    interactive: false
     recipeRef: vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1

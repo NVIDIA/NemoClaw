@@ -88,6 +88,17 @@
             "recipeRef": {
               "$ref": "#/$defs/stableId"
             },
+            "platform": {
+              "enum": [
+                "spark",
+                "station",
+                "n1x",
+                "linux"
+              ]
+            },
+            "interactive": {
+              "type": "boolean"
+            },
             "bindings": {
               "type": "object",
               "minProperties": 1,

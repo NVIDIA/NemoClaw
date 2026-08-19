@@ -5,21 +5,21 @@ apiVersion: nemoclaw.nvidia.com/managed-inference/v1
 kind: ServingRecipe
 
 metadata:
-  id: vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1
-  displayName: Qwen3.6 35B A3B NVFP4 with vLLM
+  id: vllm.deepseek-r1-distill-llama-70b.optimized-arm64-single.v1
+  displayName: DeepSeek-R1 Distill Llama 70B with vLLM on optimized arm64 hardware
 
 spec:
   backend: vllm
 
   model:
-    id: nvidia/Qwen3.6-35B-A3B-NVFP4
-    revision: 491c2f1ea524c639598bf8fa787a93fed5a6fbce
-    environmentValue: qwen3.6-35b-a3b-nvfp4
-    displayName: Qwen3.6 35B-A3B NVFP4
-    menuOrder: 60
-    servedName: nvidia/Qwen3.6-35B-A3B-NVFP4
-    downloadSizeBytes: 23500000000
-    gated: false
+    id: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+    revision: b1c0b44b4369b597ad119a196caf79a9c40e141e
+    environmentValue: deepseek-r1-distill-70b
+    displayName: DeepSeek-R1 Distill Llama 70B
+    menuOrder: 20
+    servedName: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+    downloadSizeBytes: 141000000000
+    gated: true
     installFastSafetensors: true
     preparation:
       ref: none/v1
@@ -27,7 +27,7 @@ spec:
   runtime:
     image: nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2
     imageDownloadSizeBytes: 9603085145
-    minimumComputeCapability: 121
+    minimumComputeCapability: 0
     pullTimeoutSeconds: 43200
     architecture: arm64
     networkMode: bridge
@@ -57,35 +57,18 @@ spec:
     executable: /usr/local/bin/vllm
     arguments:
       - name: --max-model-len
-        value: 262144
+        value: 32768
       - name: --gpu-memory-utilization
-        value: 0.4
-      - name: --dtype
-        value: auto
-      - name: --quantization
-        value: modelopt
-      - name: --kv-cache-dtype
-        value: fp8
-      - name: --attention-backend
-        value: flashinfer
-      - name: --moe-backend
-        value: marlin
+        value: 0.7
       - name: --max-num-seqs
         value: 4
-      - name: --max-num-batched-tokens
-        value: 8192
-      - name: --enable-chunked-prefill
-      - name: --async-scheduling
-      - name: --enable-prefix-caching
+      - name: --reasoning-parser
+        value: deepseek_r1
       - name: --enable-auto-tool-choice
       - name: --tool-call-parser
-        value: qwen3_coder
-      - name: --reasoning-parser
-        value: qwen3
-      - name: --load-format
-        value: fastsafetensors
+        value: hermes
       - name: --trust-remote-code
 
   readiness:
     timeoutSeconds: 1800
-    expectedModel: nvidia/Qwen3.6-35B-A3B-NVFP4
+    expectedModel: deepseek-ai/DeepSeek-R1-Distill-Llama-70B

@@ -11,6 +11,7 @@ import { compileLlamaCppGgufCachePlan } from "../llama-cpp/gguf-cache-plan";
 import type {
   CompiledServingCatalog,
   CompiledServingCatalogPayload,
+  HostLocalInferenceServingRecipe,
   LlamaCppServingRecipe,
   ServingCatalogRegistries,
   ServingCatalogSchemas,
@@ -28,7 +29,7 @@ import type {
 
 const API_VERSION = "nemoclaw.nvidia.com/managed-inference/v1" as const;
 const CATALOG_SCHEMA_VERSION = "1.0.0" as const;
-const COMPILER_VERSION = "1.2.0" as const;
+const COMPILER_VERSION = "1.3.0" as const;
 const READINESS_SCHEMA_REF =
   "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json" as const;
 const RECIPE_SCHEMA_ID =
@@ -148,6 +149,16 @@ function definitionIdentity(
 
 function isLlamaCppServingRecipe(recipe: ServingRecipe): recipe is LlamaCppServingRecipe {
   return recipe.spec.providerId === "llama-cpp-local";
+}
+
+function isHostLocalVllmRecipe(
+  recipe: ServingRecipe,
+): recipe is HostLocalInferenceServingRecipe {
+  return (
+    recipe.spec.backend === "vllm" &&
+    recipe.spec.execution.materializerRef === "vllm.host-local/v1" &&
+    recipe.spec.execution.lifecycleRef === "vllm.host-local.lifecycle/v1"
+  );
 }
 
 function isReadinessRegistryEntry(
@@ -523,6 +534,20 @@ function validateCatalogSemantics(
       }
       validateLlamaCppPreset(recipe, preset, registries);
     }
+    if (isHostLocalVllmRecipe(recipe)) {
+      const platform = preset.spec.plan.platform;
+      if (!platform) {
+        throw new ServingCatalogValidationError(
+          `Preset ${preset.metadata.id} must declare its vLLM platform.`,
+        );
+      }
+      const architecture = recipe.spec.runtime?.architecture;
+      if (platform !== "linux" && architecture !== "arm64") {
+        throw new ServingCatalogValidationError(
+          `Preset ${preset.metadata.id} requires an arm64 recipe for ${platform}.`,
+        );
+      }
+    }
     validateBindings(preset, recipe, registries);
     const nodeCount = (preset.spec.requirements?.all ?? []).find(
       (requirement) =>
@@ -556,6 +581,30 @@ function validateCatalogSemantics(
       );
     }
     automaticSelectors.set(key, preset.metadata.id);
+  }
+
+  const modelVariants = new Map<string, string>();
+  for (const preset of presets) {
+    if (preset.spec.selection === "disabled" || preset.spec.plan.backend !== "vllm") continue;
+    const recipe = recipesById.get(preset.spec.plan.recipeRef);
+    if (!recipe || !isHostLocalVllmRecipe(recipe)) continue;
+    const environmentValue = recipe.spec.model.environmentValue;
+    const platform = preset.spec.plan.platform;
+    const architecture = recipe.spec.runtime?.architecture;
+    if (!environmentValue || !platform || !architecture) continue;
+    const key = canonicalServingCatalogJson({
+      environmentValue,
+      platform,
+      architecture,
+      priority: preset.spec.priority,
+    });
+    const previous = modelVariants.get(key);
+    if (previous) {
+      throw new ServingCatalogValidationError(
+        `vLLM presets ${previous} and ${preset.metadata.id} define the same model and hardware priority.`,
+      );
+    }
+    modelVariants.set(key, preset.metadata.id);
   }
 }
 

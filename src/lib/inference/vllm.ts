@@ -57,13 +57,17 @@ import {
 import {
   assertGatedModelAccess,
   buildVllmServeCommand,
+  defaultVllmModelForPlatform,
   NEMOTRON_ULTRA_DUAL_STATION_IMAGE,
   NEMOTRON_ULTRA_STATION_IMAGE,
   parseVllmExtraServeArgs,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
+  vllmPlatformSpecificity,
   type VllmModelDef,
   type VllmPlatform,
+  type VllmRuntimeOverride,
+  type VllmRuntimeVariant,
 } from "./vllm-models";
 import {
   type DualStationVllmPlan,
@@ -188,24 +192,6 @@ export const VLLM_IMAGES = {
   },
 } as const;
 
-function nemotronNanoModel(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
-  if (!match) throw new Error("vllm-models registry is missing the nemotron-3-nano-4b entry");
-  return match;
-}
-
-function deepseekV4FlashModel(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
-  if (!match) throw new Error("vllm-models registry is missing the deepseek-v4-flash entry");
-  return match;
-}
-
-function qwen35bNvfp4Model(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
-  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-35b-a3b-nvfp4 entry");
-  return match;
-}
-
 const HF_TOKEN_SETTINGS_URL = "https://huggingface.co/settings/tokens";
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
 const VLLM_MAX_STARTUP_RESTARTS = 3;
@@ -308,7 +294,7 @@ const SPARK_PROFILE: VllmProfile = {
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
   imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
-  defaultModel: qwen35bNvfp4Model(),
+  defaultModel: defaultVllmModelForPlatform("spark", "arm64"),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: vllmDockerRunFlags(),
   pullTimeoutSec: 12 * 60 * 60,
@@ -322,7 +308,7 @@ const N1X_PROFILE: VllmProfile = {
   image: SPARK_PROFILE.image,
   imageDownloadSizeBytes: SPARK_PROFILE.imageDownloadSizeBytes,
   imageUnpackedSizeBytes: SPARK_PROFILE.imageUnpackedSizeBytes,
-  defaultModel: qwen35bNvfp4Model(),
+  defaultModel: defaultVllmModelForPlatform("n1x", "arm64"),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
@@ -337,7 +323,7 @@ const STATION_PROFILE: VllmProfile = {
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
   imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
-  defaultModel: deepseekV4FlashModel(),
+  defaultModel: defaultVllmModelForPlatform("station", "arm64"),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
@@ -373,7 +359,7 @@ const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxImage
       image: genericLinuxImage.ref,
       imageDownloadSizeBytes: genericLinuxImage.downloadSizeBytes,
       imageUnpackedSizeBytes: genericLinuxImage.unpackedSizeBytes,
-      defaultModel: nemotronNanoModel(),
+      defaultModel: defaultVllmModelForPlatform("linux", process.arch),
       containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
       dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
       pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
@@ -598,30 +584,76 @@ export function buildVllmRunArgs(
   ];
 }
 
-export function resolveVllmRuntimeProfile(
+function selectedVllmRuntime(
   profile: VllmProfile,
   model: VllmModelDef,
   architecture: NodeJS.Architecture = profile.architecture ?? process.arch,
-): VllmProfile {
-  const matchingVariants = (model.runtimeVariants ?? []).filter(
-    (candidate) =>
-      (!candidate.platforms || candidate.platforms.includes(profile.platform)) &&
-      (!candidate.architectures || candidate.architectures.includes(architecture)),
-  );
+): VllmRuntimeOverride | VllmRuntimeVariant | undefined {
+  const matchingVariants = (model.runtimeVariants ?? [])
+    .filter(
+      (candidate) =>
+        vllmPlatformSpecificity(candidate.platforms, profile.platform) >= 0 &&
+        (!candidate.architectures || candidate.architectures.includes(architecture)),
+    )
+    .sort(
+      (left, right) =>
+        vllmPlatformSpecificity(left.platforms, profile.platform) -
+          vllmPlatformSpecificity(right.platforms, profile.platform) ||
+        left.priority - right.priority ||
+        (left.catalogPresetId ?? "").localeCompare(right.catalogPresetId ?? ""),
+    );
   const runtime = matchingVariants.at(-1) ?? model.runtime;
   if (model.requireRuntimeVariant && !runtime) {
     throw new Error(
       `${model.label} has no managed vLLM runtime for ${profile.name} on ${architecture}.`,
     );
   }
+  return runtime;
+}
+
+function replaceCatalogGpuRequest(
+  profile: VllmProfile,
+  runtime: VllmRuntimeOverride,
+  extraRunArgs: string[],
+): string[] {
+  if (runtime.dockerRunArgsMode !== "replace" || !profile.buildDockerRunFlags) {
+    return extraRunArgs;
+  }
+  if (profile.platform !== "station" || !runtime.catalogPresetId) return extraRunArgs;
+  const platformFlags = profile.buildDockerRunFlags();
+  const platformGpuIndex = platformFlags.indexOf("--gpus");
+  const recipeGpuIndex = extraRunArgs.indexOf("--gpus");
+  if (
+    platformGpuIndex < 0 ||
+    platformGpuIndex === platformFlags.length - 1 ||
+    recipeGpuIndex < 0 ||
+    recipeGpuIndex === extraRunArgs.length - 1
+  ) {
+    throw new Error(`${profile.name} did not produce one declarative GPU request.`);
+  }
+  const replaced = [...extraRunArgs];
+  replaced[recipeGpuIndex + 1] = platformFlags[platformGpuIndex + 1]!;
+  return replaced;
+}
+
+function applyVllmRuntimeProfile(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  runtime: VllmRuntimeOverride | VllmRuntimeVariant | undefined,
+): VllmProfile {
   let resolved = profile;
   if (runtime) {
-    const extraRunArgs = [...(runtime.dockerRunArgs ?? [])];
+    const extraRunArgs = replaceCatalogGpuRequest(
+      profile,
+      runtime,
+      [...(runtime.dockerRunArgs ?? [])],
+    );
     resolved = {
       ...profile,
       image: runtime.image,
       imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
-      imageUnpackedSizeBytes: undefined,
+      imageUnpackedSizeBytes:
+        runtime.image === profile.image ? profile.imageUnpackedSizeBytes : undefined,
       modelDownloadSizeBytes: runtime.modelDownloadSizeBytes ?? profile.modelDownloadSizeBytes,
       loadTimeoutSec: runtime.loadTimeoutSec ?? profile.loadTimeoutSec,
       dockerRunFlags:
@@ -636,10 +668,45 @@ export function resolveVllmRuntimeProfile(
             : undefined,
       pullTimeoutSec: runtime.pullTimeoutSec ?? profile.pullTimeoutSec,
       minComputeCapability: runtime.minComputeCapability ?? model.minComputeCapability,
+      servingCatalog: runtime.servingCatalog ?? profile.servingCatalog,
     };
   }
   assertVllmRegistryDigestRef(resolved.image);
   return resolved;
+}
+
+export function resolveVllmRuntimeProfile(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  architecture: NodeJS.Architecture = profile.architecture ?? process.arch,
+): VllmProfile {
+  return applyVllmRuntimeProfile(profile, model, selectedVllmRuntime(profile, model, architecture));
+}
+
+export function resolveVllmModelRuntime(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  architecture: NodeJS.Architecture = profile.architecture ?? process.arch,
+): { profile: VllmProfile; model: VllmModelDef } {
+  const runtime = selectedVllmRuntime(profile, model, architecture);
+  const resolvedProfile = applyVllmRuntimeProfile(profile, model, runtime);
+  if (!runtime || !("modelArgs" in runtime)) return { profile: resolvedProfile, model };
+  return {
+    profile: resolvedProfile,
+    model: {
+      ...model,
+      maxModelLen: runtime.maxModelLen,
+      revision: runtime.revision,
+      servedModelId: runtime.servedModelId,
+      modelArgs: runtime.modelArgs,
+      serveEnv: runtime.serveEnv,
+      installFastSafetensors: runtime.installFastSafetensors,
+      fixedServeCommand: runtime.fixedServeCommand,
+      managedBearerAuth: runtime.managedBearerAuth,
+      trustRemoteCode: runtime.trustRemoteCode,
+      runtime,
+    },
+  };
 }
 
 const SHA256_IMAGE_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
@@ -1571,12 +1638,6 @@ async function runVllmInstall(
   hostLocalSelection?: MaterializedHostLocalVllmSelection,
 ): Promise<{ ok: boolean }> {
   if (profile.defaultModel.fixedServeCommand) {
-    if (String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim()) {
-      console.error(
-        "  vLLM install failed: this local model profile does not accept NEMOCLAW_VLLM_MODEL.",
-      );
-      return { ok: false };
-    }
     if (String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
       console.error(
         `  vLLM install failed: this local model profile does not accept ${VLLM_EXTRA_ARGS_ENV}.`,
@@ -1682,28 +1743,52 @@ async function runVllmInstall(
     });
   }
   if (!resolved) return { ok: false };
-  const { model, source: modelSource } = resolved;
+  let { model } = resolved;
+  const { source: modelSource } = resolved;
   // Platform-restricted models are filtered out of the interactive picker,
   // but a direct NEMOCLAW_VLLM_MODEL override bypasses that filter, so this
   // gate is the only platform enforcement on the env-override path. It must
   // reject every wrong-platform model, not just runtime-carrying ones — an
   // NVFP4 Spark checkpoint or a 352 GB Station recipe cannot serve here and
   // must fail before the image pull and download (#7358).
-  if (!model.platforms.includes(profile.platform)) {
+  const architecture = profile.architecture ?? process.arch;
+  const hasCompatibleRuntime = (model.runtimeVariants ?? []).some(
+    (variant) =>
+      vllmPlatformSpecificity(variant.platforms, profile.platform) >= 0 &&
+      (!variant.architectures || variant.architectures.includes(architecture)),
+  );
+  if (
+    (model.runtimeVariants?.length && !hasCompatibleRuntime) ||
+    (!model.runtimeVariants?.length && !model.platforms.includes(profile.platform))
+  ) {
     console.error(`  vLLM install failed: ${model.label} is not supported on ${profile.name}`);
     return { ok: false };
   }
   let runtimeProfile: VllmProfile;
-  try {
-    runtimeProfile = resolveVllmRuntimeProfile(profile, model);
-  } catch (err) {
-    console.error(`  vLLM install failed: ${(err as Error).message}`);
-    return { ok: false };
+  if (
+    hostLocalSelection ||
+    (profile.platform === "station" &&
+      configuredPeer.length > 0 &&
+      model.envValue === "nemotron-3-ultra-550b-a55b")
+  ) {
+    runtimeProfile = profile;
+  } else {
+    try {
+      const runtime = resolveVllmModelRuntime(profile, model);
+      runtimeProfile = runtime.profile;
+      model = runtime.model;
+    } catch (err) {
+      console.error(`  vLLM install failed: ${(err as Error).message}`);
+      return { ok: false };
+    }
   }
 
   let extraServeArgs: string[];
   let servedModelId: string;
   try {
+    if (model.fixedServeCommand && String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
+      throw new Error(`this managed vLLM recipe does not accept ${VLLM_EXTRA_ARGS_ENV}`);
+    }
     extraServeArgs = parseVllmExtraServeArgs();
     servedModelId = resolveVllmServedModelId(model.servedModelId ?? model.id, extraServeArgs);
   } catch (err) {

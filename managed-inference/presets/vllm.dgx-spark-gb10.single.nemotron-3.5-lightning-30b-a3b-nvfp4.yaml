@@ -103,4 +103,6 @@ spec:
 
   plan:
     backend: vllm
+    platform: spark
+    interactive: false
     recipeRef: vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1

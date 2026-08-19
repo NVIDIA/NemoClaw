@@ -80,6 +80,15 @@ export interface ServingTemporaryFilesystem {
   readonly options: readonly string[];
 }
 
+export interface VllmDirectInstallPolicy {
+  /** Authentication used by the legacy NEMOCLAW_VLLM_MODEL install surface. */
+  readonly authentication: "none" | "bearer";
+  /** Whether VLLM_EXTRA_ARGS is rejected for the direct install surface. */
+  readonly fixedArguments: boolean;
+  /** Whether the direct install surface owns a catalog lifecycle receipt. */
+  readonly catalogReceipt: boolean;
+}
+
 export interface ManagedInferenceServingRecipe {
   readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
   readonly kind: "ServingRecipe";
@@ -90,6 +99,9 @@ export interface ManagedInferenceServingRecipe {
     readonly model: {
       readonly id: string;
       readonly revision: string;
+      readonly environmentValue: string;
+      readonly displayName: string;
+      readonly menuOrder: number;
       readonly servedName: string;
       readonly files?: readonly { readonly path: string; readonly digest: string }[];
       readonly downloadSizeBytes: number;
@@ -100,6 +112,7 @@ export interface ManagedInferenceServingRecipe {
     readonly runtime: {
       readonly image: string;
       readonly imageDownloadSizeBytes: number;
+      readonly minimumComputeCapability: number;
       readonly pullTimeoutSeconds: number;
       readonly architecture: string;
       readonly networkMode: string;
@@ -133,6 +146,7 @@ export interface ManagedInferenceServingRecipe {
       readonly authentication: string;
       readonly executable: string;
       readonly arguments: readonly ServingArgument[];
+      readonly directInstall?: VllmDirectInstallPolicy;
     };
     readonly readiness: {
       readonly timeoutSeconds: number;
@@ -183,6 +197,9 @@ interface GenericServingRecipe extends ServingRecipeEnvelope {
     readonly model: {
       readonly id: string;
       readonly revision: string;
+      readonly environmentValue?: string;
+      readonly displayName?: string;
+      readonly menuOrder?: number;
       readonly servedName?: string;
       readonly files?: readonly { readonly path: string; readonly digest: string }[];
       readonly downloadSizeBytes?: number;
@@ -192,6 +209,7 @@ interface GenericServingRecipe extends ServingRecipeEnvelope {
     };
     readonly runtime?: Partial<ManagedInferenceServingRecipe["spec"]["runtime"]> & {
       readonly components?: Readonly<Record<string, string>>;
+      readonly minimumComputeCapability?: number;
     };
     readonly execution: {
       readonly receiptRef?: string;
@@ -208,6 +226,7 @@ interface GenericServingRecipe extends ServingRecipeEnvelope {
       readonly authentication?: string;
       readonly executable?: string;
       readonly arguments?: readonly ServingArgument[];
+      readonly directInstall?: Partial<VllmDirectInstallPolicy>;
     };
     readonly readiness?: {
       readonly contractRef?: string;
@@ -436,6 +455,8 @@ export interface ManagedInferenceServingPreset {
     readonly plan: {
       readonly backend: string;
       readonly recipeRef: string;
+      readonly platform?: "spark" | "station" | "n1x" | "linux";
+      readonly interactive?: boolean;
       readonly bindings?: Readonly<Record<string, ServingPresetTopologyBinding>>;
     };
   };
@@ -453,6 +474,8 @@ export interface ServingPreset {
     readonly plan: {
       readonly backend: string;
       readonly recipeRef: string;
+      readonly platform?: "spark" | "station" | "n1x" | "linux";
+      readonly interactive?: boolean;
       readonly bindings?: Readonly<Record<string, ServingPresetTopologyBinding>>;
     };
   };
@@ -467,7 +490,7 @@ export interface ServingCatalogSourceProvenance {
 
 export interface CompiledServingCatalogPayload {
   readonly schemaVersion: "1.0.0";
-  readonly compilerVersion: "1.2.0";
+  readonly compilerVersion: "1.3.0";
   readonly sourceRevision: string;
   readonly readinessSchemaRef: "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json";
   readonly recipes: readonly ServingRecipe[];

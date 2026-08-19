@@ -326,7 +326,7 @@ describe("managed inference serving catalog compiler", () => {
     expect(first.readinessSchemaRef).toBe(
       "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
     );
-    expect(first.compilerVersion).toBe("1.2.0");
+    expect(first.compilerVersion).toBe("1.3.0");
     expect(first.recipes.map((definition) => definition.metadata.id)).toEqual(["test.recipe.v1"]);
     expect(first.presets.map((definition) => definition.metadata.id)).toEqual(["test.preset.auto"]);
     expect(first.sources.map((source) => source.path)).toEqual([

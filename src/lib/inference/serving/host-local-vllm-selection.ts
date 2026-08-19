@@ -106,9 +106,6 @@ export function materializeHostLocalVllmSelection(
   ) {
     throw new Error("selected serving preset is not a host-local vLLM recipe");
   }
-  if (baseProfile.platform !== "spark" && baseProfile.platform !== "linux") {
-    throw new Error("host-local vLLM serving presets require DGX Spark or Linux + NVIDIA GPU");
-  }
   const runtime = recipe.spec.runtime;
   const hostArchitecture = baseProfile.architecture ?? process.arch;
   const expectedRuntimeArchitecture =
@@ -139,8 +136,8 @@ export function materializeHostLocalVllmSelection(
   };
   const model: VllmModelDef = {
     id: recipe.spec.model.id,
-    label: recipe.metadata.displayName ?? recipe.metadata.id,
-    envValue: preset.metadata.id,
+    label: recipe.spec.model.displayName,
+    envValue: recipe.spec.model.environmentValue,
     downloadSizeBytes: recipe.spec.model.downloadSizeBytes,
     maxModelLen: positiveIntegerArgument(selection, "--max-model-len"),
     revision: recipe.spec.model.revision,
@@ -148,6 +145,7 @@ export function materializeHostLocalVllmSelection(
     modelArgs: modelArguments(selection),
     gated: recipe.spec.model.gated,
     platforms: [baseProfile.platform],
+    minComputeCapability: runtime.minimumComputeCapability,
     ...(Object.keys(serveEnvironment).length > 0 ? { serveEnv: serveEnvironment } : {}),
     runtime: {
       image: runtime.image,
@@ -155,6 +153,7 @@ export function materializeHostLocalVllmSelection(
       modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
       loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
       pullTimeoutSec: runtime.pullTimeoutSeconds,
+      minComputeCapability: runtime.minimumComputeCapability,
       dockerRunArgs: dockerRunArguments(recipe),
       dockerRunArgsMode: "replace",
     },

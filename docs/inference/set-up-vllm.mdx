@@ -28,7 +28,7 @@ Do not expose the port to your LAN or the internet.
 An authenticated fixed profile publishes container port `8000` through the configured host port on exactly two host addresses: `127.0.0.1` and the exact private IPv4 gateway of the `openshell-docker` bridge.
 It never publishes that host port on `0.0.0.0` or `::`.
 The provider route remains `https://inference.local` inside the sandbox, and OpenShell reaches the server through the private bridge binding.
-The managed Muse Glimmer profile uses the same bearer-protected listener and two-address publication boundary.
+The managed Muse Glimmer and Nemotron 3.5 Lightning profiles use the same bearer-protected listener and two-address publication boundary.
 
 The qualified two-DGX Spark and two-DGX Station paths use bearer-protected `/v1` routes and Docker host networking on both runtime containers; network isolation remains required for other endpoints and distributed traffic.
 Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for their isolation requirements.
@@ -109,6 +109,15 @@ $$nemoclaw profiles list
 The command evaluates the catalog against the current host without downloading a model or changing host, gateway, inference, or sandbox resources.
 Each entry includes a stable ID, display name, backend, model, topology, selection mode, support state, estimated downloads, and an incompatibility reason when applicable.
 Add `--json` when a script needs the same fields as structured output.
+
+The managed inference catalog is also the source for `NEMOCLAW_VLLM_MODEL` slugs, model labels, immutable revisions, images, serve arguments, and platform defaults.
+A host-local model that uses a registered vLLM execution contract requires recipe and preset YAML, not a model-specific CLI code path.
+The catalog compiler rejects missing runtime fields, duplicate variants, and ambiguous automatic defaults.
+
+NemoClaw evaluates matching runtime variants from general to specific.
+A generic Linux recipe is the baseline for a compatible Linux appliance when no exact device recipe exists.
+An exact DGX Spark, DGX Station, or N1x recipe replaces that baseline.
+Architecture, GPU compute capability, readiness, and support-state checks still reject incompatible combinations.
 
 ### Select a Serving Profile
 
@@ -529,7 +538,7 @@ NemoClaw applies the registered `vllm serve` arguments, including the reasoning 
 | `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Supported override. |
 | `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark, N1x | `12.1` | DGX Spark and N1x default. |
 | `muse-glimmer-30b` | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | DGX Spark, compatible Linux `amd64` NVIDIA GPU | `12.0` on Linux, `12.1` on DGX Spark | Experimental explicit-only choice for text, reasoning, and structured tool calls. NemoClaw does not enable or support DFlash for this profile. |
-| `nemotron-3.5-lightning-30b` | `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` | Compatible Linux `amd64` NVIDIA GPU | `8.0` | Experimental explicit-only Linux baseline. Use the stable catalog profile ID on DGX Spark. |
+| `nemotron-3.5-lightning-30b` | `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` | DGX Spark, compatible Linux `amd64` NVIDIA GPU | `8.0` on Linux, `12.1` on DGX Spark | Experimental explicit-only choice with architecture-specific recipes. |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Generic Linux NVIDIA GPU default. |
 | `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | `10.0` | DGX Station profile default outside express install. |
 | `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | `10.0` | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |

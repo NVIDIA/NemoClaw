@@ -98,4 +98,6 @@ spec:
 
   plan:
     backend: vllm
+    platform: spark
+    interactive: false
     recipeRef: vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1

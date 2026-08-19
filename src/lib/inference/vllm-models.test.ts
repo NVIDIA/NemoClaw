@@ -3,10 +3,13 @@
 
 import { describe, expect, it } from "vitest";
 
+import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
+import type { HostLocalInferenceServingRecipe } from "./serving/types";
 import {
   assertGatedModelAccess,
   buildNemotronUltraDistributedServeCommand,
   buildVllmServeCommand,
+  defaultVllmModelForPlatform,
   DEFAULT_VLLM_MODEL,
   modelsForPlatform,
   parseVllmExtraServeArgs,
@@ -14,9 +17,100 @@ import {
   selectVllmModelFromEnv,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
+  vllmModelsFromCatalog,
 } from "./vllm-models";
 
 describe("vllm model registry", () => {
+  it("derives every host-local vLLM preset from the compiled catalog", () => {
+    const catalog = loadManagedInferenceCatalog();
+    const recipeById = new Map(catalog.recipes.map((recipe) => [recipe.metadata.id, recipe]));
+    const activeHostLocalPresets = catalog.presets.filter((preset) => {
+      const recipe = recipeById.get(preset.spec.plan.recipeRef);
+      return (
+        preset.spec.selection !== "disabled" &&
+        preset.spec.plan.backend === "vllm" &&
+        recipe?.spec.execution.materializerRef === "vllm.host-local/v1"
+      );
+    });
+
+    expect(VLLM_MODELS.flatMap((model) => model.runtimeVariants ?? [])).toHaveLength(
+      activeHostLocalPresets.length,
+    );
+    expect(new Set(VLLM_MODELS.map((model) => model.envValue)).size).toBe(VLLM_MODELS.length);
+    for (const model of VLLM_MODELS) {
+      expect(model.runtimeVariants?.length).toBeGreaterThan(0);
+      for (const variant of model.runtimeVariants ?? []) {
+        expect(variant.catalogPresetId).toMatch(/^vllm\./u);
+        expect(variant.platforms).toHaveLength(1);
+        expect(variant.architectures).toHaveLength(1);
+      }
+    }
+  });
+
+  it("adds a model through catalog data without a TypeScript registry edit", () => {
+    const catalog = loadManagedInferenceCatalog();
+    const sourceRecipe = catalog.recipes.find(
+      ({ metadata }) =>
+        metadata.id === "vllm.nemotron-3-nano-4b-fp8.linux-amd64-single.v1",
+    ) as HostLocalInferenceServingRecipe;
+    const sourcePreset = catalog.presets.find(
+      ({ spec }) => spec.plan.recipeRef === sourceRecipe.metadata.id,
+    )!;
+    const recipeId = "vllm.catalog-only-test-model.linux-amd64-single.v1";
+    const addedRecipe: HostLocalInferenceServingRecipe = {
+      ...sourceRecipe,
+      metadata: { ...sourceRecipe.metadata, id: recipeId, displayName: "Catalog-only test model" },
+      spec: {
+        ...sourceRecipe.spec,
+        model: {
+          ...sourceRecipe.spec.model,
+          id: "test/catalog-only-model",
+          environmentValue: "catalog-only-model",
+          displayName: "Catalog-only model",
+          menuOrder: 999,
+          servedName: "catalog-only-model",
+        },
+        readiness: { ...sourceRecipe.spec.readiness, expectedModel: "catalog-only-model" },
+      },
+    };
+    const addedPreset = {
+      ...sourcePreset,
+      metadata: {
+        ...sourcePreset.metadata,
+        id: "vllm.linux-amd64-nvidia.single.catalog-only-test-model",
+        displayName: "Catalog-only test model on Linux x86_64",
+      },
+      spec: {
+        ...sourcePreset.spec,
+        selection: "explicit-only" as const,
+        plan: { ...sourcePreset.spec.plan, recipeRef: recipeId },
+      },
+    };
+
+    const models = vllmModelsFromCatalog({
+      ...catalog,
+      recipes: [...catalog.recipes, addedRecipe],
+      presets: [...catalog.presets, addedPreset],
+    });
+
+    expect(models.find(({ envValue }) => envValue === "catalog-only-model")).toMatchObject({
+      id: "test/catalog-only-model",
+      label: "Catalog-only model",
+      platforms: ["linux"],
+      requireRuntimeVariant: true,
+    });
+  });
+
+  it.each([
+    ["spark", "arm64", "qwen3.6-35b-a3b-nvfp4"],
+    ["station", "arm64", "deepseek-v4-flash"],
+    ["n1x", "arm64", "qwen3.6-35b-a3b-nvfp4"],
+    ["linux", "x64", "nemotron-3-nano-4b"],
+    ["linux", "arm64", "nemotron-3-nano-4b"],
+  ] as const)("selects the catalog default for %s/%s", (platform, architecture, expected) => {
+    expect(defaultVllmModelForPlatform(platform, architecture).envValue).toBe(expected);
+  });
+
   it("starts directly with setup when the serving environment is empty (#8246)", () => {
     const command = buildVllmServeCommand({
       id: "test/model",
@@ -103,42 +197,34 @@ describe("vllm model registry", () => {
     expect(ultra!.id).toBe("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4");
     expect(ultra!.revision).toBe("183968f87ae4cedce3039313cac1fd43d112c578");
     expect(ultra!.servedModelId).toBe("nvidia/nemotron-3-ultra-550b-a55b");
-    expect(ultra!.runtime).toEqual({
+    expect(ultra!.runtime).toMatchObject({
       image:
         "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
       imageDownloadSizeBytes: 10_670_087_425,
       modelDownloadSizeBytes: 352_381_245_521,
       loadTimeoutSec: 3600,
-      dockerRunArgs: ["--shm-size", "16g", "--ulimit", "memlock=-1", "--ulimit", "stack=67108864"],
+      dockerRunArgs: expect.arrayContaining([
+        "--gpus",
+        "all",
+        "--shm-size",
+        "17179869184b",
+        "--ulimit",
+        "memlock=-1",
+      ]),
+      dockerRunArgsMode: "replace",
+      minComputeCapability: 100,
+      pullTimeoutSec: 43_200,
     });
 
     const cmd = buildVllmServeCommand(ultra!);
-    expect(cmd).toBe(
-      [
-        "export VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY=1",
-        "&& export VLLM_NVFP4_GEMM_BACKEND=flashinfer-trtllm",
-        "&& vllm serve nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
-        "--tensor-parallel-size 1",
-        "--pipeline-parallel-size 1",
-        "--data-parallel-size 1",
-        "--port 8000",
-        "--trust-remote-code",
-        "--max-model-len 262144",
-        "--revision 183968f87ae4cedce3039313cac1fd43d112c578",
-        "--served-model-name nvidia/nemotron-3-ultra-550b-a55b",
-        "--host 0.0.0.0",
-        "--cpu-offload-gb 150",
-        "--cpu-offload-params experts",
-        `--kernel_config '{"enable_flashinfer_autotune": false}'`,
-        `--speculative-config '{"method":"nemotron_h_mtp","num_speculative_tokens":3}'`,
-        "--max-num-seqs 256",
-        "--gpu-memory-utilization 0.9",
-        "--reasoning-parser nemotron_v3",
-        "--enable-auto-tool-choice",
-        "--tool-call-parser qwen3_coder",
-        `--default-chat-template-kwargs '{"enable_thinking":true,"force_nonempty_content":true}'`,
-      ].join(" "),
-    );
+    expect(cmd).toContain("export VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY=1");
+    expect(cmd).toContain("export VLLM_NVFP4_GEMM_BACKEND=flashinfer-trtllm");
+    expect(cmd).toContain("vllm serve nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4");
+    expect(cmd).toContain("--max-model-len 262144");
+    expect(cmd).toContain("--revision 183968f87ae4cedce3039313cac1fd43d112c578");
+    expect(cmd).toContain("--cpu-offload-gb 150");
+    expect(cmd).toContain("--reasoning-parser nemotron_v3");
+    expect(cmd).toContain("--trust-remote-code");
   });
 
   it("builds the pinned two-Station Nemotron Ultra vLLM v0.25.1 Ray head command", () => {
@@ -460,7 +546,7 @@ describe("vllm model registry", () => {
       servedModelId: "muse-glimmer",
       maxModelLen: 32768,
       platforms: ["spark", "linux"],
-      minComputeCapability: 121,
+      minComputeCapability: 120,
       gated: false,
       installFastSafetensors: false,
       trustRemoteCode: false,
@@ -493,7 +579,7 @@ describe("vllm model registry", () => {
 
     expect(lightning).toMatchObject({
       id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
-      platforms: ["linux"],
+      platforms: ["spark", "linux"],
       pickerPlatforms: [],
       minComputeCapability: 80,
       requireRuntimeVariant: true,

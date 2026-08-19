@@ -5,13 +5,13 @@ apiVersion: nemoclaw.nvidia.com/managed-inference/v1
 kind: ServingPreset
 
 metadata:
-  id: vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4
-  displayName: Muse Glimmer 30B NVFP4 W4A4 on one DGX Spark
-  supportState: experimental
+  id: vllm.dgx-spark-gb10.single.qwen3-6-35b-a3b-nvfp4
+  displayName: Qwen3.6 35B-A3B NVFP4 on one DGX Spark
+  supportState: supported
 
 spec:
-  selection: explicit-only
-  priority: 460
+  selection: automatic
+  priority: 550
 
   requirements:
     all:
@@ -105,4 +105,4 @@ spec:
     backend: vllm
     platform: spark
     interactive: true
-    recipeRef: vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1
+    recipeRef: vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1

@@ -86,6 +86,7 @@ const SAFE_ENVIRONMENT_NAME = /^[A-Z][A-Z0-9_]{0,127}$/u;
 const HOST_LOCAL_SAFE_ARGUMENT_VALUE = /^[A-Za-z0-9_@%+=:,./{}[\]"-]+$/u;
 const HOST_LOCAL_SAFE_ENVIRONMENT_VALUE = /^[A-Za-z0-9_@%+=:,./-]+$/u;
 const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/u;
+const VLLM_ENVIRONMENT_VALUE = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
 const MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
   "GLOO_SOCKET_IFNAME",
   "HEADLESS",
@@ -167,6 +168,30 @@ function positiveIntegerArgument(
   return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= maximum ? parsed : undefined;
 }
 
+function validateDeclarativeVllmModel(
+  recipe: ManagedInferenceServingRecipe | HostLocalInferenceServingRecipe,
+): string | undefined {
+  const { model, runtime } = recipe.spec;
+  if (
+    !VLLM_ENVIRONMENT_VALUE.test(model.environmentValue) ||
+    typeof model.displayName !== "string" ||
+    model.displayName.trim() !== model.displayName ||
+    model.displayName.length === 0 ||
+    !Number.isSafeInteger(model.menuOrder) ||
+    model.menuOrder < 0
+  ) {
+    return "vLLM recipe requires a model environment value, display name, and non-negative menu order";
+  }
+  if (
+    !Number.isSafeInteger(runtime.minimumComputeCapability) ||
+    runtime.minimumComputeCapability < 0 ||
+    runtime.minimumComputeCapability > 999
+  ) {
+    return "vLLM recipe requires a bounded minimum compute capability or zero for no floor";
+  }
+  return undefined;
+}
+
 function validateManagedClusterMaterializerRecipe(
   recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
@@ -174,6 +199,8 @@ function validateManagedClusterMaterializerRecipe(
   if (!isManagedClusterInferenceServingRecipe(recipe)) {
     return "recipe does not select the managed cluster materializer";
   }
+  const declarativeModelError = validateDeclarativeVllmModel(recipe);
+  if (declarativeModelError) return declarativeModelError;
   const { execution } = recipe.spec;
   if (
     !Number.isSafeInteger(execution.nodeCount) ||
@@ -312,6 +339,18 @@ function validateHostLocalVllmMaterializerRecipe(
   if (recipe.spec.execution.materializerRef !== HOST_LOCAL_VLLM_MATERIALIZER_REF) {
     return "recipe does not select the host-local vLLM materializer";
   }
+  const declarativeModelError = validateDeclarativeVllmModel(recipe);
+  if (declarativeModelError) return declarativeModelError;
+  const directInstall = recipe.spec.serve.directInstall;
+  if (
+    !directInstall ||
+    (directInstall.authentication !== "none" && directInstall.authentication !== "bearer") ||
+    typeof directInstall.fixedArguments !== "boolean" ||
+    typeof directInstall.catalogReceipt !== "boolean" ||
+    (directInstall.catalogReceipt && directInstall.authentication !== "bearer")
+  ) {
+    return "host-local vLLM requires a valid declarative direct-install policy";
+  }
   const execution = recipe.spec.execution;
   if (
     execution.topologyBinding !== undefined ||
@@ -365,8 +404,7 @@ function validateHostLocalVllmMaterializerRecipe(
   }
   if (
     recipe.spec.serve.executable !== "/usr/local/bin/vllm" ||
-    recipe.spec.model.preparation.ref !== NO_PREPARATION_REF ||
-    recipe.spec.model.installFastSafetensors
+    recipe.spec.model.preparation.ref !== NO_PREPARATION_REF
   ) {
     return "host-local vLLM requires the registered executable without model preparation";
   }
@@ -720,6 +758,8 @@ const SERVING_READINESS_REGISTRY: ServingCatalogRegistries["readiness"] = new Ma
     { kind: "observation", valueType: "version", role: "driver-version" },
   ],
   ["host.platform.dgx_spark", new Set(["qualification", "capability"] as const)],
+  ["host.platform.dgx_station", new Set(["qualification", "capability"] as const)],
+  ["host.platform.n1x", new Set(["qualification", "capability"] as const)],
   ["host.platform.supported", "capability"],
   ["host.docker.available", "capability"],
   ["host.docker.daemon_reachable", "capability"],
