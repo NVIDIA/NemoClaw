@@ -19,10 +19,9 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
-
   # E2E recommendations intentionally do not live here. The unified PR Review
   # Advisor derives them from each PR diff and the current workflows instead of
-  # a duplicated, manually synchronized path-to-job catalog.
+  # manually synchronized path-to-job catalog a duplicated,.
   path_instructions:
     - path: "docs/**"
       instructions: &fern-doc-links |
