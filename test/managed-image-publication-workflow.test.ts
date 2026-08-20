@@ -621,7 +621,7 @@ describe("complete managed-image publication workflow", () => {
     expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
   });
 
-  it("passes the reported OpenClaw trusted-private MCP discovery twice on one exact PR cohort (#8746)", () => {
+  it("runs the reported OpenClaw MCP discovery twice with a bounded credential-revision waiver (#8746)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const discovery = managedPrOpenClawMcpDiscovery(workflow);
     const stableMcp = required(
@@ -644,9 +644,15 @@ describe("complete managed-image publication workflow", () => {
     expect(discovery.env?.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
     expect(discovery.env?.NEMOCLAW_E2E_SHARD).toBe("openclaw");
     expect(discovery.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
-    expect(discovery.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
+    const stableSupervisorImage = required(
       stableMcp.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      "stable MCP job is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
     );
+    const discoverySupervisorImage = required(
+      discovery.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      "OpenClaw MCP discovery is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
+    );
+    expect(discoverySupervisorImage).toBe(stableSupervisorImage);
     expect(discovery.env).not.toHaveProperty("E2E_MANAGED_IMAGE_REVISION");
     expect(JSON.stringify(discovery)).not.toContain("secrets.");
     expect(JSON.stringify(discovery)).not.toContain("github.token");
@@ -658,12 +664,30 @@ describe("complete managed-image publication workflow", () => {
     expect(assemble).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
-    const run = step(discovery, "Run exact OpenClaw trusted-private MCP discovery").run ?? "";
+    const runStep = step(discovery, "Run exact OpenClaw trusted-private MCP discovery");
+    const run = runStep.run ?? "";
+    expect(runStep.id).toBe("exact_mcp_discovery");
+    expect(Object.entries(runStep)).toContainEqual(["continue-on-error", true]);
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(JSON.stringify(discovery)).not.toContain("jq ");
     expect(run).toMatch(/npx --no-install tsx[\s\S]*test\/e2e\/live\/mcp-bridge\.test\.ts/u);
     expect(run).not.toContain("--selector");
     expect(step(discovery, "Scan MCP artifacts for fixture credentials").if).toBe("always()");
+    const enforce = step(discovery, "Enforce exact MCP discovery result");
+    expect(enforce.if).toBe("always()");
+    expect(enforce.env?.MCP_DISCOVERY_OUTCOME).toBe(
+      "${{ steps.exact_mcp_discovery.outcome }}",
+    );
+    expect(enforce.env?.MCP_ARTIFACT_SECRET_SCAN_OUTCOME).toBe(
+      "${{ steps.mcp_artifact_secret_scan.outcome }}",
+    );
+    expect(enforce.run).toContain("assert-openshell-2847-mcp-failure.mts");
+    expect(enforce.run).toContain('[[ "$MCP_DISCOVERY_OUTCOME" != "failure" ]]');
+    expect(enforce.run).toContain('[[ "$MCP_ARTIFACT_SECRET_SCAN_OUTCOME" != "success" ]]');
+    const steps = discovery.steps ?? [];
+    expect(steps.indexOf(step(discovery, "Upload exact MCP discovery evidence"))).toBeLessThan(
+      steps.indexOf(enforce),
+    );
   });
 
   it("keeps the activation proof outside mocked runtime boundaries (#7744)", () => {

@@ -1056,7 +1056,9 @@ jobs:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
         run: bash scripts/install-openshell.sh
 
-      - name: Run exact OpenClaw trusted-private MCP discovery
+      - id: exact_mcp_discovery
+        name: Run exact OpenClaw trusted-private MCP discovery
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -1083,6 +1085,27 @@ jobs:
           path: e2e-artifacts/live/pr-exact-mcp/pass-${{ matrix.pass }}/
           if-no-files-found: error
           retention-days: 1
+
+      - name: Enforce exact MCP discovery result
+        if: always()
+        env:
+          MCP_ARTIFACT_SECRET_SCAN_OUTCOME: ${{ steps.mcp_artifact_secret_scan.outcome }}
+          MCP_DISCOVERY_OUTCOME: ${{ steps.exact_mcp_discovery.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "$MCP_ARTIFACT_SECRET_SCAN_OUTCOME" != "success" ]]; then
+            echo "ERROR: MCP artifact credential scan did not pass" >&2
+            exit 1
+          fi
+          if [[ "$MCP_DISCOVERY_OUTCOME" == "success" ]]; then
+            exit 0
+          fi
+          if [[ "$MCP_DISCOVERY_OUTCOME" != "failure" ]]; then
+            echo "ERROR: exact MCP discovery ended with outcome $MCP_DISCOVERY_OUTCOME" >&2
+            exit 1
+          fi
+          npx --no-install tsx tools/e2e/assert-openshell-2847-mcp-failure.mts \
+            "$E2E_ARTIFACT_DIR"
 
   pi-candidate:
     name: Build and validate the Pi candidate managed image (${{ matrix.arch }})
