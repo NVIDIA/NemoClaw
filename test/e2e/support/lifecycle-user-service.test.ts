@@ -18,6 +18,43 @@ import {
 
 const installer = fileURLToPath(new URL("../../../scripts/install.sh", import.meta.url));
 
+function prepareFixtureInstaller(root: string, env: NodeJS.ProcessEnv): string {
+  const fixtureInstaller = path.join(root, "install-fixture.sh");
+  fs.writeFileSync(
+    fixtureInstaller,
+    [
+      `source ${JSON.stringify(installer)}`,
+      "systemd_user_service_system_unit_roots() { :; }",
+      "",
+    ].join("\n"),
+  );
+  env.XDG_CONFIG_DIRS = path.join(root, "empty-xdg-config-dirs");
+  env.XDG_DATA_DIRS = path.join(root, "empty-xdg-data-dirs");
+  env.XDG_DATA_HOME = path.join(root, "data-home");
+  env.XDG_RUNTIME_DIR = path.join(root, "runtime");
+  return fixtureInstaller;
+}
+
+function writeUnitPathBusctl(bin: string, unitRoot: string): void {
+  fs.writeFileSync(
+    path.join(bin, "busctl"),
+    [
+      "#!/bin/sh",
+      `printf '%s\n' ${JSON.stringify(JSON.stringify({ type: "as", data: [unitRoot] }))}`,
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+}
+
+function linuxFixtureCommand(script: string, env: NodeJS.ProcessEnv): string {
+  return [
+    `export PATH=${JSON.stringify(env.PATH ?? "")}`,
+    "uname() { printf 'Linux\\n'; }",
+    script,
+  ].join("\n");
+}
+
 describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
   it("stages, enables, and removes the repository service without installer cleanup", () => {
     const root = fs.mkdtempSync(
@@ -43,6 +80,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeUnitPathBusctl(bin, path.join(configHome, "systemd", "user"));
 
     try {
       const env = buildAvailabilityProbeEnv({
@@ -51,9 +89,15 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
         XDG_CONFIG_HOME: configHome,
       });
       env.NEMOCLAW_INSTALLER_STAGED = installerCleanupSentinel;
+      const fixtureInstaller = prepareFixtureInstaller(root, env);
       const staged = execFileSync(
         "bash",
-        ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+        [
+          "-lc",
+          linuxFixtureCommand(buildOpenShellGatewayUserServiceStageScript(), env),
+          "stage-service",
+          fixtureInstaller,
+        ],
         { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
       );
 
@@ -62,16 +106,20 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       expect(fs.readFileSync(unit, "utf8")).toContain(`ExecStart=${bin}/openshell-gateway`);
       expect(fs.statSync(unit).mode & 0o777).toBe(0o600);
 
-      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRemovalScript()], {
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      execFileSync(
+        "sh",
+        ["-lc", linuxFixtureCommand(buildOpenShellGatewayUserServiceRemovalScript(), env)],
+        {
+          env,
+          killSignal: "SIGKILL",
+          timeout: 30_000,
+        },
+      );
 
       expect(fs.existsSync(unit)).toBe(false);
-      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+      const calls = fs.readFileSync(log, "utf8").trim().split("\n");
+      expect(calls).toEqual([
         "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager",
-        "--user list-unit-files --type=service --state=enabled,enabled-runtime --no-legend --plain --no-pager",
         "--user daemon-reload",
         "--user cat openshell-gateway",
         "--user enable nemoclaw-openshell-gateway",
@@ -92,17 +140,26 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(path.join(bin, "systemctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, "systemctl"), ["#!/bin/sh", "exit 0", ""].join("\n"), {
+      mode: 0o755,
+    });
+    writeUnitPathBusctl(bin, path.join(configHome, "systemd", "user"));
 
     try {
       const env = buildAvailabilityProbeEnv({
         HOME: home,
-        PATH: `${bin}:/usr/bin:/bin`,
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
       });
+      const fixtureInstaller = prepareFixtureInstaller(root, env);
       const output = execFileSync(
         "bash",
-        ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+        [
+          "-lc",
+          linuxFixtureCommand(buildOpenShellGatewayUserServiceStageScript(), env),
+          "stage-service",
+          fixtureInstaller,
+        ],
         { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
       );
 
@@ -136,6 +193,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeUnitPathBusctl(bin, path.join(configHome, "systemd", "user"));
 
     try {
       const env = buildAvailabilityProbeEnv({
@@ -143,11 +201,17 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
         PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
       });
+      const fixtureInstaller = prepareFixtureInstaller(root, env);
 
       expect(() =>
         execFileSync(
           "bash",
-          ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+          [
+            "-lc",
+            linuxFixtureCommand(buildOpenShellGatewayUserServiceStageScript(), env),
+            "stage-service",
+            fixtureInstaller,
+          ],
           { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
         ),
       ).toThrow();
@@ -172,21 +236,28 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
     fs.writeFileSync(path.join(bin, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(
       path.join(bin, "systemctl"),
-      '#!/bin/sh\n[ "$*" = "--user cat openshell-gateway" ] && exit 1\nexit 0\n',
+      ["#!/bin/sh", '[ "$*" = "--user cat openshell-gateway" ] && exit 1', "exit 0", ""].join("\n"),
       { mode: 0o755 },
     );
+    writeUnitPathBusctl(bin, unitDir);
 
     try {
       const env = buildAvailabilityProbeEnv({
         HOME: home,
-        PATH: `${bin}:/usr/bin:/bin`,
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
       });
+      const fixtureInstaller = prepareFixtureInstaller(root, env);
 
       expect(() =>
         execFileSync(
           "bash",
-          ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+          [
+            "-lc",
+            linuxFixtureCommand(buildOpenShellGatewayUserServiceStageScript(), env),
+            "stage-service",
+            fixtureInstaller,
+          ],
           { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
         ),
       ).toThrow();
@@ -230,11 +301,15 @@ describe("managed OpenShell gateway user-service restart", () => {
         PATH: `${bin}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
       });
-      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRestartScript()], {
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      execFileSync(
+        "sh",
+        ["-lc", linuxFixtureCommand(buildOpenShellGatewayUserServiceRestartScript(), env)],
+        {
+          env,
+          killSignal: "SIGKILL",
+          timeout: 30_000,
+        },
+      );
 
       expect(env.XDG_CONFIG_HOME).toBe(configHome);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([

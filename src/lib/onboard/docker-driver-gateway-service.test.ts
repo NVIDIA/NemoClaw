@@ -1295,50 +1295,37 @@ describe("docker-driver-gateway-service", () => {
     },
   );
 
-  it("fails closed when SYSTEMD_UNIT_PATH overrides the user unit search path (#8926)", () => {
-    const home = "/home/nvidia";
-    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
-
-    expect(() =>
-      stopOpenShellGatewayUserService({
-        commandExists: (command) => command === "systemctl",
-        env: { HOME: home, SYSTEMD_UNIT_PATH: "/opt/custom-systemd/user" },
-        existsSync: (candidate) => candidate === servicePath,
-        home,
-        lstatSync: nonSymlinkStat,
-        platform: "linux",
-        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
-        spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
-      }),
-    ).toThrow("SYSTEMD_UNIT_PATH");
-  });
-
   it("blocks fallback when an activation root cannot be inspected (#8926)", () => {
     const home = "/home/nvidia";
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
 
-    expect(() =>
-      stopOpenShellGatewayUserService({
-        commandExists: (command) => command === "systemctl",
-        env: { HOME: home },
-        existsSync: (candidate) => candidate === servicePath,
-        home,
-        lstatSync: ((candidate: string) =>
-          candidate === servicePath
-            ? { isSymbolicLink: () => false }
-            : throwErrno(
-                candidate === `${home}/.local/share/systemd/user` ? "permission denied" : "missing",
-                candidate === `${home}/.local/share/systemd/user` ? "EACCES" : "ENOENT",
-              )) as never,
-        platform: "linux",
-        readdirSync: ((root: string) =>
-          root === `${home}/.local/share/systemd/user`
-            ? throwErrno("permission denied", "EACCES")
-            : throwErrno("missing", "ENOENT")) as never,
-        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
-        spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
-      }),
-    ).toThrow("permission denied");
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: ((candidate: string) =>
+        candidate === servicePath
+          ? { isSymbolicLink: () => false }
+          : throwErrno(
+              candidate === `${home}/.local/share/systemd/user` ? "permission denied" : "missing",
+              candidate === `${home}/.local/share/systemd/user` ? "EACCES" : "ENOENT",
+            )) as never,
+      platform: "linux",
+      readdirSync: ((root: string) =>
+        root === `${home}/.local/share/systemd/user`
+          ? throwErrno("permission denied", "EACCES")
+          : throwErrno("missing", "ENOENT")) as never,
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+    });
+
+    expect(result).toMatchObject({
+      standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
+    });
+    expect(result.reason).toContain("could not inspect systemd user service activation paths");
+    expect(result.reason).not.toContain("permission denied");
   });
 
   it.each([
@@ -1416,28 +1403,33 @@ describe("docker-driver-gateway-service", () => {
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
     const userRoot = `${home}/.config/systemd/user`;
 
-    expect(() =>
-      stopOpenShellGatewayUserService({
-        commandExists: (command) => command === "systemctl",
-        env: { HOME: home },
-        existsSync: (candidate) => candidate === servicePath,
-        home,
-        lstatSync: nonSymlinkStat,
-        platform: "linux",
-        readdirSync: ((root: string) =>
-          root === userRoot
-            ? [
-                {
-                  isDirectory: () => false,
-                  isSymbolicLink: () => true,
-                  name: "default.target.wants",
-                },
-              ]
-            : throwErrno("dangling activation directory", "ENOENT")) as never,
-        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
-        spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
-      }),
-    ).toThrow("dangling activation directory");
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readdirSync: ((root: string) =>
+        root === userRoot
+          ? [
+              {
+                isDirectory: () => false,
+                isSymbolicLink: () => true,
+                name: "default.target.wants",
+              },
+            ]
+          : throwErrno("dangling activation directory", "ENOENT")) as never,
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+    });
+
+    expect(result).toMatchObject({
+      standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
+    });
+    expect(result.reason).toContain("could not inspect systemd user service activation paths");
+    expect(result.reason).not.toContain("dangling activation directory");
   });
 
   it("blocks fallback for a dangling activation root (#8926)", () => {
@@ -1445,27 +1437,32 @@ describe("docker-driver-gateway-service", () => {
     const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
     const userRoot = `${home}/.config/systemd/user`;
 
-    expect(() =>
-      stopOpenShellGatewayUserService({
-        commandExists: (command) => command === "systemctl",
-        env: { HOME: home },
-        existsSync: (candidate) => candidate === servicePath,
-        home,
-        lstatSync: ((candidate: string) => ({
-          isSymbolicLink: () => candidate === userRoot,
-        })) as never,
-        platform: "linux",
-        readdirSync: ((root: string) => {
-          const error = new Error(
-            root === userRoot ? "dangling activation root" : "missing",
-          ) as NodeJS.ErrnoException;
-          error.code = "ENOENT";
-          throw error;
-        }) as never,
-        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
-        spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
-      }),
-    ).toThrow("dangling activation root");
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: ((candidate: string) => ({
+        isSymbolicLink: () => candidate === userRoot,
+      })) as never,
+      platform: "linux",
+      readdirSync: ((root: string) => {
+        const error = new Error(
+          root === userRoot ? "dangling activation root" : "missing",
+        ) as NodeJS.ErrnoException;
+        error.code = "ENOENT";
+        throw error;
+      }) as never,
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
+    });
+
+    expect(result).toMatchObject({
+      standaloneFallbackAllowed: false,
+      standaloneFallbackBlocked: true,
+    });
+    expect(result.reason).toContain("could not inspect systemd user service activation paths");
+    expect(result.reason).not.toContain("dangling activation root");
   });
 
   it("does not classify a thrown known diagnostic as a manager result (#8926)", () => {

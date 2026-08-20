@@ -10,7 +10,6 @@ import { writeExecutable } from "./helpers/installer-sourced-env";
 import { writeNpmStub } from "./helpers/installer-run-fixture";
 
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
-const OPENSHELL_INSTALLER = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
 
 function writeNodeStub(fakeBin: string) {
   writeExecutable(
@@ -87,36 +86,6 @@ function runWithoutStrings(env: Record<string, string> = {}) {
 }
 
 describe("installer build-dependency preflight (#4415)", { timeout: 30_000 }, () => {
-  it("checks for strings before the shared OpenShell installer changes files", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-no-strings-"));
-    const fakeBin = path.join(tmp, "bin");
-    const curlLog = path.join(tmp, "curl.log");
-    fs.mkdirSync(fakeBin);
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "$CURL_LOG"
-exit 90`,
-    );
-    const homeContentsBefore = fs.readdirSync(tmp, { recursive: true }).sort();
-
-    const result = spawnSync("bash", [OPENSHELL_INSTALLER], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        CURL_LOG: curlLog,
-        HOME: tmp,
-        PATH: `${fakeBin}:${buildSystemPathWithout("strings")}`,
-      },
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/'strings' \(from binutils\) is required/);
-    expect(fs.existsSync(curlLog)).toBe(false);
-    expect(fs.readdirSync(tmp, { recursive: true }).sort()).toEqual(homeContentsBefore);
-  });
-
   it("fails fast when binutils strings is missing, before clone/build work", () => {
     const result = runWithoutStrings();
     const output = `${result.stdout}${result.stderr}`;

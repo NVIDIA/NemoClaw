@@ -49,7 +49,15 @@ function runInstallHelper(home: string, body: string, env: NodeJS.ProcessEnv = {
   const { PATH: injectedPath, ...injectedEnv } = env;
   return spawnSync(
     "bash",
-    ["-c", ["set -euo pipefail", `source ${JSON.stringify(INSTALLER)}`, body].join("\n")],
+    [
+      "-c",
+      [
+        "set -euo pipefail",
+        `source ${JSON.stringify(INSTALLER)}`,
+        "systemd_user_service_system_unit_roots() { :; }",
+        body,
+      ].join("\n"),
+    ],
     {
       cwd: home,
       encoding: "utf-8",
@@ -58,9 +66,15 @@ function runInstallHelper(home: string, body: string, env: NodeJS.ProcessEnv = {
         HOME: home,
         PATH: `${platformBin}:${injectedPath ?? `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`}`,
         XDG_CONFIG_HOME: "",
+        XDG_CONFIG_DIRS: path.join(home, "empty-xdg-config-dirs"),
+        XDG_DATA_DIRS: path.join(home, "empty-xdg-data-dirs"),
+        XDG_DATA_HOME: "",
+        XDG_RUNTIME_DIR: path.join(home, "runtime"),
+        SYSTEMD_UNIT_PATH: "",
         NEMOCLAW_REPO_ROOT: path.dirname(INSTALLER),
         ...injectedEnv,
       },
+      timeout: 30_000,
     },
   );
 }
@@ -155,13 +169,21 @@ function writeUpstreamSystemctlStub(
       'case "$*" in',
       '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
       "    ;;",
-      '  "--user list-unit-files --type=service --state=enabled,enabled-runtime --no-legend --plain --no-pager")',
-      "    ;;",
       '  "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart")',
       ...response.map((line) => `    ${line}`),
       "    ;;",
       "  *) exit 97 ;;",
       "esac",
+      "",
+    ].join("\n"),
+  );
+  writeExecutable(
+    path.join(bin, "busctl"),
+    [
+      "#!/usr/bin/env bash",
+      `printf '%s\n' ${JSON.stringify(
+        JSON.stringify({ type: "as", data: [path.join(home, ".config", "systemd", "user")] }),
+      )}`,
       "",
     ].join("\n"),
   );
@@ -179,20 +201,23 @@ function writeGatewayDiscoverySystemctlStub(
   options: {
     activeRows?: string[];
     activeServices?: string[];
-    enabledRows?: string[];
-    enabledServices?: string[];
+    activationRoot?: string;
+    activationServices?: string[];
     failure?: {
-      command: "list-units" | "list-unit-files" | `show:${string}`;
+      command: "list-units" | "unit-path" | `show:${string}`;
       diagnostic: string;
       status: number;
     };
     services?: Record<string, GatewayServiceMetadata>;
+    unitPathOutput?: string;
+    unitPaths?: string[];
   },
 ) {
   const bin = path.join(home, "discovery-systemctl-bin");
   const log = path.join(home, "discovery-systemctl.log");
+  const busctlLog = path.join(home, "discovery-busctl.log");
   const activeServices = options.activeServices ?? [];
-  const enabledServices = options.enabledServices ?? [];
+  const activationServices = options.activationServices ?? [];
   const failure = options.failure;
   const failureLines = (command: string): string[] | undefined =>
     failure?.command === command
@@ -211,9 +236,6 @@ function writeGatewayDiscoverySystemctlStub(
       options.activeRows ??
         activeServices.map((name) => `${name} loaded active running test service`),
     );
-  const listUnitFiles =
-    failureLines("list-unit-files") ??
-    responseLines(options.enabledRows ?? enabledServices.map((name) => `${name} enabled enabled`));
   const showCases = Object.entries(options.services ?? {}).flatMap(([name, metadata]) => {
     const failure = failureLines(`show:${name}`);
     const response = failure ?? [
@@ -222,7 +244,7 @@ function writeGatewayDiscoverySystemctlStub(
         `ActiveState=${metadata.activeState ?? (activeServices.includes(name) ? "active" : "inactive")}`,
       )}`,
       `printf '%s\\n' ${JSON.stringify(
-        `UnitFileState=${metadata.unitFileState ?? (enabledServices.includes(name) ? "enabled" : "disabled")}`,
+        `UnitFileState=${metadata.unitFileState ?? (activationServices.includes(name) ? "enabled" : "disabled")}`,
       )}`,
     ];
     return [
@@ -231,6 +253,16 @@ function writeGatewayDiscoverySystemctlStub(
       "    ;;",
     ];
   });
+
+  for (const serviceName of activationServices) {
+    const activationPath = path.join(
+      options.activationRoot ?? path.join(home, ".config", "systemd", "user"),
+      "default.target.wants",
+      serviceName,
+    );
+    fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+    fs.symlinkSync(path.join(home, `missing-${serviceName}`), activationPath);
+  }
 
   fs.mkdirSync(bin, { recursive: true });
   writeExecutable(
@@ -242,16 +274,31 @@ function writeGatewayDiscoverySystemctlStub(
       '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
       ...listUnits.map((line) => `    ${line}`),
       "    ;;",
-      '  "--user list-unit-files --type=service --state=enabled,enabled-runtime --no-legend --plain --no-pager")',
-      ...listUnitFiles.map((line) => `    ${line}`),
-      "    ;;",
       ...showCases,
       "  *) exit 97 ;;",
       "esac",
       "",
     ].join("\n"),
   );
-  return { bin, log };
+  const unitPathResponse =
+    failureLines("unit-path") ??
+    responseLines([
+      options.unitPathOutput ??
+        JSON.stringify({
+          type: "as",
+          data: options.unitPaths ?? [path.join(home, ".config", "systemd", "user")],
+        }),
+    ]);
+  writeExecutable(
+    path.join(bin, "busctl"),
+    [
+      "#!/usr/bin/env bash",
+      `printf '%s\n' "$*" >> ${JSON.stringify(busctlLog)}`,
+      ...unitPathResponse,
+      "",
+    ].join("\n"),
+  );
+  return { bin, busctlLog, log };
 }
 
 function installWithGatewayDiscovery(
@@ -316,9 +363,20 @@ describe("install.sh OpenShell gateway service", () => {
 
   it("leaves custom gateway ports on the detached lifecycle (#6903)", () => {
     const home = makeTempRoot();
+    const canonicalActivationPath = path.join(
+      home,
+      ".config",
+      "systemd",
+      "user",
+      "default.target.wants",
+      "openshell-gateway.service",
+    );
+    fs.mkdirSync(path.dirname(canonicalActivationPath), { recursive: true });
+    fs.symlinkSync(path.join(home, "missing-canonical-unit.service"), canonicalActivationPath);
     const result = stageService(home, userGatewayBin(home), { NEMOCLAW_GATEWAY_PORT: "18080" });
 
     expect(result.status).toBe(0);
+    expect(fs.lstatSync(canonicalActivationPath).isSymbolicLink()).toBe(true);
     expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
@@ -347,46 +405,183 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
-  it("blocks an enabled noncanonical gateway on a selected custom port without querying canonical units (#9705)", () => {
+  it("blocks an active service with unparseable executable metadata on a custom port (#9705)", () => {
     const home = makeTempRoot();
     const gatewayBin = userGatewayBin(home);
     const systemctl = writeGatewayDiscoverySystemctlStub(home, {
-      activeServices: ["openshell-gateway.service"],
-      enabledServices: ["nemoclaw-openshell-gateway.service", "renamed-gateway.service"],
+      activeServices: ["ambiguous-gateway.service"],
       services: {
-        "renamed-gateway.service": {
-          execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port=18080 ; ignore_errors=no ; }`,
-        },
+        "ambiguous-gateway.service": { execStart: "truncated" },
       },
     });
 
     const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin, {
       NEMOCLAW_GATEWAY_PORT: "18080",
     });
-    const calls = fs.readFileSync(systemctl.log, "utf-8");
 
     expect(result.status, result.stdout + result.stderr).toBe(1);
-    expect(result.stderr).toContain("renamed-gateway.service");
-    expect(result.stderr).toContain("port 18080");
-    expect(calls).toContain("show renamed-gateway.service");
-    expect(calls).not.toContain("property=Environment");
-    expect(calls).not.toContain("show openshell-gateway.service");
-    expect(calls).not.toContain("show nemoclaw-openshell-gateway.service");
+    expect(result.stderr).toContain("ambiguous executable metadata");
     expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it.each(["generated", "static"] as const)(
+    "blocks an inactive %s custom gateway from its activation link (#9705)",
+    (unitFileState) => {
+      const home = makeTempRoot();
+      const gatewayBin = userGatewayBin(home);
+      const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+        activeServices: ["openshell-gateway.service"],
+        activationServices: ["nemoclaw-openshell-gateway.service", "renamed-gateway.service"],
+        services: {
+          "renamed-gateway.service": {
+            activeState: "inactive",
+            execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port=18080 ; ignore_errors=no ; }`,
+            unitFileState,
+          },
+        },
+      });
+
+      const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin, {
+        NEMOCLAW_GATEWAY_PORT: "18080",
+      });
+      const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      expect(result.stderr).toContain("renamed-gateway.service");
+      expect(result.stderr).toContain("port 18080");
+      expect(calls).toContain("show renamed-gateway.service");
+      expect(calls).not.toContain("list-unit-files");
+      expect(calls).not.toContain("property=Environment");
+      expect(calls).not.toContain("show openshell-gateway.service");
+      expect(calls).not.toContain("show nemoclaw-openshell-gateway.service");
+      expect(fs.existsSync(servicePath(home))).toBe(false);
+    },
+  );
+
+  it("uses only the reachable user manager unit path for activation discovery (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const managerRoot = path.join(home, "manager-only-units");
+    const processConfigHome = path.join(home, "process-only-config");
+    const processActivationDirectory = path.join(
+      processConfigHome,
+      "systemd",
+      "user",
+      "default.target.wants",
+    );
+    fs.mkdirSync(processActivationDirectory, { recursive: true });
+    fs.symlinkSync(
+      path.join(home, "missing-process-only.service"),
+      path.join(processActivationDirectory, "process-only.service"),
+    );
+    const serviceName = "manager-only-gateway.service";
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+      activationRoot: managerRoot,
+      activationServices: [serviceName],
+      services: {
+        [serviceName]: {
+          activeState: "inactive",
+          execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port 8080 ; }`,
+          unitFileState: "static",
+        },
+      },
+      unitPaths: [managerRoot],
+    });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin, {
+      XDG_CONFIG_HOME: processConfigHome,
+    });
+    const systemctlCalls = fs.readFileSync(systemctl.log, "utf-8");
+    const busctlCalls = fs.readFileSync(systemctl.busctlLog, "utf-8");
+
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stderr).toContain(serviceName);
+    expect(systemctlCalls).toContain(`show ${serviceName}`);
+    expect(systemctlCalls).not.toContain("process-only.service");
+    expect(systemctlCalls).not.toContain("property=Environment");
+    expect(busctlCalls.trim()).toBe(
+      "--user --json=short get-property org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager UnitPath",
+    );
+  });
+
+  it.each([
+    ["malformed JSON", "manager-secret-not-json"],
+    [
+      "an extra property",
+      JSON.stringify({ type: "as", data: ["/manager/root"], secret: "manager-secret" }),
+    ],
+    ["an empty path list", JSON.stringify({ type: "as", data: [] })],
+    ["a relative path", JSON.stringify({ type: "as", data: ["manager-secret-relative"] })],
+    ["the wrong D-Bus type", JSON.stringify({ type: "s", data: ["/manager/root"] })],
+  ])("fails before staging when the user manager returns %s (#9705)", (_case, unitPathOutput) => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, { unitPathOutput });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
+    const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("user manager unit-path query failed");
+    expect(result.stderr).not.toContain("manager-secret");
+    expect(calls).not.toContain(" show ");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it("redacts a failed user manager unit-path query (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const secret = "manager-query-secret";
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+      failure: { command: "unit-path", diagnostic: secret, status: 1 },
+    });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("user manager unit-path query failed");
+    expect(result.stderr).not.toContain(secret);
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it("fails after active enumeration when busctl is unavailable (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {});
+
+    const result = runInstallHelper(
+      home,
+      [
+        'command_exists() { [[ "$1" != "busctl" ]] && command -v "$1" >/dev/null 2>&1; }',
+        "upstream_openshell_gateway_user_service_installed() { return 1; }",
+        `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(gatewayBin)}; }`,
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("user manager unit-path query failed");
+    expect(fs.readFileSync(systemctl.log, "utf-8").trim()).toBe(
+      "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager",
+    );
   });
 
   it("stages the managed service when noncanonical services prove a different port or executable (#9705)", () => {
     const home = makeTempRoot();
     const gatewayBin = userGatewayBin(home);
     const systemctl = writeGatewayDiscoverySystemctlStub(home, {
-      activeServices: ["other-app.service", "other-gateway.service"],
+      activeServices: ["other-app.service"],
+      activationServices: ["other-gateway.service"],
       services: {
         "other-app.service": {
           execStart:
             "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 --port 8080 ; ignore_errors=no ; }",
         },
         "other-gateway.service": {
+          activeState: "inactive",
           execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port=18080 ; ignore_errors=no ; }`,
+          unitFileState: "generated",
         },
       },
     });
@@ -425,44 +620,35 @@ describe("install.sh OpenShell gateway service", () => {
     },
   );
 
-  it.each(["list-unit-files", "show:foreign-gateway.service"] as const)(
-    "fails closed when the user manager becomes unavailable during the %s query (#9705)",
-    (command) => {
-      const home = makeTempRoot();
-      const gatewayBin = userGatewayBin(home);
-      const systemctl = writeGatewayDiscoverySystemctlStub(home, {
-        activeServices: ["foreign-gateway.service"],
-        failure: {
-          command,
-          diagnostic: "Failed to connect to bus: No medium found",
-          status: 1,
-        },
-        services: {
-          "foreign-gateway.service": {
-            execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port 8080 ; }`,
-          },
-        },
-      });
-
-      const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
-
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Could not inspect active or enabled user services");
-      expect(fs.existsSync(servicePath(home))).toBe(false);
-    },
-  );
-
-  it.each([
-    ["a truncated active row", { activeRows: ["foreign-gateway.service loaded active"] }],
-    [
-      "an enabled row with extra columns",
-      { enabledRows: ["foreign-gateway.service enabled enabled extra"] },
-    ],
-  ])("fails before staging when service discovery returns %s (#9705)", (_case, discovery) => {
+  it("fails closed when the user manager becomes unavailable during a metadata query (#9705)", () => {
     const home = makeTempRoot();
     const gatewayBin = userGatewayBin(home);
     const systemctl = writeGatewayDiscoverySystemctlStub(home, {
-      ...discovery,
+      activeServices: ["foreign-gateway.service"],
+      failure: {
+        command: "show:foreign-gateway.service",
+        diagnostic: "Failed to connect to bus: No medium found",
+        status: 1,
+      },
+      services: {
+        "foreign-gateway.service": {
+          execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port 8080 ; }`,
+        },
+      },
+    });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Could not inspect active or enabled user services");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it("fails before staging when active service discovery returns a truncated row (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+      activeRows: ["foreign-gateway.service loaded active"],
       services: {
         "foreign-gateway.service": {
           activeState: "inactive",
@@ -481,7 +667,167 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
   });
 
-  it("retains the two-name activation scan when gateway discovery cannot reach the user manager (#9705)", () => {
+  it("fails before staging when an activation directory cannot be inspected (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const activationDirectory = path.join(
+      home,
+      ".config",
+      "systemd",
+      "user",
+      "default.target.wants",
+    );
+    fs.mkdirSync(path.dirname(activationDirectory), { recursive: true });
+    fs.symlinkSync(path.join(home, "missing-activation-directory"), activationDirectory);
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {});
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
+    const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("user service activation scan failed");
+    expect(result.stderr).not.toContain("missing-activation-directory");
+    expect(calls).not.toContain("list-unit-files");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
+  it("rejects a relative manager unit path before activation-root traversal (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const secret = "relative-manager-secret";
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+      unitPathOutput: JSON.stringify({ type: "as", data: [secret] }),
+    });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("user manager unit-path query failed");
+    expect(result.stderr).not.toContain(secret);
+  });
+
+  it("treats glob characters in an XDG data directory as literal path content (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const literalDataDirectory = path.join(home, "xdg-data-[literal]");
+    const activationDirectory = path.join(
+      literalDataDirectory,
+      "systemd",
+      "user",
+      "default.target.wants",
+    );
+    const serviceName = "literal-path-gateway.service";
+    fs.mkdirSync(activationDirectory, { recursive: true });
+    fs.mkdirSync(path.join(home, "xdg-data-l", "systemd", "user"), { recursive: true });
+    fs.symlinkSync(
+      path.join(home, "missing-literal-unit.service"),
+      path.join(activationDirectory, serviceName),
+    );
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+      failure: {
+        command: "list-units",
+        diagnostic: "Failed to connect to bus: No medium found",
+        status: 1,
+      },
+      services: {
+        [serviceName]: {
+          activeState: "inactive",
+          execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port 18080 ; }`,
+          unitFileState: "static",
+        },
+      },
+    });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin, {
+      NEMOCLAW_GATEWAY_PORT: "18080",
+      XDG_CONFIG_DIRS: path.join(home, "empty-config-dirs"),
+      XDG_DATA_DIRS: literalDataDirectory,
+    });
+
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stderr).toContain(
+      "a noncanonical enabled user service cannot be qualified for selected port 18080",
+    );
+    expect(result.stderr).not.toContain(serviceName);
+    expect(result.stderr).not.toContain(activationDirectory);
+  });
+
+  it("uses the user data fallback when XDG_DATA_HOME is relative (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const activationDirectory = path.join(
+      home,
+      ".local",
+      "share",
+      "systemd",
+      "user",
+      "default.target.wants",
+    );
+    const serviceName = "fallback-data-home-gateway.service";
+    fs.mkdirSync(activationDirectory, { recursive: true });
+    fs.symlinkSync(
+      path.join(home, "missing-fallback-unit.service"),
+      path.join(activationDirectory, serviceName),
+    );
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+      failure: {
+        command: "list-units",
+        diagnostic: "Failed to connect to bus: No medium found",
+        status: 1,
+      },
+      services: {
+        [serviceName]: {
+          activeState: "inactive",
+          execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port 18080 ; }`,
+          unitFileState: "static",
+        },
+      },
+    });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin, {
+      NEMOCLAW_GATEWAY_PORT: "18080",
+      XDG_CONFIG_DIRS: path.join(home, "empty-config-dirs"),
+      XDG_DATA_DIRS: path.join(home, "empty-data-dirs"),
+      XDG_DATA_HOME: "relative-data-home",
+    });
+
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stderr).toContain(
+      "a noncanonical enabled user service cannot be qualified for selected port 18080",
+    );
+    expect(result.stderr).not.toContain(serviceName);
+    expect(result.stderr).not.toContain(activationDirectory);
+  });
+
+  it("redacts an unsafe activation filename before querying service metadata (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const secret = "tenant-secret-name";
+    const serviceName = `${secret}\nspoofed.service`;
+    const activationDirectory = path.join(
+      home,
+      ".config",
+      "systemd",
+      "user",
+      "default.target.wants",
+    );
+    fs.mkdirSync(activationDirectory, { recursive: true });
+    fs.symlinkSync(
+      path.join(home, "missing-unsafe-unit.service"),
+      path.join(activationDirectory, serviceName),
+    );
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {});
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
+    const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("user service activation scan failed");
+    expect(result.stderr).not.toContain(secret);
+    expect(calls).not.toContain("show");
+  });
+
+  it("blocks a noncanonical activation link when gateway discovery cannot reach the user manager (#9705)", () => {
     const home = makeTempRoot();
     const activationPath = path.join(
       home,
@@ -511,12 +857,17 @@ describe("install.sh OpenShell gateway service", () => {
       { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
     );
 
-    expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(result.stdout).toContain("existing standalone gateway");
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stderr).toContain(
+      "a noncanonical enabled user service cannot be qualified for selected port 8080",
+    );
+    expect(result.stderr).not.toContain("renamed-gateway.service");
+    expect(result.stderr).not.toContain(activationPath);
     expect(fs.lstatSync(activationPath).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(systemctl.log, "utf-8").trim()).toBe(
       "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager",
     );
+    expect(fs.existsSync(systemctl.busctlLog)).toBe(false);
   });
 
   it("rejects a relative gateway binary path (#6903)", () => {
@@ -694,7 +1045,6 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(servicePath(home))).toBe(false);
     expect(fs.readFileSync(systemctl.log, "utf-8").trim().split(/\r?\n/u)).toEqual([
       "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager",
-      "--user list-unit-files --type=service --state=enabled,enabled-runtime --no-legend --plain --no-pager",
       "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart",
     ]);
   });
@@ -828,20 +1178,43 @@ describe("install.sh OpenShell gateway service", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("SYSTEMD_UNIT_PATH=");
-    expect(result.stderr).toContain("\\nspoofed-log-line");
+    expect(result.stderr).toContain(
+      "installer could not inspect OpenShell gateway activation configuration",
+    );
+    expect(result.stderr).not.toContain("SYSTEMD_UNIT_PATH=");
+    expect(result.stderr).not.toContain("\\nspoofed-log-line");
     expect(result.stderr).not.toContain("\nspoofed-log-line");
     expect(result.stdout).not.toContain("existing standalone gateway");
   });
 
+  it("redacts a later canonical activation-scan failure (#8926)", () => {
+    const home = makeTempRoot();
+    const secret = "later-scan-secret";
+
+    const result = runInstallHelper(
+      home,
+      [
+        "require_no_competing_openshell_gateway_user_service() { :; }",
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
+        "require_compatible_upstream_openshell_gateway_service() { return 2; }",
+        "install_nemoclaw_openshell_gateway_user_service",
+      ].join("\n"),
+      { SYSTEMD_UNIT_PATH: `${home}/${secret}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("could not inspect OpenShell gateway activation configuration");
+    expect(result.stderr).not.toContain(secret);
+  });
+
   it.skipIf(RUNNING_AS_ROOT)(
-    "fails closed when an activation root cannot be inspected (#8926)",
+    "fails closed when an activation root has an inaccessible ancestor (#8926)",
     () => {
       const home = makeTempRoot();
       const dataHome = path.join(home, "xdg-data");
       const activationRoot = path.join(dataHome, "systemd", "user");
       fs.mkdirSync(activationRoot, { recursive: true });
-      fs.chmodSync(activationRoot, 0o000);
+      fs.chmodSync(dataHome, 0o000);
       const systemctl = writeUpstreamSystemctlStub(home, {
         diagnostic: "Failed to connect to bus: No medium found",
         status: 1,
@@ -861,12 +1234,54 @@ describe("install.sh OpenShell gateway service", () => {
           },
         );
       } finally {
-        fs.chmodSync(activationRoot, 0o700);
+        fs.chmodSync(dataHome, 0o700);
       }
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("could not inspect");
-      expect(result.stderr).toContain(activationRoot);
+      expect(result.stderr).toContain(
+        "installer could not inspect OpenShell gateway activation configuration",
+      );
+      expect(result.stderr).not.toContain(activationRoot);
+    },
+  );
+
+  it.skipIf(RUNNING_AS_ROOT)(
+    "fails closed when an activation root has an inaccessible symlink ancestor (#8926)",
+    () => {
+      const home = makeTempRoot();
+      const hiddenParent = path.join(home, "hidden-parent");
+      const hiddenDataHome = path.join(hiddenParent, "data-home");
+      const dataHome = path.join(home, "xdg-data-link");
+      fs.mkdirSync(hiddenDataHome, { recursive: true });
+      fs.symlinkSync(hiddenDataHome, dataHome);
+      fs.chmodSync(hiddenParent, 0o000);
+      const systemctl = writeUpstreamSystemctlStub(home, {
+        diagnostic: "Failed to connect to bus: No medium found",
+        status: 1,
+      });
+
+      let result: ReturnType<typeof runInstallHelper>;
+      try {
+        result = runInstallHelper(
+          home,
+          [
+            "upstream_openshell_gateway_user_service_installed() { return 0; }",
+            "install_nemoclaw_openshell_gateway_user_service",
+          ].join("\n"),
+          {
+            PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+            XDG_DATA_HOME: dataHome,
+          },
+        );
+      } finally {
+        fs.chmodSync(hiddenParent, 0o700);
+      }
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "installer could not inspect OpenShell gateway activation configuration",
+      );
+      expect(result.stderr).not.toContain(hiddenParent);
     },
   );
 

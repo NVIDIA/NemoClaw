@@ -294,6 +294,10 @@ inspect_noncanonical_openshell_gateway_user_services() {
   fi
   return 0
 }
+collect_systemd_user_service_activation_paths() {
+  SYSTEMD_USER_SERVICE_ACTIVATION_PATHS=()
+  return 0
+}
 openshell() { printf 'openshell %s\\n' "$*" >> "$EFFECT_LOG"; return 0; }
 info() { :; }
 preinstall_backup_and_retire_legacy_gateway

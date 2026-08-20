@@ -1541,6 +1541,9 @@ UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
 UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
 NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
+SYSTEMD_USER_SERVICE_ACTIVATION_PATHS=()
+SYSTEMD_USER_SERVICE_ACTIVATION_ERROR=""
+SYSTEMD_USER_MANAGER_UNIT_ROOTS=()
 
 upstream_openshell_gateway_user_service_installed() {
   [[ "$(uname -s)" == "Linux" ]] || return 1
@@ -1772,10 +1775,19 @@ trusted_openshell_gateway_bin_for_service() {
 }
 
 classify_noncanonical_openshell_gateway_user_service() {
-  local service_name="${1:-}" selected_port="${2:-}" service_output service_status
+  local service_name="${1:-}" selected_port="${2:-}" enabled_by_activation_path="${3:-false}"
+  local service_output service_status
   local classifier_module classifier_output classifier_status user_gateway_bin
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
+
+  case "$enabled_by_activation_path" in
+    true | false) ;;
+    *)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The activation state for ${service_name} is invalid."
+      return 3
+      ;;
+  esac
 
   if service_output="$(LC_ALL=C systemctl --user show "$service_name" \
     --property=ExecStart --property=ActiveState --property=UnitFileState 2>&1)"; then
@@ -1798,12 +1810,15 @@ classify_noncanonical_openshell_gateway_user_service() {
           import fs from "node:fs";
           import { pathToFileURL } from "node:url";
 
-          const [modulePath, selectedPort, ...trustedExecutablePaths] = process.argv.slice(1);
+          const [modulePath, selectedPort, activationState, ...trustedExecutablePaths] =
+            process.argv.slice(1);
           try {
             const { classifyOpenShellGatewayServiceMetadata } = await import(
               pathToFileURL(modulePath).href
             );
+            if (activationState !== "true" && activationState !== "false") process.exit(2);
             const verdict = classifyOpenShellGatewayServiceMetadata({
+              enabledByActivationPath: activationState === "true",
               gatewayPort: Number(selectedPort),
               metadata: fs.readFileSync(0, "utf8"),
               trustedExecutablePaths,
@@ -1812,7 +1827,7 @@ classify_noncanonical_openshell_gateway_user_service() {
           } catch {
             process.exit(2);
           }
-        ' "$classifier_module" "$selected_port" "$user_gateway_bin" \
+        ' "$classifier_module" "$selected_port" "$enabled_by_activation_path" "$user_gateway_bin" \
         "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN" "$OPENSHELL_GATEWAY_SYSTEM_BIN" 2>/dev/null
   )"; then
     :
@@ -1833,9 +1848,9 @@ classify_noncanonical_openshell_gateway_user_service() {
 }
 
 inspect_noncanonical_openshell_gateway_user_services() {
-  local selected_port="${1:-}" active_output enabled_output query_status line service_name
-  local inspected_name already_inspected
-  local -a service_names=() inspected_names=() row_columns=()
+  local selected_port="${1:-}" active_output query_status line service_name activation_path
+  local activation_service_name inspected_name already_inspected enabled_by_activation_path
+  local -a service_names=() activation_service_names=() inspected_names=() row_columns=()
   command_exists systemctl || return 2
 
   if active_output="$(LC_ALL=C systemctl --user list-units --type=service \
@@ -1850,15 +1865,6 @@ inspect_noncanonical_openshell_gateway_user_services() {
     NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The active service query failed with status ${query_status}."
     return 3
   fi
-  if enabled_output="$(LC_ALL=C systemctl --user list-unit-files --type=service \
-    --state=enabled,enabled-runtime --no-legend --plain --no-pager 2>&1)"; then
-    :
-  else
-    query_status=$?
-    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The enabled service query failed with status ${query_status}."
-    return 3
-  fi
-
   while IFS= read -r line; do
     row_columns=()
     read -r -a row_columns <<<"$line"
@@ -1872,19 +1878,26 @@ inspect_noncanonical_openshell_gateway_user_services() {
     fi
     service_names+=("$service_name")
   done <<<"$active_output"
-  while IFS= read -r line; do
-    row_columns=()
-    read -r -a row_columns <<<"$line"
-    [[ "${#row_columns[@]}" -gt 0 ]] || continue
-    service_name="${row_columns[0]}"
-    if [[ "${#row_columns[@]}" -lt 2 || "${#row_columns[@]}" -gt 3 ||
-      ! "$service_name" =~ ^([A-Za-z0-9_]|\\x[0-9A-Fa-f]{2})([A-Za-z0-9_.@:-]|\\x[0-9A-Fa-f]{2})*[.]service$ ||
-      ("${row_columns[1]}" != "enabled" && "${row_columns[1]}" != "enabled-runtime") ]]; then
-      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The enabled service list returned invalid metadata."
-      return 3
-    fi
-    service_names+=("$service_name")
-  done <<<"$enabled_output"
+
+  if collect_systemd_user_manager_unit_roots; then
+    :
+  else
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The user manager unit-path query failed."
+    return 3
+  fi
+  if collect_systemd_user_service_activation_paths all manager; then
+    :
+  else
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The user service activation scan failed."
+    return 3
+  fi
+  if [[ "${#SYSTEMD_USER_SERVICE_ACTIVATION_PATHS[@]}" -gt 0 ]]; then
+    for activation_path in "${SYSTEMD_USER_SERVICE_ACTIVATION_PATHS[@]}"; do
+      service_name="${activation_path##*/}"
+      service_names+=("$service_name")
+      activation_service_names+=("$service_name")
+    done
+  fi
 
   if [[ "${#service_names[@]}" -gt 0 ]]; then
     for service_name in "${service_names[@]}"; do
@@ -1903,7 +1916,18 @@ inspect_noncanonical_openshell_gateway_user_services() {
       [[ "$already_inspected" -eq 0 ]] || continue
       inspected_names+=("$service_name")
 
-      if classify_noncanonical_openshell_gateway_user_service "$service_name" "$selected_port"; then
+      enabled_by_activation_path=false
+      if [[ "${#activation_service_names[@]}" -gt 0 ]]; then
+        for activation_service_name in "${activation_service_names[@]}"; do
+          if [[ "$activation_service_name" == "$service_name" ]]; then
+            enabled_by_activation_path=true
+            break
+          fi
+        done
+      fi
+
+      if classify_noncanonical_openshell_gateway_user_service \
+        "$service_name" "$selected_port" "$enabled_by_activation_path"; then
         case "$NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT" in
           unrelated | different-port) continue ;;
           block-selected-port)
@@ -1935,7 +1959,7 @@ inspect_noncanonical_openshell_gateway_user_services() {
 }
 
 require_no_competing_openshell_gateway_user_service() {
-  local gateway_port discovery_status
+  local gateway_port discovery_status activation_path rendered_activation_path activation_status=0
   [[ "$(uname -s)" == "Linux" ]] || return 0
   gateway_port="${1:-$(resolve_nemoclaw_gateway_port)}"
   if inspect_noncanonical_openshell_gateway_user_services "$gateway_port"; then
@@ -1945,6 +1969,18 @@ require_no_competing_openshell_gateway_user_service() {
   fi
   if [[ "$discovery_status" -ne 2 ]]; then
     error "${NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR:-Could not inspect active or enabled user services.}"
+  fi
+  if activation_path="$(enabled_openshell_gateway_user_service_activation_path "$gateway_port")"; then
+    if [[ "$activation_path" == "noncanonical" ]]; then
+      error "The systemd user manager is unavailable, and a noncanonical enabled user service cannot be qualified for selected port ${gateway_port}. Restore the systemd user manager and inspect or disable enabled services before rerunning NemoClaw."
+    fi
+    printf -v rendered_activation_path '%q' "$activation_path"
+    error "The systemd user manager is unavailable, but $rendered_activation_path can activate a gateway user service that can later claim port ${gateway_port}. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+  else
+    activation_status=$?
+  fi
+  if [[ "$activation_status" -eq 2 ]]; then
+    error "The systemd user manager is unavailable, and the installer could not inspect OpenShell gateway activation configuration. Restore the default unit search path and access to its configured locations, then rerun NemoClaw."
   fi
 }
 
@@ -1962,81 +1998,241 @@ openshell_user_config_home() {
   fi
 }
 
-enabled_openshell_gateway_user_service_activation_path() {
-  local user_config_home user_data_home runtime_dir unit_root activation_dir service_name activation_path
-  local config_dirs data_dirs directory
-  local -a unit_roots=()
-  if [[ -n "${SYSTEMD_UNIT_PATH:-}" ]]; then
-    printf 'SYSTEMD_UNIT_PATH=%q\n' "$SYSTEMD_UNIT_PATH"
-    return 2
-  fi
-  user_config_home="$(openshell_user_config_home)"
-  user_data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
-  if [[ "$user_data_home" != /* ]]; then
-    printf '%s\n' "$user_data_home"
-    return 2
-  fi
-  unit_roots+=(
-    "${user_config_home}/systemd/user"
-    "${user_config_home}/systemd/user.control"
-    "${user_data_home%/}/systemd/user"
-    "/etc/systemd/user"
-    "/run/systemd/user"
-    "/usr/local/lib/systemd/user"
-    "/usr/lib/systemd/user"
+systemd_user_service_system_unit_roots() {
+  printf '%s\n' \
+    "/etc/systemd/user" \
+    "/run/systemd/user" \
+    "/usr/local/lib/systemd/user" \
+    "/usr/lib/systemd/user" \
     "/lib/systemd/user"
-  )
-  config_dirs="${XDG_CONFIG_DIRS:-/etc/xdg}"
-  data_dirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-  local IFS=:
-  for directory in $config_dirs $data_dirs; do
-    [[ -n "$directory" ]] || continue
-    if [[ "$directory" != /* ]]; then
-      printf '%s\n' "$directory"
-      return 2
-    fi
-    unit_roots+=("${directory%/}/systemd/user")
-  done
-  runtime_dir="${XDG_RUNTIME_DIR:-}"
-  if [[ "$runtime_dir" != /* && "${UID:-}" =~ ^[0-9]+$ ]]; then
-    runtime_dir="/run/user/${UID}"
-  fi
-  if [[ "$runtime_dir" == /* ]]; then
-    unit_roots+=(
-      "${runtime_dir%/}/systemd/user.control"
-      "${runtime_dir%/}/systemd/transient"
-      "${runtime_dir%/}/systemd/generator.early"
-      "${runtime_dir%/}/systemd/user"
-      "${runtime_dir%/}/systemd/generator"
-      "${runtime_dir%/}/systemd/generator.late"
-    )
-  fi
+}
 
-  for unit_root in "${unit_roots[@]}"; do
-    if [[ -e "$unit_root" || -L "$unit_root" ]]; then
-      if [[ ! -d "$unit_root" || ! -r "$unit_root" || ! -x "$unit_root" ]]; then
-        printf '%s\n' "$unit_root"
+collect_systemd_user_manager_unit_roots() {
+  local query_output unit_root parser_complete=0
+  local parser_sentinel="nemoclaw-systemd-unit-path-parser-complete"
+  SYSTEMD_USER_MANAGER_UNIT_ROOTS=()
+  if ! command_exists busctl || ! command_exists node; then
+    return 2
+  fi
+  if query_output="$(LC_ALL=C busctl --user --json=short get-property \
+    org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+    org.freedesktop.systemd1.Manager UnitPath 2>&1)"; then
+    :
+  else
+    return 2
+  fi
+  # shellcheck disable=SC2016 # JavaScript template literals must reach node unchanged.
+  while IFS= read -r -d '' unit_root; do
+    if [[ "$unit_root" == "$parser_sentinel" ]]; then
+      parser_complete=1
+      continue
+    fi
+    SYSTEMD_USER_MANAGER_UNIT_ROOTS+=("$unit_root")
+  done < <(
+    printf '%s' "$query_output" \
+      | node --input-type=module --eval '
+          import fs from "node:fs";
+          import path from "node:path";
+
+          const sentinel = process.argv[1];
+          try {
+            const value = JSON.parse(fs.readFileSync(0, "utf8"));
+            const keys =
+              value !== null && typeof value === "object" && !Array.isArray(value)
+                ? Object.keys(value).sort()
+                : [];
+            if (
+              keys.length !== 2 ||
+              keys[0] !== "data" ||
+              keys[1] !== "type" ||
+              value.type !== "as" ||
+              !Array.isArray(value.data) ||
+              value.data.length === 0 ||
+              value.data.some(
+                (unitRoot) =>
+                  typeof unitRoot !== "string" ||
+                  unitRoot.length === 0 ||
+                  unitRoot.includes("\0") ||
+                  !path.isAbsolute(unitRoot),
+              )
+            ) {
+              process.exit(2);
+            }
+            for (const unitRoot of value.data) process.stdout.write(`${unitRoot}\0`);
+            process.stdout.write(`${sentinel}\0`);
+          } catch {
+            process.exit(2);
+          }
+        ' "$parser_sentinel" 2>/dev/null
+  )
+  if [[ "$parser_complete" -ne 1 || "${#SYSTEMD_USER_MANAGER_UNIT_ROOTS[@]}" -eq 0 ]]; then
+    SYSTEMD_USER_MANAGER_UNIT_ROOTS=()
+    return 2
+  fi
+}
+
+collect_systemd_user_service_activation_paths() {
+  local scan_scope="${1:-canonical}"
+  local root_source="${2:-environment}"
+  local user_config_home user_data_home runtime_dir unit_root activation_dir service_name activation_path
+  local config_dirs data_dirs directory system_root visible_parent
+  local -a config_directories=() data_directories=() unit_roots=()
+  SYSTEMD_USER_SERVICE_ACTIVATION_PATHS=()
+  SYSTEMD_USER_SERVICE_ACTIVATION_ERROR=""
+  case "$scan_scope" in
+    all | canonical) ;;
+    *)
+      SYSTEMD_USER_SERVICE_ACTIVATION_ERROR="an invalid activation scan scope"
+      return 2
+      ;;
+  esac
+  case "$root_source" in
+    manager)
+      if [[ "${#SYSTEMD_USER_MANAGER_UNIT_ROOTS[@]}" -eq 0 ]]; then
+        SYSTEMD_USER_SERVICE_ACTIVATION_ERROR="the user manager unit path is empty"
         return 2
       fi
+      unit_roots=("${SYSTEMD_USER_MANAGER_UNIT_ROOTS[@]}")
+      ;;
+    environment)
+      if [[ -n "${SYSTEMD_UNIT_PATH:-}" ]]; then
+        printf -v SYSTEMD_USER_SERVICE_ACTIVATION_ERROR 'SYSTEMD_UNIT_PATH=%q' "$SYSTEMD_UNIT_PATH"
+        return 2
+      fi
+      user_config_home="$(openshell_user_config_home)"
+      if [[ -n "${XDG_DATA_HOME:-}" && "$XDG_DATA_HOME" == /* ]]; then
+        user_data_home="$XDG_DATA_HOME"
+      else
+        user_data_home="${HOME}/.local/share"
+      fi
+      unit_roots+=(
+        "${user_config_home}/systemd/user"
+        "${user_config_home}/systemd/user.control"
+        "${user_data_home%/}/systemd/user"
+      )
+      while IFS= read -r system_root; do
+        [[ -n "$system_root" ]] && unit_roots+=("$system_root")
+      done < <(systemd_user_service_system_unit_roots)
+      config_dirs="${XDG_CONFIG_DIRS:-/etc/xdg}"
+      data_dirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+      if [[ "$config_dirs" == *$'\n'* || "$data_dirs" == *$'\n'* ]]; then
+        SYSTEMD_USER_SERVICE_ACTIVATION_ERROR="an XDG directory list contains a line break"
+        return 2
+      fi
+      IFS=: read -r -a config_directories <<<"$config_dirs"
+      IFS=: read -r -a data_directories <<<"$data_dirs"
+      for directory in "${config_directories[@]}" "${data_directories[@]}"; do
+        [[ -n "$directory" ]] || continue
+        if [[ "$directory" != /* ]]; then
+          printf -v SYSTEMD_USER_SERVICE_ACTIVATION_ERROR '%q' "$directory"
+          return 2
+        fi
+        unit_roots+=("${directory%/}/systemd/user")
+      done
+      runtime_dir="${XDG_RUNTIME_DIR:-}"
+      if [[ "$runtime_dir" != /* && "${UID:-}" =~ ^[0-9]+$ ]]; then
+        runtime_dir="/run/user/${UID}"
+      fi
+      if [[ "$runtime_dir" == /* ]]; then
+        unit_roots+=(
+          "${runtime_dir%/}/systemd/user.control"
+          "${runtime_dir%/}/systemd/transient"
+          "${runtime_dir%/}/systemd/generator.early"
+          "${runtime_dir%/}/systemd/user"
+          "${runtime_dir%/}/systemd/generator"
+          "${runtime_dir%/}/systemd/generator.late"
+        )
+      fi
+      ;;
+    *)
+      SYSTEMD_USER_SERVICE_ACTIVATION_ERROR="an invalid activation root source"
+      return 2
+      ;;
+  esac
+
+  for unit_root in "${unit_roots[@]}"; do
+    if [[ "$unit_root" != /* ]]; then
+      printf -v SYSTEMD_USER_SERVICE_ACTIVATION_ERROR '%q' "$unit_root"
+      return 2
+    fi
+    if [[ ! -e "$unit_root" && ! -L "$unit_root" ]]; then
+      visible_parent="$unit_root"
+      while [[ "$visible_parent" != "/" && ! -e "$visible_parent" && ! -L "$visible_parent" ]]; do
+        visible_parent="${visible_parent%/*}"
+        [[ -n "$visible_parent" ]] || visible_parent="/"
+      done
+      if [[ -L "$visible_parent" && ! -d "$visible_parent" ]]; then
+        printf -v SYSTEMD_USER_SERVICE_ACTIVATION_ERROR '%q' "$visible_parent"
+        return 2
+      fi
+      if [[ -d "$visible_parent" && (! -r "$visible_parent" || ! -x "$visible_parent") ]]; then
+        printf -v SYSTEMD_USER_SERVICE_ACTIVATION_ERROR '%q' "$visible_parent"
+        return 2
+      fi
+      continue
+    fi
+    if [[ ! -d "$unit_root" || ! -r "$unit_root" || ! -x "$unit_root" ]]; then
+      printf -v SYSTEMD_USER_SERVICE_ACTIVATION_ERROR '%q' "$unit_root"
+      return 2
     fi
     for activation_dir in "$unit_root"/*.wants "$unit_root"/*.requires "$unit_root"/*.upholds; do
       if [[ -L "$activation_dir" && ! -d "$activation_dir" ]]; then
-        printf '%s\n' "$activation_dir"
+        printf -v SYSTEMD_USER_SERVICE_ACTIVATION_ERROR '%q' "$activation_dir"
         return 2
       fi
       [[ -d "$activation_dir" ]] || continue
       if [[ ! -r "$activation_dir" || ! -x "$activation_dir" ]]; then
-        printf '%s\n' "$activation_dir"
+        printf -v SYSTEMD_USER_SERVICE_ACTIVATION_ERROR '%q' "$activation_dir"
         return 2
       fi
-      for service_name in openshell-gateway "${NEMOCLAW_GATEWAY_SERVICE_NAME}"; do
-        activation_path="${activation_dir}/${service_name}.service"
-        if [[ -e "$activation_path" || -L "$activation_path" ]]; then
+      if [[ "$scan_scope" == "all" ]]; then
+        for activation_path in "$activation_dir"/*.service; do
+          [[ -e "$activation_path" || -L "$activation_path" ]] || continue
+          service_name="${activation_path##*/}"
+          if [[ ! "$service_name" =~ ^([A-Za-z0-9_]|\\x[0-9A-Fa-f]{2})([A-Za-z0-9_.@:-]|\\x[0-9A-Fa-f]{2})*[.]service$ ]]; then
+            printf -v SYSTEMD_USER_SERVICE_ACTIVATION_ERROR '%q' "$activation_path"
+            return 2
+          fi
+          SYSTEMD_USER_SERVICE_ACTIVATION_PATHS+=("$activation_path")
+        done
+      else
+        for service_name in openshell-gateway "${NEMOCLAW_GATEWAY_SERVICE_NAME}"; do
+          activation_path="${activation_dir}/${service_name}.service"
+          if [[ -e "$activation_path" || -L "$activation_path" ]]; then
+            SYSTEMD_USER_SERVICE_ACTIVATION_PATHS+=("$activation_path")
+            return 0
+          fi
+        done
+      fi
+    done
+  done
+  return 0
+}
+
+enabled_openshell_gateway_user_service_activation_path() {
+  local gateway_port="${1:-8080}" activation_path service_name
+  if ! collect_systemd_user_service_activation_paths all; then
+    printf '%s\n' "$SYSTEMD_USER_SERVICE_ACTIVATION_ERROR"
+    return 2
+  fi
+  if [[ "$gateway_port" -eq 8080 ]]; then
+    for activation_path in "${SYSTEMD_USER_SERVICE_ACTIVATION_PATHS[@]}"; do
+      service_name="${activation_path##*/}"
+      case "$service_name" in
+        openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service")
           printf '%s\n' "$activation_path"
           return 0
-        fi
-      done
+          ;;
+      esac
     done
+  fi
+  for activation_path in "${SYSTEMD_USER_SERVICE_ACTIVATION_PATHS[@]}"; do
+    service_name="${activation_path##*/}"
+    case "$service_name" in
+      openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service") continue ;;
+    esac
+    printf '%s\n' "noncanonical"
+    return 0
   done
   return 1
 }
@@ -2063,7 +2259,7 @@ install_nemoclaw_openshell_gateway_user_service() {
     if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
       error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
     fi
-    local compatibility_status activation_path activation_status
+    local compatibility_status activation_path rendered_activation_path activation_status
     if require_compatible_upstream_openshell_gateway_service; then
       info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
       return 0
@@ -2074,11 +2270,15 @@ install_nemoclaw_openshell_gateway_user_service() {
       error "Could not determine whether the effective upstream OpenShell gateway user service is compatible."
     fi
     if activation_path="$(enabled_openshell_gateway_user_service_activation_path)"; then
-      error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+      if [[ "$activation_path" == "noncanonical" ]]; then
+        error "The systemd user manager is unavailable, and a noncanonical enabled user service cannot be qualified for selected port 8080. Restore the systemd user manager and inspect or disable enabled services before rerunning NemoClaw."
+      fi
+      printf -v rendered_activation_path '%q' "$activation_path"
+      error "The systemd user manager is unavailable, but $rendered_activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
     else
       activation_status=$?
       if [[ "$activation_status" -eq 2 ]]; then
-        error "The systemd user manager is unavailable, and the installer could not inspect OpenShell gateway activation configuration at $activation_path. Restore the default unit search path or access to that location, then rerun NemoClaw."
+        error "The systemd user manager is unavailable, and the installer could not inspect OpenShell gateway activation configuration. Restore the default unit search path and access to its configured locations, then rerun NemoClaw."
       fi
     fi
     warn "The systemd user manager is unavailable. No enabled OpenShell gateway user service activation path was found, so onboarding will keep the existing standalone gateway on port 8080."

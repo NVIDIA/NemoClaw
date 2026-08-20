@@ -22,6 +22,7 @@ export type OpenShellGatewayServiceMetadataVerdict =
   | "block-selected-port";
 
 export interface OpenShellGatewayServiceMetadataInput {
+  enabledByActivationPath: boolean;
   gatewayPort: number;
   metadata: string;
   trustedExecutablePaths: readonly string[];
@@ -124,6 +125,7 @@ function parseExecStartPort(execStart: string): number | null {
 
 /** Classify read-only systemd metadata without reading service environment values. */
 export function classifyOpenShellGatewayServiceMetadata({
+  enabledByActivationPath,
   gatewayPort,
   metadata,
   trustedExecutablePaths,
@@ -144,10 +146,21 @@ export function classifyOpenShellGatewayServiceMetadata({
     properties.ActiveState,
   );
   const enabled =
-    properties.UnitFileState === "enabled" || properties.UnitFileState === "enabled-runtime";
+    enabledByActivationPath ||
+    properties.UnitFileState === "enabled" ||
+    properties.UnitFileState === "enabled-runtime";
   if (!active && !enabled) return "unrelated";
+  if (
+    enabledByActivationPath &&
+    (properties.ExecStart === "" || properties.UnitFileState === "not-found")
+  ) {
+    return "block-ambiguous-executable";
+  }
 
   const executablePaths = extractExecStartPaths(properties.ExecStart);
+  if (executablePaths.length === 0) {
+    return properties.ExecStart === "" ? "unrelated" : "block-ambiguous-executable";
+  }
   const gatewayPaths = executablePaths.filter(
     (candidate) => path.basename(candidate) === "openshell-gateway",
   );

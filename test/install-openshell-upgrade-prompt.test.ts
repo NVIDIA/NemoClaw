@@ -220,6 +220,7 @@ exit 0
     source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
     info() { printf '[INFO] %s\\n' "$*"; }
     warn() { printf '[WARN] %s\\n' "$*"; }
+    require_no_competing_openshell_gateway_user_service() { :; }
     _CLI_BIN=nemoclaw
     HOME="${home}"
     NEMOCLAW_SOURCE_ROOT="${currentSource}"

@@ -322,7 +322,7 @@ function effectiveHome(home: string | undefined, env: NodeJS.ProcessEnv | undefi
 }
 
 export function getOpenShellUserConfigHome(home = os.homedir(), env?: NodeJS.ProcessEnv): string {
-  const configured = env?.XDG_CONFIG_HOME?.trim();
+  const configured = env?.XDG_CONFIG_HOME;
   return configured && path.isAbsolute(configured)
     ? path.normalize(configured)
     : path.join(home, ".config");
@@ -344,7 +344,7 @@ function getNemoclawOpenShellGatewayUserServiceBinaryPaths(
   home = os.homedir(),
   env?: NodeJS.ProcessEnv,
 ): string[] {
-  const configured = env?.XDG_BIN_HOME?.trim();
+  const configured = env?.XDG_BIN_HOME;
   const userBinHome =
     configured && path.isAbsolute(configured)
       ? path.normalize(configured)
@@ -451,6 +451,16 @@ function runSystemctlUser(
 }
 
 const SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS = 10_000;
+
+const SYSTEMD_USER_MANAGER_UNIT_PATH_ARGS = [
+  "--user",
+  "--json=short",
+  "get-property",
+  "org.freedesktop.systemd1",
+  "/org/freedesktop/systemd1",
+  "org.freedesktop.systemd1.Manager",
+  "UnitPath",
+] as const;
 
 const OPENSHELL_HOMEBREW_FORMULA_ABSENT = 65;
 const OPENSHELL_HOMEBREW_FORMULA_REPAIR = 66;
@@ -741,27 +751,64 @@ function userManagerLooksUnavailable(reason: string): boolean {
   );
 }
 
-function findSystemdUserServiceActivationPath(
-  service: Pick<OpenShellGatewayUserServiceTarget, "manager">,
-  home: string,
-  env: NodeJS.ProcessEnv,
-  existsSync: (filePath: string) => boolean,
-  lstatSync: typeof fs.lstatSync,
-  readdirSync: typeof fs.readdirSync,
-): string | null {
-  if (service.manager !== "systemd") return null;
-  if (env.SYSTEMD_UNIT_PATH?.trim()) {
+interface SystemdUserServiceActivation {
+  activationPath: string;
+  serviceName: string;
+}
+
+function formatDiagnosticPath(filePath: string): string {
+  return JSON.stringify(filePath).replace(
+    /[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+function parseSystemdUserManagerUnitPaths(output: string): string[] | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const keys = Object.keys(value).sort();
+  if (keys.length !== 2 || keys[0] !== "data" || keys[1] !== "type") return null;
+  const result = value as Record<string, unknown>;
+  if (
+    result.type !== "as" ||
+    !Array.isArray(result.data) ||
+    result.data.length === 0 ||
+    result.data.some(
+      (unitRoot) =>
+        typeof unitRoot !== "string" ||
+        unitRoot.length === 0 ||
+        unitRoot.includes("\0") ||
+        !path.isAbsolute(unitRoot),
+    )
+  ) {
+    return null;
+  }
+  return result.data as string[];
+}
+
+function systemdUserServiceFallbackUnitRoots(home: string, env: NodeJS.ProcessEnv): string[] {
+  if (env.SYSTEMD_UNIT_PATH) {
     throw new OpenShellGatewayServiceTrustError(
       "SYSTEMD_UNIT_PATH overrides the systemd user unit search path, so NemoClaw cannot prove that no gateway service can activate.",
     );
   }
-  const configDirectories = (env.XDG_CONFIG_DIRS?.trim() || "/etc/xdg").split(":").filter(Boolean);
-  const dataHome = env.XDG_DATA_HOME?.trim();
+  const configDirectories = (env.XDG_CONFIG_DIRS || "/etc/xdg").split(":").filter(Boolean);
+  const configHome = env.XDG_CONFIG_HOME;
+  const effectiveConfigHome =
+    configHome && path.isAbsolute(configHome)
+      ? path.normalize(configHome)
+      : path.join(home, ".config");
+  const dataHome = env.XDG_DATA_HOME;
   const effectiveDataHome =
     dataHome && path.isAbsolute(dataHome)
       ? path.normalize(dataHome)
       : path.join(home, ".local", "share");
-  const configuredDataDirectories = (env.XDG_DATA_DIRS?.trim() || "/usr/local/share:/usr/share")
+  const configuredDataDirectories = (env.XDG_DATA_DIRS || "/usr/local/share:/usr/share")
     .split(":")
     .filter(Boolean);
   if (
@@ -773,8 +820,8 @@ function findSystemdUserServiceActivationPath(
     );
   }
   const roots = [
-    path.join(getOpenShellUserConfigHome(home, env), "systemd", "user"),
-    path.join(getOpenShellUserConfigHome(home, env), "systemd", "user.control"),
+    path.join(effectiveConfigHome, "systemd", "user"),
+    path.join(effectiveConfigHome, "systemd", "user.control"),
     path.join(effectiveDataHome, "systemd", "user"),
     "/etc/systemd/user",
     "/run/systemd/user",
@@ -788,7 +835,7 @@ function findSystemdUserServiceActivationPath(
       path.join(path.normalize(directory), "systemd", "user"),
     ),
   ];
-  const runtimeDir = env.XDG_RUNTIME_DIR?.trim();
+  const runtimeDir = env.XDG_RUNTIME_DIR;
   const effectiveRuntimeDir =
     runtimeDir && path.isAbsolute(runtimeDir)
       ? path.normalize(runtimeDir)
@@ -805,35 +852,94 @@ function findSystemdUserServiceActivationPath(
       path.join(effectiveRuntimeDir, "systemd", "generator.late"),
     );
   }
-  const serviceNames = [OPENSHELL_GATEWAY_USER_SERVICE, NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE];
+  return roots;
+}
+
+function assertMissingActivationRootIsSafe(
+  root: string,
+  lstatSync: typeof fs.lstatSync,
+  readdirSync: typeof fs.readdirSync,
+): void {
+  let candidate = root;
+  while (true) {
+    try {
+      const candidateStat = lstatSync(candidate);
+      if (candidate === root) {
+        throw new OpenShellGatewayServiceTrustError(
+          `Could not inspect OpenShell gateway user service root ${root}.`,
+        );
+      }
+      try {
+        readdirSync(candidate, { withFileTypes: true });
+        return;
+      } catch (error) {
+        const code =
+          error && typeof error === "object" && "code" in error ? String(error.code) : null;
+        if (!candidateStat.isSymbolicLink() && code === "ENOTDIR") return;
+        throw new OpenShellGatewayServiceTrustError(
+          `Could not inspect OpenShell gateway user service root ${root}: ${formatError(error)}`,
+        );
+      }
+    } catch (error) {
+      if (error instanceof OpenShellGatewayServiceTrustError) throw error;
+      const code =
+        error && typeof error === "object" && "code" in error ? String(error.code) : null;
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        throw new OpenShellGatewayServiceTrustError(
+          `Could not inspect OpenShell gateway user service root ${root}: ${formatError(error)}`,
+        );
+      }
+    }
+    const parent = path.dirname(candidate);
+    if (parent === candidate) return;
+    candidate = parent;
+  }
+}
+
+function discoverSystemdUserServiceActivations(
+  home: string,
+  env: NodeJS.ProcessEnv,
+  lstatSync: typeof fs.lstatSync,
+  readdirSync: typeof fs.readdirSync,
+  managerUnitRoots?: readonly string[],
+): SystemdUserServiceActivation[] {
+  const roots = managerUnitRoots ?? systemdUserServiceFallbackUnitRoots(home, env);
+  const activations = new Map<string, string>();
   for (const root of new Set(roots)) {
+    if (!path.isAbsolute(root)) {
+      throw new OpenShellGatewayServiceTrustError(
+        "Could not inspect a relative systemd user service activation root.",
+      );
+    }
     let targetDirectories: string[];
     try {
       targetDirectories = readdirSync(root, { withFileTypes: true })
-        .filter(
-          (entry) =>
-            (entry.isDirectory() || entry.isSymbolicLink()) &&
-            (entry.name.endsWith(".wants") ||
-              entry.name.endsWith(".requires") ||
-              entry.name.endsWith(".upholds")),
-        )
+        .filter((entry) => {
+          if (
+            !entry.name.endsWith(".wants") &&
+            !entry.name.endsWith(".requires") &&
+            !entry.name.endsWith(".upholds")
+          ) {
+            return false;
+          }
+          if (entry.isDirectory() || entry.isSymbolicLink()) return true;
+          try {
+            const entryStat = lstatSync(path.join(root, entry.name));
+            return entryStat.isDirectory() || entryStat.isSymbolicLink();
+          } catch (error) {
+            throw new OpenShellGatewayServiceTrustError(
+              `Could not inspect OpenShell gateway user service dependency entry ${path.join(root, entry.name)}: ${formatError(error)}`,
+            );
+          }
+        })
         .map((entry) => entry.name);
     } catch (error) {
+      if (error instanceof OpenShellGatewayServiceTrustError) throw error;
       const code =
         error && typeof error === "object" && "code" in error ? String(error.code) : null;
       if (code === "ENOENT" || code === "ENOTDIR") {
-        try {
-          lstatSync(root);
-        } catch (statError) {
-          const statCode =
-            statError && typeof statError === "object" && "code" in statError
-              ? String(statError.code)
-              : null;
-          if (statCode === "ENOENT" || statCode === "ENOTDIR") continue;
-          throw new OpenShellGatewayServiceTrustError(
-            `Could not inspect OpenShell gateway user service root ${root}: ${formatError(statError)}`,
-          );
-        }
+        assertMissingActivationRootIsSafe(root, lstatSync, readdirSync);
+        continue;
       }
       throw new OpenShellGatewayServiceTrustError(
         `Could not inspect OpenShell gateway user service root ${root}: ${formatError(error)}`,
@@ -849,24 +955,43 @@ function findSystemdUserServiceActivationPath(
           `Could not inspect OpenShell gateway user service dependency directory ${targetPath}: ${formatError(error)}`,
         );
       }
-      for (const serviceName of serviceNames) {
-        const candidate = path.join(root, targetDirectory, `${serviceName}.service`);
-        if (targetEntries.includes(`${serviceName}.service`)) return candidate;
-        if (existsSync(candidate)) return candidate;
-        try {
-          if (lstatSync(candidate).isSymbolicLink()) return candidate;
-        } catch (error) {
-          const code =
-            error && typeof error === "object" && "code" in error ? String(error.code) : null;
-          if (code === "ENOENT" || code === "ENOTDIR") continue;
+      for (const serviceName of targetEntries) {
+        if (!serviceName.endsWith(".service")) continue;
+        if (!isSafeSystemdServiceName(serviceName)) {
           throw new OpenShellGatewayServiceTrustError(
-            `Could not inspect OpenShell gateway user service activation path ${candidate}: ${formatError(error)}`,
+            "Could not inspect a systemd user service activation path because the service name is invalid.",
           );
+        }
+        if (!activations.has(serviceName)) {
+          activations.set(serviceName, path.join(targetPath, serviceName));
         }
       }
     }
   }
-  return null;
+  return [...activations].map(([serviceName, activationPath]) => ({
+    activationPath,
+    serviceName,
+  }));
+}
+
+function findSystemdUserServiceActivation(
+  service: Pick<OpenShellGatewayUserServiceTarget, "manager">,
+  home: string,
+  env: NodeJS.ProcessEnv,
+  lstatSync: typeof fs.lstatSync,
+  readdirSync: typeof fs.readdirSync,
+): SystemdUserServiceActivation | null {
+  if (service.manager !== "systemd") return null;
+  const activations = discoverSystemdUserServiceActivations(home, env, lstatSync, readdirSync);
+  return (
+    activations.find(
+      ({ serviceName }) =>
+        serviceName === `${OPENSHELL_GATEWAY_USER_SERVICE}.service` ||
+        serviceName === `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    ) ??
+    activations[0] ??
+    null
+  );
 }
 
 function parseSystemctlShow(
@@ -920,43 +1045,44 @@ function parseActiveSystemdServiceNames(output: string): string[] | null {
   return names;
 }
 
-function parseEnabledSystemdServiceNames(output: string): string[] | null {
-  const names: string[] = [];
-  for (const rawLine of output.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    const columns = line.split(/\s+/);
-    if (
-      columns.length < 2 ||
-      columns.length > 3 ||
-      !isSafeSystemdServiceName(columns[0]) ||
-      (columns[1] !== "enabled" && columns[1] !== "enabled-runtime")
-    ) {
-      return null;
-    }
-    names.push(columns[0]);
-  }
-  return names;
-}
-
-function assertNoCanonicalGatewayActivationPath(
+function assertNoOfflineGatewayActivationPath(
   gatewayPort: number,
   opts: OpenShellGatewayUserServiceOptions,
 ): void {
-  if (gatewayPort !== 8080) return;
   const env = opts.env ?? process.env;
   const home = effectiveHome(opts.home, opts.env);
-  const activationPath = findSystemdUserServiceActivationPath(
-    { manager: "systemd" },
-    home,
-    env,
-    opts.existsSync ?? fs.existsSync,
-    opts.lstatSync ?? fs.lstatSync,
-    opts.readdirSync ?? fs.readdirSync,
+  let activations: SystemdUserServiceActivation[];
+  try {
+    activations = discoverSystemdUserServiceActivations(
+      home,
+      env,
+      opts.lstatSync ?? fs.lstatSync,
+      opts.readdirSync ?? fs.readdirSync,
+    );
+  } catch {
+    throw new OpenShellGatewayServiceTrustError(
+      "Could not inspect systemd user service activation paths while the user manager is unavailable.",
+    );
+  }
+  const canonicalNames = new Set([
+    `${OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+  ]);
+  const canonicalActivation = activations.find(({ serviceName }) =>
+    canonicalNames.has(serviceName),
   );
-  if (!activationPath) return;
+  const noncanonicalActivation = activations.find(
+    ({ serviceName }) => !canonicalNames.has(serviceName),
+  );
+  const activation = gatewayPort === 8080 ? canonicalActivation : null;
+  if (activation) {
+    throw new OpenShellGatewayServiceTrustError(
+      `OpenShell gateway user service activation path ${formatDiagnosticPath(activation.activationPath)} can later claim port ${String(gatewayPort)}.`,
+    );
+  }
+  if (!noncanonicalActivation) return;
   throw new OpenShellGatewayServiceTrustError(
-    `OpenShell gateway user service activation path ${activationPath} can later claim port ${String(gatewayPort)}.`,
+    `The systemd user manager is unavailable, and a noncanonical enabled user service cannot be qualified for selected port ${String(gatewayPort)}.`,
   );
 }
 
@@ -1006,7 +1132,7 @@ export function assertNoCompetingOpenShellGatewayUserService(
   const env = opts.env ?? process.env;
   const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
   if (!commandExists("systemctl")) {
-    assertNoCanonicalGatewayActivationPath(gatewayPort, opts);
+    assertNoOfflineGatewayActivationPath(gatewayPort, opts);
     return;
   }
   const commandOptions = { env, spawnSyncImpl: opts.spawnSyncImpl ?? spawnSync };
@@ -1024,42 +1150,59 @@ export function assertNoCompetingOpenShellGatewayUserService(
   );
   if (!active.ok) {
     if (userManagerLooksUnavailable(active.reason ?? "")) {
-      assertNoCanonicalGatewayActivationPath(gatewayPort, opts);
+      assertNoOfflineGatewayActivationPath(gatewayPort, opts);
       return;
     }
     throw new OpenShellGatewayServiceTrustError(
       "Could not inspect same-user OpenShell gateway services during active enumeration.",
     );
   }
-  const enabled = runSystemctlUser(
-    [
-      "list-unit-files",
-      "--type=service",
-      "--state=enabled,enabled-runtime",
-      "--no-legend",
-      "--plain",
-      "--no-pager",
-    ],
-    commandOptions,
-    SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
-  );
-  if (!enabled.ok) {
-    throw new OpenShellGatewayServiceTrustError(
-      "Could not inspect same-user OpenShell gateway services during enabled enumeration.",
-    );
-  }
   const activeNames = parseActiveSystemdServiceNames(active.stdout ?? "");
-  const enabledNames = parseEnabledSystemdServiceNames(enabled.stdout ?? "");
-  if (!activeNames || !enabledNames) {
+  if (!activeNames) {
     throw new OpenShellGatewayServiceTrustError(
       "Could not inspect same-user OpenShell gateway services because systemd returned malformed service enumeration metadata.",
     );
   }
+  if (!commandExists("busctl")) {
+    throw new OpenShellGatewayServiceTrustError(
+      "Could not inspect same-user OpenShell gateway services during manager unit-path enumeration.",
+    );
+  }
+  const managerUnitPath = runCommand(
+    "busctl",
+    [...SYSTEMD_USER_MANAGER_UNIT_PATH_ARGS],
+    { ...commandOptions, env: { ...env, LC_ALL: "C" } },
+    SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
+  );
+  const managerUnitRoots = managerUnitPath.ok
+    ? parseSystemdUserManagerUnitPaths(managerUnitPath.stdout ?? "")
+    : null;
+  if (!managerUnitRoots) {
+    throw new OpenShellGatewayServiceTrustError(
+      "Could not inspect same-user OpenShell gateway services during manager unit-path enumeration.",
+    );
+  }
+  const home = effectiveHome(opts.home, opts.env);
+  let activations: SystemdUserServiceActivation[];
+  try {
+    activations = discoverSystemdUserServiceActivations(
+      home,
+      env,
+      opts.lstatSync ?? fs.lstatSync,
+      opts.readdirSync ?? fs.readdirSync,
+      managerUnitRoots,
+    );
+  } catch {
+    throw new OpenShellGatewayServiceTrustError(
+      "Could not inspect same-user OpenShell gateway services during activation-path enumeration.",
+    );
+  }
+  const activationNames = new Set(activations.map(({ serviceName }) => serviceName));
   const canonicalNames = new Set([
     `${OPENSHELL_GATEWAY_USER_SERVICE}.service`,
     `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`,
   ]);
-  const serviceNames = [...new Set([...activeNames, ...enabledNames])].filter(
+  const serviceNames = [...new Set([...activeNames, ...activationNames])].filter(
     (serviceName) => !canonicalNames.has(serviceName),
   );
   for (const serviceName of serviceNames) {
@@ -1079,11 +1222,11 @@ export function assertNoCompetingOpenShellGatewayUserService(
         "Could not inspect same-user OpenShell gateway services during service metadata query.",
       );
     }
-    const home = effectiveHome(opts.home, opts.env);
     assertCompetingServiceVerdictAllowed(
       serviceName,
       gatewayPort,
       classifyOpenShellGatewayServiceMetadata({
+        enabledByActivationPath: activationNames.has(serviceName),
         gatewayPort,
         metadata: metadata.stdout ?? "",
         trustedExecutablePaths: getNemoclawOpenShellGatewayUserServiceBinaryPaths(home, env),
@@ -1494,23 +1637,35 @@ export function stopOpenShellGatewayUserService(
   ): OpenShellGatewayUserServiceStopResult => {
     const userManagerUnavailable =
       service.manager === "systemd" && userManagerLooksUnavailable(managerDiagnostic ?? "");
-    const activationPath = userManagerUnavailable
-      ? findSystemdUserServiceActivationPath(
+    let activation: SystemdUserServiceActivation | null = null;
+    let activationScanFailed = false;
+    if (userManagerUnavailable) {
+      try {
+        activation = findSystemdUserServiceActivation(
           service,
           home,
           env,
-          existsSync,
           opts.lstatSync ?? fs.lstatSync,
           opts.readdirSync ?? fs.readdirSync,
-        )
-      : null;
+        );
+      } catch {
+        activationScanFailed = true;
+      }
+    }
     const fallbackBlocked =
       standaloneFallbackBlocked ||
       (!stopped && service.manager === "homebrew") ||
-      activationPath !== null;
-    const reportedReason = activationPath
-      ? `${reason ?? "The systemd user manager is unavailable"}; ${activationPath} can activate a gateway user service that can later claim port 8080`
-      : reason;
+      activation !== null ||
+      activationScanFailed;
+    const reportedReason = activationScanFailed
+      ? `${reason ?? "The systemd user manager is unavailable"}; could not inspect systemd user service activation paths`
+      : activation &&
+          (activation.serviceName === `${OPENSHELL_GATEWAY_USER_SERVICE}.service` ||
+            activation.serviceName === `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`)
+        ? `${reason ?? "The systemd user manager is unavailable"}; ${formatDiagnosticPath(activation.activationPath)} can activate a gateway user service that can later claim port 8080`
+        : activation
+          ? `${reason ?? "The systemd user manager is unavailable"}; a noncanonical enabled user service cannot be qualified for selected port 8080`
+          : reason;
     return {
       attempted: true,
       standaloneFallbackAllowed: !stopped && !fallbackBlocked && userManagerUnavailable,

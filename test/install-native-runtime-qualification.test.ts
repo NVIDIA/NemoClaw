@@ -230,6 +230,11 @@ prepare_installer_host() { record prepare-installer-host; }
 step() { record "step-$1-$2"; }
 install_nodejs() { record install-nodejs; }
 ensure_supported_runtime() { record ensure-supported-runtime; }
+require_stable_installer_gateway_management() {
+  record require-stable-installer-gateway-management
+  _NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE=managed
+}
+ensure_openshell_build_deps() { record ensure-openshell-build-deps; }
 resolve_pending_express_wsl_provider() { record resolve-pending-express-wsl-provider; }
 ensure_station_express_pair() { record ensure-station-express-pair; }
 fix_npm_permissions() { record fix-npm-permissions; }
@@ -252,6 +257,8 @@ main --non-interactive --yes-i-accept-third-party-software
       "step-1-Node.js",
       "install-nodejs",
       "ensure-supported-runtime",
+      "require-stable-installer-gateway-management",
+      "ensure-openshell-build-deps",
       "resolve-pending-express-wsl-provider",
       "ensure-station-express-pair",
       "step-2-NemoClaw CLI",
@@ -423,7 +430,13 @@ main --non-interactive --yes-i-accept-third-party-software
     expect(fs.statSync(path.join(artifactDirectory, "installer.sh")).size).toBeLessThanOrEqual(
       524288,
     );
-    expect(receiptNames.filter((name) => name.endsWith(".json")).every((receiptName) => fs.statSync(path.join(artifactDirectory, receiptName)).size <= 4096)).toBe(true);
+    expect(
+      receiptNames
+        .filter((name) => name.endsWith(".json"))
+        .every(
+          (receiptName) => fs.statSync(path.join(artifactDirectory, receiptName)).size <= 4096,
+        ),
+    ).toBe(true);
     expect(
       JSON.parse(fs.readFileSync(path.join(artifactDirectory, "invocation.json"), "utf-8")),
     ).toMatchObject({
