@@ -26,10 +26,10 @@ const TRANSACTION = path.join(
 );
 const START = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 
-function runHermesRootMcpStartup(commitStatus: 0 | 1) {
+function runHermesRootMcpStartup(opts: { commitStatus: 0 | 1; dashboardStatus?: 0 | 1 }) {
   const source = fs.readFileSync(START, "utf-8");
   const startupBlock = source.match(
-    /^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nfinalize_tirith_marker_retry\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
+    /^prepare_hermes_dashboard_home sandbox:sandbox \|\| exit 1$\n[\s\S]*?^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nfinalize_tirith_marker_retry\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
   )?.[0];
   expect(startupBlock).toBeDefined();
   const startupScript = startupBlock as string;
@@ -42,11 +42,12 @@ function runHermesRootMcpStartup(commitStatus: 0 | 1) {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       'trace() { printf "%s\\n" "$*"; }',
+      `prepare_hermes_dashboard_home() { trace dashboard-profile; return ${opts.dashboardStatus ?? 0}; }`,
       'launch_hermes_gateway() { GATEWAY_PID=4242; trace "launch:$GATEWAY_PID"; }',
       "start_gateway_log_stream() { trace log-stream; }",
       'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
       "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }\nfinalize_tirith_marker_retry() { trace tirith-finalize; }",
-      `commit_hermes_mcp_applied_if_pending() { trace commit-applied; return ${commitStatus}; }`,
+      `commit_hermes_mcp_applied_if_pending() { trace commit-applied; return ${opts.commitStatus}; }`,
       "stop_hermes_gateway_fail_closed() { trace stop-fail-closed; }",
       "restore_hermes_config_permissions_after_dashboard_start() { trace restore-permissions; }",
       startupScript,
@@ -590,10 +591,11 @@ print(json.dumps({"state": state, "config_reads": config_reads}))
     expect(JSON.parse(result.stdout)).toEqual({ state: "current", config_reads: 1 });
   });
 
-  it("commits pending state after root gateway health before continuing startup", () => {
-    const success = runHermesRootMcpStartup(0);
+  it("prepares the dashboard profile before root gateway health and applied-state commit", () => {
+    const success = runHermesRootMcpStartup({ commitStatus: 0 });
     expect(success.status, success.stderr).toBe(0);
     expect(success.stdout.trim().split("\n")).toEqual([
+      "dashboard-profile",
       "launch:4242",
       "log-stream",
       "health:4242",
@@ -605,10 +607,18 @@ print(json.dumps({"state": state, "config_reads": config_reads}))
     ]);
   });
 
+  it("fails root startup closed when dashboard profile preparation fails", () => {
+    const failure = runHermesRootMcpStartup({ commitStatus: 0, dashboardStatus: 1 });
+    expect(failure.status).toBe(1);
+    expect(failure.stdout.trim().split("\n")).toEqual(["dashboard-profile"]);
+    expect(failure.stdout).not.toContain("launch:");
+  });
+
   it("fails root startup closed when the applied-state commit fails after gateway health", () => {
-    const failure = runHermesRootMcpStartup(1);
+    const failure = runHermesRootMcpStartup({ commitStatus: 1 });
     expect(failure.status).toBe(1);
     expect(failure.stdout.trim().split("\n")).toEqual([
+      "dashboard-profile",
       "launch:4242",
       "log-stream",
       "health:4242",
