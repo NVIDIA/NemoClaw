@@ -58,7 +58,9 @@ const foreignProviderId = "99999999-8888-4777-8666-555555555555";
 let providerGetCount = 0;
 let observedProviderName = null;
 let attachmentAttemptedThisProcess = false;
+let credentialUpdatedThisProcess = false;
 let observedCredentialAbsentThisProcess = false;
+let credentialRepublishBeforeObservationCountThisProcess = 0;
 let credentialRepublishAfterAbsenceCountThisProcess = 0;
 let credentialFreeRefreshAfterAbsenceCountThisProcess = 0;
 
@@ -116,7 +118,19 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         throw new Error("Unexpected provider update: " + args.join(" "));
       }
       setProviderVersion(providerVersion() + 1);
-      if (isCredentialUpdate) mark("updated");
+      if (isCredentialUpdate) {
+        credentialUpdatedThisProcess = true;
+        mark("updated");
+      }
+      if (
+        crashAfter === "credential-projection-coalesced" &&
+        isCredentialUpdate &&
+        marked("bound-policy") &&
+        !observedCredentialAbsentThisProcess
+      ) {
+        credentialRepublishBeforeObservationCountThisProcess += 1;
+        fs.appendFileSync(marker("republish-before-observation"), "republish\n", { mode: 0o600 });
+      }
       if (
         crashAfter === "credential-projection-coalesced" &&
         isCredentialUpdate &&
@@ -205,17 +219,17 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const isPreupdateObservation =
     isObservation &&
     providerPresentAtStart &&
-    !marked("updated") &&
+    !credentialUpdatedThisProcess &&
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
   if (crashAfter === "credential-projection-coalesced" && isObservation) {
-    if (credentialRepublishAfterAbsenceCountThisProcess === 0) {
+    if (credentialRepublishBeforeObservationCountThisProcess === 0) {
       observedCredentialAbsentThisProcess = true;
       mark("credential-observed-absent");
     }
     return {
       status: 0,
-      stdout: credentialRepublishAfterAbsenceCountThisProcess > 0 ? "v" + providerVersion() : "absent",
+      stdout: credentialRepublishBeforeObservationCountThisProcess > 0 ? "v" + providerVersion() : "absent",
       stderr: "",
     };
   }
@@ -571,10 +585,11 @@ describe("MCP add crash consistency", () => {
       expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
       expect(combinedOutput).not.toContain("host-only-secret");
-      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(false);
       const credentialRepublishCount = fs
-        .readFileSync(path.join(home, "republish-after-observed-absence.marker"), "utf8")
+        .readFileSync(path.join(home, "republish-before-observation.marker"), "utf8")
         .split("\n")
         .filter(Boolean).length;
       expect(credentialRepublishCount).toBe(1);

@@ -435,6 +435,17 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
+    if (Object.hasOwn(adapterEnvValues, entry.env[0])) {
+      // OpenShell 0.0.106 can miss a credential update published before the
+      // bound policy generation. Republish while that policy is active and
+      // before the first readiness exec; the exact provider identity is
+      // rechecked before and after this update-only mutation.
+      upsertMcpProvider(entry.providerName ?? "", options.env, {
+        allowExisting: true,
+        expectedProviderId: entry.providerId,
+        requireExisting: true,
+      });
+    }
     waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? {
