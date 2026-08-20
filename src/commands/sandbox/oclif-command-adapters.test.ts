@@ -444,44 +444,73 @@ describe("sandbox oclif command adapters", () => {
     expect(mocks.shieldsDown).toHaveBeenCalledOnce();
   });
 
-  it("rejects schema-5 Shields commands from inside their lifecycle deadline gate (#9203)", async ({
+  it("rejects schema-5 Shields commands through their owned lifecycle fence (#9203)", async ({
     onTestFinished,
   }) => {
-    const guard = vi
-      .spyOn(portableAgentLifecycle, "assertHermesPortableCommandUnavailable")
-      .mockImplementation((_sandboxName, commandId) => {
-        throw new Error(`rejected ${commandId}`);
-      });
-    onTestFinished(() => guard.mockRestore());
-    mocks.shieldsDown.mockImplementationOnce(
-      (_sandboxName: string, options: { assertCommandAvailable?: () => void }) =>
-        options.assertCommandAvailable?.(),
+    fs.writeFileSync(
+      path.join(stateDir, "shields-timer-alpha.json"),
+      JSON.stringify({
+        pid: 2_147_483_647,
+        sandboxName: "alpha",
+        snapshotPath: path.join(stateDir, "snapshot.yaml"),
+        restoreAt: new Date(Date.now() - 60_000).toISOString(),
+        processToken: "a".repeat(32),
+      }),
     );
-    mocks.shieldsUp.mockImplementationOnce(
-      (_sandboxName: string, options: { assertCommandAvailable?: () => void }) =>
-        options.assertCommandAvailable?.(),
+    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+      kind: "hermes",
+      snapshot: {
+        receipt: {
+          phase: "active",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "generation-1",
+          container: { sandboxId: "sandbox-id" },
+        },
+      } as never,
+    });
+    const mutation = vi.fn();
+    mocks.shieldsDown.mockImplementation(
+      (_sandboxName: string, options: { assertCommandAvailable?: () => void }) => {
+        options.assertCommandAvailable?.();
+        mutation();
+      },
     );
-    mocks.shieldsStatus.mockImplementationOnce(
+    mocks.shieldsUp.mockImplementation(
+      (_sandboxName: string, options: { assertCommandAvailable?: () => void }) => {
+        options.assertCommandAvailable?.();
+        mutation();
+      },
+    );
+    mocks.shieldsStatus.mockImplementation(
       (
         _sandboxName: string,
         _allowInlineRecovery: boolean,
         options: { assertCommandAvailable?: () => void },
-      ) => options.assertCommandAvailable?.(),
+      ) => {
+        options.assertCommandAvailable?.();
+        mutation();
+      },
     );
+    onTestFinished(() => {
+      mocks.shieldsDown.mockReset();
+      mocks.shieldsUp.mockReset();
+      mocks.shieldsStatus.mockReset();
+    });
 
     await expect(ShieldsDownCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      "rejected sandbox:shields:down",
+      "not supported for an experimental Hermes portable sandbox",
     );
     await expect(ShieldsUpCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      "rejected sandbox:shields:up",
+      "not supported for an experimental Hermes portable sandbox",
     );
     await expect(ShieldsStatusCommand.run(["alpha"], rootDir)).rejects.toThrow(
-      "rejected sandbox:shields:status",
+      "not supported for an experimental Hermes portable sandbox",
     );
 
     expect(mocks.shieldsDown).toHaveBeenCalledOnce();
     expect(mocks.shieldsUp).toHaveBeenCalledOnce();
     expect(mocks.shieldsStatus).toHaveBeenCalledOnce();
+    expect(mutation).not.toHaveBeenCalled();
   });
 
   it("translates shields exit sentinels into exit codes without a traceback (#7382)", async () => {

@@ -77,6 +77,7 @@ export abstract class NemoClawCommand extends Command {
       typeof commandId === "string" &&
       sandboxName &&
       (commandId === "launch" || commandId.startsWith("sandbox:")) &&
+      !portablePolicy?.ownsLifecycleFence &&
       !portablePolicy?.helpRequested
     ) {
       assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
@@ -153,11 +154,14 @@ export abstract class NemoClawCommand extends Command {
     this.lifecycleParserOutput = null;
 
     const commandId = this.id;
+    const portablePolicy =
+      typeof commandId === "string" ? classifyHermesPortableCommand(commandId, this.argv) : null;
     const parsedSandboxName = (parsed.args as Record<string, unknown>).sandboxName;
     if (
       typeof commandId === "string" &&
       typeof parsedSandboxName === "string" &&
-      (commandId === "launch" || commandId.startsWith("sandbox:"))
+      (commandId === "launch" || commandId.startsWith("sandbox:")) &&
+      !portablePolicy?.ownsLifecycleFence
     ) {
       assertHermesPortableCommandSupported(commandId, parsedSandboxName, this.argv);
     }
