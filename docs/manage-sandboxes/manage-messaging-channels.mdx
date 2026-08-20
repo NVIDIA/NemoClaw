@@ -21,7 +21,9 @@ For WeChat, the cached-token shortcut applies.
 Remove WeChat first when you intend to acquire a fresh account through a new QR scan.
 
 For Google Chat, re-add the channel and paste the replacement service-account JSON.
-NemoClaw updates the gateway-side refresh material, and the sandbox continues to receive only gateway-minted access tokens.
+NemoClaw updates the gateway-side refresh material.
+The sandbox keeps only the OpenShell credential placeholder.
+OpenShell keeps refreshed access tokens at the gateway and substitutes them at approved egress boundaries.
 
 <AgentOnly variant="hermes">
 Re-adding Google Chat prompts again for the project ID, complete Pub/Sub subscription name, and email sender allowlist.

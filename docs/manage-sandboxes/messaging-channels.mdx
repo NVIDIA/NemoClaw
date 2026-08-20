@@ -40,7 +40,7 @@ Interfaces, defaults, and supported features can change, and NVIDIA does not rec
 | Telegram | `TELEGRAM_BOT_TOKEN` | DM allowlist, group policy, mention mode | [Set Up Telegram](set-up-telegram) |
 | Discord | `DISCORD_BOT_TOKEN` | Server ID, user ID, mention mode | [Set Up Discord](set-up-discord) |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | User and channel allowlists | [Set Up Slack](set-up-slack) |
-| Google Chat | Service-account JSON | OpenClaw webhook and user IDs, or Hermes Pub/Sub subscription and email allowlist | [Set Up Google Chat](set-up-google-chat) |
+| Google Chat | Service-account JSON; OpenClaw public HTTPS endpoint and personal-account app principal when applicable; Hermes Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist | OpenClaw user ID allowlist instead of pairing | [Set Up Google Chat](set-up-google-chat) |
 | WeChat | Host-side QR scan | DM allowlist | [Set Up WeChat](set-up-wechat) |
 | WhatsApp | In-sandbox QR pairing | Hermes sender allowlist and non-interactive channel selection | [Set Up WhatsApp](set-up-whatsapp) |
 | Microsoft Teams | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | User allowlist, webhook port, mention mode | [Set Up Microsoft Teams](set-up-microsoft-teams) |
@@ -51,8 +51,8 @@ Refer to [Set Up Google Chat](set-up-google-chat) for the interactive tunnel, au
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-Google Chat requires a service-account JSON key, a Google Cloud project ID, and a complete Pub/Sub subscription name for Hermes.
-Use email addresses for the optional sender allowlist.
+Google Chat requires a service-account JSON key, a Google Cloud project ID, a complete Pub/Sub subscription name, and a comma-separated email sender allowlist for Hermes.
+If you omit the email allowlist, Hermes uses default-deny behavior and rejects all senders.
 Refer to [Set Up Google Chat](set-up-google-chat) for topic publishing, pull subscription, and credential-boundary requirements.
 </AgentOnly>
 

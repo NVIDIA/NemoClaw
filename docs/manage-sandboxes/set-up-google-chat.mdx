@@ -228,7 +228,7 @@ If the webhook returns an error, verify that the public endpoint still ends in `
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-Follow the prompts for the GCP project ID, complete Pub/Sub subscription name, and email sender allowlist.
+Follow the prompts for the Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist.
 Hermes does not create or require a public webhook endpoint.
 OpenShell mints one token with the `chat.bot` and `pubsub` scopes and inserts it into approved requests to `chat.googleapis.com` and `pubsub.googleapis.com`.
 The policy permits only Pub/Sub `pull` and `acknowledge` operations for the configured transport, plus the Google Chat REST operations used for replies.
