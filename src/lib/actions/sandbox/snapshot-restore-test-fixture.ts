@@ -22,6 +22,8 @@ export type OpenshellCaptureResult = {
 };
 export type SandboxRecord = {
   name: string;
+  createdAt?: string;
+  pendingRouteReservation?: true;
   agent?: string | null;
   baselineExclusionTransition?: {
     id: string;
@@ -59,6 +61,7 @@ export type SandboxRecord = {
   credentialEnv?: string | null;
   preferredInferenceApi?: string | null;
   lifecycleGeneration?: string;
+  lifecycleLiveIdentityFingerprint?: string;
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   dashboardPort?: number | null;
@@ -187,7 +190,7 @@ export const isGatewayHealthyMock = vi.fn(() => true);
 export const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 export const stopNimContainerMock = vi.fn();
 export const stopNimContainerByNameMock = vi.fn();
-export const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
+export const parseLiveSandboxNamesMock = vi.fn((_output: string) => new Set(["alpha"]));
 export const waitForRestoredSandboxGatewaySupervisorMock = vi.fn(() => true);
 export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   (
@@ -325,6 +328,8 @@ vi.mock("../../state/registry", () => ({
   getCustomPolicies: getCustomPoliciesMock,
   getDisabledMessagingChannelsFromEntry: vi.fn(() => []),
   getSandbox: getSandboxMock,
+  isRouteOnlySandboxReservation: (entry: SandboxRecord) =>
+    entry.pendingRouteReservation === true && entry.createdAt === undefined,
   listSandboxes: () => ({
     sandboxes: ["alpha", "beta", "gamma"].map((name) => getSandboxMock(name)).filter(Boolean),
     defaultSandbox: "alpha",
