@@ -292,13 +292,25 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`aiohttp==3.14.3`");
     expect(review).toContain("`cryptography==50.0.0`");
     expect(review).toContain("`alibabacloud-dingtalk==2.2.54`");
-    expect(review).toContain("confirms 95 unique third-party package names");
+    expect(review).toContain(
+      "contains 95 unique third-party package names across all retained environment markers",
+    );
+    expect(review).toContain(
+      "Six exported packages—`colorama`, `concurrent-log-handler`, `portalocker`, `pywin32`, `pywinpty`, and `tzdata`—are guarded by `sys_platform == 'win32'`",
+    );
+    expect(review).toContain(
+      "both published base jobs prepared, installed, and compatibility-checked 90 distributions",
+    );
     expect(review).toContain("`agent-client-protocol==0.9.0`");
     expect(review).toContain("PyPI serves no PEP 740 provenance");
     expect(review).toContain("does not validate protocol sessions");
     expect(review).toContain("require separate product acceptance and end-to-end evidence");
     expect(review).toContain("95-package amd64 and arm64 capability-union evidence predates ACP");
-    expect(review).toContain("installed and checked 90 packages on both amd64 and arm64");
+    expect(review).toContain(
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:0d07845fa3b02a0657d28e134eb2e1f4a96cc6260e2538f3d4eafe831c7e5c17",
+    );
+    expect(review).toContain("found 97 installed distributions");
+    expect(review).toContain("contains 95 third-party runtime distributions");
     expect(review).toContain("Tornado `6.5.7` is the lowest version");
     expect(review).toContain("source-distribution-only");
     expect(review).toContain("`mcp==1.28.1`");

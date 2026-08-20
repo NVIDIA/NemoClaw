@@ -459,7 +459,11 @@ describe("Hermes share mount package parity (#2947)", () => {
         [
           "#!/bin/sh",
           `printf '%s\\n' "$*" >> ${JSON.stringify(hermesCalls)}`,
-          'case "$*" in --version|"acp --check") exit 0 ;; *) exit 64 ;; esac',
+          'case "$#" in',
+          '  1) [ "$1" = "--version" ] || exit 64 ;;',
+          '  2) [ "$1" = "acp" ] && [ "$2" = "--check" ] || exit 64 ;;',
+          '  *) exit 64 ;;',
+          "esac",
           "",
         ].join("\n"),
         { mode: 0o700 },
