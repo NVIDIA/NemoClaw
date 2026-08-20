@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { selectAuthorizedChatModel } from "../lib/select-authorized-chat-model.mts";
@@ -9,6 +12,26 @@ const endpoint = "https://inference.example.test/v1";
 const currentModel = "nvidia/nvidia/nemotron-3-ultra";
 
 describe("authorized alternate chat model selection", () => {
+  it("loads through the standalone tsx entrypoint", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.resolve("test/e2e/lib/select-authorized-chat-model.mts"),
+        "--current-model",
+        currentModel,
+        "--endpoint",
+        endpoint,
+      ],
+      { encoding: "utf8", env: { ...process.env, COMPATIBLE_API_KEY: "" } },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("COMPATIBLE_API_KEY is required");
+    expect(result.stderr).not.toContain("SyntaxError");
+  });
+
   it.each([endpoint, "http://127.0.0.1:8000/v1"])(
     "selects the highest-priority catalog model at %s",
     async (permittedEndpoint) => {
@@ -61,7 +84,10 @@ describe("authorized alternate chat model selection", () => {
         apiKey: "test-key",
         currentModel,
         endpoint,
-        fetchModels: () => ({ ok: true, ids: [currentModel, "nvidia/embed-v1"] }),
+        fetchModels: () => ({
+          ok: true,
+          ids: [currentModel, "nvidia/embed-v1"],
+        }),
         probeModel,
       }),
     ).rejects.toThrow("the endpoint listed no alternate chat model");

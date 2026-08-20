@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { probeOpenAiLikeEndpointOptimized } from "../../../src/lib/inference/onboard-probes.ts";
-import { fetchOpenAiLikeModels } from "../../../src/lib/inference/provider-models.ts";
-import { isLoopbackHostname } from "../../../src/lib/core/url-utils.ts";
+import * as onboardProbes from "../../../src/lib/inference/onboard-probes.ts";
+import * as providerModels from "../../../src/lib/inference/provider-models.ts";
+import * as urlUtils from "../../../src/lib/core/url-utils.ts";
 import type { ModelCatalogFetchResult } from "../../../src/lib/onboard/types.ts";
 
 const CHAT_MODEL_HINT = /(?:claude|deepseek|gemma|gpt|kimi|llama|mistral|nemotron|phi|qwen)/iu;
@@ -15,6 +15,9 @@ const PREFERRED_MODELS = [
   "nvidia/nemotron-3-super-120b-a12b",
 ];
 const MAX_CANDIDATES = 6;
+const { probeOpenAiLikeEndpointOptimized } = onboardProbes;
+const { fetchOpenAiLikeModels } = providerModels;
+const { isLoopbackHostname } = urlUtils;
 
 type FetchModels = (endpoint: string, apiKey: string) => ModelCatalogFetchResult;
 type ProbeModel = (
@@ -87,7 +90,9 @@ export async function selectAuthorizedChatModel({
   if (candidates.length === 0) fail("the endpoint listed no alternate chat model");
 
   for (const model of candidates) {
-    const result = await probeModel(endpoint, model, apiKey, { skipResponsesProbe: true });
+    const result = await probeModel(endpoint, model, apiKey, {
+      skipResponsesProbe: true,
+    });
     if (result.ok) return model;
     process.stderr.write(
       `Alternate model candidate ${model} failed validation; trying the next candidate.\n`,
