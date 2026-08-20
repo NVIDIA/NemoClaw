@@ -28,7 +28,7 @@ export const HOST_LOCAL_VLLM_RECIPE_LABEL = "com.nvidia.nemoclaw.serving-recipe"
 export const HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL =
   "com.nvidia.nemoclaw.serving-recipe-digest" as const;
 export const HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE = "host-local-vllm-runtime.json" as const;
-const HOST_LOCAL_VLLM_PORT = 8000;
+const HOST_LOCAL_VLLM_CONTAINER_PORT = 8000;
 const DUAL_STATION_VLLM_ROLE_LABEL = "com.nvidia.nemoclaw.vllm-role";
 
 interface DockerInspectRow {
@@ -308,7 +308,7 @@ export function recoverHostLocalManagedVllmEndpoint(
   const ports = row.NetworkSettings?.Ports;
   const portBindings =
     ports && typeof ports === "object" && !Array.isArray(ports)
-      ? (ports as Record<string, unknown>)["8000/tcp"]
+      ? (ports as Record<string, unknown>)[`${String(HOST_LOCAL_VLLM_CONTAINER_PORT)}/tcp`]
       : null;
   const bindings = Array.isArray(portBindings) ? portBindings : [];
   const loopbackBinding = bindings.find(
@@ -332,6 +332,18 @@ export function recoverHostLocalManagedVllmEndpoint(
   const configuredKeyRows = env.filter(
     (value): value is string => typeof value === "string" && value.startsWith("VLLM_API_KEY="),
   );
+  const loopbackHostPort =
+    loopbackBinding &&
+    typeof (loopbackBinding as { HostPort?: unknown }).HostPort === "string" &&
+    /^\d{4,5}$/u.test((loopbackBinding as { HostPort: string }).HostPort)
+      ? Number((loopbackBinding as { HostPort: string }).HostPort)
+      : Number.NaN;
+  const bridgeHostPort =
+    bridgeBinding &&
+    typeof (bridgeBinding as { HostPort?: unknown }).HostPort === "string" &&
+    /^\d{4,5}$/u.test((bridgeBinding as { HostPort: string }).HostPort)
+      ? Number((bridgeBinding as { HostPort: string }).HostPort)
+      : Number.NaN;
   if (
     row.Id === undefined ||
     typeof row.Id !== "string" ||
@@ -341,8 +353,12 @@ export function recoverHostLocalManagedVllmEndpoint(
     bindings.length !== 2 ||
     !loopbackBinding ||
     !bridgeBinding ||
-    (loopbackBinding as { HostPort?: unknown }).HostPort !== String(HOST_LOCAL_VLLM_PORT) ||
-    (bridgeBinding as { HostPort?: unknown }).HostPort !== String(HOST_LOCAL_VLLM_PORT) ||
+    !Number.isSafeInteger(loopbackHostPort) ||
+    loopbackHostPort < 1024 ||
+    loopbackHostPort > 65_535 ||
+    String(loopbackHostPort) !== (loopbackBinding as { HostPort: string }).HostPort ||
+    bridgeHostPort !== loopbackHostPort ||
+    String(bridgeHostPort) !== (bridgeBinding as { HostPort: string }).HostPort ||
     configuredKeyRows.length !== 1 ||
     typeof authFingerprint !== "string"
   ) {
@@ -364,5 +380,5 @@ export function recoverHostLocalManagedVllmEndpoint(
   ) {
     throw new Error("Managed host-local vLLM authentication is missing or mismatched.");
   }
-  return { baseUrl: `http://127.0.0.1:${String(HOST_LOCAL_VLLM_PORT)}`, apiKey };
+  return { baseUrl: `http://127.0.0.1:${String(loopbackHostPort)}`, apiKey };
 }

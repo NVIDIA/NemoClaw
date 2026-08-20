@@ -581,9 +581,30 @@ export function getManagedVllmProviderState(
     throw new Error("Multiple managed vLLM runtimes are present; refusing to select an endpoint.");
   }
   if (hostLocalEndpoint) {
+    let recoveredUrl: URL;
+    try {
+      recoveredUrl = new URL(hostLocalEndpoint.baseUrl);
+    } catch {
+      throw new Error("Managed host-local vLLM returned an invalid loopback endpoint.");
+    }
+    const recoveredPort = Number(recoveredUrl.port);
+    if (
+      recoveredUrl.protocol !== "http:" ||
+      recoveredUrl.hostname !== "127.0.0.1" ||
+      recoveredUrl.pathname !== "/" ||
+      recoveredUrl.username ||
+      recoveredUrl.password ||
+      recoveredUrl.search ||
+      recoveredUrl.hash ||
+      !Number.isSafeInteger(recoveredPort) ||
+      recoveredPort < 1024 ||
+      recoveredPort > 65_535
+    ) {
+      throw new Error("Managed host-local vLLM returned an invalid loopback endpoint.");
+    }
     return {
       kind: "ready",
-      baseUrl: `${HOST_GATEWAY_URL}:${String(VLLM_PORT)}/v1`,
+      baseUrl: `${HOST_GATEWAY_URL}:${String(recoveredPort)}/v1`,
       validationBaseUrl: `${hostLocalEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
       apiKey: hostLocalEndpoint.apiKey,
     };
