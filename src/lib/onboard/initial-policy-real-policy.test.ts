@@ -148,6 +148,7 @@ describe("initial sandbox policy real preset merge", () => {
       path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
       agent: "langchain-deepagents-code",
     },
+    { path: ["agents", "nemocua", "policy-additions.yaml"], agent: "nemocua" },
   ])(
     "keeps $agent on the provider-neutral inference.local route without host-native inference egress",
     ({ path: policyPath, agent }) => {
@@ -170,6 +171,43 @@ describe("initial sandbox policy real preset merge", () => {
       ).toEqual([]);
     },
   );
+
+  it("limits NemoCUA managed inference to the prepared image clients (#9649)", () => {
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("agents", "nemocua", "policy-additions.yaml"),
+        [],
+        { agentName: "nemocua" },
+      ),
+    );
+
+    const managedInference = effective.network_policies?.managed_inference;
+
+    expect(effective.filesystem_policy?.read_only).toContain(MANAGED_STARTUP_MERGED_CA_FILE);
+    expect(managedInference).toEqual({
+      name: "managed_inference",
+      endpoints: [
+        {
+          host: "inference.local",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: [
+            { allow: { method: "POST", path: "/v1/chat/completions" } },
+            { allow: { method: "POST", path: "/v1/responses" } },
+            { allow: { method: "GET", path: "/v1/models" } },
+            { allow: { method: "GET", path: "/v1/models/**" } },
+          ],
+        },
+      ],
+      binaries: [
+        { path: "/usr/bin/python3" },
+        { path: "/usr/local/bin/python3" },
+        { path: "/usr/bin/curl" },
+      ],
+    });
+    expect(managedInference?.endpoints?.[0]).not.toHaveProperty("access");
+  });
 
   it("uses Hermes channel YAML when the Hermes base policy path implies the agent", () => {
     const prepared = prepareInitialSandboxCreatePolicy(

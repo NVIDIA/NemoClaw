@@ -1559,15 +1559,43 @@ export async function connectSandbox(
   sandboxName: string,
   options: SandboxConnectOptions = {},
 ): Promise<void> {
-  return withConnectSandboxLifecycleLock(sandboxName, async () => {
-    await connectSandboxWithinLifecycleFence(sandboxName, options);
+  const started = await withConnectSandboxLifecycleLock(sandboxName, async () => {
+    const prepared = await prepareConnectSandboxWithinLifecycleFence(sandboxName, options);
+    if (!prepared) return null;
+    return {
+      completion: runConnectChildWithShieldsRelockNotice(
+        prepared.binary,
+        prepared.args,
+        {
+          hostCwd: ROOT,
+          stdin: true,
+          ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
+        },
+        sandboxName,
+        prepared.watchShields,
+      ),
+    };
   });
+  if (!started) return;
+
+  // Start the selected child under the lifecycle lock, then release the lock
+  // before waiting for an interactive shell that can remain open indefinitely.
+  const result = await started.completion;
+  result.releaseSignals?.();
+  exitWithConnectSpawnResult(sandboxName, result);
 }
 
-async function connectSandboxWithinLifecycleFence(
+type PreparedConnectChild = {
+  binary: string;
+  args: string[];
+  hostEnv?: NodeJS.ProcessEnv;
+  watchShields: boolean;
+};
+
+async function prepareConnectSandboxWithinLifecycleFence(
   sandboxName: string,
   { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions,
-): Promise<void> {
+): Promise<PreparedConnectChild | null> {
   if (probeOnly) {
     let readiness = await inspectLaunchReadiness(sandboxName);
     let publication: Awaited<ReturnType<typeof publishLaunchReadiness>>;
@@ -1606,7 +1634,7 @@ async function connectSandboxWithinLifecycleFence(
           assertHermesPortableLifecycleForConnect(sandboxName, verified, gatewayName);
         }
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
-        return;
+        return null;
       }
       // Refuse recovery only when a prior epoch might exist and could not be
       // durably rotated. When the authority and receipt are both securely
@@ -1675,7 +1703,7 @@ async function connectSandboxWithinLifecycleFence(
       process.exit(1);
     }
     if (publication.kind === "evidence-failed") {
-      if (!requireLaunchReadinessPublication) return;
+      if (!requireLaunchReadinessPublication) return null;
       // A platform without a per-user runtime authority (macOS) can never
       // store launch-readiness evidence. The probe and recovery still
       // succeeded, and `launch` runs the complete preflight without the
@@ -1685,14 +1713,14 @@ async function connectSandboxWithinLifecycleFence(
         console.log(
           "  Note: launch-readiness evidence is unavailable on this platform; the next launch runs the complete preflight.",
         );
-        return;
+        return null;
       }
       console.error(
         "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
       );
       process.exit(1);
     }
-    return;
+    return null;
   }
 
   const { agent, sb, hermesPortable } = await prepareInteractiveSession(sandboxName);
@@ -1781,17 +1809,10 @@ async function connectSandboxWithinLifecycleFence(
   const connectArgs = portableAuthority
     ? ["sandbox", "connect", "-g", portableAuthority.gatewayName, sandboxName]
     : ["sandbox", "connect", sandboxName];
-  const result = await runConnectChildWithShieldsRelockNotice(
-    portableAuthority?.executablePath ?? getOpenshellBinary(),
-    connectArgs,
-    {
-      hostCwd: ROOT,
-      stdin: true,
-      ...(portableAuthority ? { hostEnv: portableAuthority.env } : {}),
-    },
-    sandboxName,
-    agent?.name === "openclaw" || sb?.agent === "openclaw",
-  );
-  result.releaseSignals?.();
-  exitWithConnectSpawnResult(sandboxName, result);
+  return {
+    binary: portableAuthority?.executablePath ?? getOpenshellBinary(),
+    args: connectArgs,
+    ...(portableAuthority ? { hostEnv: portableAuthority.env } : {}),
+    watchShields: agent?.name === "openclaw" || sb?.agent === "openclaw",
+  };
 }
