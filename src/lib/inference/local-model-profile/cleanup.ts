@@ -80,6 +80,7 @@ export interface LocalModelRuntimeCleanupOptions {
   env?: NodeJS.ProcessEnv;
   engine?: ContainerEngine;
   deps?: Partial<CleanupDeps>;
+  privateBridge?: DockerLlamaCppPrivateBridgeController;
 }
 
 export interface HuggingFaceCacheDataCleanupOptions {
@@ -469,6 +470,7 @@ function cleanupLlamaCpp(
     sandboxName?: string;
     env?: NodeJS.ProcessEnv;
     engine?: ContainerEngine;
+    privateBridge?: DockerLlamaCppPrivateBridgeController;
   } = {},
 ): boolean {
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
@@ -554,8 +556,16 @@ function cleanupLlamaCpp(
     engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
   );
 
+  const privateBridge = options.privateBridge ?? createDockerLlamaCppPrivateBridgeController();
+
   const lease = journalStore.acquireExecution(journal.transactionId);
   try {
+    journalStore.assertExecution(lease);
+    // The bridge publishes the runtime port on the host. Stop it before the
+    // container it forwards to is removed, or it outlives a destroy that
+    // reports success and keeps the port bound (#9598).
+    privateBridge.stopTransaction(journal.transactionId);
+    privateBridge.assertStopped(journal.transactionId);
     journalStore.assertExecution(lease);
     removeExactContainerForJournal(engine, journal, removed);
     journalStore.assertExecution(lease);
@@ -628,9 +638,6 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly engine?: ContainerEngine;
   readonly deps?: Partial<CleanupDeps>;
-}
-
-export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppSandboxCleanupOptions {
   readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
 }
 
@@ -671,7 +678,7 @@ function requireManagedLlamaCppLifecycleCleanupReceipt(
 export function prepareManagedLlamaCppLifecycleCleanup(
   runtimeOwnerSandboxName: string,
   expectedReceipt: HostLocalInferenceReceipt,
-  options: ManagedLlamaCppLifecycleCleanupOptions = {},
+  options: ManagedLlamaCppSandboxCleanupOptions = {},
 ): HostLocalInferenceReceipt {
   const receipt = requireManagedLlamaCppLifecycleCleanupReceipt(expectedReceipt);
   const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
@@ -736,7 +743,7 @@ export function prepareManagedLlamaCppLifecycleCleanup(
 export function finalizeManagedLlamaCppLifecycleCleanup(
   runtimeOwnerSandboxName: string,
   expectedReceipt: HostLocalInferenceReceipt,
-  options: ManagedLlamaCppLifecycleCleanupOptions = {},
+  options: ManagedLlamaCppSandboxCleanupOptions = {},
 ): LocalModelRuntimeCleanupResult {
   const removed: string[] = [];
   const preserved: string[] = [];
@@ -906,6 +913,7 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
       sandboxName,
       env: options.env,
       engine: options.engine,
+      privateBridge: options.privateBridge,
     });
     preserveSharedHuggingFaceCache(homeDir, preserved);
     return { ok: true, removed, preserved };
@@ -955,6 +963,7 @@ export function cleanupLocalModelRuntimes(
         sandboxName: options.sandboxName,
         env: options.env,
         engine: options.engine,
+        privateBridge: options.privateBridge,
       });
     }
     preserveSharedHuggingFaceCache(homeDir, preserved);
