@@ -201,6 +201,29 @@ describe("runUpdateAction", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway (--fresh)"));
   });
 
+  it("runs the maintained installer fetch with HTTPS pinned across redirects", async () => {
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+
+    const result = await runUpdateAction(
+      { yes: true },
+      {
+        currentVersion: () => "0.1.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(true);
+    const [command, args] = spawnSyncImpl.mock.calls[0] as unknown as [string, readonly string[]];
+    expect(command).toBe("bash");
+    expect(args.at(-1)).toContain("--proto '=https'");
+    expect(args.at(-1)).toContain("--proto-redir '=https'");
+  });
+
   it("refuses --fresh when the maintained tag is older than the install, even with --yes (#8306)", async () => {
     const spawnSyncImpl = vi.fn();
     const error = vi.fn();

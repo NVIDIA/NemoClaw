@@ -11,7 +11,14 @@ import { normalizeVersion } from "../domain/installer/version";
 
 export const NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh";
 export const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
-export const NEMOCLAW_UPDATE_COMMAND = `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | bash`;
+/**
+ * Pipeline `nemoclaw update` runs to install the maintained build.
+ * `--proto '=https'` and `--proto-redir '=https'` hold the transfer on HTTPS for
+ * the initial request and for every redirect, so a downgrade redirect fails
+ * closed instead of piping plaintext-fetched bytes into `bash`. Same fetch
+ * hardening as `src/lib/onboard/install-ollama-linux.ts`.
+ */
+export const NEMOCLAW_UPDATE_COMMAND = `curl -fsSL --proto '=https' --proto-redir '=https' ${NEMOCLAW_INSTALLER_URL} | bash`;
 export const NEMOCLAW_MAINTAINED_INSTALL_TAG = "lkg";
 
 type LogFn = (message?: string) => void;
@@ -100,7 +107,7 @@ function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
   return {
     cliName: "nemoclaw",
     displayName: "NemoClaw",
-    maintainedUpdateCommand: NEMOCLAW_UPDATE_COMMAND,
+    maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | bash`,
   };
 }
 
