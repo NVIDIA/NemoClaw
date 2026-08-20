@@ -14,13 +14,19 @@ const selectorPath = path.resolve("test/e2e/lib/select-authorized-chat-model.mts
 const tsxPath = path.resolve("node_modules/.bin/tsx");
 
 describe("authorized alternate chat model selection", () => {
-  it("reports a missing credential when tsx executes the selector", () => {
+  it("rejects unsafe credential transport when tsx executes the selector", () => {
     const result = spawnSync(
       tsxPath,
-      [selectorPath, "--endpoint", endpoint, "--current-model", currentModel],
+      [
+        selectorPath,
+        "--endpoint",
+        "http://inference.example.test/v1",
+        "--current-model",
+        currentModel,
+      ],
       {
         encoding: "utf8",
-        env: { ...process.env, COMPATIBLE_API_KEY: "" },
+        env: { ...process.env, COMPATIBLE_API_KEY: "placeholder-key" },
         killSignal: "SIGKILL",
         timeout: 10_000,
       },
@@ -29,7 +35,7 @@ describe("authorized alternate chat model selection", () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "authorized model selection failed: COMPATIBLE_API_KEY is required",
+      "authorized model selection failed: the endpoint must use HTTPS unless it targets loopback",
     );
   });
 
