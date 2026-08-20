@@ -715,8 +715,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
       const current = entries.get(name);
-      if (!current?.pendingRouteReservation) return false;
-      entries.set(name, { ...current, pendingRouteReservation: undefined });
+      expect(current?.pendingRouteReservation).toBe(true);
+      entries.set(name, { ...current!, pendingRouteReservation: undefined });
       return true;
     });
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
@@ -783,16 +783,16 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       );
       f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
         const current = entries.get(name);
-        if (!current?.pendingRouteReservation) return false;
-        entries.set(name, { ...current, pendingRouteReservation: undefined });
+        expect(current?.pendingRouteReservation).toBe(true);
+        entries.set(name, { ...current!, pendingRouteReservation: undefined });
         return true;
       });
       f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
       let gatewayListCalls = 0;
       f.captureOpenshellMock.mockImplementation((args) => {
-        if (args[0] === "sandbox" && args[1] === "list" && args.includes("-g")) {
-          gatewayListCalls += 1;
-        }
+        gatewayListCalls += Number(
+          args[0] === "sandbox" && args[1] === "list" && args.includes("-g"),
+        );
         const betaIsVisible = state === "identity-drifted" || gatewayListCalls > 1;
         return f.openshellResponses(args, {
           "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
