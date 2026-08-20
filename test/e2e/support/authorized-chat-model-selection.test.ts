@@ -1,14 +1,38 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { selectAuthorizedChatModel } from "../lib/select-authorized-chat-model.mts";
 
 const endpoint = "https://inference.example.test/v1";
 const currentModel = "nvidia/nvidia/nemotron-3-ultra";
+const selectorPath = path.resolve("test/e2e/lib/select-authorized-chat-model.mts");
+const tsxPath = path.resolve("node_modules/.bin/tsx");
 
 describe("authorized alternate chat model selection", () => {
+  it("reports a missing credential through the live E2E tsx command", () => {
+    const result = spawnSync(
+      tsxPath,
+      [selectorPath, "--endpoint", endpoint, "--current-model", currentModel],
+      {
+        encoding: "utf8",
+        env: { ...process.env, COMPATIBLE_API_KEY: "" },
+        killSignal: "SIGKILL",
+        timeout: 10_000,
+      },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "authorized model selection failed: COMPATIBLE_API_KEY is required",
+    );
+  });
+
   it.each([endpoint, "http://127.0.0.1:8000/v1"])(
     "selects the highest-priority catalog model at %s",
     async (permittedEndpoint) => {
