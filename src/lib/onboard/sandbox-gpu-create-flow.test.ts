@@ -613,6 +613,23 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
 });
 
 describe("runSandboxGpuCreateFlow native failure and readiness", () => {
+  it("bounds the streamed sandbox readiness probe", async () => {
+    const deps = createDeps();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
+      route: "native",
+    });
+    const streamOptions = mocks.streamSandboxCreate.mock.calls[0]?.[3] as {
+      readyCheck: () => boolean;
+    };
+
+    expect(streamOptions.readyCheck()).toBe(true);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], {
+      ignoreError: true,
+      timeout: 5_000,
+    });
+  });
+
   it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {
     const input = createInput();
     const patch = createPatch();
