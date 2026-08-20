@@ -17,6 +17,7 @@ type CrashBoundary =
   | "policy-drift"
   | "credential-collision"
   | "credential-command-race"
+  | "credential-projection-coalesced"
   | "registered-credential-collision"
   | "registered-late-collision"
   | "adapter"
@@ -39,6 +40,9 @@ includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete proc
 const fs = require("node:fs");
 const path = require("node:path");
 const crashAfter = ${JSON.stringify(crashAfter)};
+if (crashAfter === "credential-projection-coalesced") {
+  process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "2";
+}
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const mark = (name) => fs.writeFileSync(marker(name), "yes\n", { mode: 0o600 });
 const marked = (name) => fs.existsSync(marker(name));
@@ -50,6 +54,8 @@ const foreignProviderId = "99999999-8888-4777-8666-555555555555";
 let providerGetCount = 0;
 let observedProviderName = null;
 let attachmentAttemptedThisProcess = false;
+let observedCredentialAbsentThisProcess = false;
+let credentialRefreshAfterAbsenceThisProcess = false;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -106,6 +112,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       }
       setProviderVersion(providerVersion() + 1);
       if (isCredentialUpdate) mark("updated");
+      if (
+        crashAfter === "credential-projection-coalesced" &&
+        isCredentialFreeRefresh &&
+        observedCredentialAbsentThisProcess
+      ) {
+        credentialRefreshAfterAbsenceThisProcess = true;
+        mark("refresh-after-observed-absence");
+      }
     }
     mark("provider");
     if (crashAfter === "registered-late-collision") registry.addExtraProvider("foreign-registered");
@@ -179,6 +193,17 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     !marked("updated") &&
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
+  if (crashAfter === "credential-projection-coalesced" && isObservation) {
+    if (!credentialRefreshAfterAbsenceThisProcess) {
+      observedCredentialAbsentThisProcess = true;
+      mark("credential-observed-absent");
+    }
+    return {
+      status: 0,
+      stdout: credentialRefreshAfterAbsenceThisProcess ? "v" + providerVersion() : "absent",
+      stderr: "",
+    };
+  }
   return {
     status: crashAfter === "preupdate-observation-forbidden" && isPreupdateObservation ? 1 : 0,
     stdout: isObservation ? (marked("updated") ? "v" + providerVersion() : marked("provider") ? "v1" : "absent") : "",
@@ -506,6 +531,35 @@ function readBridge(home: string): Record<string, unknown> {
 }
 
 describe("MCP add crash consistency", () => {
+  it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
+    try {
+      const script = buildAddProcessScript(home, "credential-projection-coalesced");
+      const first = spawnScript(home, script);
+      const second = spawnScript(home, script);
+      const results = await Promise.all([collectProcess(first), collectProcess(second)]);
+      const combinedOutput = results
+        .map((result) => `${result.stdout}\n${result.stderr}`)
+        .join("\n---\n");
+
+      expect(
+        results.map((result) => result.status).sort(),
+        combinedOutput,
+      ).toEqual([0, 2]);
+      expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
+      expect(combinedOutput).not.toContain("host-only-secret");
+      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "refresh-after-observed-absence.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+      expect(readBridge(home).addState).toBeUndefined();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a missing host credential before creating durable MCP state", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-missing-secret-"));
     try {

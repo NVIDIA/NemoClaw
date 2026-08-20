@@ -1123,11 +1123,11 @@ async function startService() {
     );
   }
   if (processIdentityFailureRole === "service") {
+    await terminateProcessIdentity(processIdentity);
+    fs.rmSync(backendSocketPath, { force: true });
     if (processIdentityFailureRecord) {
       writeProcessRecord(processIdentityFailureRecord, processIdentity);
     }
-    await terminateProcessIdentity(processIdentity);
-    fs.rmSync(backendSocketPath, { force: true });
     throw new Error(
       `Portable profile fixture could not create the process identity record for service ${service.pid}.`,
     );
