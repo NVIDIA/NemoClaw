@@ -86,6 +86,11 @@ function installerEnv(
   delete env.NEMOCLAW_GATEWAY_MANAGEMENT;
   delete env.NEMOCLAW_OPENSHELL_UPGRADE_PREPARED;
   delete env.NEMOCLAW_SINGLE_SESSION;
+  delete env.SYSTEMD_UNIT_PATH;
+  delete env.XDG_BIN_HOME;
+  delete env.XDG_CONFIG_HOME;
+  delete env.XDG_DATA_HOME;
+  delete env.XDG_RUNTIME_DIR;
   return {
     ...env,
     ...(declarationPath ? { NEMOCLAW_GATEWAY_MANAGEMENT: declarationPath } : {}),

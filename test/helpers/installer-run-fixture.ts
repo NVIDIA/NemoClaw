@@ -65,6 +65,15 @@ export function createInstallerCheckout(prefix: string): InstallerCheckout {
   const { root, binDir } = workspace;
   const prefixDir = path.join(root, "prefix");
   fs.mkdirSync(path.join(prefixDir, "bin"), { recursive: true });
+  workspace.writeExecutable(
+    "systemctl",
+    `#!/usr/bin/env bash
+case "$1 $2" in
+  "--user list-units" | "--user list-unit-files") exit 0 ;;
+esac
+exit 1
+`,
+  );
   return {
     root,
     binDir,
