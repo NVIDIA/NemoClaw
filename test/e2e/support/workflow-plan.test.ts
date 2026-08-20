@@ -475,13 +475,11 @@ describe("E2E workflow plan", () => {
     expect(plan.selectedJobs).not.toContain(selector);
   });
 
-  it.each(
-    [
-        "Network: enforces network-policy rules",
-        "Network: runs on ubuntu-latest",
-        "Network: validates issue-2478 recovery",
-      ],
-  )(
+  it.each([
+    "Network: enforces network-policy rules",
+    "Network: runs on ubuntu-latest",
+    "Network: validates issue-2478 recovery",
+  ])(
     "rejects malformed, implementation-derived, and duplicate display names [%s]",
     (displayName) => {
       const networkPolicy = catalogueTarget("network-policy");
@@ -1206,19 +1204,14 @@ describe("E2E workflow plan", () => {
       "| `llama-cpp-dgx-spark-qualification` | unresolved | Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence | NVIDIA DGX Spark GB10; local llama.cpp inference | Explicit dispatch only; excluded from the default release matrix | The protected plan can enable or skip its OpenClaw subqualification |",
     );
     expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
-    const inertDeclarations = listTargets()
-      .map((target) => ({ target, support: liveTargetSupport(target) }))
-      .filter(({ support }) => !support.supported);
+    const inertDeclarationCount = listTargets().filter(
+      (target) => !liveTargetSupport(target).supported,
+    ).length;
     expect(complete.stdout).toContain(
-      `The ${inertDeclarations.length} inert typed declarations above`,
+      `The ${inertDeclarationCount} inert typed declarations above`,
     );
     expect(complete.stdout).toContain(
-      inertDeclarations
-        .map(
-          ({ target, support }) =>
-            `| \`${target.id}\` | unresolved | unresolved | unresolved | ${support.reasons.join("; ")} |`,
-        )
-        .join("\n"),
+      "| `brev-launchable-cloud-openclaw` | unresolved | unresolved | unresolved | platform 'brev-launchable' is not wired for live fixtures; install 'launchable' is not wired for live fixtures |",
     );
     expect(complete.stdout).toContain("#8285");
     expect(complete.stdout).toContain("#8286");

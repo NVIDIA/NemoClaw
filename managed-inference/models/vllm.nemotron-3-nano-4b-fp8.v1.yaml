@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+metadata:
+  id: vllm.nemotron-3-nano-4b-fp8.v1
+  displayName: NVIDIA Nemotron-3 Nano 4B FP8
+spec:
+  id: nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
+  revision: 3fe6dab75665a93884214ad4b1b95cf02717d081
+  environmentValue: nemotron-3-nano-4b
+  displayName: NVIDIA Nemotron-3 Nano 4B FP8
+  menuOrder: 30
+  servedName: nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
+  downloadSizeBytes: 5280000000
+  gated: false
+  installFastSafetensors: true
+  preparation:
+    ref: none/v1
+  probePolicyRef: nvidia.endpoint-validation.standard/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: false
+    reasoning: true
+    multimodal: false

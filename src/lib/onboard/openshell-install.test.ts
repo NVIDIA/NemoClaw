@@ -137,7 +137,7 @@ describe("ensureOpenshellForOnboard", () => {
     );
   });
 
-  it("applies the 0.0.101 floor during final validation when the blueprint omits a minimum", () => {
+  it("applies the 0.0.106 floor during final validation when the blueprint omits a minimum", () => {
     const deps = makeDeps({
       isOpenshellInstalled: () => false,
       getInstalledOpenshellVersion: () => "0.0.81",
@@ -151,6 +151,6 @@ describe("ensureOpenshellForOnboard", () => {
     expect(deps.error).toHaveBeenCalledWith(
       "  \u2717 openshell 0.0.81 is below the minimum required by this NemoClaw release.",
     );
-    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml min_openshell_version: 0.0.101");
+    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml min_openshell_version: 0.0.106");
   });
 });

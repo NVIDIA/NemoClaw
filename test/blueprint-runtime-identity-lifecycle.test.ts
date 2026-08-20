@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   attachRuntimeIdentity,
+  mintRuntimeIdentityCredential,
   prepareRuntimeIdentity,
   type RuntimeIdentityCommandOptions,
   type RuntimeIdentityCommandResult,
@@ -173,7 +174,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("configures, attaches, and removes only its owned provider through the command boundary", async () => {
+  it("configures, attaches, mints, and removes only its owned provider through the command boundary", async () => {
     const profileDir = path.join(root, "provider-profiles");
     const profilePath = path.join(profileDir, "okta-runtime-v1.yaml");
     const statePath = path.join(root, "openshell-state.json");
@@ -229,6 +230,7 @@ describe("blueprint runtime identity lifecycle integration", () => {
     const prepared = await prepareRuntimeIdentity(CONFIG, deps);
     const attachmentCreated = await attachRuntimeIdentity(prepared, "identity-sandbox", deps);
     const receipt = { ...prepared, attachment_created: attachmentCreated };
+    await mintRuntimeIdentityCredential(receipt, deps);
 
     let state = await readState(fakeOpenShell);
     expect(receipt).toEqual({
@@ -248,6 +250,14 @@ describe("blueprint runtime identity lifecycle integration", () => {
     expect(state.attachments).toEqual({
       "identity-sandbox": "e2e-okta-runtime",
     });
+    const rotateIndex = state.calls.findIndex(
+      ({ args }) => args[0] === "provider" && args[1] === "refresh" && args[2] === "rotate",
+    );
+    const attachIndex = state.calls.findIndex(
+      ({ args }) => args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach",
+    );
+    expect(attachIndex).toBeGreaterThanOrEqual(0);
+    expect(rotateIndex).toBeGreaterThan(attachIndex);
 
     const configureCall = state.calls.find(
       ({ args }) => args[0] === "provider" && args[1] === "refresh" && args[2] === "configure",

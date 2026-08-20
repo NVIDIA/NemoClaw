@@ -3,13 +3,14 @@
 
 import assert from "node:assert/strict";
 
-const MANIFEST_DIGEST = "sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204";
+const MANIFEST_DIGEST = "sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965";
 export const MUSE_GLIMMER_VLLM_IMAGE_REFERENCE = `vllm/vllm-openai@${MANIFEST_DIGEST}`;
-const CONFIG_DIGEST = "sha256:c3f199e54a26d2d7a9a41115cd07ce9d90a6488c5a4e75b17129e1006ce533fd";
-const SOURCE_REVISION = "ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9";
+const CONFIG_DIGEST = "sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303";
+const SOURCE_REVISION = "5a4c8d99242e9e069b604d0e9b969e77f7dd501d";
 const MUSE_MERGE_COMMIT = "6adad08767583f52eb4d2122111af0bf638ed5e6";
+const REVISION_FIX_COMMIT = "90984ddbed27a09409506d6d6c0eea87f54b04b5";
+const MODEL_REVISION = "d35cb79050f419c457611b1cee5c5d15b176f285";
 const PIPELINE_ID = "019d130e-464e-4ff7-b84b-492992c0c06b";
-const PIPELINE_URL = "https://buildkite.com/vllm/release-v2/builds/5174";
 
 const EXPECTED_PROVENANCE = {
   schemaVersion: 1,
@@ -30,42 +31,59 @@ const EXPECTED_PROVENANCE = {
     manifestUrl: `https://registry-1.docker.io/v2/vllm/vllm-openai/manifests/${MANIFEST_DIGEST}`,
     configDigest: CONFIG_DIGEST,
     configMediaType: "application/vnd.docker.container.image.v1+json",
-    configSizeBytes: 34_762,
+    configSizeBytes: 34_738,
     configUrl: `https://registry-1.docker.io/v2/vllm/vllm-openai/blobs/${CONFIG_DIGEST}`,
     layerCount: 32,
-    compressedLayerSizeBytes: 9_699_710_136,
-    createdAt: "2026-08-14T05:33:50.528328374Z",
+    compressedLayerSizeBytes: 9_706_339_423,
+    createdAt: "2026-08-19T05:34:00.562836767Z",
     platform: {
       os: "linux",
       architecture: "arm64",
     },
   },
   build: {
-    sourceRepository: "https://github.com/vllm-project/vllm",
     sourceRevision: SOURCE_REVISION,
-    sourceRevisionUrl: `https://github.com/vllm-project/vllm/commit/${SOURCE_REVISION}`,
     imageTag: `vllm/vllm-openai:nightly-${SOURCE_REVISION}`,
     pipelineId: PIPELINE_ID,
-    pipelineUrl: PIPELINE_URL,
   },
   upstreamSupport: {
     museMergeCommit: MUSE_MERGE_COMMIT,
-    museMergeCommitUrl: `https://github.com/vllm-project/vllm/commit/${MUSE_MERGE_COMMIT}`,
-    comparisonUrl: `https://github.com/vllm-project/vllm/compare/${MUSE_MERGE_COMMIT}...${SOURCE_REVISION}`,
-    relationship: "direct-descendant",
-    aheadBy: 1,
+    relationship: "descendant",
+    aheadBy: 173,
+    revisionFixCommit: REVISION_FIX_COMMIT,
+    revisionFixRelationship: "descendant",
+    revisionFixAheadBy: 33,
   },
   reportedLabels: {
     "ai.vllm.build.commit": SOURCE_REVISION,
     "ai.vllm.build.pipeline": PIPELINE_ID,
-    "ai.vllm.build.url": PIPELINE_URL,
     "ai.vllm.image.tag": `vllm/vllm-openai:nightly-${SOURCE_REVISION}`,
     "org.opencontainers.image.revision": SOURCE_REVISION,
-    "org.opencontainers.image.source": "https://github.com/vllm-project/vllm",
+  },
+  runtimeDependencies: {
+    vllmVersion: "0.26.1rc1.dev942+g5a4c8d992",
+    huggingfaceHubVersion: "1.28.0",
+    sentencepieceVersion: "0.2.2",
+    tiktokenVersion: "0.14.0",
+  },
+  revisionSerialization: {
+    model: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+    requestedRevision: MODEL_REVISION,
+    resolvedRevisionBeforePickle: MODEL_REVISION,
+    resolvedRevisionAfterPickle: MODEL_REVISION,
+    preserved: true,
   },
   verification: {
-    observedAt: "2026-08-14T16:33:50Z",
-    methods: ["docker-buildx-imagetools-inspect-raw", "docker-image-inspect", "github-compare-api"],
+    observedAt: "2026-08-19T22:53:46Z",
+    methods: [
+      "docker-buildx-imagetools-inspect-raw",
+      "docker-image-inspect",
+      "github-compare-api",
+      "container-package-imports",
+      "resolved-revision-pickle-round-trip",
+      "dgx-spark-cold-cache-startup",
+      "vllm-openai-api-validation",
+    ],
     signedProvenanceAttestation: "not-available",
   },
 } as const;

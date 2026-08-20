@@ -46,6 +46,19 @@ describe("dashboard remote-bind E2E environment", () => {
     ).toBe(true);
   });
 
+  it("accepts recovery proof after the interactive connect reaches its test deadline (#9606)", () => {
+    const timedOutRecovery = {
+      exitCode: 143,
+      timedOut: true,
+      stdout: "\u001B[32m✓\u001B[0m Dashboard port forward re-established.\n",
+      stderr: "client_loop: send disconnect: Broken pipe\n",
+    };
+
+    expect(dashboardRemoteBindConnectStarted(timedOutRecovery, "e2e-dashboard-bind", "18789")).toBe(
+      true,
+    );
+  });
+
   it("rejects a connect result with no numeric exit code and no forward proof", () => {
     expect(
       dashboardRemoteBindConnectStarted(
@@ -53,6 +66,36 @@ describe("dashboard remote-bind E2E environment", () => {
           exitCode: null,
           stdout: "Connecting to sandbox...\n",
           stderr: "",
+        },
+        "e2e-dashboard-bind",
+        "18789",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a completed nonzero connect even when it printed recovery proof (#9606)", () => {
+    expect(
+      dashboardRemoteBindConnectStarted(
+        {
+          exitCode: 1,
+          timedOut: false,
+          stdout: "Dashboard port forward re-established.\n",
+          stderr: "connect failed\n",
+        },
+        "e2e-dashboard-bind",
+        "18789",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a timed-out interactive connect without background-forward proof (#9606)", () => {
+    expect(
+      dashboardRemoteBindConnectStarted(
+        {
+          exitCode: 143,
+          timedOut: true,
+          stdout: "Connecting to sandbox...\n",
+          stderr: "client_loop: send disconnect: Broken pipe\n",
         },
         "e2e-dashboard-bind",
         "18789",

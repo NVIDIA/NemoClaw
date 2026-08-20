@@ -146,7 +146,7 @@ function parsePodmanManagedContainer(
   );
   if (sandboxNamespace !== PODMAN_SANDBOX_NAMESPACE) {
     throw new Error(
-      `Podman sandbox is missing exact OpenShell v0.0.101 label ${PODMAN_SANDBOX_NAMESPACE_LABEL}=<empty>.`,
+      `Podman sandbox is missing exact OpenShell v0.0.106 label ${PODMAN_SANDBOX_NAMESPACE_LABEL}=<empty>.`,
     );
   }
   if (containerLabels[PODMAN_SANDBOX_WORKSPACE_LABEL] !== PODMAN_SANDBOX_WORKSPACE) {

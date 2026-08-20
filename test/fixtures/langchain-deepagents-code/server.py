@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+import threading
 
 
 def _build_server_env():
@@ -21,28 +23,34 @@ class ServerProcess:
         self._process = None
         self._persistent_env_overrides = {}
         self._env_overrides = {}
+        self._state_lock = threading.RLock()
 
     async def start(self):
-        cmd = self.cmd
-        work_dir = self.work_dir
-        env = self.env
-        env.update(self._persistent_env_overrides)
-        env.update(self._env_overrides)
-        self._log_file = subprocess.PIPE
-        self._process = subprocess.Popen(  # noqa: S603, ASYNC220
-            cmd,
-            cwd=str(work_dir),
-            env=env,
-            stdout=self._log_file,
-            stderr=subprocess.STDOUT,
-        )
-        output, _ = self._process.communicate(timeout=10)
-        if self._process.returncode != 0:
-            raise RuntimeError(output.decode())
-        self.outputs.append(output.decode())
+        with self._state_lock:
+            cmd = self.cmd
+            work_dir = self.work_dir
+            env = self.env
+            env.update(self._persistent_env_overrides)
+            env.update(self._env_overrides)
+            self._log_file = subprocess.PIPE
+            self._process = subprocess.Popen(  # noqa: S603
+                cmd,
+                cwd=str(work_dir),
+                env=env,
+                stdout=self._log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=(sys.platform != "win32"),
+            )
+            process = self._process
+            output, _ = process.communicate(timeout=10)
+            if process.returncode != 0:
+                raise RuntimeError(output.decode())
+            self.outputs.append(output.decode())
 
     async def restart(self):
-        if self._process is not None and self._process.poll() is None:
-            self._process.terminate()
-            self._process.wait(timeout=10)
-        await self.start()
+        with self._state_lock:
+            process = self._process
+            if process is not None and process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+            await self.start()

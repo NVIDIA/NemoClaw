@@ -36,6 +36,9 @@ const {
   setResolvedOllamaHost,
 }: typeof import("../inference/local") = require("../inference/local");
 
+const OFFICIAL_OLLAMA_INSTALLER_URL = "https://ollama.com/install.sh";
+const OFFICIAL_OLLAMA_INSTALLER_PROCESS_TIMEOUT_MS = 190_000;
+
 /**
  * Install location modes.
  *
@@ -124,6 +127,8 @@ function detectJetpackVariant(opts: InstallOllamaLinuxOptions): "jetpack5" | "je
  */
 function runOfficialInstallScript(opts: InstallOllamaLinuxOptions): void {
   const log = opts.log ?? ((m: string) => console.log(m));
+  const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
+  const runCaptureExImpl = opts.runCaptureExImpl ?? runCaptureEx;
   const runShellImpl = opts.runShellImpl ?? runShell;
   ensureOllamaLinuxExtractionDependencies(opts);
   log(
@@ -134,9 +139,68 @@ function runOfficialInstallScript(opts: InstallOllamaLinuxOptions): void {
   if (versionPin) {
     log(`  Requesting Ollama ${MIN_OLLAMA_VERSION} from the installer.`);
   }
-  runShellImpl(`set -o pipefail; curl -fsSL https://ollama.com/install.sh | ${versionPin}sh`, {
-    stdio: "inherit",
-  });
+
+  const installerDirectory = fs.mkdtempSync(
+    nodePath.join(os.tmpdir(), "nemoclaw-ollama-installer-"),
+  );
+  const installerPath = nodePath.join(installerDirectory, "install.sh");
+
+  let failure: { exitCode: number; message: string } | null = null;
+  try {
+    fs.writeFileSync(installerPath, "", { flag: "wx", mode: 0o600 });
+    const fetchResult = runCaptureExImpl(
+      [
+        "curl",
+        "--fail",
+        "--show-error",
+        "--silent",
+        "--location",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "120",
+        "--retry",
+        "3",
+        "--retry-all-errors",
+        "--retry-delay",
+        "1",
+        "--retry-max-time",
+        "180",
+        "--output",
+        installerPath,
+        OFFICIAL_OLLAMA_INSTALLER_URL,
+      ],
+      { timeout: OFFICIAL_OLLAMA_INSTALLER_PROCESS_TIMEOUT_MS },
+    );
+    if (fetchResult.exitCode !== 0) {
+      failure = {
+        exitCode: fetchResult.exitCode ?? 1,
+        message: `  Ollama installer download failed after bounded retries (exit ${fetchResult.exitCode ?? "unknown"}).`,
+      };
+    } else {
+      const installResult = runShellImpl(`${versionPin}sh ${shellQuote(installerPath)}`, {
+        ignoreError: true,
+        stdio: "inherit",
+      });
+      if (installResult.error || installResult.status !== 0) {
+        failure = {
+          exitCode: installResult.status ?? 1,
+          message: `  Ollama installer failed (exit ${installResult.status ?? "unknown"}).`,
+        };
+      }
+    }
+  } finally {
+    fs.rmSync(installerDirectory, { force: true, recursive: true });
+  }
+
+  if (failure) {
+    errorLog(failure.message);
+    process.exit(failure.exitCode);
+  }
 }
 
 /**

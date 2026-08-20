@@ -20,6 +20,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import {
@@ -28,6 +29,7 @@ import {
   mintSandboxJwt,
   runSandboxTokenContainerProbe,
 } from "./openshell-gateway-auth-probe.ts";
+import { verifyOpenShellTlsServerNameSourceBoundary } from "./openshell-v0106-tls-server-name-source.ts";
 
 export { buildSandboxTokenContainerProbeInvocation } from "./openshell-gateway-auth-probe.ts";
 
@@ -440,9 +442,15 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
 
   const version = run(gatewayBin, ["--version"]);
   expect(version.status, commandOutput(version)).toBe(0);
-  expect(commandOutput(version)).toContain(process.env.NEMOCLAW_CANDIDATE_VERSION || "0.0.101");
+  expect(commandOutput(version)).toContain(
+    process.env.NEMOCLAW_CANDIDATE_VERSION || OPENSHELL_V0106_QUALIFICATION.version,
+  );
 
   await requireDockerDaemon({ dockerBin, host, skip });
+
+  progress.phase("verify the exact OpenShell TLS server-name source boundary");
+  const sourceBoundary = await verifyOpenShellTlsServerNameSourceBoundary();
+  await artifacts.writeJson("tls-server-name-source-boundary.json", sourceBoundary);
 
   progress.phase("launch the mTLS and JWT-protected gateway");
   const port = await pickPort();
@@ -471,8 +479,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
     OPENSHELL_BIND_ADDRESS: "127.0.0.1",
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
     OPENSHELL_DOCKER_NETWORK_NAME: networkName,
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
-      "ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
+    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: OPENSHELL_V0106_QUALIFICATION.supervisorImage,
     OPENSHELL_DRIVERS: "docker",
     OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${port}`,
     OPENSHELL_LOCAL_TLS_DIR: certBundle.localTlsDir,

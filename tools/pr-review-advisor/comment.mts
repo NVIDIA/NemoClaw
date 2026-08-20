@@ -30,11 +30,6 @@ type ReviewAdvisorResult = {
     confidence?: string;
     oneLine?: string;
     topItem?: string;
-    sinceLastReview?: {
-      resolved?: number;
-      stillApplies?: number;
-      newItems?: number;
-    };
   };
   findings?: Array<{
     severity?: string;
@@ -1158,10 +1153,6 @@ function nextAction(records: FindingRecord[]): string {
 }
 
 function buildSecondarySummary(result?: ReviewAdvisorResult): string {
-  const sinceLastReview = result?.summary?.sinceLastReview;
-  if (sinceLastReview) {
-    return `**Since last review:** ${countLabel(sinceLastReview.resolved, "prior item")} resolved · ${countLabel(sinceLastReview.stillApplies, "still applies", "still apply")} · ${countLabel(sinceLastReview.newItems, "new item")} found\n`;
-  }
   return "";
 }
 

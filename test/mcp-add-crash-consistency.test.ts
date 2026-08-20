@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 
 type CrashBoundary =
   | "provider"
@@ -77,14 +77,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   }
   if (args[0] === "provider" && args[1] === "get") {
     if (args[2] === "foreign-attached" || args[2] === "foreign-registered") {
-      return { status: 0, stdout: "Id: " + foreignProviderId + "\nType: generic\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" };
+      return { status: 0, stdout: "Id: " + foreignProviderId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" };
     }
     observedProviderName = args[2];
     providerGetCount += 1;
     if (crashAfter === "race" && providerGetCount === 2) mark("provider");
     if (crashAfter === "late-race" && providerGetCount === 3) mark("provider");
     return marked("provider")
-      ? { status: 0, stdout: "Id: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: generic\nResource version: " + (marked("updated") ? "2" : "1") + "\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
+      ? { status: 0, stdout: "Id: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: nemoclaw-mcp-v1\nResource version: " + (marked("updated") ? "2" : "1") + "\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
@@ -103,7 +103,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     if (crashAfter === "credential-collision") {
       return {
         status: 0,
-        stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nforeign-attached generic 1 0\n",
+        stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nforeign-attached nemoclaw-mcp-v1 1 0\n",
         stderr: "",
       };
     }
@@ -118,7 +118,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return {
       status: 0,
       stdout: attached
-        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + providerName + " generic 1 0\n"
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + providerName + " nemoclaw-mcp-v1 1 0\n"
         : "No providers attached to sandbox crash-test.\n",
       stderr: "",
     };
@@ -302,7 +302,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 const { runCredentialsAddAction } = require("./src/lib/actions/credentials-add.js");
 runCredentialsAddAction({
   provider: "custom-provider",
-  type: "generic",
+  type: "nemoclaw-mcp-v1",
   credentials: ["FAKE_MCP_SECRET"],
   configPairs: [],
   fromExisting: false,
@@ -350,7 +350,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     observedProviderName = args[2];
     return marked("provider")
-      ? { status: 0, stdout: "Id: " + providerId + "\nType: generic\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
+      ? { status: 0, stdout: "Id: " + providerId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
@@ -374,7 +374,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return {
       status: 0,
       stdout: attached
-        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + providerName + " generic 1 0\n"
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + providerName + " nemoclaw-mcp-v1 1 0\n"
         : "No providers attached to sandbox crash-test.\n",
       stderr: "",
     };
@@ -443,7 +443,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Type: generic\nCredential keys: FAKE_MCP_SECRET\n",
+      stdout: "Type: nemoclaw-mcp-v1\nCredential keys: FAKE_MCP_SECRET\n",
       stderr: "",
     };
   }
@@ -550,13 +550,13 @@ describe("MCP add crash consistency", () => {
       const interrupted = runAddProcess(home, "adapter");
       expect(interrupted.status, `${interrupted.stdout}\n${interrupted.stderr}`).toBe(86);
       const policyApplyLog = path.join(home, "policy-apply-log.marker");
-      expect(fs.readFileSync(policyApplyLog, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(fs.readFileSync(policyApplyLog, "utf8").trim().split("\n")).toHaveLength(2);
       fs.rmSync(path.join(home, "provider.marker"));
 
       const resumed = runAddProcess(home, "", false);
       expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(2);
       expect(resumed.stderr).toContain("is missing. Export host environment variable");
-      expect(fs.readFileSync(policyApplyLog, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(fs.readFileSync(policyApplyLog, "utf8").trim().split("\n")).toHaveLength(2);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
@@ -564,7 +564,7 @@ describe("MCP add crash consistency", () => {
 
       const recovered = runAddProcess(home, "");
       expect(recovered.status, `${recovered.stdout}\n${recovered.stderr}`).toBe(0);
-      expect(fs.readFileSync(policyApplyLog, "utf8").trim().split("\n")).toHaveLength(2);
+      expect(fs.readFileSync(policyApplyLog, "utf8").trim().split("\n")).toHaveLength(4);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();

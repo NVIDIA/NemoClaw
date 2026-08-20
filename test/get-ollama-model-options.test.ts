@@ -46,6 +46,10 @@ describe("getOllamaModelOptions host-pinned fallback", () => {
     setResolvedOllamaHost(OLLAMA_LOCALHOST);
     const { capture, calls } = makeCapture([
       {
+        match: /\/api\/tags/,
+        output: JSON.stringify({ models: [] }),
+      },
+      {
         match: /ollama list/,
         output:
           "NAME           ID            SIZE    MODIFIED\nllama3.2:3b    abc123        2.0 GB  2 days ago\n",

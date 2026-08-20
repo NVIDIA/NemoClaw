@@ -70,6 +70,14 @@ export async function setupOllamaLocalInference(
       return exitProcess(1);
     }
   }
+  // Prove the model on the endpoint being recorded, not only on the host-side
+  // daemon every check above resolves through. Those are two different Ollama
+  // processes when WSL and Windows each run one (#9454).
+  const sandboxModel = localInference.validateSandboxFacingOllamaModel(model);
+  if (!sandboxModel.ok) {
+    error(`  ${sandboxModel.message}`);
+    return exitProcess(1);
+  }
   const baseUrl = getLocalProviderBaseUrl(provider);
   let ollamaCredential = "ollama";
   if (frontOllamaWithProxy) {

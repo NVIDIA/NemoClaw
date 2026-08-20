@@ -125,12 +125,12 @@ function looksLikeSandboxNotReadyForwardStart(diagnostic: string): boolean {
  * (#6099).
  *
  * Compatibility boundary: these exact diagnostics are emitted by the pinned
- * OpenShell 0.0.101 forward-start path tracked in #7266. Reassess this matcher
- * when NemoClaw's supported OpenShell range moves beyond 0.0.101, and remove it
+ * OpenShell 0.0.106 forward-start path tracked in #7266. Reassess this matcher
+ * when NemoClaw's supported OpenShell range moves beyond 0.0.106, and remove it
  * once OpenShell either keeps the attempt alive until the listener is ready or
  * exposes a structured retryable outcome. Keep the fragments narrow so an
  * unrelated SSH or gateway failure cannot enter the listener-retry path.
- * OpenShell 0.0.101 can also reject a forward during the sandbox readiness
+ * OpenShell 0.0.106 can also reject a forward during the sandbox readiness
  * handoff. That command has already exited, so list polling cannot recover it;
  * the retry wrapper below gives the OpenShell gateway a bounded settle interval.
  */

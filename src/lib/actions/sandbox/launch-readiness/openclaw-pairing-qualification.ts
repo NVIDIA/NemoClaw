@@ -580,7 +580,11 @@ function runOpenClawPairingObservation(
 ): { readonly output: string; readonly policy: string } {
   const approvalPolicy = (execDeps?.readApprovalPolicy ?? readAutoPairApprovalPolicyModule)();
   const normalizedVersion = openclawVersion.trim();
-  if (!approvalPolicy || !normalizedVersion || normalizedVersion.length > 128) {
+  if (
+    !approvalPolicy ||
+    normalizedVersion.length > 128 ||
+    (mode === "qualification" && !normalizedVersion)
+  ) {
     throw new OpenClawPairingQualificationError();
   }
   const approvalPolicyModuleB64 = Buffer.from(approvalPolicy, "utf8").toString("base64");

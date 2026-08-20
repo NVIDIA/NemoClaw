@@ -359,6 +359,9 @@ export function createCreatedSandboxCompletionActions(
             ...options.registration,
             runtimeFields: {
               ...options.registration.runtimeFields,
+              sandboxGpuProof:
+                options.gpu.config.sandboxGpuProof ??
+                options.registration.runtimeFields.sandboxGpuProof,
               openshellVersion:
                 configuredReceipt?.openshellExecutableAuthority.version ??
                 options.registration.runtimeFields.openshellVersion,
@@ -542,7 +545,10 @@ export function createOnboardCreatedSandboxCompletion(
           agent?.configPaths.dir,
         ),
       restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
-      getDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
+      getDcodeSelectionDrift: createDcodeSelectionDriftReader(
+        runCaptureOpenshell,
+        () => gateway.gatewayName,
+      ),
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),

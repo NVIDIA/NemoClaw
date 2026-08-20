@@ -8,6 +8,7 @@ import {
   scrubManagedMcpAdapterOrThrow,
 } from "./mcp-bridge-adapter-teardown";
 import { MCP_BRIDGE_POLICY_SOURCE, McpBridgeError } from "./mcp-bridge-contracts";
+import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import {
   assertMcpDestroySnapshotCurrent,
@@ -16,11 +17,9 @@ import {
   inspectExactMcpDestroyProvider,
 } from "./mcp-bridge-destroy-preflight";
 import {
-  attachProvider,
   deleteProvider,
   detachProvider,
   inspectMcpProvider,
-  waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
@@ -47,9 +46,9 @@ export {
 /**
  * Phase one of sandbox destroy. Remove the adapter entry from the retained
  * sandbox volume and detach exact MCP providers while preserving the global
- * provider objects (and therefore their host-only credentials), generated
- * policy, and registry cleanup manifest. Any failure restores adapter and
- * attachment state before returning.
+ * provider objects (and therefore their host-only credentials) and registry
+ * cleanup manifest. OpenShell requires the bound policy to be removed before
+ * detach. Any failure restores the managed runtime before returning.
  */
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
@@ -122,14 +121,19 @@ export async function prepareMcpBridgesForDestroy(
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpBridgeEntry[] = [];
+  const removedPolicies: McpBridgeEntry[] = [];
   try {
     for (const entry of entries) {
       scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
       scrubbedAdapters.push(entry);
     }
     for (const entry of entries) {
+      removeGeneratedPolicy(sandboxName, entry);
+      removedPolicies.push(entry);
+    }
+    for (const entry of entries) {
       inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-      const detachOutcome = detachProvider(sandboxName, entry);
+      const detachOutcome = detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
       if (detachOutcome === "unknown") {
         throw new McpBridgeError(
           `Could not prove provider detach for MCP server '${entry.server}'.`,
@@ -160,20 +164,24 @@ export async function prepareMcpBridgesForDestroy(
     }
   } catch (error) {
     const rollbackFailures: string[] = [];
-    for (const entry of [...detached].reverse()) {
+    let runtimeRestored = false;
+    if (removedPolicies.length > 0) {
       try {
-        inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-        attachProvider(sandboxName, entry);
-        // Reattach preserves the provider value, so presence is sufficient;
-        // still wait before reloading an adapter that may connect immediately.
-        waitForAttachedMcpCredential(sandboxName, entry);
+        await restoreExistingMcpBridgeRuntime(sandboxName, removedPolicies, {
+          lifecyclePhase: "teardown-rollback",
+        });
+        runtimeRestored = true;
       } catch (rollbackError) {
         rollbackFailures.push(
           rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
         );
       }
     }
-    rollbackFailures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters));
+    if (!runtimeRestored) {
+      rollbackFailures.push(
+        ...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters),
+      );
+    }
     const current = registry.getSandbox(sandboxName);
     if (current?.mcp?.destroyPreparedAt) {
       try {
@@ -322,7 +330,7 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
       force: options.force,
     });
     if (!beforeDelete.exists) continue;
-    deleteProvider(entry, { allowMissing: true });
+    deleteProvider(entry, { allowLegacyGeneric: true, allowMissing: true });
     const after = inspectMcpProvider(entry.providerName);
     if (after.exists !== false) {
       throw new McpBridgeError(

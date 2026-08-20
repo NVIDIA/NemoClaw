@@ -11,7 +11,7 @@ import {
 import {
   inspectMcpProvider,
   type McpProviderInspection,
-  providerMatchesCredential,
+  providerMatchesManagedCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider";
 import {
@@ -142,7 +142,11 @@ export function inspectExactMcpDestroyProvider(
       `OpenShell provider '${entry.providerName}' is missing. Refusing to destroy sandbox state because a failed sandbox delete could not restore authenticated MCP without the preserved provider credential.`,
     );
   }
-  if (!providerMatchesCredential(inspection, entry.env[0], entry.providerId)) {
+  if (
+    !providerMatchesManagedCredential(inspection, entry.env[0], entry.providerId, {
+      allowLegacyGeneric: true,
+    })
+  ) {
     const forceDetail = options.force
       ? " --force does not delete a non-matching global provider because it may be owned by another workflow."
       : "";

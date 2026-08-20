@@ -220,6 +220,7 @@ describe("created DCode sandbox finalization", () => {
           getDcodeSelectionDrift: (name, provider, model, api) => {
             order.push("validate");
             return getDcodeSelectionDrift(name, provider, model, api, {
+              getGatewayName: () => "nemoclaw-18081",
               runCaptureOpenshell: () =>
                 identityFromConfig(fs.readFileSync(fixture.currentPath, "utf8")),
             });
@@ -493,6 +494,7 @@ describe("created DCode sandbox finalization", () => {
           },
           getDcodeSelectionDrift: (name, provider, model, api) =>
             getDcodeSelectionDrift(name, provider, model, api, {
+              getGatewayName: () => "nemoclaw-18081",
               runCaptureOpenshell: () =>
                 identityFromConfig(fs.readFileSync(fixture.currentPath, "utf8")),
             }),
@@ -1025,6 +1027,7 @@ describe("created sandbox completion actions", () => {
           dashboardPort: manageDashboard ? 8644 : 0,
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
+          runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
         }),
       );
     },

@@ -151,6 +151,13 @@ function enablePublication(source: string): string {
   });
 }
 
+function addUnexpectedPublicationField(source: string): string {
+  const candidate = YAML.parse(source) as ImageManifest;
+  const publication = candidate.spec!.publication! as Record<string, unknown>;
+  publication.consumerAlias = "latest";
+  return YAML.stringify(candidate);
+}
+
 function configureManifestAnnotations(source: string, annotations: Record<string, string>): string {
   const candidate = YAML.parse(source) as { metadata: { annotations?: Record<string, string> } };
   candidate.metadata.annotations = annotations;
@@ -529,7 +536,7 @@ describe("declarative llama.cpp server image", () => {
   it.each([
     [
       "an unexpected publication field",
-      manifestSource.replace("    enabled: false", "    enabled: false\n    consumerAlias: latest"),
+      addUnexpectedPublicationField(manifestSource),
     ],
     ["automatic publication", manifestSource.replace("workflow_dispatch", "push")],
     ["an untrusted ref", manifestSource.replace("refs/heads/main", "refs/heads/release")],

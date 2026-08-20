@@ -3517,8 +3517,8 @@ reportChildScenario(async () => {
       const zstdPreflightIndex = commands.findIndex((command) =>
         command.includes("apt-get install -y -qq --no-install-recommends zstd"),
       );
-      const installerIndex = commands.findIndex((command) =>
-        command.includes("ollama.com/install.sh"),
+      const installerIndex = commands.findIndex(
+        (command) => command.startsWith("sh '") && command.includes("/install.sh'"),
       );
       assert.ok(zstdPreflightIndex >= 0);
       assert.ok(installerIndex > zstdPreflightIndex);
@@ -3537,17 +3537,15 @@ reportChildScenario(async () => {
           value.includes("creates a system user, a systemd service, and writes to /usr/local"),
       );
       const installerCommandIndex = events.findIndex(
-        ({ type, value }) => type === "command" && value.includes("ollama.com/install.sh"),
+        ({ type, value }) =>
+          type === "command" && value.startsWith("sh '") && value.includes("/install.sh'"),
       );
       assert.ok(zstdWarningIndex >= 0 && zstdWarningIndex < zstdCommandIndex);
       assert.ok(installerWarningIndex >= 0 && installerWarningIndex < installerCommandIndex);
-      assert.equal(
-        events.find(
-          ({ type, value }) => type === "command" && value.includes("ollama.com/install.sh"),
-        )?.stdio,
-        "inherit",
+      assert.equal(events[installerCommandIndex]?.stdio, "inherit");
+      assert.ok(
+        commands.some((command) => command.includes("/install.sh'")),
       );
-      assert.ok(commands.some((command) => command.includes("ollama.com/install.sh")));
       assert.ok(!commands.some((command) => command.includes("brew install")));
       assert.ok(
         commands.some((command) => command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve")),
@@ -3596,8 +3594,8 @@ runner.runCapture = (command) => {
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
 };
+runner.runCaptureEx = () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false });
 runner.runShell = (command) => {
-  if (command.includes("ollama.com/install.sh")) return { status: 0 };
   if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };
   return { status: 0 };
@@ -3694,8 +3692,8 @@ const { setupNim } = require(${onboardPath});
       const zstdPreflightIndex = runShellCalls.findIndex(({ command }) =>
         command.includes("apt-get install -y -qq --no-install-recommends zstd"),
       );
-      const installerIndex = runShellCalls.findIndex(({ command }) =>
-        command.includes("ollama.com/install.sh"),
+      const installerIndex = runShellCalls.findIndex(
+        ({ command }) => command.startsWith("sh '") && command.includes("/install.sh'"),
       );
       assert.ok(zstdPreflightIndex >= 0);
       assert.ok(installerIndex > zstdPreflightIndex);
@@ -3809,7 +3807,7 @@ const { setupNim } = require(${onboardPath});
           isNonInteractive: () => true,
           runCaptureImpl: runCapture,
           runShellImpl: (command) => {
-            installerRan ||= command.includes("ollama.com/install.sh");
+            installerRan ||= command.includes("/install.sh'");
             commands.push(command);
             return successfulRunShellResult();
           },
@@ -3855,7 +3853,9 @@ const { setupNim } = require(${onboardPath});
       assert.equal(prompt.mock.calls.length, 0);
       assert.equal(result.provider, "ollama-local");
       assert.ok(notes.some((line) => line.includes("[non-interactive] Provider: ollama")));
-      assert.ok(commands.some((command) => command.includes("ollama.com/install.sh")));
+      assert.ok(
+        commands.some((command) => command.includes("/install.sh'")),
+      );
     } finally {
       resetOllamaHostCache();
     }

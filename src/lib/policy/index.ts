@@ -57,6 +57,7 @@ import {
   isPolicyDocument,
   isPolicyObject,
   isPresetPolicyMap,
+  materializeLocalInferencePresetPorts,
   type PolicyDocument,
   type PolicyObject,
   type PolicyValue,
@@ -156,7 +157,8 @@ function loadCentralPreset(name: string, options: { reportMissing?: boolean } = 
     if (options.reportMissing !== false) console.error(`  Preset not found: ${name}`);
     return null;
   }
-  return fs.readFileSync(file, "utf-8");
+  const content = fs.readFileSync(file, "utf-8");
+  return name === "local-inference" ? materializeLocalInferencePresetPorts(content) : content;
 }
 
 function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): string | null {
@@ -848,7 +850,7 @@ function openClawNpmReviewedEntries(baselinePolicyContent: string): {
 }
 
 /**
- * OpenShell 0.0.101 rejects overlapping endpoint selectors whose TLS or L7
+ * OpenShell 0.0.106 rejects overlapping endpoint selectors whose TLS or L7
  * metadata differs, even when their binary lists are disjoint. Keep the
  * restricted OpenClaw baseline GET-only. While the broader npm preset is
  * active, its reviewed full-access L4 endpoint temporarily replaces the

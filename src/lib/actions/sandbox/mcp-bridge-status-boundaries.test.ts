@@ -46,14 +46,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 4\nCredential keys: LD_PRELOAD\n",
+      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\n",
       stderr: "",
     };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return {
       status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake generic 1 0\n",
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\n",
       stderr: "",
     };
   }
@@ -121,15 +121,11 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
       detail: expect.stringMatching(/inspection was skipped.*legacy credential/i),
     });
     expect(payload.status.warnings).toEqual([
-      expect.stringMatching(/provider at sandbox scope.*endpoint-exclusive credential binding/i),
       expect.stringMatching(/persisted MCP URL no longer satisfies.*remove this server/i),
       expect.stringMatching(
         /persisted MCP credential name no longer satisfies.*remove this server/i,
       ),
     ]);
-    expect(payload.text).toMatch(
-      /warning: OpenShell currently attaches this credential provider at sandbox scope/i,
-    );
     expect(payload.text).toMatch(/warning: This persisted MCP URL no longer satisfies/i);
     expect(payload.text).toMatch(
       /warning: This persisted MCP credential name no longer satisfies/i,

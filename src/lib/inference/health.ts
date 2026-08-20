@@ -216,7 +216,7 @@ function hasValidChatMessageFields(
   allowStreamingDelta: boolean,
 ): boolean {
   let recognizedField = false;
-  for (const field of ["content", "reasoning_content", "refusal"] as const) {
+  for (const field of ["content", "reasoning_content", "reasoning", "refusal"] as const) {
     if (!(field in message)) continue;
     const value = message[field];
     const valid =
@@ -289,7 +289,7 @@ function validateChatCompletionsResponse(body: string): InferenceResponseValidat
     return hasChatCompletionsChoice(parsed, false)
       ? { ok: true }
       : notChatCompletionsResult(
-          "no choice carried a message with text content, a refusal, or tool calls",
+          "no choice carried a message with text content, reasoning_content, reasoning, a refusal, or tool calls",
         );
   }
 
@@ -418,6 +418,14 @@ function buildInvocationProbeDetail(
     return (
       `${route} at ${endpoint} was answered, but the probe could not read the response ` +
       `as proof that the model ran. (${result.message})`
+    );
+  }
+  if (classifyHealthProbeFailureLabel(result) === "unauthorized") {
+    return (
+      `${endpoint} rejected the ${route} request. ` +
+      `This probe authenticates with the host credential in ${credentialEnv}, not the provider ` +
+      `credential stored in the gateway. Check ${credentialEnv} where you run this command. ` +
+      `(${result.message})`
     );
   }
   return (
