@@ -5,7 +5,7 @@ import path from "node:path";
 
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
-import { redactSensitiveText } from "../security/redact";
+import { redact, redactFull, redactSensitiveText } from "../security/redact";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
   deriveCheckpointFromSession,
@@ -211,6 +211,10 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
 
 export function redactOnboardDiagnosticText(message: string): string {
   return redactSensitiveText(message) ?? "";
+}
+
+export function redactOnboardCommandDiagnosticText(message: string): string {
+  return redactSensitiveText(redact(redactFull(message))) ?? "";
 }
 
 export function createPortableOnboardEnvironmentScope(
