@@ -101,7 +101,7 @@ describe("onboard exit handler registration", () => {
     expect(loaded.machine.state).toBe("init");
   });
 
-  it("preserves an incomplete onboarding session after validation fails and records an unexpected exit as failed (#9732)", () => {
+  it("preserves and resumes an incomplete validation session while unexpected exits still fail (#9732)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const scriptPath = path.join(tmpDir, "onboard-exit-registration.cjs");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
@@ -114,6 +114,9 @@ describe("onboard exit handler registration", () => {
     const validationPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "onboard", "inference-selection-validation.ts"),
     );
+    const resultPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
+    );
 
     fs.writeFileSync(
       scriptPath,
@@ -121,10 +124,14 @@ describe("onboard exit handler registration", () => {
 const flowSlices = require(${flowSlicesPath});
 const onboardSession = require(${sessionPath});
 const validation = require(${validationPath});
+const { advanceTo } = require(${resultPath});
 const sentinel = new Error("stop-after-exit-registration");
+const resumeSentinel = new Error("stop-after-resume-checkpoint");
+const resumeRequested = process.argv.includes("--resume");
 const exitListeners = [];
 const originalOnce = process.once;
 const originalExit = process.exit;
+let resumeEvidence = null;
 
 process.once = function once(event, listener) {
   if (event === "exit") {
@@ -150,7 +157,19 @@ const validationHelpers = validation.createInferenceSelectionValidationHelpers({
   promptValidationRecovery: async () => "selection",
 });
 
-flowSlices.runInitialOnboardFlowSequence = async ({ runtime }) => {
+flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
+  if (resumeRequested) {
+    const before = await runtime.session();
+    await runtime.applyResult(advanceTo("preflight", { metadata: { state: before.machine.state } }));
+    const after = await runtime.session();
+    resumeEvidence = {
+      requested: context.resume,
+      sessionId: before.sessionId,
+      startingMachineState: before.machine.state,
+      continuedMachineState: after.machine.state,
+    };
+    throw resumeSentinel;
+  }
   await runtime.markStepStarted("preflight");
   if (process.env.NEMOCLAW_TEST_EXIT_KIND === "validation") {
     await validationHelpers.validateCustomOpenAiLikeSelection(
@@ -177,6 +196,12 @@ const { onboard } = require(${onboardPath});
     });
     throw new Error("expected sentinel");
   } catch (error) {
+    if (resumeRequested) {
+      if (error !== resumeSentinel && error?.message !== resumeSentinel.message) throw error;
+      const loaded = onboardSession.loadSession();
+      console.log(JSON.stringify({ loaded, resumeEvidence, exitListeners: exitListeners.length }));
+      return;
+    }
     const validationExit = process.env.NEMOCLAW_TEST_EXIT_KIND === "validation";
     if (
       (!validationExit && error !== sentinel && error?.message !== sentinel.message) ||
@@ -200,8 +225,8 @@ const { onboard } = require(${onboardPath});
 `,
     );
 
-    const runOnboard = (home: string, exitKind: "unexpected" | "validation") =>
-      spawnSync(process.execPath, [scriptPath], {
+    const runOnboard = (home: string, exitKind: "unexpected" | "validation" | "resume") =>
+      spawnSync(process.execPath, [scriptPath, ...(exitKind === "resume" ? ["--resume"] : [])], {
         cwd: repoRoot,
         encoding: "utf8",
         env: {
@@ -247,6 +272,29 @@ const { onboard } = require(${onboardPath});
     expect(validationPayload.loaded.machine.state).toBe("init");
     expect(validationPayload.loaded.checkpoint).not.toBeNull();
     expect(validationPayload.loaded.checkpoint?.machineState).toBe("init");
+
+    const resumeResult = runOnboard(validationHome, "resume");
+
+    expect(resumeResult.status, resumeResult.stderr).toBe(0);
+    const resumeLastLine = resumeResult.stdout.trim().split(/\n/).at(-1) ?? "";
+    const resumePayload = JSON.parse(resumeLastLine) as {
+      loaded: ReturnType<typeof onboardSession.createSession>;
+      resumeEvidence: {
+        requested: boolean;
+        sessionId: string;
+        startingMachineState: string;
+        continuedMachineState: string;
+      };
+      exitListeners: number;
+    };
+    expect(resumePayload.exitListeners).toBeGreaterThanOrEqual(2);
+    expect(resumePayload.resumeEvidence.requested).toBe(true);
+    expect(resumePayload.resumeEvidence.sessionId).toBe(validationPayload.loaded.sessionId);
+    expect(resumePayload.resumeEvidence.startingMachineState).toBe("init");
+    expect(resumePayload.resumeEvidence.continuedMachineState).toBe("preflight");
+    expect(resumePayload.loaded.status).toBe("in_progress");
+    expect(resumePayload.loaded.failure).toBeNull();
+    expect(resumePayload.loaded.machine.state).toBe("preflight");
   });
 
   it("onboard() preserves a resumable session after a normal incomplete result (#9048)", () => {
