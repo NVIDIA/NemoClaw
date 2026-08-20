@@ -303,14 +303,14 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
   });
 
   const teardownCases = [
-    ["destroy", "prepareMcpBridgesForDestroy"],
-    ["rebuild", "prepareMcpBridgesForRebuild"],
+    ["destroy", "prepareMcpBridgesForDestroy", "generic"],
+    ["rebuild", "prepareMcpBridgesForRebuild", "nemoclaw-mcp-v1"],
   ] as const;
 
   it.each(teardownCases)(
     "%s teardown does not require the marker from the old image",
-    async (label, method) => {
-      if (label === "rebuild") providerType = "nemoclaw-mcp-v1";
+    async (_label, method, caseProviderType) => {
+      providerType = caseProviderType;
       const preparation = await bridge[method]("alpha");
 
       expect({ entryCount: preparation.entries.length, ...lifecycleResult() }).toMatchObject({
@@ -325,8 +325,8 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
 
   it.each(teardownCases)(
     "%s teardown fails closed when adapter ownership is unproved",
-    async (label, method) => {
-      if (label === "rebuild") providerType = "nemoclaw-mcp-v1";
+    async (_label, method, caseProviderType) => {
+      providerType = caseProviderType;
       adapterRemovalOutcome = "unowned";
 
       let error = "";
