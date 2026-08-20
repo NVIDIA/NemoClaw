@@ -12,6 +12,11 @@ import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
 
 const listen = useOpenAiValidationTestServers();
+const resumableValidationExit = {
+  code: 1,
+  name: "OnboardDeferredExitError",
+  preserveIncompleteSession: true,
+};
 
 describe("inference selection validation", () => {
   it.each([
@@ -235,8 +240,8 @@ describe("inference selection validation", () => {
           "meta/llama-3.3-70b-instruct",
           "NVIDIA_INFERENCE_API_KEY",
         ),
-      ).rejects.toThrow("Non-interactive endpoint validation failed.");
-      expect(exit).toHaveBeenCalledWith(1);
+      ).rejects.toMatchObject(resumableValidationExit);
+      expect(exit).not.toHaveBeenCalled();
       expect(process.exitCode).toBe(1);
       expect(promptValidationRecovery).not.toHaveBeenCalled();
       expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
@@ -588,9 +593,9 @@ describe("inference selection validation", () => {
           "model-a",
           "COMPATIBLE_ANTHROPIC_API_KEY",
         ),
-      ).rejects.toThrow("Non-interactive endpoint validation failed.");
+      ).rejects.toMatchObject(resumableValidationExit);
       expect(probeAnthropicEndpoint).not.toHaveBeenCalled();
-      expect(exit).toHaveBeenCalledWith(1);
+      expect(exit).not.toHaveBeenCalled();
     } finally {
       process.exitCode = originalExitCode;
       exit.mockRestore();
@@ -621,12 +626,9 @@ describe("inference selection validation", () => {
           "model-a",
           "COMPATIBLE_ANTHROPIC_API_KEY",
         ),
-      ).rejects.toThrow("Non-interactive endpoint validation failed.");
+      ).rejects.toMatchObject(resumableValidationExit);
       expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
-      expect(exit).toHaveBeenCalledWith(1);
-      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
-        exit.mock.invocationCallOrder[0] ?? 0,
-      );
+      expect(exit).not.toHaveBeenCalled();
     } finally {
       process.exitCode = originalExitCode;
       exit.mockRestore();
@@ -659,13 +661,10 @@ describe("inference selection validation", () => {
           "model-a",
           "COMPATIBLE_ANTHROPIC_API_KEY",
         ),
-      ).rejects.toThrow("Non-interactive endpoint validation failed.");
+      ).rejects.toMatchObject(resumableValidationExit);
       expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
       expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain("teardown boom");
-      expect(exit).toHaveBeenCalledWith(1);
-      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
-        exit.mock.invocationCallOrder[0] ?? 0,
-      );
+      expect(exit).not.toHaveBeenCalled();
     } finally {
       process.exitCode = originalExitCode;
       exit.mockRestore();
@@ -1017,8 +1016,8 @@ exit 0
           null,
           { intendedApi: "openai-completions" },
         ),
-      ).rejects.toThrow("Non-interactive endpoint validation failed.");
-      expect(exit).toHaveBeenCalledWith(1);
+      ).rejects.toMatchObject(resumableValidationExit);
+      expect(exit).not.toHaveBeenCalled();
       expect(promptValidationRecovery).not.toHaveBeenCalled();
       const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");
       expect(errorOutput).toContain(

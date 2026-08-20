@@ -43,6 +43,7 @@ import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
 import { summarizeProbeForDisplay } from "./probe-diagnostics";
 import { normalizeReasoningFlag } from "./reasoning-mode";
+import { OnboardDeferredExitError } from "./session-bootstrap";
 
 export type EndpointValidationResult =
   | {
@@ -174,8 +175,7 @@ export function createInferenceSelectionValidationHelpers(
       );
     }
     process.exitCode = 1;
-    (process.exit as (code?: number) => void)(1);
-    throw new Error("Non-interactive endpoint validation failed.");
+    throw new OnboardDeferredExitError(1, { preserveIncompleteSession: true });
   }
 
   function printValidationFailure(

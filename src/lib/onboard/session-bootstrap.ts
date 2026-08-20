@@ -160,11 +160,13 @@ const ONBOARD_DEFERRED_EXIT_ERROR = Symbol.for("nemoclaw.onboard.deferred-exit-e
 export class OnboardDeferredExitError extends Error {
   readonly [ONBOARD_DEFERRED_EXIT_ERROR] = true;
   readonly code: number;
+  readonly preserveIncompleteSession: boolean;
 
-  constructor(code: number) {
+  constructor(code: number, options: { preserveIncompleteSession?: boolean } = {}) {
     super(`Onboarding requested exit ${String(code)}.`);
     this.name = "OnboardDeferredExitError";
     this.code = code;
+    this.preserveIncompleteSession = options.preserveIncompleteSession === true;
   }
 }
 
@@ -179,6 +181,10 @@ export function isOnboardDeferredExitError(error: unknown): error is OnboardDefe
     typeof candidate.code === "number" &&
     Number.isInteger(candidate.code)
   );
+}
+
+export function shouldPreserveIncompleteOnboardSession(error: unknown): boolean {
+  return isOnboardDeferredExitError(error) && error.preserveIncompleteSession;
 }
 
 interface DeferredExitOptions {
