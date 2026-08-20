@@ -114,7 +114,7 @@ describe("live E2E target matrix", () => {
     expectExecutableTypedTargetCoverage();
   });
 
-  it("assigns the longer job ceiling only to post-reboot recovery (#9622)", () => {
+  it("assigns a 75-minute job timeout only to post-reboot recovery (#9622)", () => {
     expect(
       Object.fromEntries(
         buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes]),

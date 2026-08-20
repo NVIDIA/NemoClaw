@@ -76,7 +76,7 @@ describe("onboard final-handoff timeout contract", () => {
     ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],
   ] as const)(
-    "keeps the %s catalogue target alive through test cleanup",
+    "reserves at least 20 minutes of catalogue-job headroom after the %s test timeout",
     (targetId, testTimeoutMs, targetTimeoutMinutes) => {
       expect(catalogueTarget(targetId).timeoutMinutes).toBe(targetTimeoutMinutes);
       expect(catalogueTarget(targetId).timeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
@@ -116,7 +116,7 @@ describe("onboard final-handoff timeout contract", () => {
     expect(liveTargetTimeoutContract(undefined)).toEqual({ targetTimeoutMinutes: 45 });
   });
 
-  it("keeps the post-reboot registry job alive through test cleanup", () => {
+  it("reserves at least 20 minutes of registry-job headroom after the post-reboot test timeout", () => {
     const contract = liveTargetTimeoutContract("post-reboot-recovery");
 
     expect(contract.targetTimeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
