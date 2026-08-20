@@ -32,6 +32,7 @@ function buildAddProcessScript(
   home: string,
   crashAfter: CrashBoundary,
   includeSecret = true,
+  registrationGate = "",
 ): string {
   return String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -40,12 +41,21 @@ includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete proc
 const fs = require("node:fs");
 const path = require("node:path");
 const crashAfter = ${JSON.stringify(crashAfter)};
+const registrationGate = ${JSON.stringify(registrationGate)};
 if (crashAfter === "credential-projection-coalesced") {
   process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "2";
 }
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const mark = (name) => fs.writeFileSync(marker(name), "yes\n", { mode: 0o600 });
 const marked = (name) => fs.existsSync(marker(name));
+const waitForMarked = (name) => {
+  const deadline = Date.now() + 10_000;
+  const sleep = new Int32Array(new SharedArrayBuffer(4));
+  while (!marked(name)) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for " + name);
+    Atomics.wait(sleep, 0, 0, 10);
+  }
+};
 const providerVersion = () => Number.parseInt(marked("provider-version") ? fs.readFileSync(marker("provider-version"), "utf8") : "1", 10);
 const setProviderVersion = (version) => fs.writeFileSync(marker("provider-version"), String(version), { mode: 0o600 });
 const providerPresentAtStart = marked("provider");
@@ -240,7 +250,13 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
   };
 };
 
-if (!registry.getSandbox("crash-test")) {
+const sandboxMissing = !registry.getSandbox("crash-test");
+if (registrationGate && sandboxMissing) {
+  mark(registrationGate + "-registration-ready");
+  waitForMarked("release-" + registrationGate + "-registration");
+}
+if (sandboxMissing) {
+  fs.appendFileSync(marker("sandbox-registration-log"), registrationGate + "\n", { mode: 0o600 });
   registry.registerSandbox({
     name: "crash-test",
     agent: "openclaw",
@@ -295,8 +311,18 @@ function collectProcess(child: ChildProcessWithoutNullStreams): Promise<{
   child.stdout.on("data", (chunk: string) => (stdout += chunk));
   child.stderr.on("data", (chunk: string) => (stderr += chunk));
   return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (status) => resolve({ status, stdout, stderr }));
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`Timed out waiting for child process ${child.pid ?? "unknown"}`));
+    }, 30_000);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("close", (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    });
   });
 }
 
@@ -530,18 +556,47 @@ function readBridge(home: string): Record<string, unknown> {
   return parsed.sandboxes["crash-test"].mcp.bridges.fake;
 }
 
+function releaseRegistration(home: string, gate: string): void {
+  fs.writeFileSync(path.join(home, `release-${gate}-registration.marker`), "yes\n", {
+    mode: 0o600,
+  });
+}
+
 describe("MCP add crash consistency", () => {
   it("commits one bridge and rejects one duplicate after delayed credential projection (#9764)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-concurrent-projection-"));
+    let first: ChildProcessWithoutNullStreams | undefined;
+    let second: ChildProcessWithoutNullStreams | undefined;
     try {
-      const script = buildAddProcessScript(home, "credential-projection-coalesced");
-      const first = spawnScript(home, script);
-      const second = spawnScript(home, script);
-      const results = await Promise.all([collectProcess(first), collectProcess(second)]);
+      first = spawnScript(
+        home,
+        buildAddProcessScript(home, "credential-projection-coalesced", true, "winner"),
+      );
+      second = spawnScript(
+        home,
+        buildAddProcessScript(home, "credential-projection-coalesced", true, "late"),
+      );
+      await Promise.all([
+        waitForMarker(home, "winner-registration-ready"),
+        waitForMarker(home, "late-registration-ready"),
+      ]);
+
+      releaseRegistration(home, "winner");
+      const firstResult = await collectProcess(first);
+      expect(firstResult.status, `${firstResult.stdout}\n${firstResult.stderr}`).toBe(0);
+
+      releaseRegistration(home, "late");
+      const secondResult = await collectProcess(second);
+      const results = [firstResult, secondResult];
       const combinedOutput = results
         .map((result) => `${result.stdout}\n${result.stderr}`)
         .join("\n---\n");
 
+      const sandboxRegistrationCount = fs
+        .readFileSync(path.join(home, "sandbox-registration-log.marker"), "utf8")
+        .split("\n")
+        .filter(Boolean).length;
+      expect(sandboxRegistrationCount).toBe(1);
       expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
       expect(combinedOutput).not.toContain("host-only-secret");
@@ -558,6 +613,10 @@ describe("MCP add crash consistency", () => {
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();
     } finally {
+      releaseRegistration(home, "winner");
+      releaseRegistration(home, "late");
+      first?.kill("SIGKILL");
+      second?.kill("SIGKILL");
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
