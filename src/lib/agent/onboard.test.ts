@@ -323,6 +323,11 @@ describe("agent setup session boundaries", () => {
     };
   }
 
+  beforeEach(() => {
+    getSandboxMock.mockReset();
+    getSandboxMock.mockReturnValue(null);
+  });
+
   afterEach(() => {
     mocks.run.mockReset();
     vi.restoreAllMocks();
@@ -465,6 +470,92 @@ describe("agent setup session boundaries", () => {
       "Agent gateway did not respond within 1s",
     );
     expect(context.recordStepComplete).not.toHaveBeenCalled();
+  });
+
+  // Per-sandbox Hermes API ports (#9739):
+  // - the manifest names the default port, 8642
+  // - a second sandbox on one host serves its API on its own allocated port
+  // - probing the manifest default there reaches nothing and times out
+  const hermesProbeAgent = makeAgent({
+    name: "hermes",
+    displayName: "Hermes Agent",
+    healthProbe: { url: "http://localhost:8642/health", port: 8642, timeout_seconds: 1 },
+  });
+
+  function probeUrlsFrom(
+    runCaptureOpenshell: ReturnType<typeof vi.fn<OnboardContext["runCaptureOpenshell"]>>,
+  ): string[] {
+    return runCaptureOpenshell.mock.calls
+      .map(([args]) => args)
+      .filter((args) => args.includes("curl"))
+      .map((args) => String(args[args.length - 1]));
+  }
+
+  it("probes the sandbox's own Hermes API port instead of the manifest default (#9739)", async () => {
+    getSandboxMock.mockReturnValue({ hermesApiPort: 8643 });
+    const runCaptureOpenshell = vi
+      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
+    const { context } = createAgentSetupContext(runCaptureOpenshell);
+
+    await handleAgentSetup(
+      "hermes-core-test",
+      "model-x",
+      "provider-x",
+      hermesProbeAgent,
+      false,
+      null,
+      context,
+    );
+
+    expect(probeUrlsFrom(runCaptureOpenshell)).toEqual(["http://localhost:8643/health"]);
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+    expect(context.recordStepComplete).toHaveBeenCalledWith("agent_setup", {
+      sandboxName: "hermes-core-test",
+      provider: "provider-x",
+      model: "model-x",
+    });
+  });
+
+  it("keeps the manifest probe port for a sandbox that owns the default API port (#9739)", async () => {
+    getSandboxMock.mockReturnValue({ hermesApiPort: 8642 });
+    const runCaptureOpenshell = vi
+      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
+    const { context } = createAgentSetupContext(runCaptureOpenshell);
+
+    await handleAgentSetup(
+      "hermes-first",
+      "model-x",
+      "provider-x",
+      hermesProbeAgent,
+      false,
+      null,
+      context,
+    );
+
+    expect(probeUrlsFrom(runCaptureOpenshell)).toEqual(["http://localhost:8642/health"]);
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+  });
+
+  it("retargets the resume health probe at the sandbox's own API port (#9739)", async () => {
+    getSandboxMock.mockReturnValue({ hermesApiPort: 8643 });
+    const runCaptureOpenshell = vi.fn<OnboardContext["runCaptureOpenshell"]>(() => "ok");
+    const { context } = createAgentSetupContext(runCaptureOpenshell);
+
+    await handleAgentSetup(
+      "hermes-core-test",
+      "model-x",
+      "provider-x",
+      hermesProbeAgent,
+      true,
+      null,
+      context,
+    );
+
+    expect(probeUrlsFrom(runCaptureOpenshell)).toEqual(["http://localhost:8643/health"]);
+    expect(context.skippedStepMessage).toHaveBeenCalledWith("agent_setup", "hermes-core-test");
+    expect(context.startRecordedStep).not.toHaveBeenCalled();
   });
 });
 
