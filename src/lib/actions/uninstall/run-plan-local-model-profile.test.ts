@@ -12,6 +12,7 @@ import {
 } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import {
+  loadManagedLlamaCppOwner,
   managedLlamaCppStatePaths,
   reserveManagedLlamaCppOwner,
 } from "../../inference/llama-cpp/managed-state";
@@ -626,6 +627,10 @@ describe("uninstall local model profile cleanup", () => {
     );
     const stateDir = publishManagedLlamaOwner(tmpHome, 8080, "selected-sandbox");
     const siblingStateDir = publishManagedLlamaOwner(tmpHome, 9000, "sibling-sandbox");
+    const selectedPaths = managedLlamaCppStatePaths(tmpHome, 8080);
+    const siblingPaths = managedLlamaCppStatePaths(tmpHome, 9000);
+    const selectedOwnerBefore = loadManagedLlamaCppOwner(selectedPaths);
+    const siblingOwnerBefore = loadManagedLlamaCppOwner(siblingPaths);
     writeScopedGatewayState(tmpHome);
     const unrelatedState = path.join(tmpHome, ".nemoclaw", "unrelated-state.json");
     fs.writeFileSync(unrelatedState, "{}\n", { mode: 0o600 });
@@ -662,6 +667,8 @@ describe("uninstall local model profile cleanup", () => {
       expect(fs.existsSync(stateDir)).toBe(true);
       expect(fs.existsSync(path.join(stateDir, "owner.json"))).toBe(true);
       expect(fs.existsSync(path.join(siblingStateDir, "owner.json"))).toBe(true);
+      expect(loadManagedLlamaCppOwner(selectedPaths)).toEqual(selectedOwnerBefore);
+      expect(loadManagedLlamaCppOwner(siblingPaths)).toEqual(siblingOwnerBefore);
       expect(fs.existsSync(unrelatedState)).toBe(false);
       expect(runLocalModelRuntimeCleanup).not.toHaveBeenCalled();
       expect(logs.some((message) => message.endsWith("State and binaries"))).toBe(true);
