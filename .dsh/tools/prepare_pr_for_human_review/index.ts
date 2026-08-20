@@ -62,19 +62,13 @@ export default async function prepare_pr_for_human_review(input: {
       /[\r\n]/.test(input.broadGateEvidence))
   )
     throw new Error("broadGateEvidence must be a non-empty single line of at most 4000 characters");
-  const before = await tools.bash({
-    command: "git status --porcelain=v1",
+  const before = await tools.read_git_checkout({
     workdir: input.workdir,
-    description: "Check handoff working tree",
-    timeoutMs: 30000,
+    includeRoot: false,
+    includeBranch: false,
   });
-  if (before.kind !== "foreground" || before.exitCode !== 0)
-    throw new Error("Could not inspect handoff working tree");
-  if (before.stdout.text.trim())
-    throw new Error(
-      "Working tree has uncommitted changes; commit or stash them before handoff.\n" +
-        before.stdout.text,
-    );
+  if (!before.clean)
+    throw new Error("Working tree has uncommitted changes; commit or stash them before handoff.");
   const plan = [
     "run focused non-writing validation",
     "confirm validation left worktree clean",
@@ -122,22 +116,28 @@ export default async function prepare_pr_for_human_review(input: {
         ok: false,
         step: "validation",
         validation,
-        status: status.kind === "foreground" ? status.stdout.text : "",
+        status:
+          status.kind === "foreground"
+            ? (
+                await tools.project_diagnostic_text({
+                  lines: [status.stdout.text],
+                  clipMode: "tail",
+                  maxCharacters: 4000,
+                  maxLineCharacters: 4000000,
+                })
+              ).text
+            : "",
       }),
     };
   }
-  const after = await tools.bash({
-    command: "git status --porcelain=v1",
+  const after = await tools.read_git_checkout({
     workdir: input.workdir,
-    description: "Check post-validation cleanliness",
-    timeoutMs: 30000,
+    includeRoot: false,
+    includeBranch: false,
   });
-  if (after.kind !== "foreground" || after.exitCode !== 0)
-    throw new Error("Could not inspect post-validation working tree");
-  if (after.stdout.text.trim())
+  if (after.statusBase64 !== before.statusBase64)
     throw new Error(
-      "Validation changed tracked or untracked files; review and commit them before handoff.\n" +
-        after.stdout.text,
+      "Validation changed tracked or untracked files; review and commit them before handoff.",
     );
   const view = await tools.run_github_cli({
     workdir: input.workdir,
@@ -156,15 +156,7 @@ export default async function prepare_pr_for_human_review(input: {
   if (pr.state !== "OPEN") throw new Error("PR #" + input.pullNumber + " is not open");
   if (!/^[0-9a-f]{40}$/.test(String(pr.headRefOid ?? "")))
     throw new Error("Pull request returned an invalid commit SHA");
-  const headResult = await tools.bash({
-    command: "git rev-parse HEAD",
-    workdir: input.workdir,
-    description: "Resolve handoff checkout commit",
-    timeoutMs: 10000,
-  });
-  if (headResult.kind !== "foreground" || headResult.exitCode !== 0)
-    throw new Error("Could not resolve local HEAD");
-  const localHead = headResult.stdout.text.trim();
+  const localHead = after.head;
   if (!/^[0-9a-f]{40,64}$/.test(localHead)) throw new Error("Local HEAD is invalid");
   let push = null;
   if (input.push !== false) {
@@ -175,16 +167,41 @@ export default async function prepare_pr_for_human_review(input: {
       timeoutMs: 120000,
     });
     if (pushed.kind !== "foreground") throw new Error("Git push did not finish");
+    const [pushStdout, pushStderr] = await Promise.all([
+      tools.project_diagnostic_text({
+        lines: [pushed.stdout.text],
+        clipMode: "tail",
+        maxCharacters: 2000,
+        maxLineCharacters: 4000000,
+      }),
+      tools.project_diagnostic_text({
+        lines: [pushed.stderr.text],
+        clipMode: "tail",
+        maxCharacters: 4000,
+        maxLineCharacters: 4000000,
+      }),
+    ]);
     push = {
       code: pushed.exitCode,
-      stdout: pushed.stdout.text.slice(-2000),
-      stderr: pushed.stderr.text.slice(-4000),
-      truncated: pushed.stdout.truncated || pushed.stderr.truncated,
+      stdout: pushStdout.text,
+      stderr: pushStderr.text,
+      truncated:
+        pushed.stdout.truncated ||
+        pushed.stderr.truncated ||
+        pushStdout.truncated ||
+        pushStderr.truncated,
     };
-    if (pushed.exitCode !== 0)
+    if (pushed.exitCode !== 0) {
+      const pushError = await tools.project_diagnostic_text({
+        lines: [pushed.stderr.text],
+        clipMode: "tail",
+        maxCharacters: 4000000,
+        maxLineCharacters: 4000000,
+      });
       throw new Error(
-        "Git push failed; stop and resolve GitHub access before continuing.\n" + pushed.stderr.text,
+        "Git push failed; stop and resolve GitHub access before continuing.\n" + pushError.text,
       );
+    }
   } else if (localHead !== pr.headRefOid)
     throw new Error("push:false requires the local commit to match the PR commit");
   const receipt = await tools.refresh_pr_body_evidence({
@@ -238,11 +255,21 @@ export default async function prepare_pr_for_human_review(input: {
         timeoutMs: 30000,
         apply: true,
       });
-      ready = {
-        code: marked.code,
-        stdout: marked.stdout.slice(-2000),
-        stderr: marked.stderr.slice(-4000),
-      };
+      const [readyStdout, readyStderr] = await Promise.all([
+        tools.project_diagnostic_text({
+          lines: [marked.stdout],
+          clipMode: "tail",
+          maxCharacters: 2000,
+          maxLineCharacters: 4000000,
+        }),
+        tools.project_diagnostic_text({
+          lines: [marked.stderr],
+          clipMode: "tail",
+          maxCharacters: 4000,
+          maxLineCharacters: 4000000,
+        }),
+      ]);
+      ready = { code: marked.code, stdout: readyStdout.text, stderr: readyStderr.text };
     } else ready = { code: 0, stdout: "Pull request was already ready for review.", stderr: "" };
     const afterReady = await tools.read_nemoclaw_pr({
       workdir: input.workdir,

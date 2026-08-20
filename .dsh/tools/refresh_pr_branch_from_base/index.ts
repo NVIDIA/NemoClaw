@@ -114,17 +114,41 @@ export default async function refresh_pr_branch_from_base(input: {
   });
   if (update.code !== 0) {
     const detail = update.stdout + "\n" + update.stderr;
-    if (authPattern.test(detail))
+    if (authPattern.test(detail)) {
+      const diagnostic = await tools.project_diagnostic_text({
+        lines: [update.stderr],
+        clipMode: "tail",
+        maxLines: 1,
+        maxCharacters: 4000000,
+        maxLineCharacters: 4000000,
+      });
       throw new Error(
-        `GitHub access failed while updating PR #${input.number}; stop and restore repository access before continuing.\n${update.stderr}`,
+        `GitHub access failed while updating PR #${input.number}; stop and restore repository access before continuing.\n${diagnostic.text}`,
       );
+    }
+    const [stdout, stderr] = await Promise.all([
+      tools.project_diagnostic_text({
+        lines: [update.stdout],
+        clipMode: "tail",
+        maxLines: 1,
+        maxCharacters: 2000,
+        maxLineCharacters: 4000000,
+      }),
+      tools.project_diagnostic_text({
+        lines: [update.stderr],
+        clipMode: "tail",
+        maxLines: 1,
+        maxCharacters: 2000,
+        maxLineCharacters: 4000000,
+      }),
+    ]);
     return {
       ...base,
       reason: "GitHub did not update the PR branch",
       response: {
         code: update.code,
-        stdout: update.stdout.slice(-2000),
-        stderr: update.stderr.slice(-2000),
+        stdout: stdout.text,
+        stderr: stderr.text,
       },
     };
   }

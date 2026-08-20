@@ -87,13 +87,20 @@ export default async function audit_nemoclaw_request_changes(input: {
     if (r.stdout.truncated || r.stderr.truncated)
       throw new Error(description + " exceeded the bounded command output");
     if (r.exitCode !== 0 && !allowFailure) {
-      if (accessFailure.test(detail))
+      const authFailure = accessFailure.test(detail);
+      const projected = await tools.project_diagnostic_text({
+        lines: [detail.trim()],
+        clipMode: "tail",
+        maxCharacters: authFailure ? 4000000 : 4000,
+        maxLineCharacters: 4000000,
+      });
+      if (authFailure)
         throw new Error(
           description +
             " failed; stop and restore GitHub access before continuing.\n" +
-            detail.trim(),
+            projected.text,
         );
-      throw new Error(description + " failed.\n" + detail.trim().slice(-4000));
+      throw new Error(description + " failed.\n" + projected.text);
     }
     return r;
   };
@@ -189,10 +196,11 @@ export default async function audit_nemoclaw_request_changes(input: {
             headSha +
             '","verdict":"VALID|INVALID|HUMAN_REQUIRED","summary":"<evidence>","invalidFindings":[],"decisionQuestion":null}';
           const childPrompt = [prompt, "Use checkout " + input.workdir + "."].join("\n");
-          const before = await run(
-            "{ git rev-parse HEAD; git status --porcelain=v1 -z | base64 | tr -d '\n'; printf '\n'; }",
-            "Record audit checkout identity",
-          );
+          const before = await tools.read_git_checkout({
+            workdir: input.workdir,
+            includeRoot: false,
+            includeBranch: false,
+          });
           const agent = await tools.subagent({
             description: "Audit exact-commit review",
             prompt: childPrompt,
@@ -209,11 +217,12 @@ export default async function audit_nemoclaw_request_changes(input: {
                   : JSON.stringify(value),
             )
             .join("\n");
-          const after = await run(
-            "{ git rev-parse HEAD; git status --porcelain=v1 -z | base64 | tr -d '\n'; printf '\n'; }",
-            "Verify audit checkout identity",
-          );
-          if (after.stdout.text.trim() !== before.stdout.text.trim())
+          const after = await tools.read_git_checkout({
+            workdir: input.workdir,
+            includeRoot: false,
+            includeBranch: false,
+          });
+          if (after.head !== before.head || after.statusBase64 !== before.statusBase64)
             throw new Error("The read-only blocker audit changed HEAD or the worktree");
           const marker = "NEMOCLAW_AUDIT_RESULT=";
           const markerIndex = agentOutput.lastIndexOf(marker);
@@ -224,7 +233,14 @@ export default async function audit_nemoclaw_request_changes(input: {
               commit: headSha,
               status: "OPERATIONAL_FAILURE",
               error: "Missing audit result",
-              rawTail: agentOutput.slice(-2000),
+              rawTail: (
+                await tools.project_diagnostic_text({
+                  lines: [agentOutput],
+                  clipMode: "tail",
+                  maxCharacters: 2000,
+                  maxLineCharacters: 4000000,
+                })
+              ).text,
             };
             continue;
           }

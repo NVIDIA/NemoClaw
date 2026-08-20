@@ -97,7 +97,14 @@ export default async function commit_push_refresh_pr(input: {
     throw new Error("Could not resolve a valid PR source branch");
   if (branch !== pr.headRefName)
     throw new Error("branch must match the PR source branch " + pr.headRefName);
-  const localHeadBefore = (await run("git rev-parse HEAD", "Read local commit")).trim();
+  const localHeadBefore = (
+    await tools.read_git_checkout({
+      workdir: input.workdir,
+      includeRoot: false,
+      includeBranch: false,
+      includeStatus: false,
+    })
+  ).head;
   if (localHeadBefore !== pr.headRefOid)
     throw new Error(
       "Local commit " +
@@ -175,7 +182,14 @@ export default async function commit_push_refresh_pr(input: {
   }
   const staged = await run("git diff --cached --name-status", "Read staged change summary");
   await run("git commit -s -m " + quote(input.message.trim()), "Create signed-off commit", 120000);
-  const localHead = (await run("git rev-parse HEAD", "Read committed revision")).trim();
+  const localHead = (
+    await tools.read_git_checkout({
+      workdir: input.workdir,
+      includeRoot: false,
+      includeBranch: false,
+      includeStatus: false,
+    })
+  ).head;
   let pushResult = null;
   let receipt = null;
   let readiness = null;

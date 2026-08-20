@@ -120,12 +120,30 @@ export default async function run_nemoclaw_focused_repair_validation(input: {
       timeoutMs,
     });
     if (r.kind !== "foreground") throw new Error("Unexpected background result");
+    const [stdoutTail, stderrTail] = await Promise.all([
+      tools.project_diagnostic_text({
+        lines: r.stdout.text.split(/\r?\n/),
+        clipMode: "tail",
+        maxLines: 80,
+        maxCharacters: 4000000,
+        maxLineCharacters: 4000000,
+        sourceTruncated: r.stdout.truncated,
+      }),
+      tools.project_diagnostic_text({
+        lines: r.stderr.text.split(/\r?\n/),
+        clipMode: "tail",
+        maxLines: 80,
+        maxCharacters: 4000000,
+        maxLineCharacters: 4000000,
+        sourceTruncated: r.stderr.truncated,
+      }),
+    ]);
     steps.push({
       name: item.name,
       command: item.command,
       code: r.exitCode ?? -1,
-      stdoutTail: r.stdout.text.split(/\r?\n/).slice(-80).join("\n"),
-      stderrTail: r.stderr.text.split(/\r?\n/).slice(-80).join("\n"),
+      stdoutTail: stdoutTail.text,
+      stderrTail: stderrTail.text,
       truncated: r.stdout.truncated || r.stderr.truncated,
     });
   }

@@ -25,21 +25,15 @@ export default async function publish_nemoclaw_pr_branch(input: {
     if (r.exitCode !== 0 && !allow) throw new Error(r.stderr.text || description + " failed");
     return r;
   };
-  const head = (
-    await run("git rev-parse HEAD", "Resolve publication candidate commit")
-  ).stdout.text.trim();
+  const checkout = await tools.read_git_checkout({
+    workdir: input.workdir,
+    includeRoot: false,
+  });
+  const head = checkout.head;
   if (head !== input.expectedHeadSha)
     throw new Error("Local commit does not match expectedHeadSha");
-  const status = (
-    await run("git status --porcelain=v1", "Check publication candidate cleanliness")
-  ).stdout.text
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .join("\n");
-  if (status) throw new Error("Publication candidate has uncommitted changes");
-  const branch = (
-    await run("git branch --show-current", "Read publication branch")
-  ).stdout.text.trim();
+  if (!checkout.clean) throw new Error("Publication candidate has uncommitted changes");
+  const branch = checkout.branch ?? "";
   if (!branch || branch === baseBranch) throw new Error("Publication requires a feature branch");
   const existing = await tools.run_github_cli({
     workdir: input.workdir,

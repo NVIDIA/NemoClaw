@@ -26,18 +26,26 @@ export default async function checkout_pr_for_local_repair(input: {
     !/^[A-Za-z0-9_./-]+$/.test(localBranch)
   )
     throw new Error("repo, remote, or localBranch is invalid");
-  const before = await tools.bash({
-    command: "git status --short --branch",
-    workdir: input.workdir,
-    description: "Check active checkout cleanliness",
-    timeoutMs: 30000,
-  });
+  const [checkoutIdentity, before] = await Promise.all([
+    tools.read_git_checkout({
+      workdir: input.workdir,
+      includeRoot: false,
+      includeBranch: false,
+      includeStatus: true,
+    }),
+    tools.bash({
+      command: "git status --short --branch",
+      workdir: input.workdir,
+      description: "Read active checkout diagnostic",
+      timeoutMs: 30000,
+    }),
+  ]);
   if (before.kind !== "foreground" || before.exitCode !== 0)
     throw new Error("Could not inspect active checkout");
   const uncommitted = before.stdout.text
     .split(/\r?\n/)
     .filter((line) => line.trim() && !line.startsWith("##"));
-  if (requireClean && uncommitted.length)
+  if (requireClean && !checkoutIdentity.clean)
     throw new Error(
       "Active checkout has uncommitted changes; use prepare_isolated_pr_worktree for concurrent work or clean this checkout first.\n" +
         uncommitted.join("\n"),

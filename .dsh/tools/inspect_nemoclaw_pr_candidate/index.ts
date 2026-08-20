@@ -29,15 +29,18 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
       "git fetch --prune " + q(remote) + " " + q(baseBranch),
       "Refresh trusted pull request base",
     );
-  const branch = (
-      await run("git branch --show-current", "Read candidate branch")
-    ).stdout.text.trim(),
-    headSha = (await run("git rev-parse HEAD", "Read candidate commit")).stdout.text.trim(),
+  const checkout = await tools.read_git_checkout({
+      workdir: input.workdir,
+      includeRoot: false,
+    }),
+    branch = checkout.branch ?? "",
+    headSha = checkout.head,
     baseSha = (
       await run("git rev-parse " + q(remote + "/" + baseBranch), "Read trusted base commit")
     ).stdout.text.trim(),
-    statusEntries = (await run("git status --porcelain=v1", "Read candidate worktree")).stdout.text
-      .split(/\r?\n/)
+    statusEntries = Buffer.from(checkout.statusBase64 ?? "", "base64")
+      .toString("utf8")
+      .split("\0")
       .filter(Boolean),
     range = remote + "/" + baseBranch + "..HEAD";
   const log = (
@@ -123,7 +126,7 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
     blockers.push({ code: "detached-head", message: "The candidate checkout is detached." });
   if (branch === baseBranch)
     blockers.push({ code: "base-branch", message: "The candidate is on the base branch." });
-  if (statusEntries.length)
+  if (!checkout.clean)
     blockers.push({
       code: "dirty-worktree",
       message: "The candidate worktree has uncommitted changes.",
@@ -160,7 +163,7 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
     baseSha,
     branch,
     headSha,
-    clean: statusEntries.length === 0,
+    clean: checkout.clean,
     statusEntries,
     commits,
     changedFiles,

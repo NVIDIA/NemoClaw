@@ -105,15 +105,13 @@ export default async function prepare_isolated_pr_worktree(input: {
     targetParts.length <= namespaceParts.length
   )
     throw new Error("path must be a strict descendant of the caller isolation namespace");
-  const status = await tools.bash({
-    command: "git status --short",
+  const primary = await tools.read_git_checkout({
     workdir: input.workdir,
-    description: "Check primary worktree cleanliness",
-    timeoutMs: 30000,
+    includeRoot: false,
+    includeBranch: false,
+    includeStatus: true,
   });
-  if (status.kind !== "foreground" || status.exitCode !== 0)
-    throw new Error("Could not inspect primary worktree");
-  if (requirePrimaryClean && status.stdout.text.trim())
+  if (requirePrimaryClean && !primary.clean)
     throw new Error("Primary worktree has uncommitted changes");
   const canonical = await tools.read_nemoclaw_pr({
       workdir: input.workdir,
@@ -220,23 +218,19 @@ export default async function prepare_isolated_pr_worktree(input: {
   let action = "created";
   const registeredEntry = registered.get(targetPath);
   if (registeredEntry) {
-    const wtStatus = await tools.bash({
-      command: "git status --short",
+    const checkout = await tools.read_git_checkout({
       workdir: targetPath,
-      description: "Check isolated worktree cleanliness",
-      timeoutMs: 30000,
+      includeRoot: false,
+      includeBranch: false,
+      includeStatus: true,
     });
-    if (wtStatus.kind !== "foreground" || wtStatus.exitCode !== 0)
-      throw new Error("Could not inspect worktree " + targetPath);
-    if (wtStatus.stdout.text.trim())
+    if (!checkout.clean)
       throw new Error(
         "Worktree " + targetPath + " has uncommitted changes and will not be reused or replaced",
       );
     if (!registeredEntry.detached)
       throw new Error("Existing worktree is branch-attached and will not be reused or replaced");
-    const resolved = (
-      await run("git rev-parse HEAD", "Resolve isolated worktree commit", 10000, targetPath)
-    ).trim();
+    const resolved = checkout.head;
     if (resolved === item.headRefOid) {
       if (!reuseExisting)
         throw new Error(
@@ -282,10 +276,13 @@ export default async function prepare_isolated_pr_worktree(input: {
       "Create exact-commit worktree",
       30000,
     );
-  const head = (
-    await run("git rev-parse HEAD", "Verify isolated worktree commit", 10000, targetPath)
-  ).trim();
-  if (head !== item.headRefOid)
+  const prepared = await tools.read_git_checkout({
+    workdir: targetPath,
+    includeRoot: false,
+    includeBranch: false,
+    includeStatus: false,
+  });
+  if (prepared.head !== item.headRefOid)
     throw new Error("Prepared worktree resolved to an unexpected commit");
   return { dryRun: false, apply: true, mutated: action !== "reused", ...result, action };
 }

@@ -86,11 +86,16 @@ export default async function refresh_pr_body_evidence(input: {
     if (result.stdout.truncated) throw new Error(description + " exceeded the bounded read");
     return result.stdout.text.trim();
   };
-  const localHead = await run("git rev-parse HEAD", "Resolve checkout commit");
+  const checkout = await tools.read_git_checkout({
+    workdir: input.workdir,
+    includeRoot: false,
+    includeBranch: false,
+    includeStatus: false,
+  });
+  const localHead = checkout.head;
   const agentsBlob = await run("git rev-parse HEAD:AGENTS.md", "Resolve AGENTS.md blob");
   const shaPattern = /^[0-9a-f]{40,64}$/;
-  if (!shaPattern.test(localHead) || !shaPattern.test(agentsBlob))
-    throw new Error("Could not resolve valid local commit and AGENTS.md blob SHAs");
+  if (!shaPattern.test(agentsBlob)) throw new Error("Could not resolve a valid AGENTS.md blob SHA");
   if (input.expectedHeadSha && localHead !== input.expectedHeadSha)
     throw new Error(
       "Checkout commit changed: expected " + input.expectedHeadSha + ", found " + localHead,

@@ -213,14 +213,22 @@ export default async function diagnose_nemoclaw_pr_e2e_gate(input: {
       "Read failed gate controller log",
       60000,
     );
+    const relevantLines = failedLog
+      .split(/\r?\n/)
+      .filter((line) => /not retryable|Existing PR gate state|error|failed|failure/i.test(line))
+      .slice(-30);
+    const projected = await tools.project_diagnostic_text({
+      lines: relevantLines,
+      clipMode: "head",
+      lineClipMode: "head",
+      maxLines: 30,
+      maxCharacters: 120029,
+      maxLineCharacters: 4000,
+    });
     controllerFailure = {
       runId: Number(latestController.id),
       url: String(latestController.url ?? "").slice(0, 2000),
-      relevant: failedLog
-        .split(/\r?\n/)
-        .filter((line) => /not retryable|Existing PR gate state|error|failed|failure/i.test(line))
-        .slice(-30)
-        .map((line) => line.slice(0, 4000)),
+      relevant: projected.text ? projected.text.split("\n") : [],
     };
   }
   const childRunId =

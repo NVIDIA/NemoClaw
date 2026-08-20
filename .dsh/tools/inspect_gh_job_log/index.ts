@@ -108,21 +108,19 @@ export default async function inspect_gh_job_log(input: {
     }
     selected = [...indexes].sort((a, b) => a - b).map((index) => lines[index]);
   }
-  const lineClipped = selected.length > maxLines;
-  const candidates = clipMode === "head" ? selected.slice(0, maxLines) : selected.slice(-maxLines);
-  const output = [];
-  let size = 0;
-  let characterClipped = false;
-  for (const candidate of clipMode === "head" ? candidates : [...candidates].reverse()) {
-    characterClipped ||= candidate.length > 4000;
-    const line = candidate.slice(0, 4000);
-    if (size + line.length + 1 > 40000) break;
-    output.push(line);
-    size += line.length + 1;
-  }
-  if (clipMode === "tail") output.reverse();
-  const byteClipped = output.length < candidates.length;
-  const truncated = sourceTruncated || lineClipped || characterClipped || byteClipped;
+  const projected = await tools.project_diagnostic_text({
+    lines: selected,
+    clipMode,
+    lineClipMode: "head",
+    maxLines,
+    maxCharacters: 39999,
+    maxLineCharacters: 4000,
+    sourceTruncated,
+  });
+  const lineClipped = projected.lineClipped;
+  const characterClipped = projected.lineCharacterClipped;
+  const byteClipped = projected.textClipped;
+  const truncated = projected.truncated;
   const truncationReasons = [
     ...(sourceTruncated ? ["source-log-bounded-before-filtering"] : []),
     ...(lineClipped ? ["selected-lines-exceeded-maxLines"] : []),
@@ -141,11 +139,11 @@ export default async function inspect_gh_job_log(input: {
     truncationReasons,
     clipMode,
     maxLines,
-    selectedLines: selected.length,
-    returnedLines: output.length,
-    omittedLines: Math.max(0, selected.length - output.length),
+    selectedLines: projected.selectedLines,
+    returnedLines: projected.returnedLines,
+    omittedLines: projected.omittedLines,
     matchedLines,
-    stdout: redact(output.join("\n")),
+    stdout: redact(projected.text),
     stderr,
   };
 }

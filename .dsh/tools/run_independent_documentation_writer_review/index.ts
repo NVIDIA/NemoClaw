@@ -86,28 +86,36 @@ export default async function run_independent_documentation_writer_review(input:
     if (r.kind !== "foreground") throw new Error(description + " did not finish");
     if (r.stdout.truncated || r.stderr.truncated)
       throw new Error(description + " exceeded the bounded command output");
-    if (r.exitCode !== 0)
-      throw new Error(
-        description + " failed: " + (r.stderr.text || r.stdout.text).trim().slice(-4000),
-      );
+    if (r.exitCode !== 0) {
+      const detail = await tools.project_diagnostic_text({
+        lines: [(r.stderr.text || r.stdout.text).trim()],
+        clipMode: "tail",
+        maxCharacters: 4000,
+        maxLineCharacters: 4000000,
+      });
+      throw new Error(description + " failed: " + detail.text);
+    }
     return r.stdout.text;
   };
-  const identity = await run(
-    "{ git status --porcelain=v1 -z | base64 | tr -d '\n'; printf '\n'; git rev-parse --show-toplevel; git rev-parse HEAD; git rev-parse " +
+  const identity = await tools.read_git_checkout({
+    workdir: input.workdir,
+    includeBranch: false,
+  });
+  const specializedIdentity = await run(
+    "{ git rev-parse " +
       q(baseRef + "^{commit}") +
       "; git rev-parse " +
       q(input.expectedHeadSha + ":AGENTS.md") +
       "; }",
-    "Verify documentation review identity",
+    "Verify documentation review refs",
   );
-  const [status64 = "", rootPath, headSha, baseSha, agentsBlobSha] = identity
-    .replace(/\n$/, "")
-    .split("\n");
-  const status = Buffer.from(status64, "base64").toString("utf8");
+  const [baseSha, agentsBlobSha] = specializedIdentity.replace(/\n$/, "").split("\n");
+  const rootPath = identity.root,
+    headSha = identity.head;
   if (headSha !== input.expectedHeadSha)
     throw new Error("HEAD changed: expected " + input.expectedHeadSha + ", found " + headSha);
   const requireClean = input.requireClean ?? true;
-  if (requireClean && status)
+  if (requireClean && !identity.clean)
     throw new Error("Documentation review requires a worktree with no uncommitted changes");
   const names64 = await run(
     "git diff --name-only -z --diff-filter=ACDMRTUXB " +
@@ -193,17 +201,15 @@ export default async function run_independent_documentation_writer_review(input:
   });
   if (review.kind !== "foreground")
     throw new Error("Independent documentation review did not return a foreground result");
-  const after64 = await run(
-    "{ git rev-parse HEAD; git status --porcelain=v1 -z | base64 | tr -d '\n'; printf '\n'; }",
-    "Verify documentation review cleanup",
-  );
-  const [headAfter, statusAfter64 = ""] = after64.trim().split("\n", 2);
-  const statusAfter = Buffer.from(statusAfter64, "base64").toString("utf8");
-  if (headAfter !== headSha)
-    throw new Error("HEAD changed during review from " + headSha + " to " + headAfter);
-  if (requireClean && statusAfter)
+  const after = await tools.read_git_checkout({
+    workdir: input.workdir,
+    includeBranch: false,
+  });
+  if (after.head !== headSha)
+    throw new Error("HEAD changed during review from " + headSha + " to " + after.head);
+  if (requireClean && after.statusBase64 !== identity.statusBase64)
     throw new Error("The read-only documentation review changed the worktree");
-  const output = review.output
+  const normalizedOutput = review.output
     .map((value) =>
       typeof value === "string"
         ? value
@@ -214,6 +220,13 @@ export default async function run_independent_documentation_writer_review(input:
     .join("\n")
     .trim()
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+  const projectedOutput = await tools.project_diagnostic_text({
+    lines: [normalizedOutput],
+    clipMode: "tail",
+    maxCharacters: 4000000,
+    maxLineCharacters: 4000000,
+  });
+  const output = projectedOutput.text;
   const value = (label, choices) =>
     new RegExp(
       "(?:^|\\n)\\s*(?:[-*+]\\s*)?(?:\\d+[.)]\\s*)?(?:#{1,6}\\s*)?(?:\\*\\*|__|\\x60)?" +
@@ -222,17 +235,32 @@ export default async function run_independent_documentation_writer_review(input:
         choices +
         ")(?:\\*\\*|__|\\x60)?\\s*(?=$|\\n)",
       "imu",
-    ).exec(output)?.[1];
+    ).exec(normalizedOutput)?.[1];
   const receiptResult = value("Result", "docs-updated|no-docs-needed|blocked");
   const verdict = value("Verdict", "PASS|BLOCKED");
   if (!receiptResult)
     throw new Error(
       "Independent reviewer did not return a recognized Documentation Writer Review result. Output tail:\n" +
-        output.slice(-4000),
+        (
+          await tools.project_diagnostic_text({
+            lines: [output],
+            clipMode: "tail",
+            maxCharacters: 4000,
+            maxLineCharacters: 4000000,
+          })
+        ).text,
     );
   if (!verdict)
     throw new Error(
-      "Independent reviewer did not return PASS or BLOCKED. Output tail:\n" + output.slice(-4000),
+      "Independent reviewer did not return PASS or BLOCKED. Output tail:\n" +
+        (
+          await tools.project_diagnostic_text({
+            lines: [output],
+            clipMode: "tail",
+            maxCharacters: 4000,
+            maxLineCharacters: 4000000,
+          })
+        ).text,
     );
   return {
     applied: true,

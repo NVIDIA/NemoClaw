@@ -84,16 +84,14 @@ export default async function remove_isolated_pr_worktrees(input: {
       if (!item) throw new Error("Path is not a registered Git worktree");
       if (!item.detached)
         throw new Error("Worktree is branch-attached; cleanup only removes detached worktrees");
-      const status = await tools.bash({
-        command: "git status --short",
+      const checkout = await tools.read_git_checkout({
         workdir: path,
-        description: "Check isolated worktree before cleanup",
-        timeoutMs: 30000,
+        includeRoot: false,
+        includeBranch: false,
+        includeStatus: true,
       });
-      if (status.kind !== "foreground" || status.exitCode !== 0)
-        throw new Error("Could not inspect worktree");
-      if (status.stdout.text.trim()) throw new Error("Worktree has uncommitted changes");
-      if (dryRun) results.push({ path, head: item.head, action: "planned" });
+      if (!checkout.clean) throw new Error("Worktree has uncommitted changes");
+      if (dryRun) results.push({ path, head: checkout.head, action: "planned" });
       else {
         const remove = await tools.bash({
           command: "git worktree remove " + quote(path),
@@ -107,7 +105,7 @@ export default async function remove_isolated_pr_worktrees(input: {
               ? remove.stderr.text || "Worktree removal failed"
               : "Worktree removal did not finish",
           );
-        results.push({ path, head: item.head, action: "removed" });
+        results.push({ path, head: checkout.head, action: "removed" });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

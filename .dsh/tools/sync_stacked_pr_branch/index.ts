@@ -47,21 +47,14 @@ export default async function sync_stacked_pr_branch(input: {
           (checked.kind === "foreground" ? ": " + checked.stderr.text : ""),
       );
   }
-  const statusBefore = await tools.bash({
-    command: "git status --porcelain=v1",
+  const statusBefore = await tools.read_git_checkout({
     workdir: input.workdir,
-    description: "Check stacked branch working tree",
-    timeoutMs: 30000,
+    includeRoot: false,
+    includeBranch: false,
   });
-  if (statusBefore.kind !== "foreground" || statusBefore.exitCode !== 0)
-    throw new Error("Could not inspect working tree");
-  if (
-    (input.resetToRemote === true || input.requireClean !== false) &&
-    statusBefore.stdout.text.trim()
-  )
+  if ((input.resetToRemote === true || input.requireClean !== false) && !statusBefore.clean)
     throw new Error(
-      "Working tree has uncommitted changes; commit or stash them before synchronizing the branch.\n" +
-        statusBefore.stdout.text,
+      "Working tree has uncommitted changes; commit or stash them before synchronizing the branch.",
     );
   const plan = [
     "git fetch " + quote(remote) + " " + quote(input.headBranch) + " " + quote(input.baseBranch),
@@ -80,9 +73,18 @@ export default async function sync_stacked_pr_branch(input: {
       resultJson: JSON.stringify({
         ok: true,
         dryRun: true,
-        statusBefore: statusBefore.stdout.text,
+        statusBeforeBase64: statusBefore.statusBase64,
       }),
     };
+  const project = async (text, maxCharacters) =>
+    (
+      await tools.project_diagnostic_text({
+        lines: [text],
+        clipMode: "tail",
+        maxCharacters,
+        maxLineCharacters: 4000000,
+      })
+    ).text;
   const run = async (command, description, timeoutMs) => {
     const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
     if (result.kind !== "foreground") throw new Error(description + " did not finish");
@@ -104,8 +106,8 @@ export default async function sync_stacked_pr_branch(input: {
         step: "fetch",
         fetch: {
           code: fetch.exitCode,
-          stdout: fetch.stdout.text.slice(-2000),
-          stderr: fetch.stderr.text.slice(-4000),
+          stdout: await project(fetch.stdout.text, 2000),
+          stderr: await project(fetch.stderr.text, 4000),
           truncated: fetch.stdout.truncated || fetch.stderr.truncated,
         },
       }),
@@ -126,8 +128,8 @@ export default async function sync_stacked_pr_branch(input: {
         step: "checkout",
         checkout: {
           code: checkout.exitCode,
-          stdout: checkout.stdout.text.slice(-2000),
-          stderr: checkout.stderr.text.slice(-4000),
+          stdout: await project(checkout.stdout.text, 2000),
+          stderr: await project(checkout.stderr.text, 4000),
           truncated: checkout.stdout.truncated || checkout.stderr.truncated,
         },
       }),
@@ -150,8 +152,8 @@ export default async function sync_stacked_pr_branch(input: {
           step: "reset",
           reset: {
             code: reset.exitCode,
-            stdout: reset.stdout.text.slice(-2000),
-            stderr: reset.stderr.text.slice(-4000),
+            stdout: await project(reset.stdout.text, 2000),
+            stderr: await project(reset.stderr.text, 4000),
             truncated: reset.stdout.truncated || reset.stderr.truncated,
           },
         }),
@@ -166,27 +168,27 @@ export default async function sync_stacked_pr_branch(input: {
   const log = await run("git log -5 --oneline --decorate", "Read stacked branch history", 30000);
   const detail = {
     ok: merge.exitCode === 0,
-    fetch: { code: fetch.exitCode, stderr: fetch.stderr.text.slice(-2000) },
+    fetch: { code: fetch.exitCode, stderr: await project(fetch.stderr.text, 2000) },
     checkout: {
       code: checkout.exitCode,
-      stdout: checkout.stdout.text.slice(-2000),
-      stderr: checkout.stderr.text.slice(-2000),
+      stdout: await project(checkout.stdout.text, 2000),
+      stderr: await project(checkout.stderr.text, 2000),
     },
     reset: reset
       ? {
           code: reset.exitCode,
-          stdout: reset.stdout.text.slice(-2000),
-          stderr: reset.stderr.text.slice(-2000),
+          stdout: await project(reset.stdout.text, 2000),
+          stderr: await project(reset.stderr.text, 2000),
         }
       : null,
     merge: {
       code: merge.exitCode,
-      stdout: merge.stdout.text.slice(-8000),
-      stderr: merge.stderr.text.slice(-4000),
+      stdout: await project(merge.stdout.text, 8000),
+      stderr: await project(merge.stderr.text, 4000),
       truncated: merge.stdout.truncated || merge.stderr.truncated,
     },
-    status: finalStatus.stdout.text,
-    log: log.stdout.text,
+    status: await project(finalStatus.stdout.text, 4000),
+    log: await project(log.stdout.text, 4000),
   };
   return {
     applied: true,

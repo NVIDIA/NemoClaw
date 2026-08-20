@@ -29,12 +29,24 @@ export default async function run_nemoclaw_release_preflight(input: {
       description: "Refresh release candidate reference",
       timeoutMs: 120000,
     });
-    if (f.kind !== "foreground" || (f.exitCode ?? -1) !== 0)
+    if (f.kind !== "foreground" || (f.exitCode ?? -1) !== 0) {
+      const error =
+        f.kind === "foreground"
+          ? await tools.project_diagnostic_text({
+              lines: [f.stderr.text],
+              clipMode: "head",
+              maxLines: 1,
+              maxCharacters: 2000,
+              maxLineCharacters: 4000000,
+              sourceTruncated: f.stderr.truncated,
+            })
+          : null;
       return {
         stage: "fetch-failed",
         dryRun,
-        error: f.kind === "foreground" ? f.stderr.text.slice(0, 2000) : "unexpected result",
+        error: error?.text ?? "unexpected result",
       };
+    }
   }
   const acceptedExitCodes = Array.from({ length: 16 }, (_, code) => code);
   const auth = await tools.run_github_cli({
@@ -43,12 +55,20 @@ export default async function run_nemoclaw_release_preflight(input: {
     acceptedExitCodes,
     timeoutMs: 30000,
   });
-  if (auth.code !== 0)
+  if (auth.code !== 0) {
+    const error = await tools.project_diagnostic_text({
+      lines: [auth.stderr],
+      clipMode: "head",
+      maxLines: 1,
+      maxCharacters: 2000,
+      maxLineCharacters: 4000000,
+    });
     return {
       stage: "github-auth-failed",
       dryRun,
-      error: auth.stderr.slice(0, 2000),
+      error: error.text,
     };
+  }
   const ref = remote + "/" + branch,
     r = await tools.bash({
       command:
@@ -60,12 +80,24 @@ export default async function run_nemoclaw_release_preflight(input: {
       description: "Inspect release candidate version",
       timeoutMs: 30000,
     });
-  if (r.kind !== "foreground" || (r.exitCode ?? -1) !== 0)
+  if (r.kind !== "foreground" || (r.exitCode ?? -1) !== 0) {
+    const error =
+      r.kind === "foreground"
+        ? await tools.project_diagnostic_text({
+            lines: [r.stderr.text],
+            clipMode: "head",
+            maxLines: 1,
+            maxCharacters: 2000,
+            maxLineCharacters: 4000000,
+            sourceTruncated: r.stderr.truncated,
+          })
+        : null;
     return {
       stage: "version-unavailable",
       dryRun,
-      error: r.kind === "foreground" ? r.stderr.text.slice(0, 2000) : "unexpected result",
+      error: error?.text ?? "unexpected result",
     };
+  }
   const [candidateSha, previousTag] = r.stdout.text.trim().split(/\r?\n/),
     m = /^v(\d+)\.(\d+)\.(\d+)$/.exec(previousTag ?? "");
   if (!m) return { stage: "version-unavailable", dryRun, candidateSha, previousTag };

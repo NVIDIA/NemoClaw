@@ -33,11 +33,29 @@ export default async function run_docs_validation_for_changed_docs(input: {
         timeoutMs: command === "npm run docs" ? 300000 : 180000,
       });
       if (r.kind !== "foreground") throw new Error("Unexpected background result");
+      const [stdoutTail, stderrTail] = await Promise.all([
+        tools.project_diagnostic_text({
+          lines: [r.stdout.text],
+          clipMode: "tail",
+          maxLines: 1,
+          maxCharacters: 6000,
+          maxLineCharacters: 4000000,
+          sourceTruncated: r.stdout.truncated,
+        }),
+        tools.project_diagnostic_text({
+          lines: [r.stderr.text],
+          clipMode: "tail",
+          maxLines: 1,
+          maxCharacters: 6000,
+          maxLineCharacters: 4000000,
+          sourceTruncated: r.stderr.truncated,
+        }),
+      ]);
       steps.push({
         name: command,
         code: r.exitCode ?? -1,
-        stdoutTail: r.stdout.text.slice(-6000),
-        stderrTail: r.stderr.text.slice(-6000),
+        stdoutTail: stdoutTail.text,
+        stderrTail: stderrTail.text,
         truncated: r.stdout.truncated || r.stderr.truncated,
       });
       if ((r.exitCode ?? -1) !== 0) break;

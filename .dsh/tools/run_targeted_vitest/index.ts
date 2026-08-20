@@ -78,12 +78,6 @@ export default async function run_targeted_vitest(input: {
   const maxLines = Math.max(1, Math.min(500, input.maxLines ?? 120));
   const clipMode = input.clipMode ?? "tail";
   if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
-  const clip = (value) => {
-    const lines = String(value).split(/\r?\n/);
-    const clipped = lines.length > maxLines;
-    const kept = clipMode === "head" ? lines.slice(0, maxLines) : lines.slice(-maxLines);
-    return { text: kept.join("\n"), totalLines: lines.length, returnedLines: kept.length, clipped };
-  };
   const command = "npx " + args.map(quote).join(" ");
   const result = await tools.bash({
     command,
@@ -92,10 +86,28 @@ export default async function run_targeted_vitest(input: {
     timeoutMs,
   });
   if (result.kind !== "foreground") throw new Error("Unexpected background result");
-  const stdout = clip(result.stdout.text);
-  const stderr = clip(result.stderr.text);
-  const truncated =
-    result.stdout.truncated || result.stderr.truncated || stdout.clipped || stderr.clipped;
+  const [stdout, stderr] = await Promise.all([
+    tools.project_diagnostic_text({
+      lines: String(result.stdout.text).split(/\r?\n/),
+      clipMode,
+      maxLines,
+      maxCharacters: 4000000,
+      maxLineCharacters: 4000000,
+      sourceTruncated: result.stdout.truncated,
+    }),
+    tools.project_diagnostic_text({
+      lines: String(result.stderr.text).split(/\r?\n/),
+      clipMode,
+      maxLines,
+      maxCharacters: 4000000,
+      maxLineCharacters: 4000000,
+      sourceTruncated: result.stderr.truncated,
+    }),
+  ]);
+  const transportTruncated = stdout.sourceTruncated || stderr.sourceTruncated;
+  const stdoutClipped = stdout.lineClipped;
+  const stderrClipped = stderr.lineClipped;
+  const truncated = stdout.truncated || stderr.truncated;
   return {
     command,
     code: result.exitCode ?? -1,
@@ -106,15 +118,15 @@ export default async function run_targeted_vitest(input: {
       ? "TRUNCATED OUTPUT: do not assume omitted test output is irrelevant or absent."
       : null,
     truncationReasons: [
-      ...(result.stdout.truncated || result.stderr.truncated ? ["tool-transport-truncated"] : []),
-      ...(stdout.clipped ? ["stdout-exceeded-maxLines"] : []),
-      ...(stderr.clipped ? ["stderr-exceeded-maxLines"] : []),
+      ...(transportTruncated ? ["tool-transport-truncated"] : []),
+      ...(stdoutClipped ? ["stdout-exceeded-maxLines"] : []),
+      ...(stderrClipped ? ["stderr-exceeded-maxLines"] : []),
     ],
     clipMode,
     maxLines,
-    stdoutTotalLines: stdout.totalLines,
+    stdoutTotalLines: stdout.selectedLines,
     stdoutReturnedLines: stdout.returnedLines,
-    stderrTotalLines: stderr.totalLines,
+    stderrTotalLines: stderr.selectedLines,
     stderrReturnedLines: stderr.returnedLines,
   };
 }

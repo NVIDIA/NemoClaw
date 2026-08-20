@@ -48,18 +48,14 @@ export default async function restack_pr_chain(input: {
     if (checked.kind !== "foreground" || checked.exitCode !== 0)
       throw new Error("Invalid " + label + " branch " + branch);
   }
-  const initial = await tools.bash({
-    command: "git status --porcelain=v1",
+  const initial = await tools.read_git_checkout({
     workdir: input.workdir,
-    description: "Check restack working tree",
-    timeoutMs: 30000,
+    includeRoot: false,
+    includeBranch: false,
   });
-  if (initial.kind !== "foreground" || initial.exitCode !== 0)
-    throw new Error("Could not inspect working tree");
-  if (initial.stdout.text.trim())
+  if (!initial.clean)
     throw new Error(
-      "Working tree has uncommitted changes; commit or stash them before restacking.\n" +
-        initial.stdout.text,
+      "Working tree has uncommitted changes; commit or stash them before restacking.",
     );
   let parent = base;
   const plan = [];
@@ -118,7 +114,17 @@ export default async function restack_pr_chain(input: {
       base: currentBase,
       sync,
       validation,
-      status: branchStatus.kind === "foreground" ? branchStatus.stdout.text : "",
+      status:
+        branchStatus.kind === "foreground"
+          ? (
+              await tools.project_diagnostic_text({
+                lines: [branchStatus.stdout.text],
+                clipMode: "tail",
+                maxCharacters: 4000,
+                maxLineCharacters: 4000000,
+              })
+            ).text
+          : "",
     };
     results.push(item);
     if (!syncDetail.ok || (validation && !validation.ok))
@@ -129,16 +135,13 @@ export default async function restack_pr_chain(input: {
         notes: ["Stopped at the first synchronization or validation failure."],
         resultJson: JSON.stringify({ ok: false, results }),
       };
-    const clean = await tools.bash({
-      command: "git status --porcelain=v1",
+    const clean = await tools.read_git_checkout({
       workdir: input.workdir,
-      description: "Check post-validation cleanliness",
-      timeoutMs: 30000,
+      includeRoot: false,
+      includeBranch: false,
     });
-    if (clean.kind !== "foreground" || clean.exitCode !== 0)
-      throw new Error("Could not inspect post-validation working tree");
-    if (clean.stdout.text.trim()) {
-      item.postValidationStatus = clean.stdout.text;
+    if (!clean.clean) {
+      item.postValidationStatusBase64 = clean.statusBase64;
       return {
         applied: true,
         mode: "apply",
@@ -158,16 +161,41 @@ export default async function restack_pr_chain(input: {
       timeoutMs: 120000,
     });
     if (push.kind !== "foreground") throw new Error("Git push did not finish");
+    const [pushStdout, pushStderr] = await Promise.all([
+      tools.project_diagnostic_text({
+        lines: [push.stdout.text],
+        clipMode: "tail",
+        maxCharacters: 2000,
+        maxLineCharacters: 4000000,
+      }),
+      tools.project_diagnostic_text({
+        lines: [push.stderr.text],
+        clipMode: "tail",
+        maxCharacters: 4000,
+        maxLineCharacters: 4000000,
+      }),
+    ]);
     item.push = {
       code: push.exitCode,
-      stdout: push.stdout.text.slice(-2000),
-      stderr: push.stderr.text.slice(-4000),
-      truncated: push.stdout.truncated || push.stderr.truncated,
+      stdout: pushStdout.text,
+      stderr: pushStderr.text,
+      truncated:
+        push.stdout.truncated ||
+        push.stderr.truncated ||
+        pushStdout.truncated ||
+        pushStderr.truncated,
     };
-    if (push.exitCode !== 0)
+    if (push.exitCode !== 0) {
+      const pushError = await tools.project_diagnostic_text({
+        lines: [push.stderr.text],
+        clipMode: "tail",
+        maxCharacters: 4000000,
+        maxLineCharacters: 4000000,
+      });
       throw new Error(
-        "Git push failed; stop and resolve GitHub access before continuing.\n" + push.stderr.text,
+        "Git push failed; stop and resolve GitHub access before continuing.\n" + pushError.text,
       );
+    }
     currentBase = branch;
   }
   return {

@@ -63,8 +63,13 @@ export default async function create_nemoclaw_pr(input: {
     input.body.includes("Your Name <your-email@example.com>")
   )
     throw new Error("PR body must include the configured contributor DCO declaration");
-  const head = (await run("git rev-parse HEAD", "Read candidate commit")).stdout.text.trim(),
-    branch = (await run("git branch --show-current", "Read candidate branch")).stdout.text.trim();
+  const checkout = await tools.read_git_checkout({
+      workdir: input.workdir,
+      includeRoot: false,
+      includeStatus: false,
+    }),
+    head = checkout.head,
+    branch = checkout.branch ?? "";
   if (!branch || branch.startsWith("-") || !/^[A-Za-z0-9._/-]+$/.test(branch))
     throw new Error("Could not resolve a valid current branch; HEAD may be detached");
   if (head !== input.expectedHeadSha)
@@ -127,8 +132,13 @@ export default async function create_nemoclaw_pr(input: {
         .filter((c) => !c.verified)
         .map((c) => ({ sha: c.sha, reason: c.reason })),
     };
-  const current = (await run("git rev-parse HEAD", "Recheck candidate commit")).stdout.text.trim();
-  if (current !== input.expectedHeadSha)
+  const current = await tools.read_git_checkout({
+    workdir: input.workdir,
+    includeRoot: false,
+    includeBranch: false,
+    includeStatus: false,
+  });
+  if (current.head !== input.expectedHeadSha)
     throw new Error("Candidate commit changed after publication");
   let command =
     "gh pr create --repo " +

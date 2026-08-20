@@ -126,7 +126,14 @@ export default async function summarize_nemoclaw_merge_queue(input: {
         advisorFindings: body.match(/\*\*Findings:\*\*[^\n]*/)?.[0] ?? null,
       });
     } catch (e) {
-      enriched.push({ ...c, enrichmentError: String(e?.message ?? e).slice(0, 1000) });
+      const projected = await tools.project_diagnostic_text({
+        lines: [String(e?.message ?? e)],
+        clipMode: "head",
+        maxLines: 1,
+        maxCharacters: 1000,
+        maxLineCharacters: 1000,
+      });
+      enriched.push({ ...c, enrichmentError: projected.text });
     }
   }
   const ids = new Set(enriched.map((p) => p.number)),

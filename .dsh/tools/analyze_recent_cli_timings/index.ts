@@ -55,12 +55,16 @@ export default async function analyze_recent_cli_timings(input: {
   if (!Number.isFinite(ratio) || ratio < 0.5 || ratio > 1)
     throw new Error("minSampleRatio must be from 0.5 through 1");
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const redact = (value) =>
-    String(value)
-      .replace(/(authorization:?)\s*\S+/gi, "$1 [REDACTED]")
-      .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=)\S+/g, "$1[REDACTED]")
-      .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
-      .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
+  const project = async (value, maxCharacters, clipMode = "tail") =>
+    (
+      await tools.project_diagnostic_text({
+        lines: [String(value)],
+        clipMode,
+        maxLines: 1,
+        maxCharacters,
+        maxLineCharacters: maxCharacters,
+      })
+    ).text;
   const accessFailures = [
     "authentication",
     "authorization",
@@ -83,7 +87,7 @@ export default async function analyze_recent_cli_timings(input: {
     if (result.exitCode !== 0 && accessFailures.some((value) => detail.includes(value)))
       throw new Error(
         "GitHub access failed; correct authentication or authorization before retrying.\n" +
-          redact(result.stderr.text).slice(-1500),
+          (await project(result.stderr.text, 1500)),
       );
     return result;
   };
@@ -149,7 +153,7 @@ export default async function analyze_recent_cli_timings(input: {
       if (downloaded.exitCode !== 0) {
         failures.push({
           runId: artifact.runId,
-          detail: redact(downloaded.stderr.text || downloaded.stdout.text).slice(-1000),
+          detail: await project(downloaded.stderr.text || downloaded.stdout.text, 1000),
         });
         continue;
       }
@@ -181,7 +185,7 @@ export default async function analyze_recent_cli_timings(input: {
     const marker = "/" + repoName + "/" + repoName + "/";
     const clean = (value) => {
       const index = value.lastIndexOf(marker);
-      return index >= 0 ? value.slice(index + marker.length) : redact(value);
+      return index >= 0 ? value.slice(index + marker.length) : value;
     };
     for (const { artifact, data } of reports) {
       const suites = data.testResults ?? [];
@@ -193,7 +197,7 @@ export default async function analyze_recent_cli_timings(input: {
         testFiles: suites.length,
       });
       for (const suite of suites) {
-        const file = clean(String(suite.name || ""));
+        const file = await project(clean(String(suite.name || "")), 4000000, "head");
         const wall = Math.max(0, Number(suite.endTime || 0) - Number(suite.startTime || 0));
         files.set(file, [...(files.get(file) ?? []), wall]);
         for (const test of suite.assertionResults ?? []) {

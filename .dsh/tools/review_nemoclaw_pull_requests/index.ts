@@ -73,10 +73,15 @@ export default async function review_nemoclaw_pull_requests(input: {
     if (r.kind !== "foreground") throw new Error(description + " did not finish");
     if (r.stdout.truncated || r.stderr.truncated)
       throw new Error(description + " exceeded bounded output");
-    if (r.exitCode !== 0 && !allowFailure)
-      throw new Error(
-        description + " failed.\n" + (r.stderr.text || r.stdout.text).trim().slice(-4000),
-      );
+    if (r.exitCode !== 0 && !allowFailure) {
+      const detail = await tools.project_diagnostic_text({
+        lines: [(r.stderr.text || r.stdout.text).trim()],
+        clipMode: "tail",
+        maxCharacters: 4000,
+        maxLineCharacters: 4000000,
+      });
+      throw new Error(description + " failed.\n" + detail.text);
+    }
     return r;
   };
   const mapLimit = async (items, limit, fn) => {
@@ -337,7 +342,14 @@ export default async function review_nemoclaw_pull_requests(input: {
           url: pr.url,
           commit: pr.headRefOid,
           status: "OPERATIONAL_FAILURE",
-          error: String(error?.message ?? error).slice(-4000),
+          error: (
+            await tools.project_diagnostic_text({
+              lines: [String(error?.message ?? error)],
+              clipMode: "tail",
+              maxCharacters: 4000,
+              maxLineCharacters: 4000000,
+            })
+          ).text,
         });
         return;
       }
@@ -360,7 +372,14 @@ export default async function review_nemoclaw_pull_requests(input: {
           url: pr.url,
           commit: pr.headRefOid,
           status: "OPERATIONAL_FAILURE",
-          error: (responseOutput || "Missing review result").slice(-4000),
+          error: (
+            await tools.project_diagnostic_text({
+              lines: [responseOutput || "Missing review result"],
+              clipMode: "tail",
+              maxCharacters: 4000,
+              maxLineCharacters: 4000000,
+            })
+          ).text,
         });
         return;
       }

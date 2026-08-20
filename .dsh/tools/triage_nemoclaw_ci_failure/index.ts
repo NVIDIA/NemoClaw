@@ -152,19 +152,24 @@ export default async function triage_nemoclaw_ci_failure(input: {
   const selectedLines = [...selectedIndexes]
     .sort((left, right) => left - right)
     .map((index) => logLines[index].slice(0, 4000));
-  const candidates =
-    clipMode === "head" ? selectedLines.slice(0, maxLines) : selectedLines.slice(-maxLines);
-  let boundedLines = candidates;
-  let boundedText = boundedLines.join("\n");
+  const projected = await tools.project_diagnostic_text({
+    lines: selectedLines,
+    clipMode,
+    maxLines,
+    maxCharacters: 4000000,
+    maxLineCharacters: 4000000,
+    sourceTruncated,
+  });
+  const candidateText = projected.text;
+  let boundedText = candidateText;
   if (boundedText.length > 40000) {
     if (clipMode === "head") boundedText = boundedText.slice(0, 40000);
     else boundedText = boundedText.slice(-40000);
-    boundedLines = boundedText.split("\n");
   }
-  const lineClipped = selectedLines.length > candidates.length;
-  const byteClipped =
-    boundedLines.length < candidates.length || boundedText.length < candidates.join("\n").length;
-  const truncated = sourceTruncated || lineClipped || byteClipped;
+  const boundedLines = boundedText ? boundedText.split("\n") : [];
+  const lineClipped = projected.lineClipped;
+  const byteClipped = boundedText.length < candidateText.length;
+  const truncated = projected.sourceTruncated || lineClipped || byteClipped;
   const log = {
     jobId,
     repo,
