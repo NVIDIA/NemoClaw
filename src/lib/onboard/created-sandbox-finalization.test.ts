@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import {
-  completeOrdinaryOnboardSandboxCreation,
   createCreatedSandboxCompletionActions,
   createOnboardCreatedSandboxCompletion,
   finalizeCreatedSandbox,
@@ -22,48 +21,6 @@ import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
 
 const fixtures: string[] = [];
-
-describe("ordinary sandbox completion", () => {
-  it("republishes attached provider state after Docker recreation without credential flags", () => {
-    const runOpenshell = vi.fn(
-      (_args: string[], _options: { ignoreError: true; suppressOutput: true }) => ({
-        status: 0,
-        stdout: "",
-        stderr: "",
-      }),
-    );
-    const setDefault = vi.fn();
-
-    expect(
-      completeOrdinaryOnboardSandboxCreation(
-        {
-          sandboxName: "alpha",
-          sandboxWasLiveDefault: false,
-          runtimeFields: { openshellDriver: "docker" } as SandboxEntry,
-          messagingProviders: ["alpha-slack", "alpha-slack"],
-          inferenceProvider: "compatible-endpoint",
-          liveExists: true,
-        },
-        {
-          setDefault,
-          runFile: vi.fn(),
-          scriptsDir: "/tmp/scripts",
-          gatewayName: "nemoclaw",
-          providerExistsInGateway: () => true,
-          runOpenshell,
-          armCancelRollback: vi.fn(),
-          dockerInfoFormat: vi.fn(() => "true"),
-          runCapture: vi.fn(() => ""),
-        },
-      ),
-    ).toBe("alpha");
-    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "update", "-g", "nemoclaw", "compatible-endpoint"],
-      ["provider", "update", "-g", "nemoclaw", "alpha-slack"],
-    ]);
-    expect(runOpenshell.mock.calls.flat(2)).not.toContain("--credential");
-  });
-});
 
 afterEach(() => {
   delete process.env.NEMOCLAW_OPENSHELL_BIN;
