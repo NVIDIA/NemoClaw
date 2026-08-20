@@ -22,6 +22,16 @@ describe("sandbox start readiness", () => {
     expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps Error terminal outside the post-start grace period (#9753)", () => {
+    const harness = createConnectHarness({ listOutputs: ["alpha Error"] });
+
+    expect(() => harness.waitForSandboxReadyOrExit("alpha")).toThrow(
+      'process.exit unexpectedly called with "1"',
+    );
+
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("fails after the stopped sandbox Error phase remains terminal (#9753)", () => {
     const harness = createConnectHarness({
       listOutputs: Array.from({ length: 11 }, () => "alpha Error"),
