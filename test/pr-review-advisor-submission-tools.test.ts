@@ -1083,8 +1083,11 @@ describe("PR review advisor submission tools", () => {
     expect(submission.result()).toBeNull();
   });
 
-  it("reports receipt and terminology errors before one submit repair", async () => {
-    const submission = controller();
+  it("reports draft errors together before one submit repair", async () => {
+    let returnInvalidE2e = true;
+    const submission = controller(new Map(), (draft) =>
+      returnInvalidE2e ? { ...draft, coverage: null } : draft,
+    );
     const draft = receipt({
       decisions: [terminologyDecision("missing-trace")],
       noChangesReason: null,
@@ -1102,11 +1105,13 @@ describe("PR review advisor submission tools", () => {
     expect(failure).toBeInstanceOf(Error);
     expect(failure?.message).toContain("acceptanceCoverage[1] does not report a concern");
     expect(failure?.message).toContain("securityCategories[1] does not report a concern");
+    expect(failure?.message).toContain("normalized E2E failed schema validation");
     expect(failure?.message).toContain("Unknown terminology trace missing-trace");
     expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.terminologySnapshot()).toMatchObject({ revision: 0 });
     expect(submission.result()).toBeNull();
 
+    returnInvalidE2e = false;
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
       terminate: true,

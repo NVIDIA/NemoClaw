@@ -317,6 +317,7 @@ export function createReviewSubmissionController({
   const reviewReceiptSchema = createReviewReceiptSchema(securityCategoryNames);
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const validateReceipt = ajv.compile(reviewReceiptSchema);
+  const validateE2e = ajv.compile(e2eSchema);
   const validate = ajv.compile(schema);
 
   const recordFindings = defineTool({
@@ -429,9 +430,15 @@ export function createReviewSubmissionController({
       await captureValidationIssue(validationIssues, () =>
         validateSecurityCategories(receiptDraft!.securityCategories, securityCategoryNames),
       );
-      const normalizedE2e = await captureValidationIssue(validationIssues, () =>
-        normalizeE2e(structuredClone(e2eDraft!), metadata),
-      );
+      const normalizedE2e = await captureValidationIssue(validationIssues, async () => {
+        const normalized = await normalizeE2e(structuredClone(e2eDraft!), metadata);
+        if (!validateE2e(normalized)) {
+          throw new Error(
+            `submit_review normalized E2E failed schema validation: ${ajv.errorsText(validateE2e.errors)}`,
+          );
+        }
+        return normalized;
+      });
       const candidateTerminology = createTerminologyLedger(metadata.headSha);
       const traces =
         typeof terminologyTraces === "function" ? terminologyTraces() : terminologyTraces;
