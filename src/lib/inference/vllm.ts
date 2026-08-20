@@ -1683,7 +1683,11 @@ async function runVllmInstall(
       );
   if (managedCluster.kind === "handled") return managedCluster.result;
 
-  if (!hostLocalSelection && !(profile.platform === "station" && configuredPeer)) {
+  if (
+    !hostLocalSelection &&
+    !profile.defaultModel.fixedServeCommand &&
+    !(profile.platform === "station" && configuredPeer)
+  ) {
     const selected = resolveHostLocalVllmSelection(profile, process.env, {
       automatic: opts.nonInteractive,
       readinessReports: opts.readinessReports,

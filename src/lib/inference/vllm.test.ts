@@ -982,6 +982,31 @@ describe("installVllm model resolution", () => {
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("gated on Hugging Face"));
   });
 
+  it("keeps the fixed local-model profile command when installing vLLM", async () => {
+    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const model = {
+      ...baseProfile.defaultModel,
+      fixedServeCommand: true as const,
+      managedBearerAuth: true as const,
+    };
+    const profile = { ...baseProfile, defaultModel: model };
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+    await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+
+    expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
+    const command = mocks.dockerRunDetached.mock.calls
+      .flatMap((call: unknown[]) => (call[0] as readonly string[]).map(String))
+      .find((value) => value.includes("vllm serve"));
+    expect(command).toBeDefined();
+    expect(command).not.toContain("--trust-remote-code");
+  });
+
   it("persists exact profile ownership before authenticating a catalog-selected runtime (#8246)", async () => {
     const baseProfile = detectVllmProfile({
       platform: "spark",
