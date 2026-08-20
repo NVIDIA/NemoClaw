@@ -13,8 +13,19 @@ export function hasUnsafeHostMountTerminalText(value: string): boolean {
   return UNSAFE_TERMINAL_TEXT.test(value);
 }
 
-function failHostMount(value: string, detail: string): never {
-  throw new Error(`Invalid --host-mount '${value}': ${detail}`);
+function failHostMount(value: string, detail: string, cause?: unknown): never {
+  throw new Error(
+    `Invalid --host-mount '${value}': ${detail}`,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function failUnreadableHostMountSource(value: string, source: string, error: unknown): never {
+  failHostMount(
+    value,
+    `host directory is not usable: ${source}. ${error instanceof Error ? error.message : String(error)}`,
+    error,
+  );
 }
 
 function assertNoSymlinkComponents(source: string, original: string): void {
@@ -25,8 +36,8 @@ function assertNoSymlinkComponents(source: string, original: string): void {
     let stat: fs.Stats;
     try {
       stat = fs.lstatSync(current);
-    } catch {
-      failHostMount(original, `host directory does not exist: ${source}`);
+    } catch (error) {
+      failUnreadableHostMountSource(original, source, error);
     }
     if (stat.isSymbolicLink()) {
       failHostMount(original, `host path must not contain symlinks: ${current}`);
@@ -52,8 +63,8 @@ export function parseReadOnlyHostMount(value: string): SandboxHostMount {
   let sourceStat: fs.BigIntStats;
   try {
     sourceStat = fs.statSync(source, { bigint: true });
-  } catch {
-    failHostMount(value, `host directory does not exist: ${source}`);
+  } catch (error) {
+    failUnreadableHostMountSource(value, source, error);
   }
   if (!sourceStat.isDirectory()) {
     failHostMount(value, `host path must be a directory: ${source}`);
