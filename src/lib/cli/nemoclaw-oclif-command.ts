@@ -100,6 +100,7 @@ export abstract class NemoClawCommand extends Command {
         return super._run<T>();
       });
     }
+    if (portablePolicy?.ownsLifecycleFence) return await super._run<T>();
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
     return await withMcpLifecycleLock(sandboxName, () => {
