@@ -29,14 +29,19 @@ function loadPromptQueueRuntime(): PromptQueueRuntime {
 describe("onboard child prompt queue", () => {
   it("fails when a child scenario asks an unscripted question", async () => {
     const target: PromptTarget = {};
-    const { messages, prompts } = loadPromptQueueRuntime().installPromptQueue(target, []);
+    const { messages, prompts } = loadPromptQueueRuntime().installPromptQueue(target, ["answer"]);
 
     assert.ok(target.prompt);
+    const prompt = target.prompt;
+    assert.equal(await prompt("  Expected question: "), "answer");
     await assert.rejects(
-      target.prompt("  Unexpected question: ", { secret: true }),
+      prompt("  Unexpected question: ", { secret: true }),
       /Unexpected prompt after scripted answers were exhausted:   Unexpected question:/,
     );
-    assert.deepEqual(messages, ["  Unexpected question: "]);
-    assert.deepEqual(prompts, [{ message: "  Unexpected question: ", secret: true }]);
+    assert.deepEqual(messages, ["  Expected question: ", "  Unexpected question: "]);
+    assert.deepEqual(prompts, [
+      { message: "  Expected question: ", secret: false },
+      { message: "  Unexpected question: ", secret: true },
+    ]);
   });
 });
