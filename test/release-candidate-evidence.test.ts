@@ -132,7 +132,14 @@ function docsCandidate(number: number, mergeSha: string): Record<string, unknown
     mergedAt: "2026-08-20T12:00:00Z",
     number,
     reviewDecision: "APPROVED",
-    statusCheckRollup: [],
+    statusCheckRollup: [
+      {
+        __typename: "CheckRun",
+        conclusion: "SUCCESS",
+        name: "docs",
+        status: "COMPLETED",
+      },
+    ],
     title: `docs: prepare v1.2.${number} documentation`,
     url: `https://github.com/NVIDIA/NemoClaw/pull/${number}`,
   };
@@ -180,6 +187,15 @@ esac
       GH_CALL_LOG: callLog,
       GH_COMMITS_JSON: JSON.stringify([
         [
+          {
+            sha: "1".repeat(40),
+            commit: {
+              author: { email: "41898282+github-actions[bot]@users.noreply.github.com" },
+              message: "docs: earlier cumulative update",
+              verification: { verified: true },
+            },
+            parents: [{ sha: previousTagSha }],
+          },
           {
             sha: String(42).padStart(40, "0"),
             commit: {
@@ -294,7 +310,14 @@ describe("release candidate evidence commands", () => {
       JSON.parse(
         fs.readFileSync(path.join(selection.input.evidenceDir, "docs-pr-checks.json"), "utf8"),
       ),
-    ).toEqual([]);
+    ).toEqual([
+      {
+        __typename: "CheckRun",
+        conclusion: "SUCCESS",
+        name: "docs",
+        status: "COMPLETED",
+      },
+    ]);
     expect(
       fs.readFileSync(path.join(selection.input.evidenceDir, "docs-pr-final-sha"), "utf8").trim(),
     ).toBe(String(42).padStart(40, "0"));
