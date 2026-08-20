@@ -78,6 +78,11 @@
     },
     {
       "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "test": "binds the checked-in provenance to the selected runtime",
+      "category": "security"
+    },
+    {
+      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "rejects %s",
       "category": "security"
     },
