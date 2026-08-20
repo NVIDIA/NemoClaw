@@ -64,9 +64,12 @@ export function allowedDocumentationPath(file: string): boolean {
   );
 }
 
-export function nextPatchReleaseTag(rangeStartTag: string): string {
-  const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
-  if (!match) throw new Error("release range start tag cannot produce a release target");
+export function nextPatchReleaseTag(
+  rangeStartTag: string,
+  invalidMessage = "release range start tag cannot produce a release target",
+): string {
+  const match = /^v(0|[1-9]\d*)[.](0|[1-9]\d*)[.](0|[1-9]\d*)$/u.exec(rangeStartTag);
+  if (!match) throw new Error(invalidMessage);
   return `v${BigInt(match[1]!)}.${BigInt(match[2]!)}.${BigInt(match[3]!) + 1n}`;
 }
 

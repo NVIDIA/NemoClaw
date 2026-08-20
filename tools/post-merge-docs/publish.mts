@@ -54,7 +54,10 @@ type Approval = {
 function targetReleaseTag(rangeStartTag: string): string {
   const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
   if (!match) fail("review range start tag cannot produce a release target");
-  return nextPatchReleaseTag(rangeStartTag);
+  return nextPatchReleaseTag(
+    rangeStartTag,
+    "review range start tag cannot produce a release target",
+  );
 }
 function approvedPatch(directory: string, repository: string, mainSha: string): Approval {
   const patch = readBoundedFile(path.join(directory, "docs.patch"), 5_242_880, true);

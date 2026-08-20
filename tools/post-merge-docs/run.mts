@@ -59,7 +59,7 @@ function exactSha(value: string | undefined, name: string): string {
 function targetReleaseTag(rangeStartTag: string): string {
   const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
   if (!match) fail("RANGE_START_TAG cannot produce a release target");
-  return nextPatchReleaseTag(rangeStartTag);
+  return nextPatchReleaseTag(rangeStartTag, "RANGE_START_TAG cannot produce a release target");
 }
 
 function git(repository: string, args: readonly string[]): string {

@@ -9,7 +9,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-import { validatePostMergeDocsWorkflowBoundary } from "../tools/post-merge-docs/contract.mts";
+import {
+  nextPatchReleaseTag,
+  validatePostMergeDocsWorkflowBoundary,
+} from "../tools/post-merge-docs/contract.mts";
 import { publishDocumentation, type Request } from "../tools/post-merge-docs/publish.mts";
 import { configurePostMergeDocs, executePostMergeDocs } from "../tools/post-merge-docs/run.mts";
 import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
@@ -378,6 +381,9 @@ afterEach(() => {
 });
 
 describe("post-merge documentation publisher", () => {
+  it.each(["v01.2.3", "v1.02.3", "v1.2.003"])("rejects non-canonical release tag %s", (tag) => {
+    expect(() => nextPatchReleaseTag(tag)).toThrow("cannot produce a release target");
+  });
   it("creates one verified branch and cumulative draft PR", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
