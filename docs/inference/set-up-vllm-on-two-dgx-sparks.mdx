@@ -40,7 +40,7 @@ When no matching cluster qualifies during automatic selection, NemoClaw retains 
 This ordinary no-match result occurs before the distributed image or model download starts.
 
 Existing related runtime state is not an ordinary no-match result.
-NemoClaw stops when either host has a related vLLM or DGX Station container, an ambiguous runtime inspection, or a listener on port `8000` or `25000`.
+NemoClaw stops when either host has a related vLLM or DGX Station container, an ambiguous runtime inspection, or a listener on the configured vLLM port or port `25000`.
 An existing durable managed-cluster or dual-Station runtime receipt also stops setup.
 A copied runtime binding, an orphaned discovery claim, or an SSH binding conflict also stops setup.
 NemoClaw leaves the existing files, containers, and listeners untouched instead of replacing, repairing, adopting, or removing them.
@@ -104,16 +104,16 @@ Each container receives all host GPUs, `/dev/infiniband`, Docker host networking
 The launch does not use a read-only root filesystem, drop Linux capabilities, or set `no-new-privileges`.
 The serving command does not enable vLLM's `--trust-remote-code` switch.
 Before it copies the pinned snapshot's required encoder module into the runtime package, it verifies that file against the recipe's exact SHA-256 digest.
-The head binds HTTP port `8000` only to the qualified primary rail address.
+The head binds the configured vLLM port, `${NEMOCLAW_VLLM_PORT:-8000}`, only to the qualified primary rail address.
 vLLM applies bearer API key authentication to its authenticated API routes, including the inventory and chat routes that NemoClaw verifies.
-The API key does not authenticate every endpoint on port `8000`.
+The API key does not authenticate every endpoint on the configured vLLM port.
 vLLM exposes unauthenticated inference and operational endpoints on that port.
 Trusted Docker administrators can inspect that API key in the head container environment.
 The distributed rendezvous and RoCE traffic do not use that bearer credential.
 
 Treat both DGX Spark systems and every host that can reach the direct rails as one trusted runtime boundary.
-Allow port `8000` only from the OpenShell Docker subnet to the selected head rail address.
-Deny port `8000` on management, LAN, and internet-facing interfaces.
+Allow the configured vLLM port only from the OpenShell Docker subnet to the selected head rail address.
+Deny the configured vLLM port on management, LAN, and internet-facing interfaces.
 Restrict port `25000`, NVIDIA Collective Communications Library (NCCL), and RoCE traffic to the exact reciprocal private rail addresses.
 The address-specific bind reduces listener exposure but does not replace these firewall and trusted-boundary controls.
 </Warning>

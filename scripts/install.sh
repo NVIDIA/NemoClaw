@@ -5190,9 +5190,9 @@ activate_express_install() {
       export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
         if [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ] \
-          || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] || [ -n "${NEMOCLAW_VLLM_PORT:-}" ] \
+          || [ -n "${NEMOCLAW_VLLM_MODEL:-}" ] \
           || [ -n "${NEMOCLAW_VLLM_EXTRA_ARGS_JSON:-}" ]; then
-          error "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides."
+          error "The fixed DGX Spark vLLM profile does not accept provider, model, or serve-argument overrides."
         fi
         unset NEMOCLAW_PROVIDER
         export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
@@ -5292,7 +5292,7 @@ station_managed_dual_head_running() {
     "$running" == "true" &&
     "$managed" == "true" &&
     "$role" == "head" &&
-    "$schema" == "3" &&
+    ("$schema" == "2" || "$schema" == "3") &&
     "$cluster" =~ ^[a-f0-9]{64}$ &&
     "$launch_contract" =~ ^[a-f0-9]{64}$ &&
     "$api_fingerprint" =~ ^[a-f0-9]{64}$ &&
@@ -5334,7 +5334,7 @@ ensure_station_express_host() {
     # the post-Node coordinator revalidates the reciprocal physical pair before
     # the existing lifecycle is allowed to reuse it.
     _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=1
-    info "Found a complete running NemoClaw-managed dual-Station head candidate; deferring host preparation until reciprocal pair and lifecycle validation."
+    info "Found a complete running NemoClaw-managed dual-Station head candidate; deferring host preparation until reciprocal pair and lifecycle validation, including any required launch-schema replacement."
     return 0
   fi
   if station_dual_model_requested && station_migratable_legacy_single_head_running; then
@@ -5645,7 +5645,7 @@ describe_express_install() {
     "DGX Spark")
       if [ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-managed-vllm}" = "fixed-vllm" ]; then
         inference_summary="Qwen3.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile"
-        inference_disclosure="The serving catalog owns the model, image, port, and vLLM arguments. The installer rejects provider and model overrides, and the dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides before starting its managed container."
+        inference_disclosure="The serving catalog owns the model, image, and vLLM arguments. The installer rejects provider and model overrides, and the dedicated local-model onboarder rejects vLLM model and serve-argument overrides before starting its managed container. NEMOCLAW_VLLM_PORT may override the host listener."
       elif [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
         inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
         inference_disclosure="The explicit model remains authoritative, so this run keeps the existing single-host DGX Spark profile. Managed vLLM pulls the configured image/model and runs only its dedicated container."
@@ -6034,12 +6034,6 @@ main() {
     && { [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; }; then
     error "The local model profile does not accept NEMOCLAW_PROVIDER or NEMOCLAW_MODEL overrides."
   fi
-  if [ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" = "1" ] \
-    && [ "${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" = "vllm" ] \
-    && [ -n "${NEMOCLAW_VLLM_PORT:-}" ]; then
-    error "The vLLM local model profile uses fixed port 8000 and does not accept NEMOCLAW_VLLM_PORT."
-  fi
-
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
   # is only one of several phase-3 steps that need a TTY or --non-interactive

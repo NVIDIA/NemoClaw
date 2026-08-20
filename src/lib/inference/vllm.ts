@@ -24,7 +24,7 @@ import { runCurlProbe } from "../adapters/http/probe";
 import { CLI_NAME } from "../cli/branding";
 import { warnLine } from "../cli/terminal-style";
 import { markPhaseActivity } from "../core/phase-activity";
-import { VLLM_PORT } from "../core/ports";
+import { VLLM_PORT } from "../core/vllm-port";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
 import { runCapture } from "../runner";
@@ -827,6 +827,7 @@ function inspectVllmContainerOwnership(containerName: string): VllmContainerOwne
 function vllmContainerReplacementTarget(
   containerName: string,
   dockerEnv?: Record<string, string>,
+  expectedContainerId?: string,
 ): { ok: true; containerId?: string } | { ok: false; reason: string } {
   const ownership = dockerEnv
     ? inspectVllmContainerOwnershipInDockerEnv(containerName, dockerEnv)
@@ -849,6 +850,15 @@ function vllmContainerReplacementTarget(
       reason:
         `Container "${containerName}" is the head of a managed dual-Station deployment. ` +
         `Refusing single-host replacement because it would orphan the peer worker. Restore ${NEMOCLAW_DGX_STATION_PEER_ENV} and select Nemotron Ultra to manage the pair.`,
+    };
+  }
+  if (
+    expectedContainerId &&
+    (ownership.kind !== "managed" || ownership.containerId !== expectedContainerId)
+  ) {
+    return {
+      ok: false,
+      reason: `Managed vLLM container "${containerName}" changed after recovery. NemoClaw will not remove it. Retry onboarding.`,
     };
   }
   return ownership.kind === "managed"
@@ -957,6 +967,7 @@ function startContainer(
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
   resolveBridgeHost: (dockerEnv: Record<string, string>) => string = (env) =>
     resolveManagedVllmBridgeHost(dockerCapture, env),
+  expectedReplacementContainerId?: string,
 ): { ok: true; containerId: string } | { ok: false; reason: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
   // The explicit download completed before this long-lived container starts,
@@ -987,6 +998,7 @@ function startContainer(
   const replacement = vllmContainerReplacementTarget(
     profile.containerName,
     model.managedBearerAuth ? dockerEnv : undefined,
+    expectedReplacementContainerId,
   );
   if (!replacement.ok) return replacement;
   if (replacement.containerId) {
@@ -1652,12 +1664,6 @@ async function runVllmInstall(
       );
       return { ok: false };
     }
-    if (String(process.env.NEMOCLAW_VLLM_PORT ?? "").trim()) {
-      console.error(
-        "  vLLM install failed: this local model profile uses fixed port 8000 and does not accept NEMOCLAW_VLLM_PORT.",
-      );
-      return { ok: false };
-    }
   }
   const managedCluster = hostLocalSelection
     ? { kind: "not-selected" as const }
@@ -1864,12 +1870,6 @@ async function runVllmInstall(
         imageUnpackedSizeBytes: undefined,
         loadTimeoutSec: dualStationPlan.runtime.loadTimeoutSeconds,
       };
-      if (VLLM_PORT !== 8000) {
-        console.error(
-          "  Dual DGX Station setup requires the default vLLM port 8000; unset NEMOCLAW_VLLM_PORT and retry.",
-        );
-        return { ok: false };
-      }
       if (extraServeArgs.length > 0) {
         console.error(
           `  Dual DGX Station setup does not accept ${VLLM_EXTRA_ARGS_ENV}; the verified distributed launch is fixed.`,
@@ -1885,10 +1885,29 @@ async function runVllmInstall(
   // the guard first keeps a refused install free of both side effects.
   // Port 25000 is not checked here: it belongs to the managed-cluster
   // rendezvous contract and this single-node path never binds it.
+  let recoveredHostLocalContainerId: string | undefined;
   const servingPort = await opts.checkServingPort?.(VLLM_PORT);
   if (servingPort && !servingPort.ok) {
-    printServingPortConflict(servingPort);
-    return { ok: false };
+    // An interrupted host-local install can leave its authenticated managed
+    // container holding the fixed port. Admit that state only after the
+    // lifecycle recovery check validates the exact receipt, bindings, and
+    // credential fingerprint. The replacement guard below then removes the
+    // inspected container ID immediately before the new launch.
+    try {
+      const recovered = recoverHostLocalManagedVllmEndpoint();
+      if (recovered?.baseUrl === `http://127.0.0.1:${String(VLLM_PORT)}`) {
+        recoveredHostLocalContainerId = recovered.containerId;
+        // Continue through the ordinary managed-container replacement path.
+      } else {
+        printServingPortConflict(servingPort);
+        return { ok: false };
+      }
+    } catch (error) {
+      console.error(
+        `  vLLM install failed: managed host-local vLLM recovery could not verify the container: ${(error as Error).message}`,
+      );
+      return { ok: false };
+    }
   }
 
   let hostLocalApiKey: string | null = null;
@@ -1968,6 +1987,7 @@ async function runVllmInstall(
     const replacement = vllmContainerReplacementTarget(
       runtimeProfile.containerName,
       model.managedBearerAuth ? localDockerEnv : undefined,
+      recoveredHostLocalContainerId,
     );
     if (!replacement.ok) {
       console.error(`  vLLM install failed: ${replacement.reason}`);
@@ -2212,6 +2232,7 @@ async function runVllmInstall(
     model,
     localDockerEnv,
     opts.resolveManagedBridgeHost,
+    recoveredHostLocalContainerId,
   );
   if (!start.ok) {
     console.error(`  vLLM install failed: ${String(start.reason)}`);
