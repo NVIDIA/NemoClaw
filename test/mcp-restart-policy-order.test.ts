@@ -226,7 +226,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   }
   if (args[0] === "provider" && args[1] === "update") {
     providerCalls.push(command);
-    resourceVersion = 2;
+    resourceVersion += 1;
     return { status: 0, stdout: "Updated provider", stderr: "" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
@@ -296,9 +296,10 @@ bridge.restartMcpBridge("alpha", "example").then(
       providerCalls: string[];
       registeredProviderGets: number;
     };
-    expect(payload.observations).toEqual(["v1", "v2"]);
+    expect(payload.observations).toEqual(["v1", "v3"]);
     expect(payload.providerCalls).toEqual([
       "provider update alpha-mcp-example --credential MCP_TOKEN",
+      "provider update alpha-mcp-example",
     ]);
     expect(payload.registeredProviderGets).toBe(1);
     expect(payload.proofScripts).toHaveLength(2);
