@@ -146,6 +146,33 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
+  it("fails when finalization invalidates the OpenClaw config hash after the early refresh (#9530)", async () => {
+    let configHashValid = true;
+    vi.mocked(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).mockImplementation(() => configHashValid);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
+      () => {
+        configHashValid = false;
+        return true;
+      },
+    );
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).toHaveBeenCalledTimes(2);
+    expect(args.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw config integrity verification failed after rebuild.",
+    );
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
+      "rebuilt successfully",
+    );
+  });
+
   it("does not run OpenClaw session reconciliation for another agent (#7102)", async () => {
     agentName = "hermes";
     const args = input();
