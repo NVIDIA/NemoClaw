@@ -672,7 +672,7 @@ describe("shields timer authorization", () => {
     expect(fs.existsSync(`${mutationLockPath}.containment`)).toBe(false);
   });
 
-  it("restores and updates state when marker matches current timer invocation", async () => {
+  it("retires successful timer authority only after lifecycle gates are released (#9750)", async () => {
     const timer = await import("./timer");
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
@@ -707,6 +707,15 @@ describe("shields timer authorization", () => {
 
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     const deadlinePath = `${sandboxMutationLockPath}.deadline`;
+    let lifecycleGatePresentAtMarkerCleanup: boolean | null = null;
+    const renameSync = fs.renameSync;
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+      if (oldPath === markerPath) {
+        lifecycleGatePresentAtMarkerCleanup =
+          fs.existsSync(sandboxMutationLockPath) || fs.existsSync(deadlinePath);
+      }
+      renameSync(oldPath, newPath);
+    });
     shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementationOnce(() => {
       expect(fs.existsSync(sandboxMutationLockPath)).toBe(true);
       expect(fs.existsSync(deadlinePath)).toBe(true);
@@ -721,7 +730,13 @@ describe("shields timer authorization", () => {
       };
     });
 
-    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+    const exitCode = await (async () => {
+      try {
+        return await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+      } finally {
+        renameSpy.mockRestore();
+      }
+    })();
     const stateFile = path.join(stateDir, `shields-${sandboxName}.json`);
     const updatedState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
 
@@ -732,6 +747,7 @@ describe("shields timer authorization", () => {
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
     expect(fs.existsSync(deadlinePath)).toBe(false);
+    expect(lifecycleGatePresentAtMarkerCleanup).toBe(false);
     expect(shieldsIndexMock.completeAutoRestoreTransition).toHaveBeenCalledWith(
       sandboxName,
       PROCESS_TOKEN,
