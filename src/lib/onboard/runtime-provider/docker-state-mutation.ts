@@ -148,14 +148,12 @@ def copied_file(path):
                 break
             payload.extend(chunk)
         after = os.fstat(descriptor)
-        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0 or
-            before.st_nlink != 1 or len(payload) > MAXIMUM or
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or len(payload) > MAXIMUM or
             (before.st_dev, before.st_ino, before.st_nlink, before.st_uid, before.st_gid,
              before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
             (after.st_dev, after.st_ino, after.st_nlink, after.st_uid, after.st_gid,
              after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
             fail("transport-copied-file-invalid")
-        os.fchmod(descriptor, 0o600)
         return bytes(payload)
     finally:
         os.close(descriptor)
@@ -1305,7 +1303,10 @@ function withHelperTransportHostDirectory<T>(hostRoot: string, run: (root: strin
 }
 
 function writePrivateTransportFile(filePath: string, value: Buffer): void {
-  const descriptor = fs.openSync(filePath, "wx", 0o600);
+  // Docker can preserve the invoking host UID on copied files. The enclosing
+  // transport directories remain private (0700), while this copy source must be
+  // readable by the capability-restricted broker after publication.
+  const descriptor = fs.openSync(filePath, "wx", 0o644);
   try {
     fs.writeFileSync(descriptor, value);
     fs.fsyncSync(descriptor);

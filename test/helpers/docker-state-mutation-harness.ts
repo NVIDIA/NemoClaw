@@ -181,6 +181,7 @@ function createContainerStateMutationHarness(
   const helperActions: string[] = [];
   const supervisorSignals: string[] = [];
   const acquireRequests: string[] = [];
+  const transportCopySourceModes: number[] = [];
   let acquireDeferralsRemaining = options.deferAcquireOnce ? 1 : 0;
   let lostAcquireResponsesRemaining = options.loseAcquireResponseOnce ? 1 : 0;
   let releaseFailuresRemaining = options.failReleaseOnce ? 1 : 0;
@@ -300,6 +301,7 @@ function createContainerStateMutationHarness(
       const containerPrefix = `${DOCKER_STATE_MUTATION_RUNTIME_ID}:`;
       if (destination.startsWith(containerPrefix)) {
         const containerPath = destination.slice(containerPrefix.length);
+        transportCopySourceModes.push(fs.statSync(source).mode & 0o777);
         const payload = fs.readFileSync(source);
         transportFiles.set(containerPath, payload);
         if (containerPath.endsWith(".incoming")) {
@@ -573,6 +575,7 @@ function createContainerStateMutationHarness(
     engineAuthorityStore,
     helperActions,
     supervisorSignals,
+    transportCopySourceModes,
     lifecycleStore,
     lifecycleGeneration,
     owner,

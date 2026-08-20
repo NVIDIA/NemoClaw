@@ -523,6 +523,7 @@ describe("Docker state mutation owner", () => {
     expect(stop).toBeGreaterThan(broker);
     expect(publications).toHaveLength(1);
     expect(request).toBeGreaterThan(stop);
+    expect(runtime.transportCopySourceModes).toEqual([0o644, 0o644]);
     expect(
       commands.some(
         (args) =>
