@@ -62,6 +62,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "compiles the managed-inference catalogue after dependencies and before the live test (#9680)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "runs the trusted Vitest guardrails against pull request data",
       "category": "security"
