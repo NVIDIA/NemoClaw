@@ -105,6 +105,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         throw new Error("Unexpected provider update: " + args.join(" "));
       }
       setProviderVersion(providerVersion() + 1);
+      mark("refreshed");
       if (isCredentialUpdate) mark("updated");
     }
     mark("provider");
@@ -181,7 +182,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   isPreupdateObservation && mark("observation");
   return {
     status: crashAfter === "preupdate-observation-forbidden" && isPreupdateObservation ? 1 : 0,
-    stdout: isObservation ? (marked("updated") ? "v" + providerVersion() : marked("provider") ? "v1" : "absent") : "",
+    stdout: isObservation ? (marked("refreshed") ? "v" + providerVersion() : marked("provider") ? "v1" : "absent") : "",
     stderr: "",
   };
 };
