@@ -325,7 +325,9 @@ If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable prof
 Run `$$nemoclaw profiles list` to inspect an incompatibility reason before onboarding.
 
 If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
-The onboarding review screen identifies the resolved profile, recipe, model, runtime image, support state, and download estimates before confirmation.
+The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation.
+When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root.
+Otherwise, onboarding stops before it records a route that the profile does not declare.
 After creation, human status shows the profile, recipe, and catalog digest; JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
 
 #### `--host-mount`
@@ -4149,6 +4151,9 @@ Same-API-family changes hot-reload without replacing the gateway process.
 When the API family changes, NemoClaw commits the config and integrity hash, then uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards.
 The sandbox remains running, but agent requests are briefly interrupted.
 If the restart fails, the route and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch.
+After every changed synchronized route, NemoClaw also verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success.
+If pairing does not converge, the route and config remain committed.
+Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -4690,6 +4695,9 @@ The JSON diagnostic with `"event":"voice_gateway"` and `"state":"listening"` con
 
 The runtime must keep the raw session grant in process memory.
 NemoClaw keeps only the digest needed for constant-time grant validation.
+Sequential sessions for the same runtime conversation reuse the same internal OpenClaw context.
+A different runtime conversation, runtime identity, runtime profile, sandbox, or agent uses a separate context.
+NemoClaw derives the internal context key without exposing the raw runtime conversation ID.
 When the session closes or expires, the runtime must discard the raw grant, and NemoClaw removes its validation digest from active session state.
 The process owns the OpenClaw session binding, turn state, and response correlation.
 It clears that state when the session closes or expires and when the foreground process stops.
@@ -4742,7 +4750,9 @@ Passthrough commands do not consume flags intended for the downstream command as
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
+| `NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT` | 11436 | Host-side Bedrock Runtime adapter |
 | `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` | 11437 | Host-side OpenRouter runtime adapter |
+| `NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT` | 11438 | Host-side HTTPS Pin Runtime adapter |
 <AgentOnly variant="openclaw,hermes">
 | `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback outside WSL) | Dashboard or API forward bind address. WSL uses an all-interface forward for Windows-host reachability. Set to `0.0.0.0` to opt in to remote bind on other SSH-deployed hosts. |
 </AgentOnly>
@@ -4751,10 +4761,10 @@ Passthrough commands do not consume flags intended for the downstream command as
 </AgentOnly>
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
-`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `8081`, `11434`, `11435`, `11437`, and `11438`.
+`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, Bedrock Runtime adapter, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `8081`, `11434`, `11435`, `11436`, `11437`, and `11438`.
 Port `8081` is reserved for authenticated existing-server attachment and the managed llama.cpp runtime.
 It cannot be assigned to another configurable NemoClaw service port.
-When you select OpenRouter, `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` must also be distinct from the gateway, vLLM, Ollama, Ollama proxy, and HTTPS Pin Runtime adapter ports.
+Each runtime adapter port must be distinct from the gateway, vLLM, Ollama, Ollama proxy, dashboard allocation range, and other runtime adapter ports.
 When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another.
 Only port `8080` uses a NemoClaw-managed Linux systemd user service or macOS Homebrew service.
 NemoClaw-managed gateways on custom ports run as detached processes and do not change the default gateway service.

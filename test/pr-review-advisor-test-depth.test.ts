@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { renderSummary, sanitizeTestDepth } from "../tools/pr-review-advisor/analyze.mts";
+import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
+import {
+  enforceDeterministicTestDepthFloor,
+  type ReviewTestDepth,
+} from "../tools/pr-review-advisor/review-quality.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 
-type TestDepth = Parameters<typeof sanitizeTestDepth>[1];
+type TestDepth = ReviewTestDepth;
 type ReviewResult = Parameters<typeof renderSummary>[0];
 
 function reviewResult(testDepth: TestDepth): ReviewResult {
@@ -58,7 +62,7 @@ function reviewResult(testDepth: TestDepth): ReviewResult {
 
 describe("PR review advisor deterministic test-depth floor", () => {
   it("preserves runtime validation against model downgrades (#6446)", () => {
-    const result = sanitizeTestDepth(
+    const result = enforceDeterministicTestDepthFloor(
       {
         verdict: "unit_sufficient",
         rationale: "The model found unit coverage sufficient.",
@@ -87,7 +91,7 @@ describe("PR review advisor deterministic test-depth floor", () => {
       { length: 20 },
       (_value, index) => `Add model-specific regression test ${index + 1}.`,
     );
-    const testDepth = sanitizeTestDepth(
+    const testDepth = enforceDeterministicTestDepthFloor(
       {
         verdict: "runtime_validation_recommended",
         rationale: "The model identified a retry-specific gap.",

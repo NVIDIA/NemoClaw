@@ -6,6 +6,7 @@ import {
   isTrustedPrivateEndpointCapability,
   type TrustedPrivateEndpointCapability,
 } from "../inference/endpoint-ssrf-preflight";
+import type { RequestedServingProfileModel } from "../inference/serving/requested-profile-model";
 import { VLLM_MODELS } from "../inference/vllm-models";
 import { isLoopbackHostname } from "../private-networks";
 import { cliName } from "./branding";
@@ -25,6 +26,13 @@ export interface SetupNimVllmSelectionOptions {
   managedInstall?: boolean;
   /** True when the already-detected GPU confirms DGX Spark (covers firmware-unknown GB10 hosts). */
   sparkHost?: boolean;
+  /**
+   * Model the serving profile requested for this run declares, when one was and
+   * its backend is vLLM. A running server answers that request only if it serves
+   * that model; otherwise onboarding stores a recorded route the profile does not
+   * describe while the review screen still shows the profile (#9563).
+   */
+  servingProfileModel?: RequestedServingProfileModel | null;
 }
 
 export interface SetupNimVllmDeps {
@@ -150,6 +158,21 @@ function reportedModelMatchesRequest(
       model.servedModelId?.toLowerCase() === normalizedRequest,
   );
   return root.toLowerCase() === (registeredModel?.id ?? requestedModel).toLowerCase();
+}
+
+/**
+ * A running endpoint answers a requested profile under the alias the recipe pins,
+ * or under any alias whose reported root is the declared model. An endpoint that
+ * reports no safe root answers only under the pinned alias.
+ */
+function reportedModelMatchesServingProfile(
+  models: VllmModels,
+  detectedModel: string,
+  profile: RequestedServingProfileModel,
+): boolean {
+  if (detectedModel === profile.servedName) return true;
+  const root = reportedModelRoot(findVllmModelEntry(models, detectedModel));
+  return root !== null && root.toLowerCase() === profile.modelId.toLowerCase();
 }
 
 /** Preserve the checkpoint identity proven by the vLLM model response. */
@@ -313,6 +336,37 @@ export function createSetupNimVllmHandler(
     }
     if (!deps.isSafeModelId(detectedModel)) {
       console.error("  Detected vLLM model ID contains invalid characters.");
+      deps.exitProcess(1);
+    }
+    const servingProfile = options.servingProfileModel ?? null;
+    if (
+      servingProfile &&
+      !reportedModelMatchesServingProfile(models, detectedModel, servingProfile)
+    ) {
+      const declared = `serves '${servingProfile.modelId}' as '${servingProfile.servedName}'`;
+      console.error(
+        managedEndpoint
+          ? `  Serving profile '${servingProfile.presetId}' ${declared}, but the managed vLLM ` +
+            `endpoint reports '${detectedModel}'.`
+          : `  Serving profile '${servingProfile.presetId}' ${declared}, but vLLM on ` +
+            `localhost:${deps.VLLM_PORT} reports '${detectedModel}'.`,
+      );
+      console.error(
+        "  Onboarding would store that model as the sandbox's recorded route, so the agent " +
+          "would use a model the profile does not declare.",
+      );
+      console.error(
+        managedEndpoint
+          ? "  Stop the managed vLLM deployment, then rerun the original install/onboard command."
+          : `  Stop the existing vLLM server on localhost:${deps.VLLM_PORT}, then rerun the ` +
+            "original install/onboard command.",
+      );
+      console.error(
+        `  To keep '${detectedModel}' instead, start detailed setup without a profile:`,
+      );
+      console.error("    unset NEMOCLAW_SERVING_PRESET NEMOCLAW_PROVIDER");
+      console.error(`    ${cliName()} onboard --fresh`);
+      console.error("  Then select Local vLLM when prompted.");
       deps.exitProcess(1);
     }
     if (

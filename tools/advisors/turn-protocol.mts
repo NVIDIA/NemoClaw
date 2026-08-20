@@ -47,6 +47,16 @@ export type AdvisorPromptTurn = {
   atomicTerminalToolName?: string;
   /** Opt into one tool-only continuation when the atomic terminal commit is absent. */
   atomicTerminalRepairPrompt?: string;
+  /**
+   * Terminal submit tool that may follow context, reads, prose, and other active draft tools.
+   * The turn permits one success, or one failed attempt followed by one success when repair is enabled.
+   * Nothing may follow a success.
+   */
+  terminalSubmitToolName?: string;
+  /** Opt into one repair in the same SDK turn or one continuation after a settled failure. */
+  terminalSubmitRepairPrompt?: string;
+  /** Tools available during the terminal-submit repair continuation. */
+  terminalSubmitRepairToolNames?: string[];
 };
 
 export function createAdvisorPromptTurn({
@@ -68,6 +78,8 @@ export type AdvisorTurnTools = {
   requireToolsBeforeText: string[];
   requireAssistantText: boolean;
   atomicTerminalToolName?: string;
+  terminalSubmitToolName?: string;
+  terminalSubmitRepairToolNames?: string[];
 };
 
 export type AdvisorTurnFlowEvent =
@@ -87,21 +99,38 @@ export function resolveAdvisorTurnTools(
   const atomicTerminalToolName = normalizedToolNames(
     turn.atomicTerminalToolName ? [turn.atomicTerminalToolName] : undefined,
   )[0];
+  const terminalSubmitToolName = normalizedToolNames(
+    turn.terminalSubmitToolName ? [turn.terminalSubmitToolName] : undefined,
+  )[0];
+  const terminalSubmitRepairToolNames = normalizedToolNames(turn.terminalSubmitRepairToolNames);
   const requiredToolNames = uniqueToolNames([
     ...contextToolNames,
     ...normalizedToolNames(turn.requiredToolNames),
     ...requireToolsBeforeText,
     ...(atomicTerminalToolName ? [atomicTerminalToolName] : []),
+    ...(terminalSubmitToolName ? [terminalSubmitToolName] : []),
   ]);
   const activeToolNames = uniqueToolNames([
     ...contextToolNames,
     ...normalizedToolNames(turn.activeToolNames),
     ...requiredToolNames,
   ]);
-  const unknown = activeToolNames.filter((toolName) => !availableToolNames.has(toolName));
+  const unknown = uniqueToolNames([...activeToolNames, ...terminalSubmitRepairToolNames]).filter(
+    (toolName) => !availableToolNames.has(toolName),
+  );
   if (unknown.length > 0) {
     throw new Error(
       `Advisor turn ${turn.name} references unregistered tool(s): ${unknown.join(", ")}`,
+    );
+  }
+  if (atomicTerminalToolName && terminalSubmitToolName) {
+    throw new Error(
+      `Advisor turn ${turn.name} cannot combine atomic terminal and preparatory terminal submit tools`,
+    );
+  }
+  if (terminalSubmitRepairToolNames.length > 0 && !terminalSubmitToolName) {
+    throw new Error(
+      `Advisor turn ${turn.name} terminal submit repair tools require a terminal submit tool`,
     );
   }
   if (
@@ -124,6 +153,8 @@ export function resolveAdvisorTurnTools(
     requireToolsBeforeText,
     requireAssistantText: turn.requireAssistantText === true,
     atomicTerminalToolName,
+    terminalSubmitToolName,
+    terminalSubmitRepairToolNames,
   };
 }
 
@@ -150,10 +181,85 @@ function terminalToolEventCounts(events: AdvisorTurnFlowEvent[], toolName: strin
   };
 }
 
+function terminalSubmitAttemptSequence(events: AdvisorTurnFlowEvent[], toolName: string) {
+  const outcomes: Array<"failed" | "successful"> = [];
+  let active = false;
+  let malformed = false;
+  for (const event of events) {
+    if (event.type === "tool_start" && event.toolName === toolName) {
+      if (active) malformed = true;
+      active = true;
+      continue;
+    }
+    if (event.type === "tool_end" && event.toolName === toolName) {
+      if (!active) malformed = true;
+      active = false;
+      outcomes.push(event.isError ? "failed" : "successful");
+      continue;
+    }
+    if (active) malformed = true;
+  }
+  return { outcomes, malformed, unsettled: active };
+}
+
+function hasActivityAfterSuccessfulTerminalSubmit(
+  events: AdvisorTurnFlowEvent[],
+  toolName: string,
+): boolean {
+  const successIndex = events.findIndex(
+    (event) => event.type === "tool_end" && event.toolName === toolName && !event.isError,
+  );
+  return successIndex >= 0 && events.slice(successIndex + 1).length > 0;
+}
+
 function unexpectedAtomicToolEvent(events: AdvisorTurnFlowEvent[], toolName: string) {
   return events.find((event) =>
     event.type === "text" ? Boolean(event.text.trim()) : event.toolName !== toolName,
   );
+}
+
+function terminalSubmitToolErrors(
+  turnName: string,
+  events: AdvisorTurnFlowEvent[],
+  toolName: string,
+  repaired = false,
+): string[] {
+  const counts = terminalToolEventCounts(events, toolName);
+  const expectedAttempts = repaired ? 2 : 1;
+  const expectedFailures = repaired ? 1 : 0;
+  const errors: string[] = [];
+  if (counts.starts !== counts.completions) {
+    errors.push(
+      `${turnName} must settle every ${toolName} attempt ` +
+        `(observed ${counts.starts} starts and ${counts.completions} completions)`,
+    );
+  }
+  const sequence = terminalSubmitAttemptSequence(events, toolName);
+  if (sequence.malformed) {
+    errors.push(`${turnName} emitted a malformed ${toolName} submit attempt sequence`);
+  }
+  if (
+    counts.starts !== expectedAttempts ||
+    counts.completions !== expectedAttempts ||
+    counts.successfulCompletions !== 1 ||
+    counts.failedCompletions !== expectedFailures
+  ) {
+    errors.push(
+      `${turnName} must make exactly ${expectedAttempts} ${toolName} submit attempt(s), ` +
+        `with ${expectedFailures} failed and 1 successful completion ` +
+        `(observed ${counts.starts} starts, ${counts.successfulCompletions} successful, and ${counts.failedCompletions} failed completions)`,
+    );
+  }
+  const expectedOutcomes = repaired ? ["failed", "successful"] : ["successful"];
+  if (sequence.outcomes.join(",") !== expectedOutcomes.join(",")) {
+    errors.push(
+      `${turnName} must complete ${toolName} attempts in this order: ${expectedOutcomes.join(", ")}`,
+    );
+  }
+  if (hasActivityAfterSuccessfulTerminalSubmit(events, toolName)) {
+    errors.push(`${turnName} emitted activity after successful ${toolName}`);
+  }
+  return errors;
 }
 
 function atomicTerminalToolErrors(
@@ -194,6 +300,7 @@ export function advisorTurnFlowErrors(
   turnName: string,
   events: AdvisorTurnFlowEvent[],
   tools: AdvisorTurnTools,
+  terminalSubmitRepaired = false,
 ): string[] {
   const errors: string[] = [];
   const textIndexes = events.flatMap((event, index) =>
@@ -217,6 +324,16 @@ export function advisorTurnFlowErrors(
   if (tools.atomicTerminalToolName) {
     errors.push(...atomicTerminalToolErrors(turnName, events, tools.atomicTerminalToolName));
   }
+  if (tools.terminalSubmitToolName) {
+    errors.push(
+      ...terminalSubmitToolErrors(
+        turnName,
+        events,
+        tools.terminalSubmitToolName,
+        terminalSubmitRepaired,
+      ),
+    );
+  }
   return errors;
 }
 
@@ -236,6 +353,67 @@ export function repairableAtomicTerminalToolName(
   if (counts.successfulCompletions > 0) return undefined;
   if (counts.completions !== counts.failedCompletions) return undefined;
   return toolName;
+}
+
+export function repairableTerminalSubmitToolName(
+  turn: AdvisorPromptTurn,
+  events: AdvisorTurnFlowEvent[],
+  tools: AdvisorTurnTools,
+  successfulToolNames: ReadonlySet<string>,
+  turnError: string | undefined,
+): string | undefined {
+  if (!turn.terminalSubmitRepairPrompt?.trim() || turnError) return undefined;
+  const toolName = tools.terminalSubmitToolName;
+  if (!toolName || successfulToolNames.has(toolName)) return undefined;
+  const expectedTools = new Set([...READ_ONLY_TOOLS, ...tools.activeToolNames]);
+  if (events.some((event) => event.type !== "text" && !expectedTools.has(event.toolName))) {
+    return undefined;
+  }
+  const counts = terminalToolEventCounts(events, toolName);
+  if (counts.starts !== 1 || counts.completions !== 1) return undefined;
+  if (counts.successfulCompletions !== 0 || counts.failedCompletions !== 1) return undefined;
+  return toolName;
+}
+
+export function hasCompletedTerminalSubmitRepair(
+  turn: AdvisorPromptTurn,
+  events: AdvisorTurnFlowEvent[],
+  tools: AdvisorTurnTools,
+  turnError: string | undefined,
+): boolean {
+  if (!turn.terminalSubmitRepairPrompt?.trim() || turnError) return false;
+  const toolName = tools.terminalSubmitToolName;
+  if (!toolName) return false;
+  const sequence = terminalSubmitAttemptSequence(events, toolName);
+  return (
+    !sequence.malformed &&
+    !sequence.unsettled &&
+    sequence.outcomes.join(",") === "failed,successful" &&
+    !hasActivityAfterSuccessfulTerminalSubmit(events, toolName)
+  );
+}
+
+export function terminalSubmitRepairPrompt(turn: AdvisorPromptTurn, toolName: string): string {
+  return `${turn.terminalSubmitRepairPrompt?.trim()}\n\nComplete the repair with exactly one successful \`${toolName}\` call. Emit no prose before or after the tool calls.`;
+}
+
+export function terminalSubmitRepairErrors(
+  turnName: string,
+  events: AdvisorTurnFlowEvent[],
+  toolName: string,
+  repairToolNames: string[],
+): string[] {
+  const repairName = `${turnName} terminal-submit repair`;
+  const allowed = new Set([...(repairToolNames ?? []), toolName]);
+  const unexpected = events.find((event) => event.type !== "text" && !allowed.has(event.toolName));
+  const errors = terminalSubmitToolErrors(repairName, events, toolName);
+  if (events.some((event) => event.type === "text" && event.text.trim())) {
+    errors.push(`${repairName} emitted prose during repair`);
+  }
+  if (unexpected && unexpected.type !== "text") {
+    errors.push(`${repairName} called unexpected tool ${unexpected.toolName}`);
+  }
+  return errors;
 }
 
 export function atomicTerminalRepairPrompt(turn: AdvisorPromptTurn, toolName: string): string {

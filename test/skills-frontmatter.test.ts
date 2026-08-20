@@ -260,6 +260,12 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("../_shared/security-rubric.md");
     expect(skill).toContain("../_shared/documentation-writing-review.md");
     expect(skill).toContain("smallest independently valuable capability slice");
+    expect(skill).toContain("Prefer a neutral or negative");
+    expect(skill).toContain("total line delta");
+    expect(skill).toContain("Possible future reuse is not enough");
+    expect(skill).toContain("Preserve semantic regression coverage");
+    expect(skill).toContain("Record the reduction case for the completed design");
+    expect(skill).toContain("Simplification result:");
     expect(skill).toContain("Read current code, tests, workflows");
     expect(skill).toContain("Load a narrow specialist only");
     expect(skill).toContain("it does not authorize GitHub writes");
