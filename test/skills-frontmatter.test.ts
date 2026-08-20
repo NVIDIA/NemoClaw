@@ -212,9 +212,17 @@ describe("repo skill markdown files", () => {
 
     const delegateBeforeRepair = createPr.indexOf("Before routing a repair");
     expect(delegateBeforeRepair).toBeGreaterThanOrEqual(0);
-    expect(createPr.indexOf("Route each valid code-changing finding")).toBeGreaterThan(
-      delegateBeforeRepair,
+    const scopedRoute = createPr.search(/Route only finding groups in\s+the repair scope/u);
+    expect(scopedRoute).toBeGreaterThan(delegateBeforeRepair);
+    const excludedGroupGate = createPr.search(
+      /Do not route a finding group that the\s+shared workflow excludes from the repair scope/u,
     );
+    expect(excludedGroupGate).toBeGreaterThan(scopedRoute);
+    expect(createPr.indexOf("Preserve its unresolved or deferred disposition")).toBeGreaterThan(
+      excludedGroupGate,
+    );
+    expect(createPr).toContain("Route only review finding groups in the repair scope");
+    expect(createPr).not.toMatch(/Route each valid code-changing(?: review)? finding/u);
     expect(createPr).toContain("shared workflow owns the single count-and-approval state machine");
     expect(createPr).toContain("returns with validation evidence");
     expect(createPr).not.toMatch(
@@ -477,7 +485,7 @@ describe("repo skill markdown files", () => {
       fs.readFileSync(path.join(skillRoot, "evals", "evals.json"), "utf8"),
     ) as Array<{ id: string; expected_skill: string | null }>;
 
-    expect(skill).toContain("Route each valid code-changing finding to");
+    expect(skill).toMatch(/Route only finding groups in\s+the repair scope to/u);
     expect(skill).toContain("nemoclaw-contributor-implement-issue");
     expect(skill).toContain("selects and runs the tests for the changed behavior");
     expect(skill).toContain("Do not select a test in this workflow");
