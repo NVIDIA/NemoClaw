@@ -114,7 +114,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       if (isCredentialUpdate) mark("updated");
       if (
         crashAfter === "credential-projection-coalesced" &&
-        isCredentialFreeRefresh &&
+        isCredentialUpdate &&
         observedCredentialAbsentThisProcess
       ) {
         credentialRefreshAfterAbsenceThisProcess = true;

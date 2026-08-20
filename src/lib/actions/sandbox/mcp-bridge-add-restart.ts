@@ -44,7 +44,6 @@ import {
   observeMcpCredentialRevision,
   providerMatchesCredential,
   providerShapeDetail,
-  refreshMcpProviderEnvironment,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
@@ -441,7 +440,14 @@ async function addMcpBridgeUnlocked(
             previousRevision: previousCredentialRevision,
           }
         : {}),
-      refreshAfterObservedAbsence: () => refreshMcpProviderEnvironment(entry),
+      // A no-field provider update advances only the provider resource
+      // version. OpenShell publishes a fresh credential revision only when
+      // the credential is supplied again after the bound policy is active.
+      refreshAfterObservedAbsence: () =>
+        upsertMcpProvider(entry.providerName ?? "", options.env, {
+          allowExisting: true,
+          expectedProviderId: entry.providerId,
+        }),
     });
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
