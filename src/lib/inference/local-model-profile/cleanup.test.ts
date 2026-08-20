@@ -665,26 +665,72 @@ describe("host-local model cleanup", () => {
     );
   });
 
-  it("uses gateway and sandbox scope and leaves a different owner untouched", () => {
+  it("stops the exact bridge before sandbox cleanup and leaves a different owner untouched (#9598)", () => {
     const homeDir = temporaryHome();
     const gatewayPort = 8091;
     const harness = engineHarness();
+    const privateBridge = privateBridgeFixture();
     createManagedState(homeDir, harness.engine, { gatewayPort });
 
     const skipped = cleanupManagedLlamaCppRuntimeForSandbox("different-sandbox", {
       homeDir,
       gatewayPort,
       engine: harness.engine,
+      privateBridge,
     });
     expect(skipped).toEqual({ ok: true, removed: [], preserved: [] });
     expect(harness.capture).not.toHaveBeenCalled();
+    expect(privateBridge.stopTransaction).not.toHaveBeenCalled();
+    expect(privateBridge.assertStopped).not.toHaveBeenCalled();
 
     const removed = cleanupManagedLlamaCppRuntimeForSandbox("spark-agent", {
       homeDir,
       gatewayPort,
       engine: harness.engine,
+      privateBridge,
     });
     expect(removed).toMatchObject({ ok: true });
+    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
+    expect(privateBridge.assertStopped).toHaveBeenCalledWith(TRANSACTION_ID);
+    const containerRemovalCall = harness.capture.mock.calls.findIndex(
+      ([argv]) => argv[0] === "rm" && argv[1] === "--force",
+    );
+    expect(containerRemovalCall).toBeGreaterThanOrEqual(0);
+    expect(privateBridge.stopTransaction.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.capture.mock.invocationCallOrder[containerRemovalCall]!,
+    );
+    expect(privateBridge.assertStopped.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.capture.mock.invocationCallOrder[containerRemovalCall]!,
+    );
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir, gatewayPort).stateDir)).toBe(false);
+  });
+
+  it("preserves lifecycle authority when the sandbox bridge remains active (#9598)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    const privateBridge = privateBridgeFixture();
+    privateBridge.assertStopped.mockImplementationOnce(() => {
+      throw new Error("bridge remains active");
+    });
+    createManagedState(homeDir, harness.engine);
+
+    const result = cleanupManagedLlamaCppRuntimeForSandbox("spark-agent", {
+      homeDir,
+      engine: harness.engine,
+      privateBridge,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "bridge remains active" });
+    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
+    expect(privateBridge.assertStopped).toHaveBeenCalledWith(TRANSACTION_ID);
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["rm", "--force", RUNTIME_ID],
+      expect.any(Number),
+    );
+    expect(harness.capture).not.toHaveBeenCalledWith(
+      ["network", "rm", NETWORK_ID],
+      expect.any(Number),
+    );
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
   });
 });

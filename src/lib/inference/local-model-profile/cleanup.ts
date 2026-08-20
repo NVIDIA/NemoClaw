@@ -469,6 +469,7 @@ function cleanupLlamaCpp(
     sandboxName?: string;
     env?: NodeJS.ProcessEnv;
     engine?: ContainerEngine;
+    privateBridge?: DockerLlamaCppPrivateBridgeController;
   } = {},
 ): boolean {
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
@@ -557,6 +558,11 @@ function cleanupLlamaCpp(
   const lease = journalStore.acquireExecution(journal.transactionId);
   try {
     journalStore.assertExecution(lease);
+    if (options.privateBridge) {
+      options.privateBridge.stopTransaction(journal.transactionId);
+      options.privateBridge.assertStopped(journal.transactionId);
+    }
+    journalStore.assertExecution(lease);
     removeExactContainerForJournal(engine, journal, removed);
     journalStore.assertExecution(lease);
     const expectedNetworkLabels = {
@@ -628,6 +634,7 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly engine?: ContainerEngine;
   readonly deps?: Partial<CleanupDeps>;
+  readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
 }
 
 export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppSandboxCleanupOptions {
@@ -906,6 +913,7 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
       sandboxName,
       env: options.env,
       engine: options.engine,
+      privateBridge: options.privateBridge ?? createDockerLlamaCppPrivateBridgeController(),
     });
     preserveSharedHuggingFaceCache(homeDir, preserved);
     return { ok: true, removed, preserved };
