@@ -78,5 +78,8 @@ describe("portable profile rootless runtime workflow", () => {
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
     expect(liveTest).toContain('location = "localhost:5000"\\ninsecure = true');
+    expect(liveTest).toContain("DOCKER_NETWORK_IPAM_INSPECT_FORMAT");
+    expect(liveTest).toContain("parseDockerNetworkIpamEntries(");
+    expect(liveTest).not.toContain("{{range .Subnets}}");
   });
 });

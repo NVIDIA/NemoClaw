@@ -14,11 +14,13 @@ import * as importedPortableHostPreparation from "../../../src/lib/onboard/exper
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import {
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  parseDockerNetworkIpamEntries,
   PORTABLE_DOCKER_NETWORK_NAME,
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_REGISTRY_IP,
-} from "../../../src/lib/onboard/experimental/portable-profile.ts";
+} from "../../../src/lib/onboard/docker-driver-platform.ts";
 import { test } from "../fixtures/e2e-test.ts";
 import {
   cleanupPortableHostGatewayAlias,
@@ -212,18 +214,20 @@ async function main(progress: TestProgress): Promise<void> {
       run("podman", ["image", "inspect", "--format", "{{.Id}}", imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
-    assert.equal(
-      run("podman", [
-        "network",
-        "inspect",
-        "--format",
-        "{{range .Subnets}}{{println .Subnet}}{{end}}",
-        PORTABLE_DOCKER_NETWORK_NAME,
-      ]),
-      PORTABLE_DOCKER_NETWORK_SUBNET,
+    assert.deepEqual(
+      parseDockerNetworkIpamEntries(
+        run("docker", [
+          "network",
+          "inspect",
+          "--format",
+          DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+          PORTABLE_DOCKER_NETWORK_NAME,
+        ]),
+      )?.map(({ subnet }) => subnet),
+      [PORTABLE_DOCKER_NETWORK_SUBNET],
     );
     assert.equal(
-      run("podman", [
+      run("docker", [
         "inspect",
         "--format",
         `{{with index .NetworkSettings.Networks ${JSON.stringify(PORTABLE_DOCKER_NETWORK_NAME)}}}{{.IPAddress}}{{end}}`,
