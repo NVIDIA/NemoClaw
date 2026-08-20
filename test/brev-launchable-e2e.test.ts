@@ -656,6 +656,30 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.readFileSync(multiple.calls, "utf8")).not.toContain("full-e2e.test.ts");
   }, 90_000);
 
+  it("redacts a malformed boot-image value before retaining failure evidence", () => {
+    const credentialBearingValue = "token=guest-controlled-boot-secret";
+    const boot = fixture({ bootImage: credentialBearingValue });
+    const result = run(boot.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("booted image does not match the producer handoff");
+    expect(emittedOutput(result, boot.workDir)).not.toContain(credentialBearingValue);
+    expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
+    const artifact = fs.readFileSync(path.join(boot.workDir, "launchable-e2e.json"), "utf8");
+    expect(artifact).not.toContain(credentialBearingValue);
+    expect(JSON.parse(artifact)).toMatchObject({
+      boot: { bootImage: "<redacted>" },
+      validation: {
+        imageSelection: {
+          status: "failed",
+          expected: "projects/brevdevprod/global/images/nemoclaw-test-image",
+          observed: "<redacted>",
+        },
+        runtimeProvenance: { status: "not-run", checks: [] },
+        fullE2E: "not-run",
+      },
+    });
+  });
+
   it("redacts unconstrained runtime provenance before retaining or logging it", () => {
     const credentialBearingValue = "NVIDIA/guest-controlled-secret";
     const boot = fixture({ sourceRepository: credentialBearingValue });
