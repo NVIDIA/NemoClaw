@@ -152,7 +152,7 @@ export function classifyOpenShellGatewayServiceMetadata({
     (candidate) => path.basename(candidate) === "openshell-gateway",
   );
   if (gatewayPaths.length === 0) {
-    return executablePaths.length === 0 && properties.ExecStart.includes("openshell-gateway")
+    return properties.ExecStart.includes("openshell-gateway")
       ? "block-ambiguous-executable"
       : "unrelated";
   }

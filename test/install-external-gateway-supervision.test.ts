@@ -14,7 +14,12 @@ import {
   writeExecutable,
 } from "./helpers/installer-sourced-env";
 
-type DeclarationMode = "absent" | "externally-supervised" | "invalid" | "nemoclaw-managed";
+type DeclarationMode =
+  | "absent"
+  | "externally-supervised"
+  | "invalid"
+  | "nemoclaw-managed"
+  | "whitespace";
 type DeclarationDriftPoint = "after-backup" | "before-backup";
 
 const SOURCE_ROOT = path.join(import.meta.dirname, "..");
@@ -58,7 +63,11 @@ function writeGatewayManagementDeclaration(root: string, mode: DeclarationMode):
             requiredCapabilities: [],
           }
         : { version: 1, mode, requiredCapabilities: [] };
-  return mode === "absent" ? null : persistGatewayManagementDeclaration(root, declaration);
+  return mode === "absent"
+    ? null
+    : mode === "whitespace"
+      ? "   "
+      : persistGatewayManagementDeclaration(root, declaration);
 }
 
 function installerEnv(
@@ -83,7 +92,7 @@ function installerEnv(
   };
 }
 
-function runManagedServiceStage(mode: DeclarationMode) {
+function runManagedServiceStage(mode: DeclarationMode, rejectNode = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-external-service-stage-"));
   const home = path.join(root, "home");
   const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
@@ -106,6 +115,7 @@ function runManagedServiceStage(mode: DeclarationMode) {
 source "$INSTALLER_UNDER_TEST" >/dev/null
 NEMOCLAW_SOURCE_ROOT="$SOURCE_ROOT"
 NEMOCLAW_OPENSHELL_GATEWAY_BIN="$GATEWAY_BIN"
+${rejectNode ? "node() { return 91; }" : ""}
 uname() { printf '%s\\n' Linux; }
 resolve_nemoclaw_gateway_port() { printf '%s\\n' 8080; }
 upstream_openshell_gateway_user_service_installed() { return 1; }
@@ -245,6 +255,7 @@ function runLegacyGatewayRetirement(mode: DeclarationMode, driftPoint?: Declarat
       "-c",
       `
 source "$INSTALLER_UNDER_TEST" >/dev/null
+NEMOCLAW_SOURCE_ROOT="$SOURCE_ROOT"
 nemoclaw_state_dir() { printf '%s\\n' "$STATE_DIR"; }
 resolve_nemoclaw_gateway_port() { printf '%s\\n' 8080; }
 nemoclaw_gateway_name() { printf '%s\\n' nemoclaw; }
@@ -327,6 +338,14 @@ describe("installer external gateway supervision", () => {
     expect(fixture.output).toContain("Invalid gateway management declaration");
     expect(fixture.output).not.toContain("private-field-name");
     expect(fixture.output).not.toContain("provider-secret-value");
+  });
+
+  it("validates a nonempty declaration value before staging a managed service (#9705)", () => {
+    const fixture = runManagedServiceStage("whitespace", true);
+
+    expect(fixture.result.status, fixture.output).toBe(1);
+    expect(fixture.serviceExists).toBe(false);
+    expect(fixture.output).toContain("Invalid gateway management declaration");
   });
 
   it("rejects an invalid declaration before backing up or retiring a gateway (#9705)", () => {

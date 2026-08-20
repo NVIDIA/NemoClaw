@@ -1290,14 +1290,19 @@ _UPGRADE_SANDBOXES_FAILED=false
 require_stable_installer_gateway_management() {
   local gateway_management_module management_output management_status
   local management_mode management_digest unexpected
-  gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/src/lib/onboard/gateway-management.ts"
-  [[ -f "$gateway_management_module" ]] \
-    || error "Invalid gateway management declaration: the gateway management parser is unavailable."
-  command -v node >/dev/null 2>&1 \
-    || error "Invalid gateway management declaration: Node.js is unavailable for gateway management validation."
+  if [[ -z "${NEMOCLAW_GATEWAY_MANAGEMENT-}" ]]; then
+    # This is the parser's canonical result for an absent declaration. Later
+    # calls still reject a declaration that appears during this process.
+    management_output="managed 74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+  else
+    gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/src/lib/onboard/gateway-management.ts"
+    [[ -f "$gateway_management_module" ]] \
+      || error "Invalid gateway management declaration: the gateway management parser is unavailable."
+    command -v node >/dev/null 2>&1 \
+      || error "Invalid gateway management declaration: Node.js is unavailable for gateway management validation."
 
-  if management_output="$(node --no-warnings --experimental-strip-types \
-    --input-type=module --eval '
+    if management_output="$(node --no-warnings --experimental-strip-types \
+      --input-type=module --eval '
       import { createHash } from "node:crypto";
       import { pathToFileURL } from "node:url";
 
@@ -1333,15 +1338,16 @@ require_stable_installer_gateway_management() {
         .digest("hex");
       process.stdout.write(mode + " " + digest);
     ' "$gateway_management_module" 2>&1)"; then
-    :
-  else
-    management_status=$?
-    if [[ "$management_output" == "Invalid gateway management declaration: "* &&
-      "$management_output" != *$'\n'* &&
-      "$management_output" != *$'\r'* ]]; then
-      error "$management_output"
+      :
+    else
+      management_status=$?
+      if [[ "$management_output" == "Invalid gateway management declaration: "* &&
+        "$management_output" != *$'\n'* &&
+        "$management_output" != *$'\r'* ]]; then
+        error "$management_output"
+      fi
+      error "Invalid gateway management declaration: validation failed with status ${management_status}."
     fi
-    error "Invalid gateway management declaration: validation failed with status ${management_status}."
   fi
   read -r management_mode management_digest unexpected <<<"$management_output"
   if [[ -n "$unexpected" ||
@@ -1740,15 +1746,23 @@ resolve_openshell_gateway_bin_for_service() {
   printf "%s\n" "$gateway_bin"
 }
 
-trusted_openshell_gateway_bin_for_service() {
-  local gateway_bin="${1:-}"
+readonly OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN="/usr/local/bin/openshell-gateway"
+readonly OPENSHELL_GATEWAY_SYSTEM_BIN="/usr/bin/openshell-gateway"
+
+openshell_gateway_user_bin_for_service() {
   local user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   if [[ "$user_bin_home" != /* ]]; then
     user_bin_home="${HOME}/.local/bin"
   fi
-  user_bin_home="${user_bin_home%/}"
+  printf "%s\n" "${user_bin_home%/}/openshell-gateway"
+}
+
+trusted_openshell_gateway_bin_for_service() {
+  local gateway_bin="${1:-}"
+  local user_gateway_bin
+  user_gateway_bin="$(openshell_gateway_user_bin_for_service)"
   case "$gateway_bin" in
-    "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+    "$user_gateway_bin" | "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN" | "$OPENSHELL_GATEWAY_SYSTEM_BIN")
       return 0
       ;;
     *)
@@ -1759,7 +1773,7 @@ trusted_openshell_gateway_bin_for_service() {
 
 classify_noncanonical_openshell_gateway_user_service() {
   local service_name="${1:-}" selected_port="${2:-}" service_output service_status
-  local classifier_module classifier_output classifier_status
+  local classifier_module classifier_output classifier_status user_gateway_bin
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 
@@ -1777,39 +1791,29 @@ classify_noncanonical_openshell_gateway_user_service() {
     NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The shared service classifier is unavailable."
     return 3
   fi
+  user_gateway_bin="$(openshell_gateway_user_bin_for_service)"
   if classifier_output="$(
     printf '%s' "$service_output" \
       | node --no-warnings --experimental-strip-types --input-type=module --eval '
           import fs from "node:fs";
-          import path from "node:path";
           import { pathToFileURL } from "node:url";
 
-          const [modulePath, selectedPort] = process.argv.slice(1);
+          const [modulePath, selectedPort, ...trustedExecutablePaths] = process.argv.slice(1);
           try {
             const { classifyOpenShellGatewayServiceMetadata } = await import(
               pathToFileURL(modulePath).href
             );
-            const home = process.env.HOME ?? "";
-            if (!path.isAbsolute(home)) process.exit(2);
-            const configuredBinHome = process.env.XDG_BIN_HOME?.trim();
-            const userBinHome =
-              configuredBinHome && path.isAbsolute(configuredBinHome)
-                ? path.normalize(configuredBinHome)
-                : path.join(home, ".local", "bin");
             const verdict = classifyOpenShellGatewayServiceMetadata({
               gatewayPort: Number(selectedPort),
               metadata: fs.readFileSync(0, "utf8"),
-              trustedExecutablePaths: [
-                path.join(userBinHome, "openshell-gateway"),
-                "/usr/local/bin/openshell-gateway",
-                "/usr/bin/openshell-gateway",
-              ],
+              trustedExecutablePaths,
             });
             process.stdout.write(verdict);
           } catch {
             process.exit(2);
           }
-        ' "$classifier_module" "$selected_port" 2>/dev/null
+        ' "$classifier_module" "$selected_port" "$user_gateway_bin" \
+        "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN" "$OPENSHELL_GATEWAY_SYSTEM_BIN" 2>/dev/null
   )"; then
     :
   else
