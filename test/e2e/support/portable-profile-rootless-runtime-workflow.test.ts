@@ -6,8 +6,11 @@ import { describe, expect, it } from "vitest";
 import { readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 
 describe("portable profile rootless runtime workflow", () => {
-  // source-shape-contract: compatibility -- The workflow must compile the candidate catalogue, pin Ubuntu 26.04 and Podman 5.7, and correct the pasta AppArmor policy before the live E2E test
-  it("prepares Ubuntu 26.04, Podman 5.7, and the pasta AppArmor policy before the live E2E test (#9006)", () => {
+  // source-shape-contract: compatibility -- Actionlint and the workflow must share Ubuntu 26.04 while the workflow compiles the candidate catalogue, pins Podman 5.7, and corrects the pasta AppArmor policy before live E2E
+  it("keeps actionlint and live E2E on Ubuntu 26.04 and Podman 5.7 (#9006)", () => {
+    const actionlint = readYaml<{ "self-hosted-runner"?: { labels?: string[] } }>(
+      ".github/actionlint.yaml",
+    );
     const workflow = readYaml<Workflow>(".github/workflows/portable-profile-e2e.yaml");
     const job = workflow.jobs["rootless-linux"];
     const steps = job?.steps ?? [];
@@ -35,6 +38,7 @@ describe("portable profile rootless runtime workflow", () => {
     const runtimeVersionIndex = provision?.indexOf("podman --version") ?? -1;
 
     expect(job?.["runs-on"]).toBe("ubuntu-26.04");
+    expect(actionlint["self-hosted-runner"]?.labels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(dependencyInstallIndex).toBeGreaterThanOrEqual(0);
     expect(catalogueCompileIndex).toBeGreaterThan(dependencyInstallIndex);

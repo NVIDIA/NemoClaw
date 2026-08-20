@@ -63,7 +63,7 @@
     },
     {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
-      "test": "prepares Ubuntu 26.04, Podman 5.7, and the pasta AppArmor policy before the live E2E test (#9006)",
+      "test": "keeps actionlint and live E2E on Ubuntu 26.04 and Podman 5.7 (#9006)",
       "category": "compatibility"
     },
     {
