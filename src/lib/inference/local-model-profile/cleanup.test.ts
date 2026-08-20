@@ -548,10 +548,12 @@ describe("host-local model cleanup", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness({ containerPresent: phase !== "network-creating" });
     createManagedState(homeDir, harness.engine, { phase });
+    const privateBridge = privateBridgeFixture();
 
     const result = cleanupLocalModelRuntimes({
       homeDir,
       engine: harness.engine,
+      privateBridge,
     });
 
     expect(result).toMatchObject({ ok: true });
