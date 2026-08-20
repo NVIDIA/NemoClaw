@@ -224,9 +224,7 @@ async function addBridgeAndReadStatus(
     policy: { gatewayPresent: true },
     adapter: { registered: true },
   });
-  expect(statusJson.warnings).toEqual([
-    expect.stringMatching(/provider at sandbox scope.*endpoint-exclusive credential binding/i),
-  ]);
+  expect(statusJson.warnings).toEqual([]);
   expect(status.stdout).not.toContain(HOST_SECRET);
   expect(statusJson.provider.name).toMatch(
     new RegExp(`^${options.sandboxName}-mcp-${SERVER_NAME}-[a-f0-9]{16}$`),

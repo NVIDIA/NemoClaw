@@ -137,7 +137,11 @@ Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_
 Use a dedicated service name such as `MY_SERVICE_MCP_TOKEN`.
 
 NemoClaw requires exactly one `--env` bearer credential per server.
-Use a distinct environment variable for each managed server in the same sandbox because OpenShell static credential keys are sandbox-wide and cannot be attached twice.
+Use a distinct environment variable for each managed server in the same sandbox because credential keys must be unique across attached providers.
+NemoClaw binds each dedicated provider to its generated MCP endpoint, so OpenShell resolves the placeholder only for that endpoint's host, port, and path.
+
+If this server uses the profile-less `generic` provider from an earlier NemoClaw build, remove it and add it again with the credential exported.
+That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
 
 ## Meet Endpoint Requirements
 

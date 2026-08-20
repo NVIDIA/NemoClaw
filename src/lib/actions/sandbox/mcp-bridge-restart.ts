@@ -14,6 +14,7 @@ import {
   assertNoAttachedProviderCredentialCollisions,
   assertNoProviderCredentialCollisions,
   attachProvider,
+  ensureMcpBridgeProviderProfile,
   detachMissingProviderReference,
   type McpCredentialRevisionObservation,
   type McpProviderInspection,
@@ -134,9 +135,11 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     const target = resolvedTargetPins(resolvedByServer, entry);
     let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
-    // Revalidate the actual running supervisor before rotating, recreating,
-    // attaching, or re-registering an authenticated provider.
-    applyGeneratedPolicy(sandboxName, entry, target);
+    // Revalidate the actual running supervisor before rotating or recreating
+    // credentials. The temporary policy cannot bind the provider until an
+    // endpointless profile is attached.
+    ensureMcpBridgeProviderProfile();
+    applyGeneratedPolicy(sandboxName, entry, target, { bindCredential: false });
     const providerResult = upsertMcpProvider(entry.providerName ?? "", envRefs, {
       allowExisting: true,
       expectedProviderId: entry.providerId,
@@ -167,6 +170,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       );
     }
     attachProvider(sandboxName, entry);
+    applyGeneratedPolicy(sandboxName, entry, target);
     waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? { previousRevision: previousCredentialRevision }
@@ -229,8 +233,12 @@ export async function restoreExistingMcpBridgeRuntime(
   assertNoProviderCredentialCollisions(sandboxName, entries);
   for (const entry of entries) {
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
-    applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
+    ensureMcpBridgeProviderProfile();
+    applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+      bindCredential: false,
+    });
     attachProvider(sandboxName, entry);
+    applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
     waitForAttachedMcpCredential(sandboxName, entry);
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
     registerAgentAdapter(

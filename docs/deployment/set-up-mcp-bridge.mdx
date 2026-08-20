@@ -92,14 +92,19 @@ NemoClaw compensates with an exact HTTPS destination, path, MCP method profile, 
 
 Remove the interpreter grants when OpenShell exposes stable script or package entrypoint attribution.
 
-OpenShell v0.0.106 attaches static provider credentials at sandbox scope rather than reserving a credential key exclusively for one endpoint.
-It also does not expose an immutable provider binding on an attachment.
+OpenShell v0.0.106 requires a static credential provider to have a complete endpoint binding before the supervisor projects its placeholder.
+NemoClaw imports the endpointless `nemoclaw-mcp-v1` profile, creates a dedicated provider for each server, and binds that provider to one generated MCP endpoint with `credential_binding.provider`.
+OpenShell withholds the credential before the binding is active and outside the bound host, port, and path.
 
-NemoClaw rejects credential-key reuse between managed MCP servers, creates a dedicated provider for each definition, reports the residual risk in `status`, and requires a unique least-privilege token and environment key.
-Do not grant a broader inspected-HTTP route to the same adapter runtime because that route could resolve the sandbox-scoped placeholder.
+Credential keys must still be unique across providers attached to the same sandbox.
+NemoClaw rejects managed MCP credential-key reuse and requires a unique least-privilege token and environment key for each server.
+
+A managed MCP provider created by an earlier NemoClaw build can have the profile-less `generic` type and cannot satisfy this binding contract.
+NemoClaw refuses to restart or rebuild that registration.
+Remove the MCP server, export its credential again, and add the server so NemoClaw recreates it with the endpointless profile.
 
 OpenShell v0.0.106 updates, attaches, detaches, and deletes providers by mutable name instead of an atomic immutable identity.
-NemoClaw compensates with randomized provider names, the per-sandbox lifecycle lock, and immediate ownership checks against the recorded provider ID, type, and credential-key metadata before mutations.
+NemoClaw compensates with randomized provider names, the per-sandbox lifecycle lock, and immediate ownership checks against the recorded provider ID and credential-key metadata plus the expected provider type before mutations.
 
 NemoClaw fails closed and preserves retryable state when those checks do not match, but the checks do not provide compare-and-swap behavior against another OpenShell client.
 Do not concurrently replace or mutate a managed provider through another OpenShell client while an MCP lifecycle command is running.

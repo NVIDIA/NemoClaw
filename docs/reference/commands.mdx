@@ -3057,9 +3057,10 @@ Server names must start with a letter and contain at most 64 letters, digits, hy
 NemoClaw rejects invalid names and endpoints before it writes lifecycle state or changes OpenShell resources.
 NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, explicit MCP methods, and a 131,072-byte request-body limit.
 OpenShell `0.0.106` evaluates that policy before replacing the attached provider placeholder in the allowed request header.
-Static provider placeholders are sandbox-scoped rather than endpoint-exclusive, so do not grant broader inspected-HTTP routes to the same adapter runtime and credential key.
+NemoClaw imports the endpointless `nemoclaw-mcp-v1` profile and binds the dedicated provider to that endpoint with `credential_binding.provider`.
+OpenShell withholds the credential before the binding is active and outside the bound host, port, and path.
 The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener.
-After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, generic type, valid resource version, and exactly one credential key matching the recorded key.
+After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one credential key matching the recorded key.
 If those readiness checks pass, it sends a differential pair of wire-level MCP `initialize` requests from inside the sandbox — one with the placeholder header and one with an unresolvable control bearer — to verify that OpenShell resolves the credential on egress; otherwise it reports an inconclusive `probe skipped` result and sends no request.
 Neither outcome fails the committed add, and `--no-probe` skips this check.
 For full setup details, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server).
@@ -3104,9 +3105,8 @@ Status includes OpenShell provider presence and credential-key shape, provider a
 For a trusted private endpoint, status also compares current DNS answers with recorded pins without changing the policy.
 Text output reports `private address pins: match`, `drift`, or `unresolved`.
 JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins.
-While a managed provider is attached, text and JSON status warn that its credential is sandbox-scoped until OpenShell supports endpoint-exclusive binding plus Host, scheme, and query enforcement.
 When a single server is named, status requests a differential wire-level credential-resolution probe.
-It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, generic type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail.
+It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, `nemoclaw-mcp-v1` type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail.
 When ready, the same MCP `initialize` is sent from inside the sandbox once with the `openshell:resolve:env:KEY` placeholder header and once with a deliberately-unresolvable control bearer.
 Classification uses the two HTTP status codes plus curl exit codes for transport, timeout, and policy-denial outcomes; response bodies are never captured or printed.
 A `verified` verdict requires the placeholder request to be accepted (HTTP 2xx) while the control is rejected — the only outcome that proves a valid credential was on the wire.
@@ -3153,6 +3153,8 @@ For a public entry, restart resolves the hostname again and refreshes the policy
 If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision.
 Otherwise, restart reuses an existing provider whose current metadata match the registry.
 A missing provider requires the variable to be exported before retrying.
+An existing provider with the profile-less legacy `generic` type must be removed and added again with its credential exported.
+OpenShell 0.0.106 cannot bind that provider to an MCP endpoint, so restart and rebuild fail closed instead of activating it.
 When that provider is already absent but its name still blocks sandbox exec,
 restart first detaches only the dangling sandbox-spec reference, then runs the
 agent capability probe before changing a live provider or policy.
@@ -3185,11 +3187,13 @@ Keep them down until the command returns; a concurrent relock refuses the config
 
 </AgentOnly>
 
-NemoClaw unregisters the sandbox agent adapter, prechecks and removes the recorded OpenShell provider, removes the owned generated policy, and clears the sandbox registry entry.
+For an ordinary managed entry, NemoClaw unregisters the sandbox agent adapter, removes the exact owned generated policy, detaches and deletes the recorded OpenShell provider, and clears the sandbox registry entry.
+For a stored legacy entry whose credential name is no longer accepted, it first detaches the exact provider so adapter cleanup cannot start with that credential attached.
 Deep Agents teardown does not require managed MCP capability v2 from the old image.
 For a v1 image, NemoClaw removes the exact registry-owned entry from the legacy `.mcp.json` while preserving unrelated user state; a replacement image must pass the v2 capability check before post-rebuild providers or policy are restored.
 The command fails closed on observed drift.
-`--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the exact recorded ID, type, and credential key and policy deletion still requires exact owned content.
+`--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the recorded ID and credential key plus an accepted managed provider type, and policy deletion still requires exact owned content.
+An exact legacy `generic` provider is accepted only for cleanup.
 Residuals preserve registry state.
 OpenShell `0.0.106` mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.
 
