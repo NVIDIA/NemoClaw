@@ -25,7 +25,8 @@ The following example starts vLLM on port `8000`.
 vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000
 ```
 
-Port `8000` is one of NemoClaw's bundled host-gateway ports.
+Port `8000` is the default vLLM host-gateway port.
+Set `NEMOCLAW_VLLM_PORT` before onboarding to select a different port.
 
 <Warning>
 For the no-authentication path on bundled host-gateway ports, bind the backend to loopback only.
@@ -58,7 +59,7 @@ Enter the server base URL and the model ID reported by the server.
 
 Use a host-routable URL such as `http://localhost:8000/v1` when you want onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 To qualify for automatic rewriting, an HTTP endpoint URL must use the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.
-Automatic rewriting is limited to NemoClaw's bundled host-gateway ports: `8000`, `11434`, and `11435`.
+Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
 NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
 Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
 NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
