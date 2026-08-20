@@ -1105,7 +1105,8 @@ jobs:
             exit 1
           fi
           npx --no-install tsx tools/e2e/assert-openshell-2847-mcp-failure.mts \
-            "$E2E_ARTIFACT_DIR"
+            "$E2E_ARTIFACT_DIR" \
+            "$CANDIDATE_SHA"
 
   pi-candidate:
     name: Build and validate the Pi candidate managed image (${{ matrix.arch }})

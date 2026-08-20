@@ -675,13 +675,14 @@ describe("complete managed-image publication workflow", () => {
     expect(step(discovery, "Scan MCP artifacts for fixture credentials").if).toBe("always()");
     const enforce = step(discovery, "Enforce exact MCP discovery result");
     expect(enforce.if).toBe("always()");
-    expect(enforce.env?.MCP_DISCOVERY_OUTCOME).toBe(
-      "${{ steps.exact_mcp_discovery.outcome }}",
-    );
+    expect(enforce.env?.MCP_DISCOVERY_OUTCOME).toBe("${{ steps.exact_mcp_discovery.outcome }}");
     expect(enforce.env?.MCP_ARTIFACT_SECRET_SCAN_OUTCOME).toBe(
       "${{ steps.mcp_artifact_secret_scan.outcome }}",
     );
     expect(enforce.run).toContain("assert-openshell-2847-mcp-failure.mts");
+    expect(enforce.run).toMatch(
+      /assert-openshell-2847-mcp-failure\.mts \\\n\s+"\$E2E_ARTIFACT_DIR" \\\n\s+"\$CANDIDATE_SHA"/u,
+    );
     expect(enforce.run).toContain('[[ "$MCP_DISCOVERY_OUTCOME" != "failure" ]]');
     expect(enforce.run).toContain('[[ "$MCP_ARTIFACT_SECRET_SCAN_OUTCOME" != "success" ]]');
     const steps = discovery.steps ?? [];

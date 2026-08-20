@@ -14,6 +14,7 @@ const resultNames = [
   "openclaw-mcp-concurrent-add-first.result.json",
   "openclaw-mcp-concurrent-add-second.result.json",
 ];
+const candidateSha = "a".repeat(40);
 
 function writeJson(file: string, value: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -48,8 +49,8 @@ function makeEvidence(): string {
     version: 1,
     jobId: "mcp-bridge",
     shardId: "openclaw",
-    expectedSha: "a".repeat(40),
-    testedSha: "a".repeat(40),
+    expectedSha: candidateSha,
+    testedSha: candidateSha,
     passed: 0,
     failed: 1,
     skipped: 0,
@@ -72,7 +73,7 @@ describe("OpenShell credential-revision failure evidence", () => {
   it("accepts both exact credential-revision failures with completed cleanup", () => {
     const root = makeEvidence();
 
-    expect(assertOpenShell2847FailureEvidence(root)).toBe("e2e-pr-exact-mcp-1");
+    expect(assertOpenShell2847FailureEvidence(root, candidateSha)).toBe("e2e-pr-exact-mcp-1");
   });
 
   it("rejects a different command failure", () => {
@@ -82,7 +83,7 @@ describe("OpenShell credential-revision failure evidence", () => {
     result.stderr = "OpenClaw tool discovery failed\n";
     writeJson(resultFile, result);
 
-    expect(() => assertOpenShell2847FailureEvidence(root)).toThrow(
+    expect(() => assertOpenShell2847FailureEvidence(root, candidateSha)).toThrow(
       /different terminal diagnostic/u,
     );
   });
@@ -97,7 +98,22 @@ describe("OpenShell credential-revision failure evidence", () => {
     );
     writeJson(resultFile, result);
 
-    expect(() => assertOpenShell2847FailureEvidence(root)).toThrow(/unexpected diagnostic/u);
+    expect(() => assertOpenShell2847FailureEvidence(root, candidateSha)).toThrow(
+      /unexpected diagnostic/u,
+    );
+  });
+
+  it("rejects evidence from a different commit", () => {
+    const root = makeEvidence();
+    const signalFile = path.join(root, "risk-signal.json");
+    const signal = JSON.parse(fs.readFileSync(signalFile, "utf8")) as Record<string, unknown>;
+    signal.expectedSha = "b".repeat(40);
+    signal.testedSha = "b".repeat(40);
+    writeJson(signalFile, signal);
+
+    expect(() => assertOpenShell2847FailureEvidence(root, candidateSha)).toThrow(
+      /unexpected E2E risk signal/u,
+    );
   });
 
   it("rejects incomplete sandbox cleanup", () => {
@@ -107,7 +123,7 @@ describe("OpenShell credential-revision failure evidence", () => {
       failures: ["destroy sandbox e2e-pr-exact-mcp-1"],
     });
 
-    expect(() => assertOpenShell2847FailureEvidence(root)).toThrow(
+    expect(() => assertOpenShell2847FailureEvidence(root, candidateSha)).toThrow(
       /does not confirm sandbox cleanup/u,
     );
   });

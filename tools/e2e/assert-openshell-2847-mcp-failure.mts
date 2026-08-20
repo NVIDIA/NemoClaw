@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
+const COMMIT_SHA = /^[0-9a-f]{40}$/u;
 const RESULT_BASENAMES = [
   "openclaw-mcp-concurrent-add-first.result.json",
   "openclaw-mcp-concurrent-add-second.result.json",
@@ -64,7 +65,13 @@ function commandSandbox(file: string, expectedPass: string): string {
   return failure[1];
 }
 
-export function assertOpenShell2847FailureEvidence(artifactDirectory: string): string {
+export function assertOpenShell2847FailureEvidence(
+  artifactDirectory: string,
+  candidateSha: string,
+): string {
+  if (!COMMIT_SHA.test(candidateSha)) {
+    throw new Error("OpenShell #2847 candidate SHA must be a lowercase 40-character SHA");
+  }
   const root = path.resolve(artifactDirectory);
   const pass = path.basename(root).match(/^pass-([12])$/u)?.[1];
   if (!pass) throw new Error("OpenShell #2847 evidence directory must end in pass-1 or pass-2");
@@ -92,8 +99,9 @@ export function assertOpenShell2847FailureEvidence(artifactDirectory: string): s
   if (
     Object.entries(expectedSignal).some(([key, value]) => signal[key] !== value) ||
     typeof signal.expectedSha !== "string" ||
-    !/^[0-9a-f]{40}$/u.test(signal.expectedSha) ||
-    signal.testedSha !== signal.expectedSha
+    !COMMIT_SHA.test(signal.expectedSha) ||
+    signal.expectedSha !== candidateSha ||
+    signal.testedSha !== candidateSha
   ) {
     throw new Error("OpenShell #2847 evidence has an unexpected E2E risk signal");
   }
@@ -113,12 +121,13 @@ export function assertOpenShell2847FailureEvidence(artifactDirectory: string): s
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const root = process.argv[2];
-    if (!root || process.argv.length !== 3) {
+    const candidateSha = process.argv[3];
+    if (!root || !candidateSha || process.argv.length !== 4) {
       throw new Error(
-        "Usage: npx tsx tools/e2e/assert-openshell-2847-mcp-failure.mts ARTIFACT_DIR",
+        "Usage: npx tsx tools/e2e/assert-openshell-2847-mcp-failure.mts ARTIFACT_DIR CANDIDATE_SHA",
       );
     }
-    const sandbox = assertOpenShell2847FailureEvidence(root);
+    const sandbox = assertOpenShell2847FailureEvidence(root, candidateSha);
     console.log(
       `::warning title=OpenShell #2847::Accepted the exact provider credential revision failure for ${sandbox}. Remove this waiver after NVIDIA/OpenShell#2847 is released and pinned.`,
     );
