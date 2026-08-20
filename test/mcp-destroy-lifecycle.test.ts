@@ -184,7 +184,6 @@ async function captureMessage(action: () => Promise<unknown>): Promise<string> {
     return error instanceof Error ? error.message : String(error);
   }
 }
-
 function registerAlphaGithubBridge(): void {
   registry.registerSandbox({
     name: "alpha",
@@ -303,6 +302,9 @@ beforeEach(() => {
       case args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach":
         testState.attachedProviders.add(args[4]);
         return { status: 0, stdout: "Attached provider", stderr: "" };
+      case args[0] === "provider" && args[1] === "update" && args.length === 3 && testState.providers.has(args[2]):
+        testState.providers.get(args[2])!.resourceVersion = (testState.providers.get(args[2])!.resourceVersion ?? 1) + 1;
+        return { status: 0, stdout: "Updated provider", stderr: "" };
       case args[0] === "provider" &&
         args[1] === "delete" &&
         testState.failProviderDelete === args[2]:
@@ -1236,15 +1238,12 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
 
     expect(process.env.GITHUB_TOKEN).toBe("ambient-value-that-must-not-rotate");
     expect([...testState.providers.keys()]).toContain("alpha-mcp-github");
-    expect(
-      testState.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
-    ).toBe(true);
-    expect(testState.calls.some((call) => /^provider (create|update) /.test(call))).toBe(false);
+    expect(testState.calls).toContain("sandbox provider attach alpha alpha-mcp-github");
+    expect(testState.providers.get("alpha-mcp-github")?.resourceVersion).toBe(2);
+    expect(testState.calls.some((call) => /^provider (create|update) .*--credential/.test(call))).toBe(false);
     expect(testState.policyApplyCalls).toBe(2);
     expect(testState.adapterCalls).toContain("command -v mcporter");
-    expect(
-      testState.adapterCalls.some((call) => call.includes("openshell:resolve:env:GITHUB_TOKEN")),
-    ).toBe(true);
+    expect(testState.adapterCalls.some((call) => call.includes("openshell:resolve:env:GITHUB_TOKEN"))).toBe(true);
     expect(sandbox?.mcp?.bridges).toHaveProperty("github");
     expect(sandbox?.mcp?.managedServerNames).toEqual(["github", "retired"]);
     expect(sandbox?.mcp?.destroyPreparedAt).toBeUndefined();
@@ -1320,7 +1319,8 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     await bridge.restoreMcpBridgesAfterRebuild("alpha", [bridgeEntries.github]);
 
     expect(process.env.GITHUB_TOKEN).toBe("ambient-value-that-must-not-rotate");
-    expect(testState.calls.some((call) => /^provider (create|update) /.test(call))).toBe(false);
+    expect(testState.providers.get("alpha-mcp-github")?.resourceVersion).toBe(2);
+    expect(testState.calls.some((call) => /^provider (create|update) .*--credential/.test(call))).toBe(false);
     expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
     expect(testState.adapterRegistered).toBe(true);
     expect(testState.policyApplyCalls).toBe(2);

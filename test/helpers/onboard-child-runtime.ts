@@ -27,7 +27,10 @@ function installPromptQueue(target, configuredAnswers) {
   target.prompt = async (message, options = {}) => {
     messages.push(message);
     prompts.push({ message, secret: options.secret === true });
-    return answers.shift() ?? "";
+    if (answers.length === 0) {
+      throw new Error("Unexpected prompt after scripted answers were exhausted: " + message);
+    }
+    return answers.shift();
   };
   return { answers, messages, prompts };
 }

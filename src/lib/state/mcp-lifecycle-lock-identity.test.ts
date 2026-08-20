@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   classifyMcpLifecycleLock,
   isMcpLifecycleLockOwner,
+  readMcpLockHostIdentity,
+  readMcpLockPidNamespaceIdentity,
   type LockObservation,
   type McpLifecycleLockIdentityProbes,
   type McpLifecycleLockOwner,
@@ -93,6 +95,38 @@ function probes(
 }
 
 describe("MCP lifecycle lock identity properties", () => {
+  it("reclaims a zombie local owner without treating its PID as live", () => {
+    const localHostIdentity = readMcpLockHostIdentity();
+    const localPidNamespaceIdentity = readMcpLockPidNamespaceIdentity();
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const readFileSync = vi.spyOn(fs, "readFileSync").mockImplementation((filePath) => {
+      expect(filePath).toBe("/proc/4242/stat");
+      return "4242 (shields timer) Z 1 2 3";
+    });
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    try {
+      expect(
+        classifyMcpLifecycleLock(
+          observation(
+            owner(4242, "linux:test-boot:10", {
+              hostIdentity: localHostIdentity,
+              pidNamespaceIdentity: localPidNamespaceIdentity,
+            }),
+          ),
+          SANDBOX_NAME,
+          0,
+          30_000,
+        ),
+      ).toBe("stale");
+      expect(kill).not.toHaveBeenCalled();
+    } finally {
+      kill.mockRestore();
+      readFileSync.mockRestore();
+      platform.mockRestore();
+    }
+  });
+
   it("keeps a matching live owner active across PID, start-tick, and clock boundaries", () => {
     fc.assert(
       fc.property(

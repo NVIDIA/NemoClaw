@@ -14,6 +14,10 @@ export {
   type MaterializedHostLocalVllmSelection,
   resolveHostLocalVllmSelection,
 } from "./host-local-vllm-selection.js";
+export {
+  NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV,
+  NEMOCLAW_SERVING_PRESET_ENV,
+} from "./managed-cluster-discovery.js";
 export { tryInstallManagedClusterManagedVllm } from "./managed-cluster-installer.js";
 export { recoverInstalledManagedClusterVllmEndpoint } from "./managed-cluster-runtime-receipt.js";
 export { runtimeAuthFingerprint } from "./runtime-auth-fingerprint.js";
