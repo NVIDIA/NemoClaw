@@ -151,7 +151,7 @@ function createRuntimeFixture(pullFailure?: PullFailure) {
   });
   harness.state.networkId = NETWORK_ID;
   harness.state.networkName = "openshell-docker";
-  harness.state.networkGatewayIp = "169.254.1.1";
+  harness.state.networkGatewayIp = "10.87.0.1";
   harness.state.ollamaPsModels = [
     {
       name: "qwen3-vl:4b",
@@ -396,7 +396,7 @@ describe("Hermes Portable Ollama inference activation", () => {
           model: "qwen3-vl:4b",
           networkName: "openshell-docker",
           networkId: NETWORK_ID,
-          networkGatewayIp: "169.254.1.1",
+          networkGatewayIp: "10.87.0.1",
           networkListenerIp: PORTABLE_HOST_GATEWAY_IP,
           gpuDevices: [GPU_DEVICE],
         },

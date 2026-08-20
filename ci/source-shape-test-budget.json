@@ -67,6 +67,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "selects exact-commit rootless evidence for Portable recovery changes (#9707)",
+      "category": "security"
+    },
+    {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "runs the trusted Vitest guardrails against pull request data",
       "category": "security"
