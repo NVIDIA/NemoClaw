@@ -625,12 +625,18 @@ describe("uninstall local model profile cleanup", () => {
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-llama-fail-")),
     );
     const stateDir = publishManagedLlamaOwner(tmpHome, 8080, "selected-sandbox");
+    const siblingStateDir = publishManagedLlamaOwner(tmpHome, 9000, "sibling-sandbox");
     writeScopedGatewayState(tmpHome);
     const unrelatedState = path.join(tmpHome, ".nemoclaw", "unrelated-state.json");
     fs.writeFileSync(unrelatedState, "{}\n", { mode: 0o600 });
     const errors: string[] = [];
     const logs: string[] = [];
     const runLocalModelRuntimeCleanup = vi.fn(() => ok());
+    const runManagedLlamaCppRuntimeCleanup = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "qualified endpoint changed",
+    }));
     try {
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
@@ -644,17 +650,18 @@ describe("uninstall local model profile cleanup", () => {
           log: (message) => logs.push(message),
           run: vi.fn(okWithKnownGatewayList),
           runLocalModelRuntimeCleanup,
-          runManagedLlamaCppRuntimeCleanup: vi.fn(() => ({
-            status: 1,
-            stdout: "",
-            stderr: "qualified endpoint changed",
-          })),
+          runManagedLlamaCppRuntimeCleanup,
         }),
       );
 
       expect(result.exitCode).toBe(1);
+      expect(runManagedLlamaCppRuntimeCleanup).toHaveBeenCalledExactlyOnceWith(
+        "selected-sandbox",
+        8080,
+      );
       expect(fs.existsSync(stateDir)).toBe(true);
       expect(fs.existsSync(path.join(stateDir, "owner.json"))).toBe(true);
+      expect(fs.existsSync(path.join(siblingStateDir, "owner.json"))).toBe(true);
       expect(fs.existsSync(unrelatedState)).toBe(false);
       expect(runLocalModelRuntimeCleanup).not.toHaveBeenCalled();
       expect(logs.some((message) => message.endsWith("State and binaries"))).toBe(true);
