@@ -707,13 +707,13 @@ describe("shields timer authorization", () => {
 
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     const deadlinePath = `${sandboxMutationLockPath}.deadline`;
-    let lifecycleGatePresentAtMarkerCleanup: boolean | null = null;
+    const lifecycleGateStatesAtMarkerCleanup: boolean[] = [];
     const renameSync = fs.renameSync;
     const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
-      if (oldPath === markerPath) {
-        lifecycleGatePresentAtMarkerCleanup =
-          fs.existsSync(sandboxMutationLockPath) || fs.existsSync(deadlinePath);
-      }
+      oldPath === markerPath &&
+        lifecycleGateStatesAtMarkerCleanup.push(
+          fs.existsSync(sandboxMutationLockPath) || fs.existsSync(deadlinePath),
+        );
       renameSync(oldPath, newPath);
     });
     shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementationOnce(() => {
@@ -747,7 +747,7 @@ describe("shields timer authorization", () => {
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
     expect(fs.existsSync(deadlinePath)).toBe(false);
-    expect(lifecycleGatePresentAtMarkerCleanup).toBe(false);
+    expect(lifecycleGateStatesAtMarkerCleanup).toEqual([false]);
     expect(shieldsIndexMock.completeAutoRestoreTransition).toHaveBeenCalledWith(
       sandboxName,
       PROCESS_TOKEN,
