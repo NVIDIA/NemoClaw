@@ -609,11 +609,9 @@ runtime_checks="$(jq -c --arg sha "$CANDIDATE_SHA" --arg imageRepositorySha "$im
       if ($observed | type) == "number" and $observed == ($observed | floor) and
           $observed >= 0 and $observed <= 999 then $observed else "<redacted>" end
     elif $field == "sourceRepository" then
-      if ($observed | type) == "string" and ($observed | length) <= 200 and
-          ($observed | test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) then $observed else "<redacted>" end
+      if $observed == "NVIDIA/NemoClaw" then $observed else "<redacted>" end
     elif $field == "sourcePath" then
-      if ($observed | type) == "string" and ($observed | length) <= 256 and
-          ($observed | test("^/[A-Za-z0-9._/-]+$")) then $observed else "<redacted>" end
+      if $observed == "/opt/nemoclaw-image/NemoClaw" then $observed else "<redacted>" end
     elif $field == "repoSha" or $field == "provisionSha" or $field == "imageRepositorySha" then
       if ($observed | type) == "string" and ($observed | test("^[0-9a-f]{40}$")) then $observed else "<redacted>" end
     elif $field == "repoClean" or $field == "runtimeOverrides" then

@@ -603,13 +603,13 @@ describe("focused staging Brev Launchable lane", () => {
         options: { sourceRepository: "example/NemoClaw" },
         field: "sourceRepository",
         expected: "NVIDIA/NemoClaw",
-        observed: "example/NemoClaw",
+        observed: "<redacted>",
       },
       {
         options: { sourcePath: "/home/ubuntu/NemoClaw" },
         field: "sourcePath",
         expected: "/opt/nemoclaw-image/NemoClaw",
-        observed: "/home/ubuntu/NemoClaw",
+        observed: "<redacted>",
       },
     ];
 
@@ -657,7 +657,7 @@ describe("focused staging Brev Launchable lane", () => {
   }, 90_000);
 
   it("redacts unconstrained runtime provenance before retaining or logging it", () => {
-    const credentialBearingValue = "token=guest-controlled-secret";
+    const credentialBearingValue = "NVIDIA/guest-controlled-secret";
     const boot = fixture({ sourceRepository: credentialBearingValue });
     const result = run(boot.env);
     expect(result.status).not.toBe(0);
