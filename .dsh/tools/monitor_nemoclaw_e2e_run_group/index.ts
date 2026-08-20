@@ -61,40 +61,19 @@ export default async function monitor_nemoclaw_e2e_run_group(input: {
   const runLimit = Math.max(runIds.length, Math.min(100, input.runLimit ?? 100));
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const cut = (value, size) => (typeof value === "string" ? value.slice(0, size) : null);
-  const redact = (value) =>
-    String(value)
-      .replace(/(authorization\s*:)[^\r\n]*/gi, "$1 [REDACTED]")
-      .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)\s*=)\s*[^\s]+/g, "$1[REDACTED]")
-      .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
-      .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
   const runGh = async (args) => {
-    const result = await tools.bash({
-      command: "gh " + args.map(quote).join(" "),
+    const result = await tools.run_github_cli({
       workdir: input.workdir,
-      description: "Read bounded GitHub E2E data",
+      args,
       timeoutMs: 60000,
     });
-    if (result.kind !== "foreground") throw new Error("Unexpected background result");
-    if (result.exitCode !== 0)
-      throw new Error(
-        "GitHub E2E run monitoring failed: " + redact(result.stderr.text).slice(-1500),
-      );
     try {
-      return JSON.parse(result.stdout.text || "null");
+      return JSON.parse(result.stdout || "null");
     } catch {
       throw new Error("GitHub E2E run monitoring returned an invalid bounded response");
     }
   };
-  const sleep = async () => {
-    const result = await tools.bash({
-      command: "sleep " + quote(String(intervalMs / 1000)),
-      workdir: input.workdir,
-      description: "Wait before next E2E poll",
-      timeoutMs: intervalMs + 1000,
-    });
-    if (result.kind !== "foreground" || result.exitCode !== 0)
-      throw new Error("E2E polling wait failed");
-  };
+  const sleep = () => new Promise((resolve) => setTimeout(resolve, intervalMs));
   const deadline = Date.now() + timeoutMs;
   let polls = 0;
   let selected = [];

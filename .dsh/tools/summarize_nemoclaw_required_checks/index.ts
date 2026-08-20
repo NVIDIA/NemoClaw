@@ -27,21 +27,28 @@ export default async function summarize_nemoclaw_required_checks(input: {
     !/^[\w./-]+$/.test(base)
   )
     throw new Error("Invalid input");
-  const a = await tools.bash({
-      command: "gh api repos/" + repo + "/branches/" + base + "/protection/required_status_checks",
+  const [a, b] = await Promise.all([
+    tools.run_github_cli({
       workdir: input.workdir,
-      description: "Read required pull request checks",
+      args: ["api", "repos/" + repo + "/branches/" + base + "/protection/required_status_checks"],
+      acceptedExitCodes: [0, 1],
     }),
-    b = await tools.bash({
-      command:
-        "gh pr checks " + input.number + " --repo " + repo + " --json name,state,bucket,link",
+    tools.run_github_cli({
       workdir: input.workdir,
-      description: "Read pull request check states",
-    });
-  if (a.kind !== "foreground" || b.kind !== "foreground" || ![0, 8].includes(b.exitCode))
-    throw new Error("Could not read checks");
-  const cfg = a.exitCode === 0 ? JSON.parse(a.stdout.text) : { contexts: [], checks: [] },
-    all = JSON.parse(b.stdout.text || "[]"),
+      args: [
+        "pr",
+        "checks",
+        String(input.number),
+        "--repo",
+        repo,
+        "--json",
+        "name,state,bucket,link",
+      ],
+      acceptedExitCodes: [0, 8],
+    }),
+  ]);
+  const cfg = a.code === 0 ? JSON.parse(a.stdout) : { contexts: [], checks: [] },
+    all = JSON.parse(b.stdout || "[]"),
     names = [...new Set([...(cfg.contexts ?? []), ...(cfg.checks ?? []).map((c) => c.context)])],
     items = names
       .slice(0, limit)
@@ -55,7 +62,7 @@ export default async function summarize_nemoclaw_required_checks(input: {
       number: input.number,
       base,
       configured: names.length,
-      protectionReadable: a.exitCode === 0,
+      protectionReadable: a.code === 0,
     },
   };
 }

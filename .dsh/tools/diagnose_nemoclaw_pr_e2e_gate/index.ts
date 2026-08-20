@@ -99,21 +99,18 @@ export default async function diagnose_nemoclaw_pr_e2e_gate(input: {
     throw new Error("number must be a positive PR number");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
   const maxControllerPages = Math.max(1, Math.min(5, input.maxControllerPages ?? 3));
-  const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const transient =
     /TLS handshake timeout|connection reset|temporar(?:y|ily)|HTTP 50[234]|unexpected EOF|i\/o timeout/i;
-  const gh = async (args, description, timeoutMs = 30000) => {
-    const command = "gh " + args.map(q).join(" ");
-    let last;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      last = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
-      if (last.kind !== "foreground") throw new Error("Unexpected background result");
-      if (last.exitCode === 0) return last.stdout.text;
-      const detail = last.stderr.text + "\n" + last.stdout.text;
-      if (!transient.test(detail) || attempt === 3)
-        throw new Error(`GitHub read failed: ${detail.slice(-1500)}`);
+  const gh = async (args, _description, timeoutMs = 30000) => {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const result = await tools.run_github_cli({ workdir: input.workdir, args, timeoutMs });
+        return result.stdout;
+      } catch (error) {
+        if (!transient.test(String(error)) || attempt === 3) throw error;
+      }
     }
-    throw new Error("GitHub read failed");
+    throw new Error("GitHub read retry bound was exhausted");
   };
   const prRaw = JSON.parse(
     await gh(

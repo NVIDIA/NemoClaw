@@ -46,18 +46,13 @@ export default async function inspect_nemoclaw_workflow_inline_growth(input: {
     requested.some((p) => !/^\.github\/workflows\/[^/]+\.ya?ml$/.test(p))
   )
     throw new Error("files must be workflow YAML paths");
-  const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
-  const run = async (args, label, optional = false) => {
-    const r = await tools.bash({
-      command: ["gh", ...args].map(q).join(" "),
+  const run = async (args, _label, optional = false) =>
+    tools.run_github_cli({
       workdir: input.workdir,
-      description: label,
+      args,
+      acceptedExitCodes: optional ? [0, 1] : [0],
       timeoutMs: 60000,
     });
-    if (r.kind !== "foreground" || (!optional && r.exitCode !== 0))
-      throw new Error(label + " failed");
-    return r;
-  };
   const v = await run(
     [
       "pr",
@@ -70,7 +65,7 @@ export default async function inspect_nemoclaw_workflow_inline_growth(input: {
     ],
     "Read pull request workflow files",
   );
-  const pr = JSON.parse(v.stdout.text),
+  const pr = JSON.parse(v.stdout),
     wanted = new Set(requested),
     files = (pr.files ?? [])
       .filter(
@@ -107,28 +102,18 @@ export default async function inspect_nemoclaw_workflow_inline_growth(input: {
   for (const f of files) {
     const endpoint = "repos/" + repo + "/contents/" + f.path;
     const [b, h] = await Promise.all([
-      run(
-        [
-          "api",
-          endpoint + "?ref=" + pr.baseRefOid,
-          "-H",
-          "Accept: application/vnd.github.raw+json",
-        ],
-        "Read base workflow content",
-        true,
-      ),
-      run(
-        [
-          "api",
-          endpoint + "?ref=" + pr.headRefOid,
-          "-H",
-          "Accept: application/vnd.github.raw+json",
-        ],
-        "Read head workflow content",
-      ),
+      run(["api", endpoint + "?ref=" + pr.baseRefOid], "Read base workflow content", true),
+      run(["api", endpoint + "?ref=" + pr.headRefOid], "Read head workflow content"),
     ]);
-    const before = b.exitCode === 0 ? measure(b.stdout.text) : measure(""),
-      after = measure(h.stdout.text);
+    const decode = (result) => {
+      if (!result.ok) return "";
+      const payload = JSON.parse(result.stdout);
+      if (payload.encoding !== "base64" || typeof payload.content !== "string")
+        throw new Error("Workflow content response was not base64 text");
+      return atob(payload.content.replace(/\s/g, ""));
+    };
+    const before = measure(decode(b)),
+      after = measure(decode(h));
     workflows.push({
       path: f.path,
       additions: f.additions ?? 0,

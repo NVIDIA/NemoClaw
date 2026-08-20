@@ -17,17 +17,14 @@ export default async function summarize_nemoclaw_merge_queue(input: {
     enrichLimit = Math.max(0, Math.min(50, input.enrichLimit ?? 25));
   if (base !== undefined && (base.length < 1 || base.length > 255))
     throw new Error("base must contain 1 to 255 characters");
-  const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
-  const run = async (args, label, allowed = [0]) => {
-    const r = await tools.bash({
-      command: ["gh", ...args].map(q).join(" "),
+  const run = async (args, _label, allowed = [0]) => {
+    const result = await tools.run_github_cli({
       workdir: input.workdir,
-      description: label,
+      args,
+      acceptedExitCodes: allowed,
       timeoutMs: 60000,
     });
-    if (r.kind !== "foreground" || !allowed.includes(r.exitCode))
-      throw new Error(label + " failed");
-    return r.stdout.text;
+    return result.stdout;
   };
   const list = async (search) =>
     JSON.parse(

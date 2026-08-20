@@ -92,19 +92,21 @@ export default async function carry_nemoclaw_cached_review_recommendations(input
   };
   const blobAt = async (file, ref) => {
     const encodedFile = file.split("/").map(encodeURIComponent).join("/");
-    const command =
-      "gh api " +
-      quote(`repos/${repo}/contents/${encodedFile}?ref=${encodeURIComponent(ref)}`) +
-      " --method GET --jq .sha";
-    const result = await tools.bash({
-      command,
+    const result = await tools.run_github_cli({
       workdir: input.workdir,
-      description: "Read GitHub file blob identity",
+      args: [
+        "api",
+        `repos/${repo}/contents/${encodedFile}?ref=${encodeURIComponent(ref)}`,
+        "--method",
+        "GET",
+        "--jq",
+        ".sha",
+      ],
+      acceptedExitCodes: [0, 1],
       timeoutMs: 30000,
     });
-    if (result.kind !== "foreground") throw new Error("GitHub file lookup did not finish");
-    const detail = `${result.stdout.text}\n${result.stderr.text}`;
-    if (result.exitCode === 0) return { exists: true, sha: result.stdout.text.trim() };
+    const detail = `${result.stdout}\n${result.stderr}`;
+    if (result.code === 0) return { exists: true, sha: result.stdout.trim() };
     if (/HTTP 404|Not Found/i.test(detail)) return { exists: false, sha: null };
     if (accessFailure.test(detail))
       throw new Error(
@@ -115,13 +117,19 @@ export default async function carry_nemoclaw_cached_review_recommendations(input
   const readPrFiles = async (number) => {
     const files = [];
     for (let page = 1; page <= 31; page += 1) {
-      const text = await run(
-        "gh api " +
-          quote(`repos/${repo}/pulls/${number}/files?per_page=100&page=${page}`) +
-          " --method GET --jq '.[].filename'",
-        "Read pull request files for cache carry",
-      );
-      const pageFiles = text.split("\n").filter(Boolean);
+      const result = await tools.run_github_cli({
+        workdir: input.workdir,
+        args: [
+          "api",
+          `repos/${repo}/pulls/${number}/files?per_page=100&page=${page}`,
+          "--method",
+          "GET",
+          "--jq",
+          ".[].filename",
+        ],
+        timeoutMs: 30000,
+      });
+      const pageFiles = result.stdout.split("\n").filter(Boolean);
       if (page === 31 && pageFiles.length)
         throw new Error(
           `PR #${number} has more than 3000 files; refusing an incomplete cache carry`,
@@ -132,15 +140,20 @@ export default async function carry_nemoclaw_cached_review_recommendations(input
     throw new Error(`PR #${number} file pagination did not complete`);
   };
   const processItem = async (item) => {
-    const prText = await run(
-      "gh pr view " +
-        item.number +
-        " --repo " +
-        quote(repo) +
-        " --json number,title,url,state,isDraft,headRefOid,changedFiles",
-      "Read pull request for cache carry",
-    );
-    const pr = JSON.parse(prText);
+    const prResult = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "pr",
+        "view",
+        String(item.number),
+        "--repo",
+        repo,
+        "--json",
+        "number,title,url,state,isDraft,headRefOid,changedFiles",
+      ],
+      timeoutMs: 30000,
+    });
+    const pr = JSON.parse(prResult.stdout);
     if (pr.state !== "OPEN" || pr.isDraft)
       throw new Error(`PR #${item.number} must be open and non-draft`);
     if (pr.headRefOid !== item.toHeadSha)

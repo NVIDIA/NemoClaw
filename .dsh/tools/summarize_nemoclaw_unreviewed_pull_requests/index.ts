@@ -16,18 +16,22 @@ export default async function summarize_nemoclaw_unreviewed_pull_requests(input:
     limit = input.limit ?? 50;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)
     throw new Error("Invalid input");
-  const r = await tools.bash({
-    command:
-      "gh pr list --repo " +
-      repo +
-      " --state open --limit " +
-      (limit + 1) +
-      " --json number,title,url,author,isDraft,reviewDecision,updatedAt",
+  const r = await tools.run_github_cli({
     workdir: input.workdir,
-    description: "List unreviewed NemoClaw pull requests",
+    args: [
+      "pr",
+      "list",
+      "--repo",
+      repo,
+      "--state",
+      "open",
+      "--limit",
+      String(limit + 1),
+      "--json",
+      "number,title,url,author,isDraft,reviewDecision,updatedAt",
+    ],
   });
-  if (r.kind !== "foreground" || r.exitCode !== 0) throw new Error("Could not list pull requests");
-  const all = JSON.parse(r.stdout.text),
+  const all = JSON.parse(r.stdout),
     items = all.filter((p) => !p.reviewDecision).slice(0, limit);
   return {
     repo,

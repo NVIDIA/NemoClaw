@@ -42,26 +42,14 @@ export default async function wait_for_nemoclaw_pr_check(input: {
   const intervalMs = Math.max(1000, Math.min(120000, input.intervalMs ?? 15000));
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const cut = (value, size) => (typeof value === "string" ? value.slice(0, size) : null);
-  const redact = (value) =>
-    String(value)
-      .replace(/(authorization\s*:)[^\r\n]*/gi, "$1 [REDACTED]")
-      .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)\s*=)\s*[^\s]+/g, "$1[REDACTED]")
-      .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
-      .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
   const runGh = async (args) => {
-    const result = await tools.bash({
-      command: "gh " + args.map(quote).join(" "),
+    const result = await tools.run_github_cli({
       workdir: input.workdir,
-      description: "Read pull request check state",
+      args,
       timeoutMs: 60000,
     });
-    if (result.kind !== "foreground") throw new Error("Unexpected background result");
-    if (result.exitCode !== 0)
-      throw new Error(
-        "GitHub pull request check read failed: " + redact(result.stderr.text).slice(-1500),
-      );
     try {
-      return JSON.parse(result.stdout.text || "null");
+      return JSON.parse(result.stdout || "null");
     } catch {
       throw new Error("GitHub pull request check read returned an invalid bounded response");
     }
@@ -80,16 +68,7 @@ export default async function wait_for_nemoclaw_pr_check(input: {
       app: cut(check.app?.slug || check.app?.name, 500),
     };
   };
-  const sleep = async () => {
-    const result = await tools.bash({
-      command: "sleep " + quote(String(intervalMs / 1000)),
-      workdir: input.workdir,
-      description: "Wait before next check poll",
-      timeoutMs: intervalMs + 1000,
-    });
-    if (result.kind !== "foreground" || result.exitCode !== 0)
-      throw new Error("Pull request check polling wait failed");
-  };
+  const sleep = () => new Promise((resolve) => setTimeout(resolve, intervalMs));
   const initial = await readHead();
   const headSha = String(initial?.headRefOid || "");
   if (!/^[0-9a-f]{40}$/.test(headSha))

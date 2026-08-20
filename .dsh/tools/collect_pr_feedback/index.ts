@@ -37,62 +37,37 @@ export default async function collect_pr_feedback(input: {
     throw new Error("bodyLimit must be between 100 and 10000");
   const repo = input.repository;
   const pr = input.pullNumber;
-  const run = async (command, description, allowed = [0]) => {
-    const result = await tools.bash({ command, workdir: input.workdir, description });
-    if (result.kind !== "foreground" || !allowed.includes(result.exitCode))
-      throw new Error(description + " failed");
-    if (result.stdout.truncated || result.stderr.truncated)
-      throw new Error(description + " exceeded bounded output");
-    return result.stdout.text.trim();
+  const run = async (args, allowed = [0]) => {
+    const result = await tools.run_github_cli({
+      workdir: input.workdir,
+      args,
+      acceptedExitCodes: allowed,
+    });
+    return result.stdout.trim();
   };
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const collectPages = async (path, projection, description, jqProjection) => {
-    const pageSize = 10;
-    const pageLimit = 10;
-    const items = [];
-    let pages = 0;
-    for (let page = 1; page <= pageLimit; page++) {
-      const text = await run(
-        "gh api " +
-          quote(path + "?per_page=" + pageSize + "&page=" + page) +
-          " --jq " +
-          quote(jqProjection),
-        description,
-      );
-      const rows = text ? JSON.parse(text) : [];
-      if (!Array.isArray(rows)) throw new Error(description + " returned a non-array response");
-      pages++;
-      items.push(...rows.map(projection));
-      if (rows.length < pageSize) return { items, pages, truncated: false };
-    }
-    const sentinel = await run(
-      "gh api " +
-        quote(path + "?per_page=" + pageSize + "&page=" + (pageLimit + 1)) +
-        " --jq " +
-        quote(jqProjection),
-      "Check " + description.toLowerCase() + " completeness",
-    );
-    const remaining = sentinel ? JSON.parse(sentinel) : [];
-    if (!Array.isArray(remaining))
-      throw new Error(description + " sentinel returned a non-array response");
-    return { items, pages, truncated: remaining.length > 0 };
+  const collectPages = async (path, projection, _description, _jqProjection) => {
+    const page = await tools.read_github_pages({
+      workdir: input.workdir,
+      repository: repo,
+      path,
+      pageSize: 10,
+      pageLimit: 10,
+    });
+    return { items: page.items.map(projection), pages: page.pagesRead, truncated: page.truncated };
   };
   const [pullText, checksText, reviewsPage, inlinePage, discussionPage] = await Promise.all([
-    run(
-      "gh pr view " +
-        pr +
-        " --repo " +
-        quote(repo) +
-        " --json url,state,headRefOid,baseRefOid,mergeStateStatus,reviewDecision",
-      "Collect pull request status snapshot",
-    ),
-    run(
-      "gh pr checks " + pr + " --repo " + quote(repo) + " --json name,state,bucket,link",
-      "Collect pull request check snapshot",
-      [0, 8],
-    ),
+    run([
+      "pr",
+      "view",
+      String(pr),
+      "--repo",
+      repo,
+      "--json",
+      "url,state,headRefOid,baseRefOid,mergeStateStatus,reviewDecision",
+    ]),
+    run(["pr", "checks", String(pr), "--repo", repo, "--json", "name,state,bucket,link"], [0, 8]),
     collectPages(
-      "/repos/" + repo + "/pulls/" + pr + "/reviews",
+      "pulls/" + pr + "/reviews",
       (item) => ({
         id: item.id,
         user: item.user?.login ?? "",
@@ -104,7 +79,7 @@ export default async function collect_pr_feedback(input: {
       'map({id,user:{login:.user.login},state,commit_id,body:((.body // "")[:' + bodyLimit + "])})",
     ),
     collectPages(
-      "/repos/" + repo + "/pulls/" + pr + "/comments",
+      "pulls/" + pr + "/comments",
       (item) => ({
         id: item.id,
         user: item.user?.login ?? "",
@@ -119,7 +94,7 @@ export default async function collect_pr_feedback(input: {
         "]),html_url})",
     ),
     collectPages(
-      "/repos/" + repo + "/issues/" + pr + "/comments",
+      "issues/" + pr + "/comments",
       (item) => ({
         id: item.id,
         user: item.user?.login ?? "",

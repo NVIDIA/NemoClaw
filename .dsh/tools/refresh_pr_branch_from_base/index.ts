@@ -41,28 +41,8 @@ export default async function refresh_pr_branch_from_base(input: {
   apiMessage: string | null;
   response: { code: Integer; stdout: string; stderr: string } | null;
 }> {
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const authPattern =
     /authentication|authorization|forbidden|permission|resource not accessible|HTTP 40[13]|SSO/i;
-  const runGh = async (args, description) => {
-    const result = await tools.bash({
-      command: "gh " + args.map(quote).join(" "),
-      workdir: input.workdir,
-      description,
-      timeoutMs: 30000,
-    });
-    if (result.kind !== "foreground") throw new Error("Unexpected background result");
-    return { code: result.exitCode ?? -1, stdout: result.stdout.text, stderr: result.stderr.text };
-  };
-  const requireRead = (result, operation) => {
-    if (result.code === 0) return;
-    const detail = (result.stdout + "\n" + result.stderr).trim();
-    if (authPattern.test(detail))
-      throw new Error(
-        `GitHub access failed while ${operation}; stop and restore repository access before continuing.\n${detail}`,
-      );
-    throw new Error(`GitHub did not complete ${operation}.\n${detail}`);
-  };
   if (!Number.isSafeInteger(input.number) || input.number <= 0)
     throw new Error("number must be a positive integer");
   const repo = input.repo ?? "NVIDIA/NemoClaw";
@@ -70,20 +50,19 @@ export default async function refresh_pr_branch_from_base(input: {
   if (!/^[0-9a-f]{40}$/.test(input.expectedHeadSha))
     throw new Error("expectedHeadSha must be a lowercase 40-character commit SHA");
   const view = async () => {
-    const result = await runGh(
-      [
-        "pr",
-        "view",
-        String(input.number),
-        "--repo",
-        repo,
-        "--json",
-        "number,url,state,isDraft,headRefOid,baseRefName,headRefName,mergeable,mergeStateStatus",
-      ],
-      "Read pull request branch state",
-    );
-    requireRead(result, `reading PR #${input.number}`);
-    return JSON.parse(result.stdout);
+    const [pr, detailResult] = await Promise.all([
+      tools.read_nemoclaw_pr({
+        workdir: input.workdir,
+        number: input.number,
+        repository: repo,
+      }),
+      tools.run_github_cli({
+        workdir: input.workdir,
+        args: ["pr", "view", String(input.number), "--repo", repo, "--json", "headRefName"],
+        timeoutMs: 30000,
+      }),
+    ]);
+    return { ...pr, headRefName: JSON.parse(detailResult.stdout).headRefName ?? "" };
   };
   const before = await view();
   if (before.headRefOid !== input.expectedHeadSha)
@@ -119,8 +98,9 @@ export default async function refresh_pr_branch_from_base(input: {
       reason:
         "GitHub reports merge conflicts; resolve them only after confirming the intended behavior",
     };
-  const update = await runGh(
-    [
+  const update = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: [
       "api",
       "--method",
       "PUT",
@@ -128,8 +108,10 @@ export default async function refresh_pr_branch_from_base(input: {
       "-f",
       `expected_head_sha=${before.headRefOid}`,
     ],
-    "Request pull request branch update",
-  );
+    acceptedExitCodes: [0, 1],
+    timeoutMs: 30000,
+    apply: true,
+  });
   if (update.code !== 0) {
     const detail = update.stdout + "\n" + update.stderr;
     if (authPattern.test(detail))

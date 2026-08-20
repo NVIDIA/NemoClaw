@@ -51,21 +51,23 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
     commits = [];
   for (const row of log) {
     const [sha, subject] = row.split("\t");
-    const vr = await run(
-      "gh api " +
-        q("repos/" + repo + "/commits/" + sha) +
-        " --jq " +
-        q('[.commit.verification.verified, (.commit.verification.reason // "")] | @tsv'),
-      "Read GitHub commit verification",
-      true,
-    );
+    const vr = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "api",
+        "repos/" + repo + "/commits/" + sha,
+        "--jq",
+        '[.commit.verification.verified, (.commit.verification.reason // "")] | @tsv',
+      ],
+      acceptedExitCodes: [0, 1],
+    });
     let githubVerification = "not-pushed",
       verificationReason = null;
-    if (vr.exitCode === 0) {
-      const [ok, reason] = vr.stdout.text.trim().split("\t");
+    if (vr.code === 0) {
+      const [ok, reason] = vr.stdout.trim().split("\t");
       githubVerification = ok === "true" ? "verified" : "unverified";
       verificationReason = reason || null;
-    } else if (!/404|Not Found|422|No commit found for SHA/i.test(vr.stderr.text + vr.stdout.text))
+    } else if (!/404|Not Found|422|No commit found for SHA/i.test(vr.stderr + vr.stdout))
       throw new Error("GitHub verification read failed; stop and restore access");
     commits.push({ sha, subject, githubVerification, verificationReason });
   }
@@ -82,23 +84,29 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
     ).stdout.text.trim(),
     email = (await run("git config user.email", "Read contributor email", true)).stdout.text.trim(),
     permission = (
-      await run(
-        "gh repo view " + q(repo) + " --json viewerPermission --jq .viewerPermission",
-        "Read repository permission",
-      )
-    ).stdout.text.trim();
-  const existing = JSON.parse(
-    (
-      await run(
-        "gh pr list --repo " +
-          q(repo) +
-          " --head " +
-          q(branch) +
-          " --state open --json number,url,state --limit 2",
-        "Find existing pull request",
-      )
-    ).stdout.text || "[]",
-  );
+      await tools.run_github_cli({
+        workdir: input.workdir,
+        args: ["repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission"],
+      })
+    ).stdout.trim();
+  const existingResult = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "pr",
+        "list",
+        "--repo",
+        repo,
+        "--head",
+        branch,
+        "--state",
+        "open",
+        "--json",
+        "number,url,state",
+        "--limit",
+        "2",
+      ],
+    }),
+    existing = JSON.parse(existingResult.stdout || "[]");
   const docs = changedFiles.filter((f) => /^(docs|fern)\//.test(f)),
     codeFiles = changedFiles.filter((f) => !/^(docs|fern)\//.test(f)),
     sensitivePaths = changedFiles.filter((f) =>

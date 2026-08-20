@@ -139,24 +139,20 @@ export default async function prepare_pr_for_human_review(input: {
       "Validation changed tracked or untracked files; review and commit them before handoff.\n" +
         after.stdout.text,
     );
-  const view = await tools.bash({
-    command:
-      "gh pr view " +
-      input.pullNumber +
-      " --repo " +
-      quote(repo) +
-      " --json headRefName,headRefOid,url,title,state",
+  const view = await tools.run_github_cli({
     workdir: input.workdir,
-    description: "Inspect human review pull request",
+    args: [
+      "pr",
+      "view",
+      String(input.pullNumber),
+      "--repo",
+      repo,
+      "--json",
+      "headRefName,headRefOid,url,title,state",
+    ],
     timeoutMs: 30000,
   });
-  if (view.kind !== "foreground" || view.exitCode !== 0)
-    throw new Error(
-      view.kind === "foreground"
-        ? view.stderr.text || "Could not read pull request"
-        : "Pull request read did not finish",
-    );
-  const pr = JSON.parse(view.stdout.text);
+  const pr = JSON.parse(view.stdout);
   if (pr.state !== "OPEN") throw new Error("PR #" + input.pullNumber + " is not open");
   if (!/^[0-9a-f]{40}$/.test(String(pr.headRefOid ?? "")))
     throw new Error("Pull request returned an invalid commit SHA");
@@ -228,23 +224,35 @@ export default async function prepare_pr_for_human_review(input: {
         }),
       };
     }
-    const marked = await tools.bash({
-      command: "gh pr ready " + input.pullNumber + " --repo " + quote(repo),
+    const beforeReady = await tools.read_nemoclaw_pr({
       workdir: input.workdir,
-      description: "Mark pull request ready",
-      timeoutMs: 30000,
+      number: input.pullNumber,
+      repository: repo,
     });
-    if (marked.kind !== "foreground") throw new Error("Mark-ready command did not finish");
-    ready = {
-      code: marked.exitCode,
-      stdout: marked.stdout.text.slice(-2000),
-      stderr: marked.stderr.text.slice(-4000),
-    };
-    if (
-      marked.exitCode !== 0 &&
-      !/already.*ready/i.test(marked.stdout.text + "\n" + marked.stderr.text)
-    )
-      throw new Error("Could not mark the PR ready for review.\n" + marked.stderr.text);
+    if (beforeReady.state !== "OPEN" || beforeReady.headRefOid !== localHead)
+      throw new Error("PR identity changed before mark-ready; no readiness write was performed");
+    if (beforeReady.isDraft) {
+      const marked = await tools.run_github_cli({
+        workdir: input.workdir,
+        args: ["pr", "ready", String(input.pullNumber), "--repo", repo],
+        timeoutMs: 30000,
+        apply: true,
+      });
+      ready = {
+        code: marked.code,
+        stdout: marked.stdout.slice(-2000),
+        stderr: marked.stderr.slice(-4000),
+      };
+    } else ready = { code: 0, stdout: "Pull request was already ready for review.", stderr: "" };
+    const afterReady = await tools.read_nemoclaw_pr({
+      workdir: input.workdir,
+      number: input.pullNumber,
+      repository: repo,
+    });
+    if (afterReady.state !== "OPEN" || afterReady.headRefOid !== localHead || afterReady.isDraft)
+      throw new Error(
+        "PR readiness state did not match the exact expected commit after mark-ready",
+      );
   }
   const summary = await tools.summarize_pr_readiness({
     number: input.pullNumber,

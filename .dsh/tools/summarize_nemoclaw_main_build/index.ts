@@ -78,51 +78,29 @@ export default async function summarize_nemoclaw_main_build(input: {
   if (input.sha && !/^[0-9a-f]{40}$/.test(input.sha))
     throw new Error("sha must be a full commit SHA");
   const limit = Math.min(Math.max(input.maxRuns ?? 25, 1), 100);
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const redact = (value) =>
-    String(value)
-      .replace(/(authorization:?)\s*\S+/gi, "$1 [REDACTED]")
-      .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=)\S+/g, "$1[REDACTED]")
-      .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
-      .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
-  const transient = [
-    "tls handshake timeout",
-    "connection reset",
-    "temporary",
-    "temporarily",
-    "http 502",
-    "http 503",
-    "http 504",
-    "unexpected eof",
-    "i/o timeout",
-  ];
+  const transient =
+    /TLS handshake timeout|connection reset|temporar(?:y|ily)|HTTP 50[234]|unexpected EOF|i\/o timeout/i;
   const gh = async (args) => {
-    let last;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      last = await tools.bash({
-        command: "gh " + args.map(quote).join(" "),
-        workdir: input.workdir,
-        description: "Read bounded main workflow status",
-        timeoutMs: 30000,
-      });
-      if (last.kind !== "foreground") throw new Error("Unexpected background result");
-      if (last.exitCode === 0) return last.stdout.text;
-      const detail = (last.stderr.text + "\n" + last.stdout.text).toLowerCase();
-      if (!transient.some((value) => detail.includes(value)) || attempt === 2) break;
-      const pause = await tools.bash({
-        command: "sleep " + quote((attempt + 1) * 0.75),
-        workdir: input.workdir,
-        description: "Pause before bounded GitHub retry",
-        timeoutMs: 3000,
-      });
-      if (pause.kind !== "foreground" || pause.exitCode !== 0) break;
+      try {
+        const result = await tools.run_github_cli({
+          workdir: input.workdir,
+          args,
+          timeoutMs: 30000,
+        });
+        return result.stdout;
+      } catch (error) {
+        if (!transient.test(String(error)) || attempt === 2) throw error;
+        const pause = await tools.bash({
+          command: "sleep " + String((attempt + 1) * 0.75),
+          workdir: input.workdir,
+          description: "Pause before bounded GitHub retry",
+          timeoutMs: 3000,
+        });
+        if (pause.kind !== "foreground" || pause.exitCode !== 0) throw error;
+      }
     }
-    throw new Error(
-      "GitHub read failed: gh " +
-        args.slice(0, 3).join(" ") +
-        "\n" +
-        redact(last?.stderr.text ?? "").slice(-1500),
-    );
+    throw new Error("GitHub read retry bound was exhausted");
   };
   const parse = (text) => {
     try {

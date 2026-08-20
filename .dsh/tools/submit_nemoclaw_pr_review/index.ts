@@ -21,7 +21,6 @@ export default async function submit_nemoclaw_pr_review(input: {
   reviewer: string;
   review: null | { id: Integer; state: string; commitId: string; submittedAt: string; url: string };
 }> {
-  const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repo ?? "NVIDIA/NemoClaw";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || repo.length > 200)
     throw new Error("repo must be owner/name and contain 200 or fewer characters");
@@ -35,39 +34,17 @@ export default async function submit_nemoclaw_pr_review(input: {
     throw new Error("review body must contain 65536 or fewer characters");
   if (!/^[0-9a-f]{40}$/.test(input.expectedHeadSha))
     throw new Error("expectedHeadSha must be a lowercase 40-character commit SHA");
-  const accessPattern =
-    /authentication|authorization|forbidden|permission|resource not accessible|HTTP 40[13]/iu;
-  const run = async (args, description) => {
-    const result = await tools.bash({
-      command: "gh " + args.map(q).join(" "),
+  const [canonicalPr, detailResult, viewerResult] = await Promise.all([
+    tools.read_nemoclaw_pr({ workdir: input.workdir, number: input.number, repository: repo }),
+    tools.run_github_cli({
       workdir: input.workdir,
-      description,
-      timeoutMs: 60000,
-    });
-    if (result.kind === "foreground" && result.exitCode === 0) return result.stdout.text;
-    const detail =
-      result.kind === "foreground"
-        ? (result.stdout.text + "\n" + result.stderr.text).trim()
-        : "command did not finish in the foreground";
-    if (accessPattern.test(detail))
-      throw new Error(
-        "GitHub access failed while " +
-          description.toLowerCase() +
-          "; stop and restore repository access before continuing.\n" +
-          detail,
-      );
-    throw new Error("GitHub did not complete " + description.toLowerCase() + ".\n" + detail);
-  };
-  const [viewed, viewerText] = await Promise.all([
-    run(
-      ["pr", "view", String(input.number), "--repo", repo, "--json", "headRefOid,url,title"],
-      "Reading pull request",
-    ),
-    run(["api", "user", "--jq", ".login"], "Reading authenticated GitHub user"),
+      args: ["pr", "view", String(input.number), "--repo", repo, "--json", "title"],
+    }),
+    tools.run_github_cli({ workdir: input.workdir, args: ["api", "user", "--jq", ".login"] }),
   ]);
-  const pr = JSON.parse(viewed);
-  const headSha = String(pr.headRefOid ?? "");
-  const reviewer = viewerText.trim();
+  const detail = JSON.parse(detailResult.stdout);
+  const headSha = canonicalPr.headRefOid;
+  const reviewer = viewerResult.stdout.trim();
   if (!/^[0-9a-f]{40}$/.test(headSha))
     throw new Error("PR #" + input.number + " returned an invalid commit SHA");
   if (headSha !== input.expectedHeadSha)
@@ -85,68 +62,54 @@ export default async function submit_nemoclaw_pr_review(input: {
       mutated: false,
       repo,
       number: input.number,
-      title: pr.title ?? "",
-      prUrl: pr.url ?? "",
+      title: detail.title ?? "",
+      prUrl: canonicalPr.url ?? "",
       headSha,
       event: input.event,
       reviewer,
       review: null,
     };
-  const flag =
+  const apiEvent =
     input.event === "approve"
-      ? "--approve"
+      ? "APPROVE"
       : input.event === "request-changes"
-        ? "--request-changes"
-        : "--comment";
-  await run(
-    ["pr", "review", String(input.number), "--repo", repo, flag, "--body", input.body],
-    "Submitting pull request review",
-  );
-  const [owner, name] = repo.split("/");
-  const query =
-    "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviews(last:100){nodes{databaseId state submittedAt url commit{oid} author{login}}}}}}";
-  const reviewText = await run(
-    [
+        ? "REQUEST_CHANGES"
+        : "COMMENT";
+  const created = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: [
       "api",
-      "graphql",
+      "--method",
+      "POST",
+      "repos/" + repo + "/pulls/" + input.number + "/reviews",
       "-f",
-      "owner=" + owner,
+      "commit_id=" + input.expectedHeadSha,
       "-f",
-      "repo=" + name,
-      "-F",
-      "number=" + input.number,
+      "event=" + apiEvent,
       "-f",
-      "query=" + query,
+      "body=" + input.body,
     ],
-    "Reading submitted pull request review",
-  );
-  const reviews = JSON.parse(reviewText).data?.repository?.pullRequest?.reviews?.nodes ?? [];
-  const review = [...reviews]
-    .reverse()
-    .find((entry) => entry.author?.login === reviewer && entry.commit?.oid === headSha);
-  if (!review)
-    throw new Error(
-      "GitHub accepted the review but the last 100 reviews contain no review by " +
-        reviewer +
-        " for commit " +
-        headSha,
-    );
+    apply: true,
+  });
+  const review = JSON.parse(created.stdout);
+  if (!Number.isSafeInteger(review.id) || review.commit_id !== input.expectedHeadSha)
+    throw new Error("GitHub review response did not match the expected commit");
   return {
     applied: true,
     mutated: true,
     repo,
     number: input.number,
-    title: pr.title ?? "",
-    prUrl: pr.url ?? "",
+    title: detail.title ?? "",
+    prUrl: canonicalPr.url ?? "",
     headSha,
     event: input.event,
     reviewer,
     review: {
-      id: review.databaseId,
-      state: review.state,
-      commitId: review.commit.oid,
-      submittedAt: review.submittedAt,
-      url: review.url,
+      id: review.id,
+      state: review.state ?? "",
+      commitId: review.commit_id,
+      submittedAt: review.submitted_at ?? "",
+      url: review.html_url ?? "",
     },
   };
 }

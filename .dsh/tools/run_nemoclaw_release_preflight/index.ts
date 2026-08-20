@@ -36,17 +36,18 @@ export default async function run_nemoclaw_release_preflight(input: {
         error: f.kind === "foreground" ? f.stderr.text.slice(0, 2000) : "unexpected result",
       };
   }
-  const auth = await tools.bash({
-    command: "gh auth status",
+  const acceptedExitCodes = Array.from({ length: 16 }, (_, code) => code);
+  const auth = await tools.run_github_cli({
     workdir: input.workdir,
-    description: "Check GitHub authentication status",
+    args: ["auth", "status"],
+    acceptedExitCodes,
     timeoutMs: 30000,
   });
-  if (auth.kind !== "foreground" || (auth.exitCode ?? -1) !== 0)
+  if (auth.code !== 0)
     return {
       stage: "github-auth-failed",
       dryRun,
-      error: auth.kind === "foreground" ? auth.stderr.text.slice(0, 2000) : "unexpected result",
+      error: auth.stderr.slice(0, 2000),
     };
   const ref = remote + "/" + branch,
     r = await tools.bash({
@@ -87,15 +88,28 @@ export default async function run_nemoclaw_release_preflight(input: {
       q("^## " + nextTag.replaceAll(".", "\\.")) +
       " " +
       q(ref) +
-      " -- 'docs/changelog/*.mdx' || true; gh run list --repo " +
-      q(repo) +
-      " --workflow e2e.yaml --branch " +
-      q(branch) +
-      " --limit " +
-      limit +
-      " --json databaseId,name,status,conclusion,url,headSha",
+      " -- 'docs/changelog/*.mdx' || true",
     workdir: input.workdir,
-    description: "Inspect release changelog and runs",
+    description: "Inspect release changelog details",
+    timeoutMs: 60000,
+  });
+  const runs = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: [
+      "run",
+      "list",
+      "--repo",
+      repo,
+      "--workflow",
+      "e2e.yaml",
+      "--branch",
+      branch,
+      "--limit",
+      String(limit),
+      "--json",
+      "databaseId,name,status,conclusion,url,headSha",
+    ],
+    acceptedExitCodes,
     timeoutMs: 60000,
   });
   return {
@@ -108,7 +122,7 @@ export default async function run_nemoclaw_release_preflight(input: {
     candidateSha,
     previousTag,
     nextTag,
-    details: d.kind === "foreground" ? d.stdout.text : "",
+    details: (d.kind === "foreground" ? d.stdout.text : "") + runs.stdout,
     warning: dryRun ? "Remote refs were not refreshed in dry-run mode." : null,
   };
 }

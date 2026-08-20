@@ -32,28 +32,6 @@ export default async function approve_nemoclaw_fork_workflow_runs(input: {
     action: string;
   }[];
 }> {
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const authPattern =
-    /authentication|authorization|forbidden|permission|resource not accessible|HTTP 40[13]|SSO/i;
-  const runGh = async (args, description) => {
-    const result = await tools.bash({
-      command: "gh " + args.map(quote).join(" "),
-      workdir: input.workdir,
-      description,
-      timeoutMs: 30000,
-    });
-    if (result.kind !== "foreground") throw new Error("Unexpected background result");
-    return { code: result.exitCode ?? -1, stdout: result.stdout.text, stderr: result.stderr.text };
-  };
-  const requireRead = (result, operation) => {
-    if (result.code === 0) return;
-    const detail = (result.stdout + "\n" + result.stderr).trim();
-    if (authPattern.test(detail))
-      throw new Error(
-        `GitHub access failed while ${operation}; stop and restore repository access before continuing.\n${detail}`,
-      );
-    throw new Error(`GitHub did not complete ${operation}.\n${detail}`);
-  };
   const repo = input.repo ?? "NVIDIA/NemoClaw";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
   if (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 10)
@@ -89,8 +67,9 @@ export default async function approve_nemoclaw_fork_workflow_runs(input: {
   const readPrFiles = async (number) => {
     const files = [];
     for (let page = 1; page <= 31; page += 1) {
-      const result = await runGh(
-        [
+      const result = await tools.run_github_cli({
+        workdir: input.workdir,
+        args: [
           "api",
           `repos/${repo}/pulls/${number}/files?per_page=100&page=${page}`,
           "--method",
@@ -98,9 +77,8 @@ export default async function approve_nemoclaw_fork_workflow_runs(input: {
           "--jq",
           ".[].filename",
         ],
-        "Read fork pull request files",
-      );
-      requireRead(result, `reading files for PR #${number}`);
+        timeoutMs: 30000,
+      });
       const pageFiles = result.stdout.split("\n").filter(Boolean);
       if (page === 31 && pageFiles.length)
         throw new Error(
@@ -112,8 +90,9 @@ export default async function approve_nemoclaw_fork_workflow_runs(input: {
     throw new Error(`PR #${number} file pagination did not complete`);
   };
   const readPr = async (item) => {
-    const result = await runGh(
-      [
+    const result = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
         "pr",
         "view",
         String(item.number),
@@ -122,9 +101,8 @@ export default async function approve_nemoclaw_fork_workflow_runs(input: {
         "--json",
         "number,title,url,state,isDraft,headRefOid,isCrossRepository,maintainerCanModify,changedFiles",
       ],
-      "Read fork pull request state",
-    );
-    requireRead(result, `reading PR #${item.number}`);
+      timeoutMs: 30000,
+    });
     const pr = JSON.parse(result.stdout);
     if (pr.state !== "OPEN")
       throw new Error(`PR #${item.number} is ${pr.state}; workflow approval requires an open PR`);
@@ -151,8 +129,9 @@ export default async function approve_nemoclaw_fork_workflow_runs(input: {
   const plans = [];
   for (const item of input.items) {
     const current = await readPr(item);
-    const listed = await runGh(
-      [
+    const listed = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
         "run",
         "list",
         "--repo",
@@ -164,9 +143,8 @@ export default async function approve_nemoclaw_fork_workflow_runs(input: {
         "--json",
         "databaseId,workflowName,event,status,conclusion,url,headSha",
       ],
-      "List action-required workflow runs",
-    );
-    requireRead(listed, `listing workflow runs for PR #${item.number}`);
+      timeoutMs: 30000,
+    });
     let runs = JSON.parse(listed.stdout).filter(
       (run) =>
         run.event === "pull_request" &&
@@ -208,11 +186,12 @@ export default async function approve_nemoclaw_fork_workflow_runs(input: {
   for (const plan of plans) {
     for (const run of plan.runs) {
       await readPr(plan.item);
-      const approved = await runGh(
-        ["api", `repos/${repo}/actions/runs/${run.databaseId}/approve`, "--method", "POST"],
-        "Approve guarded workflow run",
-      );
-      requireRead(approved, `approving workflow ${run.databaseId} for PR #${plan.item.number}`);
+      await tools.run_github_cli({
+        workdir: input.workdir,
+        args: ["api", `repos/${repo}/actions/runs/${run.databaseId}/approve`, "--method", "POST"],
+        timeoutMs: 30000,
+        apply: true,
+      });
       approvals.push({
         number: plan.item.number,
         headSha: plan.item.expectedHeadSha,

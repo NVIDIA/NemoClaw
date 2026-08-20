@@ -62,7 +62,6 @@ export default async function find_nemoclaw_pull_requests(input: {
   if (draft === "only") parts.push("draft:true");
   if (input.search?.trim()) parts.push(input.search.trim());
   const search = parts.join(" ");
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const fields = [
     "number",
     "title",
@@ -94,21 +93,18 @@ export default async function find_nemoclaw_pull_requests(input: {
   ];
   if (author) args.push("--author", author);
   if (search) args.push("--search", search);
-  const command = "gh " + args.map(quote).join(" ");
   const attempts = [];
   let result;
   for (let attempt = 1; attempt <= retry5xx + 1; attempt++) {
-    result = await tools.bash({
-      command,
+    result = await tools.run_github_cli({
       workdir: input.workdir,
-      description: "List matching GitHub pull requests",
+      args,
+      acceptedExitCodes: [0, 1],
       timeoutMs: 120000,
     });
-    if (result.kind !== "foreground")
-      throw new Error("GitHub pull request query did not finish in the foreground");
-    attempts.push({ attempt, code: result.exitCode ?? -1 });
-    if (result.exitCode === 0) break;
-    const detail = result.stdout.text + "\n" + result.stderr.text;
+    attempts.push({ attempt, code: result.code });
+    if (result.code === 0) break;
+    const detail = result.stdout + "\n" + result.stderr;
     if (
       /authentication|authorization|forbidden|permission|resource not accessible|HTTP 40[13]|SSO/i.test(
         detail,
@@ -120,7 +116,7 @@ export default async function find_nemoclaw_pull_requests(input: {
     if (!/HTTP 5\d\d|server|service|temporar/i.test(detail) || attempt > retry5xx)
       throw new Error("GitHub did not list pull requests after " + attempt + " attempt(s)");
   }
-  const rows = JSON.parse(result.stdout.text || "[]");
+  const rows = JSON.parse(result.stdout || "[]");
   const limitReached = rows.length > limit;
   const selected = rows.slice(0, limit);
   const normalized = selected

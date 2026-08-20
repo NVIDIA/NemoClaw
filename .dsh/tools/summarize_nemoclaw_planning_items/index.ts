@@ -60,23 +60,17 @@ export default async function summarize_nemoclaw_planning_items(input: {
     maxComments = Math.max(0, Math.min(5, input.maxComments ?? 3)),
     marker = input.commentMarker ?? "";
   if (marker.length > 200) throw new Error("commentMarker must contain at most 200 characters");
-  const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
   const view = async (kind, number) => {
     const fields =
       kind === "pr"
         ? "number,title,state,url,headRefOid,headRefName,baseRefName,isDraft,body,comments"
         : "number,title,state,url,body,comments";
-    const r = await tools.bash({
-      command: ["gh", kind, "view", String(number), "--repo", repo, "--json", fields]
-        .map(q)
-        .join(" "),
+    const result = await tools.run_github_cli({
       workdir: input.workdir,
-      description: "Read GitHub planning item",
+      args: [kind, "view", String(number), "--repo", repo, "--json", fields],
       timeoutMs: 60000,
     });
-    if (r.kind !== "foreground" || r.exitCode !== 0)
-      throw new Error("Could not read " + kind + " " + number);
-    const x = JSON.parse(r.stdout.text);
+    const x = JSON.parse(result.stdout);
     return {
       number: x.number,
       title: x.title ?? "",

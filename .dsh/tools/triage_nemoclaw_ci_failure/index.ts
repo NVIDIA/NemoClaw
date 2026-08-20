@@ -83,13 +83,12 @@ export default async function triage_nemoclaw_ci_failure(input: {
     if (result.kind !== "foreground") throw new Error("Unexpected background result");
     return result;
   };
-  const jobResult = await run(
-    `gh api ${q(`repos/${repo}/actions/jobs/${jobId}`)}`,
-    "Read GitHub Actions job metadata",
-  );
-  if (jobResult.exitCode !== 0)
-    throw new Error(`Could not read job metadata: ${redact(jobResult.stderr.text).slice(-1500)}`);
-  const rawJob = JSON.parse(jobResult.stdout.text);
+  const jobResult = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: ["api", `repos/${repo}/actions/jobs/${jobId}`],
+    timeoutMs: 30000,
+  });
+  const rawJob = JSON.parse(jobResult.stdout);
   const job = {
     id: Number(rawJob.id ?? jobId),
     runId: Number(rawJob.run_id ?? 0),
@@ -191,12 +190,12 @@ export default async function triage_nemoclaw_ci_failure(input: {
   };
   let artifact = null;
   if (artifactName) {
-    const inventoryResult = await run(
-      `gh api ${q(`repos/${repo}/actions/runs/${job.runId}/artifacts?per_page=100`)}`,
-      "Read workflow artifact inventory",
-    );
-    if (inventoryResult.exitCode !== 0) throw new Error("Could not read artifact inventory");
-    const inventory = JSON.parse(inventoryResult.stdout.text);
+    const inventoryResult = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: ["api", `repos/${repo}/actions/runs/${job.runId}/artifacts?per_page=100`],
+      timeoutMs: 30000,
+    });
+    const inventory = JSON.parse(inventoryResult.stdout);
     const found = (inventory.artifacts ?? []).find((entry) => entry.name === artifactName);
     if (!found) throw new Error(`Artifact ${artifactName} was not found for run ${job.runId}`);
     const sizeBytes = Number(found.size_in_bytes ?? 0);

@@ -93,31 +93,34 @@ export default async function review_nemoclaw_pull_requests(input: {
     );
     return out;
   };
-  const viewPr = async (number) =>
-    JSON.parse(
-      (
-        await run(
-          "gh pr view " +
-            number +
-            " --repo " +
-            q(repo) +
-            " --json number,title,url,state,isDraft,author,baseRefName,headRefName,headRefOid,mergeStateStatus,reviewDecision,reviews",
-          "Read pull request metadata",
-        )
-      ).stdout.text,
-    );
+  const viewPr = async (number) => {
+    const result = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "pr",
+        "view",
+        String(number),
+        "--repo",
+        repo,
+        "--json",
+        "number,title,url,state,isDraft,author,baseRefName,headRefName,headRefOid,mergeStateStatus,reviewDecision,reviews",
+      ],
+      timeoutMs: 60000,
+    });
+    return JSON.parse(result.stdout);
+  };
   const compareMain = async (sha) => {
-    const value = JSON.parse(
-      (
-        await run(
-          "gh api " +
-            q("repos/" + repo + "/compare/" + sha + "...main") +
-            " --jq " +
-            q("{status,ahead_by,behind_by}"),
-          "Compare pull request with main",
-        )
-      ).stdout.text,
-    );
+    const result = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "api",
+        "repos/" + repo + "/compare/" + sha + "...main",
+        "--jq",
+        "{status,ahead_by,behind_by}",
+      ],
+      timeoutMs: 60000,
+    });
+    const value = JSON.parse(result.stdout);
     return { ...value, mainCommitsMissingFromPr: value.ahead_by };
   };
   const maintainer = (pr) =>

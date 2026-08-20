@@ -74,11 +74,11 @@ export default async function create_nemoclaw_pr(input: {
   let assignee = null;
   if (input.assignee !== false) {
     const permission = (
-      await run(
-        "gh repo view " + q(repo) + " --json viewerPermission --jq .viewerPermission",
-        "Read repository permission",
-      )
-    ).stdout.text.trim();
+      await tools.run_github_cli({
+        workdir: input.workdir,
+        args: ["repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission"],
+      })
+    ).stdout.trim();
     if (["TRIAGE", "WRITE", "MAINTAIN", "ADMIN"].includes(permission)) assignee = "@me";
     else if (input.assignee === "@me")
       throw new Error("Repository permission does not allow self-assignment");
@@ -145,16 +145,26 @@ export default async function create_nemoclaw_pr(input: {
   if (assignee) command += " --assignee @me";
   const created = await run(command, "Create GitHub pull request", true);
   if (created.exitCode !== 0) {
-    const lookup = await run(
-      "gh pr list --repo " +
-        q(repo) +
-        " --head " +
-        q(branch) +
-        " --state open --json url --limit 1 --jq '.[0].url // empty'",
-      "Check pull request after create failure",
-      true,
-    );
-    if (lookup.exitCode === 0 && lookup.stdout.text.trim())
+    const lookup = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "pr",
+        "list",
+        "--repo",
+        repo,
+        "--head",
+        branch,
+        "--state",
+        "open",
+        "--json",
+        "url",
+        "--limit",
+        "1",
+        "--jq",
+        ".[0].url // empty",
+      ],
+    });
+    if (lookup.stdout.trim())
       return {
         ok: true,
         apply: true,
@@ -168,7 +178,7 @@ export default async function create_nemoclaw_pr(input: {
         assignee,
         commitCount,
         verificationPending: false,
-        url: lookup.stdout.text.trim(),
+        url: lookup.stdout.trim(),
         unverified: [],
       };
     throw new Error(

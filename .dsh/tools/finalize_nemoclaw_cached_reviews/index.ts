@@ -40,46 +40,22 @@ export default async function finalize_nemoclaw_cached_reviews(input: {
   )
     throw new Error("cacheRoot must be a safe absolute path other than /");
   const jobRoot = input.cacheRoot;
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const authPattern =
-    /authentication|authorization|forbidden|permission|resource not accessible|HTTP 40[13]|SSO/iu;
-  const gh = async (args, description) => {
-    const result = await tools.bash({
-      command: "gh " + args.map(quote).join(" "),
+  const viewPr = async (number) => {
+    const result = await tools.run_github_cli({
       workdir: input.workdir,
-      description,
+      args: [
+        "pr",
+        "view",
+        String(number),
+        "--repo",
+        repo,
+        "--json",
+        "number,title,url,state,isDraft,author,headRefOid,mergeable,mergeStateStatus,reviews",
+      ],
       timeoutMs: 60000,
     });
-    if (result.kind !== "foreground") throw new Error(description + " did not finish");
-    if (result.exitCode !== 0) {
-      const detail = (result.stdout.text + "\n" + result.stderr.text).trim();
-      if (authPattern.test(detail))
-        throw new Error(
-          "GitHub access failed while " +
-            description.toLowerCase() +
-            "; stop and restore repository access.\n" +
-            detail,
-        );
-      throw new Error(description + " failed.\n" + detail);
-    }
-    if (result.stdout.truncated) throw new Error(description + " exceeded the bounded output");
-    return result.stdout.text;
+    return JSON.parse(result.stdout);
   };
-  const viewPr = async (number) =>
-    JSON.parse(
-      await gh(
-        [
-          "pr",
-          "view",
-          String(number),
-          "--repo",
-          repo,
-          "--json",
-          "number,title,url,state,isDraft,author,headRefOid,mergeable,mergeStateStatus,reviews",
-        ],
-        "Read pull request review state",
-      ),
-    );
   const readRecommendation = async (number, sha) => {
     try {
       const value = await tools.read({

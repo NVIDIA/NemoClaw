@@ -43,20 +43,33 @@ export default async function checkout_pr_for_local_repair(input: {
         uncommitted.join("\n"),
     );
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
-  const view = await tools.bash({
-    command:
-      "gh pr view " +
-      input.number +
-      " --repo " +
-      q(repo) +
-      " --json baseRefName,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,maintainerCanModify,title,url",
-    workdir: input.workdir,
-    description: "Inspect in-place pull request target",
-    timeoutMs: 60000,
-  });
-  if (view.kind !== "foreground" || view.exitCode !== 0)
-    throw new Error(view.kind === "foreground" ? view.stderr.text : "Unexpected result");
-  const pr = JSON.parse(view.stdout.text);
+  const canonical = await tools.read_nemoclaw_pr({
+      workdir: input.workdir,
+      number: input.number,
+      repository: repo,
+    }),
+    detailResult = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "pr",
+        "view",
+        String(input.number),
+        "--repo",
+        repo,
+        "--json",
+        "number,state,isDraft,baseRefName,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,maintainerCanModify,title,url",
+      ],
+    }),
+    pr = JSON.parse(detailResult.stdout);
+  if (
+    pr.number !== canonical.number ||
+    pr.url !== canonical.url ||
+    pr.state !== canonical.state ||
+    pr.isDraft !== canonical.isDraft ||
+    pr.headRefOid !== canonical.headRefOid ||
+    pr.baseRefName !== canonical.baseRefName
+  )
+    throw new Error("Pull request changed between canonical and detailed snapshots; retry");
   if (dryRun)
     return {
       dryRun,

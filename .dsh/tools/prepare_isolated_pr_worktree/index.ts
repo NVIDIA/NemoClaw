@@ -115,24 +115,34 @@ export default async function prepare_isolated_pr_worktree(input: {
     throw new Error("Could not inspect primary worktree");
   if (requirePrimaryClean && status.stdout.text.trim())
     throw new Error("Primary worktree has uncommitted changes");
-  const view = await tools.bash({
-    command:
-      "gh pr view " +
-      input.number +
-      " --repo " +
-      quote(repo) +
-      " --json number,url,state,isDraft,headRefOid,headRefName,headRepository,headRepositoryOwner,maintainerCanModify,baseRefName,baseRefOid",
-    workdir: input.workdir,
-    description: "Inspect isolated worktree target",
-    timeoutMs: 30000,
-  });
-  if (view.kind !== "foreground" || view.exitCode !== 0)
-    throw new Error(
-      view.kind === "foreground"
-        ? view.stderr.text || "GitHub read failed for PR #" + input.number
-        : "GitHub read did not finish",
-    );
-  const item = JSON.parse(view.stdout.text);
+  const canonical = await tools.read_nemoclaw_pr({
+      workdir: input.workdir,
+      number: input.number,
+      repository: repo,
+    }),
+    detailResult = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "pr",
+        "view",
+        String(input.number),
+        "--repo",
+        repo,
+        "--json",
+        "number,url,state,isDraft,headRefOid,headRefName,headRepository,headRepositoryOwner,maintainerCanModify,baseRefName,baseRefOid",
+      ],
+      timeoutMs: 30000,
+    }),
+    item = JSON.parse(detailResult.stdout);
+  if (
+    item.number !== canonical.number ||
+    item.url !== canonical.url ||
+    item.state !== canonical.state ||
+    item.isDraft !== canonical.isDraft ||
+    item.headRefOid !== canonical.headRefOid ||
+    item.baseRefName !== canonical.baseRefName
+  )
+    throw new Error("Pull request changed between canonical and detailed snapshots; retry");
   if (requireOpen && item.state !== "OPEN")
     throw new Error("PR #" + input.number + " state is " + item.state + "; an open PR is required");
   if (

@@ -73,16 +73,19 @@ export default async function commit_push_refresh_pr(input: {
     if (result.stdout.truncated) throw new Error(description + " exceeded its bounded output");
     return result.stdout.text;
   };
-  const pr = JSON.parse(
-    await run(
-      "gh pr view " +
-        quote(String(input.pullNumber)) +
-        " --repo " +
-        quote(repo) +
-        " --json headRefName,headRefOid,url,title,state",
-      "Read pull request identity",
-    ),
-  );
+  const prRead = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: [
+      "pr",
+      "view",
+      String(input.pullNumber),
+      "--repo",
+      repo,
+      "--json",
+      "headRefName,headRefOid,url,title,state",
+    ],
+  });
+  const pr = JSON.parse(prRead.stdout);
   if (pr.state !== "OPEN") throw new Error("PR #" + input.pullNumber + " is not open");
   const branch = input.branch ?? pr.headRefName;
   if (
@@ -178,16 +181,19 @@ export default async function commit_push_refresh_pr(input: {
   let readiness = null;
   let monitored = null;
   if (willPush) {
-    const beforePush = JSON.parse(
-      await run(
-        "gh pr view " +
-          quote(String(input.pullNumber)) +
-          " --repo " +
-          quote(repo) +
-          " --json headRefOid,headRefName,state",
-        "Recheck pull request before push",
-      ),
-    );
+    const beforePushRead = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "pr",
+        "view",
+        String(input.pullNumber),
+        "--repo",
+        repo,
+        "--json",
+        "headRefOid,headRefName,state",
+      ],
+    });
+    const beforePush = JSON.parse(beforePushRead.stdout);
     if (
       beforePush.state !== "OPEN" ||
       beforePush.headRefOid !== localHeadBefore ||
@@ -201,17 +207,12 @@ export default async function commit_push_refresh_pr(input: {
     );
     let remoteHead = "";
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const viewed = JSON.parse(
-        await run(
-          "gh pr view " +
-            quote(String(input.pullNumber)) +
-            " --repo " +
-            quote(repo) +
-            " --json headRefOid",
-          "Verify pushed pull request commit",
-        ),
-      );
-      remoteHead = viewed.headRefOid ?? "";
+      const viewed = await tools.read_nemoclaw_pr({
+        workdir: input.workdir,
+        number: input.pullNumber,
+        repository: repo,
+      });
+      remoteHead = viewed.state === "OPEN" ? (viewed.headRefOid ?? "") : "";
       if (remoteHead === localHead) break;
       if (attempt < 4) await run("sleep 1", "Wait for pull request commit");
     }

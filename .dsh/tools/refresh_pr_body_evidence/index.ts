@@ -95,16 +95,27 @@ export default async function refresh_pr_body_evidence(input: {
     throw new Error(
       "Checkout commit changed: expected " + input.expectedHeadSha + ", found " + localHead,
     );
-  const readPr = async () =>
-    JSON.parse(
-      await run(
-        "gh api " +
-          quote("repos/" + repo + "/pulls/" + input.number) +
-          " --jq " +
-          quote('{state,headSha:.head.sha,body:(.body//""),updatedAt:.updated_at}'),
-        "Read pull request evidence",
-      ),
-    );
+  const readPr = async () => {
+    const [pr, detailResult] = await Promise.all([
+      tools.read_nemoclaw_pr({
+        workdir: input.workdir,
+        number: input.number,
+        repository: repo,
+      }),
+      tools.run_github_cli({
+        workdir: input.workdir,
+        args: ["api", "repos/" + repo + "/pulls/" + input.number],
+        timeoutMs: 30000,
+      }),
+    ]);
+    const detail = JSON.parse(detailResult.stdout);
+    return {
+      state: String(pr.state).toLowerCase(),
+      headSha: pr.headRefOid,
+      body: detail.body ?? "",
+      updatedAt: detail.updated_at ?? null,
+    };
+  };
   const startedAt = Date.now();
   let polls = 0;
   let pr;
@@ -215,15 +226,29 @@ export default async function refresh_pr_body_evidence(input: {
       "PR " + input.number + " commit changed to " + finalPr.headSha + "; expected " + localHead,
     );
   const body = renderBody(String(finalPr.body ?? ""));
-  const updated = JSON.parse(
-    await run(
-      "gh api " +
-        quote("repos/" + repo + "/pulls/" + input.number) +
-        " -X PATCH -f " +
-        quote("body=" + body),
-      "Update pull request evidence",
-    ),
-  );
+  const temporary = await run("umask 077; mktemp", "Create pull request body file");
+  if (!temporary.startsWith("/") || /[\r\n\0]/.test(temporary))
+    throw new Error("Could not create a safe pull request body file");
+  let updated;
+  try {
+    await tools.write({ file_path: temporary, content: body });
+    const updateResult = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "api",
+        "repos/" + repo + "/pulls/" + input.number,
+        "-X",
+        "PATCH",
+        "-F",
+        "body=@" + temporary,
+      ],
+      timeoutMs: 30000,
+      apply: true,
+    });
+    updated = JSON.parse(updateResult.stdout);
+  } finally {
+    await run("rm -f -- " + quote(temporary), "Remove pull request body file");
+  }
   return {
     ok: true,
     apply: true,

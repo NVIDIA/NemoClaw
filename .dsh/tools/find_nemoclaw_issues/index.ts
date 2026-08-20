@@ -35,7 +35,6 @@ export default async function find_nemoclaw_issues(input: {
   const labels = [...new Set((input.labels ?? []).map((x) => x.trim()).filter(Boolean))];
   const search = input.search?.trim() ?? "";
   const author = input.author?.trim() ?? "";
-  const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
   const args = [
     "issue",
     "list",
@@ -51,15 +50,8 @@ export default async function find_nemoclaw_issues(input: {
   if (search) args.push("--search", search);
   if (author) args.push("--author", author);
   for (const label of labels) args.push("--label", label);
-  const result = await tools.bash({
-    command: "gh " + args.map(q).join(" "),
-    workdir: input.workdir,
-    description: "Find matching GitHub issues",
-    timeoutMs: 60000,
-  });
-  if (result.kind !== "foreground" || result.exitCode !== 0)
-    throw new Error("Could not list issues");
-  const rows = JSON.parse(result.stdout.text || "[]");
+  const result = await tools.run_github_cli({ workdir: input.workdir, args, timeoutMs: 60000 });
+  const rows = JSON.parse(result.stdout || "[]");
   return {
     repo,
     state,

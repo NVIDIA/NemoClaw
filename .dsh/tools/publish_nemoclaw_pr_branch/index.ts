@@ -41,18 +41,25 @@ export default async function publish_nemoclaw_pr_branch(input: {
     await run("git branch --show-current", "Read publication branch")
   ).stdout.text.trim();
   if (!branch || branch === baseBranch) throw new Error("Publication requires a feature branch");
-  const existing = await run(
-    "gh pr list --repo " +
-      q(repo) +
-      " --head " +
-      q(branch) +
-      " --state open --json number,url --limit 2",
-    "Check existing pull request",
-    true,
-  );
-  if (existing.exitCode !== 0)
-    throw new Error("GitHub pull request lookup failed; stop and restore access");
-  const prs = JSON.parse(existing.stdout.text || "[]");
+  const existing = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: [
+      "pr",
+      "list",
+      "--repo",
+      repo,
+      "--head",
+      branch,
+      "--state",
+      "open",
+      "--json",
+      "number,url",
+      "--limit",
+      "2",
+    ],
+    timeoutMs: 120000,
+  });
+  const prs = JSON.parse(existing.stdout || "[]");
   if (prs.length) throw new Error("An open pull request already exists for this branch");
   const commits = (
     await run(
@@ -87,17 +94,17 @@ export default async function publish_nemoclaw_pr_branch(input: {
   );
   const verified = [];
   for (const sha of commits) {
-    const r = await run(
-      "gh api " +
-        q("repos/" + repo + "/commits/" + sha) +
-        " --jq " +
-        q('[.commit.verification.verified, (.commit.verification.reason // "")] | @tsv'),
-      "Verify published commit",
-      true,
-    );
-    if (r.exitCode !== 0)
-      throw new Error("GitHub verification read failed; stop and restore access");
-    const [ok, reason] = r.stdout.text.trim().split("\t");
+    const r = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "api",
+        "repos/" + repo + "/commits/" + sha,
+        "--jq",
+        '[.commit.verification.verified, (.commit.verification.reason // "")] | @tsv',
+      ],
+      timeoutMs: 120000,
+    });
+    const [ok, reason] = r.stdout.trim().split("\t");
     verified.push({ sha, verified: ok === "true", reason: reason || null });
   }
   const allVerified = verified.every((c) => c.verified);

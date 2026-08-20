@@ -25,7 +25,6 @@ export default async function reply_and_resolve_pr_review_thread(input: {
   replyUrl: string | null;
   resolved: boolean;
 }> {
-  const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repo ?? "NVIDIA/NemoClaw";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || repo.length > 200)
     throw new Error("repo must be owner/name and contain 200 or fewer characters");
@@ -39,45 +38,12 @@ export default async function reply_and_resolve_pr_review_thread(input: {
     throw new Error("reply body must contain 65536 or fewer characters");
   if (!/^[0-9a-f]{40}$/.test(input.expectedHeadSha))
     throw new Error("expectedHeadSha must be a lowercase 40-character commit SHA");
-  const [owner, name] = repo.split("/");
-  const accessPattern =
-    /authentication|authorization|forbidden|permission|resource not accessible|HTTP 40[13]/iu;
-  const run = async (args, operation) => {
-    const result = await tools.bash({
-      command: "gh " + args.map(q).join(" "),
-      workdir: input.workdir,
-      description: operation,
-      timeoutMs: 30000,
-    });
-    if (result.kind === "foreground" && result.exitCode === 0) return result.stdout.text;
-    const detail =
-      result.kind === "foreground"
-        ? (result.stdout.text + "\n" + result.stderr.text).trim()
-        : "command did not finish in the foreground";
-    if (accessPattern.test(detail))
-      throw new Error(
-        "GitHub access failed while " +
-          operation.toLowerCase() +
-          "; stop and restore repository access before continuing.\n" +
-          detail,
-      );
-    throw new Error("GitHub did not complete " + operation.toLowerCase() + ".\n" + detail);
-  };
   const requireExpectedCommit = async () => {
-    const pr = JSON.parse(
-      await run(
-        [
-          "pr",
-          "view",
-          String(input.number),
-          "--repo",
-          repo,
-          "--json",
-          "number,url,state,headRefOid",
-        ],
-        "Reading pull request",
-      ),
-    );
+    const pr = await tools.read_nemoclaw_pr({
+      workdir: input.workdir,
+      number: input.number,
+      repository: repo,
+    });
     if (pr.state !== "OPEN")
       throw new Error(
         "PR #" +
@@ -98,47 +64,26 @@ export default async function reply_and_resolve_pr_review_thread(input: {
     return pr;
   };
   const pr = await requireExpectedCommit();
-  const query =
-    "query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:50,after:$cursor){nodes{id isResolved comments(first:50){nodes{databaseId} pageInfo{hasNextPage}}} pageInfo{hasNextPage endCursor}}}}}";
-  let cursor = null,
-    thread = null,
-    pagesRead = 0,
-    truncatedComments = false;
-  for (; pagesRead < 10; pagesRead++) {
-    const args = [
-      "api",
-      "graphql",
-      "-f",
-      "query=" + query,
-      "-F",
-      "owner=" + owner,
-      "-F",
-      "name=" + name,
-      "-F",
-      "number=" + input.number,
-    ];
-    if (cursor) args.push("-f", "cursor=" + cursor);
-    const connection = JSON.parse(await run(args, "Reading pull request review threads")).data
-      ?.repository?.pullRequest?.reviewThreads;
-    if (!connection) throw new Error("PR #" + input.number + " review threads were not returned");
-    thread = (connection.nodes ?? []).find((candidate) =>
-      (candidate.comments.nodes ?? []).some((comment) => comment.databaseId === input.commentId),
-    );
-    truncatedComments ||= (connection.nodes ?? []).some(
-      (candidate) => candidate.comments.pageInfo?.hasNextPage,
-    );
-    if (thread || !connection.pageInfo?.hasNextPage) break;
-    cursor = connection.pageInfo.endCursor;
-  }
+  const threadSnapshot = await tools.read_nemoclaw_review_threads({
+    workdir: input.workdir,
+    number: input.number,
+    repository: repo,
+    expectedHeadSha: input.expectedHeadSha,
+    pageLimit: 10,
+  });
+  if (!threadSnapshot.complete)
+    throw new Error("Review threads exceeded 10 bounded pages for PR #" + input.number);
+  const thread = threadSnapshot.threads.find((candidate) =>
+    candidate.comments.some((comment) => comment.databaseId === input.commentId),
+  );
   if (!thread)
     throw new Error(
       "Review comment " +
         input.commentId +
-        " was not found within " +
-        (pagesRead + 1) +
-        " bounded thread page(s) for PR #" +
-        input.number +
-        (truncatedComments ? "; at least one thread has more than 50 comments" : ""),
+        " was not found in " +
+        threadSnapshot.pagesRead +
+        " complete bounded thread page(s) for PR #" +
+        input.number,
     );
   const base = {
     repo,
@@ -148,7 +93,7 @@ export default async function reply_and_resolve_pr_review_thread(input: {
     commentId: input.commentId,
     threadId: thread.id,
     alreadyResolved: Boolean(thread.isResolved),
-    pagesRead: pagesRead + 1,
+    pagesRead: threadSnapshot.pagesRead,
   };
   if (!input.apply || thread.isResolved)
     return {
@@ -161,28 +106,28 @@ export default async function reply_and_resolve_pr_review_thread(input: {
       resolved: Boolean(thread.isResolved),
     };
   await requireExpectedCommit();
-  const replyJson = JSON.parse(
-    await run(
-      [
-        "api",
-        "--method",
-        "POST",
-        "repos/" + repo + "/pulls/" + input.number + "/comments/" + input.commentId + "/replies",
-        "-f",
-        "body=" + input.body,
-      ],
-      "Replying to pull request review comment",
-    ),
-  );
+  const replyResult = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: [
+      "api",
+      "--method",
+      "POST",
+      "repos/" + repo + "/pulls/" + input.number + "/comments/" + input.commentId + "/replies",
+      "-f",
+      "body=" + input.body,
+    ],
+    apply: true,
+  });
+  const replyJson = JSON.parse(replyResult.stdout);
   await requireExpectedCommit();
   const mutation =
     "mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}";
-  const resolvedThread = JSON.parse(
-    await run(
-      ["api", "graphql", "-f", "query=" + mutation, "-f", "threadId=" + thread.id],
-      "Resolving pull request review thread",
-    ),
-  ).data?.resolveReviewThread?.thread;
+  const resolveResult = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: ["api", "graphql", "-f", "query=" + mutation, "-f", "threadId=" + thread.id],
+    apply: true,
+  });
+  const resolvedThread = JSON.parse(resolveResult.stdout).data?.resolveReviewThread?.thread;
   if (!resolvedThread?.isResolved)
     throw new Error("GitHub accepted the reply but did not resolve review thread " + thread.id);
   return {

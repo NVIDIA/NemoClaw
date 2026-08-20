@@ -204,23 +204,9 @@ export default async function analyze_base_image_publication_timings(input: {
   const e2eLimit = Math.max(30, Math.min(500, input.e2eLimit ?? 300));
   const baseLimit = Math.max(e2eLimit, Math.min(500, input.baseLimit ?? 500));
   const maxPerStratum = Math.max(30, Math.min(200, input.maxPerStratum ?? 150));
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const redact = (value) =>
-    String(value)
-      .replace(/(authorization:?)\s*\S+/gi, "$1 [REDACTED]")
-      .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=)\S+/g, "$1[REDACTED]")
-      .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@");
   const gh = async (args, timeoutMs = 60000) => {
-    const result = await tools.bash({
-      command: "gh " + args.map(quote).join(" "),
-      workdir: input.workdir,
-      description: "Read bounded GitHub workflow data",
-      timeoutMs,
-    });
-    if (result.kind !== "foreground") throw new Error("Unexpected background result");
-    if (result.exitCode !== 0)
-      throw new Error(redact("GitHub read failed: " + result.stderr.text).slice(-2000));
-    return result.stdout.text;
+    const result = await tools.run_github_cli({ workdir: input.workdir, args, timeoutMs });
+    return result.stdout;
   };
   const parse = (text, label) => {
     try {

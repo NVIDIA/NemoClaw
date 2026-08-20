@@ -89,20 +89,19 @@ export default async function analyze_recent_cli_timings(input: {
   };
   const perPage = Math.min(100, Math.max(30, limit * 3));
   const endpoint = `repos/${repo}/actions/artifacts?name=${encodeURIComponent(artifactName)}&per_page=${perPage}`;
-  const listed = await run(
-    "gh api " +
-      quote(endpoint) +
-      " --jq " +
-      quote(
-        "{artifacts:[.artifacts[]|{id,createdAt:.created_at,expired,size:.size_in_bytes,runId:.workflow_run.id,headSha:.workflow_run.head_sha}]}",
-      ),
-    60000,
-  );
-  if (listed.exitCode !== 0)
-    throw new Error("Could not list artifacts.\n" + redact(listed.stderr.text).slice(-1500));
+  const listed = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: [
+      "api",
+      endpoint,
+      "--jq",
+      "{artifacts:[.artifacts[]|{id,createdAt:.created_at,expired,size:.size_in_bytes,runId:.workflow_run.id,headSha:.workflow_run.head_sha}]}",
+    ],
+    timeoutMs: 60000,
+  });
   let artifactData;
   try {
-    artifactData = JSON.parse(listed.stdout.text);
+    artifactData = JSON.parse(listed.stdout);
   } catch {
     throw new Error("Could not parse bounded artifact listing");
   }

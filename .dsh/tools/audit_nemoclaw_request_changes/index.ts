@@ -115,15 +115,20 @@ export default async function audit_nemoclaw_request_changes(input: {
         if (index >= numbers.length) return;
         const number = numbers[index];
         try {
-          const viewed = await run(
-            "gh pr view " +
-              number +
-              " --repo " +
-              q(repo) +
-              " --json number,url,state,isDraft,headRefOid",
-            "Read pull request for blocker audit",
-          );
-          const pr = JSON.parse(viewed.stdout.text);
+          const viewed = await tools.run_github_cli({
+            workdir: input.workdir,
+            args: [
+              "pr",
+              "view",
+              String(number),
+              "--repo",
+              repo,
+              "--json",
+              "number,url,state,isDraft,headRefOid",
+            ],
+            timeoutMs: 30000,
+          });
+          const pr = JSON.parse(viewed.stdout);
           if (pr.state !== "OPEN" || pr.isDraft) {
             results[index] = {
               number,
@@ -237,14 +242,12 @@ export default async function audit_nemoclaw_request_changes(input: {
             throw new Error(
               "Audit identity or verdict mismatch for PR #" + number + " at " + headSha,
             );
-          const confirmed = JSON.parse(
-            (
-              await run(
-                "gh pr view " + number + " --repo " + q(repo) + " --json state,headRefOid",
-                "Confirm audited pull request identity",
-              )
-            ).stdout.text,
-          );
+          const confirmedResult = await tools.run_github_cli({
+            workdir: input.workdir,
+            args: ["pr", "view", String(number), "--repo", repo, "--json", "state,headRefOid"],
+            timeoutMs: 30000,
+          });
+          const confirmed = JSON.parse(confirmedResult.stdout);
           if (confirmed.state !== "OPEN" || confirmed.headRefOid !== headSha)
             throw new Error("PR #" + number + " changed during audit; result was not cached");
           const payload = JSON.stringify({

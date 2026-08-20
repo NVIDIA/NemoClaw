@@ -62,18 +62,19 @@ export default async function summarize_pr_readiness(input: {
   for (const r of s.reviews) latest.set(r.user, { user: r.user, state: r.state });
   let context = null;
   if (input.includeReviewContext) {
-    const r = await tools.bash({
-      command:
-        "gh pr view " +
-        input.number +
-        " --repo " +
-        repo +
-        " --json changedFiles,additions,deletions,body,files,commits",
+    const r = await tools.run_github_cli({
       workdir: input.workdir,
-      description: "Collect bounded pull request review context",
+      args: [
+        "pr",
+        "view",
+        String(input.number),
+        "--repo",
+        repo,
+        "--json",
+        "changedFiles,additions,deletions,body,files,commits",
+      ],
     });
-    if (r.kind !== "foreground" || r.exitCode !== 0) throw new Error("Could not collect context");
-    const x = JSON.parse(r.stdout.text);
+    const x = JSON.parse(r.stdout);
     context = {
       changedFiles: x.changedFiles ?? 0,
       additions: x.additions ?? 0,
