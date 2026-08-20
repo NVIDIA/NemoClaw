@@ -65,7 +65,12 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
   };
 });
 
-import { detectVllmProfile, installVllm } from "./vllm";
+import {
+  detectVllmProfile,
+  installVllm as installVllmProduction,
+  type InstallVllmOptions,
+  type VllmProfile,
+} from "./vllm";
 import {
   applyVllmInstallProbeDefaults,
   createVllmInstallSpies,
@@ -74,7 +79,12 @@ import {
   resetVllmInstallEnv,
   type VllmInstallSpies,
   vllmContainerRow,
+  withVllmInstallTestReadiness,
 } from "./vllm-install.test-support";
+
+function installVllm(profile: VllmProfile, options: InstallVllmOptions) {
+  return installVllmProduction(profile, withVllmInstallTestReadiness(profile, options));
+}
 
 describe("managed vLLM serving-port guard (#8685)", () => {
   const originalEnv = { ...process.env };
