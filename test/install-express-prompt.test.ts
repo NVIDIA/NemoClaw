@@ -206,29 +206,39 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(
       /Express install will configure Qwen3\.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile/,
     );
-    expect(output).toMatch(/The serving catalog owns the model, image, port, and vLLM arguments/);
+    expect(output).toMatch(/The serving catalog owns the model, image, and vLLM arguments/);
     expect(output).toMatch(/installer rejects provider and model overrides/);
     expect(output).toMatch(
-      /dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides/,
+      /dedicated local-model onboarder rejects vLLM model and serve-argument overrides/,
     );
+    expect(output).toMatch(/NEMOCLAW_VLLM_PORT may override the host listener/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER= MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm/,
     );
   });
 
-  it.each([
-    ["port", { NEMOCLAW_VLLM_PORT: "18000" }],
-    ["serve arguments", { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","4096"]' }],
-  ])("rejects a preset %s before activating the fixed Spark Express profile", (_, extraEnv) => {
-    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", extraEnv);
+  it("rejects preset serve arguments before activating the fixed Spark Express profile", () => {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
+      NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","4096"]',
+    });
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).not.toBe(0);
     expect(output).toContain(
-      "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides.",
+      "The fixed DGX Spark vLLM profile does not accept provider, model, or serve-argument overrides.",
     );
     expect(output).not.toContain("RESULT NON_INTERACTIVE=");
     expect(output).not.toContain("PROFILE_GATE=1");
+  });
+
+  it("accepts a preset host port for the fixed Spark Express profile", () => {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
+      NEMOCLAW_VLLM_PORT: "18000",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm");
   });
 
   it("preserves a preset Spark vLLM model in the prompt and exported env", () => {
