@@ -158,7 +158,36 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(result).toEqual({ ok: true });
     expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
     const runArgs = mocks.dockerRunDetached.mock.calls[0]?.[0] as readonly string[];
-    expect(runArgs[runArgs.indexOf("-lc") + 1]).toBe(buildVllmServeCommand(model));
+    const serveCommand = runArgs[runArgs.indexOf("-lc") + 1];
+    expect(serveCommand).toContain(model.id);
+    expect(serveCommand).not.toContain("--trust-remote-code");
+    expect(serveCommand).toBe(buildVllmServeCommand(model));
+  });
+
+  it("rejects NEMOCLAW_VLLM_MODEL before installing a fixed vLLM local model profile", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
+    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const model = {
+      ...baseProfile.defaultModel,
+      fixedServeCommand: true as const,
+      managedBearerAuth: true as const,
+    };
+    const profile = { ...baseProfile, defaultModel: model };
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.tryInstallManagedClusterManagedVllm).not.toHaveBeenCalled();
+    expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
+    expect(mocks.ensureDualStationVllmApiKey).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_MODEL"));
   });
 
   it("replaces a validated interrupted managed container that holds the serving port", async () => {

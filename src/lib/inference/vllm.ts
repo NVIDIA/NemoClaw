@@ -1658,9 +1658,9 @@ async function runVllmInstall(
   const explicitModel = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim();
   const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
   if (profile.defaultModel.fixedServeCommand) {
-    if (String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
+    if (explicitModel || String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
       console.error(
-        `  vLLM install failed: this local model profile does not accept ${VLLM_EXTRA_ARGS_ENV}.`,
+        `  vLLM install failed: this local model profile does not accept NEMOCLAW_VLLM_MODEL or ${VLLM_EXTRA_ARGS_ENV}.`,
       );
       return { ok: false };
     }
