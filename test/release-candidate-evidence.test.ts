@@ -181,6 +181,7 @@ esac
       GH_COMMITS_JSON: JSON.stringify([
         [
           {
+            sha: String(42).padStart(40, "0"),
             commit: {
               author: { email: "41898282+github-actions[bot]@users.noreply.github.com" },
               message: commitMessage,
@@ -289,6 +290,14 @@ describe("release candidate evidence commands", () => {
     expect(calls).toContain("/pulls/42/commits");
     expect(calls).toContain("/pulls/42/files");
     expect(calls).not.toContain("/pulls/41/");
+    expect(
+      JSON.parse(
+        fs.readFileSync(path.join(selection.input.evidenceDir, "docs-pr-checks.json"), "utf8"),
+      ),
+    ).toEqual([]);
+    expect(
+      fs.readFileSync(path.join(selection.input.evidenceDir, "docs-pr-final-sha"), "utf8").trim(),
+    ).toBe(String(42).padStart(40, "0"));
   });
 
   it("records None and skips selected-PR reads when there are no candidates", () => {
@@ -321,6 +330,9 @@ describe("release candidate evidence commands", () => {
         .readFileSync(path.join(selection.input.evidenceDir, "selected-docs-pr-fields.tsv"), "utf8")
         .trim(),
     ).toBe("None\tNone\tNone\tNone\tNone");
+    expect(
+      fs.readFileSync(path.join(selection.input.evidenceDir, "docs-coverage-sha"), "utf8").trim(),
+    ).toBe(selection.previousTagSha);
     expect(fs.readFileSync(path.join(selection.input.evidenceDir, "gh-calls.txt"), "utf8")).toBe(
       "",
     );

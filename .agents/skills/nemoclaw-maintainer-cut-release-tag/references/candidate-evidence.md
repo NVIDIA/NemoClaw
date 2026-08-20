@@ -175,6 +175,22 @@ if [[ "$DOCS_PR_NUMBER" != 'None' ]]; then
     "repos/NVIDIA/NemoClaw/pulls/${DOCS_PR_NUMBER}/commits?per_page=100" >"$DOCS_PR_COMMITS"
   run_or_stop "documentation PR file read" gh api --paginate --slurp \
     "repos/NVIDIA/NemoClaw/pulls/${DOCS_PR_NUMBER}/files?per_page=100" >"$DOCS_PR_FILES"
+  run_or_stop "documentation PR final commit verification" jq -er \
+    --arg expected "$DOCS_PR_HEAD_SHA" '
+    [.[][]] as $commits |
+    if
+      ($commits | length) > 0 and
+      $commits[-1].sha == $expected
+    then $commits[-1].sha
+    else error("documentation PR final commit does not match headRefOid")
+    end
+  ' "$DOCS_PR_COMMITS" >"$EVIDENCE_DIR/docs-pr-final-sha"
+  run_or_stop "documentation PR check rollup read" jq -ce '
+    if (.statusCheckRollup | type) == "array"
+    then .statusCheckRollup
+    else error("documentation PR check rollup is missing")
+    end
+  ' "$SELECTED_DOCS_PR" >"$EVIDENCE_DIR/docs-pr-checks.json"
   run_or_stop "documentation coverage commit selection" jq -er \
     --arg message $'docs: catch up after main\n\nSigned-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>' '
     [.[][] | select(
@@ -192,6 +208,8 @@ if [[ "$DOCS_PR_NUMBER" != 'None' ]]; then
 else
   printf '[]\n' >"$DOCS_PR_COMMITS"
   printf '[]\n' >"$DOCS_PR_FILES"
+  printf 'None\n' >"$EVIDENCE_DIR/docs-pr-final-sha"
+  printf '[]\n' >"$EVIDENCE_DIR/docs-pr-checks.json"
   printf '%s\n' "$DOCS_COVERAGE_SHA" >"$EVIDENCE_DIR/docs-coverage-sha"
   : >"$EVIDENCE_DIR/docs-changed-paths.txt"
 fi
