@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
   executeSandboxCommand: vi.fn(),
   executeSandboxExecCommand: vi.fn(),
+  getLiveSandboxPolicyEntryDigest: vi.fn(),
   getPresetContentGatewayState: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn(),
   removePreset: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("../src/lib/gateway-runtime-action", () => ({
 
 vi.mock("../src/lib/policy", () => ({
   applyPresetContent: mocks.applyPresetContent,
+  getLiveSandboxPolicyEntryDigest: mocks.getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState: mocks.getPresetContentGatewayState,
   removePreset: mocks.removePreset,
 }));
@@ -107,11 +109,13 @@ beforeEach(() => {
     switch (true) {
       case command === "status --output json":
         return { status: 0, stdout: "ready", stderr: "" };
+      case args[0] === "provider" && args[1] === "profile" && args[2] === "import":
+        return { status: 0, stdout: "Imported provider profile", stderr: "" };
       case args[0] === "provider" && args[1] === "get":
         return providerExists
           ? {
               status: 0,
-              stdout: `Id: ${providerId}\nType: generic\nResource version: 1\nCredential keys: GITHUB_TOKEN\n`,
+              stdout: `Id: ${providerId}\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };
@@ -119,7 +123,7 @@ beforeEach(() => {
         return {
           status: 0,
           stdout: attached
-            ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github generic 1 0\n"
+            ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github nemoclaw-mcp-v1 1 0\n"
             : "No providers attached to sandbox alpha.\n",
           stderr: "",
         };
@@ -145,6 +149,9 @@ beforeEach(() => {
     after: { state: "healthy_named" },
   });
 
+  mocks.getLiveSandboxPolicyEntryDigest
+    .mockReset()
+    .mockImplementation(() => (policyState === "absent" ? null : "present"));
   mocks.getPresetContentGatewayState.mockReset().mockImplementation(() => policyState);
   mocks.applyPresetContent.mockReset().mockImplementation(() => {
     policyApplyCalls += 1;
@@ -231,7 +238,13 @@ beforeEach(() => {
   });
   registry.addCustomPolicy("alpha", {
     name: entry.policyName,
-    content: "network_policies: {}\n",
+    content: bridge.buildMcpBridgePolicyYaml(
+      entry.server,
+      entry.url,
+      entry.adapter,
+      { addresses: ["8.8.8.8"] },
+      entry.providerName,
+    ),
     sourcePath: "generated:nemoclaw-mcp-bridge",
   });
 });
