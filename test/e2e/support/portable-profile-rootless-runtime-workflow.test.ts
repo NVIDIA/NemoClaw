@@ -13,8 +13,8 @@ function rootlessLinuxStep(name: string): WorkflowStep {
 }
 
 describe("portable profile rootless runtime workflow", () => {
-  // source-shape-contract: compatibility -- Rootless Vitest must compile the exact candidate catalogue before imports run
-  it("compiles the managed-inference catalogue after dependencies and before the live test (#9680)", () => {
+  // source-shape-contract: compatibility -- The rootless workflow must compile the exact candidate managed inference catalogue before the live E2E test imports it
+  it("compiles the managed inference catalogue after dependency installation and before the live E2E test (#9680)", () => {
     const workflow = readYaml<Workflow>(".github/workflows/portable-profile-e2e.yaml");
     const steps = workflow.jobs["rootless-linux"]?.steps ?? [];
     const dependencyInstallIndex = steps.findIndex(
