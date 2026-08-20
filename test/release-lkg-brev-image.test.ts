@@ -146,7 +146,7 @@ afterEach(() => {
 });
 
 describe("LKG production image workflow", () => {
-  // source-shape-contract: security -- The LKG caller must keep its production-only trigger, permissions, action pins, and dispatch credential on reviewed workflow boundaries
+  // source-shape-contract: security -- The LKG caller must keep its production-only trigger, permissions, action pins, and dispatch credential on reviewed workflow and process boundaries
   it("keeps the LKG credential on the production-only dispatch step (#9798)", () => {
     const workflow = readYaml<Workflow>(".github/workflows/release-lkg-brev-image.yaml");
 
@@ -189,6 +189,11 @@ describe("LKG production image workflow", () => {
     expect(serialized).not.toContain("id-token");
     expect(serialized).not.toContain("build-lkg-image.yml");
     expect(serialized).not.toContain("build-daily-image.yml");
+
+    const scriptSource = fs.readFileSync(scriptPath, "utf8");
+    expect(scriptSource).toContain("\nunset GH_DEBUG\n");
+    expect(scriptSource).toContain('GH_TOKEN="$NEMOCLAW_IMAGE_DISPATCH_TOKEN" gh api');
+    expect(scriptSource).not.toMatch(/\benv[^\n]*GH_TOKEN=/u);
   });
 });
 
