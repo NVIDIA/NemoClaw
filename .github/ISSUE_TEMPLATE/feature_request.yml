@@ -21,13 +21,80 @@ body:
     validations:
       required: true
 
+  - type: markdown
+    attributes:
+      value: |
+        ## Proposal Details
+
+        Answer each required proposal-detail field.
+        If a field does not apply, enter `Not applicable` and explain why.
+        If the answer is unknown, enter `Unknown` and state what must be decided.
+
   - type: textarea
     id: constraints
     attributes:
-      label: Constraints and Non-goals
-      description: List only current constraints or exclusions that materially change the solution.
+      label: Scope and Exclusions
+      description: |
+        State what the proposal includes and excludes.
+        List current constraints that materially change the solution.
     validations:
-      required: false
+      required: true
+
+  - type: textarea
+    id: ownership
+    attributes:
+      label: Ongoing Ownership
+      description: |
+        Who will maintain this contribution after merge?
+        Name the proposed person or team.
+    validations:
+      required: true
+
+  - type: textarea
+    id: placement_support
+    attributes:
+      label: Placement and Support Expectations
+      description: |
+        Request placement in core NemoClaw or NemoClaw Community.
+        State the support expected after merge.
+        Maintainers make the final placement and support decision.
+        Refer to [Community Solutions](https://github.com/NVIDIA/NemoClaw/blob/main/docs/resources/community-contributions.mdx).
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation_plan
+    attributes:
+      label: Validation Plan
+      description: |
+        List the tests, documentation, security analysis, compatibility evidence,
+        or runtime validation required to evaluate this proposal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility Requirements
+      description: |
+        List the versions, operating systems, hardware, providers, and runtimes
+        that this proposal is expected to work with. State any exclusions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: security_privacy
+    attributes:
+      label: Security or Privacy Impact
+      description: |
+        Describe changes to permissions, credentials, personal data, network access,
+        execution boundaries, or third-party trust.
+        Do not include credential values, personal data, or confidential customer
+        or partner information.
+        Do not report a vulnerability in this issue.
+        Follow [SECURITY.md](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md).
+    validations:
+      required: true
 
   - type: textarea
     id: implementation

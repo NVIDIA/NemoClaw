@@ -41,19 +41,12 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 2. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 4. Opens one Pi session per model lane and performs exactly two normal turns.
-5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, prior findings, positives, and limitations in one coherent pass.
+5. The `investigate` turn has repo-confined `read`, `grep`, `find`, and `ls` tools, deterministic PR context tools, and trusted terminology tracing. It examines scope, architecture and simplicity, terminology, correctness, acceptance, source-of-truth behavior, all security categories, tests, CI and operations, E2E coverage, positives, and limitations in one coherent pass.
 6. The `challenge-and-record` turn keeps repository reads and adds `record_findings`, `record_review_receipt`, `recommend_e2e`, and `submit_review`. The first three replace complete in-memory draft sections. They do not update canonical state.
-7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema.
-   A successful call validates and assembles pending state, then ends the turn.
-   The session runner atomically commits that state only after accepting the complete terminal flow.
-   Failed validation does not mutate canonical state.
-   The `challenge-and-record` turn accepts one failed call followed by one successful call in one SDK response.
-   If the first response settles after the failed call, the controller can request one tool-only continuation.
-   Omission, provider failure, unsettled calls, extra attempts, or activity after success fail closed and discard pending state.
-8. Trusted code writes the session transcript, finding, terminology, result, summary, and detailed-review artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
+7. `submit_review` validates the complete draft, deterministic E2E floors and allowlists, terminology trace bindings, finding references, and the public result schema. A successful call validates and assembles pending state, then ends the turn. The session runner atomically commits that state only after accepting the complete terminal flow. Failed validation does not mutate canonical state. The `challenge-and-record` turn permits one bounded repair: it accepts one failed call followed by one successful call in the same SDK response, or, if the failed call settles the response, one tool-only continuation. Omission, provider failure, unsettled calls, extra attempts, or activity after success fail closed and discard pending state.
+8. Trusted code writes the session transcript, result, and summary artifacts. The trusted publisher posts only validated artifacts for the same pull request commit.
 9. The primary GPT-5.6 Terra lane publishes the sticky comment. The Nemotron Ultra lane remains an artifact-only evaluation lane.
     The evaluation lane does not publish another review.
-    Previous sticky-comment ingestion is disabled for both lanes.
 
 `investigate-turn.mts` and `challenge-and-record-turn.mts` own the two normal turn contracts, including their prompts and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `artifacts.mts` owns artifact paths, and `render-result.mts` owns human-readable result output. `analyze.mts` composes these modules and runs the session.
 
@@ -95,7 +88,6 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target.
   The rendered comment preserves its hidden identity metadata while enforcing a 60 KiB UTF-8 limit, and publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
-- Both analysis lanes currently set `PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW=false`. The primary lane publishes a sticky comment; the Nemotron lane is artifact-only. `collectGitHubContext` loads previous Advisor comments only when that setting is `true` and a provenance collector is available. Otherwise it sets `previousAdvisorReview` to `null`. Any future enablement must validate comment provenance before previous review content becomes model context; marker text or mutable comment metadata alone is not sufficient.
 - During rollout, non-default advisor lanes may see an older trusted `main` checkout that has the workflow matrix but not the matching model support. The workflow treats that as trusted-main rollout skew and writes low-confidence skip artifacts in the lane-specific artifact directory. Do not run PR-controlled advisor code to bypass this gate; remove the gate only after the trusted `main` implementation always supports the parallel advisor lane.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed
   invariant and required job for missing evidence. The trusted E2E normalizer restores any listed
@@ -153,12 +145,9 @@ instead of failing closed without artifacts.
 
 ## Artifacts
 
-- `pr-review-advisor-result.json` — normalized advisor result with findings projected from the canonical open ledger records, or execution metadata when analysis is unavailable.
-- `pr-review-advisor-final-result.json` — normalized canonical result used for comments.
-- `pr-review-advisor-finding-ledger.json` — open submitted findings with stable IDs and their addition history, refreshed after every settled turn.
-- `pr-review-advisor-terminology-ledger.json` — the canonical terminology receipt for the head commit, including decisions that reference a trusted trace, refreshed after every settled turn.
+- `pr-review-advisor-result.json` — validated advisor result, or execution metadata when analysis is unavailable.
+- `pr-review-advisor-final-result.json` — canonical result used for comments.
 - `pr-review-advisor-summary.md` — markdown summary used in the job summary.
-- `pr-review-advisor-detailed-review.md` — expanded acceptance, security, and source-of-truth review details.
 - `pr-review-advisor-session.html` — complete two-turn session transcript for debugging, including embedded session JSON, prompts, context reads, draft tools, validation, and bounded repair when used.
 
 The parallel Nemotron Ultra lane writes the same filenames under
@@ -218,11 +207,12 @@ native, YAGNI, or shrink tags; those suggestions must keep validation, security,
 and required tests intact. A blocker keeps its evidence and required outcome in the blocker card.
 Its simplification metadata renders once in a brief `Recommended refactoring` section below the
 blockers.
-The canonical ledger normalizer reports `merge_as_is` only when a completed, non-low-confidence review
-has no open findings.
-It reports `merge_after_fixes` when any blocker, warning, or suggestion remains open.
-It reserves `info_only` for skipped, unavailable, incomplete, or low-confidence review evidence, and reports
-`superseded` when competing work replaces the PR.
+Trusted submission derives `merge_after_fixes` when findings remain and `info_only` for low-confidence
+review evidence. A finding-free `superseded` request succeeds only when deterministic context identifies
+an open PR that explicitly replaces the PR under review. Without that evidence, `submit_review` rejects
+the request and discards pending state. A `superseded` request with findings becomes
+`merge_after_fixes`. Other finding-free reviews become `merge_as_is`. Failure output can also use
+`info_only`.
 These recommendations describe advisor findings only.
 They never approve a PR, replace required human review, or change the repository's merge gates.
 Warnings identify concerns that maintainers can accept without author action. Suggestions identify

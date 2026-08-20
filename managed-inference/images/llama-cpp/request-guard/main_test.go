@@ -119,6 +119,8 @@ func TestParseConfigRequiresEveryDeclaredValue(t *testing.T) {
 		"--port", "8082",
 		"--api-key-file", llamaServerAPIKeyPath,
 		"--n-predict", "4096",
+		"--jinja",
+		"--chat-template-kwargs", `{"reasoning_strength":"low"}`,
 		"--no-ui",
 		"--no-slots",
 		"--no-mmproj",

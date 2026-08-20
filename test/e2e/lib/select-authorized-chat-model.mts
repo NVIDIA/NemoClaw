@@ -1,10 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { probeOpenAiLikeEndpointOptimized } from "../../../src/lib/inference/onboard-probes.ts";
-import { fetchOpenAiLikeModels } from "../../../src/lib/inference/provider-models.ts";
-import { isLoopbackHostname } from "../../../src/lib/core/url-utils.ts";
+import * as urlUtilsModule from "../../../src/lib/core/url-utils.ts";
+import * as onboardProbesModule from "../../../src/lib/inference/onboard-probes.ts";
+import * as providerModelsModule from "../../../src/lib/inference/provider-models.ts";
 import type { ModelCatalogFetchResult } from "../../../src/lib/onboard/types.ts";
+
+function unwrapCommonJsModule<T extends object>(module: T): T {
+  return (module as T & { default?: T }).default ?? module;
+}
+
+const { isLoopbackHostname } = unwrapCommonJsModule(urlUtilsModule);
+const { probeOpenAiLikeEndpointOptimized } = unwrapCommonJsModule(onboardProbesModule);
+const { fetchOpenAiLikeModels } = unwrapCommonJsModule(providerModelsModule);
 
 const CHAT_MODEL_HINT = /(?:claude|deepseek|gemma|gpt|kimi|llama|mistral|nemotron|phi|qwen)/iu;
 const NON_CHAT_MODEL_HINT =
