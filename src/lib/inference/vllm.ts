@@ -24,7 +24,7 @@ import { runCurlProbe } from "../adapters/http/probe";
 import { CLI_NAME } from "../cli/branding";
 import { warnLine } from "../cli/terminal-style";
 import { markPhaseActivity } from "../core/phase-activity";
-import { VLLM_PORT } from "../core/ports";
+import { VLLM_PORT } from "../core/vllm-port";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
 import { runCapture } from "../runner";
@@ -1652,12 +1652,6 @@ async function runVllmInstall(
       );
       return { ok: false };
     }
-    if (String(process.env.NEMOCLAW_VLLM_PORT ?? "").trim()) {
-      console.error(
-        "  vLLM install failed: this local model profile uses fixed port 8000 and does not accept NEMOCLAW_VLLM_PORT.",
-      );
-      return { ok: false };
-    }
   }
   const managedCluster = hostLocalSelection
     ? { kind: "not-selected" as const }
@@ -1864,12 +1858,6 @@ async function runVllmInstall(
         imageUnpackedSizeBytes: undefined,
         loadTimeoutSec: dualStationPlan.runtime.loadTimeoutSeconds,
       };
-      if (VLLM_PORT !== 8000) {
-        console.error(
-          "  Dual DGX Station setup requires the default vLLM port 8000; unset NEMOCLAW_VLLM_PORT and retry.",
-        );
-        return { ok: false };
-      }
       if (extraServeArgs.length > 0) {
         console.error(
           `  Dual DGX Station setup does not accept ${VLLM_EXTRA_ARGS_ENV}; the verified distributed launch is fixed.`,
