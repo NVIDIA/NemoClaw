@@ -73,6 +73,13 @@ function finding(title = "The refusal is hidden") {
     verificationHint: "Assert the refusal result.",
     missingRegressionTest: "Add a refusal-path test.",
     evidence: ["tools/pr-review-advisor/review-submission.mts:7 returns success"],
+    receiptConcerns: [
+      "acceptance:Propagate refusal",
+      "acceptance:Cover refusal regression",
+      "acceptance:Clause",
+      `security:${SECURITY_CATEGORY_NAMES[0]}`,
+      "source-of-truth:config",
+    ],
     basis: {
       kind: "behavior_mismatch",
       observed: "The refusal path returns success.",
@@ -738,7 +745,7 @@ describe("PR review advisor submission tools", () => {
     await execute(duplicateSecurity, RECORD_REVIEW_RECEIPT_TOOL, duplicateReceipt);
     await execute(duplicateSecurity, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(duplicateSecurity, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
-      `unsupported or duplicate: ${SECURITY_CATEGORY_NAMES[0]}`,
+      `securityCategories contains duplicate receipt concern security:${SECURITY_CATEGORY_NAMES[0]}`,
     );
 
     const badReference = controller();
@@ -978,6 +985,63 @@ describe("PR review advisor submission tools", () => {
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toBeDefined();
+  });
+
+  it.each([
+    [
+      "acceptance",
+      (draft: ReturnType<typeof receipt>) => {
+        draft.acceptanceCoverage = [
+          { clause: "Repeated", status: "missing", evidence: "one", findingId: "F-001" },
+          { clause: "Repeated", status: "partial", evidence: "two", findingId: "F-001" },
+        ];
+      },
+      "acceptanceCoverage contains duplicate receipt concern acceptance:Repeated",
+    ],
+    [
+      "source of truth",
+      (draft: ReturnType<typeof receipt>) => {
+        draft.acceptanceCoverage = [];
+        draft.sourceOfTruthReview = [
+          { surface: "config", status: "missing", findingId: "F-001", invalidState: "one", sourceBoundary: "source", whyNotSourceFix: "none", regressionTest: "test", removalCondition: "fixed", evidence: "one" },
+          { surface: "config", status: "needs_followup", findingId: "F-001", invalidState: "two", sourceBoundary: "source", whyNotSourceFix: "none", regressionTest: "test", removalCondition: "fixed", evidence: "two" },
+        ];
+      },
+      "sourceOfTruthReview contains duplicate receipt concern source-of-truth:config",
+    ],
+  ] as const)("rejects duplicate %s receipt concern identities", async (_name, mutate, message) => {
+    const submission = controller();
+    const draft = receipt();
+    mutate(draft);
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(message);
+  });
+
+  it("rejects a compatible finding linked to a different receipt concern", async () => {
+    const submission = controller();
+    const draft = receipt();
+    draft.acceptanceCoverage = [
+      { clause: "First", status: "missing", evidence: "line 1", findingId: "F-001" },
+      { clause: "Second", status: "partial", evidence: "line 2", findingId: "F-001" },
+    ];
+    await execute(submission, RECORD_FINDINGS_TOOL, {
+      findings: [
+        {
+          ...finding(),
+          severity: "blocker",
+          category: "acceptance",
+          basis: { ...finding().basis, kind: "unmet_acceptance" },
+          receiptConcerns: ["acceptance:First"],
+        },
+      ],
+    });
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "acceptanceCoverage[2] references F-001, but that finding does not name receipt concern acceptance:Second",
+    );
   });
 
   it("rejects two concerns that share one wrong finding ID without mutation", async () => {

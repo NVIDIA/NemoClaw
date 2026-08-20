@@ -53,6 +53,7 @@ const findingSchema = Type.Object(
     verificationHint: text,
     missingRegressionTest: text,
     evidence: Type.Array(text, { minItems: 1 }),
+    receiptConcerns: Type.Optional(Type.Array(text, { minItems: 1, uniqueItems: true })),
     basis: Type.Object(
       {
         kind: Type.Union(REVIEW_FINDING_BASIS_KINDS.map((value) => Type.Literal(value))),
@@ -322,7 +323,7 @@ export function createReviewSubmissionController({
     name: RECORD_FINDINGS_TOOL,
     label: "Record review findings draft",
     description:
-      "Replace the complete findings draft and return stable IDs. Omit simplification for ordinary findings; provide the simplification object only for basis.kind=unnecessary_complexity. Canonical state changes only after successful terminal submission.",
+      "Replace the complete findings draft and return stable IDs. Omit simplification for ordinary findings; provide it only for basis.kind=unnecessary_complexity. When a receipt concern will link this finding, list each exact association in receiptConcerns as acceptance:<clause>, security:<category>, or source-of-truth:<surface>. Canonical state changes only after successful terminal submission.",
     parameters: Type.Object(
       { findings: Type.Array(findingSchema, { maxItems: REVIEW_FINDING_LIMIT }) },
       { additionalProperties: false },
@@ -549,6 +550,7 @@ function validateReceiptFindingReferences(
     findingsById,
     (entry) => entry.status === "partial" || entry.status === "missing",
     (finding) => ACCEPTANCE_FINDING_PAIRS.has(findingPair(finding)),
+    (entry) => `acceptance:${String(entry.clause)}`,
     (entry) => (entry.status === "missing" ? "blocker" : "warning"),
   );
   validateConcernEntries(
@@ -557,6 +559,7 @@ function validateReceiptFindingReferences(
     findingsById,
     (entry) => entry.verdict === "warning" || entry.verdict === "fail",
     (finding) => SECURITY_FINDING_PAIRS.has(findingPair(finding)),
+    (entry) => `security:${String(entry.category)}`,
     (entry) => (entry.verdict === "fail" ? "blocker" : "warning"),
   );
   validateConcernEntries(
@@ -565,6 +568,7 @@ function validateReceiptFindingReferences(
     findingsById,
     (entry) => entry.status === "needs_followup" || entry.status === "missing",
     (finding) => SOURCE_OF_TRUTH_FINDING_CATEGORIES.has(finding.category),
+    (entry) => `source-of-truth:${String(entry.surface)}`,
   );
 }
 
@@ -574,10 +578,17 @@ function validateConcernEntries(
   findingsById: ReadonlyMap<string, CandidateFindingInput>,
   requiresFinding: (entry: Record<string, unknown>) => boolean,
   fitsConcern: (finding: CandidateFindingInput) => boolean,
+  concernKey: (entry: Record<string, unknown>) => string,
   minimumSeverity?: (entry: Record<string, unknown>) => (typeof REVIEW_FINDING_SEVERITIES)[number],
 ): void {
-  for (const [index, rawEntry] of entries.entries()) {
-    const entry = rawEntry as Record<string, unknown>;
+  const typedEntries = entries as readonly Record<string, unknown>[];
+  const concernKeys = typedEntries.map(concernKey);
+  const duplicateConcern = concernKeys.find((key, index) => concernKeys.indexOf(key) !== index);
+  if (duplicateConcern) {
+    throw new Error(`${section} contains duplicate receipt concern ${duplicateConcern}`);
+  }
+  for (const [index, entry] of typedEntries.entries()) {
+    const expectedConcern = concernKeys[index]!;
     const required = requiresFinding(entry);
     const findingId = entry.findingId;
     if (!required && findingId !== null)
@@ -596,6 +607,11 @@ function validateConcernEntries(
       throw new Error(
         `${section}[${index + 1}] references ${findingId} (${finding.category}/${finding.basis.kind}), which does not fit this concern. Remove the reference when this entry does not report a concern, or record and reference a finding for this exact concern.`,
       );
+    if (!finding.receiptConcerns?.includes(expectedConcern)) {
+      throw new Error(
+        `${section}[${index + 1}] references ${findingId}, but that finding does not name receipt concern ${expectedConcern}. Add the exact association to the finding receiptConcerns.`,
+      );
+    }
     if (!minimumSeverity) continue;
     const requiredSeverity = minimumSeverity(entry);
     const actualRank = REVIEW_FINDING_SEVERITIES.indexOf(finding.severity);
