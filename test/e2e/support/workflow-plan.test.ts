@@ -1033,6 +1033,12 @@ describe("E2E workflow plan", () => {
     const malformedPlans = [
       missingField,
       { ...validPlan, matrix: [...validPlan.matrix, { ...registryRow }] },
+      {
+        ...validPlan,
+        matrix: validPlan.matrix.map((row, index) =>
+          index === 0 ? { ...row, timeout_minutes: 0 } : row,
+        ),
+      },
       { ...validPlan, testMatrix: [{ ...testRow, id: "invalid_id" }] },
       {
         ...validPlan,
