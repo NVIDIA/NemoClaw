@@ -81,7 +81,10 @@ function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
 
 function hostLocalFixtureCatalog(): CompiledManagedInferenceCatalog {
   const catalog = shippedCatalog();
-  const sourceRecipe = catalog.recipes.find(isHostLocalInferenceServingRecipe);
+  const sourceRecipe = catalog.recipes.find(
+    (recipe): recipe is HostLocalInferenceServingRecipe =>
+      isHostLocalInferenceServingRecipe(recipe) && recipe.spec.runtime.architecture === "arm64",
+  );
   expect(sourceRecipe).toBeDefined();
   const sourcePreset = catalog.presets.find(
     ({ spec }) => spec.plan.recipeRef === sourceRecipe!.metadata.id,
@@ -121,27 +124,32 @@ function catalogReadinessEntities(
     "readiness" in requirement ? [requirement.readiness] : [],
   );
   return {
-    observations: readinessRequirements.flatMap((readiness) =>
-      readiness.kind !== "observation"
-        ? []
-        : "state" in readiness
-          ? [
-              {
-                id: readiness.id,
-                state: readiness.state as SystemReadinessReport["observations"][number]["state"],
-              },
-            ]
-          : [
-              {
-                id: readiness.id,
-                state: "present" as const,
-                value:
-                  readiness.comparison.operator === "one-of"
-                    ? readiness.comparison.values[0]
-                    : readiness.comparison.value,
-              },
-            ],
-    ),
+    observations: [
+      ...readinessRequirements.flatMap((readiness) =>
+        readiness.kind !== "observation"
+          ? []
+          : "state" in readiness
+            ? [
+                {
+                  id: readiness.id,
+                  state: readiness.state as SystemReadinessReport["observations"][number]["state"],
+                },
+              ]
+            : [
+                {
+                  id: readiness.id,
+                  state: "present" as const,
+                  value:
+                    readiness.comparison.operator === "one-of"
+                      ? readiness.comparison.values[0]
+                      : readiness.comparison.value,
+                },
+              ],
+      ),
+      { id: "host.gpu.unified_memory", state: "present", value: true },
+      { id: "host.gpu.memory_total_bytes", state: "present", value: 500_000_000_000 },
+      { id: "host.gpu.memory_per_device_bytes", state: "present", value: 500_000_000_000 },
+    ],
     capabilities: readinessRequirements.flatMap((readiness) =>
       readiness.kind === "capability"
         ? [
@@ -332,6 +340,54 @@ describe("managed inference resolver", () => {
     expect(result).not.toHaveProperty("topologyQualification");
   });
 
+  it("resolves a direct model slug only after its full host requirements match", () => {
+    const catalog = hostLocalFixtureCatalog();
+    const recipe = catalog.recipes[0] as HostLocalInferenceServingRecipe;
+    const report = readinessReport({}, catalog.presets[0]!);
+    const result = resolveManagedInferenceServing(
+      {
+        readinessReports: [{ nodeId: "host", report }],
+        topologyQualifications: [],
+        intent: { provider: "vllm", vllmModel: recipe.spec.model.environmentValue },
+        now: NOW,
+      },
+      catalog,
+    );
+
+    expect(result).toMatchObject({
+      outcome: "selected",
+      selection: "explicit",
+      preset: { metadata: { id: catalog.presets[0]!.metadata.id } },
+    });
+  });
+
+  it("rejects a direct model before materialization when GPU memory is below its floor", () => {
+    const catalog = hostLocalFixtureCatalog();
+    const recipe = catalog.recipes[0] as HostLocalInferenceServingRecipe;
+    const base = readinessReport({}, catalog.presets[0]!);
+    const report = {
+      ...base,
+      observations: base.observations.map((observation) =>
+        observation.id === "host.gpu.memory_total_bytes" ||
+        observation.id === "host.gpu.memory_per_device_bytes"
+          ? { ...observation, value: 1 }
+          : observation,
+      ),
+    } as SystemReadinessReport;
+
+    expect(
+      resolveManagedInferenceServing(
+        {
+          readinessReports: [{ nodeId: "host", report }],
+          topologyQualifications: [],
+          intent: { vllmModel: recipe.spec.model.environmentValue },
+          now: NOW,
+        },
+        catalog,
+      ),
+    ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
+  });
+
   it("materializes a host-local selection into the existing single-Spark runtime (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
     const presetId = catalog.presets[0]!.metadata.id;
@@ -351,6 +407,7 @@ describe("managed inference resolver", () => {
     const baseProfile = {
       name: "DGX Spark",
       platform: "spark",
+      architecture: "arm64",
       image: "example.invalid/vllm@sha256:" + "a".repeat(64),
       imageDownloadSizeBytes: 1,
       defaultModel: {} as never,
@@ -366,16 +423,15 @@ describe("managed inference resolver", () => {
       recipeId: catalog.recipes[0]!.metadata.id,
       profile: {
         platform: "spark",
-        servingCatalog: {
-          presetId,
-          recipeId: catalog.recipes[0]!.metadata.id,
-        },
       },
       model: {
         id: catalog.recipes[0]!.spec.model.id,
         platforms: ["spark"],
       },
     });
+    expect(selected.profile.servingCatalog).toBeUndefined();
+    expect(selected.model.managedBearerAuth).toBeUndefined();
+    expect(selected.model.fixedServeCommand).toBeUndefined();
   });
 
   it("selects the shipped automatic preset from catalog data", () => {
@@ -629,6 +685,17 @@ describe("managed inference resolver", () => {
             { id: "host.os.architecture", state: "present", value: "arm64" },
             { id: "host.gpu.count", state: "present", value: 1 },
             { id: "host.gpu.driver_version", state: "present", value: "580.65.06" },
+            { id: "host.gpu.unified_memory", state: "present", value: true },
+            {
+              id: "host.gpu.memory_total_bytes",
+              state: "present",
+              value: 500_000_000_000,
+            },
+            {
+              id: "host.gpu.memory_per_device_bytes",
+              state: "present",
+              value: 500_000_000_000,
+            },
           ],
         }),
       }));
@@ -750,22 +817,41 @@ describe("managed inference resolver", () => {
     expect(Object.isFrozen(selected.topologyQualification.output)).toBe(true);
   });
 
-  it.each([
-    { name: "provider", intent: { provider: "vllm" } },
-    { name: "model", intent: { vllmModel: "another/model" } },
-    {
-      name: "extra arguments",
-      intent: { vllmExtraArguments: ["--another-option"] },
-    },
-  ])("leaves existing $name intent authoritative for automatic selection", ({ intent }) => {
+  it("leaves unmodeled extra arguments authoritative for automatic selection", () => {
     expect(
       resolveManagedInferenceServing({
         readinessReports: [],
         topologyQualifications: [],
-        intent,
+        intent: { vllmExtraArguments: ["--another-option"] },
         now: NOW,
       }),
     ).toMatchObject({ outcome: "no-match", code: "explicit-intent" });
+  });
+
+  it("ignores blank extra arguments during declarative selection", () => {
+    expect(
+      resolveManagedInferenceServing(
+        resolverInput({ intent: { vllmExtraArguments: ["", "   "] } }),
+      ),
+    ).toMatchObject({ outcome: "selected" });
+  });
+
+  it.each([
+    { intent: { provider: "vllm" }, outcome: "no-match", code: "requirements-not-met" },
+    {
+      intent: { vllmModel: "another/model" },
+      outcome: "rejected",
+      code: "requirements-not-met",
+    },
+  ] as const)("routes declarative provider and model intent through selection", (expected) => {
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [],
+        topologyQualifications: [],
+        intent: expected.intent,
+        now: NOW,
+      }),
+    ).toMatchObject({ outcome: expected.outcome, code: expected.code });
   });
 
   it("rejects an unknown explicit preset", () => {
