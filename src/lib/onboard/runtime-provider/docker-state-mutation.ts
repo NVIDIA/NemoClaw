@@ -1444,6 +1444,32 @@ function parseHelperTransportResult(
   };
 }
 
+function helperFailureCode(stderr: string, action: HelperAction): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stderr);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const failure = parsed as Record<string, unknown>;
+  return failure.schemaVersion === 1 &&
+    failure.action === action &&
+    failure.status === "failed" &&
+    typeof failure.code === "string" &&
+    /^[a-z][a-z0-9-]{0,127}$/u.test(failure.code)
+    ? failure.code
+    : null;
+}
+
+function requireHelperSuccess(result: ContainerEngineCommandResult, action: HelperAction): string {
+  if (result.error || result.status !== 0 || result.stderr.length !== 0) {
+    const code = helperFailureCode(result.stderr, action);
+    fail(`root helper ${action} did not complete successfully${code ? `: ${code}` : ""}`);
+  }
+  return result.stdout;
+}
+
 function invokeHelperTransport(
   capture: HelperTransportCapture,
   options: ContainerStateMutationOwnerOptions,
@@ -1490,10 +1516,7 @@ function invokeHelperTransport(
     );
     return parsed;
   });
-  return parseHelperReceipt(
-    requireCommandSuccess(result, `root helper ${action}`),
-    options.providerId,
-  );
+  return parseHelperReceipt(requireHelperSuccess(result, action), options.providerId);
 }
 
 function supervisorSignalCommand(runtimeId: string, requestedSignal: "SIGSTOP" | "SIGCONT") {
