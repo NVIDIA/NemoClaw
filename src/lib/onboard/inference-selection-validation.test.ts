@@ -17,6 +17,11 @@ const resumableValidationExit = {
   name: "OnboardDeferredExitError",
   preserveIncompleteSession: true,
 };
+const terminalValidationExit = {
+  code: 1,
+  name: "OnboardDeferredExitError",
+  preserveIncompleteSession: false,
+};
 
 describe("inference selection validation", () => {
   it.each([
@@ -219,7 +224,7 @@ describe("inference selection validation", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const promptValidationRecovery = vi.fn(async () => "selection" as const);
-    const teardownOrphanManagedGatewayOnAbort = vi.fn();
+    const teardownOrphanManagedGatewayOnAbort = vi.fn(() => true);
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => true,
       agentProductName: () => "OpenClaw",
@@ -582,7 +587,7 @@ describe("inference selection validation", () => {
       probeAnthropicEndpoint,
       promptValidationRecovery: vi.fn(async () => "selection" as const),
       resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
-      teardownOrphanManagedGatewayOnAbort: vi.fn(),
+      teardownOrphanManagedGatewayOnAbort: vi.fn(() => true),
     });
 
     try {
@@ -605,7 +610,7 @@ describe("inference selection validation", () => {
 
   it("tears down an orphan managed gateway before non-interactive validation exit (#8952)", async () => {
     const originalExitCode = process.exitCode;
-    const teardownOrphanManagedGatewayOnAbort = vi.fn();
+    const teardownOrphanManagedGatewayOnAbort = vi.fn(() => true);
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const helpers = createInferenceSelectionValidationHelpers({
@@ -636,7 +641,40 @@ describe("inference selection validation", () => {
     }
   });
 
-  it("still exits when abort teardown throws during non-interactive validation (#8952)", async () => {
+  it("keeps validation exit terminal when abort teardown is incomplete (#9732)", async () => {
+    const originalExitCode = process.exitCode;
+    const teardownOrphanManagedGatewayOnAbort = vi.fn(() => false);
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint: vi.fn(),
+      teardownOrphanManagedGatewayOnAbort,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic",
+          "https://metadata-name.example/v1",
+          "model-a",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+        ),
+      ).rejects.toMatchObject(terminalValidationExit);
+      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
+      expect(exit).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = originalExitCode;
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("keeps validation exit terminal when abort teardown throws (#8952)", async () => {
     const originalExitCode = process.exitCode;
     const teardownOrphanManagedGatewayOnAbort = vi.fn(() => {
       throw new Error("teardown boom");
@@ -661,7 +699,7 @@ describe("inference selection validation", () => {
           "model-a",
           "COMPATIBLE_ANTHROPIC_API_KEY",
         ),
-      ).rejects.toMatchObject(resumableValidationExit);
+      ).rejects.toMatchObject(terminalValidationExit);
       expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledTimes(1);
       expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain("teardown boom");
       expect(exit).not.toHaveBeenCalled();
@@ -1003,7 +1041,7 @@ exit 0
       probeOpenAiLikeEndpoint,
       promptValidationRecovery,
       resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
-      teardownOrphanManagedGatewayOnAbort: vi.fn(),
+      teardownOrphanManagedGatewayOnAbort: vi.fn(() => true),
     });
 
     try {

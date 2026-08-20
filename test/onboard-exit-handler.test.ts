@@ -101,7 +101,7 @@ describe("onboard exit handler registration", () => {
     expect(loaded.machine.state).toBe("init");
   });
 
-  it("preserves and resumes an incomplete validation session while unexpected exits still fail (#9732)", () => {
+  it("resumes clean validation exits while cleanup failures and unexpected exits stay terminal (#9732)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const scriptPath = path.join(tmpDir, "onboard-exit-registration.cjs");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
@@ -153,7 +153,8 @@ const validationHelpers = validation.createInferenceSelectionValidationHelpers({
     failures: [{ name: "Chat Completions API", httpStatus: 503 }],
   }),
   resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
-  teardownOrphanManagedGatewayOnAbort: () => {},
+  teardownOrphanManagedGatewayOnAbort: () =>
+    process.env.NEMOCLAW_TEST_EXIT_KIND !== "validation-cleanup-failure",
   promptValidationRecovery: async () => "selection",
 });
 
@@ -171,7 +172,7 @@ flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
     throw resumeSentinel;
   }
   await runtime.markStepStarted("preflight");
-  if (process.env.NEMOCLAW_TEST_EXIT_KIND === "validation") {
+  if (process.env.NEMOCLAW_TEST_EXIT_KIND?.startsWith("validation")) {
     await validationHelpers.validateCustomOpenAiLikeSelection(
       "Custom endpoint",
       "https://endpoint.test/v1",
@@ -202,7 +203,7 @@ const { onboard } = require(${onboardPath});
       console.log(JSON.stringify({ loaded, resumeEvidence, exitListeners: exitListeners.length }));
       return;
     }
-    const validationExit = process.env.NEMOCLAW_TEST_EXIT_KIND === "validation";
+    const validationExit = process.env.NEMOCLAW_TEST_EXIT_KIND?.startsWith("validation");
     if (
       (!validationExit && error !== sentinel && error?.message !== sentinel.message) ||
       (validationExit && error?.message !== "process.exit:1")
@@ -225,7 +226,10 @@ const { onboard } = require(${onboardPath});
 `,
     );
 
-    const runOnboard = (home: string, exitKind: "unexpected" | "validation" | "resume") =>
+    const runOnboard = (
+      home: string,
+      exitKind: "unexpected" | "validation" | "validation-cleanup-failure" | "resume",
+    ) =>
       spawnSync(process.execPath, [scriptPath, ...(exitKind === "resume" ? ["--resume"] : [])], {
         cwd: repoRoot,
         encoding: "utf8",
@@ -272,6 +276,22 @@ const { onboard } = require(${onboardPath});
     expect(validationPayload.loaded.machine.state).toBe("init");
     expect(validationPayload.loaded.checkpoint).not.toBeNull();
     expect(validationPayload.loaded.checkpoint?.machineState).toBe("init");
+
+    const cleanupFailureHome = path.join(tmpDir, "validation-cleanup-failure-home");
+    fs.mkdirSync(cleanupFailureHome);
+    const cleanupFailureResult = runOnboard(cleanupFailureHome, "validation-cleanup-failure");
+
+    expect(cleanupFailureResult.status, cleanupFailureResult.stderr).toBe(1);
+    const cleanupFailureLastLine = cleanupFailureResult.stdout.trim().split(/\n/).at(-1) ?? "";
+    const cleanupFailurePayload = JSON.parse(cleanupFailureLastLine) as {
+      loaded: ReturnType<typeof onboardSession.createSession>;
+      exitListeners: number;
+    };
+    expect(cleanupFailurePayload.exitListeners).toBeGreaterThanOrEqual(2);
+    expect(cleanupFailurePayload.loaded.steps.preflight.status).toBe("failed");
+    expect(cleanupFailurePayload.loaded.status).toBe("failed");
+    expect(cleanupFailurePayload.loaded.failure?.step).toBe("preflight");
+    expect(cleanupFailurePayload.loaded.machine.state).toBe("failed");
 
     const resumeResult = runOnboard(validationHome, "resume");
 
