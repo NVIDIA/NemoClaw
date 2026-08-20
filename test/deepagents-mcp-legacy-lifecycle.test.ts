@@ -57,6 +57,7 @@ type ProviderType = "generic" | "nemoclaw-mcp-v1";
 
 let providerExists = true;
 let providerType: ProviderType = "generic";
+let providerResourceVersion = 1;
 let attached = true;
 let adapterRegistered = true;
 let adapterRemovalOutcome = "";
@@ -101,6 +102,7 @@ beforeEach(() => {
 
   providerExists = true;
   providerType = "generic";
+  providerResourceVersion = 1;
   attached = true;
   adapterRegistered = true;
   adapterRemovalOutcome = "";
@@ -120,7 +122,7 @@ beforeEach(() => {
         return providerExists
           ? {
               status: 0,
-              stdout: `Id: ${providerId}\nType: ${providerType}\nResource version: 1\nCredential keys: GITHUB_TOKEN\n`,
+              stdout: `Id: ${providerId}\nType: ${providerType}\nResource version: ${providerResourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };
@@ -138,6 +140,12 @@ beforeEach(() => {
       case args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach":
         attached = true;
         return { status: 0, stdout: "Attached provider", stderr: "" };
+      case args[0] === "provider" &&
+        args[1] === "update" &&
+        args[2] === "alpha-mcp-github" &&
+        args.length === 3:
+        providerResourceVersion += 1;
+        return { status: 0, stdout: "Updated provider", stderr: "" };
       case args[0] === "provider" && args[1] === "delete":
         providerExists = false;
         attached = false;

@@ -3482,6 +3482,11 @@ prepare_restricted_log /tmp/gateway.log gateway:gateway 600
 # shellcheck disable=SC2119
 validate_tmp_permissions
 
+# Migrate and seed the dashboard profile before Hermes reads the shared home.
+# Waiting until dashboard launch leaves restored legacy state in the gateway's
+# HERMES_HOME during its readiness check.
+prepare_hermes_dashboard_home sandbox:sandbox || exit 1
+
 # Start Hermes gateway. Messaging egress goes directly through OpenShell.
 launch_hermes_gateway
 start_gateway_log_stream
