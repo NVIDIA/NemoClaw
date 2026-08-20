@@ -54,6 +54,9 @@ jobs:
       - name: Install root dependencies
         run: npm ci --ignore-scripts
 
+      - name: Compile managed inference catalogue
+        run: npm run catalog:compile
+
       - name: Build shared policy boundary
         run: npm run build:policy-boundary
 
