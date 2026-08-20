@@ -731,6 +731,8 @@ export interface NemotronUltraDistributedServeOptions {
   masterAddr: string;
   /** Routable Ray head port. */
   masterPort: number;
+  /** vLLM API port exposed by the Ray head. */
+  apiPort: number;
   /** Routable address of the node running this command. */
   nodeAddr?: string;
 }
@@ -756,6 +758,9 @@ export function buildNemotronUltraDistributedServeCommand(
     options.masterPort > 65535
   ) {
     throw new Error("Nemotron Ultra distributed masterPort must be an integer from 1 to 65535.");
+  }
+  if (!Number.isInteger(options.apiPort) || options.apiPort < 1024 || options.apiPort > 65535) {
+    throw new Error("Nemotron Ultra distributed apiPort must be an integer from 1024 to 65535.");
   }
   const nodeAddr = (options.nodeAddr ?? masterAddr).trim();
   if (net.isIP(nodeAddr) !== 4) {
@@ -783,6 +788,7 @@ export function buildNemotronUltraDistributedServeCommand(
   const sharedArgs = rewriteVllmArgs(FIXED_HOST_LOCAL_VLLM_ARGS, {
     "--tensor-parallel-size": String(stationPair.tensorParallelSize),
     "--pipeline-parallel-size": String(stationPair.pipelineParallelSize),
+    "--port": String(options.apiPort),
   });
   const modelArgs = rewriteVllmArgs(
     model.modelArgs,
