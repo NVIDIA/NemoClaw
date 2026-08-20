@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import catalogSchema from "../managed-inference/schemas/catalog.schema.json" with { type: "json" };
+import modelSchema from "../managed-inference/schemas/model.schema.json" with { type: "json" };
 import presetSchema from "../managed-inference/schemas/preset.schema.json" with { type: "json" };
 import recipeSchema from "../managed-inference/schemas/recipe.schema.json" with { type: "json" };
 import { getManagedInferenceServingCatalogRegistries } from "../src/lib/inference/serving/adapter-registry.js";
@@ -33,7 +34,7 @@ const MUSE_PROFILE_ID = "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4"
 const MUSE_RECIPE_ID = "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1";
 
 function catalogSources(): ServingCatalogSource[] {
-  return (["presets", "recipes"] as const).flatMap((kind) => {
+  return (["models", "presets", "recipes"] as const).flatMap((kind) => {
     const directory = path.join(REPOSITORY_ROOT, "managed-inference", kind);
     return readdirSync(directory)
       .filter((name) => name.endsWith(".yaml"))
@@ -50,6 +51,7 @@ function compile(sources: readonly ServingCatalogSource[]) {
     sourceRevision: "a".repeat(40),
     schemas: {
       catalog: catalogSchema,
+      model: modelSchema,
       preset: presetSchema,
       recipe: recipeSchema,
     },
@@ -58,6 +60,31 @@ function compile(sources: readonly ServingCatalogSource[]) {
 }
 
 describe("managed inference YAML profile contract", () => {
+  it.each([
+    ["vllm.qwen3-6-27b-fp8.linux-amd64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-27b-fp8.linux-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-27b-fp8.optimized-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1", 64_000_000_000, 0.4, 23_500_000_000],
+  ])(
+    "reserves model-weight headroom within the %s GPU utilization budget",
+    (recipeId, minimumGpuMemoryBytes, utilization, downloadSizeBytes) => {
+      const recipe = compile(catalogSources()).recipes.find(
+        ({ metadata }) => metadata.id === recipeId,
+      );
+
+      expect(recipe?.spec).toMatchObject({
+        model: { downloadSizeBytes },
+        runtime: { minimumGpuMemoryBytes },
+        serve: {
+          arguments: expect.arrayContaining([
+            { name: "--gpu-memory-utilization", value: utilization },
+          ]),
+        },
+      });
+      expect(minimumGpuMemoryBytes * utilization).toBeGreaterThan(downloadSizeBytes * 1.05);
+    },
+  );
+
   it("compiles the shipped managed-cluster profile through the canonical catalog (#8129)", () => {
     const catalog = compile(catalogSources());
     const preset = catalog.presets.find(({ metadata }) => metadata.id === PROFILE_ID);

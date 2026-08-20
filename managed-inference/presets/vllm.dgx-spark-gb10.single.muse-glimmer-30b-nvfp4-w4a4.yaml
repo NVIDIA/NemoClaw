@@ -8,6 +8,9 @@ metadata:
   id: vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4
   displayName: Muse Glimmer 30B NVFP4 W4A4 on one DGX Spark
   supportState: experimental
+  validation:
+    level: schema
+    evidence: managed-inference-catalog-compiler-v1
 
 spec:
   selection: explicit-only
@@ -103,4 +106,6 @@ spec:
 
   plan:
     backend: vllm
+    platform: spark
+    interactive: true
     recipeRef: vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1

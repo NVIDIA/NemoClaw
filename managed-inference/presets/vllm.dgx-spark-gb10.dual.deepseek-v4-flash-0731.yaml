@@ -8,6 +8,9 @@ metadata:
   id: vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731
   displayName: DeepSeek V4 Flash 0731 on two DGX Sparks
   supportState: experimental
+  validation:
+    level: schema
+    evidence: managed-inference-catalog-compiler-v1
 
 spec:
   selection: automatic
@@ -76,6 +79,8 @@ spec:
 
   plan:
     backend: vllm
+    platform: spark
+    interactive: false
     recipeRef: vllm.deepseek-v4-flash-0731.spark-dual.v1
     bindings:
       sparkTopology:
