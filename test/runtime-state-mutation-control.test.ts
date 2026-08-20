@@ -1280,8 +1280,6 @@ describe("runtime state mutation controller", () => {
           engineBindingSha256: "3".repeat(64),
           runtimeId: "1".repeat(64),
           runtimePid: 4812,
-          pidMode: "",
-          privileged: false,
           sandboxIdentitySha256: "4".repeat(64),
           containerMountsSha256: "5".repeat(64),
           stateRoot: "/sandbox/.hermes",

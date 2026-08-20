@@ -1114,8 +1114,6 @@ function runtimeStateSha256(
       ["engineBindingSha256", bindingSha256],
       ["runtimeId", observation.runtimeId],
       ["runtimePid", observation.runtimePid],
-      ["pidMode", observation.pidMode],
-      ["privileged", observation.privileged],
       ["sandboxIdentitySha256", observation.sandboxIdentitySha256],
       ["containerMountsSha256", observation.containerMountsSha256],
       ["stateRoot", stateRoot.stateRoot],

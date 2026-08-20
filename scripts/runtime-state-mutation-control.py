@@ -649,8 +649,6 @@ def _runtime_state_sha256(request: AcquireRequest) -> str:
                 "engineBindingSha256": request.engine_binding_sha256,
                 "runtimeId": request.runtime_id,
                 "runtimePid": request.runtime_pid,
-                "pidMode": "",
-                "privileged": False,
                 "sandboxIdentitySha256": request.sandbox_identity_sha256,
                 "containerMountsSha256": request.container_mounts_sha256,
                 "stateRoot": request.state_root,

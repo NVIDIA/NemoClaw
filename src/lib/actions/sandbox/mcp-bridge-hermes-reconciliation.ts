@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import { sleepMs } from "../../core/wait";
 import { redactFull } from "../../security/redact";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -15,7 +16,8 @@ const HERMES_MCP_INSPECT_TIMEOUT_MS = 60_000;
 const HERMES_MCP_RECONCILIATION_FAILURE =
   "Hermes MCP runtime does not match the persisted managed intent";
 const HERMES_MCP_RACED_SNAPSHOT_DETAIL = "refusing raced Hermes MCP integrity snapshot";
-const HERMES_MCP_RACED_SNAPSHOT_ATTEMPTS = 3;
+const HERMES_MCP_RACED_SNAPSHOT_ATTEMPTS = 6;
+const HERMES_MCP_RACED_SNAPSHOT_RETRY_MS = 500;
 const ANSI_OR_UNSAFE_CONTROL_RE =
   /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
 const DISPLAY_LINE_BREAK_RE = /[\r\n\u2028\u2029]+/g;
@@ -197,6 +199,7 @@ export function assertHermesMcpRuntimeIntent(
     attempt < HERMES_MCP_RACED_SNAPSHOT_ATTEMPTS;
     attempt += 1
   ) {
+    sleepMs(HERMES_MCP_RACED_SNAPSHOT_RETRY_MS);
     inspection = inspectHermesMcpRuntimeIntent(sandboxName, options);
   }
   if (inspection.ok) return;
