@@ -155,6 +155,21 @@ fi
   }
 }
 
+function candidateIndexFilter(step: Step): string {
+  const source = required(step.run, "candidate assembly script is missing");
+  const match = /--arg arm64 [^\n]+ '\n(?<filter>[\s\S]*?)\n\s+' "\$RUNNER_TEMP\/llama-cpp-candidate\/candidate-index\.json"/u.exec(
+    source,
+  );
+  return required(match?.groups?.filter, "candidate index jq filter is missing");
+}
+
+function runCandidateIndexFilter(filter: string, candidate: unknown, amd64: string, arm64: string) {
+  return spawnSync("jq", ["-e", "--arg", "amd64", amd64, "--arg", "arm64", arm64, filter], {
+    encoding: "utf8",
+    input: JSON.stringify(candidate),
+  });
+}
+
 describe("llama.cpp image PR workflow", () => {
   const config = required(workflow.jobs?.config, "config job is missing");
   const build = required(workflow.jobs?.["pr-build"], "native PR build job is missing");
@@ -364,10 +379,48 @@ describe("llama.cpp image PR workflow", () => {
     expect(assembleStep.run).toContain(
       'docker buildx imagetools create --tag "$IMAGE:$CANDIDATE_TAG" "${sources[@]}"',
     );
-    expect(assembleStep.run).toContain("scripts/checks/validate-managed-base-index.sh");
+    expect(assembleStep.run).not.toContain("scripts/checks/validate-managed-base-index.sh");
     expect(assembleStep.run).toContain("candidate-index.json");
     expect(assembleStep.run).toContain("platform-digests.json");
     expect(assembleStep.run).not.toMatch(/latest|stable|release/iu);
+  });
+
+  it("accepts direct platform manifests and rejects descriptor drift (#8231)", () => {
+    const assemble = required(
+      workflow.jobs?.["assemble-candidate"],
+      "candidate assembly job is missing",
+    );
+    const assembleStep = namedStep(assemble, "Assemble candidate index and capture exact digest");
+    const descriptor = (architecture: string, digest: string) => ({
+      digest,
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      platform: { architecture, os: "linux" },
+      size: 4096,
+    });
+    const amd64 = `sha256:${"a".repeat(64)}`;
+    const arm64 = `sha256:${"b".repeat(64)}`;
+    const filter = candidateIndexFilter(assembleStep);
+    const candidate = (manifests: ReturnType<typeof descriptor>[]) => ({
+      manifests,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      schemaVersion: 2,
+    });
+
+    const accepted = runCandidateIndexFilter(
+      filter,
+      candidate([descriptor("amd64", amd64), descriptor("arm64", arm64)]),
+      amd64,
+      arm64,
+    );
+    expect(accepted.status, accepted.stderr).toBe(0);
+
+    const rejected = runCandidateIndexFilter(
+      filter,
+      candidate([descriptor("amd64", arm64), descriptor("arm64", amd64)]),
+      amd64,
+      arm64,
+    );
+    expect(rejected.status).toBe(1);
   });
 
   it("requires an anonymous exact-digest pull after publication and before candidate assembly (#8250)", () => {
