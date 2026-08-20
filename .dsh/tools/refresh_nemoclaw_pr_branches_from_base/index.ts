@@ -32,7 +32,7 @@ const settled = await Promise.allSettled(
 );
 const results = settled.map((result, index) =>
   result.status === "fulfilled"
-    ? { number: input.items[index].number, ok: true, error: null, ...result.value }
+    ? { ...result.value, number: input.items[index].number, ok: true, error: null }
     : {
         number: input.items[index].number,
         ok: false,
@@ -50,6 +50,14 @@ const results = settled.map((result, index) =>
         response: null,
       },
 );
+const accessFailure = results.find(
+  (result) =>
+    !result.ok &&
+    /GitHub access failed|authentication|authorization|forbidden|permission/i.test(
+      result.error ?? "",
+    ),
+);
+if (accessFailure) throw new Error(accessFailure.error);
 return {
   apply: input.apply,
   mutated: results.some((result) => result.mutated),

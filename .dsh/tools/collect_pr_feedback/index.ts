@@ -23,14 +23,17 @@ const run = async (command, description, allowed = [0]) => {
   return result.stdout.text.trim();
 };
 const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-const collectPages = async (path, projection, description) => {
-  const pageSize = 100;
+const collectPages = async (path, projection, description, jqProjection) => {
+  const pageSize = 10;
   const pageLimit = 10;
   const items = [];
   let pages = 0;
   for (let page = 1; page <= pageLimit; page++) {
     const text = await run(
-      "gh api " + quote(path + "?per_page=" + pageSize + "&page=" + page),
+      "gh api " +
+        quote(path + "?per_page=" + pageSize + "&page=" + page) +
+        " --jq " +
+        quote(jqProjection),
       description,
     );
     const rows = text ? JSON.parse(text) : [];
@@ -40,7 +43,10 @@ const collectPages = async (path, projection, description) => {
     if (rows.length < pageSize) return { items, pages, truncated: false };
   }
   const sentinel = await run(
-    "gh api " + quote(path + "?per_page=1&page=" + (pageLimit * pageSize + 1)),
+    "gh api " +
+      quote(path + "?per_page=" + pageSize + "&page=" + (pageLimit + 1)) +
+      " --jq " +
+      quote(jqProjection),
     "Check " + description.toLowerCase() + " completeness",
   );
   const remaining = sentinel ? JSON.parse(sentinel) : [];
@@ -72,6 +78,7 @@ const [pullText, checksText, reviewsPage, inlinePage, discussionPage] = await Pr
       body: String(item.body ?? "").slice(0, bodyLimit),
     }),
     "Collect submitted pull request reviews",
+    'map({id,user:{login:.user.login},state,commit_id,body:((.body // "")[:' + bodyLimit + "])})",
   ),
   collectPages(
     "/repos/" + repo + "/pulls/" + pr + "/comments",
@@ -84,6 +91,9 @@ const [pullText, checksText, reviewsPage, inlinePage, discussionPage] = await Pr
       url: item.html_url ?? "",
     }),
     "Collect inline pull request comments",
+    'map({id,user:{login:.user.login},path,line,body:((.body // "")[:' +
+      bodyLimit +
+      "]),html_url})",
   ),
   collectPages(
     "/repos/" + repo + "/issues/" + pr + "/comments",
@@ -94,6 +104,7 @@ const [pullText, checksText, reviewsPage, inlinePage, discussionPage] = await Pr
       url: item.html_url ?? "",
     }),
     "Collect pull request discussion comments",
+    'map({id,user:{login:.user.login},body:((.body // "")[:' + bodyLimit + "]),html_url})",
   ),
 ]);
 const pull = pullText ? JSON.parse(pullText) : {};

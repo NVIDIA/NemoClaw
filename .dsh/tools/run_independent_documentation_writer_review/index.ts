@@ -80,7 +80,9 @@ const identity = await run(
     "; }",
   "Verify documentation review identity",
 );
-const [status64 = "", rootPath, headSha, baseSha, agentsBlobSha] = identity.trim().split("\n");
+const [status64 = "", rootPath, headSha, baseSha, agentsBlobSha] = identity
+  .replace(/\n$/, "")
+  .split("\n");
 const status = Buffer.from(status64, "base64").toString("utf8");
 if (headSha !== input.expectedHeadSha)
   throw new Error("HEAD changed: expected " + input.expectedHeadSha + ", found " + headSha);

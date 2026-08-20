@@ -227,12 +227,13 @@ if (refreshNow.length) {
     });
     for (const item of refreshNow) {
       const pr = metadata.get(item.number);
+      const refresh = refreshed.results.find((entry) => entry.number === item.number);
       resultsByNumber.set(item.number, {
         number: item.number,
         url: pr.url,
         commit: pr.headRefOid,
-        status: "BASE_REFRESHED_REQUEUE",
-        refresh: refreshed.results.find((entry) => entry.number === item.number) ?? refreshed,
+        status: refresh?.ok ? "BASE_REFRESHED_REQUEUE" : "BASE_REFRESH_FAILED",
+        refresh: refresh ?? refreshed,
       });
     }
   }

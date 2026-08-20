@@ -18,7 +18,11 @@
         "type": "integer"
       }
     },
-    "required": ["repository", "pullNumber", "workdir"],
+    "required": [
+      "repository",
+      "pullNumber",
+      "workdir"
+    ],
     "additionalProperties": false
   },
   "output": {
@@ -74,7 +78,12 @@
               "type": "string"
             }
           },
-          "required": ["name", "state", "bucket", "link"],
+          "required": [
+            "name",
+            "state",
+            "bucket",
+            "link"
+          ],
           "additionalProperties": false
         }
       },
@@ -99,7 +108,13 @@
               "type": "string"
             }
           },
-          "required": ["id", "user", "state", "commitId", "body"],
+          "required": [
+            "id",
+            "user",
+            "state",
+            "commitId",
+            "body"
+          ],
           "additionalProperties": false
         }
       },
@@ -134,7 +149,14 @@
               "type": "string"
             }
           },
-          "required": ["id", "user", "path", "line", "body", "url"],
+          "required": [
+            "id",
+            "user",
+            "path",
+            "line",
+            "body",
+            "url"
+          ],
           "additionalProperties": false
         }
       },
@@ -156,18 +178,33 @@
               "type": "string"
             }
           },
-          "required": ["id", "user", "body", "url"],
+          "required": [
+            "id",
+            "user",
+            "body",
+            "url"
+          ],
           "additionalProperties": false
         }
       },
       "truncation": {
         "type": "object",
         "properties": {
-          "reviews": { "type": "boolean" },
-          "inlineComments": { "type": "boolean" },
-          "discussionComments": { "type": "boolean" }
+          "reviews": {
+            "type": "boolean"
+          },
+          "inlineComments": {
+            "type": "boolean"
+          },
+          "discussionComments": {
+            "type": "boolean"
+          }
         },
-        "required": ["reviews", "inlineComments", "discussionComments"],
+        "required": [
+          "reviews",
+          "inlineComments",
+          "discussionComments"
+        ],
         "additionalProperties": false
       }
     },
@@ -181,5 +218,5 @@
     ],
     "additionalProperties": false
   },
-  "revision": 3
+  "revision": 4
 }

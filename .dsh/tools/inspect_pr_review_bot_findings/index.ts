@@ -22,7 +22,8 @@ const s = await tools.collect_pr_feedback({
     workdir: input.workdir,
     bodyLimit: 4000,
   }),
-  completeness = s.truncation.inlineComments || s.truncation.discussionComments;
+  completeness =
+    s.truncation.reviews || s.truncation.inlineComments || s.truncation.discussionComments;
 if (completeness) throw new Error("Review bot findings exceeded the bounded feedback snapshot");
 const bots =
     /^(github-code-quality|github-advanced-security|coderabbitai|github-actions)(\[bot\])?$/i,
