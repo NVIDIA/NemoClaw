@@ -71,6 +71,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(
       "test/hermes-dependency-review.test.ts",
       "test/hermes-share-mount-deps.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
       "test/sandbox-provisioning.test.ts",
     ),
   },
@@ -172,6 +173,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)scripts\/checks\/validate-managed-base-index\.sh$/,
     testsToRun: runTests("test/validate-managed-base-index.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/checks\/download-hermes-source-archive[.]sh$/,
+    testsToRun: runTests(
+      "test/hermes-share-mount-deps.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)scripts\/checks\/retry-docker-imagetools-inspect\.sh$/,

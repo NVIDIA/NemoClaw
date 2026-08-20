@@ -12,6 +12,13 @@ import { stageFixedParser, useRealPatchedParser } from "./helpers/python-parser-
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
+const HERMES_ARCHIVE_HELPER = path.join(
+  ROOT,
+  "scripts",
+  "checks",
+  "download-hermes-source-archive.sh",
+);
+const PRIVATE_CURL_DIAGNOSTIC = "private curl diagnostic must stay redacted";
 
 function extractAptInstallCommand(dockerfile: string): string {
   const runtimeStage = dockerfile.lastIndexOf(
@@ -88,6 +95,144 @@ function runLoggedShell(command: string, tmp: string, functionDefs: string[] = [
   const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 15000 });
   const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
   return { result, calls };
+}
+
+function runHermesArchiveLayer(
+  responses: readonly string[],
+  expectedChecksum?: string,
+  archiveReplacement?: string,
+) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-archive-"));
+  const sourceRoot = path.join(tmp, "source");
+  const archiveRoot = path.join(sourceRoot, "hermes-agent-test");
+  const sourceTarball = path.join(tmp, "source.tar.gz");
+  const targetRoot = path.join(tmp, "target", "hermes");
+  const downloadedTarball = path.join(tmp, "download", "hermes.tar.gz");
+  const checksumFile = `${downloadedTarball}.sha256`;
+  const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
+  const whatsappProxyPatch = path.join(tmp, "hermes-whatsapp-proxy.patch");
+  const helperCopy = path.join(tmp, "download-hermes-source-archive.sh");
+  const fakeBin = path.join(tmp, "bin");
+  const responseFile = path.join(tmp, "responses");
+  const stateFile = path.join(tmp, "attempt");
+  const callLog = path.join(tmp, "calls.log");
+  const urlLog = path.join(tmp, "urls.log");
+  const scriptPath = path.join(tmp, "run-hermes-archive-layer.sh");
+
+  fs.mkdirSync(path.join(archiveRoot, "tests"), { recursive: true });
+  fs.mkdirSync(path.dirname(downloadedTarball), { recursive: true });
+  fs.mkdirSync(fakeBin);
+  fs.writeFileSync(securityPatch, "test patch fixture\n");
+  fs.writeFileSync(whatsappProxyPatch, "test patch fixture\n");
+  fs.writeFileSync(path.join(archiveRoot, "pyproject.toml"), 'version = "test"\n');
+  fs.writeFileSync(
+    path.join(archiveRoot, "tests", "security-fixture.txt"),
+    "intentionally hostile test-only URL\n",
+  );
+  const packed = spawnSync("tar", ["-czf", sourceTarball, "-C", sourceRoot, "hermes-agent-test"], {
+    encoding: "utf-8",
+  });
+  expect(packed.status, packed.stderr).toBe(0);
+  fs.writeFileSync(sourceTarball, archiveReplacement ?? fs.readFileSync(sourceTarball));
+  const checksum = createHash("sha256").update(fs.readFileSync(sourceTarball)).digest("hex");
+  fs.writeFileSync(responseFile, `${responses.join("\n")}\n`);
+  fs.writeFileSync(
+    path.join(fakeBin, "curl"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "attempt=1",
+      'if [ -f "$ARCHIVE_STATE" ]; then attempt=$(( $(cat "$ARCHIVE_STATE") + 1 )); fi',
+      'printf "%s\\n" "$attempt" > "$ARCHIVE_STATE"',
+      'response="$(sed -n "${attempt}p" "$ARCHIVE_RESPONSES")"',
+      '[ -n "$response" ] || response="$(tail -n 1 "$ARCHIVE_RESPONSES")"',
+      'printf "curl %s\\n" "$response" >> "$ARCHIVE_CALL_LOG"',
+      '[ "${1:-}" = "--disable" ] || exit 67',
+      'output=""',
+      'url=""',
+      "fail=0",
+      'while [ "$#" -gt 0 ]; do',
+      '  case "$1" in',
+      '    -o|--output) shift; output="$1" ;;',
+      '    --output=*) output="${1#--output=}" ;;',
+      "    --retry|--retry=*|--retry-*) exit 66 ;;",
+      "    --fail|--fail-with-body|-*f*) fail=1 ;;",
+      '    https://*) url="$1" ;;',
+      "  esac",
+      "  shift",
+      "done",
+      '[ -n "$url" ]',
+      'printf "%s\\n" "$url" >> "$ARCHIVE_URL_LOG"',
+      'if [ "$attempt" -gt 1 ] && [ -e "$output" ]; then',
+      '  printf "curl stale-output\\n" >> "$ARCHIVE_CALL_LOG"',
+      "  exit 65",
+      "fi",
+      'case "$response" in',
+      '  http:200) cp "$ARCHIVE_SOURCE" "$output"; printf 200 ;;',
+      `  http:*) printf partial > "$output"; printf "%s" "\${response#http:}"; printf "%s\\n" ${JSON.stringify(PRIVATE_CURL_DIAGNOSTIC)} >&2; [ "$fail" -eq 0 ] || exit 22 ;;`,
+      `  exit:*) printf partial > "$output"; printf 000; printf "%s\\n" ${JSON.stringify(PRIVATE_CURL_DIAGNOSTIC)} >&2; exit "\${response#exit:}" ;;`,
+      "  *) exit 64 ;;",
+      "esac",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  fs.writeFileSync(
+    path.join(fakeBin, "sleep"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'printf "sleep %s\\n" "$*" >> "$ARCHIVE_CALL_LOG"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  fs.copyFileSync(HERMES_ARCHIVE_HELPER, helperCopy);
+  const command = extractHermesArchiveCommand(fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8"))
+    .replaceAll("/tmp/hermes-security-dependencies.patch", securityPatch)
+    .replaceAll("/tmp/hermes-whatsapp-proxy.patch", whatsappProxyPatch)
+    .replaceAll("/tmp/hermes.tar.gz.sha256", checksumFile)
+    .replaceAll("/tmp/hermes.tar.gz", downloadedTarball)
+    .replaceAll("/opt/hermes", targetRoot)
+    .replaceAll("/tmp/nemoclaw-download-hermes-source-archive.sh", helperCopy);
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `target_root=${JSON.stringify(targetRoot)}`,
+      `security_patch=${JSON.stringify(securityPatch)}`,
+      `whatsapp_proxy_patch=${JSON.stringify(whatsappProxyPatch)}`,
+      "git() {",
+      '  [ "$1" = "-C" ]',
+      '  [ "$2" = "$target_root" ]',
+      '  [ "$3" = "apply" ]',
+      '  if [ "$4" = "--check" ]; then',
+      '    [ "$5" = "$security_patch" ] || [ "$5" = "$whatsapp_proxy_patch" ]',
+      "  else",
+      '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
+      "  fi",
+      "}",
+      'export HERMES_VERSION="v2026.7.20"',
+      `export HERMES_TARBALL_SHA256=${JSON.stringify(expectedChecksum ?? checksum)}`,
+      command,
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  const result = spawnSync("bash", [scriptPath], {
+    encoding: "utf-8",
+    env: {
+      ARCHIVE_CALL_LOG: callLog,
+      ARCHIVE_RESPONSES: responseFile,
+      ARCHIVE_SOURCE: sourceTarball,
+      ARCHIVE_STATE: stateFile,
+      ARCHIVE_URL_LOG: urlLog,
+      PATH: `${fakeBin}:${process.env.PATH}`,
+    },
+    timeout: 15_000,
+  });
+  const calls = fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf-8").trim().split("\n") : [];
+  const urls = fs.existsSync(urlLog) ? fs.readFileSync(urlLog, "utf-8").trim().split("\n") : [];
+  return { calls, downloadedTarball, result, targetRoot, tmp, urls };
 }
 
 function runHermesInstallLayer(
@@ -219,82 +364,135 @@ function runHermesInstallLayer(
 }
 
 describe("Hermes share mount package parity (#2947)", () => {
-  it("removes upstream tests in the Hermes archive extraction layer", () => {
-    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-archive-"));
-    const sourceRoot = path.join(tmp, "source");
-    const archiveRoot = path.join(sourceRoot, "hermes-agent-test");
-    const sourceTarball = path.join(tmp, "source.tar.gz");
-    const targetRoot = path.join(tmp, "target", "hermes");
-    const downloadedTarball = path.join(tmp, "download", "hermes.tar.gz");
-    const checksumFile = `${downloadedTarball}.sha256`;
-    const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
-    const whatsappProxyPatch = path.join(tmp, "hermes-whatsapp-proxy.patch");
-    const scriptPath = path.join(tmp, "run-hermes-archive-layer.sh");
-
+  it("retries a throttled Hermes archive and removes upstream tests (#9815)", () => {
+    const { calls, result, targetRoot, tmp, urls } = runHermesArchiveLayer([
+      "http:429",
+      "http:200",
+    ]);
     try {
-      fs.mkdirSync(path.join(archiveRoot, "tests"), { recursive: true });
-      fs.mkdirSync(path.dirname(downloadedTarball), { recursive: true });
-      fs.writeFileSync(securityPatch, "test patch fixture\n");
-      fs.writeFileSync(whatsappProxyPatch, "test patch fixture\n");
-      fs.writeFileSync(path.join(archiveRoot, "pyproject.toml"), 'version = "test"\n');
-      fs.writeFileSync(
-        path.join(archiveRoot, "tests", "security-fixture.txt"),
-        "intentionally hostile test-only URL\n",
-      );
-      const packed = spawnSync(
-        "tar",
-        ["-czf", sourceTarball, "-C", sourceRoot, "hermes-agent-test"],
-        { encoding: "utf-8" },
-      );
-      expect(packed.status, packed.stderr).toBe(0);
-      const checksum = createHash("sha256").update(fs.readFileSync(sourceTarball)).digest("hex");
-      const command = extractHermesArchiveCommand(dockerfile)
-        .replaceAll("/tmp/hermes-security-dependencies.patch", securityPatch)
-        .replaceAll("/tmp/hermes-whatsapp-proxy.patch", whatsappProxyPatch)
-        .replaceAll("/tmp/hermes.tar.gz.sha256", checksumFile)
-        .replaceAll("/tmp/hermes.tar.gz", downloadedTarball)
-        .replaceAll("/opt/hermes", targetRoot);
-      fs.writeFileSync(
-        scriptPath,
-        [
-          "#!/usr/bin/env bash",
-          "set -euo pipefail",
-          `source_tarball=${JSON.stringify(sourceTarball)}`,
-          "curl() {",
-          "  output=",
-          '  while [ "$#" -gt 0 ]; do',
-          '    if [ "$1" = "-o" ]; then shift; output="$1"; fi',
-          "    shift",
-          "  done",
-          '  cp "$source_tarball" "$output"',
-          "}",
-          `target_root=${JSON.stringify(targetRoot)}`,
-          `security_patch=${JSON.stringify(securityPatch)}`,
-          `whatsapp_proxy_patch=${JSON.stringify(whatsappProxyPatch)}`,
-          "git() {",
-          '  [ "$1" = "-C" ]',
-          '  [ "$2" = "$target_root" ]',
-          '  [ "$3" = "apply" ]',
-          '  if [ "$4" = "--check" ]; then',
-          '    [ "$5" = "$security_patch" ] || [ "$5" = "$whatsapp_proxy_patch" ]',
-          "  else",
-          '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
-          "  fi",
-          "}",
-          'export HERMES_VERSION="vtest"',
-          `export HERMES_TARBALL_SHA256=${JSON.stringify(checksum)}`,
-          command,
-        ].join("\n"),
-        { mode: 0o700 },
-      );
-
-      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual(["curl http:429", "sleep 1", "curl http:200"]);
+      expect(urls).toEqual([
+        "https://github.com/NousResearch/hermes-agent/archive/refs/tags/v2026.7.20.tar.gz",
+        "https://github.com/NousResearch/hermes-agent/archive/refs/tags/v2026.7.20.tar.gz",
+      ]);
+      expect(result.stderr.split("\n").filter((line) => line.startsWith("Hermes archive"))).toEqual(
+        [
+          "Hermes archive download outcome=transient-external attempt=1/3 failure=http-429 retry-in=1s",
+          "Hermes archive download outcome=passed-after-retry attempt=2/3",
+        ],
+      );
+      expect(result.stderr).not.toContain(PRIVATE_CURL_DIAGNOSTIC);
       expect(fs.readFileSync(path.join(targetRoot, "pyproject.toml"), "utf-8")).toContain(
         'version = "test"',
       );
       expect(() => fs.lstatSync(path.join(targetRoot, "tests"))).toThrow();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("stops after three throttled Hermes archive attempts (#9815)", () => {
+    const { calls, downloadedTarball, result, tmp } = runHermesArchiveLayer([
+      "http:429",
+      "http:429",
+      "http:429",
+    ]);
+    try {
+      expect(result.status).not.toBe(0);
+      expect(calls).toEqual([
+        "curl http:429",
+        "sleep 1",
+        "curl http:429",
+        "sleep 2",
+        "curl http:429",
+      ]);
+      expect(result.stderr.split("\n").filter((line) => line.startsWith("Hermes archive"))).toEqual(
+        [
+          "Hermes archive download outcome=transient-external attempt=1/3 failure=http-429 retry-in=1s",
+          "Hermes archive download outcome=transient-external attempt=2/3 failure=http-429 retry-in=2s",
+          "Hermes archive download outcome=exhausted attempt=3/3 failure=http-429",
+        ],
+      );
+      expect(result.stderr).not.toContain(PRIVATE_CURL_DIAGNOSTIC);
+      expect(fs.existsSync(downloadedTarball)).toBe(false);
+      expect(fs.existsSync(`${downloadedTarball}.partial`)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each([404, 500])("does not retry terminal Hermes archive HTTP %i (#9815)", (status) => {
+    const { calls, result, tmp } = runHermesArchiveLayer([`http:${status}`]);
+    try {
+      expect(result.status).not.toBe(0);
+      expect(calls).toEqual([`curl http:${status}`]);
+      expect(result.stderr).toContain(
+        `Hermes archive download outcome=failed-no-retry attempt=1/3 failure=http-${status}`,
+      );
+      expect(result.stderr).not.toContain(PRIVATE_CURL_DIAGNOSTIC);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not retry a Hermes archive transport failure (#9815)", () => {
+    const { calls, result, tmp } = runHermesArchiveLayer(["exit:28"]);
+    try {
+      expect(result.status).not.toBe(0);
+      expect(calls).toEqual(["curl exit:28"]);
+      expect(result.stderr).toContain(
+        "Hermes archive download outcome=failed-no-retry attempt=1/3 failure=curl-exit-28",
+      );
+      expect(result.stderr).not.toContain(PRIVATE_CURL_DIAGNOSTIC);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("downloads the Hermes archive once when GitHub returns HTTP 200 (#9815)", () => {
+    const { calls, result, targetRoot, tmp } = runHermesArchiveLayer(["http:200"]);
+    try {
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual(["curl http:200"]);
+      expect(result.stderr).toContain(
+        "Hermes archive download outcome=passed-first-attempt attempt=1/3",
+      );
+      expect(fs.readFileSync(path.join(targetRoot, "pyproject.toml"), "utf-8")).toContain(
+        'version = "test"',
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a downloaded Hermes archive that does not match its checksum (#9815)", () => {
+    const { calls, result, targetRoot, tmp } = runHermesArchiveLayer(["http:200"], "0".repeat(64));
+    try {
+      expect(result.status).not.toBe(0);
+      expect(calls).toEqual(["curl http:200"]);
+      expect(result.stderr).toContain(
+        "Hermes archive download outcome=passed-first-attempt attempt=1/3",
+      );
+      expect(fs.existsSync(path.join(targetRoot, "pyproject.toml"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not retry a checksum-valid malformed Hermes archive (#9815)", () => {
+    const { calls, result, targetRoot, tmp } = runHermesArchiveLayer(
+      ["http:200"],
+      undefined,
+      "checksum-valid malformed archive\n",
+    );
+    try {
+      expect(result.status).not.toBe(0);
+      expect(calls).toEqual(["curl http:200"]);
+      expect(result.stderr).toContain(
+        "Hermes archive download outcome=passed-first-attempt attempt=1/3",
+      );
+      expect(fs.existsSync(path.join(targetRoot, "pyproject.toml"))).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
