@@ -55,7 +55,7 @@ let providerGetCount = 0;
 let observedProviderName = null;
 let attachmentAttemptedThisProcess = false;
 let observedCredentialAbsentThisProcess = false;
-let credentialRefreshAfterAbsenceThisProcess = false;
+let credentialRefreshAfterAbsenceCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -117,8 +117,8 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         isCredentialFreeRefresh &&
         observedCredentialAbsentThisProcess
       ) {
-        credentialRefreshAfterAbsenceThisProcess = true;
-        mark("refresh-after-observed-absence");
+        credentialRefreshAfterAbsenceCountThisProcess += 1;
+        fs.appendFileSync(marker("refresh-after-observed-absence"), "refresh\n", { mode: 0o600 });
       }
     }
     mark("provider");
@@ -194,13 +194,13 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
   if (crashAfter === "credential-projection-coalesced" && isObservation) {
-    if (!credentialRefreshAfterAbsenceThisProcess) {
+    if (credentialRefreshAfterAbsenceCountThisProcess === 0) {
       observedCredentialAbsentThisProcess = true;
       mark("credential-observed-absent");
     }
     return {
       status: 0,
-      stdout: credentialRefreshAfterAbsenceThisProcess ? "v" + providerVersion() : "absent",
+      stdout: credentialRefreshAfterAbsenceCountThisProcess > 0 ? "v" + providerVersion() : "absent",
       stderr: "",
     };
   }
@@ -542,14 +542,16 @@ describe("MCP add crash consistency", () => {
         .map((result) => `${result.stdout}\n${result.stderr}`)
         .join("\n---\n");
 
-      expect(
-        results.map((result) => result.status).sort(),
-        combinedOutput,
-      ).toEqual([0, 2]);
+      expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
       expect(combinedOutput).not.toContain("host-only-secret");
       expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "refresh-after-observed-absence.marker"))).toBe(true);
+      const credentialRefreshCount = fs
+        .readFileSync(path.join(home, "refresh-after-observed-absence.marker"), "utf8")
+        .split("\n")
+        .filter(Boolean).length;
+      expect(credentialRefreshCount).toBe(1);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
