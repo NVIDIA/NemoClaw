@@ -635,13 +635,13 @@ const { createSandbox } = require(${onboardPath});
       const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
         /\bprovider (create|update)\b/.test(entry.command),
       );
-      assert.equal(
-        providerMutationCommands
-          .map(
-            (entry: CommandEntry) => /\bprovider update -g nemoclaw \S+$/.exec(entry.command)?.[0],
-          )
-          .join("\n"),
-        "provider update -g nemoclaw my-assistant-discord-bridge\nprovider update -g nemoclaw my-assistant-slack-bridge\nprovider update -g nemoclaw my-assistant-slack-app",
+      assert.deepEqual(
+        providerMutationCommands.map((entry: CommandEntry) => entry.command),
+        [
+          `${path.join(fakeBin, "openshell")} provider update -g nemoclaw my-assistant-discord-bridge`,
+          `${path.join(fakeBin, "openshell")} provider update -g nemoclaw my-assistant-slack-bridge`,
+          `${path.join(fakeBin, "openshell")} provider update -g nemoclaw my-assistant-slack-app`,
+        ],
         "tokenless rebuild must refresh the gateway-scoped providers without credentials",
       );
       const createCommand = payload.commands.find((entry: CommandEntry) =>
