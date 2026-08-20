@@ -316,10 +316,12 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.106/openshell.rb",
     },
-    // Reviewed normalized template from the downstream 0.0.106 pin PR. This
-    // trust prerequisite intentionally leaves the selected product release
-    // unchanged until that separately reviewed pin update lands.
-    installerTemplateSha256: ["5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0"],
+    // Reviewed normalized templates for the selected 0.0.106 installer. The
+    // second digest adds the fail-before-download strings preflight in #9726.
+    installerTemplateSha256: [
+      "5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0",
+      "e850e927aab619d52c5de72967137569d65dd7fa669920c7c5b558f0770140d1",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
