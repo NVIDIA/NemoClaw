@@ -71,9 +71,10 @@ shared workflow excludes from the repair scope. Preserve its unresolved or defer
 That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for
 the group instead of one commit or push per finding.
 
-After the routed repair returns with validation evidence, resume the shared sequence at the commit
-step. Complete the final collection and evidence-removal steps before pushing. Push after no
-unresolved finding requires a change.
+After the routed repair returns and its validation passes, resume the shared sequence at the commit
+step. If validation fails or is inconclusive, return to the repair and validation steps. Do not commit
+or push until validation passes. Complete the final collection and evidence-removal steps before
+pushing. Push after no unresolved finding requires a change.
 
 Immediately before pushing, repeat the complete collection. Confirm that its initial and final `headRefOid` values match.
 

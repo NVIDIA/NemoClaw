@@ -224,7 +224,23 @@ describe("repo skill markdown files", () => {
     expect(createPr).toContain("Route only review finding groups in the repair scope");
     expect(createPr).not.toMatch(/Route each valid code-changing(?: review)? finding/u);
     expect(createPr).toContain("shared workflow owns the single count-and-approval state machine");
-    expect(createPr).toContain("returns with validation evidence");
+
+    const validationPass = createPr.indexOf("its validation passes");
+    const commitStep = createPr.indexOf("resume the shared sequence at the commit");
+    const failedValidation = createPr.indexOf("validation fails or is inconclusive");
+    const finalCollection = createPr.indexOf("Complete the final collection");
+    const pushGate = createPr.indexOf("Push after no unresolved finding requires a change");
+    expect(validationPass).toBeGreaterThan(excludedGroupGate);
+    expect(commitStep).toBeGreaterThan(validationPass);
+    expect(failedValidation).toBeGreaterThan(commitStep);
+    expect(createPr.slice(failedValidation, finalCollection)).toContain(
+      "return to the repair and validation steps",
+    );
+    expect(createPr.slice(failedValidation, finalCollection)).toMatch(
+      /Do not commit\s+or push until validation passes/u,
+    );
+    expect(finalCollection).toBeGreaterThan(failedValidation);
+    expect(pushGate).toBeGreaterThan(finalCollection);
     expect(createPr).not.toMatch(
       /count is two or more|permits at most two such|does not reset the count/iu,
     );
