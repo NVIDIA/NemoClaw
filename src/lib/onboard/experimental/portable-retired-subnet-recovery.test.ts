@@ -84,51 +84,150 @@ describe("portable retired-subnet recovery (#9707)", () => {
     expect(linkLocal.check(PORTABLE_REGISTRY_IP, "ipv4")).toBe(false);
   });
 
-  it.each<[string, SpawnResult, string]>([
-    [
-      "no registry is attached",
-      result(1),
-      "Network 'openshell-docker' still uses the retired portable subnet 169.254.1.0/24. " +
-        "Remove it with `podman network rm openshell-docker`, then rerun " +
-        "`nemoclaw onboard --experimental-profile portable`.",
-    ],
-    [
-      "an owned registry is attached",
-      result(0, "1 true 169.254.1.3"),
-      "Network 'openshell-docker' still uses the retired portable subnet 169.254.1.0/24. " +
-        "Remove the managed registry first, then the network, without `--force`: " +
-        "`podman rm -f nemoclaw-portable-registry` and `podman network rm openshell-docker`, " +
-        "then rerun `nemoclaw onboard --experimental-profile portable`.",
-    ],
-    [
-      "an unmanaged same-name registry is attached",
-      result(0, "<no value> true 169.254.1.3"),
-      "Network 'openshell-docker' still uses the retired portable subnet 169.254.1.0/24. " +
-        "A container named 'nemoclaw-portable-registry' is attached to it but does not carry the " +
-        "NemoClaw ownership label, so NemoClaw will not name it for removal. Resolve that container " +
-        "yourself, remove the network with `podman network rm openshell-docker`, then rerun " +
-        "`nemoclaw onboard --experimental-profile portable`.",
-    ],
-  ])("gives ownership-aware recovery when %s", (_label, registryInspection, error) => {
+  const NETWORK_ID = "3f2a1c9d8e7b6a5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c";
+  const REGISTRY_ID = "aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899";
+
+  function runRetiredSubnetRecovery(
+    dockerImpl: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult,
+  ) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
-      .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: RETIRED_SUBNET }])))
-      .mockReturnValueOnce(registryInspection);
-
-    expect(() =>
+      .mockImplementation(dockerImpl);
+    const run = () =>
       preparePortableExperimentalHost(
         { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         preparationDeps(home, docker),
-      ),
-    ).toThrow(error);
+      );
+    return { docker, run };
+  }
 
-    // The retired-subnet path reports and stops. It must not remove a
-    // container, remove a network, or pass --force on the operator's behalf.
-    expect(docker).toHaveBeenCalledTimes(3);
-    const issued = docker.mock.calls.map(([args]) => args.join(" "));
-    expect(issued.filter((command) => /\brm\b|--force/u.test(command))).toEqual([]);
+  // Answers the fixed call sequence: --version, network inspect (IPAM),
+  // network inspect (id), ps -a, container inspect.
+  function dockerStub(over: {
+    connected?: SpawnResult;
+    registry?: SpawnResult;
+    networkId?: SpawnResult;
+  }) {
+    return (args: readonly string[]): SpawnResult => {
+      const command = args.join(" ");
+      const routes: Array<readonly [boolean, SpawnResult]> = [
+        [
+          command.startsWith("network inspect") && command.includes("{{.Id}}"),
+          over.networkId ?? result(0, `${NETWORK_ID}\n`),
+        ],
+        [
+          command.startsWith("network inspect"),
+          result(0, JSON.stringify([{ Subnet: RETIRED_SUBNET }])),
+        ],
+        [command.startsWith("ps -a"), over.connected ?? result(0, "")],
+        [command.startsWith("inspect"), over.registry ?? result(1)],
+      ];
+      return routes.find(([matched]) => matched)?.[1] ?? result();
+    };
+  }
+
+  function issuedCommands(docker: { mock: { calls: Array<[readonly string[], ...unknown[]]> } }) {
+    return docker.mock.calls.map(([args]) => args.join(" "));
+  }
+
+  // A refusal must neither mutate the host nor print a command the operator
+  // could paste. Assert both the issued commands and the message text.
+  function expectNoRemovalGuidance(
+    docker: { mock: { calls: Array<[readonly string[], ...unknown[]]> } },
+    run: () => unknown,
+  ) {
+    expect(issuedCommands(docker).filter((c) => /\brm\b|--force/u.test(c))).toEqual([]);
+    const message = (() => {
+      try {
+        run();
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      return "";
+    })();
+    expect(message).not.toMatch(/podman (network )?rm/u);
+    expect(message).not.toContain(NETWORK_ID);
+  }
+
+  it("names only the network when nothing is connected", () => {
+    const { docker, run } = runRetiredSubnetRecovery(dockerStub({ connected: result(0, "") }));
+
+    expect(run).toThrow(
+      `Network 'openshell-docker' still uses the retired portable subnet ${RETIRED_SUBNET}. ` +
+        "No container is connected to it. Remove it without `--force`: " +
+        `\`podman network rm ${NETWORK_ID}\`, then rerun ` +
+        "`nemoclaw onboard --experimental-profile portable`.",
+    );
+    expect(issuedCommands(docker).filter((c) => /\brm\b|--force/u.test(c))).toEqual([]);
+  });
+
+  it("names the verified registry and the network by full ID when the registry is the sole container", () => {
+    const { docker, run } = runRetiredSubnetRecovery(
+      dockerStub({
+        connected: result(0, `${REGISTRY_ID}|nemoclaw-portable-registry\n`),
+        registry: result(0, "1|true|169.254.1.3"),
+      }),
+    );
+
+    expect(run).toThrow(
+      `Network 'openshell-docker' still uses the retired portable subnet ${RETIRED_SUBNET}. ` +
+        "The verified NemoClaw registry is its only connected container. Remove the registry first, " +
+        "then the network, without `--force`: " +
+        `\`podman rm -f ${REGISTRY_ID}\` and \`podman network rm ${NETWORK_ID}\`, then rerun ` +
+        "`nemoclaw onboard --experimental-profile portable`.",
+    );
+    expect(issuedCommands(docker).filter((c) => /\brm\b|--force/u.test(c))).toEqual([]);
+  });
+
+  it.each<[string, Parameters<typeof dockerStub>[0]]>([
+    [
+      "another container is connected",
+      { connected: result(0, `${REGISTRY_ID}|some-other-container\n`) },
+    ],
+    [
+      "the registry shares the network with another container",
+      {
+        connected: result(
+          0,
+          `${REGISTRY_ID}|nemoclaw-portable-registry\nbbbb|some-other-container\n`,
+        ),
+        registry: result(0, "1|true|169.254.1.3"),
+      },
+    ],
+    [
+      "a same-name container does not carry the ownership label",
+      {
+        connected: result(0, `${REGISTRY_ID}|nemoclaw-portable-registry\n`),
+        registry: result(0, "<no value>|true|169.254.1.3"),
+      },
+    ],
+  ])("shows no removal command when %s", (_label, over) => {
+    const { docker, run } = runRetiredSubnetRecovery(dockerStub(over));
+
+    expect(run).toThrow(
+      "A container NemoClaw does not own is connected to it, so NemoClaw will not name that network " +
+        "or any container for removal.",
+    );
+    expectNoRemovalGuidance(docker, run);
+  });
+
+  it.each<[string, Parameters<typeof dockerStub>[0]]>([
+    ["the connected-container probe fails", { connected: result(125) }],
+    ["the network identity probe fails", { networkId: result(125) }],
+    ["the network identity probe returns nothing", { networkId: result(0, "  \n") }],
+    [
+      "the ownership probe fails for the sole connected registry",
+      {
+        connected: result(0, `${REGISTRY_ID}|nemoclaw-portable-registry\n`),
+        registry: result(125),
+      },
+    ],
+  ])("refuses without removal guidance when %s", (_label, over) => {
+    const { docker, run } = runRetiredSubnetRecovery(dockerStub(over));
+
+    expect(run).toThrow(/failed|returned no network ID/u);
+    expectNoRemovalGuidance(docker, run);
   });
 });

@@ -644,7 +644,7 @@ describe("preparePortableExperimentalHost", () => {
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
       .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }])))
-      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+      .mockReturnValueOnce(result(0, `1|true|${PORTABLE_REGISTRY_IP}`));
     const ip = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result(0, NO_RETIRED_GATEWAY_EVIDENCE))
@@ -742,7 +742,7 @@ describe("preparePortableExperimentalHost", () => {
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
       .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }])))
-      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+      .mockReturnValueOnce(result(0, `1|true|${PORTABLE_REGISTRY_IP}`));
 
     preparePortableExperimentalHost(
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
@@ -1048,7 +1048,7 @@ describe("preparePortableExperimentalHost", () => {
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, "1 true"))
+      .mockReturnValueOnce(result(0, "1|true|"))
       .mockReturnValueOnce(result());
 
     preparePortableExperimentalHost(
@@ -1112,7 +1112,7 @@ describe("preparePortableExperimentalHost", () => {
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+      .mockReturnValueOnce(result(0, `1|true|${PORTABLE_REGISTRY_IP}`));
 
     try {
       const prepared = preparePortableExperimentalHost(scope.env, {
@@ -1369,7 +1369,7 @@ describe("preparePortableExperimentalHost", () => {
       const docker = vi
         .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
         .mockReturnValueOnce(result())
-        .mockReturnValueOnce(result(0, `1 true ${PORTABLE_REGISTRY_IP}`));
+        .mockReturnValueOnce(result(0, `1|true|${PORTABLE_REGISTRY_IP}`));
 
       const prepared = preparePortableExperimentalHost(
         { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },

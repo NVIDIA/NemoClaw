@@ -154,22 +154,26 @@ $$nemoclaw onboard --experimental-profile portable
 Do not run the loopback deletion command when onboarding reports another interface or prefix.
 Investigate and resolve the conflicting assignment before you rerun onboarding.
 
-If Portable onboarding reports that the `openshell-docker` network still uses the retired `169.254.1.0/24` subnet, follow the recovery that onboarding prints.
+If Portable onboarding reports that the `openshell-docker` network still uses the retired `169.254.1.0/24` subnet, run only the commands onboarding prints. Onboarding checks the local Podman socket for every running and stopped container connected to that network, and prints removal commands with full network and container IDs only when the network is empty or the verified NemoClaw registry is its only connected container.
 
-When no registry is attached, remove the network:
-
-```bash
-podman network rm openshell-docker
-```
-
-When the managed `nemoclaw-portable-registry` is attached, remove it first, then the network. Run the commands in this order and do not add `--force` to the network removal, which would also delete containers NemoClaw does not own:
+When no container is connected, onboarding prints the network removal. Do not add `--force`, which would also delete containers NemoClaw does not own:
 
 ```bash
-podman rm -f nemoclaw-portable-registry
-podman network rm openshell-docker
+podman network rm <network-id>
 ```
 
-When onboarding reports a container named `nemoclaw-portable-registry` that does not carry the NemoClaw ownership label, NemoClaw does not name it for removal. Resolve that container yourself before you remove the network.
+When the verified `nemoclaw-portable-registry` is the only connected container, onboarding prints the registry removal first, then the network removal. Run them in that order:
+
+```bash
+podman rm -f <registry-container-id>
+podman network rm <network-id>
+```
+
+Onboarding prints no removal command in these cases, and you resolve them yourself before rerunning:
+
+- Another container is connected to the network. Disconnect or remove that container first. Onboarding does not name it, because NemoClaw does not own it.
+- A container named `nemoclaw-portable-registry` is connected but does not carry the NemoClaw ownership label. Treat it as a container NemoClaw does not own.
+- The local Podman check itself failed. Onboarding cannot prove the network is safe to remove, so it stops. Repair Podman access, then rerun onboarding to get the check again. Do not remove the network based on a failed check.
 
 Rerun Portable onboarding after the network is gone.
 </Warning>

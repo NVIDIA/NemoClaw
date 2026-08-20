@@ -46,6 +46,10 @@ const REGISTRY_LABEL = "com.nvidia.nemoclaw.portable=1";
 // host gateway outside the sandbox subnet. Keep the retired value here so an
 // upgraded host cannot silently retain a route that captures sandbox traffic.
 const RETIRED_PORTABLE_HOST_GATEWAY_IP = "169.254.1.2";
+// Go template fields are joined with an explicit separator because a missing
+// label renders as `<no value>`, which contains a space and would corrupt
+// whitespace splitting.
+const DOCKER_FIELD_SEPARATOR = "|";
 // Portable onboarding created the sandbox network on this subnet before #9707
 // moved it out of the link-local block that netavark refuses. Name the retired
 // value so an upgraded host gets the removal command instead of the generic
@@ -433,54 +437,106 @@ function validateOwnedConfigAuthority(input: {
   if (socketPath) assertOwnedDescendants(runtimeDir, path.dirname(socketPath));
 }
 
+interface RetiredNetworkOccupancy {
+  /** Full network ID, so recovery never names an ambiguous network. */
+  readonly networkId: string;
+  /**
+   * Full ID of the sole connected container when that container is the
+   * verified NemoClaw registry. Null when the network has no connected
+   * container.
+   */
+  readonly ownedRegistryId: string | null;
+}
+
 /**
- * Classify the managed registry against a network still on the retired subnet.
+ * Enumerate every container connected to a network still on the retired subnet.
  *
- * `podman network rm` exits non-zero while a container is attached, and
- * `--force` would delete containers NemoClaw does not own. Recovery guidance
- * therefore has to know whether the attached registry carries the NemoClaw
- * ownership label before it names anything for removal (#9707).
+ * `podman network rm` exits non-zero while any container is connected, and
+ * `--force` would delete containers NemoClaw does not own. Recovery therefore
+ * has to prove the network is empty, or that the verified NemoClaw registry is
+ * its only connected container, before it names anything for removal. Anything
+ * else — a foreign container, an unreadable probe — yields no removal command
+ * at all (#9707).
+ *
+ * Throws when the local Podman probe cannot be read, so an inspection failure
+ * is never mistaken for an empty network.
  */
-function retiredNetworkRegistryAttachment(
+function inspectRetiredNetworkOccupancy(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
   networkName: string,
-): "detached" | "owned-attached" | "unmanaged" {
-  const inspection = docker(registryInspectionArgs(networkName), env);
-  if (inspection.error) {
-    requireCommand(inspection, "Inspecting the managed portable registry");
+): RetiredNetworkOccupancy {
+  const identity = docker(["network", "inspect", "--format", "{{.Id}}", networkName], env);
+  requireCommand(identity, "Inspecting the retired portable network identity");
+  const networkId = String(identity.stdout ?? "").trim();
+  if (!networkId) {
+    throw new Error("Inspecting the retired portable network identity returned no network ID");
   }
-  if (inspection.status !== 0) return "detached";
-  const [owner, , networkIp] = String(inspection.stdout ?? "")
+  // `ps -a` covers stopped containers too: a stopped container keeps its
+  // endpoint on the network and still blocks a non-force removal.
+  const connected = docker(
+    [
+      "ps",
+      "-a",
+      "--no-trunc",
+      "--filter",
+      `network=${networkName}`,
+      "--format",
+      `{{.ID}}${DOCKER_FIELD_SEPARATOR}{{.Names}}`,
+    ],
+    env,
+  );
+  requireCommand(connected, "Listing containers connected to the retired portable network");
+  const rows = String(connected.stdout ?? "")
+    .split("\n")
+    .map((row) => row.trim())
+    .filter(Boolean)
+    .map((row) => {
+      const [id, name] = row.split(DOCKER_FIELD_SEPARATOR);
+      return { id: (id ?? "").trim(), name: (name ?? "").trim() };
+    });
+  if (rows.length === 0) return { networkId, ownedRegistryId: null };
+  const [only] = rows;
+  if (rows.length > 1 || !only || only.name !== REGISTRY_CONTAINER || !only.id) {
+    throw retiredPortableSubnetForeignContainerError(networkName);
+  }
+  // A same-name container is not proof of ownership. Require the label.
+  const inspection = docker(registryInspectionArgs(networkName), env);
+  requireCommand(inspection, "Inspecting the managed portable registry");
+  const [owner] = String(inspection.stdout ?? "")
     .trim()
-    .split(/\s+/u);
-  // An absent label, an unexpected label value, or unreadable evidence is an
-  // unmanaged or ambiguous container. Never name it for removal.
-  if (owner !== "1") return "unmanaged";
-  return networkIp ? "owned-attached" : "detached";
+    .split(DOCKER_FIELD_SEPARATOR);
+  if (owner !== "1") throw retiredPortableSubnetForeignContainerError(networkName);
+  return { networkId, ownedRegistryId: only.id };
+}
+
+function retiredPortableSubnetState(networkName: string): string {
+  return `Network '${networkName}' still uses the retired portable subnet ${RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET}.`;
+}
+
+function retiredPortableSubnetForeignContainerError(networkName: string): Error {
+  return new Error(
+    `${retiredPortableSubnetState(networkName)} A container NemoClaw does not own is connected to it, ` +
+      "so NemoClaw will not name that network or any container for removal. Disconnect or resolve the " +
+      "other container yourself, then rerun `nemoclaw onboard --experimental-profile portable`.",
+  );
 }
 
 function retiredPortableSubnetError(
   networkName: string,
-  attachment: "detached" | "owned-attached" | "unmanaged",
+  occupancy: RetiredNetworkOccupancy,
 ): Error {
-  const state = `Network '${networkName}' still uses the retired portable subnet ${RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET}.`;
   const rerun = "then rerun `nemoclaw onboard --experimental-profile portable`.";
-  if (attachment === "unmanaged") {
+  if (occupancy.ownedRegistryId) {
     return new Error(
-      `${state} A container named '${REGISTRY_CONTAINER}' is attached to it but does not carry the ` +
-        "NemoClaw ownership label, so NemoClaw will not name it for removal. Resolve that container " +
-        `yourself, remove the network with \`podman network rm ${networkName}\`, ${rerun}`,
-    );
-  }
-  if (attachment === "owned-attached") {
-    return new Error(
-      `${state} Remove the managed registry first, then the network, without \`--force\`: ` +
-        `\`podman rm -f ${REGISTRY_CONTAINER}\` and \`podman network rm ${networkName}\`, ${rerun}`,
+      `${retiredPortableSubnetState(networkName)} The verified NemoClaw registry is its only connected ` +
+        "container. Remove the registry first, then the network, without `--force`: " +
+        `\`podman rm -f ${occupancy.ownedRegistryId}\` and \`podman network rm ${occupancy.networkId}\`, ${rerun}`,
     );
   }
   return new Error(
-    `${state} Remove it with \`podman network rm ${networkName}\`, ${rerun}`,
+    `${retiredPortableSubnetState(networkName)} No container is connected to it. Remove it without ` +
+      `\`--force\`: \`podman network rm ${occupancy.networkId}\`, ${rerun}`,
   );
 }
 
@@ -503,7 +559,7 @@ function ensurePortableSandboxNetwork(
     if (subnets.length === 1 && subnets[0] === RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET) {
       throw retiredPortableSubnetError(
         networkName,
-        retiredNetworkRegistryAttachment(env, docker, networkName),
+        inspectRetiredNetworkOccupancy(env, docker, networkName),
       );
     }
     if (subnets.length !== 1 || subnets[0] !== PORTABLE_DOCKER_NETWORK_SUBNET) {
@@ -523,7 +579,7 @@ function registryInspectionArgs(networkName: string): readonly string[] {
   return [
     "inspect",
     "--format",
-    `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
+    `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }}${DOCKER_FIELD_SEPARATOR}{{.State.Running}}${DOCKER_FIELD_SEPARATOR}{{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
     REGISTRY_CONTAINER,
   ];
 }
@@ -540,7 +596,7 @@ function ensureRegistryContainer(
   const exists = inspection.status === 0;
   const [owner, running, networkIp] = String(inspection.stdout ?? "")
     .trim()
-    .split(/\s+/u);
+    .split(DOCKER_FIELD_SEPARATOR);
   if (exists && owner !== "1") {
     throw new Error(
       `Refusing to replace existing unmanaged container '${REGISTRY_CONTAINER}'. Rename or remove it and retry.`,
