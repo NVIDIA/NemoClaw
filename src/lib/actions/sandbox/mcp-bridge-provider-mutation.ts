@@ -127,6 +127,7 @@ export function upsertMcpProvider(
   options: {
     allowExisting: boolean;
     expectedProviderId?: string;
+    requireExisting?: boolean;
     prepareMutation?: (action: "create" | "update") => void;
   },
 ): {
@@ -151,6 +152,11 @@ export function upsertMcpProvider(
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${providerName}'.`,
+    );
+  }
+  if (inspection.exists === false && options.requireExisting) {
+    throw new McpBridgeError(
+      `OpenShell provider '${providerName}' disappeared before credential republish. Refusing to create a replacement with a different identity.`,
     );
   }
   if (inspection.exists && !options.allowExisting) {

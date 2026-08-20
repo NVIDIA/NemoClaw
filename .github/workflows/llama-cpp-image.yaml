@@ -313,36 +313,9 @@ jobs:
           fi
           printf 'candidate_tag=%s\n' "$candidate_tag" >> "$GITHUB_OUTPUT"
 
-  publication-preflight:
-    name: Require public GHCR package
-    needs: [config, publication-gate]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      packages: read
-    steps:
-      - name: Verify public package visibility before registry writes
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          IMAGE: ${{ needs.config.outputs.publication_repository }}
-        run: |
-          set -euo pipefail
-          package_name="${IMAGE#ghcr.io/nvidia/}"
-          encoded_package_name="${package_name//\//%2F}"
-          package_api="/orgs/NVIDIA/packages/container/${encoded_package_name}"
-          if ! visibility="$(gh api "$package_api" --jq .visibility)"; then
-            echo "::error::GHCR package ${IMAGE} must exist with public visibility before publication. Bootstrap the package, set public visibility, then rerun this workflow."
-            exit 1
-          fi
-          if [ "$visibility" != "public" ]; then
-            echo "::error::GHCR package ${IMAGE} has ${visibility} visibility. Set public visibility, then rerun this workflow."
-            exit 1
-          fi
-
   publish-platform:
     name: Publish native llama.cpp digest (${{ matrix.arch }})
-    needs: [config, publication-gate, publication-preflight]
+    needs: [config, publication-gate]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
@@ -449,6 +422,29 @@ jobs:
           fi
           install -d -m 0700 "$RUNNER_TEMP/llama-cpp-digests"
           touch "$RUNNER_TEMP/llama-cpp-digests/${ARCH}-${DIGEST#sha256:}"
+
+      - name: Remove GHCR publication credentials
+        if: always()
+        shell: bash
+        run: docker logout ghcr.io
+
+      - name: Verify anonymous exact platform pull
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ needs.config.outputs.publication_repository }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          reference="${IMAGE}@${DIGEST}"
+          anonymous_config="$(mktemp -d "$RUNNER_TEMP/llama-cpp-anonymous-XXXXXX")"
+          chmod 0700 "$anonymous_config"
+          trap 'rm -rf -- "$anonymous_config"' EXIT
+          if ! env -u DOCKER_AUTH_CONFIG DOCKER_CONFIG="$anonymous_config" \
+            docker pull --platform "$PLATFORM" "$reference"; then
+            echo "::error::Anonymous exact-digest pull failed for ${reference}. The GHCR package ${IMAGE} must be public before candidate assembly."
+            exit 1
+          fi
 
       - name: Upload platform digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
