@@ -72,6 +72,7 @@ spec:
         - context-window
         - authentication
         - malformed-request
+        - request-body-limit
         - cancellation
         - client-timeout
         - log-redaction
@@ -89,8 +90,8 @@ spec:
 
   source:
     repository: https://github.com/ggml-org/llama.cpp
-    revision: 22dc605c4ead20e36f447cc67b55ef87e523bd55
-    archiveSha256: sha256:975f70723e053785e894f4e1d9cf770f2f1a7bc762fd3af174ff5635014108b6
+    revision: 8e7f22b67ef4667b4ddd50230771287f328cfb3f
+    archiveSha256: sha256:45a24299e7a24410624489d19924d492bc71a120fa17d9b7cb32f6d5c4f1aed0
 
   cuda:
     developmentBase: docker.io/nvidia/cuda@sha256:ef2203909e80b8b976cfc672f7e2ae2b00bc0e25c404ee86d89e10a3802f1c52
