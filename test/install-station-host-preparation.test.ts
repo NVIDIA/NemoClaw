@@ -429,6 +429,7 @@ ensure_cdi_runtime
     const diagnostics = runSourced(
       STATION_PREPARE,
       `
+NEMOCLAW_VLLM_PORT='19000'
 ps() {
   printf '%s %s bash bash /tmp/NemoClaw/scripts/prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"
   printf '%s 1 bash bash /tmp/NemoClaw/scripts/install.sh\n' "$PPID"
@@ -436,12 +437,12 @@ ps() {
   printf '5465 1 rg rg vllm /var/log/station.log\n'
   printf '5466 1 bash bash -c docker image ls | grep -qi vllm\n'
 }
-ss() { :; }
+ss() { printf 'LISTEN 0 4096 127.0.0.1:8000 0.0.0.0:*\n'; }
 check_agent_and_inference_conflicts
 `,
     );
     expect(diagnostics.result.status, diagnostics.output).toBe(0);
-    expect(diagnostics.output).toContain("agent_inference_workloads=none port_8000=free");
+    expect(diagnostics.output).toContain("agent_inference_workloads=none vllm_port=19000 free");
   });
 
   it("blocks vLLM executables and Python modules without exposing model names", () => {

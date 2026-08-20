@@ -3,6 +3,7 @@
 
 import {
   LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES,
+  LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
   LLAMA_CPP_DGX_SPARK_REQUIRED_METRIC_SERIES,
   type LlamaCppDgxSparkExecutionPlan,
   type LlamaCppDgxSparkQualificationReceipt,
@@ -162,6 +163,51 @@ function jsonRequest(
     method: "POST",
     signal,
   };
+}
+
+function exactSizeChatRequest(model: string, targetBytes: number): string {
+  const request = {
+    max_tokens: 1,
+    messages: [{ content: "", role: "user" }],
+    model,
+    temperature: 0,
+  };
+  const emptyBody = JSON.stringify(request);
+  const contentBytes = targetBytes - new TextEncoder().encode(emptyBody).byteLength;
+  if (contentBytes < 0) throw new Error("request-body probe target is too small");
+  request.messages[0].content = "x".repeat(contentBytes);
+  const body = JSON.stringify(request);
+  if (new TextEncoder().encode(body).byteLength !== targetBytes) {
+    throw new Error("request-body probe did not construct the exact declared size");
+  }
+  return body;
+}
+
+function exactSizeJsonRequest(
+  authorization: string,
+  body: string,
+  timeoutMilliseconds: number,
+): RequestInit {
+  return {
+    body,
+    headers: {
+      Authorization: authorization,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+    signal: requestSignal(timeoutMilliseconds),
+  };
+}
+
+function validateRequestBodyLimitError(value: unknown): void {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.error) ||
+    value.error.code !== "request_body_too_large" ||
+    value.error.type !== "invalid_request_error"
+  ) {
+    throw new Error("request-body limit probe did not return the declared error contract");
+  }
 }
 
 function usageFrom(value: unknown): ProtocolEvidence["usage"] {
@@ -727,6 +773,73 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
   await expectStatus(malformedResponse, 400, bounds.maxResponseBytes, "malformed-request probe");
   executedProbes.add("malformed-request");
 
+  const acceptedRequestBytes = plan.recipe.serve.limits.maxRequestBodyBytes;
+  const acceptedResponse = await fetchImpl(
+    chatUrl,
+    exactSizeJsonRequest(
+      authorization,
+      exactSizeChatRequest(model, acceptedRequestBytes),
+      timeoutMilliseconds,
+    ),
+  );
+  await expectStatus(
+    acceptedResponse,
+    200,
+    bounds.maxResponseBytes,
+    "request-body boundary probe",
+  );
+
+  const rejectedResponse = await fetchImpl(
+    chatUrl,
+    exactSizeJsonRequest(
+      authorization,
+      exactSizeChatRequest(model, LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES),
+      timeoutMilliseconds,
+    ),
+  );
+  validateRequestBodyLimitError(
+    await readJson(
+      rejectedResponse,
+      413,
+      bounds.maxResponseBytes,
+      "oversized request-body probe",
+    ),
+  );
+
+  const continuationHealthResponse = await fetchImpl(`${baseUrl}/health`, {
+    headers: { Authorization: authorization },
+    signal: requestSignal(bounds.clientTimeoutMilliseconds),
+  });
+  await expectStatus(
+    continuationHealthResponse,
+    200,
+    bounds.maxResponseBytes,
+    "request-body continuation health probe",
+  );
+  const bodyLimitContinuationResponse = await fetchImpl(
+    chatUrl,
+    jsonRequest(
+      authorization,
+      {
+        max_tokens: bounds.maxTokens.synchronousChat,
+        messages: [{ content: "Return one short continuation token.", role: "user" }],
+        model,
+        temperature: 0,
+      },
+      timeoutMilliseconds,
+    ),
+  );
+  validateChatCompletionResponse(
+    await readJson(
+      bodyLimitContinuationResponse,
+      200,
+      bounds.maxResponseBytes,
+      "request-body continuation completion probe",
+    ),
+    model,
+  );
+  executedProbes.add("request-body-limit");
+
   const synchronousResponse = await fetchImpl(
     chatUrl,
     jsonRequest(
@@ -914,6 +1027,17 @@ export async function runLlamaCppDgxSparkProtocolQualification(options: {
     },
     health: { httpStatus: 200, ok: true },
     malformedRequest: { httpStatus: 400, ok: true },
+    requestBodyLimit: {
+      acceptedBytes: acceptedRequestBytes,
+      acceptedHttpStatus: 200,
+      continuationHealthHttpStatus: 200,
+      continuationHttpStatus: 200,
+      errorCode: "request_body_too_large",
+      errorType: "invalid_request_error",
+      ok: true,
+      rejectedBytes: LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
+      rejectedHttpStatus: 413,
+    },
     models: { httpStatus: 200, model, ok: true },
     metrics,
     properties: propertiesEvidence.properties,

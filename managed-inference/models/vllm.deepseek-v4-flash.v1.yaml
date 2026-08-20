@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+metadata:
+  id: vllm.deepseek-v4-flash.v1
+  displayName: DeepSeek V4 Flash
+spec:
+  id: deepseek-ai/DeepSeek-V4-Flash
+  revision: 60d8d70770c6776ff598c94bb586a859a38244f1
+  environmentValue: deepseek-v4-flash
+  displayName: DeepSeek V4 Flash
+  menuOrder: 40
+  servedName: deepseek-ai/DeepSeek-V4-Flash
+  downloadSizeBytes: 352381000000
+  gated: false
+  installFastSafetensors: true
+  preparation:
+    ref: none/v1
+  probePolicyRef: nvidia.endpoint-validation.extended/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: false
+    reasoning: true
+    multimodal: false
