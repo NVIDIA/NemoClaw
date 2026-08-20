@@ -17,10 +17,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "number",
-            "expectedHeadSha"
-          ],
+          "required": ["number", "expectedHeadSha"],
           "additionalProperties": false
         }
       },
@@ -34,11 +31,7 @@
         "type": "boolean"
       }
     },
-    "required": [
-      "items",
-      "workdir",
-      "apply"
-    ],
+    "required": ["items", "workdir", "apply"],
     "additionalProperties": false
   },
   "output": {
@@ -75,13 +68,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "updated",
-          "unchanged",
-          "eligible",
-          "ineligible",
-          "failed"
-        ],
+        "required": ["updated", "unchanged", "eligible", "ineligible", "failed"],
         "additionalProperties": false
       },
       "results": {
@@ -260,11 +247,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "code",
-                    "stdout",
-                    "stderr"
-                  ],
+                  "required": ["code", "stdout", "stderr"],
                   "additionalProperties": false
                 },
                 {
@@ -293,14 +276,7 @@
         }
       }
     },
-    "required": [
-      "apply",
-      "mutated",
-      "repo",
-      "requested",
-      "counts",
-      "results"
-    ],
+    "required": ["apply", "mutated", "repo", "requested", "counts", "results"],
     "additionalProperties": false
   },
   "revision": 5

@@ -18,11 +18,7 @@
         "type": "integer"
       }
     },
-    "required": [
-      "repository",
-      "pullNumber",
-      "workdir"
-    ],
+    "required": ["repository", "pullNumber", "workdir"],
     "additionalProperties": false
   },
   "output": {
@@ -78,12 +74,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name",
-            "state",
-            "bucket",
-            "link"
-          ],
+          "required": ["name", "state", "bucket", "link"],
           "additionalProperties": false
         }
       },
@@ -108,13 +99,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "id",
-            "user",
-            "state",
-            "commitId",
-            "body"
-          ],
+          "required": ["id", "user", "state", "commitId", "body"],
           "additionalProperties": false
         }
       },
@@ -149,14 +134,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "id",
-            "user",
-            "path",
-            "line",
-            "body",
-            "url"
-          ],
+          "required": ["id", "user", "path", "line", "body", "url"],
           "additionalProperties": false
         }
       },
@@ -178,12 +156,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "id",
-            "user",
-            "body",
-            "url"
-          ],
+          "required": ["id", "user", "body", "url"],
           "additionalProperties": false
         }
       },
@@ -200,22 +173,11 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "reviews",
-          "inlineComments",
-          "discussionComments"
-        ],
+        "required": ["reviews", "inlineComments", "discussionComments"],
         "additionalProperties": false
       }
     },
-    "required": [
-      "pull",
-      "checks",
-      "reviews",
-      "inlineComments",
-      "discussionComments",
-      "truncation"
-    ],
+    "required": ["pull", "checks", "reviews", "inlineComments", "discussionComments", "truncation"],
     "additionalProperties": false
   },
   "revision": 4

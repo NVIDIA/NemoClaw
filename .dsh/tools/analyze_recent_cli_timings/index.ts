@@ -53,7 +53,7 @@ const run = async (command, timeoutMs = 120000) => {
   return result;
 };
 const perPage = Math.min(100, Math.max(30, limit * 3));
-const endpoint = `repos/${repo}/actions/artifacts?name=${artifactName}&per_page=${perPage}`;
+const endpoint = `repos/${repo}/actions/artifacts?name=${encodeURIComponent(artifactName)}&per_page=${perPage}`;
 const listed = await run(
   "gh api " +
     quote(endpoint) +
@@ -88,7 +88,10 @@ for (const artifact of artifactData.artifacts ?? []) {
 }
 if (artifacts.length < 2)
   throw new Error(`Found ${artifacts.length} retained reports; at least 2 are required`);
-const temporary = await run("mktemp -d " + quote("nemoclaw-cli-timings.XXXXXXXXXX"), 30000);
+const temporary = await run(
+  'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-cli-timings.XXXXXXXXXX"',
+  30000,
+);
 if (temporary.exitCode !== 0) throw new Error("Could not create private temporary directory");
 const root = temporary.stdout.text.trim();
 if (!root) throw new Error("Could not create private temporary directory");

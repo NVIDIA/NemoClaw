@@ -18,9 +18,7 @@
         "type": "boolean"
       }
     },
-    "required": [
-      "workdir"
-    ],
+    "required": ["workdir"],
     "additionalProperties": false
   },
   "output": {

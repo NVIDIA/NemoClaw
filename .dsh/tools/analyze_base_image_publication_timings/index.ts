@@ -86,15 +86,10 @@ for (let offset = 0; offset < selected.length; offset += 12) {
       batch.map(async (run) => {
         const data = parse(
           await gh([
-            "run",
-            "view",
-            String(run.id),
-            "--repo",
-            repo,
-            "--json",
-            "jobs",
+            "api",
+            "/repos/" + repo + "/actions/runs/" + run.id + "/jobs?per_page=100",
             "--jq",
-            '{jobs:[.jobs[]|select(.name=="base-image-publication" or .name=="generate-matrix")]}',
+            '{jobs:[.jobs[]|select(.name=="base-image-publication" or .name=="generate-matrix")|{name,status,conclusion,startedAt:.started_at,completedAt:.completed_at,steps:[.steps[]|{name,startedAt:.started_at,completedAt:.completed_at}]}]}',
           ]),
           "workflow job",
         );

@@ -20,8 +20,8 @@ if (
 const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 const redact = (value) =>
   String(value)
-    .replace(/(authorization:?)\s*\S+/gi, "$1 [REDACTED]")
-    .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=)\S+/g, "$1[REDACTED]")
+    .replace(/(authorization\s*:)[^\r\n]*/gi, "$1 [REDACTED]")
+    .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)\s*=)\s*[^\s]+/g, "$1[REDACTED]")
     .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
     .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
 const run = async (command, description, timeoutMs = 30000) => {
@@ -67,13 +67,13 @@ try {
   logStderr = redact(downloaded.stderr.text).slice(-4000);
   if (logCode === 0) {
     const bounded = await run(
-      `bytes=$(wc -c < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d' > ${q(boundedPath)}; else cp -- ${q(rawPath)} ${q(boundedPath)}; fi; printf '%s' "$bytes"`,
+      `bytes=$(wc -c < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d'; else cat -- ${q(rawPath)}; fi | tail -n 20000 > ${q(boundedPath)}; printf '%s' "$bytes"`,
       "Bound GitHub Actions job log",
     );
     if (bounded.exitCode !== 0) throw new Error("Could not bound GitHub Actions job log");
     const byteCount = Number(bounded.stdout.text.trim());
     sourceTruncated = Number.isFinite(byteCount) && byteCount > 4000000;
-    const content = await tools.read({ file_path: boundedPath, limit: 100000 });
+    const content = await tools.read({ file_path: boundedPath, limit: 20000 });
     logLines = content.lines.map((line) => line.text);
     sourceTruncated ||= content.totalLines > content.lines.length;
   }
@@ -145,7 +145,15 @@ if (artifactName) {
     const fileResults = await Promise.all(
       resultPaths.slice(0, 100).map(async (relativePath) => {
         try {
-          const file = await tools.read({ file_path: `${dir}/${relativePath}`, limit: 2000 });
+          const resultPath = `${dir}/${relativePath}`;
+          const measured = await run(
+            `wc -c < ${q(resultPath)}`,
+            "Measure bounded test result artifact",
+          );
+          if (measured.exitCode !== 0) return null;
+          const resultBytes = Number(measured.stdout.text.trim());
+          if (!Number.isFinite(resultBytes) || resultBytes > 1000000) return null;
+          const file = await tools.read({ file_path: resultPath, limit: 2000 });
           if (file.totalLines > 2000) return null;
           const value = JSON.parse(file.lines.map((line) => line.text).join("\n"));
           if (!value || typeof value !== "object" || Array.isArray(value)) return null;

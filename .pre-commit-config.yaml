@@ -115,7 +115,7 @@ repos:
         name: Oxfmt
         entry: bash tools/lint/format-added-files.sh --write
         language: system
-        files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
+        files: ^(\.dsh/tools/.*\.json|.*\.(cjs|cts|js|jsx|mjs|mts|ts|tsx))$
         pass_filenames: true
         priority: 5
 

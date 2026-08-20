@@ -35,10 +35,7 @@
         "type": "integer"
       }
     },
-    "required": [
-      "workdir",
-      "files"
-    ],
+    "required": ["workdir", "files"],
     "additionalProperties": false
   },
   "output": {
@@ -60,13 +57,7 @@
         "type": "boolean"
       }
     },
-    "required": [
-      "command",
-      "code",
-      "stdout",
-      "stderr",
-      "truncated"
-    ],
+    "required": ["command", "code", "stdout", "stderr", "truncated"],
     "additionalProperties": false
   },
   "revision": 2

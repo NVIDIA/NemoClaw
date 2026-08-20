@@ -12,7 +12,7 @@ if (!/^\d+$/.test(jobId) || jobId === "0") throw new Error("jobId must be positi
 const tailLines = Math.max(20, Math.min(500, input.tailLines ?? 180));
 const contextLines = Math.max(0, Math.min(80, input.contextLines ?? 40));
 const pattern = input.pattern ?? "";
-if (pattern.length > 1000) throw new Error("pattern is too long");
+if (pattern.length > 500) throw new Error("pattern is too long");
 let matcher;
 try {
   matcher = new RegExp(pattern, "iu");
@@ -22,8 +22,8 @@ try {
 const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 const redact = (value) =>
   String(value)
-    .replace(/(authorization:?)\s*\S+/gi, "$1 [REDACTED]")
-    .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=)\S+/g, "$1[REDACTED]")
+    .replace(/(authorization\s*:)[^\r\n]*/gi, "$1 [REDACTED]")
+    .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)\s*=)\s*[^\s]+/g, "$1[REDACTED]")
     .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
     .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
 const run = async (command, description, timeoutMs = 30000) => {
@@ -54,13 +54,13 @@ try {
   stderr = redact(downloaded.stderr.text).slice(-12000);
   if (code === 0) {
     const bounded = await run(
-      `bytes=$(wc -c < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d' > ${q(boundedPath)}; else cp -- ${q(rawPath)} ${q(boundedPath)}; fi; printf '%s' "$bytes"`,
+      `bytes=$(wc -c < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d'; else cat -- ${q(rawPath)}; fi | tail -n 20000 > ${q(boundedPath)}; printf '%s' "$bytes"`,
       "Bound downloaded GitHub job log",
     );
     if (bounded.exitCode !== 0) throw new Error("Could not bound downloaded job log");
     const byteCount = Number(bounded.stdout.text.trim());
     sourceTruncated = Number.isFinite(byteCount) && byteCount > 4000000;
-    const content = await tools.read({ file_path: boundedPath, limit: 100000 });
+    const content = await tools.read({ file_path: boundedPath, limit: 20000 });
     lines = content.lines.map((line) => line.text);
     sourceTruncated ||= content.totalLines > content.lines.length;
   }

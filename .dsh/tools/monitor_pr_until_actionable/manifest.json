@@ -42,11 +42,7 @@
         }
       }
     },
-    "required": [
-      "workdir",
-      "pullNumber",
-      "expectedHeadSha"
-    ],
+    "required": ["workdir", "pullNumber", "expectedHeadSha"],
     "additionalProperties": false
   },
   "output": {

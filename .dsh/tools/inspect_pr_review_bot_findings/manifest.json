@@ -18,10 +18,7 @@
         "type": "integer"
       }
     },
-    "required": [
-      "workdir",
-      "number"
-    ],
+    "required": ["workdir", "number"],
     "additionalProperties": false
   },
   "output": {
@@ -48,13 +45,7 @@
         "additionalProperties": true
       }
     },
-    "required": [
-      "repo",
-      "kind",
-      "truncated",
-      "items",
-      "summary"
-    ],
+    "required": ["repo", "kind", "truncated", "items", "summary"],
     "additionalProperties": false
   },
   "revision": 3

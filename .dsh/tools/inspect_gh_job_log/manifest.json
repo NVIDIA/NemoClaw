@@ -44,7 +44,14 @@
         "type": "string"
       },
       "pattern": {
-        "oneOf": [{ "type": "string" }, { "type": "null" }]
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "code": {
         "type": "integer"
@@ -74,5 +81,5 @@
     ],
     "additionalProperties": false
   },
-  "revision": 2
+  "revision": 3
 }

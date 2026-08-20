@@ -25,10 +25,7 @@
         "const": true
       }
     },
-    "required": [
-      "workdir",
-      "expectedHeadSha"
-    ],
+    "required": ["workdir", "expectedHeadSha"],
     "additionalProperties": false
   },
   "output": {

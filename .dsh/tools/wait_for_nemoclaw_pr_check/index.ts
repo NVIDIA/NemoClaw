@@ -18,6 +18,12 @@ const timeoutMs = Math.max(1000, Math.min(1800000, input.timeoutMs ?? 600000));
 const intervalMs = Math.max(1000, Math.min(120000, input.intervalMs ?? 15000));
 const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 const cut = (value, size) => (typeof value === "string" ? value.slice(0, size) : null);
+const redact = (value) =>
+  String(value)
+    .replace(/(authorization\s*:)[^\r\n]*/gi, "$1 [REDACTED]")
+    .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)\s*=)\s*[^\s]+/g, "$1[REDACTED]")
+    .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
+    .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
 const runGh = async (args) => {
   const result = await tools.bash({
     command: "gh " + args.map(quote).join(" "),
@@ -27,8 +33,14 @@ const runGh = async (args) => {
   });
   if (result.kind !== "foreground") throw new Error("Unexpected background result");
   if (result.exitCode !== 0)
-    throw new Error("GitHub pull request check read failed: " + result.stderr.text.slice(-1500));
-  return JSON.parse(result.stdout.text || "null");
+    throw new Error(
+      "GitHub pull request check read failed: " + redact(result.stderr.text).slice(-1500),
+    );
+  try {
+    return JSON.parse(result.stdout.text || "null");
+  } catch {
+    throw new Error("GitHub pull request check read returned an invalid bounded response");
+  }
 };
 const readHead = () =>
   runGh(["pr", "view", String(input.number), "--repo", repo, "--json", "headRefOid,url,title"]);

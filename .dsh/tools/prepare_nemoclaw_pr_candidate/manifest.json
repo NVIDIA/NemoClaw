@@ -40,37 +40,22 @@
               },
               "keyword": {
                 "type": "string",
-                "enum": [
-                  "Fixes",
-                  "Closes"
-                ]
+                "enum": ["Fixes", "Closes"]
               }
             },
-            "required": [
-              "number",
-              "keyword"
-            ],
+            "required": ["number", "keyword"],
             "additionalProperties": false
           },
           "typeOfChange": {
             "type": "string",
-            "enum": [
-              "code",
-              "code-with-docs",
-              "docs-prose",
-              "docs-code-samples"
-            ]
+            "enum": ["code", "code-with-docs", "docs-prose", "docs-code-samples"]
           },
           "tests": {
             "type": "object",
             "properties": {
               "result": {
                 "type": "string",
-                "enum": [
-                  "added-or-updated",
-                  "existing",
-                  "not-applicable"
-                ]
+                "enum": ["added-or-updated", "existing", "not-applicable"]
               },
               "evidence": {
                 "type": "string"
@@ -79,9 +64,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "result"
-            ],
+            "required": ["result"],
             "additionalProperties": false
           },
           "sensitivePath": {
@@ -94,9 +77,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "changed"
-            ],
+            "required": ["changed"],
             "additionalProperties": false
           },
           "ciWaiver": {
@@ -112,11 +93,7 @@
                 "type": "integer"
               }
             },
-            "required": [
-              "check",
-              "approval",
-              "followUpIssue"
-            ],
+            "required": ["check", "approval", "followUpIssue"],
             "additionalProperties": false
           },
           "hooks": {
@@ -129,9 +106,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "passed"
-            ],
+            "required": ["passed"],
             "additionalProperties": false
           },
           "broadGate": {
@@ -144,10 +119,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "passed",
-              "evidence"
-            ],
+            "required": ["passed", "evidence"],
             "additionalProperties": false
           },
           "docs": {
@@ -181,12 +153,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "testedCommit",
-              "scenario",
-              "result",
-              "evidenceUrl"
-            ],
+            "required": ["testedCommit", "scenario", "result", "evidenceUrl"],
             "additionalProperties": false
           },
           "dco": {
@@ -202,32 +169,18 @@
                 "type": "string"
               }
             },
-            "required": [
-              "commitsVerified",
-              "name",
-              "email"
-            ],
+            "required": ["commitsVerified", "name", "email"],
             "additionalProperties": false
           },
           "noSecrets": {
             "type": "boolean"
           }
         },
-        "required": [
-          "summary",
-          "changes",
-          "typeOfChange",
-          "tests",
-          "hooks",
-          "dco",
-          "noSecrets"
-        ],
+        "required": ["summary", "changes", "typeOfChange", "tests", "hooks", "dco", "noSecrets"],
         "additionalProperties": false
       }
     },
-    "required": [
-      "workdir"
-    ],
+    "required": ["workdir"],
     "additionalProperties": false
   },
   "output": {

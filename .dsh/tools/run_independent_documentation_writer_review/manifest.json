@@ -34,15 +34,7 @@
       },
       "thinking": {
         "type": "string",
-        "enum": [
-          "off",
-          "minimal",
-          "low",
-          "medium",
-          "high",
-          "xhigh",
-          "max"
-        ]
+        "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
       },
       "trustProject": {
         "type": "boolean"
@@ -51,12 +43,7 @@
         "type": "integer"
       }
     },
-    "required": [
-      "workdir",
-      "expectedHeadSha",
-      "summary",
-      "validationEvidence"
-    ],
+    "required": ["workdir", "expectedHeadSha", "summary", "validationEvidence"],
     "additionalProperties": false
   },
   "output": {
@@ -67,12 +54,7 @@
       },
       "mode": {
         "type": "string",
-        "enum": [
-          "dry-run",
-          "read-only",
-          "apply",
-          "blocked"
-        ]
+        "enum": ["dry-run", "read-only", "apply", "blocked"]
       },
       "plan": {
         "type": "array",
@@ -90,13 +72,7 @@
         "type": "string"
       }
     },
-    "required": [
-      "applied",
-      "mode",
-      "plan",
-      "notes",
-      "resultJson"
-    ],
+    "required": ["applied", "mode", "plan", "notes", "resultJson"],
     "additionalProperties": false
   },
   "revision": 7

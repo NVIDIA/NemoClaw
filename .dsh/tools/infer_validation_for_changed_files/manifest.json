@@ -12,9 +12,7 @@
         "type": "string"
       }
     },
-    "required": [
-      "workdir"
-    ],
+    "required": ["workdir"],
     "additionalProperties": false
   },
   "output": {
