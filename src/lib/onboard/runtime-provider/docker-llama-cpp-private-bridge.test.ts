@@ -229,6 +229,21 @@ describe("Docker llama.cpp private bridge controller", () => {
     }
   });
 
+  it("rejects a credential hard link before spawning", () => {
+    const credential = privateCredentialFile(64);
+    const link = path.join(credential.directory, "api-key-link");
+    fs.linkSync(credential.file, link);
+    const runtime = defaultCredentialOpenerFixture();
+    try {
+      expect(() => runtime.controller.start({ ...authority, apiKeyPath: link })).toThrow(
+        "API-key file is unavailable or invalid",
+      );
+      expect(runtime.spawnProcess).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(credential.directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([63, 66])(
     "rejects a credential file containing %i bytes before spawning",
     (credentialSize) => {
