@@ -30,6 +30,7 @@ import {
   advisorTurnFlowErrors,
   atomicTerminalRepairErrors,
   atomicTerminalRepairPrompt,
+  hasCompletedTerminalSubmitRepair,
   missingRequiredAdvisorToolNames,
   normalizedToolNames,
   promptWithRequiredContextTools,
@@ -604,7 +605,12 @@ export async function runReadOnlyAdvisor(
               `[${options.logPrefix}] atomic_terminal_repair_end ${turn.name} ${repairToolName} ok\n`,
             );
           }
-          let terminalSubmitRepaired = false;
+          let terminalSubmitRepaired = hasCompletedTerminalSubmitRepair(
+            turn,
+            currentTurnFlow,
+            tools,
+            currentTurnError,
+          );
           const submitRepairToolName = repairableTerminalSubmitToolName(
             turn,
             currentTurnFlow,
