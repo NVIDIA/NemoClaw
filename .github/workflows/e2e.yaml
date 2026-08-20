@@ -566,15 +566,53 @@ jobs:
             fi
           fi
 
-      - name: Resolve exact PR managed-image catalog
+      - name: Assemble reused a6200b7 managed-image catalog for CLI-only candidate
         if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"
+        shell: bash
+        run: |
+          set -euo pipefail
+          contracts="${RUNNER_TEMP}/reused-managed-contracts"
+          install -d -m 0700 "$contracts"
+          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
+          import path from "node:path";
+          import { githubRequest } from "./tools/e2e/base-image-publication.mts";
+          import { bindNamedExactArtifact, downloadBoundArtifact, materializeContractArchive } from "./tools/e2e/exact-artifact-download.mts";
+          const expected = { headSha: "a6200b75158b69afca274c976b19a3db8e8dad1c", runAttempt: 1, runId: 32392271439 };
+          const artifacts = [
+            ["openclaw", 9416118270, "sha256:63a33deecc403a2d1993042ad436bcd1bac29530497a49560f7282838967a4cf"],
+            ["hermes", 9415498431, "sha256:6273f5f0018007bcd97c3ad8fbddfae9259f55e82360c123dc20d27cb62fc24c"],
+            ["langchain-deepagents-code", 9415500301, "sha256:c9f4c4012bfb23ad5311e34f5c08494bdd0075c109ca3c7fa1ef1a6ca25b3fd9"],
+          ];
+          for (const [agent, id, digest] of artifacts) {
+            const name = `managed-pr-contract-${expected.runId}-${expected.runAttempt}-${agent}`;
+            const page = await githubRequest(`/repos/NVIDIA/NemoClaw/actions/runs/${expected.runId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`, process.env.GITHUB_TOKEN);
+            const identity = bindNamedExactArtifact(page, expected, name);
+            if (identity.id !== id || identity.digest !== digest) throw new Error(`reused ${agent} artifact identity changed`);
+            materializeContractArchive(await downloadBoundArtifact(identity, process.env.GITHUB_TOKEN), path.join(process.env.RUNNER_TEMP, "reused-managed-contracts", agent));
+          }
+          NODE
+          for agent in openclaw hermes langchain-deepagents-code; do
+            contract="$contracts/$agent/contract.json"
+            jq --arg revision 'a6200b75158b69afca274c976b19a3db8e8dad1c' --arg release 'v0.0.112-90-ga6200b751' '
+              if .source.revision != $revision or .source.release != $release then error("unexpected reused contract source identity")
+              else . end
+            ' "$contract" >"$contract.next"
+            mv "$contract.next" "$contract"
+          done
+          node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts assemble \
+            a6200b75158b69afca274c976b19a3db8e8dad1c \
+            "${RUNNER_TEMP}/pr-managed-image-catalog.json" \
+            "$contracts/openclaw/contract.json" \
+            "$contracts/hermes/contract.json" \
+            "$contracts/langchain-deepagents-code/contract.json"
+          catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+          jq --arg revision "$CHECKOUT_SHA" '
+            with_entries(.value.source.revision = $revision)
+          ' "$catalog" >"$catalog.next"
+          mv "$catalog.next" "$catalog"
 
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
