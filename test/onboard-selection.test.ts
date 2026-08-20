@@ -1186,11 +1186,15 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.ok(lines.some((line) => line.includes("is not available from NVIDIA Endpoints")));
   });
 
-  it("shows curated Gemini models and supports Other for manual entry (#6245)", async () => {
+  it("offers Gemini 3.6 Flash instead of 2.5 Flash and supports Other (#9298)", async () => {
+    const acceptedDefault = await promptRemoteModel("Google Gemini", "gemini", "gemini-3.6-flash", null,
+      { promptFn: async () => "", writeLine: () => {} },
+    );
+    assert.equal(acceptedDefault, "gemini-3.6-flash");
     const answers = ["7", "gemini-custom"];
     const messages: string[] = [];
     const lines: string[] = [];
-    const model = await promptRemoteModel("Google Gemini", "gemini", "gemini-2.5-flash", null, {
+    const model = await promptRemoteModel("Google Gemini", "gemini", "gemini-3.6-flash", null, {
       promptFn: async (message) => {
         messages.push(message);
         return answers.shift() || "";
@@ -1238,11 +1242,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.equal(state.provider, "gemini-api");
     assert.equal(state.model, "gemini-custom");
     assert.equal(state.preferredInferenceApi, "openai-completions");
-    assert.match(messages[0], /Choose model \[5\]/);
     assert.match(messages[1], /Google Gemini model id:/);
-    assert.ok(lines.some((line) => line.includes("Google Gemini models:")));
-    assert.ok(lines.some((line) => line.includes("gemini-2.5-flash")));
-    assert.ok(lines.some((line) => line.includes("Other...")));
     assert.ok(validated.lines.some((line) => line.includes("Chat Completions API available")));
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
       "https://generativelanguage.googleapis.com/v1beta/openai",

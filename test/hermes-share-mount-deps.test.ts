@@ -447,13 +447,27 @@ describe("Hermes share mount package parity (#2947)", () => {
     const tuiEntry = path.join(hermesRoot, "ui-tui", "dist", "entry.js");
     const webIndex = path.join(hermesRoot, "hermes_cli", "web_dist", "index.html");
     const scriptPath = path.join(tmp, "run-hermes-runtime-guard.sh");
+    const hermesCalls = path.join(tmp, "hermes-calls.log");
 
     try {
       for (const file of [agentBrowser, python, tuiEntry, webIndex]) {
         fs.mkdirSync(path.dirname(file), { recursive: true });
       }
 
-      fs.writeFileSync(fakeHermes, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      fs.writeFileSync(
+        fakeHermes,
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' "$*" >> ${JSON.stringify(hermesCalls)}`,
+          'case "$#" in',
+          '  1) [ "$1" = "--version" ] || exit 64 ;;',
+          '  2) [ "$1" = "acp" ] && [ "$2" = "--check" ] || exit 64 ;;',
+          '  *) exit 64 ;;',
+          "esac",
+          "",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
       fs.writeFileSync(agentBrowser, "#!/bin/sh\nprintf 'agent-browser test\\n'\n", {
         mode: 0o700,
       });
@@ -490,6 +504,10 @@ describe("Hermes share mount package parity (#2947)", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stderr).toContain("hermes-tui: no TTY");
+      expect(fs.readFileSync(hermesCalls, "utf-8").trim().split("\n")).toEqual([
+        "--version",
+        "acp --check",
+      ]);
       expect(fs.existsSync(agentBrowser)).toBe(true);
       expect(fs.existsSync(path.join(hermesRoot, ".node_modules.runtime"))).toBe(false);
     } finally {

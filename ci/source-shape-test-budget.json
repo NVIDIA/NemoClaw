@@ -168,7 +168,7 @@
     },
     {
       "file": "test/release-lkg-brev-image.test.ts",
-      "test": "attests one request before the isolated dispatch job (#9661)",
+      "test": "keeps the LKG credential on the production-only dispatch step (#9798)",
       "category": "security"
     },
     {
