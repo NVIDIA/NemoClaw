@@ -119,7 +119,10 @@ export function observeMcpCredentialRevision(
 export function waitForAttachedMcpCredential(
   sandboxName: string,
   entry: McpBridgeEntry,
-  options: { previousRevision?: McpCredentialRevisionObservation } = {},
+  options: {
+    previousRevision?: McpCredentialRevisionObservation;
+    refreshAfterObservedAbsence?: () => void;
+  } = {},
 ): void {
   assertAuthenticatedBridgeEntry(entry);
   const envName = entry.env[0];
@@ -133,12 +136,22 @@ export function waitForAttachedMcpCredential(
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
     10,
   );
+  let refreshedAfterObservedAbsence = false;
   const ready = waitUntil(
     () => {
       // Each exec is a fresh OpenShell process. Only the bounded placeholder
       // classification crosses back to the host, where the comparison cannot
       // be influenced by a same-UID sandbox process rewriting a snapshot file.
-      const observation = tryObserveMcpCredentialRevision(sandboxName, envName);
+      let observation = tryObserveMcpCredentialRevision(sandboxName, envName);
+      if (
+        observation === "absent" &&
+        !refreshedAfterObservedAbsence &&
+        options.refreshAfterObservedAbsence
+      ) {
+        refreshedAfterObservedAbsence = true;
+        options.refreshAfterObservedAbsence();
+        observation = tryObserveMcpCredentialRevision(sandboxName, envName);
+      }
       return (
         observation !== null &&
         observation !== "absent" &&
