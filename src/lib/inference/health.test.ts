@@ -296,9 +296,10 @@ describe("inference health", () => {
       ["numeric streaming delta", 'data: {"choices":[{"delta":{"content":123}}]}\n'],
       ["a null content field and no tool call", '{"choices":[{"message":{"content":null}}]}'],
       [
-        "a null reasoning field and no tool call",
+        "a null reasoning_content field and no tool call",
         '{"choices":[{"message":{"reasoning_content":null}}]}',
       ],
+      ["a null reasoning field and no tool call", '{"choices":[{"message":{"reasoning":null}}]}'],
       ["a null refusal field and no tool call", '{"choices":[{"message":{"refusal":null}}]}'],
     ])("rejects a Chat Completions response with %s", (_description, body) => {
       const result = probeRemoteProviderHealth("openai-api", {
@@ -327,6 +328,19 @@ describe("inference health", () => {
       expect(result?.probed).toBe(true);
       expect(result?.failureLabel).toBeUndefined();
       expect(result?.detail).toContain("succeeded");
+    });
+
+    it("accepts a reasoning-only Chat Completions response", () => {
+      const result = probeRemoteProviderHealth("openai-api", {
+        model: "reasoning-model",
+        getCredentialImpl: () => "sk-test-secret",
+        runCurlProbeImpl: () =>
+          httpOk(
+            '{"choices":[{"finish_reason":"length","message":{"content":null,"reasoning":"Planning the reply."}}]}',
+          ),
+      });
+
+      expect(result).toMatchObject({ ok: true, probed: true });
     });
 
     it.each([
