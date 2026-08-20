@@ -548,10 +548,12 @@ describe("host-local model cleanup", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness({ containerPresent: phase !== "network-creating" });
     createManagedState(homeDir, harness.engine, { phase });
+    const privateBridge = privateBridgeFixture();
 
     const result = cleanupLocalModelRuntimes({
       homeDir,
       engine: harness.engine,
+      privateBridge,
     });
 
     expect(result).toMatchObject({ ok: true });
@@ -714,6 +716,28 @@ describe("host-local model cleanup", () => {
       harness.capture.mock.invocationCallOrder[containerRemovalCall]!,
     );
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir, gatewayPort).stateDir)).toBe(false);
+  });
+
+  it("stops the managed llama.cpp bridge before removing the container it forwards to (#9598)", () => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    createManagedState(homeDir, harness.engine);
+    const privateBridge = privateBridgeFixture();
+
+    const result = cleanupManagedLlamaCppRuntimeForSandbox("spark-agent", {
+      homeDir,
+      engine: harness.engine,
+      privateBridge,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
+    expect(privateBridge.assertStopped).toHaveBeenCalledWith(TRANSACTION_ID);
+    const removalCall = harness.capture.mock.calls.findIndex((call) => call[0]?.[0] === "rm");
+    expect(removalCall).toBeGreaterThanOrEqual(0);
+    expect(privateBridge.stopTransaction.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.capture.mock.invocationCallOrder[removalCall]!,
+    );
   });
 
   it("preserves lifecycle authority when the sandbox bridge remains active (#9598)", () => {
