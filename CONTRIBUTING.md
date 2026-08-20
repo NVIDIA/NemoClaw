@@ -79,6 +79,21 @@ Open an issue when you encounter one of the following situations.
 Use [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) for questions, design exploration, and larger feature proposals before implementation.
 Maintainers may ask you to move broad or still-forming proposals from an issue to a discussion so the design can settle before code review.
 
+### Maintainer Triage and Decision
+
+For a substantive product, architecture, security, integration, or supported-surface proposal, a maintainer must record a decision in the issue or linked discussion.
+The maintainer must record the decision before implementation starts.
+
+The decision record must include these items:
+
+- **Decision:** `Accept`, `Request changes`, `Defer`, or `Decline`.
+- **Reason and placement:** State the reason. For `Accept`, record core NemoClaw or NemoClaw Community. Use `Not applicable` when the decision is not `Accept`.
+- **Accountable maintainer:** Name one maintainer when the decision is `Accept`. Use `Not applicable` when the decision is not `Accept`.
+- **Validation plan:** List the required validation evidence when the decision is `Accept`. Use `Not applicable` when the decision is not `Accept`.
+
+Contributors must not start implementing a substantive contribution until a maintainer records `Accept`, names one accountable maintainer, and states an explicit validation plan.
+Small documentation changes and low-risk fixes may continue directly to a pull request.
+
 ## Community Response Expectations
 
 NemoClaw is an alpha project, and maintainer availability varies with release, security, and stability work.

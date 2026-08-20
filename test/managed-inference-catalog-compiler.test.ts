@@ -32,6 +32,16 @@ const LIGHTNING_PROFILE_ID = "vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-
 const LIGHTNING_RECIPE_ID = "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1";
 const MUSE_PROFILE_ID = "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4";
 const MUSE_RECIPE_ID = "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1";
+const LINUX_VLLM_PROFILES = [
+  {
+    presetId: "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4",
+    recipeId: "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
+  },
+  {
+    presetId: "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
+    recipeId: "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
+  },
+] as const;
 
 function catalogSources(): ServingCatalogSource[] {
   return (["models", "presets", "recipes"] as const).flatMap((kind) => {
@@ -65,6 +75,18 @@ describe("managed inference YAML profile contract", () => {
     ["vllm.qwen3-6-27b-fp8.linux-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
     ["vllm.qwen3-6-27b-fp8.optimized-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
     ["vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1", 64_000_000_000, 0.4, 23_500_000_000],
+    [
+      "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
+      96_000_000_000,
+      0.75,
+      25_447_097_878,
+    ],
+    [
+      "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
+      96_000_000_000,
+      0.75,
+      21_561_882_284,
+    ],
   ])(
     "reserves model-weight headroom within the %s GPU utilization budget",
     (recipeId, minimumGpuMemoryBytes, utilization, downloadSizeBytes) => {
@@ -309,6 +331,37 @@ describe("managed inference YAML profile contract", () => {
       },
     });
   });
+
+  it.each(LINUX_VLLM_PROFILES)(
+    "compiles $presetId as an explicit Linux amd64 catalog profile (#9673)",
+    ({ presetId, recipeId }) => {
+      const catalog = compile(catalogSources());
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      const recipe = catalog.recipes.find(({ metadata }) => metadata.id === recipeId);
+
+      expect(preset?.metadata.supportState).toBe("experimental");
+      expect(preset?.spec).toMatchObject({
+        selection: "explicit-only",
+        plan: { backend: "vllm", platform: "linux", recipeRef: recipeId },
+      });
+      expect(preset?.spec.requirements?.all).toContainEqual({
+        readiness: {
+          scope: "everyNode",
+          kind: "observation",
+          id: "host.os.architecture",
+          comparison: { operator: "equals", value: "x64" },
+        },
+      });
+      expect(recipe?.spec).toMatchObject({
+        backend: "vllm",
+        runtime: { architecture: "amd64" },
+        execution: {
+          materializerRef: "vllm.host-local/v1",
+          lifecycleRef: "vllm.host-local.lifecycle/v1",
+        },
+      });
+    },
+  );
 
   it("documents the Experimental Lightning support boundary (#8385)", () => {
     const setupGuide = readFileSync(

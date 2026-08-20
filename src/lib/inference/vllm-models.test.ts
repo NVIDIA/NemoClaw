@@ -9,6 +9,7 @@ import type {
   HostLocalInferenceServingRecipe,
   ServingModelPreparation,
 } from "./serving/types";
+import { detectVllmProfile, resolveVllmModelRuntime } from "./vllm";
 import {
   assertGatedModelAccess,
   buildNemotronUltraDistributedServeCommand,
@@ -639,7 +640,7 @@ describe("vllm model registry", () => {
     expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
   });
 
-  it("pins the authenticated Muse Glimmer recipe for one DGX Spark", () => {
+  it("pins the authenticated Muse Glimmer model across Spark and Linux", () => {
     const muse = VLLM_MODELS.find((model) => model.envValue === "muse-glimmer-30b");
 
     expect(muse).toMatchObject({
@@ -648,8 +649,8 @@ describe("vllm model registry", () => {
       revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
       servedModelId: "muse-glimmer",
       maxModelLen: 32768,
-      platforms: ["spark"],
-      minComputeCapability: 121,
+      platforms: ["spark", "linux"],
+      minComputeCapability: 120,
       gated: false,
       installFastSafetensors: false,
       trustRemoteCode: false,
@@ -675,17 +676,19 @@ describe("vllm model registry", () => {
     expect(command).not.toContain("pip install");
   });
 
-  it("pins the published Lightning parser baseline for DGX Spark", () => {
+  it("pins the published Lightning parser baseline across managed variants", () => {
     const lightning = VLLM_MODELS.find((model) => model.envValue === "nemotron-3.5-lightning-30b");
 
     expect(lightning).toMatchObject({
       id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
-      platforms: ["spark"],
+      platforms: ["spark", "linux"],
       pickerPlatforms: [],
-      minComputeCapability: 121,
+      minComputeCapability: 90,
       requireRuntimeVariant: true,
     });
-    const command = buildVllmServeCommand(lightning!);
+    const sparkProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const sparkModel = resolveVllmModelRuntime(sparkProfile, lightning!, "arm64").model;
+    const command = buildVllmServeCommand(sparkModel);
     expect(command).toContain("--mamba-backend flashinfer");
     expect(command).toContain("--tool-call-parser step3p5");
     expect(command).toContain("--reasoning-parser step3p5");
