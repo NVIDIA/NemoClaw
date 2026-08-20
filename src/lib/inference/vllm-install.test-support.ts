@@ -16,6 +16,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { type Mock, type MockInstance, vi } from "vitest";
+import type {
+  QualificationStatus,
+  ReadinessState,
+  SystemReadinessReport,
+} from "../readiness/types.js";
+import { isHostLocalInferenceServingRecipe } from "./serving/adapter-registry.js";
+import { loadManagedInferenceCatalog } from "./serving/catalog-loader.js";
+import type { ManagedInferenceReadinessSource } from "./serving/types.js";
+import type { InstallVllmOptions, VllmProfile } from "./vllm.js";
 
 export type VllmInstallMocks = {
   dockerCapture: Mock;
@@ -48,6 +57,124 @@ export type VllmInstallSpies = {
 };
 
 export const MANAGED_CONTAINER_ID = "a".repeat(64);
+
+/** Build fresh, catalog-shaped readiness evidence for downstream install unit tests. */
+export function vllmInstallTestReadiness(
+  profile: VllmProfile,
+  modelIntent = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim(),
+): readonly ManagedInferenceReadinessSource[] {
+  const profileArchitecture = profile.architecture ?? process.arch;
+  const expectedArchitecture = profileArchitecture === "x64" ? "amd64" : profileArchitecture;
+  const catalog = loadManagedInferenceCatalog();
+  const candidates = catalog.presets.flatMap((preset) => {
+    if (preset.spec.plan.backend !== "vllm" || preset.spec.plan.platform !== profile.platform) {
+      return [];
+    }
+    const recipe = catalog.recipes.find(
+      ({ metadata }) => metadata.id === preset.spec.plan.recipeRef,
+    );
+    if (
+      !recipe ||
+      !isHostLocalInferenceServingRecipe(recipe) ||
+      recipe.spec.runtime.architecture !== expectedArchitecture
+    ) {
+      return [];
+    }
+    const requestedModel = modelIntent || profile.defaultModel.envValue;
+    const aliases = [
+      recipe.spec.model.id,
+      recipe.spec.model.environmentValue,
+      recipe.spec.model.servedName,
+    ];
+    return aliases.some((value) => value.toLowerCase() === requestedModel.toLowerCase())
+      ? [{ preset, recipe }]
+      : [];
+  });
+  if (candidates.length === 0) {
+    throw new Error(
+      `No host-local catalog fixture matches ${modelIntent || profile.defaultModel.envValue} on ${profile.platform}/${String(expectedArchitecture)}`,
+    );
+  }
+  const { preset } = candidates.sort(
+    (left, right) => right.preset.spec.priority - left.preset.spec.priority,
+  )[0]!;
+  const observations = new Map<string, SystemReadinessReport["observations"][number]>();
+  const capabilities = new Map<string, SystemReadinessReport["capabilities"][number]>();
+  const qualifications = new Map<string, SystemReadinessReport["qualifications"][number]>();
+  for (const requirement of preset.spec.requirements.all) {
+    if (!("readiness" in requirement)) continue;
+    const readiness = requirement.readiness;
+    if (readiness.kind === "observation") {
+      observations.set(
+        readiness.id,
+        "state" in readiness
+          ? { id: readiness.id, state: readiness.state as ReadinessState }
+          : {
+              id: readiness.id,
+              state: "present",
+              value:
+                readiness.comparison.operator === "one-of"
+                  ? readiness.comparison.values[0]
+                  : readiness.comparison.value,
+            },
+      );
+    } else if (readiness.kind === "capability") {
+      capabilities.set(readiness.id, {
+        id: readiness.id,
+        state: readiness.state as ReadinessState,
+      });
+    } else if ("status" in readiness) {
+      qualifications.set(readiness.id, {
+        id: readiness.id,
+        status: readiness.status as QualificationStatus,
+      });
+    }
+  }
+  const unifiedMemory = profile.platform !== "linux";
+  observations.set("host.gpu.unified_memory", {
+    id: "host.gpu.unified_memory",
+    state: "present",
+    value: unifiedMemory,
+  });
+  observations.set("host.gpu.memory_total_bytes", {
+    id: "host.gpu.memory_total_bytes",
+    state: "present",
+    value: 1_000_000_000_000,
+  });
+  observations.set("host.gpu.memory_per_device_bytes", {
+    id: "host.gpu.memory_per_device_bytes",
+    state: "present",
+    value: 1_000_000_000_000,
+  });
+  const report = {
+    schemaVersion: "1.1.0",
+    status: "supported",
+    exitCode: 0,
+    mutated: false,
+    provenance: {
+      nemoclawVersion: "0.1.0",
+      sourceRevision: "0".repeat(40),
+      observedAt: new Date().toISOString(),
+    },
+    observations: [...observations.values()],
+    capabilities: [...capabilities.values()],
+    qualifications: [...qualifications.values()],
+    findings: [],
+    evidence: [],
+  } satisfies SystemReadinessReport;
+  return [{ nodeId: "vllm-install-test-host", report }];
+}
+
+export function withVllmInstallTestReadiness(
+  profile: VllmProfile,
+  options: InstallVllmOptions,
+): InstallVllmOptions {
+  return {
+    resolveManagedBridgeHost: () => "172.18.0.1",
+    ...options,
+    readinessReports: vllmInstallTestReadiness(profile),
+  };
+}
 
 export function vllmContainerRow(
   containerName: string,

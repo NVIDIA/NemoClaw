@@ -1,15 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { VLLM_PORT } from "../../core/vllm-port";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
-// Keep this list aligned with the host.openshell.internal endpoints in
-// nemoclaw-blueprint/policies/presets/local-inference.yaml. These are policy
-// ports, not environment-overridable local provider ports.
-export const BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS = [LLAMA_CPP_PORT, 11434, 11435, 8000] as const;
+// Keep this list aligned with the materialized host.openshell.internal endpoints
+// in nemoclaw-blueprint/policies/presets/local-inference.yaml.
+export const BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS = [
+  LLAMA_CPP_PORT,
+  11434,
+  11435,
+  VLLM_PORT,
+] as const;
 
-export const COMPATIBLE_ENDPOINT_GATEWAY_PORTS = [11434, 11435, 8000] as const;
+export const COMPATIBLE_ENDPOINT_GATEWAY_PORTS = [11434, 11435, VLLM_PORT] as const;
 
 const COMPATIBLE_ENDPOINT_GATEWAY_PORT_SET = new Set<number>(COMPATIBLE_ENDPOINT_GATEWAY_PORTS);
 const LOOPBACK_BRIDGE_PROVIDERS = new Set(["compatible-endpoint", "llama-cpp-local"]);

@@ -57,10 +57,9 @@ export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarde
     }
     if (
       String(env.NEMOCLAW_VLLM_MODEL ?? "").trim() ||
-      String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim() ||
-      String(env.NEMOCLAW_VLLM_PORT ?? "").trim()
+      String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()
     ) {
-      deps.error("  The local model profile does not accept vLLM model, port, or serve overrides.");
+      deps.error("  The local model profile does not accept vLLM model or serve overrides.");
       return "retry-selection";
     }
     let materialized: ReturnType<typeof materializeHostLocalVllmSelection>;
