@@ -16,6 +16,10 @@ import {
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import {
+  buildLiveVitestArgs,
+  INFERENCE_ROUTING_TEST_PATH,
+} from "../../../tools/e2e/live-vitest-invocation.mts";
+import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
 } from "../../../tools/e2e/target-catalogue.mts";
@@ -55,6 +59,13 @@ describe("onboard final-handoff timeout contract", () => {
     ).toBe(3);
     expect(INFERENCE_ROUTING_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
       ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + testHeadroomMs,
+    );
+  });
+
+  it("stops inference-routing after the first completed failure", () => {
+    expect(buildLiveVitestArgs({ testPath: INFERENCE_ROUTING_TEST_PATH })).toContain("--bail=1");
+    expect(buildLiveVitestArgs({ testPath: "test/e2e/live/onboard-resume.test.ts" })).not.toContain(
+      "--bail=1",
     );
   });
 
