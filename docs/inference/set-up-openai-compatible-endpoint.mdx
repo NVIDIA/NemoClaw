@@ -162,20 +162,21 @@ When no container is connected, onboarding prints the network removal. Do not ad
 podman network rm <network-id>
 ```
 
-When the verified `nemoclaw-portable-registry` is the only connected container, onboarding prints the registry removal first, then the network removal. Run them in that order:
+When the verified `nemoclaw-portable-registry` is the only connected container, onboarding prints an ordered sequence that stops and removes the registry, then removes the network. No step uses `--force`. Run them in this order:
 
 ```bash
-podman rm -f <registry-container-id>
+podman stop <registry-container-id>
+podman rm <registry-container-id>
 podman network rm <network-id>
 ```
 
-Onboarding prints no removal command in these cases, and you resolve them yourself before rerunning:
+Onboarding prints no removal command in these cases. Do not remove the network or any container until you have resolved the case yourself:
 
-- Another container is connected to the network. Disconnect or remove that container first. Onboarding does not name it, because NemoClaw does not own it.
-- A container named `nemoclaw-portable-registry` is connected but does not carry the NemoClaw ownership label. Treat it as a container NemoClaw does not own.
+- Another container is connected to the network. NemoClaw does not own it and does not name it. Identify its owner and confirm with them that disconnecting or removing it is safe. If you cannot establish that, leave the container in place and use a separate recovery process instead.
+- A container named `nemoclaw-portable-registry` is connected but does not carry the NemoClaw ownership label. Treat it as a container NemoClaw does not own, and apply the same ownership check before you touch it.
 - The local Podman check itself failed. Onboarding cannot prove the network is safe to remove, so it stops. Repair Podman access, then rerun onboarding to get the check again. Do not remove the network based on a failed check.
 
-Rerun Portable onboarding after the network is gone.
+Rerun Portable onboarding once the network is gone.
 </Warning>
 
 The portable profile handles the descriptor as follows:

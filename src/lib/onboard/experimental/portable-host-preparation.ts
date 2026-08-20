@@ -530,8 +530,9 @@ function retiredPortableSubnetError(
   if (occupancy.ownedRegistryId) {
     return new Error(
       `${retiredPortableSubnetState(networkName)} The verified NemoClaw registry is its only connected ` +
-        "container. Remove the registry first, then the network, without `--force`: " +
-        `\`podman rm -f ${occupancy.ownedRegistryId}\` and \`podman network rm ${occupancy.networkId}\`, ${rerun}`,
+        "container. Stop and remove the registry, then remove the network. No step uses `--force`: " +
+        `\`podman stop ${occupancy.ownedRegistryId}\`, \`podman rm ${occupancy.ownedRegistryId}\`, ` +
+        `then \`podman network rm ${occupancy.networkId}\`, ${rerun}`,
     );
   }
   return new Error(

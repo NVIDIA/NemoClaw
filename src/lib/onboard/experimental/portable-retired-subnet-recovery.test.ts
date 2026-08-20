@@ -173,9 +173,10 @@ describe("portable retired-subnet recovery (#9707)", () => {
 
     expect(run).toThrow(
       `Network 'openshell-docker' still uses the retired portable subnet ${RETIRED_SUBNET}. ` +
-        "The verified NemoClaw registry is its only connected container. Remove the registry first, " +
-        "then the network, without `--force`: " +
-        `\`podman rm -f ${REGISTRY_ID}\` and \`podman network rm ${NETWORK_ID}\`, then rerun ` +
+        "The verified NemoClaw registry is its only connected container. Stop and remove the registry, " +
+        "then remove the network. No step uses `--force`: " +
+        `\`podman stop ${REGISTRY_ID}\`, \`podman rm ${REGISTRY_ID}\`, ` +
+        `then \`podman network rm ${NETWORK_ID}\`, then rerun ` +
         "`nemoclaw onboard --experimental-profile portable`.",
     );
     expect(issuedCommands(docker).filter((c) => /\brm\b|--force/u.test(c))).toEqual([]);
