@@ -206,7 +206,17 @@ describe("protected managed-image runtime workflow", () => {
     runtimeJob(value).needs = ["generate-matrix"];
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
-      "managed-image-protected-runtime must depend on generate-matrix and managed-image-multiarch-startup",
+      "managed-image-protected-runtime must depend on base-image-publication, generate-matrix, and managed-image-multiarch-startup",
+    );
+  });
+
+  it("rejects a mutable DCode base in protected runtime qualification", () => {
+    const value = workflow();
+    const bases = namedStep(value, "Resolve exact amd64 runtime base images");
+    bases.run = `${String(bases.run)}\nghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest`;
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must not resolve the DCode base from a mutable alias",
     );
   });
 

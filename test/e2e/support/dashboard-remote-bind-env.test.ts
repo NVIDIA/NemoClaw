@@ -63,6 +63,7 @@ describe("dashboard remote-bind E2E environment", () => {
 
   it.each([
     ["e2e-dashboard-bind 0.0.0.0 18789 4242 running", true],
+    ["e2e-dashboard-bind 0.0.0.0 18789 4242 \u001B[32mrunning\u001B[39m", true],
     ["e2e-dashboard-bind 0.0.0.0 18789 4242 not running", false],
     ["e2e-dashboard-bind 0.0.0.0 18789 4242 stopped", false],
   ])("recognizes only the exact running forward status: %s", (forwardLine, expected) => {

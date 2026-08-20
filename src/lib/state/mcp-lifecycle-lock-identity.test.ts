@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   classifyMcpLifecycleLock,
+  isMcpLifecycleLockProcessAlive,
   isMcpLifecycleLockOwner,
   type LockObservation,
   type McpLifecycleLockIdentityProbes,
@@ -93,6 +94,16 @@ function probes(
 }
 
 describe("MCP lifecycle lock identity properties", () => {
+  it("treats an unreaped zombie owner as dead", () => {
+    const pid = 42_424;
+    const readState = vi.fn(() => "Z");
+    const signal = vi.fn();
+
+    expect(isMcpLifecycleLockProcessAlive(pid, readState, signal)).toBe(false);
+    expect(readState).toHaveBeenCalledWith(pid);
+    expect(signal).not.toHaveBeenCalled();
+  });
+
   it("keeps a matching live owner active across PID, start-tick, and clock boundaries", () => {
     fc.assert(
       fc.property(

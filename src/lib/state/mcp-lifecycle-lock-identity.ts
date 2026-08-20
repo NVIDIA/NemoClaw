@@ -72,9 +72,43 @@ export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLo
   );
 }
 
-function processIsAlive(pid: number): boolean {
+function readProcessState(pid: number): string | null {
+  if (process.platform === "linux") {
+    try {
+      const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      const closeParen = statText.lastIndexOf(")");
+      if (closeParen >= 0) {
+        return (
+          statText
+            .slice(closeParen + 2)
+            .trim()
+            .split(/\s+/, 1)[0] ?? null
+        );
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: buildSubprocessEnv(),
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1_000,
+  });
+  return result.status === 0 ? result.stdout.trim() || null : null;
+}
+
+export function isMcpLifecycleLockProcessAlive(
+  pid: number,
+  readState: (processId: number) => string | null = readProcessState,
+  signalProcess: (processId: number) => unknown = (processId) => process.kill(processId, 0),
+): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  if (readState(pid)?.startsWith("Z")) return false;
   try {
-    process.kill(pid, 0);
+    signalProcess(pid);
     return true;
   } catch (error) {
     return isErrnoException(error) && error.code === "EPERM";
@@ -175,7 +209,7 @@ const LOCAL_PID_NAMESPACE_IDENTITY = readMcpLockPidNamespaceIdentity();
 const LOCAL_IDENTITY_PROBES: McpLifecycleLockIdentityProbes = {
   localHostIdentity: LOCAL_HOST_IDENTITY,
   localPidNamespaceIdentity: LOCAL_PID_NAMESPACE_IDENTITY,
-  processIsAlive,
+  processIsAlive: isMcpLifecycleLockProcessAlive,
   readProcessIdentity: readMcpLockProcessIdentity,
 };
 

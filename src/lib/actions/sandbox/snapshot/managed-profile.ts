@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isDeepStrictEqual } from "node:util";
 import { fingerprintManagedStartupProfile } from "../../../onboard/managed-startup/profile";
 import type {
   RuntimeProviderBundle,
@@ -64,9 +63,10 @@ export function readManagedSnapshotProfileAuthority(
 
 /**
  * Validate an in-place managed-profile restore against the selected provider
- * and the current exact workload. PR3.8 restores profile-backed state only
- * when no image/profile rebind is required; cross-sandbox rebind and activation
- * are intentionally owned by the later clone transaction.
+ * and both durable workload authorities. A same-name rebuild may replace the
+ * managed image and startup profile before state is restored, so runtime
+ * completion is bound to the replacement profile. Cross-sandbox rebind and
+ * activation remain owned by the later clone transaction.
  */
 export function prepareManagedSnapshotProfileRestore(
   source: ManagedSnapshotProfileSource,
@@ -113,14 +113,14 @@ export function prepareManagedSnapshotProfileRestore(
       `target '${target.name}' is not the snapshot's managed workload`,
     );
   }
-  if (
-    targetAuthority.agent !== sourceAuthority.agent ||
-    !isDeepStrictEqual(targetAuthority.receipt, sourceAuthority.receipt) ||
-    !isDeepStrictEqual(targetAuthority.contract, sourceAuthority.contract) ||
-    !isDeepStrictEqual(targetAuthority.profile, sourceAuthority.profile)
-  ) {
+  if (target.name !== source.sandboxName || targetAuthority.agent !== sourceAuthority.agent) {
     throw new ManagedSnapshotProfileRestoreError(
       `target '${target.name}' requires a managed image or startup-profile rebind`,
+    );
+  }
+  if (!provider.workload.acceptsReceipt(targetAuthority.receipt)) {
+    throw new ManagedSnapshotProfileRestoreError(
+      `provider '${provider.identity.id}' does not accept the target workload receipt`,
     );
   }
 
@@ -131,8 +131,8 @@ export function prepareManagedSnapshotProfileRestore(
     targetSandboxName: target.name,
     authority: sourceAuthority,
     providerRestoreAuthority: {
-      agent: sourceAuthority.agent,
-      profileFingerprint: fingerprintManagedStartupProfile(sourceAuthority.profile),
+      agent: targetAuthority.agent,
+      profileFingerprint: fingerprintManagedStartupProfile(targetAuthority.profile),
     },
   });
 }

@@ -4570,8 +4570,8 @@ jobs:
   # assertions without the hosted cache.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
-    needs: [generate-matrix, managed-image-multiarch-startup]
-    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
+    needs: [base-image-publication, generate-matrix, managed-image-multiarch-startup]
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 300
     permissions:
@@ -4698,6 +4698,8 @@ jobs:
 
       - id: runtime-bases
         name: Resolve exact amd64 runtime base images
+        env:
+          DCODE_BASE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
         shell: bash
         run: |
           set -euo pipefail
@@ -4744,9 +4746,17 @@ jobs:
           resolve_base hermes \
             ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
-          resolve_base dcode \
-            ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest \
-            ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
+          [[ "$DCODE_BASE_REF" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
+            echo "::error::dcode base publication returned an invalid exact reference" >&2
+            exit 1
+          }
+          dcode_digest="${DCODE_BASE_REF##*@}"
+          docker buildx imagetools inspect "$DCODE_BASE_REF" --raw > "$work_dir/dcode-exact.raw"
+          [[ "sha256:$(sha256sum "$work_dir/dcode-exact.raw" | awk '{print $1}')" == "$dcode_digest" ]] || {
+            echo "::error::dcode exact base bytes do not match the published digest" >&2
+            exit 1
+          }
+          printf 'dcode=%s\n' "$DCODE_BASE_REF" >> "$GITHUB_OUTPUT"
 
       - name: Start isolated protected runtime registry
         shell: bash
