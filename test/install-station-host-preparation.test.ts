@@ -985,7 +985,6 @@ maybe_offer_express_install() {
 station_installer_revision() { printf '${STATION_REVISION}'; }
 station_express_resume_generation() { printf '${STATION_GENERATION}'; }
 ensure_docker() { printf 'ENSURE_DOCKER\\n'; }
-ensure_openshell_build_deps() { printf 'ENSURE_BUILD_DEPS\\n'; }
 prepare_installer_host
 PAYLOAD
   cat > "$target/scripts/prepare-dgx-station-host.sh" <<'HELPER'
@@ -1035,7 +1034,7 @@ exit 0
     expect(preparationLogIndex).toBeGreaterThanOrEqual(0);
     expect(preparationLogIndex).toBeLessThan(output.indexOf("ENSURE_DOCKER"));
     expect(output).not.toContain("PREPARE_STATION");
-    expect(output.indexOf("ENSURE_DOCKER")).toBeLessThan(output.indexOf("ENSURE_BUILD_DEPS"));
+    expect(output).not.toContain("ENSURE_BUILD_DEPS");
   });
 
   it("runs Station preparation before the generic Docker bootstrap", () => {
@@ -1045,7 +1044,6 @@ exit 0
 maybe_offer_express_install() { printf 'SELECT_EXPRESS\n'; _SELECTED_EXPRESS_PLATFORM='DGX Station'; }
 ensure_station_express_host() { printf 'PREPARE_STATION\n'; }
 ensure_docker() { printf 'ENSURE_DOCKER\n'; }
-ensure_openshell_build_deps() { printf 'ENSURE_BUILD_DEPS\n'; }
 prepare_installer_host
 `,
     );
@@ -1055,7 +1053,6 @@ prepare_installer_host
       "SELECT_EXPRESS",
       "PREPARE_STATION",
       "ENSURE_DOCKER",
-      "ENSURE_BUILD_DEPS",
     ]);
   });
 
@@ -1089,14 +1086,13 @@ ensure_station_express_host() {
   return 0
 }
 ensure_docker() { printf 'ENSURE_DOCKER\n'; }
-ensure_openshell_build_deps() { printf 'ENSURE_BUILD_DEPS\n'; }
 prepare_installer_host
 `,
     );
 
     expect(result.status, output).toBe(0);
     expect(output).not.toContain("PREPARE_STATION");
-    expect(result.stdout.trim().split("\n")).toEqual(["ENSURE_DOCKER", "ENSURE_BUILD_DEPS"]);
+    expect(result.stdout.trim()).toBe("ENSURE_DOCKER");
   });
 
   it("persists the selected model and ports when host preparation requires a reboot (#7203)", () => {

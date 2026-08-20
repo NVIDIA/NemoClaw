@@ -483,7 +483,6 @@ describe("install.sh OpenShell gateway service", () => {
 
   it("retains the two-name activation scan when gateway discovery cannot reach the user manager (#9705)", () => {
     const home = makeTempRoot();
-    const gatewayBin = userGatewayBin(home);
     const activationPath = path.join(
       home,
       ".config",

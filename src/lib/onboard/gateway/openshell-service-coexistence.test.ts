@@ -108,6 +108,14 @@ it("blocks an untrusted OpenShell executable before accepting another port (#970
 it.each([
   ["a relative executable", "{ path=openshell-gateway ; argv[]=openshell-gateway --port 8080 ; }"],
   ["multiple executable paths", `{ path=${TRUSTED_GATEWAY} ; }; { path=${TRUSTED_GATEWAY} ; }`],
+  [
+    "an env-wrapped gateway",
+    "{ path=/usr/bin/env ; argv[]=/usr/bin/env openshell-gateway --port 8080 ; }",
+  ],
+  [
+    "a shell-wrapped gateway",
+    "{ path=/bin/sh ; argv[]=/bin/sh -c /usr/local/bin/openshell-gateway --port 8080 ; }",
+  ],
 ])("blocks %s as ambiguous executable metadata (#9705)", (_case, execStart) => {
   expect(classify({ ExecStart: execStart })).toBe("block-ambiguous-executable");
 });
@@ -197,6 +205,9 @@ it("excludes canonical services before a custom-port metadata query (#9705)", ()
   expect(showCalls).toHaveLength(1);
   expect(showCalls[0]?.[1]).toContain(unrelated);
   expect(showCalls[0]?.[1]).not.toContain("--property=Environment");
+  expect(spawnSyncImpl.mock.calls.map(([, , options]) => options?.timeout)).toEqual([
+    10_000, 10_000, 10_000,
+  ]);
 });
 
 it("retains the fixed-name activation scan when the user manager is unavailable (#9705)", () => {

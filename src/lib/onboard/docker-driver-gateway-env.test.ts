@@ -200,11 +200,14 @@ describe("buildDockerDriverGatewayEnv", () => {
 });
 
 describe("writeDockerGatewayDebEnvOverride", () => {
-  it("checks competing services before custom-port managed-service fallback (#9705)", async () => {
-    const assertNoCompetingService = vi.fn();
+  it("checks competing services before custom-port managed-service fallback (#9705)", () => {
+    const conflict = new Error("competing OpenShell gateway service");
+    const assertNoCompetingService = vi.fn(() => {
+      throw conflict;
+    });
     const hasService = vi.fn();
 
-    await expect(
+    expect(() =>
       startPackageManagedDockerDriverGatewayWithEnvOverride({
         assertNoCompetingOpenShellGatewayUserService: assertNoCompetingService,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
@@ -217,7 +220,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         skipSandboxBridgeReachability: false,
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
-    ).resolves.toBe(false);
+    ).toThrow(conflict);
 
     expect(assertNoCompetingService).toHaveBeenCalledWith(9090);
     expect(hasService).not.toHaveBeenCalled();

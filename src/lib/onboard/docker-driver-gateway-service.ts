@@ -377,6 +377,7 @@ function runCommand(
   command: string,
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
+  timeout?: number,
 ): CommandResult {
   try {
     return commandResult(
@@ -384,6 +385,7 @@ function runCommand(
         encoding: "utf-8",
         env: opts.env,
         stdio: ["ignore", "pipe", "pipe"],
+        ...(timeout === undefined ? {} : { timeout }),
       } satisfies SpawnSyncOptions),
       command,
     );
@@ -435,12 +437,20 @@ function commandResult(result: SpawnSyncLikeResult, command = "command"): Comman
 function runSystemctlUser(
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
+  timeout?: number,
 ) {
-  return runCommand("systemctl", ["--user", ...args], {
-    ...opts,
-    env: { ...opts.env, LC_ALL: "C" },
-  });
+  return runCommand(
+    "systemctl",
+    ["--user", ...args],
+    {
+      ...opts,
+      env: { ...opts.env, LC_ALL: "C" },
+    },
+    timeout,
+  );
 }
+
+const SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS = 10_000;
 
 const OPENSHELL_HOMEBREW_FORMULA_ABSENT = 65;
 const OPENSHELL_HOMEBREW_FORMULA_REPAIR = 66;
@@ -1010,6 +1020,7 @@ export function assertNoCompetingOpenShellGatewayUserService(
       "--no-pager",
     ],
     commandOptions,
+    SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
   );
   if (!active.ok) {
     if (userManagerLooksUnavailable(active.reason ?? "")) {
@@ -1030,6 +1041,7 @@ export function assertNoCompetingOpenShellGatewayUserService(
       "--no-pager",
     ],
     commandOptions,
+    SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
   );
   if (!enabled.ok) {
     throw new OpenShellGatewayServiceTrustError(
@@ -1060,6 +1072,7 @@ export function assertNoCompetingOpenShellGatewayUserService(
         ),
       ],
       commandOptions,
+      SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
     );
     if (!metadata.ok) {
       throw new OpenShellGatewayServiceTrustError(
@@ -1088,6 +1101,7 @@ function validateSystemdServiceIdentity(
   const result = runSystemctlUser(
     ["show", service.serviceName, "--property=FragmentPath", "--property=ExecStart"],
     opts,
+    SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
   );
   if (!result.ok) return { diagnostic: result.diagnostic, ok: false, reason: result.reason };
   const properties = parseSystemctlShow(result.stdout ?? "", ["FragmentPath", "ExecStart"]);
@@ -1216,6 +1230,7 @@ export function getTrustedActiveOpenShellGatewayUserServiceIdentity(
       "--property=MainPID",
     ],
     { env, spawnSyncImpl },
+    SYSTEMCTL_USER_INSPECTION_TIMEOUT_MS,
   );
   if (!result.ok) return null;
   const properties = parseSystemctlShow(result.stdout ?? "", [

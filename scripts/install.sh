@@ -1290,14 +1290,19 @@ _UPGRADE_SANDBOXES_FAILED=false
 require_stable_installer_gateway_management() {
   local gateway_management_module management_output management_status
   local management_mode management_digest unexpected
-  gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/src/lib/onboard/gateway-management.ts"
-  [[ -f "$gateway_management_module" ]] \
-    || error "Invalid gateway management declaration: the gateway management parser is unavailable."
-  command -v node >/dev/null 2>&1 \
-    || error "Invalid gateway management declaration: Node.js is unavailable for gateway management validation."
+  if [[ -z "${NEMOCLAW_GATEWAY_MANAGEMENT-}" ]]; then
+    # This is the parser's canonical result for an absent declaration. Later
+    # calls still reject a declaration that appears during this process.
+    management_output="managed 74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+  else
+    gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/src/lib/onboard/gateway-management.ts"
+    [[ -f "$gateway_management_module" ]] \
+      || error "Invalid gateway management declaration: the gateway management parser is unavailable."
+    command -v node >/dev/null 2>&1 \
+      || error "Invalid gateway management declaration: Node.js is unavailable for gateway management validation."
 
-  if management_output="$(node --no-warnings --experimental-strip-types \
-    --input-type=module --eval '
+    if management_output="$(node --no-warnings --experimental-strip-types \
+      --input-type=module --eval '
       import { createHash } from "node:crypto";
       import { pathToFileURL } from "node:url";
 
@@ -1333,15 +1338,16 @@ require_stable_installer_gateway_management() {
         .digest("hex");
       process.stdout.write(mode + " " + digest);
     ' "$gateway_management_module" 2>&1)"; then
-    :
-  else
-    management_status=$?
-    if [[ "$management_output" == "Invalid gateway management declaration: "* &&
-      "$management_output" != *$'\n'* &&
-      "$management_output" != *$'\r'* ]]; then
-      error "$management_output"
+      :
+    else
+      management_status=$?
+      if [[ "$management_output" == "Invalid gateway management declaration: "* &&
+        "$management_output" != *$'\n'* &&
+        "$management_output" != *$'\r'* ]]; then
+        error "$management_output"
+      fi
+      error "Invalid gateway management declaration: validation failed with status ${management_status}."
     fi
-    error "Invalid gateway management declaration: validation failed with status ${management_status}."
   fi
   read -r management_mode management_digest unexpected <<<"$management_output"
   if [[ -n "$unexpected" ||
@@ -1740,15 +1746,23 @@ resolve_openshell_gateway_bin_for_service() {
   printf "%s\n" "$gateway_bin"
 }
 
-trusted_openshell_gateway_bin_for_service() {
-  local gateway_bin="${1:-}"
+readonly OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN="/usr/local/bin/openshell-gateway"
+readonly OPENSHELL_GATEWAY_SYSTEM_BIN="/usr/bin/openshell-gateway"
+
+openshell_gateway_user_bin_for_service() {
   local user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   if [[ "$user_bin_home" != /* ]]; then
     user_bin_home="${HOME}/.local/bin"
   fi
-  user_bin_home="${user_bin_home%/}"
+  printf "%s\n" "${user_bin_home%/}/openshell-gateway"
+}
+
+trusted_openshell_gateway_bin_for_service() {
+  local gateway_bin="${1:-}"
+  local user_gateway_bin
+  user_gateway_bin="$(openshell_gateway_user_bin_for_service)"
   case "$gateway_bin" in
-    "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+    "$user_gateway_bin" | "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN" | "$OPENSHELL_GATEWAY_SYSTEM_BIN")
       return 0
       ;;
     *)
@@ -1759,7 +1773,7 @@ trusted_openshell_gateway_bin_for_service() {
 
 classify_noncanonical_openshell_gateway_user_service() {
   local service_name="${1:-}" selected_port="${2:-}" service_output service_status
-  local classifier_module classifier_output classifier_status
+  local classifier_module classifier_output classifier_status user_gateway_bin
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 
@@ -1777,39 +1791,29 @@ classify_noncanonical_openshell_gateway_user_service() {
     NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The shared service classifier is unavailable."
     return 3
   fi
+  user_gateway_bin="$(openshell_gateway_user_bin_for_service)"
   if classifier_output="$(
     printf '%s' "$service_output" \
       | node --no-warnings --experimental-strip-types --input-type=module --eval '
           import fs from "node:fs";
-          import path from "node:path";
           import { pathToFileURL } from "node:url";
 
-          const [modulePath, selectedPort] = process.argv.slice(1);
+          const [modulePath, selectedPort, ...trustedExecutablePaths] = process.argv.slice(1);
           try {
             const { classifyOpenShellGatewayServiceMetadata } = await import(
               pathToFileURL(modulePath).href
             );
-            const home = process.env.HOME ?? "";
-            if (!path.isAbsolute(home)) process.exit(2);
-            const configuredBinHome = process.env.XDG_BIN_HOME?.trim();
-            const userBinHome =
-              configuredBinHome && path.isAbsolute(configuredBinHome)
-                ? path.normalize(configuredBinHome)
-                : path.join(home, ".local", "bin");
             const verdict = classifyOpenShellGatewayServiceMetadata({
               gatewayPort: Number(selectedPort),
               metadata: fs.readFileSync(0, "utf8"),
-              trustedExecutablePaths: [
-                path.join(userBinHome, "openshell-gateway"),
-                "/usr/local/bin/openshell-gateway",
-                "/usr/bin/openshell-gateway",
-              ],
+              trustedExecutablePaths,
             });
             process.stdout.write(verdict);
           } catch {
             process.exit(2);
           }
-        ' "$classifier_module" "$selected_port" 2>/dev/null
+        ' "$classifier_module" "$selected_port" "$user_gateway_bin" \
+        "$OPENSHELL_GATEWAY_SYSTEM_LOCAL_BIN" "$OPENSHELL_GATEWAY_SYSTEM_BIN" 2>/dev/null
   )"; then
     :
   else
@@ -1930,6 +1934,19 @@ inspect_noncanonical_openshell_gateway_user_services() {
   return 0
 }
 
+require_no_competing_openshell_gateway_user_service() {
+  local gateway_port discovery_status
+  gateway_port="${1:-$(resolve_nemoclaw_gateway_port)}"
+  if inspect_noncanonical_openshell_gateway_user_services "$gateway_port"; then
+    return 0
+  else
+    discovery_status=$?
+  fi
+  if [[ "$discovery_status" -ne 2 ]]; then
+    error "${NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR:-Could not inspect active or enabled user services.}"
+  fi
+}
+
 is_nemoclaw_openshell_gateway_user_service() {
   local service_path="${1:-}"
   [[ -f "$service_path" ]] || return 1
@@ -2027,16 +2044,9 @@ install_nemoclaw_openshell_gateway_user_service() {
   require_stable_installer_gateway_management
   [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "external" ]] && return 0
   [[ "$(uname -s)" == "Linux" ]] || return 0
-  local gateway_port discovery_status
+  local gateway_port
   gateway_port="$(resolve_nemoclaw_gateway_port)"
-  if inspect_noncanonical_openshell_gateway_user_services "$gateway_port"; then
-    :
-  else
-    discovery_status=$?
-    if [[ "$discovery_status" -ne 2 ]]; then
-      error "${NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR:-Could not inspect active or enabled user services.}"
-    fi
-  fi
+  require_no_competing_openshell_gateway_user_service "$gateway_port"
   [[ "$gateway_port" -eq 8080 ]] || return 0
 
   local service_dir
@@ -3097,7 +3107,8 @@ resolve_existing_cli_runner() {
   return 1
 }
 
-prepare_current_cli_for_preupgrade_backup() {
+prepare_current_cli_with_openshell_deferred() {
+  local purpose="$1"
   local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
   local defer_was_set="${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}"
   local defer_declaration="" defer_was_exported=false
@@ -3105,7 +3116,7 @@ prepare_current_cli_for_preupgrade_backup() {
     defer_declaration="$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)"
     [[ "$defer_declaration" == declare\ -x* ]] && defer_was_exported=true
   fi
-  info "Preparing current ${_CLI_DISPLAY} CLI for pre-upgrade backup…"
+  info "Preparing current ${_CLI_DISPLAY} CLI for ${purpose}…"
   export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
   install_nemoclaw
   unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
@@ -3114,6 +3125,19 @@ prepare_current_cli_for_preupgrade_backup() {
     [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
   fi
   verify_nemoclaw
+}
+
+prepare_current_cli_for_preupgrade_backup() {
+  prepare_current_cli_with_openshell_deferred "pre-upgrade backup"
+}
+
+prepare_installer_gateway_management() {
+  local gateway_management_module
+  gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/src/lib/onboard/gateway-management.ts"
+  if [[ -n "${NEMOCLAW_GATEWAY_MANAGEMENT-}" && ! -f "$gateway_management_module" ]]; then
+    prepare_current_cli_with_openshell_deferred "gateway management validation"
+  fi
+  require_stable_installer_gateway_management
 }
 
 resolve_prepared_cli_runner() {
@@ -3584,6 +3608,7 @@ preinstall_backup_and_retire_legacy_gateway() {
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
     || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
     require_stable_installer_gateway_management
+    require_no_competing_openshell_gateway_user_service
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
@@ -6193,10 +6218,6 @@ install_nemoclaw_before_onboarding() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
-  require_stable_installer_gateway_management
-  if [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "managed" ]]; then
-    ensure_openshell_build_deps
-  fi
   resolve_pending_express_wsl_provider
   ensure_station_express_pair
 
@@ -6205,6 +6226,10 @@ install_nemoclaw_before_onboarding() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
+  prepare_installer_gateway_management
+  if [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "managed" ]]; then
+    ensure_openshell_build_deps
+  fi
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw

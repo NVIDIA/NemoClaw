@@ -116,6 +116,8 @@ case "$ARCH" in
 esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
+command -v strings >/dev/null 2>&1 \
+  || fail "'strings' (from binutils) is required to install and verify OpenShell. Install it first (Debian/Ubuntu: sudo apt-get install -y binutils) and retry."
 
 # Minimum version required for native messaging credential rewrite and
 # round-trippable base policies: WebSocket text frames, provider-shaped

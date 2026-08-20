@@ -14,7 +14,12 @@ import {
   writeExecutable,
 } from "./helpers/installer-sourced-env";
 
-type DeclarationMode = "absent" | "externally-supervised" | "invalid" | "nemoclaw-managed";
+type DeclarationMode =
+  | "absent"
+  | "externally-supervised"
+  | "invalid"
+  | "nemoclaw-managed"
+  | "whitespace";
 type DeclarationDriftPoint = "after-backup" | "before-backup";
 
 const SOURCE_ROOT = path.join(import.meta.dirname, "..");
@@ -58,7 +63,11 @@ function writeGatewayManagementDeclaration(root: string, mode: DeclarationMode):
             requiredCapabilities: [],
           }
         : { version: 1, mode, requiredCapabilities: [] };
-  return mode === "absent" ? null : persistGatewayManagementDeclaration(root, declaration);
+  return mode === "absent"
+    ? null
+    : mode === "whitespace"
+      ? "   "
+      : persistGatewayManagementDeclaration(root, declaration);
 }
 
 function installerEnv(
@@ -83,7 +92,7 @@ function installerEnv(
   };
 }
 
-function runManagedServiceStage(mode: DeclarationMode) {
+function runManagedServiceStage(mode: DeclarationMode, rejectNode = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-external-service-stage-"));
   const home = path.join(root, "home");
   const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
@@ -106,6 +115,7 @@ function runManagedServiceStage(mode: DeclarationMode) {
 source "$INSTALLER_UNDER_TEST" >/dev/null
 NEMOCLAW_SOURCE_ROOT="$SOURCE_ROOT"
 NEMOCLAW_OPENSHELL_GATEWAY_BIN="$GATEWAY_BIN"
+${rejectNode ? "node() { return 91; }" : ""}
 uname() { printf '%s\\n' Linux; }
 resolve_nemoclaw_gateway_port() { printf '%s\\n' 8080; }
 upstream_openshell_gateway_user_service_installed() { return 1; }
@@ -222,7 +232,48 @@ install_nemoclaw_before_onboarding
   };
 }
 
-function runLegacyGatewayRetirement(mode: DeclarationMode, driftPoint?: DeclarationDriftPoint) {
+function runGatewayManagementPreparation(mode: DeclarationMode) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-management-prepare-"));
+  const home = path.join(root, "home");
+  const effectLog = path.join(root, "effects.log");
+  const declarationPath = writeGatewayManagementDeclaration(root, mode);
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+NEMOCLAW_SOURCE_ROOT="$MISSING_SOURCE_ROOT"
+prepare_current_cli_with_openshell_deferred() {
+  printf '%s\\n' prepare-cli >> "$EFFECT_LOG"
+  NEMOCLAW_SOURCE_ROOT="$SOURCE_ROOT"
+}
+prepare_installer_gateway_management
+`,
+    ],
+    {
+      cwd: SOURCE_ROOT,
+      encoding: "utf-8",
+      env: installerEnv(home, declarationPath, {
+        EFFECT_LOG: effectLog,
+        MISSING_SOURCE_ROOT: path.join(root, "missing-source"),
+      }),
+    },
+  );
+
+  return {
+    effects: readEffects(effectLog),
+    output: `${result.stdout}${result.stderr}`,
+    result,
+  };
+}
+
+function runLegacyGatewayRetirement(
+  mode: DeclarationMode,
+  driftPoint?: DeclarationDriftPoint,
+  competingService = false,
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-external-retirement-"));
   const home = path.join(root, "home");
   const stateDir = path.join(root, "state");
@@ -245,6 +296,7 @@ function runLegacyGatewayRetirement(mode: DeclarationMode, driftPoint?: Declarat
       "-c",
       `
 source "$INSTALLER_UNDER_TEST" >/dev/null
+NEMOCLAW_SOURCE_ROOT="$SOURCE_ROOT"
 nemoclaw_state_dir() { printf '%s\\n' "$STATE_DIR"; }
 resolve_nemoclaw_gateway_port() { printf '%s\\n' 8080; }
 nemoclaw_gateway_name() { printf '%s\\n' nemoclaw; }
@@ -262,6 +314,13 @@ run_preupgrade_backup() {
   [ "$DRIFT_POINT" != after-backup ] || cp "$DRIFT_DECLARATION_PATH" "$NEMOCLAW_GATEWAY_MANAGEMENT"
 }
 resolve_current_openshell_version_range() { printf '%s\\n' '0.0.85 0.0.85'; }
+inspect_noncanonical_openshell_gateway_user_services() {
+  if [ "$COMPETING_SERVICE" = 1 ]; then
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="A competing OpenShell gateway service is active."
+    return 3
+  fi
+  return 0
+}
 openshell() { printf 'openshell %s\\n' "$*" >> "$EFFECT_LOG"; return 0; }
 info() { :; }
 preinstall_backup_and_retire_legacy_gateway
@@ -275,6 +334,7 @@ preinstall_backup_and_retire_legacy_gateway
         DRIFT_POINT: driftPoint ?? "",
         EFFECT_LOG: effectLog,
         STATE_DIR: stateDir,
+        COMPETING_SERVICE: competingService ? "1" : "0",
       }),
     },
   );
@@ -329,6 +389,14 @@ describe("installer external gateway supervision", () => {
     expect(fixture.output).not.toContain("provider-secret-value");
   });
 
+  it("validates a nonempty declaration value before staging a managed service (#9705)", () => {
+    const fixture = runManagedServiceStage("whitespace", true);
+
+    expect(fixture.result.status, fixture.output).toBe(1);
+    expect(fixture.serviceExists).toBe(false);
+    expect(fixture.output).toContain("Invalid gateway management declaration");
+  });
+
   it("rejects an invalid declaration before backing up or retiring a gateway (#9705)", () => {
     const fixture = runLegacyGatewayRetirement("invalid");
 
@@ -363,6 +431,20 @@ describe("installer external gateway supervision", () => {
   });
 
   it.each([
+    [
+      "loads the parser from prepared source for a declared supervisor",
+      "externally-supervised",
+      ["prepare-cli"],
+    ],
+    ["keeps the historical managed mode without preparing source", "absent", []],
+  ] as const)("%s (#9705)", (_context, mode, expectedEffects) => {
+    const fixture = runGatewayManagementPreparation(mode);
+
+    expect(fixture.result.status, fixture.output).toBe(0);
+    expect(fixture.effects).toEqual(expectedEffects);
+  });
+
+  it.each([
     ["an explicit NemoClaw-managed declaration", "nemoclaw-managed"],
     ["no gateway management declaration", "absent"],
   ] as const)("backs up and retires the legacy gateway with %s (#9705)", (_context, mode) => {
@@ -370,6 +452,14 @@ describe("installer external gateway supervision", () => {
 
     expect(fixture.result.status, fixture.output).toBe(0);
     expect(fixture.effects).toEqual(["backup-all", "openshell gateway destroy -g nemoclaw"]);
+  });
+
+  it("backs up but does not retire a gateway when another service can claim its port (#9705)", () => {
+    const fixture = runLegacyGatewayRetirement("nemoclaw-managed", undefined, true);
+
+    expect(fixture.result.status, fixture.output).toBe(1);
+    expect(fixture.effects).toEqual(["backup-all"]);
+    expect(fixture.output).toContain("competing OpenShell gateway service");
   });
 
   it.each([
