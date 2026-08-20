@@ -668,6 +668,16 @@ describe("dual-Station managed vLLM lifecycle", () => {
         { kind: "rm", target: "peer", value: WORKER_ID },
       ]),
     );
+    expect(
+      fake.containers.get(`local:${DUAL_STATION_VLLM_HEAD_CONTAINER_NAME}`)?.[0]?.labels[
+        DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL
+      ],
+    ).toBe(DUAL_STATION_VLLM_LAUNCH_SCHEMA);
+    expect(
+      fake.containers.get(`peer:${DUAL_STATION_VLLM_WORKER_CONTAINER_NAME}`)?.[0]?.labels[
+        DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL
+      ],
+    ).toBe(DUAL_STATION_VLLM_LAUNCH_SCHEMA);
   });
 
   it("refuses a schema-2 pair whose historical launch contract does not match", () => {
@@ -1123,6 +1133,15 @@ describe("managed dual-Station base URL recovery", () => {
     ).toBe(true);
     expect(fake.captureOptions.at(-1)).toMatchObject({ timeout: 10_000 });
     expect(fake.captureOptions.at(-1)?.env?.VLLM_API_KEY).toBeUndefined();
+  });
+
+  it("recovers the endpoint from an owned launch-schema-2 head", () => {
+    const fake = harness();
+    const head = fakeContainer("head");
+    head.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] = "2";
+    fake.seed("local", head);
+
+    expect(getDualStationManagedVllmBaseUrl(fake.deps)).toBe("http://192.168.240.1:8000");
   });
 
   it("reports a structurally managed running head before API-key fingerprint validation", () => {

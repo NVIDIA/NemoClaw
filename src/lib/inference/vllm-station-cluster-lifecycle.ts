@@ -775,6 +775,8 @@ function inspectManagedContainer(
     role !== spec.role ||
     clusterId !== spec.clusterId ||
     gpuUuid !== spec.gpuUuid ||
+    (launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA &&
+      launchSchema !== PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA) ||
     !SHA256_HEX_PATTERN.test(launchContract) ||
     !SHA256_HEX_PATTERN.test(apiKeyFingerprint) ||
     !TRANSACTION_ID_PATTERN.test(transactionId)
@@ -797,6 +799,7 @@ function inspectManagedContainer(
     return { kind: "foreign" };
   }
   const reusable =
+    launchSchema === DUAL_STATION_VLLM_LAUNCH_SCHEMA &&
     launchContract === spec.launchContract &&
     (spec.apiKeyFingerprint === null || apiKeyFingerprint === spec.apiKeyFingerprint);
   return { kind: "managed", containerId, running: state === "running", transactionId, reusable };
@@ -1809,7 +1812,7 @@ export function getDualStationManagedVllmBaseUrl(
     role !== "head" ||
     !CLUSTER_ID_PATTERN.test(clusterId) ||
     !SAFE_GPU_UUID_PATTERN.test(gpuUuid) ||
-    launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA ||
+    (launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA && launchSchema !== "2") ||
     !SHA256_HEX_PATTERN.test(launchContract) ||
     !TRANSACTION_ID_PATTERN.test(transactionId)
   ) {

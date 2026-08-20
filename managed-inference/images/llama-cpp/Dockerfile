@@ -29,11 +29,11 @@ RUN apt-get update \
       build-essential=12.10ubuntu1 \
       ca-certificates=20260601~24.04.1 \
       cmake=3.28.3-1build7 \
-      curl=8.5.0-2ubuntu10.11 \
+      curl=8.5.0-2ubuntu10.12 \
       g++-14=14.2.0-4ubuntu2~24.04.1 \
       gcc-14=14.2.0-4ubuntu2~24.04.1 \
       golang-go=2:1.22~2build1 \
-      libcurl4-openssl-dev=8.5.0-2ubuntu10.11 \
+      libcurl4-openssl-dev=8.5.0-2ubuntu10.12 \
       libssl-dev=3.0.13-0ubuntu3.12 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -123,7 +123,7 @@ RUN test -n "${CUDA_DEV_IMAGE}" \
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates=20260601~24.04.1 \
-      libcurl4t64=8.5.0-2ubuntu10.11 \
+      libcurl4t64=8.5.0-2ubuntu10.12 \
       libgomp1=14.2.0-4ubuntu2~24.04.1 \
     && groupadd --gid "${RUNTIME_GID}" nemoclaw-llama \
     && useradd --uid "${RUNTIME_UID}" --gid "${RUNTIME_GID}" \

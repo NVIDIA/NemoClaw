@@ -214,6 +214,7 @@ function syntheticSecondProfile(
   ];
   const catalogContents = {
     compilerVersion: baseCatalog.compilerVersion,
+    models: baseCatalog.models,
     presets: [...baseCatalog.presets, preset],
     recipes: [...baseCatalog.recipes, recipe],
     readinessSchemaRef: baseCatalog.readinessSchemaRef,

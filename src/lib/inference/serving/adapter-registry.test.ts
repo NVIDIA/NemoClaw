@@ -197,6 +197,36 @@ describe("managed inference adapter registries", () => {
     );
   });
 
+  it("validates declarative direct-install authentication and receipt combinations", () => {
+    const withDirectInstall = (
+      authentication: "none" | "bearer",
+      fixedArguments: boolean,
+      catalogReceipt: boolean,
+    ): ManagedInferenceServingRecipe => {
+      const recipe = shippedLightningRecipe();
+      return {
+        ...recipe,
+        spec: {
+          ...recipe.spec,
+          serve: {
+            ...recipe.spec.serve,
+            directInstall: { authentication, fixedArguments, catalogReceipt },
+          },
+        },
+      } as ManagedInferenceServingRecipe;
+    };
+
+    expect(
+      getManagedInferenceRecipeRegistrationError(withDirectInstall("none", true, true)),
+    ).toMatch(/valid declarative direct-install policy/u);
+    expect(
+      getManagedInferenceRecipeRegistrationError(withDirectInstall("none", false, false)),
+    ).toBeUndefined();
+    expect(
+      getManagedInferenceRecipeRegistrationError(withDirectInstall("bearer", true, true)),
+    ).toBeUndefined();
+  });
+
   it("rejects schema-valid values that the registered adapter cannot execute", () => {
     const recipe = shippedRecipe();
     const unsupportedCache = {
