@@ -398,11 +398,11 @@ describe("installOllamaOnLinux (system)", () => {
     let installerPath = "";
     const runCaptureExImpl = vi.fn().mockImplementation((command: readonly string[]) => {
       installerPath = outputPathFromCurlCommand(command);
-      expect(fs.statSync(installerPath).mode & 0o777).toBe(0o600);
       const allowedAttempts = configuredCurlAttempts(command);
       fetchAttempts = 2;
       expect(fetchAttempts).toBeLessThanOrEqual(allowedAttempts);
       fs.writeFileSync(installerPath, "#!/bin/sh\nexit 0\n");
+      expect(fs.statSync(installerPath).mode & 0o777).toBe(0o600);
       return { stdout: "", stderr: "", exitCode: 0, timedOut: false };
     });
     const runShellImpl = vi
