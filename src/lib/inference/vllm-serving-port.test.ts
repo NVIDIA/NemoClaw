@@ -73,6 +73,7 @@ import {
   type InstallVllmOptions,
   type VllmProfile,
 } from "./vllm";
+import { buildVllmServeCommand } from "./vllm-models";
 import {
   applyVllmInstallProbeDefaults,
   createVllmInstallSpies,
@@ -140,25 +141,24 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const model = {
       ...baseProfile.defaultModel,
+      id: "nvidia/fixed-local-profile",
       fixedServeCommand: true as const,
       managedBearerAuth: true as const,
     };
     const profile = { ...baseProfile, defaultModel: model };
     mockSuccessfulVllmInstall(mocks, profile.containerName);
 
-    await installVllm(profile, {
+    const result = await installVllm(profile, {
       hasImage: true,
       nonInteractive: true,
       promptFn: vi.fn(),
       resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
+    expect(result).toEqual({ ok: true });
     expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
-    const command = mocks.dockerRunDetached.mock.calls
-      .flatMap((call: unknown[]) => (call[0] as readonly string[]).map(String))
-      .find((value) => value.includes("vllm serve"));
-    expect(command).toBeDefined();
-    expect(command).not.toContain("--trust-remote-code");
+    const runArgs = mocks.dockerRunDetached.mock.calls[0]?.[0] as readonly string[];
+    expect(runArgs[runArgs.indexOf("-lc") + 1]).toBe(buildVllmServeCommand(model));
   });
 
   it("replaces a validated interrupted managed container that holds the serving port", async () => {
