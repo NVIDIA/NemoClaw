@@ -5,6 +5,7 @@ import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 export default class SandboxMcpCommand extends NemoClawCommand {
   static id = "sandbox:mcp";
+  static customHelp = true;
   static strict = false;
   static summary = "Manage MCP servers for a sandbox";
   static description =

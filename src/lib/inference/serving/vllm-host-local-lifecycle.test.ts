@@ -72,6 +72,7 @@ function inspect(
   fingerprint = runtimeAuthFingerprint(key),
   labels: Record<string, string> = {},
   bridgeHost = "172.18.0.1",
+  hostPort = "8000",
 ) {
   return JSON.stringify([
     {
@@ -89,8 +90,8 @@ function inspect(
       NetworkSettings: {
         Ports: {
           "8000/tcp": [
-            { HostIp: "127.0.0.1", HostPort: "8000" },
-            { HostIp: bridgeHost, HostPort: "8000" },
+            { HostIp: "127.0.0.1", HostPort: hostPort },
+            { HostIp: bridgeHost, HostPort: hostPort },
           ],
         },
       },
@@ -113,7 +114,11 @@ describe("host-local managed vLLM recovery", () => {
         dockerCapture: capture,
         loadApiKey: () => API_KEY,
       }),
-    ).toEqual({ baseUrl: "http://127.0.0.1:8000", apiKey: API_KEY });
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+      containerId: "a".repeat(64),
+    });
 
     expect(capture).toHaveBeenCalledOnce();
     const dockerOptions = capture.mock.calls[0]?.[1];
@@ -132,9 +137,40 @@ describe("host-local managed vLLM recovery", () => {
         loadApiKey: () => API_KEY,
         onManagedContainerObserved: observed,
       }),
-    ).toEqual({ baseUrl: "http://127.0.0.1:8000", apiKey: API_KEY });
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+      containerId: "a".repeat(64),
+    });
     expect(observed).toHaveBeenCalledOnce();
   });
+
+  it("recovers the exact configured host port from the bounded Docker bindings", () => {
+    expect(
+      recoverHostLocalManagedVllmEndpoint({
+        dockerInspect: () =>
+          inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "172.18.0.1", "19000"),
+        loadApiKey: () => API_KEY,
+      }),
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:19000",
+      apiKey: API_KEY,
+      containerId: "a".repeat(64),
+    });
+  });
+
+  it.each(["80", "1e4", "019000", "65536"])(
+    "rejects a non-canonical or unsafe recovered host port %s",
+    (hostPort) => {
+      expect(() =>
+        recoverHostLocalManagedVllmEndpoint({
+          dockerInspect: () =>
+            inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "172.18.0.1", hostPort),
+          loadApiKey: () => API_KEY,
+        }),
+      ).toThrow("unsafe or incomplete");
+    },
+  );
 
   it("fails closed when the persisted key differs from the running service", () => {
     expect(() =>
@@ -171,7 +207,11 @@ describe("host-local managed vLLM recovery", () => {
         loadApiKey: () => API_KEY,
         stateDir: directory,
       }),
-    ).toEqual({ baseUrl: "http://127.0.0.1:8000", apiKey: API_KEY });
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+      containerId: "a".repeat(64),
+    });
   });
 
   it("rejects a profile-labeled runtime when its ownership receipt is missing", () => {
