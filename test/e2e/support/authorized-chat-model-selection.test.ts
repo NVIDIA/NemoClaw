@@ -14,6 +14,27 @@ const selectorPath = path.resolve("test/e2e/lib/select-authorized-chat-model.mts
 const tsxPath = path.resolve("node_modules/.bin/tsx");
 
 describe("authorized alternate chat model selection", () => {
+  it("loads through the standalone tsx entrypoint", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.resolve("test/e2e/lib/select-authorized-chat-model.mts"),
+        "--current-model",
+        currentModel,
+        "--endpoint",
+        endpoint,
+      ],
+      { encoding: "utf8", env: { ...process.env, COMPATIBLE_API_KEY: "" } },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("COMPATIBLE_API_KEY is required");
+    expect(result.stderr).not.toContain("SyntaxError");
+    expect(result.stderr).not.toContain("helpers did not load through tsx");
+  });
+
   it("rejects unsafe credential transport when tsx executes the selector", () => {
     const result = spawnSync(
       tsxPath,
@@ -91,7 +112,10 @@ describe("authorized alternate chat model selection", () => {
         apiKey: "test-key",
         currentModel,
         endpoint,
-        fetchModels: () => ({ ok: true, ids: [currentModel, "nvidia/embed-v1"] }),
+        fetchModels: () => ({
+          ok: true,
+          ids: [currentModel, "nvidia/embed-v1"],
+        }),
         probeModel,
       }),
     ).rejects.toThrow("the endpoint listed no alternate chat model");

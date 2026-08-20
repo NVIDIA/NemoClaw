@@ -24,6 +24,14 @@ const PREFERRED_MODELS = [
 ];
 const MAX_CANDIDATES = 6;
 
+if (
+  typeof probeOpenAiLikeEndpointOptimized !== "function" ||
+  typeof fetchOpenAiLikeModels !== "function" ||
+  typeof isLoopbackHostname !== "function"
+) {
+  throw new TypeError("authorized model selection helpers did not load through tsx");
+}
+
 type FetchModels = (endpoint: string, apiKey: string) => ModelCatalogFetchResult;
 type ProbeModel = (
   endpoint: string,
@@ -95,7 +103,9 @@ export async function selectAuthorizedChatModel({
   if (candidates.length === 0) fail("the endpoint listed no alternate chat model");
 
   for (const model of candidates) {
-    const result = await probeModel(endpoint, model, apiKey, { skipResponsesProbe: true });
+    const result = await probeModel(endpoint, model, apiKey, {
+      skipResponsesProbe: true,
+    });
     if (result.ok) return model;
     process.stderr.write(
       `Alternate model candidate ${model} failed validation; trying the next candidate.\n`,

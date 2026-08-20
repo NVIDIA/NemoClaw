@@ -2438,6 +2438,7 @@ function getSetupNimDeps(): SetupNimDeps {
     handleInstallOllamaSelection,
     installVllm: setupNimFlow.withServingPortGuard(vllmInference.installVllm, checkPortAvailable),
     handleVllmSelection,
+    selectVllmModelFromEnv: vllmInference.selectVllmModelFromEnv,
     handleRoutedSelection,
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
     resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi,
@@ -2451,7 +2452,6 @@ function getSetupNimDeps(): SetupNimDeps {
 }
 const setupNim = setupNimFlow.createSetupNim(getSetupNimDeps());
 // ── Step 4: Inference provider ───────────────────────────────────
-
 function getSetupInferenceDeps(): SetupInferenceDeps {
   return {
     checkGatewayRouteCompatibility,

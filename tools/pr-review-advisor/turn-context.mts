@@ -45,19 +45,13 @@ export function buildCorrectnessTurnContext(
 export function buildSecurityTurnContext(
   context: DeterministicReviewContext,
 ): Record<string, unknown> {
-  return {
-    riskPlan: buildRiskPlanReviewContext(context.riskPlan),
-    riskyAreas: context.riskyAreas,
-    workflowSignals: context.workflowSignals,
-  };
+  return { riskyAreas: context.riskyAreas };
 }
 
 export function buildTestsTurnContext(
   context: DeterministicReviewContext,
 ): Record<string, unknown> {
   return {
-    riskPlan: buildRiskPlanReviewContext(context.riskPlan),
-    e2eInventory: trustedE2eRecommendationInventory(),
     testDepth: context.testDepth,
     staticTestInventory: context.staticTestInventory,
   };
@@ -67,8 +61,6 @@ export function buildOperationsTurnContext(
   context: DeterministicReviewContext,
 ): Record<string, unknown> {
   return {
-    riskPlan: buildRiskPlanReviewContext(context.riskPlan),
-    riskyAreas: context.riskyAreas,
     workflowSignals: context.workflowSignals,
     e2eInventory: trustedE2eRecommendationInventory(),
     selectorGuidanceOnly: true,
@@ -79,14 +71,6 @@ export function buildReconciliationTurnContext(
   context: DeterministicReviewContext,
 ): Record<string, unknown> {
   return {
-    riskPlan: {
-      headSha: context.riskPlan.headSha,
-      planHash: context.riskPlan.planHash,
-      tier: context.riskPlan.tier,
-      familyIds: context.riskPlan.families.map((family) => family.id),
-      requiredJobIds: context.riskPlan.requiredJobs.map((job) => job.id),
-      requiredTargetIds: context.riskPlan.requiredTargets.map((target) => target.id),
-    },
     linkedIssues: (context.github?.linkedIssues ?? []).map(({ number, fetchError }) => ({
       number,
       fetchError,

@@ -173,15 +173,10 @@ $env:ProgramFiles = 'C:\\Users\\tester\\attacker-controlled'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
 $trustedProgramFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
-$trustedMachineRoot = if ($trustedProgramFiles) {
-    "$trustedProgramFiles\\Docker\\Docker"
-} else {
-    'C:\\Program Files\\Docker\\Docker'
-}
 
 [pscustomobject]@{
     machineRoot = $script:DockerDesktopMachineRoot
-    trustedMachineRoot = $trustedMachineRoot
+    trustedProgramFiles = $trustedProgramFiles
     usesCallerPath = $script:DockerDesktopMachineRoot.StartsWith($env:ProgramFiles, [System.StringComparison]::OrdinalIgnoreCase)
 } | ConvertTo-Json -Compress
 `,
@@ -190,7 +185,10 @@ $trustedMachineRoot = if ($trustedProgramFiles) {
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
       expect(parsed.usesCallerPath).toBe(false);
-      expect(parsed.machineRoot).toBe(parsed.trustedMachineRoot);
+      const trustedRoot = parsed.trustedProgramFiles || "C:\\Program Files";
+      const trustedPrefix = `${trustedRoot}\\`;
+      expect(parsed.machineRoot.startsWith(trustedPrefix)).toBe(true);
+      expect(parsed.machineRoot.slice(trustedPrefix.length)).toBe("Docker\\Docker");
     },
   );
 
