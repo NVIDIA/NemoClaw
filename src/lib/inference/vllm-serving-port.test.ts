@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   measureDirectorySizeBytes: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
+  recoverHostLocalManagedVllmEndpoint: vi.fn(),
   runCapture: vi.fn(),
   tryInstallManagedClusterManagedVllm: vi.fn(async () => ({ kind: "not-selected" as const })),
 }));
@@ -59,6 +60,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
   return {
     ...actual,
     ensureDualStationVllmApiKey: mocks.ensureDualStationVllmApiKey,
+    recoverHostLocalManagedVllmEndpoint: mocks.recoverHostLocalManagedVllmEndpoint,
     tryInstallManagedClusterManagedVllm: mocks.tryInstallManagedClusterManagedVllm,
   };
 });
@@ -72,9 +74,11 @@ import {
 import {
   applyVllmInstallProbeDefaults,
   createVllmInstallSpies,
+  MANAGED_CONTAINER_ID,
   mockSuccessfulVllmInstall,
   resetVllmInstallEnv,
   type VllmInstallSpies,
+  vllmContainerRow,
   withVllmInstallTestReadiness,
 } from "./vllm-install.test-support";
 
@@ -91,6 +95,7 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     vi.clearAllMocks();
     applyVllmInstallProbeDefaults(mocks);
     mocks.getGpuIndicesByName.mockReturnValue([0]);
+    mocks.recoverHostLocalManagedVllmEndpoint.mockReturnValue(null);
     mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({ kind: "not-selected" });
     ({ errSpy, restore: restoreSpies } = createVllmInstallSpies());
     resetVllmInstallEnv();
@@ -126,6 +131,108 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(reported).toContain("port 8000 is already in use");
     expect(reported).toContain("PID 4242");
     expect(reported).not.toContain("exit 125");
+  });
+
+  it("replaces a validated interrupted managed container that holds the serving port", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const managed = vllmContainerRow(profile.containerName);
+    mockSuccessfulVllmInstall(mocks, profile.containerName, [() => managed, () => managed]);
+    mocks.recoverHostLocalManagedVllmEndpoint.mockReturnValue({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: "b".repeat(64),
+      containerId: MANAGED_CONTAINER_ID,
+    });
+    const checkServingPort = vi.fn(async () => ({ ok: false, reason: "port 8000 is held" }));
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn<(q: string) => Promise<string>>(),
+      checkServingPort,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(checkServingPort).toHaveBeenCalledWith(8000);
+    expect(mocks.recoverHostLocalManagedVllmEndpoint).toHaveBeenCalledOnce();
+    expect(mocks.dockerForceRm).toHaveBeenCalledWith(
+      MANAGED_CONTAINER_ID,
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(mocks.dockerRunDetached).toHaveBeenCalled();
+    expect(errSpy.mock.calls.flat().join("\n")).not.toContain("another process");
+  });
+
+  it("rejects a recovered managed container bound to a different port", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    mocks.recoverHostLocalManagedVllmEndpoint.mockReturnValue({
+      baseUrl: "http://127.0.0.1:19000",
+      apiKey: "b".repeat(64),
+      containerId: MANAGED_CONTAINER_ID,
+    });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn<(q: string) => Promise<string>>(),
+      checkServingPort: async () => ({ ok: false, reason: "port 8000 is held" }),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.recoverHostLocalManagedVllmEndpoint).toHaveBeenCalledOnce();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.flat().join("\n")).toContain("port 8000 is already in use");
+  });
+
+  it("fails closed when the managed container changes immediately before replacement", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(mocks, profile.containerName, [
+      () => vllmContainerRow(profile.containerName),
+      () => vllmContainerRow(profile.containerName, { id: "c".repeat(64) }),
+    ]);
+    mocks.recoverHostLocalManagedVllmEndpoint.mockReturnValue({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: "b".repeat(64),
+      containerId: MANAGED_CONTAINER_ID,
+    });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn<(q: string) => Promise<string>>(),
+      checkServingPort: async () => ({ ok: false, reason: "port 8000 is held" }),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalled();
+    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("changed after recovery"));
+  });
+
+  it("fails closed when a managed container holding the serving port cannot be recovered", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    mocks.recoverHostLocalManagedVllmEndpoint.mockImplementation(() => {
+      throw new Error("Managed host-local vLLM runtime does not match its ownership receipt.");
+    });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn<(q: string) => Promise<string>>(),
+      checkServingPort: async () => ({ ok: false, reason: "port 8000 is held" }),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.flat().join("\n")).toContain(
+      "managed host-local vLLM recovery could not verify the container",
+    );
   });
 
   it("rejects the port before the storage decisions or the cache directory", async () => {

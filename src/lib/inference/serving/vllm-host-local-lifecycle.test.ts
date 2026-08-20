@@ -114,7 +114,11 @@ describe("host-local managed vLLM recovery", () => {
         dockerCapture: capture,
         loadApiKey: () => API_KEY,
       }),
-    ).toEqual({ baseUrl: "http://127.0.0.1:8000", apiKey: API_KEY });
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+      containerId: "a".repeat(64),
+    });
 
     expect(capture).toHaveBeenCalledOnce();
     const dockerOptions = capture.mock.calls[0]?.[1];
@@ -133,17 +137,26 @@ describe("host-local managed vLLM recovery", () => {
         loadApiKey: () => API_KEY,
         onManagedContainerObserved: observed,
       }),
-    ).toEqual({ baseUrl: "http://127.0.0.1:8000", apiKey: API_KEY });
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+      containerId: "a".repeat(64),
+    });
     expect(observed).toHaveBeenCalledOnce();
   });
 
   it("recovers the exact configured host port from the bounded Docker bindings", () => {
     expect(
       recoverHostLocalManagedVllmEndpoint({
-        dockerInspect: () => inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "172.18.0.1", "19000"),
+        dockerInspect: () =>
+          inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "172.18.0.1", "19000"),
         loadApiKey: () => API_KEY,
       }),
-    ).toEqual({ baseUrl: "http://127.0.0.1:19000", apiKey: API_KEY });
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:19000",
+      apiKey: API_KEY,
+      containerId: "a".repeat(64),
+    });
   });
 
   it.each(["80", "1e4", "019000", "65536"])(
@@ -194,7 +207,11 @@ describe("host-local managed vLLM recovery", () => {
         loadApiKey: () => API_KEY,
         stateDir: directory,
       }),
-    ).toEqual({ baseUrl: "http://127.0.0.1:8000", apiKey: API_KEY });
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+      containerId: "a".repeat(64),
+    });
   });
 
   it("rejects a profile-labeled runtime when its ownership receipt is missing", () => {

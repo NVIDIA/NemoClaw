@@ -16,6 +16,7 @@ const { CLI_NAME } = require("./branding");
 const { help } = require("../actions/root-help");
 const { runOclifArgv, runOclifCommandById } = require("./oclif-runner");
 const {
+  canonicalCommandFlagLines,
   canonicalUsageList,
   globalCommandTokens,
   sandboxActionTokensForDispatch,
@@ -362,6 +363,11 @@ async function dispatchNormalizedArgv(normalized: NormalizedArgv, argv: string[]
     return;
   }
 
+  if (normalized.kind === "dumpCommandFlags") {
+    canonicalCommandFlagLines().forEach((line: string) => console.log(line));
+    return;
+  }
+
   if (normalized.kind === "global") {
     await dispatchGlobalArgv(normalized);
     return;
@@ -482,6 +488,8 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     argv.includes("--help") ||
     argv.includes("-h") ||
     argv.includes("--version") ||
+    argv[0] === "--dump-commands" ||
+    argv[0] === "--dump-command-flags" ||
     argv[0] === "version" ||
     argv[0] === "help" ||
     argv[0] === "completion";
