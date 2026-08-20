@@ -29,7 +29,7 @@ function bashBlockUnder(source: string, heading: string): string {
   );
 }
 
-const releaseEntryBlock = bashBlockUnder(evidence, "## Release Entry and Pi Result");
+const releaseEntryBlock = bashBlockUnder(evidence, "## Release Entry and Documentation Coverage");
 const temporaryDirectories: string[] = [];
 
 const shellHelpers = String.raw`
@@ -102,6 +102,14 @@ afterEach(() => {
 });
 
 describe("release candidate evidence commands", () => {
+  it("uses maintainer-visible coverage instead of an empty-patch receipt", () => {
+    expect(evidence).toContain("1. Proceed with the candidate as shown.");
+    expect(evidence).toContain("2. Create or update a docs PR for the uncovered range.");
+    expect(evidence).toContain("- Maintainer decision: Proceed with the candidate as shown.");
+    expect(evidence).not.toContain("approved-empty");
+    expect(evidence).not.toContain("Final Documentation Recheck");
+  });
+
   it("extracts only the exact release H2 section from a multi-entry changelog", () => {
     const input = fixture({
       "docs/changelog/2026-08-17.mdx": [

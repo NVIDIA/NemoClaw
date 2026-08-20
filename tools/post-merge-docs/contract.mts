@@ -18,6 +18,7 @@ function strings(value: unknown): string[] {
 export function validatePostMergeDocsWorkflowBoundary(value: unknown): string[] {
   const workflow = object(value) ?? {};
   const jobs = object(workflow.jobs) ?? {};
+  const push = object(object(workflow.on)?.push) ?? {};
   const gate = object(jobs.gate) ?? {};
   const author = object(jobs.author) ?? {};
   const publish = object(jobs.publish) ?? {};
@@ -29,9 +30,11 @@ export function validatePostMergeDocsWorkflowBoundary(value: unknown): string[] 
   const references = strings(workflow).filter((text) => /\$\{\{[^}]*\bsecrets\b/u.test(text));
   const valid =
     isDeepStrictEqual(workflow.permissions, {}) &&
+    isDeepStrictEqual(push["paths-ignore"], ["docs/**", "fern/docs.yml", "fern/assets/**"]) &&
     Object.keys(jobs).sort().join(",") === "author,gate,publish" &&
     Object.values(jobs).every((job) => !Object.hasOwn(object(job) ?? {}, "secrets")) &&
     isDeepStrictEqual(gate.permissions, { "pull-requests": "read" }) &&
+    author.if === "${{ github.repository == 'NVIDIA/NemoClaw' }}" &&
     isDeepStrictEqual(author.permissions, { contents: "read" }) &&
     isDeepStrictEqual(publish.permissions, {
       actions: "read",
