@@ -7,10 +7,8 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 const ROOT = path.resolve(import.meta.dirname, "..");
 
-import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
-import { normalizeReviewResult } from "../tools/pr-review-advisor/analyze.mts";
 import {
-  EMPTY_REVIEW_FINDING_LEDGER_SNAPSHOT,
+  EMPTY_REVIEW_FINDING_SNAPSHOT,
   REVIEW_FINDING_LIMIT,
   REVIEW_FINDING_SOURCE_MAX_BYTES,
   type CandidateFindingInput,
@@ -45,84 +43,14 @@ function candidate(overrides: Partial<CandidateFindingInput> = {}): CandidateFin
   };
 }
 
-function reviewMetadata(): Parameters<typeof normalizeReviewResult>[1] {
-  return {
-    baseRef: "origin/main",
-    headRef: "HEAD",
-    headSha: "abc123def456",
-    changedFiles: ["src/lib/runner.ts"],
-    deterministic: {
-      diffStat: "1 file changed",
-      commits: [],
-      riskyAreas: [],
-      riskPlan: buildRiskPlan({ headSha: "abc123def456", changedFiles: [] }),
-      testDepth: {
-        verdict: "unit_sufficient",
-        rationale: "deterministic fallback",
-        suggestedTests: [],
-      },
-      staticTestInventory: {
-        changedTestFiles: [],
-        nearbyTestNames: [],
-        candidateExistingCoverage: [],
-      },
-      simplificationSignals: [],
-      workflowSignals: [],
-      localizedPatchSignals: [],
-      driftEvidence: [],
-      previousAdvisorReview: null,
-      github: null,
-    },
-  };
-}
-
 describe("PR review finding submission", () => {
-  it("requires every source-of-truth review item to declare findingId", () => {
-    expect(() =>
-      normalizeReviewResult(
-        {
-          sourceOfTruthReview: [{ surface: "resolved cleanup", status: "satisfied" }],
-        },
-        reviewMetadata(),
-      ),
-    ).toThrow("sourceOfTruthReview[1] must include findingId");
-  });
-
-  it("keeps source-of-truth prose from creating findings", () => {
-    const result = normalizeReviewResult(
-      {
-        findings: [{ ...finding(), evidence: finding().evidence.join("\n") }],
-        sourceOfTruthReview: [
-          {
-            surface: "best-effort refusal cleanup",
-            status: "needs_followup",
-            findingId: "F-001",
-            invalidState: "A refusal can be reported as success.",
-            sourceBoundary: "Runner refusal handling.",
-            whyNotSourceFix: "Not established.",
-            regressionTest: finding().missingRegressionTest,
-            removalCondition: "Remove the cleanup when refusal state is impossible.",
-            evidence: finding().evidence[0],
-          },
-        ],
-      },
-      reviewMetadata(),
-    );
-
-    expect(result.findings).toHaveLength(1);
-    expect(result.sourceOfTruthReview).toMatchObject([
-      { surface: "best-effort refusal cleanup", findingId: "F-001" },
-    ]);
-  });
-
   it("returns the explicit immutable empty canonical snapshot", () => {
     const snapshot = validateReviewFindingSubmission([], ROOT);
 
-    expect(snapshot).toBe(EMPTY_REVIEW_FINDING_LEDGER_SNAPSHOT);
-    expect(snapshot).toEqual({ version: 1, revision: 0, findings: [], history: [] });
+    expect(snapshot).toBe(EMPTY_REVIEW_FINDING_SNAPSHOT);
+    expect(snapshot).toEqual({ version: 1, findings: [] });
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.findings)).toBe(true);
-    expect(Object.isFrozen(snapshot.history)).toBe(true);
   });
 
   it("assigns canonical IDs and creates the immutable submission snapshot", () => {
@@ -141,26 +69,20 @@ describe("PR review finding submission", () => {
 
     expect(snapshot).toMatchObject({
       version: 1,
-      revision: 2,
-      findings: [
-        { id: "F-001", status: "open", supersededBy: null },
-        { id: "F-002", status: "open", supersededBy: null },
-      ],
-      history: [
-        { revision: 1, operation: "add", id: "F-001", stage: "submit-review", reason: null },
-        { revision: 2, operation: "add", id: "F-002", stage: "submit-review", reason: null },
-      ],
+      findings: [{ id: "F-001" }, { id: "F-002" }],
     });
+    expect(snapshot).not.toHaveProperty("revision");
+    expect(snapshot).not.toHaveProperty("history");
+    expect(snapshot.findings[0]).not.toHaveProperty("status");
+    expect(snapshot.findings[0]).not.toHaveProperty("supersededBy");
     expect(snapshot.findings[0]).not.toHaveProperty("basis");
-    expect(snapshot.history[0]?.change).not.toHaveProperty("basis");
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.findings)).toBe(true);
-    expect(Object.isFrozen(snapshot.history)).toBe(true);
     expect(Object.isFrozen(snapshot.findings[0])).toBe(true);
     expect(Object.isFrozen(snapshot.findings[0]?.evidence)).toBe(true);
   });
 
-  it("deeply freezes canonical finding and history values", () => {
+  it("deeply freezes canonical finding values", () => {
     const snapshot = validateReviewFindingSubmission(
       [
         candidate({
@@ -176,24 +98,16 @@ describe("PR review finding submission", () => {
       ROOT,
     );
     const findingValue = snapshot.findings[0]!;
-    const historyChange = snapshot.history[0]!.change;
 
     expect(Object.isFrozen(findingValue.simplification)).toBe(true);
-    expect(Object.isFrozen(snapshot.history[0])).toBe(true);
-    expect(Object.isFrozen(historyChange)).toBe(true);
-    expect(Object.isFrozen(historyChange.simplification)).toBe(true);
     expect(() => {
       (findingValue.simplification as { cut: string }).cut = "mutated";
     }).toThrow(TypeError);
     expect(() => {
-      (historyChange.simplification as { replacement: string }).replacement = "mutated";
-    }).toThrow(TypeError);
-    expect(() => {
-      (snapshot.history[0]!.addedEvidence as string[]).push("mutated");
+      (findingValue.evidence as string[]).push("mutated");
     }).toThrow(TypeError);
     expect(snapshot.findings[0]!.simplification?.cut).toBe("duplicate fallback");
-    expect(snapshot.history[0]!.change.simplification?.replacement).toBe("direct return");
-    expect(snapshot.history[0]!.addedEvidence).toEqual([
+    expect(snapshot.findings[0]!.evidence).toEqual([
       "src/lib/runner.ts:42 returns zero on refusal",
     ]);
   });
@@ -276,7 +190,7 @@ describe("PR review finding submission", () => {
     ],
   ] as const)("keeps an admissible %s eligible", (_label, eligible) => {
     expect(validateReviewFindingSubmission([eligible], ROOT).findings).toMatchObject([
-      { id: "F-001", status: "open", title: eligible.title },
+      { id: "F-001", title: eligible.title },
     ]);
   });
 

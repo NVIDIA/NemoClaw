@@ -17,7 +17,6 @@ export function buildDriftTurnContext(
     riskyAreas: context.riskyAreas,
     workflowSignals: context.workflowSignals,
     driftEvidence: context.driftEvidence,
-    previousAdvisorReview: context.previousAdvisorReview,
     openPrOverlaps: context.github?.openPrOverlaps ?? [],
   };
 }
@@ -80,9 +79,6 @@ export function buildReconciliationTurnContext(
   context: DeterministicReviewContext,
 ): Record<string, unknown> {
   return {
-    previousAdvisorReview: context.previousAdvisorReview
-      ? { present: true, headSha: context.previousAdvisorReview.headSha }
-      : null,
     riskPlan: {
       headSha: context.riskPlan.headSha,
       planHash: context.riskPlan.planHash,
@@ -155,7 +151,6 @@ export function buildValidationTurnContext(
     staticTestInventory: context.staticTestInventory,
     simplificationSignals: context.simplificationSignals,
     localizedPatchSignals: context.localizedPatchSignals,
-    previousAdvisorReview: context.previousAdvisorReview,
     issueReferenceLines: context.github?.issueReferenceLines ?? [],
     linkedIssues: context.github?.linkedIssues ?? [],
     githubFetchError: context.github?.fetchError,

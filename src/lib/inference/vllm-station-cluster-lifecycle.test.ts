@@ -32,11 +32,13 @@ import {
   DUAL_STATION_VLLM_ROLE_LABEL,
   DUAL_STATION_VLLM_TRANSACTION_LABEL,
   DUAL_STATION_VLLM_WORKER_CONTAINER_NAME,
+  PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA,
   type DualStationVllmLifecycleDeps,
   dualStationVllmApiKeyFingerprint,
   dualStationVllmClusterId,
   dualStationVllmLaunchContract,
   getDualStationManagedVllmBaseUrl,
+  previousDualStationVllmLaunchContract,
   preflightDualStationGpuRuntime,
   preflightDualStationManagedVllm,
   rollbackDualStationLegacyMigration,
@@ -198,6 +200,15 @@ function seedLegacyHead(fake: LifecycleHarness): void {
   );
 }
 
+function previousSchemaContainer(role: "head" | "worker"): FakeContainer {
+  const container = fakeContainer(role);
+  container.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] =
+    PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA;
+  container.labels[DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL] =
+    previousDualStationVllmLaunchContract(fixturePlan(), role);
+  return container;
+}
+
 function expectRestoredLegacyHead(fake: LifecycleHarness): void {
   expect(fake.containers.get(`local:${DUAL_STATION_VLLM_HEAD_CONTAINER_NAME}`)).toEqual([
     expect.objectContaining({
@@ -305,7 +316,7 @@ describe("dual-Station managed vLLM run argv", () => {
     expect(args).toContain(plan.runtime.image);
     expect(dockerValues(args, "--label")).toEqual(
       expect.arrayContaining([
-        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=3`,
+        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=${DUAL_STATION_VLLM_LAUNCH_SCHEMA}`,
         `${DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL}=${dualStationVllmLaunchContract(plan, role)}`,
         `${DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL}=${API_KEY_FINGERPRINT}`,
         `${DUAL_STATION_VLLM_TRANSACTION_LABEL}=${TRANSACTION_ID}`,
@@ -641,22 +652,16 @@ describe("dual-Station managed vLLM lifecycle", () => {
     ]);
   });
 
-  it("adopts and replaces an owned launch-schema-2 pair", async () => {
+  it("authenticates and replaces an exact schema-2 pair instead of treating it as foreign", async () => {
     const fake = harness();
-    const head = fakeContainer("head");
-    const worker = fakeContainer("worker");
-    head.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] = "2";
-    worker.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] = "2";
-    fake.seed("local", head);
-    fake.seed("peer", worker);
+    fake.seed("local", previousSchemaContainer("head"));
+    fake.seed("peer", previousSchemaContainer("worker"));
 
     expect(preflightDualStationManagedVllm(fixturePlan(), fake.deps)).toEqual({ ok: true });
-    expect(await startDualStationManagedVllm(fixturePlan(), START_CONFIG, fake.deps)).toMatchObject(
-      {
-        ok: true,
-        reusedExisting: false,
-      },
-    );
+    expect(await startDualStationManagedVllm(fixturePlan(), START_CONFIG, fake.deps)).toMatchObject({
+      ok: true,
+      reusedExisting: false,
+    });
     expect(fake.operations.filter((operation) => operation.kind === "rm")).toEqual(
       expect.arrayContaining([
         { kind: "rm", target: "local", value: HEAD_ID },
@@ -667,12 +672,26 @@ describe("dual-Station managed vLLM lifecycle", () => {
       fake.containers.get(`local:${DUAL_STATION_VLLM_HEAD_CONTAINER_NAME}`)?.[0]?.labels[
         DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL
       ],
-    ).toBe("3");
+    ).toBe(DUAL_STATION_VLLM_LAUNCH_SCHEMA);
     expect(
       fake.containers.get(`peer:${DUAL_STATION_VLLM_WORKER_CONTAINER_NAME}`)?.[0]?.labels[
         DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL
       ],
-    ).toBe("3");
+    ).toBe(DUAL_STATION_VLLM_LAUNCH_SCHEMA);
+  });
+
+  it("refuses a schema-2 pair whose historical launch contract does not match", () => {
+    const fake = harness();
+    const head = previousSchemaContainer("head");
+    head.labels[DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL] = "f".repeat(64);
+    fake.seed("local", head);
+    fake.seed("peer", previousSchemaContainer("worker"));
+
+    expect(preflightDualStationManagedVllm(fixturePlan(), fake.deps)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("foreign"),
+    });
+    expect(fake.operations.some((operation) => operation.kind === "rm")).toBe(false);
   });
 
   it.each([
