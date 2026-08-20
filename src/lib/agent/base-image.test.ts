@@ -8,8 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
 import { testTimeout } from "../../../test/helpers/timeouts";
-import { createCuaRuntimeTestFixture } from "../cua/runtime-test-fixture";
-
 import { tmpDir, writeCa } from "../onboard/__test-helpers__/corporate-ca-fixtures";
 import {
   createSandboxBaseImageBuildProvenanceKey,
@@ -94,114 +92,56 @@ describe("agent base image provisioning", () => {
   });
 
   it(
-    "validates the complete external NemoCUA payload before resolving or building an image (#7755)",
+    "requires an operator-prepared NemoCUA sandbox image (#9649)",
     () => {
-      const runtime = createCuaRuntimeTestFixture();
-      try {
-        Object.entries(runtime.env).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined,
-        ).forEach(([name, value]) => {
-          vi.stubEnv(name, value);
-        });
-        const agent = loadAgent("nemocua");
-        const dockerfile = agent.dockerfileBasePath!;
-        fs.chmodSync(dockerfile, 0o644);
-        fs.writeFileSync(dockerfile, "FROM mutable:latest\n");
-        fs.chmodSync(dockerfile, 0o444);
+      const agent = loadAgent("nemocua", { NEMOCLAW_CUA_ENABLED: "1" });
+      vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
 
-        withMockedDocker(
-          ({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
-            expect(() => ensureAgentBaseImage(agent)).toThrow(/declared size|content identity/);
-            expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
-            expect(dockerBuildMock).not.toHaveBeenCalled();
-          },
-        );
-      } finally {
-        runtime.cleanup();
-      }
+      withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
+        expect(() => ensureAgentBaseImage(agent)).toThrow("NEMOCLAW_CUA_SANDBOX_IMAGE_REF");
+        expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
+        expect(dockerBuildMock).not.toHaveBeenCalled();
+      });
     },
     testTimeout(15_000),
   );
 
-  it("cannot resolve or stage NemoCUA image inputs after the feature is disabled (#7755)", () => {
-    const runtime = createCuaRuntimeTestFixture();
-    try {
-      const agent = loadAgent("nemocua", runtime.env);
-      vi.stubEnv("NEMOCLAW_CUA_ENABLED", "");
+  it("uses the prepared NemoCUA image without a nested base build (#9649)", () => {
+    vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
+    vi.stubEnv("NEMOCLAW_CUA_SANDBOX_IMAGE_REF", "nemocua-scenario:staged");
+    const agent = loadAgent("nemocua");
 
-      withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
-        expect(() => ensureAgentBaseImage(agent)).toThrow(
-          "use the controlled Brev Launchable activation",
-        );
-        expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
-        expect(dockerBuildMock).not.toHaveBeenCalled();
+    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
+      expect(ensureAgentBaseImage(agent)).toEqual({
+        imageTag: "nemocua-scenario:staged",
+        built: false,
       });
-    } finally {
-      runtime.cleanup();
-    }
+      expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
+      expect(dockerBuildMock).not.toHaveBeenCalled();
+    });
   });
 
-  it("uses the exact manifest-bound NemoCUA sandbox image without a nested base build (#7755)", () => {
-    const runtime = createCuaRuntimeTestFixture();
+  it("stages only the NemoCUA Dockerfile in the caller-image build context (#9649)", () => {
+    vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
+    vi.stubEnv("NEMOCLAW_CUA_SANDBOX_IMAGE_REF", "nemocua-scenario:staged");
+    const agent = loadAgent("nemocua");
+    const root = tmpDir();
+    fs.writeFileSync(path.join(root, "unrelated-sentinel.txt"), "must not enter build context");
+    let buildContext = root;
+
     try {
-      Object.entries(runtime.env).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined,
-      ).forEach(([name, value]) => {
-        vi.stubEnv(name, value);
-      });
-      const agent = loadAgent("nemocua");
-
-      withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
-        expect(ensureAgentBaseImage(agent)).toEqual({
-          imageTag: process.env.NEMOCLAW_CUA_SANDBOX_IMAGE_REF,
-          built: false,
-        });
-        expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
-        expect(dockerBuildMock).not.toHaveBeenCalled();
-      });
-    } finally {
-      runtime.cleanup();
-    }
-  });
-
-  it("stages only the exact manifest-bound NemoCUA Docker context (#7755)", () => {
-    const runtime = createCuaRuntimeTestFixture();
-    let buildContext: string | undefined;
-    try {
-      Object.entries(runtime.env).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined,
-      ).forEach(([name, value]) => {
-        vi.stubEnv(name, value);
-      });
-      const agent = loadAgent("nemocua");
-
       withMockedDocker(({ createAgentSandbox }) => {
-        const result = createAgentSandbox(agent);
+        const result = createAgentSandbox(agent, { rootDir: root });
         buildContext = result.buildCtx;
-        expect(fs.readdirSync(result.buildCtx).sort()).toEqual(["Dockerfile", "agents"]);
-        expect(fs.readdirSync(path.join(result.buildCtx, "agents"))).toEqual(["nemocua"]);
-        expect(fs.readdirSync(path.join(result.buildCtx, "agents", "nemocua")).sort()).toEqual([
-          "Dockerfile",
-          "Dockerfile.base",
-          "manifest.yaml",
-          "nemocua-cli.tar.gz",
-          "policy-additions.yaml",
-          "security-adapter.sh",
-          "target-adapter.sh",
-          "target-services.tar.gz",
-          "task-adapter.sh",
-        ]);
-        expect(fs.existsSync(path.join(result.buildCtx, "package.json"))).toBe(false);
-        expect(fs.existsSync(path.join(result.buildCtx, "private-source-coordinate.txt"))).toBe(
-          false,
-        );
+        expect(fs.readdirSync(result.buildCtx)).toEqual(["Dockerfile"]);
+        expect(fs.existsSync(path.join(result.buildCtx, "unrelated-sentinel.txt"))).toBe(false);
         expect(fs.readFileSync(result.stagedDockerfile, "utf8")).toContain(
-          `ARG BASE_IMAGE=${runtime.env.NEMOCLAW_CUA_SANDBOX_IMAGE_REF}`,
+          "ARG BASE_IMAGE=nemocua-scenario:staged",
         );
       });
     } finally {
-      buildContext ? fs.rmSync(buildContext, { recursive: true, force: true }) : undefined;
-      runtime.cleanup();
+      fs.rmSync(buildContext, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
