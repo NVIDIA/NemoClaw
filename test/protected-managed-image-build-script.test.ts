@@ -531,10 +531,10 @@ describe("protected managed-image build-cache boundary", () => {
 });
 
 describe("protected managed-image BuildKit transport retry", () => {
-  it("repeats the exact desired build after the isolated registry reports the revision tag present (#9763)", () => {
+  it("repeats the exact desired build after the isolated registry reports the revision tag absent (#9763)", () => {
     stubBuildInvocation();
     dockerBuildFailureMode = "exact-once";
-    registryStatus = "200";
+    registryStatus = "404";
 
     const result = runBuild(REPO_ROOT);
     const output = `${result.stdout}${result.stderr}`;
@@ -546,12 +546,31 @@ describe("protected managed-image BuildKit transport retry", () => {
       `--silent --show-error --output /dev/null --write-out %{http_code} --head --connect-timeout 5 --max-time 15 --header Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json http://localhost:5000/v2/nemoclaw-managed-protected/openclaw/manifests/${REVISION}`,
     );
     expect(output).toContain(
-      "Protected managed-image build retry state agent=openclaw revision-tag=present",
+      "Protected managed-image build retry state agent=openclaw revision-tag=absent",
     );
     expect(output).toContain(
       "outcome=transient-external agent=openclaw attempt=1/2 retry-in=2s failure=buildkit-http2-internal-error",
     );
     expect(output).toContain("outcome=passed-after-retry agent=openclaw attempt=2/2");
+  });
+
+  it("keeps a present revision tag terminal after an ambiguous build failure (#9763)", () => {
+    stubBuildInvocation();
+    dockerBuildFailureMode = "exact-once";
+    registryStatus = "200";
+
+    const result = runBuild(REPO_ROOT);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(42);
+    expect(recordedBuildInvocations()).toHaveLength(1);
+    expect(output).toContain(
+      "Protected managed-image build retry state agent=openclaw revision-tag=present",
+    );
+    expect(output).toContain(
+      "outcome=failed-no-retry agent=openclaw attempt=1/2 failure=state-check",
+    );
+    expect(output).not.toContain("outcome=transient-external");
   });
 
   it("keeps a near-match BuildKit failure terminal (#9763)", () => {

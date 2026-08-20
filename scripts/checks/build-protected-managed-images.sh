@@ -240,7 +240,6 @@ confirm_build_retry_state() {
   local agent="$1"
   local image_repository="$2"
   local manifest_status
-  local manifest_state
   local registry_host="${image_repository%%/*}"
   local repository_path="${image_repository#*/}"
   local manifest_url="http://${registry_host}/v2/${repository_path}/manifests/${revision}"
@@ -260,14 +259,19 @@ confirm_build_retry_state() {
   fi
 
   case "$manifest_status" in
-    200) manifest_state="present" ;;
-    404) manifest_state="absent" ;;
+    200)
+      echo "::error::Protected managed-image build retry state agent=${agent} revision-tag=present" >&2
+      return 1
+      ;;
+    404)
+      echo "::notice::Protected managed-image build retry state agent=${agent} revision-tag=absent"
+      return 0
+      ;;
     *)
       echo "::error::Protected managed-image build retry state check failed agent=${agent} registry-http=${manifest_status}" >&2
       return 1
       ;;
   esac
-  echo "::notice::Protected managed-image build retry state agent=${agent} revision-tag=${manifest_state}"
 }
 
 run_build_with_retry() {
