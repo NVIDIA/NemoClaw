@@ -327,6 +327,38 @@ describe("managed-cluster vLLM installer selection", () => {
     expect(installEffects.prerequisites).not.toHaveBeenCalled();
   });
 
+  it("uses the configured vLLM port for managed-cluster admission", async () => {
+    const selection = fixtureManagedClusterSelection();
+    const base = readyCapability();
+    const capability = {
+      ...base,
+      local: {
+        ...base.local,
+        runtimeSnapshot: { ...base.local.runtimeSnapshot, listeningPorts: [19_000] },
+      },
+    } as ManagedClusterDetectedManagedServingCapability;
+    const materializePlan = vi.fn();
+
+    const result = await tryInstallManagedClusterManagedVllm(
+      {
+        platform: "spark",
+        env: { NEMOCLAW_VLLM_PORT: "19000" },
+        nonInteractive: true,
+        promptFn: vi.fn(),
+      },
+      effects(),
+      {
+        probeCapability: () => capability,
+        resolveSelection: () => selection,
+        materializePlan,
+        error: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+    expect(materializePlan).not.toHaveBeenCalled();
+  });
+
   it("budgets the selected model and image at full size before prompting", async () => {
     const selection = fixtureManagedClusterSelection();
     const base = readyCapability();

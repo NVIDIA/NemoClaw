@@ -38,7 +38,6 @@ import {
   isOllamaRunnerCrash,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   parseOllamaList,
-  parseOllamaTags,
   probeLocalProviderHealth,
   probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
@@ -925,26 +924,26 @@ describe("local inference helpers", () => {
   });
 
   it("returns parsed ollama model options when available", () => {
-    const mockCapture = () => "nemotron-3-nano:30b  abc  24 GB  now\nqwen3:32b  def  20 GB  now";
+    let call = 0;
+    const mockCapture = () => {
+      call += 1;
+      return call === 1
+        ? JSON.stringify({ models: [] })
+        : "nemotron-3-nano:30b  abc  24 GB  now\nqwen3:32b  def  20 GB  now";
+    };
     expect(getOllamaModelOptions(mockCapture)).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
   });
 
-  it("parses installed models from Ollama /api/tags output", () => {
-    expect(
-      parseOllamaTags(
-        JSON.stringify({
-          models: [{ name: "nemotron-3-nano:30b" }, { name: "qwen3.5:9b" }],
-        }),
-      ),
-    ).toEqual(["nemotron-3-nano:30b", "qwen3.5:9b"]);
-  });
-
-  it("returns no tags for malformed Ollama API output", () => {
-    expect(parseOllamaTags("{not-json")).toEqual([]);
-    expect(parseOllamaTags(JSON.stringify({ models: null }))).toEqual([]);
-    expect(parseOllamaTags(JSON.stringify({ models: [{}, { name: "qwen3.5:9b" }] }))).toEqual([
-      "qwen3.5:9b",
-    ]);
+  it("does not fall back to the CLI after a malformed Ollama inventory", () => {
+    let call = 0;
+    const mockCapture = () => {
+      call += 1;
+      return call === 1
+        ? JSON.stringify({ models: [{}, { name: "qwen3.5:9b" }] })
+        : "qwen3.5:9b  abc  8 GB  now";
+    };
+    expect(getOllamaModelOptions(mockCapture)).toEqual([]);
+    expect(call).toBe(1);
   });
 
   it("prefers Ollama /api/tags over parsing the CLI list output", () => {
@@ -964,12 +963,24 @@ describe("local inference helpers", () => {
   });
 
   it("prefers the default ollama model when present", () => {
-    const mockCapture = () => "qwen3:32b  abc  20 GB  now\nnemotron-3-nano:30b  def  24 GB  now";
+    let call = 0;
+    const mockCapture = () => {
+      call += 1;
+      return call === 1
+        ? JSON.stringify({ models: [] })
+        : "qwen3:32b  abc  20 GB  now\nnemotron-3-nano:30b  def  24 GB  now";
+    };
     expect(getDefaultOllamaModel(null, mockCapture)).toBe(DEFAULT_OLLAMA_MODEL);
   });
 
   it("falls back to the first listed ollama model when the default is absent", () => {
-    const mockCapture = () => "qwen3:32b  abc  20 GB  now\ngemma3:4b  def  3 GB  now";
+    let call = 0;
+    const mockCapture = () => {
+      call += 1;
+      return call === 1
+        ? JSON.stringify({ models: [] })
+        : "qwen3:32b  abc  20 GB  now\ngemma3:4b  def  3 GB  now";
+    };
     expect(getDefaultOllamaModel(null, mockCapture)).toBe("qwen3:32b");
   });
 

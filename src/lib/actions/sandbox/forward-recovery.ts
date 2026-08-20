@@ -41,7 +41,11 @@ import {
   getHermesDashboardRecoveryConfig,
 } from "./hermes-dashboard-recovery";
 
-type SandboxPortAgent = { forwardPort?: unknown; runtime?: { kind?: unknown } } | null;
+type SandboxPortAgent = {
+  forwardPort?: unknown;
+  forward_ports?: unknown;
+  runtime?: { kind?: unknown };
+} | null;
 
 type SandboxPortDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -416,6 +420,31 @@ export function recoverMessagingHostForward(
   return recovered;
 }
 
+function resolveDeclaredAgentForwardPorts(
+  sandbox: ReturnType<typeof registry.getSandbox>,
+  primaryPort: number,
+  agent: SandboxPortAgent,
+  hermesDashboardPort: number | null,
+): number[] {
+  const declared = agent?.forward_ports;
+  if (!Array.isArray(declared)) return [];
+  const covered = new Set<number>([primaryPort]);
+  if (isValidPort(agent?.forwardPort)) covered.add(agent.forwardPort);
+  if (isValidPort(hermesDashboardPort)) covered.add(hermesDashboardPort);
+  const ports: number[] = [];
+  for (const candidate of declared) {
+    if (typeof candidate !== "number") continue;
+    if (!Number.isInteger(candidate) || candidate < 1024 || candidate > 65535) continue;
+    if (covered.has(candidate)) continue;
+    const port =
+      candidate === HERMES_OPENAI_API_PORT ? resolveSandboxHermesApiPort(sandbox ?? {}) : candidate;
+    if (covered.has(port)) continue;
+    covered.add(port);
+    ports.push(port);
+  }
+  return ports;
+}
+
 /**
  * Re-establish every declared `forward_ports` entry on the active agent
  * manifest that is not already owned by another recovery helper. The
@@ -437,27 +466,17 @@ export function ensureDeclaredAgentForwardPortsHealthy(
 ): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (!agent) return null;
-  const declared = (agent as { forward_ports?: unknown }).forward_ports;
-  if (!Array.isArray(declared) || declared.length === 0) return null;
   const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
   const sandbox = registry.getSandbox(sandboxName);
-  const skipSet = new Set<number>([primaryPort]);
-  // The manifest's own primary entry is the default dashboard port. This
-  // sandbox's dashboard forward lives at primaryPort and is recovered by
-  // ensureSandboxPortForward, so the default must not be probed again.
-  if (isValidPort(agent.forwardPort)) skipSet.add(agent.forwardPort);
-  if (hermesDashboard && Number.isInteger(hermesDashboard.publicPort)) {
-    skipSet.add(hermesDashboard.publicPort);
-  }
-  let sawCovered = false;
+  const ports = resolveDeclaredAgentForwardPorts(
+    sandbox,
+    primaryPort,
+    agent,
+    hermesDashboard?.publicPort ?? null,
+  );
+  if (ports.length === 0) return null;
   let allHealthy = true;
-  for (const candidate of declared) {
-    if (typeof candidate !== "number") continue;
-    if (!Number.isInteger(candidate) || candidate < 1024 || candidate > 65535) continue;
-    if (skipSet.has(candidate)) continue;
-    const port =
-      candidate === HERMES_OPENAI_API_PORT ? resolveSandboxHermesApiPort(sandbox ?? {}) : candidate;
-    sawCovered = true;
+  for (const port of ports) {
     const health = isSandboxPortForwardHealthy(sandboxName, port);
     if (health === true) continue;
     if (health === "occupied") {
@@ -468,7 +487,6 @@ export function ensureDeclaredAgentForwardPortsHealthy(
       allHealthy = false;
     }
   }
-  if (!sawCovered) return null;
   return allHealthy;
 }
 
@@ -493,18 +511,13 @@ export function areSandboxLaunchForwardsHealthy(
   if (hermesDashboard) requiredPorts.add(hermesDashboard.publicPort);
   const messagingForward = getSandboxMessagingHostForward(sandboxName);
   if (messagingForward) requiredPorts.add(messagingForward.port);
-  const declared = (agent as { forward_ports?: unknown } | null)?.forward_ports;
-  if (Array.isArray(declared)) {
-    for (const candidate of declared) {
-      if (
-        typeof candidate === "number" &&
-        Number.isInteger(candidate) &&
-        candidate >= 1024 &&
-        candidate <= 65535
-      ) {
-        requiredPorts.add(candidate);
-      }
-    }
+  for (const port of resolveDeclaredAgentForwardPorts(
+    sandbox,
+    primaryPort,
+    agent,
+    hermesDashboard?.publicPort ?? null,
+  )) {
+    requiredPorts.add(port);
   }
   const result = captureOpenshell(["forward", "list", "--gateway", owningGatewayName], {
     ignoreError: true,

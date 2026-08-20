@@ -10,6 +10,7 @@ import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 export default class SandboxAgentsDeleteCommand extends NemoClawCommand {
   static id = "sandbox:agents:delete";
+  static customHelp = true;
   static strict = false;
   static summary = "Delete an OpenClaw agent inside a sandbox";
   static description =

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
   executeSandboxCommand: vi.fn(),
   executeSandboxExecCommand: vi.fn(),
+  getLiveSandboxPolicyEntryDigest: vi.fn(),
   getPresetContentGatewayState: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn(),
   removePreset: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("../src/lib/gateway-runtime-action", () => ({
 
 vi.mock("../src/lib/policy", () => ({
   applyPresetContent: mocks.applyPresetContent,
+  getLiveSandboxPolicyEntryDigest: mocks.getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState: mocks.getPresetContentGatewayState,
   removePreset: mocks.removePreset,
 }));
@@ -38,7 +40,7 @@ vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 const ORIGINAL_HOME = process.env.HOME;
 const ORIGINAL_OPENSHELL_BIN = process.env.NEMOCLAW_OPENSHELL_BIN;
 const ORIGINAL_OPENSHELL_GATEWAY = process.env.OPENSHELL_GATEWAY;
@@ -51,7 +53,11 @@ const registry = await import("../src/lib/state/registry");
 const bridge = await import("../src/lib/actions/sandbox/mcp-bridge");
 
 const providerId = "11111111-2222-4333-8444-555555555555";
+type ProviderType = "generic" | "nemoclaw-mcp-v1";
+
 let providerExists = true;
+let providerType: ProviderType = "generic";
+let providerResourceVersion = 1;
 let attached = true;
 let adapterRegistered = true;
 let adapterRemovalOutcome = "";
@@ -65,6 +71,7 @@ function lifecycleResult() {
     attached,
     adapterRegistered,
     providerExists,
+    policyState,
     policyApplyCalls,
     markerCalls: adapterCalls.filter((call) =>
       call.includes("deepagents-code --nemoclaw-mcp-capability"),
@@ -94,6 +101,8 @@ beforeEach(() => {
   restoreEnvironmentVariable("OPENSHELL_GATEWAY", ORIGINAL_OPENSHELL_GATEWAY);
 
   providerExists = true;
+  providerType = "generic";
+  providerResourceVersion = 1;
   attached = true;
   adapterRegistered = true;
   adapterRemovalOutcome = "";
@@ -107,11 +116,13 @@ beforeEach(() => {
     switch (true) {
       case command === "status --output json":
         return { status: 0, stdout: "ready", stderr: "" };
+      case args[0] === "provider" && args[1] === "profile" && args[2] === "import":
+        return { status: 0, stdout: "Imported provider profile", stderr: "" };
       case args[0] === "provider" && args[1] === "get":
         return providerExists
           ? {
               status: 0,
-              stdout: `Id: ${providerId}\nType: generic\nResource version: 1\nCredential keys: GITHUB_TOKEN\n`,
+              stdout: `Id: ${providerId}\nType: ${providerType}\nResource version: ${providerResourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };
@@ -119,7 +130,7 @@ beforeEach(() => {
         return {
           status: 0,
           stdout: attached
-            ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github generic 1 0\n"
+            ? `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github ${providerType} 1 0\n`
             : "No providers attached to sandbox alpha.\n",
           stderr: "",
         };
@@ -129,6 +140,12 @@ beforeEach(() => {
       case args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach":
         attached = true;
         return { status: 0, stdout: "Attached provider", stderr: "" };
+      case args[0] === "provider" &&
+        args[1] === "update" &&
+        args[2] === "alpha-mcp-github" &&
+        args.length === 3:
+        providerResourceVersion += 1;
+        return { status: 0, stdout: "Updated provider", stderr: "" };
       case args[0] === "provider" && args[1] === "delete":
         providerExists = false;
         attached = false;
@@ -145,6 +162,9 @@ beforeEach(() => {
     after: { state: "healthy_named" },
   });
 
+  mocks.getLiveSandboxPolicyEntryDigest
+    .mockReset()
+    .mockImplementation(() => (policyState === "absent" ? null : "present"));
   mocks.getPresetContentGatewayState.mockReset().mockImplementation(() => policyState);
   mocks.applyPresetContent.mockReset().mockImplementation(() => {
     policyApplyCalls += 1;
@@ -231,7 +251,13 @@ beforeEach(() => {
   });
   registry.addCustomPolicy("alpha", {
     name: entry.policyName,
-    content: "network_policies: {}\n",
+    content: bridge.buildMcpBridgePolicyYaml(
+      entry.server,
+      entry.url,
+      entry.adapter,
+      { addresses: ["8.8.8.8"] },
+      entry.providerName,
+    ),
     sourcePath: "generated:nemoclaw-mcp-bridge",
   });
 });
@@ -285,13 +311,14 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
   });
 
   const teardownCases = [
-    ["destroy", "prepareMcpBridgesForDestroy"],
-    ["rebuild", "prepareMcpBridgesForRebuild"],
+    ["destroy", "prepareMcpBridgesForDestroy", "generic"],
+    ["rebuild", "prepareMcpBridgesForRebuild", "nemoclaw-mcp-v1"],
   ] as const;
 
   it.each(teardownCases)(
     "%s teardown does not require the marker from the old image",
-    async (_label, method) => {
+    async (_label, method, caseProviderType) => {
+      providerType = caseProviderType;
       const preparation = await bridge[method]("alpha");
 
       expect({ entryCount: preparation.entries.length, ...lifecycleResult() }).toMatchObject({
@@ -306,7 +333,8 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
 
   it.each(teardownCases)(
     "%s teardown fails closed when adapter ownership is unproved",
-    async (_label, method) => {
+    async (_label, method, caseProviderType) => {
+      providerType = caseProviderType;
       adapterRemovalOutcome = "unowned";
 
       let error = "";
@@ -326,7 +354,27 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
     },
   );
 
+  it("rejects a legacy generic provider before rebuild teardown mutates managed state", async () => {
+    let error = "";
+    try {
+      await bridge.prepareMcpBridgesForRebuild("alpha");
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+
+    expect({ error, ...lifecycleResult() }).toMatchObject({
+      error: expect.stringMatching(/legacy generic profile/),
+      attached: true,
+      adapterRegistered: true,
+      providerExists: true,
+      policyState: "match",
+      policyApplyCalls: 0,
+      markerCalls: 0,
+    });
+  });
+
   it("proves the replacement image marker before post-rebuild reattachment", async () => {
+    providerType = "nemoclaw-mcp-v1";
     const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
     let error = "";
     try {
@@ -346,6 +394,7 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
   });
 
   it("restores the old image when destroy deletion aborts", async () => {
+    providerType = "nemoclaw-mcp-v1";
     const preparation = await bridge.prepareMcpBridgesForDestroy("alpha");
     await bridge.restoreMcpBridgesAfterDestroyAbort("alpha", preparation);
 
@@ -358,6 +407,7 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
   });
 
   it("restores the old image when rebuild deletion aborts", async () => {
+    providerType = "nemoclaw-mcp-v1";
     const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
     await bridge.reattachMcpProvidersAfterRebuildAbort(
       "alpha",

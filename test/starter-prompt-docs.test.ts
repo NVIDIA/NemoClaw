@@ -32,7 +32,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "4394858b3bae38b04768619f99b9614161f1b565";
+const promptAssetRevision = "66b532695db0ae38b74725ce7c57e4c91be24b19";
 
 type PromptAsset = {
   path: string;
@@ -51,7 +51,7 @@ function definePromptAsset(assetPath: string, pinnedSha256: string): PromptAsset
 const promptAssets = {
   dgxSpark: definePromptAsset(
     "docs/resources/prompt-assets/dgx-spark.md",
-    "b0192f72e9a55349a7ca9c5ec3da639bd81a2c74b676f997b3e5193bc10053e1", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "0025eb13e6295b5db2994d9898c5305166f43548473532bd9f2d629d08584801", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
@@ -695,7 +695,10 @@ describe("starter prompt docs CTA", () => {
       "`nvidia/Qwen3.6-35B-A3B-NVFP4` with the fixed catalog-backed vLLM profile",
     );
     expect(sparkSource).toContain(
-      "Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset",
+      "Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset",
+    );
+    expect(sparkSource).toContain(
+      "Preserve an existing `NEMOCLAW_VLLM_PORT` host-port override",
     );
     expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
     expect(stationSource).toContain("`nemotron-ultra`");

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -9,10 +8,10 @@ import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import { settleAdvisorTurn } from "../tools/advisors/session.mts";
 import {
   advisorExecutionErrors,
-  artifactPaths,
   buildPromptTurns,
-  buildRiskPlanReviewContext,
 } from "../tools/pr-review-advisor/analyze.mts";
+import { artifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
+import { buildRiskPlanReviewContext } from "../tools/pr-review-advisor/turn-context.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 type ReviewMetadata = Parameters<typeof buildPromptTurns>[0]["metadata"];
@@ -42,8 +41,7 @@ function metadata(
         candidateExistingCoverage: [],
       },
       simplificationSignals: [],
-      previousAdvisorReview: null,
-      workflowSignals: [],
+            workflowSignals: [],
       localizedPatchSignals: [],
       driftEvidence: [],
       github: null,
@@ -51,30 +49,12 @@ function metadata(
   };
 }
 
-function schema(): Record<string, unknown> {
-  return JSON.parse(
-    fs.readFileSync(path.join(ROOT, "tools/pr-review-advisor/schema.json"), "utf8"),
-  ) as Record<string, unknown>;
-}
-
 describe("PR review advisor turn trace", () => {
   it("keeps the HTML session as the only debugging transcript", () => {
     expect(artifactPaths("artifacts/pr-review-advisor")).toEqual({
       result: path.join("artifacts/pr-review-advisor", "pr-review-advisor-result.json"),
       finalResult: path.join("artifacts/pr-review-advisor", "pr-review-advisor-final-result.json"),
-      findingLedger: path.join(
-        "artifacts/pr-review-advisor",
-        "pr-review-advisor-finding-ledger.json",
-      ),
-      terminologyLedger: path.join(
-        "artifacts/pr-review-advisor",
-        "pr-review-advisor-terminology-ledger.json",
-      ),
       summary: path.join("artifacts/pr-review-advisor", "pr-review-advisor-summary.md"),
-      detailedReview: path.join(
-        "artifacts/pr-review-advisor",
-        "pr-review-advisor-detailed-review.md",
-      ),
       sessionHtml: path.join("artifacts/pr-review-advisor", "pr-review-advisor-session.html"),
     });
   });
@@ -90,7 +70,6 @@ describe("PR review advisor turn trace", () => {
     const turns = buildPromptTurns({
       metadata: metadata(changedFiles, riskPlan),
       diff: "diff --git a/x b/x",
-      schema: schema(),
     });
     const riskBytes = turns
       .flatMap((turn) => turn.contextToolResults ?? [])

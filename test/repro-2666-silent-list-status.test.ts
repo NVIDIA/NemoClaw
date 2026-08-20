@@ -208,37 +208,67 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       { mode: 0o755 },
     );
 
+    // Use a failing test-owned gateway executable so the CLI cannot start a host-side
+    // Homebrew-installed OpenShell gateway that writes into the temporary home.
+    fs.writeFileSync(path.join(binDir, "openshell-gateway"), "#!/usr/bin/env bash\nexit 1\n", {
+      mode: 0o755,
+    });
+
     seedRegistry(path.join(home, ".nemoclaw"));
   });
 
   afterEach(() => {
     fs.rmSync(home, { recursive: true, force: true });
+    expect(fs.existsSync(home)).toBe(false);
   });
 
   function runCli(
     args: string[],
     envOverrides: NodeJS.ProcessEnv = {},
-  ): { code: number; stdout: string; stderr: string } {
+  ): {
+    code: number | null;
+    error: Error | undefined;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+  } {
     const result = spawnSync(process.execPath, [CLI, ...args], {
       encoding: "utf-8",
+      killSignal: "SIGKILL",
       timeout: 30_000,
       env: {
         ...process.env,
         HOME: home,
-        PATH: `${binDir}:${process.env.PATH || ""}`,
+        PATH: [binDir, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(path.delimiter),
         NEMOCLAW_HEALTH_POLL_COUNT: "1",
         NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
         NEMOCLAW_STATUS_PROBE_TIMEOUT_MS: "2000",
         NEMOCLAW_TEST_NO_SLEEP: "1",
         NEMOCLAW_GATEWAY_PORT: "",
+        NEMOCLAW_OPENSHELL_BIN: path.join(binDir, "openshell"),
+        NEMOCLAW_OPENSHELL_GATEWAY_BIN: path.join(binDir, "openshell-gateway"),
         ...envOverrides,
       },
     });
     return {
-      code: result.status ?? -1,
+      code: result.status,
+      error: result.error,
+      signal: result.signal,
       stdout: result.stdout ?? "",
       stderr: result.stderr ?? "",
     };
+  }
+
+  function expectCliCompleted(result: ReturnType<typeof runCli>): asserts result is ReturnType<
+    typeof runCli
+  > & {
+    code: number;
+    error: undefined;
+    signal: null;
+  } {
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
+    expect(result.code).not.toBeNull();
   }
 
   function writeFakeDocker(lines: string[]): void {
@@ -272,16 +302,18 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     );
   }
 
-  function expectLayerBefore(combined: string, layer: string, laterText: string): void {
-    const layerIndex = combined.indexOf(`Failure layer: ${layer}`);
-    const laterIndex = combined.indexOf(laterText);
+  function expectLayerBefore(stdout: string, layer: string, laterText: string): void {
+    const layerIndex = stdout.indexOf(`Failure layer: ${layer}`);
+    const laterIndex = stdout.indexOf(laterText);
     expect(layerIndex).toBeGreaterThanOrEqual(0);
     expect(laterIndex).toBeGreaterThanOrEqual(0);
     expect(layerIndex).toBeLessThan(laterIndex);
   }
 
-  it("nemoclaw list never produces silent empty output when openshell is broken", () => {
-    const { code, stdout, stderr } = runCli(["list"]);
+  it("nemoclaw list never produces silent empty output when openshell is broken (#2666)", () => {
+    const result = runCli(["list"]);
+    expectCliCompleted(result);
+    const { code, stdout, stderr } = result;
     const combined = `${stdout}\n${stderr}`;
     // The exact failure mode pre-fix was exit 0 + completely empty output.
     // The contract here is the negation of that — the user must see
@@ -298,9 +330,11 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     seedRegistry(path.join(home, ".nemoclaw"), "default-root-model");
     seedRegistry(nemoclawStateRoot(home, port), "selected-port-model", port);
 
-    const { code, stdout, stderr } = runCli(["list"], {
+    const result = runCli(["list"], {
       NEMOCLAW_GATEWAY_PORT: String(port),
     });
+    expectCliCompleted(result);
+    const { code, stdout, stderr } = result;
     const combined = `${stdout}\n${stderr}`;
 
     expect(code).toBe(0);
@@ -317,9 +351,11 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       seedRegistry(path.join(home, ".nemoclaw"), "default-root-model");
       seedRegistry(nemoclawStateRoot(home, port), "selected-port-model", port);
 
-      const { code, stdout, stderr } = runCli(["my-assist", "status"], {
+      const result = runCli(["my-assist", "status"], {
         NEMOCLAW_GATEWAY_PORT: String(port),
       });
+      expectCliCompleted(result);
+      const { code, stdout, stderr } = result;
       const combined = `${stdout}\n${stderr}`;
 
       expect(code).not.toBe(0);
@@ -333,7 +369,9 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     "nemoclaw <name> status never produces silent empty output when openshell is broken",
     testTimeoutOptions(30_000),
     () => {
-      const { code, stdout, stderr } = runCli(["my-assist", "status"]);
+      const result = runCli(["my-assist", "status"]);
+      expectCliCompleted(result);
+      const { code, stdout, stderr } = result;
       const combined = `${stdout}\n${stderr}`;
       // Must include the sandbox header AND an actionable hint.
       expect(combined.trim().length).toBeGreaterThan(0);
@@ -380,9 +418,10 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       "esac",
     ]);
 
-    const { code, stdout, stderr } = runCli(["my-assist", "status"]);
-    const combined = `${stdout}\n${stderr}`;
-    expectLayerBefore(combined, "gateway_unreachable", "still refusing connections after restart");
+    const result = runCli(["my-assist", "status"]);
+    expectCliCompleted(result);
+    const { code, stdout } = result;
+    expectLayerBefore(stdout, "gateway_unreachable", "still refusing connections after restart");
     expect(code).not.toBe(0);
   });
 
@@ -418,9 +457,10 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       "esac",
     ]);
 
-    const { code, stdout, stderr } = runCli(["my-assist", "status"]);
-    const combined = `${stdout}\n${stderr}`;
-    expectLayerBefore(combined, "container_missing", "gateway is no longer configured");
+    const result = runCli(["my-assist", "status"]);
+    expectCliCompleted(result);
+    const { code, stdout } = result;
+    expectLayerBefore(stdout, "container_missing", "gateway is no longer configured");
     expect(code).not.toBe(0);
   });
 
@@ -470,23 +510,14 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
         "esac",
       ]);
 
-      const result = spawnSync(process.execPath, [CLI, "my-assist", "status"], {
-        encoding: "utf-8",
-        timeout: 30_000,
-        env: {
-          ...process.env,
-          HOME: home,
-          PATH: `${binDir}:${process.env.PATH || ""}`,
-          NEMOCLAW_HEALTH_POLL_COUNT: "1",
-          NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
-          NEMOCLAW_STATUS_PROBE_TIMEOUT_MS: "2000",
-          NEMOCLAW_TEST_NO_SLEEP: "1",
-          NEMOCLAW_GATEWAY_PORT: String(port),
-        },
+      const result = runCli(["my-assist", "status"], {
+        NEMOCLAW_GATEWAY_PORT: String(port),
       });
-      const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      expectCliCompleted(result);
+      const { code, stdout, stderr } = result;
+      const combined = `${stdout}\n${stderr}`;
       expect(combined).toContain("container_exited_port_conflict");
-      expect(result.status).not.toBe(0);
+      expect(code).not.toBe(0);
     } finally {
       await new Promise<void>((resolve) => listener.close(() => resolve()));
     }

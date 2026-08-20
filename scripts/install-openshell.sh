@@ -121,16 +121,16 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 # round-trippable base policies: WebSocket text frames, provider-shaped
 # aliases, REST request bodies, MCP/JSON-RPC L7 enforcement, and
 # `policy get --base` for MCP/JSON-RPC-safe read-modify-write operations.
-MIN_VERSION="0.0.101"
+MIN_VERSION="0.0.106"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.101"
+MAX_VERSION="0.0.106"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-DEV_MIN_VERSION="0.0.101"
+DEV_MIN_VERSION="0.0.106"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -227,32 +227,32 @@ fi
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.101:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "7d49ab2a5ff0b826bd2bdca5e0244010f832dfc6901c808ea8c8467004c26913"
+    v0.0.106:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0"
       ;;
-    v0.0.101:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "b553d3bfc08e9354b990a10fb8abd976e039afeec2d3947f8a112018be40d296"
+    v0.0.106:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "ce981904ae8febd9cd6b3fbceb04e1dcfb48da6042bac08eadf0c2211f83fe55"
       ;;
-    v0.0.101:openshell-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "9daaccdb9e30e220d56dd6d6bf4bd00ccca8ae4ad2845f5f0d9b9da3eb8ee881"
+    v0.0.106:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "969493205e3d3462226ff613eaba0b9cde0f582e3026294169d533d41e87c905"
       ;;
-    v0.0.101:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "eaeb094ccf7dcb1fe00c7e926e6aa9aaaefb89ecbef8343720628b0fd2d84654"
+    v0.0.106:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "b7760cb752a4363c2f21d32298dd0c683dc438f6edfd16c2e4242bc0baefbb7c"
       ;;
-    v0.0.101:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "ac842ccc2ab8b5682f7479d71532cc650839250a8a41dbfae2b871cbbdfd3279"
+    v0.0.106:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "22b7781249e3487085694d0f0f3797a0e549018b81144cd24b2f1118c730d1c7"
       ;;
-    v0.0.101:openshell-gateway-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "0f9e195b7cde57f4c2080df95159c5e7e72b0248306abc242ae00a3bb6f07f14"
+    v0.0.106:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "de8f90db9dd0d3b47855b2b6d2542660730917bd1249e53140300990a8690b94"
       ;;
-    v0.0.101:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "953b90eaa7d2fc1bb7bdf38eb0ada6fad7902b13f9f895ca20b89caeac483a9e"
+    v0.0.106:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "559b8aaad3a8eeab45c511e7de531d9baa98a311282dcb0c2c5f38cc2d4ca355"
       ;;
-    v0.0.101:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "c39b7ba3cf212b88712a00d2a0e3d28e2c1e0e9f47a9a6ca818a8f06ed2140aa"
+    v0.0.106:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "5e5d758d53c6abc6d7a936be907dafa9dfce10423289536f39b50abe294dfafd"
       ;;
-    v0.0.101:openshell.rb)
-      printf '%s\n' "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2"
+    v0.0.106:openshell.rb)
+      printf '%s\n' "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642"
       ;;
     *)
       return 1
@@ -360,6 +360,21 @@ file_sha256() {
   fi
 }
 
+is_pinned_openshell_v00106_linux_x86_64_install() {
+  local openshell_bin="$1"
+  local gateway_bin="$2"
+  local sandbox_bin="$3"
+  local openshell_sha gateway_sha sandbox_sha
+
+  [ "$OS" = "Linux" ] && [ "$ARCH_LABEL" = "x86_64" ] || return 1
+  openshell_sha="$(file_sha256 "$openshell_bin")" || return 1
+  gateway_sha="$(file_sha256 "$gateway_bin")" || return 1
+  sandbox_sha="$(file_sha256 "$sandbox_bin")" || return 1
+  [ "$openshell_sha" = "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59" ] \
+    && [ "$gateway_sha" = "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c" ] \
+    && [ "$sandbox_sha" = "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8" ]
+}
+
 pinned_sandbox_build_version() {
   local digest="$1"
   case "$digest" in
@@ -384,6 +399,11 @@ pinned_sandbox_build_version() {
     a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920 | \
       88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4)
       printf '%s\n' "0.0.101"
+      ;;
+    # OpenShell v0.0.106 standalone sandbox binaries.
+    019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8 | \
+      0031c6b257a23ecc1a2333153918324f3af0005e68abde388858d682ec646c55)
+      printf '%s\n' "0.0.106"
       ;;
     *)
       return 1
@@ -569,6 +589,16 @@ openshell_has_required_messaging_features() {
   if [ -f "$sandbox_bin" ] && ! component_matches_cli_build "$openshell_bin" "$sandbox_bin" sandbox; then
     OPENSHELL_FEATURE_CHECK_ERROR="The selected OpenShell sandbox does not match the active CLI build. Install one coherent OpenShell release."
     return 1
+  fi
+
+  # The v0.0.106 release binaries are stripped and no longer retain every
+  # source-level capability marker used by the development-build fallback
+  # below. Accept only the reviewed executable byte identities as the stable
+  # release capability proof; arbitrary binaries that merely report 0.0.106
+  # must still pass the fail-closed marker checks.
+  if is_pinned_openshell_v00106_linux_x86_64_install \
+    "$openshell_bin" "$gateway_bin" "$sandbox_bin"; then
+    return 0
   fi
 
   # OpenShell #1865 has no authoritative CLI/RPC capability query yet. Scan the

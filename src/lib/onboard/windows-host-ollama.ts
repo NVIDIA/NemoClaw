@@ -20,6 +20,7 @@ export interface WindowsHostOllamaState {
 }
 
 const POWERSHELL = "powershell.exe";
+const WINDOWS_HOST_OLLAMA_PROBE_TIMEOUT_MS = 5_000;
 
 const GET_COMMAND_OLLAMA =
   "Get-Command ollama.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source";
@@ -55,7 +56,12 @@ function resolveDeps(
 }
 
 function powershell(script: string, deps: DetectWindowsHostOllamaDeps): string {
-  return deps.runCapture([POWERSHELL, "-Command", script], { ignoreError: true }).trim();
+  return deps
+    .runCapture([POWERSHELL, "-Command", script], {
+      ignoreError: true,
+      timeout: WINDOWS_HOST_OLLAMA_PROBE_TIMEOUT_MS,
+    })
+    .trim();
 }
 
 function probeInstalledPath(deps: DetectWindowsHostOllamaDeps): string {
@@ -78,9 +84,7 @@ function probeInstalledPath(deps: DetectWindowsHostOllamaDeps): string {
 function probeLoopbackOnly(deps: DetectWindowsHostOllamaDeps): boolean {
   const pid = powershell(GET_PROCESS_OLLAMA_ID, deps);
   if (!pid) return false;
-  const listenAddrs = deps.runCapture([POWERSHELL, "-Command", GET_NETTCP_OLLAMA_LISTEN], {
-    ignoreError: true,
-  });
+  const listenAddrs = powershell(GET_NETTCP_OLLAMA_LISTEN, deps);
   return /127\.0\.0\.1/.test(listenAddrs) && !/0\.0\.0\.0|^::\s*$/m.test(listenAddrs);
 }
 

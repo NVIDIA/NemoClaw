@@ -19,6 +19,7 @@ import {
   applyOllamaRuntimeContextWindow,
   resetOllamaRuntimeContextWindowAutoState,
 } from "../src/lib/inference/ollama-runtime-context.js";
+import { SMALLEST_OLLAMA_MODEL_TAG } from "../src/lib/inference/ollama-model-registry.js";
 import {
   validateAnthropicModel,
   validateOpenAiLikeModel,
@@ -1417,14 +1418,15 @@ child_process.spawnSync = (cmd, args, opts) => {
 
 const runCommands = [];
 const shellCommands = [];
+let managedOllamaStarted = false;
 const { messages } = installPromptQueue(credentials, ["8", "1"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags"))
+    return managedOllamaStarted ? ${JSON.stringify(JSON.stringify({ models: [{ name: SMALLEST_OLLAMA_MODEL_TAG }] }))} : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
@@ -1435,16 +1437,14 @@ runner.run = (command) => {
 };
 runner.runShell = (command) => {
   shellCommands.push(command);
+  managedOllamaStarted ||= command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve");
   return { status: 0 };
 };
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
 wait.sleepSeconds = () => {};
-// installOllamaSystem probes loopback at tries=1 before launching, then
-// waits at tries=10 after launch. The fake curl in these tests answers 200
-// to any URL, so real waitForHttp would short-circuit the manual launch.
-// Differentiate by tries count.
+// Fail the tries=1 pre-launch probe; pass the tries=10 post-launch probe.
 wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});
@@ -3434,8 +3434,8 @@ nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 
-// Select option 8 (nim-local), then model 1
-const { messages } = installPromptQueue(credentials, ["8", "1"]);
+// Select option 8 (nim-local), then model 1, and enter the NGC credential.
+const { messages } = installPromptQueue(credentials, ["8", "1", "ngc-test"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
@@ -3517,8 +3517,8 @@ reportChildScenario(async () => {
       const zstdPreflightIndex = commands.findIndex((command) =>
         command.includes("apt-get install -y -qq --no-install-recommends zstd"),
       );
-      const installerIndex = commands.findIndex((command) =>
-        command.includes("ollama.com/install.sh"),
+      const installerIndex = commands.findIndex(
+        (command) => command.startsWith("sh '") && command.includes("/install.sh'"),
       );
       assert.ok(zstdPreflightIndex >= 0);
       assert.ok(installerIndex > zstdPreflightIndex);
@@ -3537,17 +3537,15 @@ reportChildScenario(async () => {
           value.includes("creates a system user, a systemd service, and writes to /usr/local"),
       );
       const installerCommandIndex = events.findIndex(
-        ({ type, value }) => type === "command" && value.includes("ollama.com/install.sh"),
+        ({ type, value }) =>
+          type === "command" && value.startsWith("sh '") && value.includes("/install.sh'"),
       );
       assert.ok(zstdWarningIndex >= 0 && zstdWarningIndex < zstdCommandIndex);
       assert.ok(installerWarningIndex >= 0 && installerWarningIndex < installerCommandIndex);
-      assert.equal(
-        events.find(
-          ({ type, value }) => type === "command" && value.includes("ollama.com/install.sh"),
-        )?.stdio,
-        "inherit",
+      assert.equal(events[installerCommandIndex]?.stdio, "inherit");
+      assert.ok(
+        commands.some((command) => command.includes("/install.sh'")),
       );
-      assert.ok(commands.some((command) => command.includes("ollama.com/install.sh")));
       assert.ok(!commands.some((command) => command.includes("brew install")));
       assert.ok(
         commands.some((command) => command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve")),
@@ -3596,8 +3594,8 @@ runner.runCapture = (command) => {
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
 };
+runner.runCaptureEx = () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false });
 runner.runShell = (command) => {
-  if (command.includes("ollama.com/install.sh")) return { status: 0 };
   if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };
   return { status: 0 };
@@ -3694,8 +3692,8 @@ const { setupNim } = require(${onboardPath});
       const zstdPreflightIndex = runShellCalls.findIndex(({ command }) =>
         command.includes("apt-get install -y -qq --no-install-recommends zstd"),
       );
-      const installerIndex = runShellCalls.findIndex(({ command }) =>
-        command.includes("ollama.com/install.sh"),
+      const installerIndex = runShellCalls.findIndex(
+        ({ command }) => command.startsWith("sh '") && command.includes("/install.sh'"),
       );
       assert.ok(zstdPreflightIndex >= 0);
       assert.ok(installerIndex > zstdPreflightIndex);
@@ -3809,7 +3807,7 @@ const { setupNim } = require(${onboardPath});
           isNonInteractive: () => true,
           runCaptureImpl: runCapture,
           runShellImpl: (command) => {
-            installerRan ||= command.includes("ollama.com/install.sh");
+            installerRan ||= command.includes("/install.sh'");
             commands.push(command);
             return successfulRunShellResult();
           },
@@ -3855,7 +3853,9 @@ const { setupNim } = require(${onboardPath});
       assert.equal(prompt.mock.calls.length, 0);
       assert.equal(result.provider, "ollama-local");
       assert.ok(notes.some((line) => line.includes("[non-interactive] Provider: ollama")));
-      assert.ok(commands.some((command) => command.includes("ollama.com/install.sh")));
+      assert.ok(
+        commands.some((command) => command.includes("/install.sh'")),
+      );
     } finally {
       resetOllamaHostCache();
     }

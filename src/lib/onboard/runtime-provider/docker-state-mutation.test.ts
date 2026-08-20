@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -51,6 +52,16 @@ afterEach(() => {
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
+  it("uses one harness-owned absolute Docker executable", () => {
+    const runtime = harness();
+    runtime.authority.engine.capture(["version"]);
+    const executable = runtime.capture.mock.calls[0]?.[0] as string;
+
+    expect(path.isAbsolute(executable)).toBe(true);
+    expect(executable).toBe(fs.realpathSync(path.join(runtime.root, "bin", "docker")));
+    expect(runtime.context.environment).toMatchObject({ PATH: path.join(runtime.root, "bin") });
+  });
+
   it("resolves one full labeled runtime and records authority only on synchronous acquire", () => {
     const runtime = harness();
     const surface = createDockerStateMutationSurface({

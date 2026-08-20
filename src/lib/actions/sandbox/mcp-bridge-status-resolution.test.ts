@@ -53,7 +53,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     }
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 4\nCredential keys: " + providerCredentialKey + "\n",
+      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: " + providerCredentialKey + "\n",
       stderr: "",
     };
   }
@@ -66,7 +66,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     }
     return {
       status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github generic 1 0\n",
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github nemoclaw-mcp-v1 1 0\n",
       stderr: "",
     };
   }

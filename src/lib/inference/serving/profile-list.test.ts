@@ -32,6 +32,7 @@ describe("serving profile discovery", () => {
         topology: expect.any(String),
         selectionMode: expect.stringMatching(/^(automatic|explicit-only|disabled)$/u),
         supportState: expect.stringMatching(/^(supported|experimental|disabled)$/u),
+        validationLevel: expect.stringMatching(/^(schema|software|hardware)$/u),
         compatible: expect.any(Boolean),
       });
       expect(
@@ -52,6 +53,8 @@ describe("serving profile discovery", () => {
         topology: "single-host",
         selectionMode: "explicit-only",
         supportState: "experimental",
+        validationLevel: "hardware",
+        validationEvidence: "test-evidence",
         estimatedImageDownloadBytes: 2 * 1024 ** 3,
         estimatedModelDownloadBytes: 3 * 1024 ** 3,
         compatible: false,
@@ -61,8 +64,26 @@ describe("serving profile discovery", () => {
 
     expect(output).toContain("vllm.spark.example  Example profile");
     expect(output).toContain("selection=explicit-only support=experimental");
+    expect(output).toContain("validation=hardware:test-evidence");
     expect(output).toContain("image=2.0 GiB model-download=3.0 GiB");
     expect(output).toContain("incompatible: Host requirement is not met.");
+  });
+
+  it("reuses one immutable readiness snapshot across every profile evaluation", () => {
+    const catalog = loadServingCatalog();
+    const readinessReports = [] as const;
+    const observed: unknown[] = [];
+
+    listServingProfiles(catalog, {
+      readinessReports,
+      evaluateCompatibility: (_catalog, _preset, _recipe, reports) => {
+        observed.push(reports);
+        return { compatible: true, incompatibilityReason: null };
+      },
+    });
+
+    expect(observed).toHaveLength(catalog.presets.length);
+    expect(observed.every((reports) => reports === readinessReports)).toBe(true);
   });
 
   it("escapes an untrusted profile candidate in diagnostics (#8384)", () => {

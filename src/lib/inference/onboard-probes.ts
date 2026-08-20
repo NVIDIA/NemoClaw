@@ -50,12 +50,14 @@ const { probeOpenAiLikeEndpointWithValidationSession } = require("./openai-valid
 const {
   getChatCompletionsProbePayload,
   getChatCompletionsToolProbePayload,
+  EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY,
   isDeepSeekV4ProModel,
   isKimiK26Model,
   isReasoningOnlyLengthResponse,
   STRICT_TOOL_PROBE_INITIAL_TOKENS,
   STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER,
   strictToolProbeReasoningRetryMessage,
+  vllmProbePolicyForModel,
 } = require("./openai-probe-models");
 const {
   buildValidationProbeTimingProfile,
@@ -67,7 +69,6 @@ const {
   getCurlMaxTimeSeconds,
   getProbeProcessTimeoutMs,
 } = require("./probe-http-helpers");
-
 const {
   getCurlTimingArgs,
   runCurlProbe,
@@ -106,8 +107,6 @@ function openAiLikeFailureFromError(error) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
-
-const EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS = new Set(["deepseek-ai/deepseek-v4-flash"]);
 
 // Hostnames that are normally meant for the sandbox/container host boundary.
 // host.openshell.internal only resolves inside the OpenShell sandbox network,
@@ -507,7 +506,9 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
 
 // ── OpenAI-like probe ────────────────────────────────────────────
 function needsExtendedNvidiaEndpointValidationBudget(model) {
-  return EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS.has(String(model || "").toLowerCase());
+  return (
+    vllmProbePolicyForModel(String(model || "")) === EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY
+  );
 }
 
 function getChatCompletionsProbeTimingArgs(model, opts) {

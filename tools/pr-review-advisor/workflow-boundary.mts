@@ -519,7 +519,6 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     "PR_REVIEW_ADVISOR_WORKFLOW_NAME",
     "PR Review / Advisor",
   );
-  requireEnv(errors, "review job", reviewJob, "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW", "false");
   requireEnv(
     errors,
     "review job",

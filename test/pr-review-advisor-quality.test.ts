@@ -4,14 +4,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderSummary } from "../tools/pr-review-advisor/render-result.mts";
+import { reviewQualityIssues } from "../tools/pr-review-advisor/review-quality.mts";
 import {
-  normalizeReviewResult,
   parseSecurityRubric,
   readTrustedSecurityRubric,
-  renderDetailedReview,
-  renderSummary,
-  reviewQualityIssues,
-} from "../tools/pr-review-advisor/analyze.mts";
+} from "../tools/pr-review-advisor/trusted-guidance.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import { metadata, ROOT, validResult } from "./helpers/pr-review-advisor-test-fixtures.ts";
 
@@ -21,62 +19,13 @@ describe("PR review advisor", () => {
   });
 
   it("flags low-quality normalized advisor fields for same-session validation", () => {
-    const result = normalizeReviewResult(
-      validResult({
-        findings: [
-          {
-            severity: "warning",
-            category: "correctness",
-            file: "src/lib/example.ts",
-            line: 1,
-            title: "Missing details",
-          },
-        ],
-        securityCategories: [],
-      }),
-      metadata(),
-    );
+    const currentFinding = validResult().findings[0]!;
+    const result = validResult({
+      findings: [{ ...currentFinding, impact: "No impact provided." }],
+    });
 
-    expect(reviewQualityIssues(result)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("placeholder impact"),
-        "securityCategories were defaulted because the advisor omitted verdicts",
-      ]),
-    );
-  });
-
-  it("fills every security category instead of treating a partial review as complete", () => {
-    const result = normalizeReviewResult(
-      validResult({
-        securityCategories: [
-          {
-            category: "Secrets and Credentials",
-            verdict: "pass",
-            justification: "No committed credential was found.",
-          },
-          {
-            category: "Invented category",
-            verdict: "pass",
-            justification: "This category is not part of the security contract.",
-          },
-        ],
-      }),
-      metadata(),
-    );
-
-    expect(result.securityCategories).toHaveLength(9);
-    expect(result.securityCategories).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ category: "Invented category" })]),
-    );
-    expect(result.securityCategories).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ category: "Secrets and Credentials", verdict: "pass" }),
-        expect.objectContaining({
-          category: "System Security",
-          verdict: "warning",
-          justification: expect.stringContaining("maintainer review required"),
-        }),
-      ]),
+    expect(reviewQualityIssues(result)).toContain(
+      "findings[1] trusted-code boundary has placeholder impact",
     );
   });
 
@@ -133,9 +82,8 @@ describe("PR review advisor", () => {
   });
 
   it("renders summaries and sticky comments with maintainer-review framing", () => {
-    const result = normalizeReviewResult(validResult(), metadata());
+    const result = validResult();
     const summary = renderSummary(result);
-    const detailed = renderDetailedReview(result);
     const comment = buildComment({ summary, result, runUrl: "https://example.invalid/run" });
 
     expect(summary).toContain("# PR Review Advisor");
@@ -154,10 +102,6 @@ describe("PR review advisor", () => {
     expect(summary).not.toContain("🌱");
     expect(summary).not.toContain("## Acceptance coverage");
     expect(summary).not.toContain("## Security review");
-    expect(detailed).toContain("## Acceptance coverage");
-    expect(detailed).toContain("## Security review");
-    expect(detailed).toContain("## Source-of-truth review");
-    expect(detailed).toContain("trusted-code boundary");
     expect(comment).not.toContain("### Action checklist");
     expect(comment).not.toContain("### Findings index");
     expect(comment).not.toContain("PRA-T");
@@ -232,26 +176,5 @@ describe("PR review advisor", () => {
     expect(comment).not.toContain("Analyzed SHA: `abc123def456`");
     expect(comment).not.toContain("**Recommendation:** merge after fixes");
     expect(comment).not.toContain("**Confidence:** high");
-
-    const followUpResult = normalizeReviewResult(
-      validResult({
-        summary: {
-          recommendation: "merge_after_fixes",
-          confidence: "high",
-          oneLine: "Follow-up review completed.",
-          sinceLastReview: { resolved: 1, stillApplies: 1, newItems: 1 },
-        },
-      }),
-      metadata(),
-    );
-    const followUp = buildComment({
-      summary: renderSummary(followUpResult),
-      result: followUpResult,
-    });
-    expect(followUp).toContain(
-      "**Since last review:** 1 prior item resolved · 1 still applies · 1 new item found",
-    );
-    expect(followUp).not.toContain("Since last review details");
-    expect(followUp.match(/`PRA-1`/g)).toHaveLength(1);
   });
 });
