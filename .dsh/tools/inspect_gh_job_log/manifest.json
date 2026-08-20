@@ -1,7 +1,7 @@
 {
   "formatVersion": 0,
   "name": "inspect_gh_job_log",
-  "description": "Inspect a GitHub Actions job log with regex filtering and bounded output.",
+  "description": "Inspect a GitHub Actions job log with regex filtering, caller-selected head/tail clipping, and explicit truncation metadata.",
   "parameters": {
     "type": "object",
     "properties": {
@@ -27,8 +27,14 @@
       "contextLines": {
         "type": "integer"
       },
-      "tailLines": {
-        "type": "integer"
+      "maxLines": {
+        "type": "integer",
+        "description": "Maximum log lines to return after filtering; defaults to 120 and is capped at 500."
+      },
+      "clipMode": {
+        "type": "string",
+        "enum": ["head", "tail"],
+        "description": "Which end of filtered output to retain when clipping; defaults to tail."
       }
     },
     "required": ["workdir", "jobId"],
@@ -67,6 +73,38 @@
       },
       "stderr": {
         "type": "string"
+      },
+      "truncationNotice": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "truncationReasons": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "clipMode": {
+        "type": "string",
+        "enum": ["head", "tail"]
+      },
+      "maxLines": {
+        "type": "integer"
+      },
+      "selectedLines": {
+        "type": "integer"
+      },
+      "returnedLines": {
+        "type": "integer"
+      },
+      "omittedLines": {
+        "type": "integer"
       }
     },
     "required": [
@@ -75,11 +113,18 @@
       "pattern",
       "code",
       "truncated",
+      "truncationNotice",
+      "truncationReasons",
+      "clipMode",
+      "maxLines",
+      "selectedLines",
+      "returnedLines",
+      "omittedLines",
       "matchedLines",
       "stdout",
       "stderr"
     ],
     "additionalProperties": false
   },
-  "revision": 4
+  "revision": 5
 }

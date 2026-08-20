@@ -43,10 +43,35 @@
       "summary": {
         "type": "object",
         "additionalProperties": true
+      },
+      "truncationNotice": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "returnedItems": {
+        "type": "integer"
+      },
+      "omittedItems": {
+        "type": "integer"
       }
     },
-    "required": ["repo", "kind", "truncated", "items", "summary"],
+    "required": [
+      "repo",
+      "kind",
+      "truncated",
+      "truncationNotice",
+      "returnedItems",
+      "omittedItems",
+      "items",
+      "summary"
+    ],
     "additionalProperties": false
   },
-  "revision": 1
+  "revision": 2
 }

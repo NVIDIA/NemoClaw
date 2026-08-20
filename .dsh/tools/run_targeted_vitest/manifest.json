@@ -1,7 +1,7 @@
 {
   "formatVersion": 0,
   "name": "run_targeted_vitest",
-  "description": "Run focused Vitest files with selected projects and optional coverage.",
+  "description": "Run focused Vitest files with selected projects, bounded head/tail output, and explicit truncation metadata.",
   "parameters": {
     "type": "object",
     "properties": {
@@ -33,6 +33,15 @@
       },
       "timeoutMs": {
         "type": "integer"
+      },
+      "maxLines": {
+        "type": "integer",
+        "description": "Maximum lines returned from each output stream; defaults to 120 and is capped at 500."
+      },
+      "clipMode": {
+        "type": "string",
+        "enum": ["head", "tail"],
+        "description": "Which end of each output stream to retain when clipping; defaults to tail."
       }
     },
     "required": ["workdir", "files"],
@@ -55,10 +64,59 @@
       },
       "truncated": {
         "type": "boolean"
+      },
+      "truncationNotice": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "truncationReasons": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "clipMode": {
+        "type": "string",
+        "enum": ["head", "tail"]
+      },
+      "maxLines": {
+        "type": "integer"
+      },
+      "stdoutTotalLines": {
+        "type": "integer"
+      },
+      "stdoutReturnedLines": {
+        "type": "integer"
+      },
+      "stderrTotalLines": {
+        "type": "integer"
+      },
+      "stderrReturnedLines": {
+        "type": "integer"
       }
     },
-    "required": ["command", "code", "stdout", "stderr", "truncated"],
+    "required": [
+      "command",
+      "code",
+      "stdout",
+      "stderr",
+      "truncated",
+      "truncationNotice",
+      "truncationReasons",
+      "clipMode",
+      "maxLines",
+      "stdoutTotalLines",
+      "stdoutReturnedLines",
+      "stderrTotalLines",
+      "stderrReturnedLines"
+    ],
     "additionalProperties": false
   },
-  "revision": 2
+  "revision": 3
 }

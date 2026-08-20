@@ -1,7 +1,7 @@
 {
   "formatVersion": 0,
   "name": "triage_nemoclaw_ci_failure",
-  "description": "Classify a NemoClaw GitHub Actions failure and inspect one bounded test artifact when requested.",
+  "description": "Classify a NemoClaw GitHub Actions failure with caller-selected head/tail log clipping, explicit truncation metadata, and optional bounded artifact inspection.",
   "parameters": {
     "type": "object",
     "properties": {
@@ -21,11 +21,17 @@
       "repo": {
         "type": "string"
       },
-      "tailLines": {
-        "type": "integer"
-      },
       "artifactName": {
         "type": "string"
+      },
+      "maxLines": {
+        "type": "integer",
+        "description": "Maximum matched log and context lines to return; defaults to 120 and is capped at 500."
+      },
+      "clipMode": {
+        "type": "string",
+        "enum": ["head", "tail"],
+        "description": "Which end of matched log output to retain when clipping; defaults to tail."
       }
     },
     "required": ["workdir", "jobId"],
@@ -236,6 +242,38 @@
                 "type": "null"
               }
             ]
+          },
+          "truncationNotice": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "truncationReasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "clipMode": {
+            "type": "string",
+            "enum": ["head", "tail"]
+          },
+          "maxLines": {
+            "type": "integer"
+          },
+          "selectedLines": {
+            "type": "integer"
+          },
+          "returnedLines": {
+            "type": "integer"
+          },
+          "omittedLines": {
+            "type": "integer"
           }
         },
         "required": [
@@ -244,6 +282,13 @@
           "pattern",
           "code",
           "truncated",
+          "truncationNotice",
+          "truncationReasons",
+          "clipMode",
+          "maxLines",
+          "selectedLines",
+          "returnedLines",
+          "omittedLines",
           "matchedLines",
           "stdout",
           "stderr"
@@ -264,5 +309,5 @@
     ],
     "additionalProperties": false
   },
-  "revision": 6
+  "revision": 7
 }

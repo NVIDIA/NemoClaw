@@ -1,7 +1,7 @@
 {
   "formatVersion": 0,
   "name": "list_nemoclaw_changed_files",
-  "description": "List branch and working-tree files changed since a target branch merge base.",
+  "description": "List complete branch and working-tree file changes, rejecting truncated or oversized inventories.",
   "parameters": {
     "type": "object",
     "properties": {
@@ -49,5 +49,5 @@
     "required": ["baseRef", "files", "branchFiles", "workingTreeFiles", "untrackedFiles"],
     "additionalProperties": false
   },
-  "revision": 2
+  "revision": 3
 }

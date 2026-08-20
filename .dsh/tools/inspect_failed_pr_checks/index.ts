@@ -33,6 +33,12 @@ return {
   repo,
   kind: "failed-checks",
   truncated: failed.length > limit,
+  truncationNotice:
+    failed.length > limit
+      ? "TRUNCATED OUTPUT: additional failed checks were omitted; do not assume this list is complete."
+      : null,
+  returnedItems: Math.min(failed.length, limit),
+  omittedItems: Math.max(0, failed.length - limit),
   items: failed.slice(0, limit),
   summary: { number: input.number, totalChecks: all.length, failedChecks: failed.length },
 };

@@ -24,12 +24,18 @@ for (const command of commands)
       timeoutMs: 30000,
     }),
   );
-for (const result of results)
+for (const result of results) {
   if (result.kind !== "foreground" || result.exitCode !== 0)
     throw new Error("Could not list changed files");
+  if (result.stdout.truncated || result.stderr.truncated)
+    throw new Error("Changed-file inventory was truncated; refusing incomplete validation input");
+}
 const parse = (value) => [...new Set(value.split("\0").filter(Boolean))].sort();
 const branchFiles = parse(results[0].stdout.text);
 const workingTreeFiles = parse(results[1].stdout.text);
 const untrackedFiles = parse(results[2].stdout.text);
 const files = [...new Set([...branchFiles, ...workingTreeFiles, ...untrackedFiles])].sort();
+const totalPathBytes = files.reduce((sum, file) => sum + file.length, 0);
+if (files.length > 5000 || totalPathBytes > 1000000)
+  throw new Error("Changed-file inventory exceeds the complete validation bound");
 return { baseRef, files, branchFiles, workingTreeFiles, untrackedFiles };

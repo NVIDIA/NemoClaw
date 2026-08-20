@@ -9,8 +9,10 @@ const repo = input.repo ?? "NVIDIA/NemoClaw";
 const jobId = String(input.jobId);
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
 if (!/^\d+$/.test(jobId) || jobId === "0") throw new Error("jobId must be positive");
-const tailLines = Math.max(20, Math.min(500, input.tailLines ?? 180));
-const contextLines = Math.max(0, Math.min(80, input.contextLines ?? 40));
+const maxLines = Math.max(1, Math.min(500, input.maxLines ?? input.tailLines ?? 120));
+const clipMode = input.clipMode ?? "tail";
+if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
+const contextLines = Math.max(0, Math.min(80, input.contextLines ?? 20));
 const pattern = input.pattern ?? "";
 if (pattern.length > 500) throw new Error("pattern is too long");
 let matcher;
@@ -85,22 +87,39 @@ if (pattern) {
   }
   selected = [...indexes].sort((a, b) => a - b).map((index) => lines[index]);
 }
-const candidates = selected.slice(-tailLines);
+const lineClipped = selected.length > maxLines;
+const candidates = clipMode === "head" ? selected.slice(0, maxLines) : selected.slice(-maxLines);
 const output = [];
 let size = 0;
-for (let index = candidates.length - 1; index >= 0; index -= 1) {
-  const line = candidates[index].slice(0, 4000);
+for (const candidate of clipMode === "head" ? candidates : [...candidates].reverse()) {
+  const line = candidate.slice(0, 4000);
   if (size + line.length + 1 > 40000) break;
   output.push(line);
   size += line.length + 1;
 }
-output.reverse();
+if (clipMode === "tail") output.reverse();
+const byteClipped = output.length < candidates.length;
+const truncated = sourceTruncated || lineClipped || byteClipped;
+const truncationReasons = [
+  ...(sourceTruncated ? ["source-log-bounded-before-filtering"] : []),
+  ...(lineClipped ? ["selected-lines-exceeded-maxLines"] : []),
+  ...(byteClipped ? ["selected-text-exceeded-40000-characters"] : []),
+];
 return {
   jobId,
   repo,
   pattern: input.pattern ?? null,
   code,
-  truncated: sourceTruncated || selected.length > output.length,
+  truncated,
+  truncationNotice: truncated
+    ? "TRUNCATED OUTPUT: do not assume omitted log lines are irrelevant or absent."
+    : null,
+  truncationReasons,
+  clipMode,
+  maxLines,
+  selectedLines: selected.length,
+  returnedLines: output.length,
+  omittedLines: Math.max(0, selected.length - output.length),
   matchedLines,
   stdout: redact(output.join("\n")),
   stderr,

@@ -10,7 +10,9 @@ const jobId = String(input.jobId);
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
 if (!/^\d+$/.test(jobId) || jobId === "0")
   throw new Error("jobId must be a positive numeric GitHub Actions job ID");
-const tailLines = Math.max(20, Math.min(500, input.tailLines ?? 260));
+const maxLines = Math.max(1, Math.min(500, input.maxLines ?? input.tailLines ?? 120));
+const clipMode = input.clipMode ?? "tail";
+if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
 const artifactName = input.artifactName?.trim() ?? "";
 if (
   input.artifactName !== undefined &&
@@ -99,15 +101,40 @@ for (let index = 0; index < logLines.length; index += 1) {
 const selectedLines = [...selectedIndexes]
   .sort((left, right) => left - right)
   .map((index) => logLines[index].slice(0, 4000));
-const boundedLines = selectedLines.slice(-tailLines);
+const candidates =
+  clipMode === "head" ? selectedLines.slice(0, maxLines) : selectedLines.slice(-maxLines);
+let boundedLines = candidates;
+let boundedText = boundedLines.join("\n");
+if (boundedText.length > 40000) {
+  if (clipMode === "head") boundedText = boundedText.slice(0, 40000);
+  else boundedText = boundedText.slice(-40000);
+  boundedLines = boundedText.split("\n");
+}
+const lineClipped = selectedLines.length > candidates.length;
+const byteClipped =
+  boundedLines.length < candidates.length || boundedText.length < candidates.join("\n").length;
+const truncated = sourceTruncated || lineClipped || byteClipped;
 const log = {
   jobId,
   repo,
   pattern: "NemoClaw CI failure signatures",
   code: logCode,
-  truncated: sourceTruncated || selectedLines.length > boundedLines.length,
+  truncated,
+  truncationNotice: truncated
+    ? "TRUNCATED OUTPUT: do not assume omitted log lines are irrelevant or absent."
+    : null,
+  truncationReasons: [
+    ...(sourceTruncated ? ["source-log-bounded-before-filtering"] : []),
+    ...(lineClipped ? ["selected-lines-exceeded-maxLines"] : []),
+    ...(byteClipped ? ["selected-text-exceeded-40000-characters"] : []),
+  ],
+  clipMode,
+  maxLines,
+  selectedLines: selectedLines.length,
+  returnedLines: boundedLines.length,
+  omittedLines: Math.max(0, selectedLines.length - boundedLines.length),
   matchedLines,
-  stdout: redact(boundedLines.join("\n").slice(-40000)),
+  stdout: redact(boundedText),
   stderr: logStderr,
 };
 let artifact = null;
