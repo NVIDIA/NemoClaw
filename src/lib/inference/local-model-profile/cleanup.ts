@@ -79,8 +79,8 @@ export interface LocalModelRuntimeCleanupOptions {
   sandboxName?: string;
   env?: NodeJS.ProcessEnv;
   engine?: ContainerEngine;
-  deps?: Partial<CleanupDeps>;
   privateBridge?: DockerLlamaCppPrivateBridgeController;
+  deps?: Partial<CleanupDeps>;
 }
 
 export interface HuggingFaceCacheDataCleanupOptions {
@@ -549,23 +549,26 @@ function cleanupLlamaCpp(
     throw new Error("managed llama.cpp finalized receipt is missing");
   }
 
-  const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
-  requireQualifiedEngine(receipt?.engineAuthority ?? journal.engineAuthority, engine);
-  requireEngineSuccess(
-    "engine availability check",
-    engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
-  );
-
-  const privateBridge = options.privateBridge ?? createDockerLlamaCppPrivateBridgeController();
-
   const lease = journalStore.acquireExecution(journal.transactionId);
   try {
     journalStore.assertExecution(lease);
     // The bridge publishes the runtime port on the host. Stop it before the
     // container it forwards to is removed, or it outlives a destroy that
     // reports success and keeps the port bound (#9598).
-    privateBridge.stopTransaction(journal.transactionId);
-    privateBridge.assertStopped(journal.transactionId);
+    const privateBridge =
+      options.privateBridge ??
+      (process.platform === "linux" ? createDockerLlamaCppPrivateBridgeController() : undefined);
+    if (privateBridge) {
+      privateBridge.stopTransaction(journal.transactionId);
+      privateBridge.assertStopped(journal.transactionId);
+    }
+    journalStore.assertExecution(lease);
+    const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
+    requireQualifiedEngine(receipt?.engineAuthority ?? journal.engineAuthority, engine);
+    requireEngineSuccess(
+      "engine availability check",
+      engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
+    );
     journalStore.assertExecution(lease);
     removeExactContainerForJournal(engine, journal, removed);
     journalStore.assertExecution(lease);
@@ -637,8 +640,8 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
   readonly gatewayPort?: number;
   readonly env?: NodeJS.ProcessEnv;
   readonly engine?: ContainerEngine;
-  readonly deps?: Partial<CleanupDeps>;
   readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
+  readonly deps?: Partial<CleanupDeps>;
 }
 
 function requireManagedLlamaCppLifecycleCleanupReceipt(

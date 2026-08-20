@@ -276,7 +276,7 @@ function inspectHostLocalContainer(
 /** Recover only the exact authenticated host-local container with bounded host bindings. */
 export function recoverHostLocalManagedVllmEndpoint(
   options: RecoverHostLocalManagedVllmOptions = {},
-): { baseUrl: string; apiKey: string } | null {
+): { baseUrl: string; apiKey: string; containerId: string } | null {
   const capture = options.dockerCapture ?? dockerCapture;
   const dockerEnv = buildLocalManagedVllmDockerEnv();
   const source = (
@@ -380,5 +380,9 @@ export function recoverHostLocalManagedVllmEndpoint(
   ) {
     throw new Error("Managed host-local vLLM authentication is missing or mismatched.");
   }
-  return { baseUrl: `http://127.0.0.1:${String(loopbackHostPort)}`, apiKey };
+  return {
+    baseUrl: `http://127.0.0.1:${String(loopbackHostPort)}`,
+    apiKey,
+    containerId: row.Id,
+  };
 }

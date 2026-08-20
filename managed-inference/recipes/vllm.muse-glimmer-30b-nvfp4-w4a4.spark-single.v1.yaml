@@ -13,8 +13,8 @@ spec:
 
   modelRef: vllm.muse-glimmer-30b-nvfp4-w4a4.v1
   runtime:
-    image: vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204
-    imageDownloadSizeBytes: 9699710136
+    image: vllm/vllm-openai@sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965
+    imageDownloadSizeBytes: 9706339423
     minimumComputeCapability: 121
     minimumGpuMemoryBytes: 25447097878
     pullTimeoutSeconds: 3600
