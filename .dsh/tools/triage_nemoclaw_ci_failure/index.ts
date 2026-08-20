@@ -1,5 +1,5 @@
 /**
- * Classify a NemoClaw GitHub Actions failure with caller-selected head/tail log clipping, explicit truncation metadata, and optional bounded artifact inspection.
+ * Classify a NemoClaw GitHub Actions failure with caller-selected head/tail log clipping, explicit truncation metadata, and optional bounded artifact inspection. Reject compressed artifacts above 25,000,000 bytes.
  */
 export default async function triage_nemoclaw_ci_failure(input: {
   workdir: string;
@@ -204,7 +204,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
     const found = (inventory.artifacts ?? []).find((entry) => entry.name === artifactName);
     if (!found) throw new Error(`Artifact ${artifactName} was not found for run ${job.runId}`);
     const sizeBytes = Number(found.size_in_bytes ?? 0);
-    if (!Number.isFinite(sizeBytes) || sizeBytes > 25000000)
+    if (!Number.isFinite(sizeBytes) || sizeBytes < 0 || sizeBytes > 25000000)
       throw new Error(`Artifact ${artifactName} is too large for bounded inspection`);
     const temp = await run(
       'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-triage.XXXXXX"',
@@ -220,6 +220,18 @@ export default async function triage_nemoclaw_ci_failure(input: {
         60000,
       );
       if (download.exitCode !== 0) throw new Error("Could not download selected artifact");
+      const measured = await run(
+        `find ${q(dir)} -mindepth 1 -printf '%y %s\n' | awk 'BEGIN { files=0; bytes=0 } $1 == "d" { next } $1 != "f" { print "unsafe"; exit } { files++; bytes += $2; if (files > 100) { print "files"; exit } if (bytes > 100000000) { print "bytes"; exit } } END { if (files <= 100 && bytes <= 100000000) print "ok " files " " bytes }' | head -n 1`,
+        "Measure extracted artifact inventory",
+      );
+      const inventoryState = measured.stdout.text.trim().split(/\s+/, 1)[0];
+      if (measured.exitCode !== 0 || inventoryState !== "ok") {
+        if (inventoryState === "files")
+          throw new Error("Artifact contains more than 100 regular files");
+        if (inventoryState === "bytes")
+          throw new Error("Artifact contains more than 100,000,000 extracted bytes");
+        throw new Error("Artifact contains a symlink or another unsupported entry");
+      }
       const listed = await run(
         `find ${q(dir)} -type f -name '*.result.json' -printf '%P\0' | LC_ALL=C sort -z | head -z -n 101 | base64 -w0`,
         "List bounded test result artifacts",

@@ -1,5 +1,5 @@
 /**
- * Aggregate bounded per-test and per-file durations from recent retained NemoClaw CLI Vitest artifacts.
+ * Aggregate bounded per-test and per-file durations from recent retained NemoClaw CLI Vitest artifacts. Reject compressed artifacts above 25,000,000 bytes.
  */
 export default async function analyze_recent_cli_timings(input: {
   workdir: string;
@@ -126,6 +126,16 @@ export default async function analyze_recent_cli_timings(input: {
   }
   if (artifacts.length < 2)
     throw new Error(`Found ${artifacts.length} retained reports; at least 2 are required`);
+  const failures = [];
+  const downloadable = artifacts.filter((artifact) => {
+    if (Number.isFinite(artifact.size) && artifact.size >= 0 && artifact.size <= 25000000)
+      return true;
+    failures.push({
+      runId: artifact.runId,
+      detail: "Artifact exceeds the 25,000,000-byte compressed-size limit",
+    });
+    return false;
+  });
   const temporary = await run(
     'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-cli-timings.XXXXXXXXXX"',
     30000,
@@ -134,9 +144,8 @@ export default async function analyze_recent_cli_timings(input: {
   const root = temporary.stdout.text.trim();
   if (!root) throw new Error("Could not create private temporary directory");
   const reports = [];
-  const failures = [];
   try {
-    for (const artifact of artifacts) {
+    for (const artifact of downloadable) {
       const directory = root + "/" + artifact.runId;
       const downloaded = await run(
         "mkdir -p " +
@@ -155,6 +164,21 @@ export default async function analyze_recent_cli_timings(input: {
           runId: artifact.runId,
           detail: await project(downloaded.stderr.text || downloaded.stdout.text, 1000),
         });
+        continue;
+      }
+      const inventory = await run(
+        `find ${quote(directory)} -mindepth 1 -printf '%y %s\n' | awk 'BEGIN { files=0; bytes=0 } $1 == "d" { next } $1 != "f" { print "unsafe"; exit } { files++; bytes += $2; if (files > 100) { print "files"; exit } if (bytes > 100000000) { print "bytes"; exit } } END { if (files <= 100 && bytes <= 100000000) print "ok " files " " bytes }' | head -n 1`,
+        30000,
+      );
+      const inventoryState = inventory.stdout.text.trim().split(/\s+/, 1)[0];
+      if (inventory.exitCode !== 0 || inventoryState !== "ok") {
+        const detail =
+          inventoryState === "files"
+            ? "Artifact contains more than 100 regular files"
+            : inventoryState === "bytes"
+              ? "Artifact contains more than 100,000,000 extracted bytes"
+              : "Artifact contains a symlink or another unsupported entry";
+        failures.push({ runId: artifact.runId, detail });
         continue;
       }
       const matches = await tools.glob({ pattern: "**/vitest-results.json", path: directory });
