@@ -52,7 +52,7 @@ const RUNTIME_ADAPTERS = [
     defaultPort: 11437,
     envPort: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
     foreignPid: 99998,
-    issue: "#5826",
+    issueSuffix: " (#5826)",
     label: "OpenRouter Runtime adapter",
     orphanPid: 33334,
     persistedPid: 44323,
@@ -64,7 +64,7 @@ const RUNTIME_ADAPTERS = [
     defaultPort: 11436,
     envPort: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
     foreignPid: 99996,
-    issue: "#9552",
+    issueSuffix: " (#9552)",
     label: "Bedrock Runtime adapter",
     orphanPid: 33336,
     persistedPid: 44325,
@@ -76,7 +76,7 @@ const RUNTIME_ADAPTERS = [
     defaultPort: 11438,
     envPort: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
     foreignPid: 99997,
-    issue: "#9552",
+    issueSuffix: "",
     label: "HTTPS Pin Runtime adapter",
     orphanPid: 33338,
     persistedPid: 44324,
@@ -141,7 +141,7 @@ function lsofPortStub(ports: string[], portPids: Map<string, RunResult>) {
 
 describe("runtime adapter uninstall cleanup", () => {
   it.each(RUNTIME_ADAPTERS)(
-    "stops $label from its persisted PID before state removal ($issue)",
+    "stops $label from its persisted PID before state removal$issueSuffix",
     ({ cmdline, label, persistedPid, pidFile: pidFilename }) => {
       const logs: string[] = [];
       const killed: number[] = [];
@@ -184,7 +184,7 @@ describe("runtime adapter uninstall cleanup", () => {
   );
 
   it.each(RUNTIME_ADAPTERS)(
-    "stops an owned $label orphan on its configured port ($issue)",
+    "stops an owned $label orphan on its configured port$issueSuffix",
     ({ cmdline, customPort, defaultPort, envPort, label, orphanPid }) => {
       const logs: string[] = [];
       const killed: number[] = [];
@@ -228,7 +228,7 @@ describe("runtime adapter uninstall cleanup", () => {
   );
 
   it.each(RUNTIME_ADAPTERS)(
-    "does not signal an unrelated process on the $label port ($issue)",
+    "does not signal an unrelated process on the $label port$issueSuffix",
     ({ defaultPort, foreignPid, label }) => {
       const logs: string[] = [];
       const killed: number[] = [];
