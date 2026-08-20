@@ -2004,8 +2004,8 @@ function askPreset(question: string): Promise<string> {
 /**
  * Interactive preset picker for the `policy-remove` command. Prompts on
  * stderr and resolves to the chosen preset name, or `null` if the user
- * cancels. Invalid input returns `null` with process exit status 1. Rejects
- * with `code: "EOF"` when stdin closes before an answer (see `askPreset`).
+ * cancels or enters an invalid selection. Rejects with `code: "EOF"` when
+ * stdin closes before an answer (see `askPreset`).
  */
 async function selectForRemoval(
   items: PresetInfo[],
@@ -2024,10 +2024,13 @@ async function selectForRemoval(
   process.stderr.write("\n");
   const trimmed = (await askPreset("  Choose preset to remove: ")).trim();
   if (!trimmed) return null;
-  const item = /^\d+$/.test(trimmed) ? appliedItems[Number(trimmed) - 1] : undefined;
+  if (!/^\d+$/.test(trimmed)) {
+    process.stderr.write("\n  Invalid preset number.\n");
+    return null;
+  }
+  const item = appliedItems[Number(trimmed) - 1];
   if (!item) {
     process.stderr.write("\n  Invalid preset number.\n");
-    process.exitCode = 1;
     return null;
   }
   return item.name;

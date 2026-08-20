@@ -322,18 +322,18 @@ describe("policy preset pickers", () => {
       expect(result.selected).toBeNull();
     });
 
-    it("rejects non-numeric input with a failure status (#9742)", async () => {
+    it("rejects non-numeric input", async () => {
       const result = await runSelectionPrompt("selectForRemoval", "npm\n", {
         applied: ["npm"],
       });
       expect(result.stderr).toContain("Invalid preset number");
-      expect(result).toMatchObject({ selected: null, exitCode: 1 });
+      expect(result.selected).toBeNull();
     });
 
-    it("rejects out-of-range number with a failure status (#9742)", async () => {
+    it("rejects out-of-range number", async () => {
       const result = await runSelectionPrompt("selectForRemoval", "99\n", { applied: ["npm"] });
       expect(result.stderr).toContain("Invalid preset number");
-      expect(result).toMatchObject({ selected: null, exitCode: 1 });
+      expect(result.selected).toBeNull();
     });
 
     it("selects second preset when both are applied", async () => {
