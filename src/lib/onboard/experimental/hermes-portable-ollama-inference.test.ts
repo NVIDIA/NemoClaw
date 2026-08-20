@@ -12,6 +12,10 @@ import type {
   PodmanExecutableStat,
   PodmanSocketAuthority,
 } from "../../adapters/podman";
+import type {
+  ContainerEngineCommandCapture,
+  ContainerEngineCommandResult,
+} from "../../adapters/container-engine";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -34,7 +38,11 @@ import {
   createPortablePodmanCapture,
   type PortablePodmanAuthorityState,
 } from "../../../../test/helpers/hermes-portable-ollama-test-harness";
-import { hermesPortableOllamaAuthorityInternals } from "./hermes-portable-ollama-authority";
+import {
+  hermesPortableOllamaAuthorityInternals,
+  PORTABLE_OLLAMA_IMAGE,
+  PORTABLE_PROBE_IMAGE,
+} from "./hermes-portable-ollama-authority";
 import { createHermesPortableOllamaInferenceResolver } from "./hermes-portable-ollama-inference";
 import { PORTABLE_HOST_GATEWAY_IP } from "./portable-profile";
 
@@ -42,10 +50,13 @@ const PODMAN_PATH = "/usr/bin/podman";
 const PODMAN_BYTES = Buffer.from("portable-podman-5.7.0", "utf8");
 const NETWORK_ID = "6".repeat(64);
 const GPU_DEVICE = "nvidia.com/gpu=GPU-12345678-1234-1234-1234-123456789abc";
-const PORTABLE_PROBE_IMAGE =
-  "docker.io/curlimages/curl@sha256:fcff5cf7a4b895da7bd2933c914938db2b05d2113fa0d6c55b6d29930408f661";
 const temporaryDirectories: string[] = [];
 const environmentRestorers: Array<() => void> = [];
+
+interface PullFailure {
+  readonly image: string;
+  readonly result: ContainerEngineCommandResult;
+}
 
 const freshPortableInput = {
   application: "hermes" as const,
@@ -114,7 +125,7 @@ function executableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
-function createRuntimeFixture() {
+function createRuntimeFixture(pullFailure?: PullFailure) {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-inference-"));
   temporaryDirectories.push(homeDir);
   const runtime = runtimeAuthority(homeDir);
@@ -130,7 +141,7 @@ function createRuntimeFixture() {
   const authorityState: PortablePodmanAuthorityState = {
     networkId: NETWORK_ID,
     images: new Set<string>(),
-    failPull: null as string | null,
+    failPull: pullFailure?.image ?? null,
   };
   const gatewayProvider = createPortableGatewayProviderHarness(events);
   const runGatewayOpenshell = vi.fn(gatewayProvider.run);
@@ -151,6 +162,13 @@ function createRuntimeFixture() {
     },
   ];
   let cdiDevices = ["nvidia.com/gpu=all", GPU_DEVICE];
+  const capture = createPortablePodmanCapture(events, authorityState, harness.engine.capture);
+  const injectedCapture: ContainerEngineCommandCapture = pullFailure
+    ? (executable, args, timeoutMs, input, environment) => {
+        const result = capture(executable, args, timeoutMs, input, environment);
+        return args[2] === "pull" && args[3] === pullFailure.image ? pullFailure.result : result;
+      }
+    : capture;
   const resolverOptions = {
     runtimeContext: { authority: runtime, environmentScope },
     credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
@@ -161,7 +179,7 @@ function createRuntimeFixture() {
     captureGpuDevices: () => [GPU_DEVICE],
     captureCdiDevices: () => cdiDevices,
     podmanAuthorityDeps: {
-      capture: createPortablePodmanCapture(events, authorityState, harness.engine.capture),
+      capture: injectedCapture,
       executableAuthorityDeps: executableAuthorityDeps(),
       assertSocketAuthority,
       resolveExecutablePath: () => PODMAN_PATH,
@@ -542,6 +560,103 @@ describe("Hermes Portable Ollama inference activation", () => {
         acceleration: "nvidia-gpu",
       }),
     ).toThrow(error);
+  });
+
+  it.each([
+    ["Ollama", PORTABLE_OLLAMA_IMAGE],
+    ["curl probe", PORTABLE_PROBE_IMAGE],
+  ])("reports a bounded redacted exit failure for the pinned %s image (#9701)", (_label, image) => {
+    const injectedSecret = ["issue9701", "credential", "canary"].join("-");
+    const controlSecret = ["issue9701", "control", "canary"].join("-");
+    const standaloneToken = `hf_${"a".repeat(40)}`;
+    const jwtToken = ["eyJ" + "c".repeat(12), "d".repeat(12), "e".repeat(12)].join(".");
+    const fixture = createRuntimeFixture({
+      image,
+      result: {
+        status: 125,
+        stdout: "",
+        stderr: `registry refused OPENAI_API_KEY=${injectedSecret} OPENAI_API_\u001bKEY=${controlSecret} Authori\u001bzation: Be\u001barer ${controlSecret} ${standaloneToken} ${jwtToken} https://registry-user:${injectedSecret}@registry.example/v2 ${"detail ".repeat(80)}`,
+      },
+    });
+
+    let message = "";
+    try {
+      prepareManagedRoute(fixture);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    const detail = message.split(" Detail: ")[1] ?? "";
+    expect(message).toContain(
+      `immutable runtime image ${image}: Podman pull exited with status 125`,
+    );
+    expect(message).toContain("OPENAI_API_KEY=<REDACTED>");
+    expect(message).toContain("https://****:****@registry.example/v2");
+    expect(message).not.toContain(injectedSecret);
+    expect(message).not.toContain(controlSecret);
+    expect(message).not.toContain(standaloneToken);
+    expect(message).not.toContain(standaloneToken.slice(0, 4));
+    expect(message).not.toContain(jwtToken);
+    expect(message).not.toContain(jwtToken.slice(0, 4));
+    expect(message).not.toContain(jwtToken.split(".")[0]);
+    expect(message).not.toContain("registry-user");
+    expect(detail.length).toBeGreaterThan(0);
+    expect(detail.length).toBeLessThanOrEqual(240);
+    expect(fixture.events.filter((event) => event.includes(`podman:pull ${image} `))).toHaveLength(
+      1,
+    );
+    expect(fixture.events.some((event) => event.includes("podman:run "))).toBe(false);
+    expect(fixture.harness.container()).toBeNull();
+  });
+
+  it.each([
+    {
+      name: "spawn error",
+      image: PORTABLE_OLLAMA_IMAGE,
+      code: "ENOENT",
+      expected: "Podman pull spawn failed",
+    },
+    {
+      name: "timeout",
+      image: PORTABLE_PROBE_IMAGE,
+      code: "ETIMEDOUT",
+      expected: "Podman pull timed out after 1800000 ms",
+    },
+  ])("reports a redacted $name before managed container creation (#9701)", (scenario) => {
+    const injectedSecret = ["issue9701", "error", "canary"].join("-");
+    const controlSecret = ["issue9701", "error", "control", "canary"].join("-");
+    const standaloneToken = `hf_${"b".repeat(40)}`;
+    const jwtToken = ["eyJ" + "f".repeat(12), "g".repeat(12), "h".repeat(12)].join(".");
+    const error = Object.assign(
+      new Error(
+        `injected ${scenario.name} OPENAI_API_KEY=${injectedSecret} OPENAI_API_\u001bKEY=${controlSecret} ${standaloneToken} ${jwtToken}`,
+      ),
+      { code: scenario.code },
+    );
+    const fixture = createRuntimeFixture({
+      image: scenario.image,
+      result: { status: 1, stdout: "", stderr: "", error },
+    });
+
+    let message = "";
+    try {
+      prepareManagedRoute(fixture);
+    } catch (caught) {
+      message = (caught as Error).message;
+    }
+    expect(message).toContain(`immutable runtime image ${scenario.image}: ${scenario.expected}`);
+    expect(message).toContain("OPENAI_API_KEY=<REDACTED>");
+    expect(message).not.toContain(injectedSecret);
+    expect(message).not.toContain(controlSecret);
+    expect(message).not.toContain(standaloneToken);
+    expect(message).not.toContain(standaloneToken.slice(0, 4));
+    expect(message).not.toContain(jwtToken);
+    expect(message).not.toContain(jwtToken.slice(0, 4));
+    expect(message).not.toContain(jwtToken.split(".")[0]);
+    expect(
+      fixture.events.filter((event) => event.includes(`podman:pull ${scenario.image} `)),
+    ).toHaveLength(1);
+    expect(fixture.events.some((event) => event.includes("podman:run "))).toBe(false);
+    expect(fixture.harness.container()).toBeNull();
   });
 
   it("retains immutable image cache while recovering the exact interrupted runtime (#9596)", async () => {
