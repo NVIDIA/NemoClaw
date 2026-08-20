@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+
 import * as dockerImage from "../../adapters/docker/image";
 import * as agentDefs from "../../agent/defs";
 import * as agentOnboard from "../../agent/onboard";
@@ -187,6 +192,91 @@ describe("rebuild agent base image preflight", () => {
       overrideEnvVar,
       trustedLocalOverride,
     });
+  });
+
+  it("hands a pinned NemoCUA image alias to the inner sandbox create (#9649)", () => {
+    const cuaOverrideEnvVar = "NEMOCLAW_CUA_SANDBOX_IMAGE_REF";
+    const mutableRef = "nemocua-scenario:mutable";
+    const pinnedRef = `nemoclaw-nemocua-sandbox-base-local:rebuild-1-${"a".repeat(16)}-image-${"b".repeat(64)}`;
+    const agent = agentDefs.loadAgent("nemocua", { NEMOCLAW_CUA_ENABLED: "1" });
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cua-rebuild-test-"));
+    let buildContext = root;
+    vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
+    vi.stubEnv(cuaOverrideEnvVar, mutableRef);
+    vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agent);
+    vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
+      imageTag: mutableRef,
+      built: false,
+    });
+    const pinImage = vi
+      .spyOn(agentOnboard, "pinAgentSandboxBaseImageRef")
+      .mockReturnValue(pinnedRef);
+    const dockerRmi = vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 } as never);
+
+    try {
+      const preflight = ensureRebuildAgentBaseImage("nemocua", makeBail());
+      expect(preflight).toMatchObject({
+        ok: true,
+        imageRef: pinnedRef,
+        overrideEnvVar: cuaOverrideEnvVar,
+      });
+      expect(pinImage).toHaveBeenCalledWith("nemocua", mutableRef, {
+        forceLocal: true,
+        temporary: true,
+      });
+
+      const restore = pinRebuildAgentBaseImageForRecreate(preflight);
+      try {
+        const inner = agentOnboard.createAgentSandbox(agent, { rootDir: root });
+        buildContext = inner.buildCtx;
+        const dockerfile = fs.readFileSync(inner.stagedDockerfile, "utf8");
+        expect(dockerfile).toContain(`ARG BASE_IMAGE=${pinnedRef}`);
+        expect(dockerfile).not.toContain(mutableRef);
+      } finally {
+        restore();
+      }
+
+      expect(process.env[cuaOverrideEnvVar]).toBe(mutableRef);
+      expect(disposeRebuildAgentBaseImagePreflight(preflight)).toBe(true);
+      expect(dockerRmi).toHaveBeenCalledWith(pinnedRef, {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+    } finally {
+      fs.rmSync(buildContext, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("passes an immutable NemoCUA digest through without a local alias (#9649)", () => {
+    const cuaOverrideEnvVar = "NEMOCLAW_CUA_SANDBOX_IMAGE_REF";
+    const digestRef = `registry.example/nemocua@sha256:${"a".repeat(64)}`;
+    const agent = agentDefs.loadAgent("nemocua", { NEMOCLAW_CUA_ENABLED: "1" });
+    vi.stubEnv("NEMOCLAW_CUA_ENABLED", "1");
+    vi.stubEnv(cuaOverrideEnvVar, digestRef);
+    vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agent);
+    vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
+      imageTag: digestRef,
+      built: false,
+    });
+    const pinImage = vi.spyOn(agentOnboard, "pinAgentSandboxBaseImageRef");
+    const dockerRmi = vi.spyOn(dockerImage, "dockerRmi");
+
+    try {
+      const preflight = ensureRebuildAgentBaseImage("nemocua", makeBail());
+
+      expect(preflight).toEqual({
+        ok: true,
+        imageRef: digestRef,
+        overrideEnvVar: cuaOverrideEnvVar,
+      });
+      expect(pinImage).not.toHaveBeenCalled();
+      expect(disposeRebuildAgentBaseImagePreflight(preflight)).toBe(true);
+      expect(dockerRmi).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("fails closed when an explicit local result lacks validated outer metadata", () => {

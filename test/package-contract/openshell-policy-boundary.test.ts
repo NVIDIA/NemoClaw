@@ -220,6 +220,21 @@ describe("OpenShell policy boundary package contract", () => {
     expect(packageFiles(repoRoot)).toContain("agents/*/state-lock-plan.json");
   });
 
+  it("ships the complete repository-owned NemoCUA agent definition (#9649)", () => {
+    expect(packageFiles(repoRoot)).toEqual(
+      expect.arrayContaining([
+        "agents/*/manifest.yaml",
+        "agents/nemocua/Dockerfile",
+        "agents/nemocua/policy-additions.yaml",
+      ]),
+    );
+    expect(fs.existsSync(path.join(repoRoot, "agents", "nemocua", "manifest.yaml"))).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, "agents", "nemocua", "Dockerfile"))).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, "agents", "nemocua", "policy-additions.yaml"))).toBe(
+      true,
+    );
+  });
+
   it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 240_000 }, () => {
     const productionDependencyTree = spawnSync(
       "npm",

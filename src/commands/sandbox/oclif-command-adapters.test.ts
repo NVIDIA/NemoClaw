@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as portableAgentLifecycle from "../../lib/onboard/experimental/portable-agent-lifecycle";
 import * as receiptAuthority from "../../lib/onboard/experimental/hermes-portable-receipt";
+import { isMcpLifecycleLockHeld } from "../../lib/state/mcp-lifecycle-lock-acquisition";
 
 const mocks = vi.hoisted(() => {
   class SandboxConfigError extends Error {
@@ -191,6 +192,24 @@ describe("sandbox oclif command adapters", () => {
         process.env.NEMOCLAW_CLEANUP_GATEWAY = originalCleanupGatewayEnv;
       }
     }
+  });
+
+  it("does not hold the command lifecycle lock during an interactive connect (#9737)", async () => {
+    mocks.connectSandbox.mockImplementationOnce(async () => {
+      expect(isMcpLifecycleLockHeld("alpha")).toBe(false);
+    });
+
+    await ConnectCliCommand.run(["alpha"], rootDir);
+    expect(mocks.connectSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("holds the command lifecycle lock during connect probe recovery (#9737)", async () => {
+    mocks.connectSandbox.mockImplementationOnce(async () => {
+      expect(isMcpLifecycleLockHeld("alpha")).toBe(true);
+    });
+
+    await ConnectCliCommand.run(["alpha", "--probe-only"], rootDir);
+    expect(mocks.connectSandbox).toHaveBeenCalledOnce();
   });
 
   it("rejects the removed connect permission bypass before dispatch", async () => {

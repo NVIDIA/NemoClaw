@@ -22,6 +22,7 @@ import {
 import {
   assertMcpProviderRecoverable,
   observeMcpCredentialRevision,
+  refreshMcpProviderEnvironment,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
@@ -137,6 +138,50 @@ Provider:
     expect(() => assertMcpProviderRecoverable(entry)).toThrow(
       /legacy generic profile.*cannot bind to an MCP endpoint/,
     );
+  });
+
+  it("republishes an exact provider only after policy binding without reading its credential", () => {
+    const id = "11111111-2222-4333-8444-555555555555";
+    const providerResult = (resourceVersion: number) => ({
+      pid: 1234,
+      status: 0,
+      signal: null,
+      output: [
+        null,
+        `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+        "",
+      ],
+      stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+      stderr: "",
+    });
+    const run = vi
+      .spyOn(providerCommand, "runOpenshellProviderCommand")
+      .mockReturnValueOnce(providerResult(7))
+      .mockReturnValueOnce({
+        pid: 1234,
+        status: 0,
+        signal: null,
+        output: [null, "", ""],
+        stdout: "",
+        stderr: "",
+      })
+      .mockReturnValueOnce(providerResult(8));
+
+    expect(
+      refreshMcpProviderEnvironment({
+        server: "github",
+        agent: "openclaw",
+        adapter: "mcporter",
+        url: "https://api.githubcopilot.com/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github",
+        providerId: id,
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-08-19T00:00:00.000Z",
+      }),
+    ).toMatchObject({ resourceVersion: 8 });
+    expect(run.mock.calls[1]?.[0]).toEqual(["provider", "update", "alpha-mcp-github"]);
+    expect(run.mock.calls[1]?.[0]).not.toContain("--credential");
   });
 
   it("distinguishes a real detach from OpenShell's idempotent success", () => {

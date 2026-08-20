@@ -5025,6 +5025,15 @@ On upgrades, NemoClaw rejects `user` because a user-local install cannot replace
 On upgrades, NemoClaw also rejects `system` under `NEMOCLAW_NON_INTERACTIVE=1` when passwordless `sudo` is unavailable because the installer would hang on a hidden sudo prompt.
 The run exits with an actionable diagnostic instead.
 
+### Experimental NemoCUA
+
+Keep `NEMOCLAW_CUA_ENABLED=1` set whenever NemoClaw uses the experimental `nemocua` agent, including discovery, launch, agent commands, sandbox creation, and rebuild.
+
+| Variable | Format | Effect |
+|----------|--------|--------|
+| `NEMOCLAW_CUA_ENABLED` | exactly `1` to enable | Exposes the experimental `nemocua` agent. Other values keep it absent from agent discovery and prevent its manifest from loading. |
+| `NEMOCLAW_CUA_SANDBOX_IMAGE_REF` | image reference | Selects the caller-prepared NemoCUA sandbox image when `NEMOCLAW_CUA_ENABLED=1`. NemoClaw uses this reference directly and does not resolve a private package source. The value is required whenever NemoClaw creates or rebuilds the NemoCUA sandbox; whitespace and shell syntax are rejected. |
+
 ### Onboarding Behavior Flags
 
 The following flags toggle optional behaviors during onboarding.
