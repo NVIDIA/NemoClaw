@@ -58,8 +58,8 @@ describe("ordinary sandbox completion", () => {
       ),
     ).toBe("alpha");
     expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "update", "compatible-endpoint"],
-      ["provider", "update", "alpha-slack"],
+      ["provider", "update", "-g", "nemoclaw", "compatible-endpoint"],
+      ["provider", "update", "-g", "nemoclaw", "alpha-slack"],
     ]);
     expect(runOpenshell.mock.calls.flat(2)).not.toContain("--credential");
   });

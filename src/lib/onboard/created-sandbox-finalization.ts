@@ -261,10 +261,13 @@ export function completeOrdinaryOnboardSandboxCreation(
     );
     for (const provider of attachedProviders) {
       if (!deps.providerExistsInGateway(provider)) continue;
-      const refreshed = deps.runOpenshell(["provider", "update", provider], {
-        ignoreError: true,
-        suppressOutput: true,
-      });
+      const refreshed = deps.runOpenshell(
+        ["provider", "update", "-g", deps.gatewayName, provider],
+        {
+          ignoreError: true,
+          suppressOutput: true,
+        },
+      );
       if (refreshed.status !== 0) {
         throw new Error(
           `OpenShell did not republish attached provider '${provider}' after Docker sandbox recreation.`,

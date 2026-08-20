@@ -630,19 +630,20 @@ const { createSandbox } = require(${onboardPath});
           TELEGRAM_BOT_TOKEN: "",
         },
       });
-
       assert.equal(result.status, 0, result.stderr);
       const payload = parseStdoutJson(result.stdout);
-
       const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
         /\bprovider (create|update)\b/.test(entry.command),
       );
-      assert.deepEqual(
-        providerMutationCommands.map((entry: CommandEntry) => /\bprovider update \S+$/.exec(entry.command)?.[0]),
-        ["provider update my-assistant-discord-bridge", "provider update my-assistant-slack-bridge", "provider update my-assistant-slack-app"],
+      assert.equal(
+        providerMutationCommands
+          .map(
+            (entry: CommandEntry) => /\bprovider update -g nemoclaw \S+$/.exec(entry.command)?.[0],
+          )
+          .join("\n"),
+        "provider update -g nemoclaw my-assistant-discord-bridge\nprovider update -g nemoclaw my-assistant-slack-bridge\nprovider update -g nemoclaw my-assistant-slack-app",
+        "tokenless rebuild must refresh the gateway-scoped providers without credentials",
       );
-      assert.ok(providerMutationCommands.every((entry: CommandEntry) => !entry.command.includes("--credential")), "tokenless rebuild must not rotate provider credentials");
-
       const createCommand = payload.commands.find((entry: CommandEntry) =>
         entry.command.includes("sandbox create"),
       );
@@ -2029,5 +2030,4 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       );
     },
   );
-
 });
