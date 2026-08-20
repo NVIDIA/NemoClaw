@@ -188,6 +188,12 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)test\/e2e\/live\/portable-profile-rootless-linux\.test\.ts$/,
+    testsToRun: runTests(
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)test\/e2e\/fixtures\/portable-profile-systemctl-shim\.sh$/,
     testsToRun: runTests("test/e2e/support/portable-profile-systemctl-shim.test.ts"),
   },

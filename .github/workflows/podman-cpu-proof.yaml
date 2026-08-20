@@ -77,8 +77,8 @@ jobs:
       - name: Install locked test dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build shared sandbox-name contract
-        run: npm run build:policy-boundary
+      - name: Build CLI for the CPU delegation proof
+        run: npm run build:cli
 
       - name: Compile managed inference catalog
         run: npm run catalog:compile
@@ -126,7 +126,7 @@ jobs:
       E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
       E2E_TARGET_ID: podman-cpu-lifecycle
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
       PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
     steps:
       - name: Checkout

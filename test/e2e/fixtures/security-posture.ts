@@ -83,8 +83,8 @@ const SAFE_OPENSHELL_IDENTITY_COMPONENT = /^[a-z0-9][a-z0-9_.-]*$/u;
 const MAX_PROC_ENTRIES = 32_768;
 const MAX_CENSUS_STABILITY_ATTEMPTS = 4;
 const MAX_CENSUS_DIAGNOSTIC_IDENTITIES = 16;
-// OpenShell 0.0.99 and 0.0.101 grant the OpenShell supervisor the Docker default
-// capabilities plus NET_ADMIN, SYS_ADMIN, SYS_PTRACE, and SYSLOG. Freeze the
+// The pinned OpenShell supervisor has the Docker default capabilities plus
+// NET_ADMIN, SYS_ADMIN, SYS_PTRACE, and SYSLOG. Freeze the
 // resulting Linux capability mask so additions and removals both require an
 // explicit security review.
 export const OPENSHELL_SUPERVISOR_CAPABILITY_MASK = "00000004a82c35fb";

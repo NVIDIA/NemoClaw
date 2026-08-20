@@ -32,10 +32,12 @@ import {
   streamOpenAiChatCompletion,
 } from "./bedrock-runtime-translation";
 import {
+  cleanupFailedLocalAdapterStartup,
   DEFAULT_LOCAL_ADAPTER_STATE_DIR,
   isLocalAdapterProcess,
   type JsonObject,
   killLocalAdapterPid,
+  type LocalAdapterProcessOptions,
   loadLocalAdapterPid,
   localAdapterTokenHash,
   persistLocalAdapterPid,
@@ -287,22 +289,13 @@ export function startBedrockRuntimeAdapterFromEnv(): http.Server {
   return server;
 }
 
-function loadPersistedPid(): number | null {
-  return loadLocalAdapterPid(PID_PATH);
-}
-
-function isAdapterProcess(pid: number | null | undefined): boolean {
-  return isLocalAdapterProcess(pid, BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER, runCapture);
-}
-
-function killStaleAdapter(): void {
-  killLocalAdapterPid({
-    pidPath: PID_PATH,
-    processMatcher: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
-    run,
-    runCapture,
-  });
-}
+const ADAPTER_PROCESS: LocalAdapterProcessOptions & { statePath: string } = {
+  pidPath: PID_PATH,
+  statePath: STATE_PATH,
+  processMatcher: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
+  run,
+  runCapture,
+};
 
 function getAdapterScriptPath(): string {
   const scriptsDir = typeof SCRIPTS === "string" ? SCRIPTS : path.join(process.cwd(), "scripts");
@@ -380,10 +373,10 @@ export async function ensureBedrockRuntimeAdapter(options: {
   const credentialHash = adapterCredentialHash({ endpointUrl, region, compatibleCredential });
   const priorState = readLocalAdapterJsonFile(STATE_PATH);
   const priorToken = readLocalAdapterTextFile(TOKEN_PATH);
-  const priorPid = loadPersistedPid();
+  const priorPid = loadLocalAdapterPid(PID_PATH);
   if (
     priorToken &&
-    isAdapterProcess(priorPid) &&
+    isLocalAdapterProcess(priorPid, BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER, runCapture) &&
     priorState?.endpointUrl === endpointUrl &&
     priorState?.region === region &&
     priorState?.credentialHash === credentialHash &&
@@ -400,7 +393,7 @@ export async function ensureBedrockRuntimeAdapter(options: {
     };
   }
 
-  killStaleAdapter();
+  killLocalAdapterPid(ADAPTER_PROCESS);
   const token = crypto.randomBytes(24).toString("hex");
   const childEnv: Record<string, string> = {
     NEMOCLAW_BEDROCK_RUNTIME_ENDPOINT_URL: endpointUrl,
@@ -420,22 +413,27 @@ export async function ensureBedrockRuntimeAdapter(options: {
     env: childEnv,
     buildEnv: buildSubprocessEnv,
   });
-  persistLocalAdapterPid(PID_PATH, child.pid);
+  try {
+    persistLocalAdapterPid(PID_PATH, child.pid);
 
-  if (!(await waitForAdapterHealth(token))) {
-    throw new Error(
-      `Bedrock Runtime adapter did not become healthy on ${BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
-    );
+    if (!(await waitForAdapterHealth(token))) {
+      throw new Error(
+        `Bedrock Runtime adapter did not become healthy on ${BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
+      );
+    }
+
+    writeLocalAdapterSecretFile(TOKEN_PATH, token);
+    writeLocalAdapterJsonFile(STATE_PATH, {
+      endpointUrl,
+      region,
+      credentialHash,
+      pid: child.pid ?? null,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    cleanupFailedLocalAdapterStartup(ADAPTER_PROCESS, child.pid);
+    throw err;
   }
-
-  writeLocalAdapterSecretFile(TOKEN_PATH, token);
-  writeLocalAdapterJsonFile(STATE_PATH, {
-    endpointUrl,
-    region,
-    credentialHash,
-    pid: child.pid ?? null,
-    updatedAt: new Date().toISOString(),
-  });
   process.env[BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV] = token;
 
   return {

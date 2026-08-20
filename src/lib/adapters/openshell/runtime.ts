@@ -20,7 +20,7 @@ type CommandArgs = string[];
 export { buildOpenShellSubprocessEnv };
 
 type RunnerOptions = {
-  /** Exact canonical executable selected by a CUA authority snapshot. */
+  /** Exact canonical executable selected by the caller. */
   openshellBinary?: string;
   env?: NodeJS.ProcessEnv;
   replaceEnv?: boolean;

@@ -7,7 +7,6 @@ import type { AgentDefinition } from "../../../agent/defs";
 import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import * as agentRuntime from "../../../agent/runtime";
 import { runAgentSmokeCommands } from "../../../agent/terminal-smoke";
-import { requireCuaLifecycleReadiness } from "../../../cua/lifecycle-readiness";
 import type { SandboxEntry } from "../../../state/registry";
 import {
   buildSandboxInferenceRouteProbeArgs,
@@ -41,7 +40,6 @@ export interface LaunchReadinessHealthDeps {
     agent: InferenceRouteProbeAgent,
     gatewayName: string,
   ) => ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
-  cuaReadiness?: typeof requireCuaLifecycleReadiness;
 }
 
 export class LaunchReadinessObservationError extends Error {
@@ -78,9 +76,7 @@ export function resolveLaunchInteractiveCommand(
   agent: AgentDefinition,
   agentName: string,
 ): string | null {
-  return agentName === "nemocua"
-    ? agentRuntime.getTerminalCommand(agent, "interactive")
-    : agentRuntime.getInteractiveAgentCommand(agent, agentName);
+  return agentRuntime.getInteractiveAgentCommand(agent, agentName);
 }
 
 export function resolveTrustedLaunchAgent(
@@ -98,9 +94,6 @@ export function resolveTrustedLaunchAgent(
   }
   const interactive = resolveLaunchInteractiveCommand(agent, agentName);
   if (!interactive) throw new LaunchReadinessObservationError("session");
-  if (agentName === "nemocua" && interactive !== "nemocua interactive") {
-    throw new LaunchReadinessObservationError("session");
-  }
   return agent;
 }
 
@@ -120,18 +113,12 @@ export async function requireLaunchSemanticHealth(
   sandboxName: string,
   gatewayName: string,
   agentName: string,
-  entry: SandboxEntry,
+  _entry: SandboxEntry,
   agent: AgentDefinition,
   inferenceConfigured: boolean,
   deps: LaunchReadinessHealthDeps,
 ): Promise<void> {
-  if (agentName === "nemocua") {
-    try {
-      (deps.cuaReadiness ?? requireCuaLifecycleReadiness)(entry);
-    } catch {
-      throw new LaunchReadinessObservationError("health");
-    }
-  } else if (isTerminalAgent(agent)) {
+  if (isTerminalAgent(agent)) {
     const smoke = (deps.smoke ?? runAgentSmokeCommands)(
       sandboxName,
       agent,

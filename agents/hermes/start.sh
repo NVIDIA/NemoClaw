@@ -3462,7 +3462,7 @@ fi
 # while Hermes actually runs in the legacy root-separated topology.
 # sourceBoundary: OpenShell owns workload topology; NemoClaw owns the immutable
 # root-lifecycle marker and stamps it before starting the root-separated gateway.
-# whyNotSourceFix: OpenShell 0.0.101 supports both topologies but exposes no
+# whyNotSourceFix: OpenShell 0.0.106 supports both topologies but exposes no
 # attested same-UID capability that this packaged entrypoint can query.
 # regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe and
 # add when the root-lifecycle marker identifies the legacy topology.
@@ -3481,6 +3481,11 @@ prepare_restricted_log /tmp/gateway.log gateway:gateway 600
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # shellcheck disable=SC2119
 validate_tmp_permissions
+
+# Migrate and seed the dashboard profile before Hermes reads the shared home.
+# Waiting until dashboard launch leaves restored legacy state in the gateway's
+# HERMES_HOME during its readiness check.
+prepare_hermes_dashboard_home sandbox:sandbox || exit 1
 
 # Start Hermes gateway. Messaging egress goes directly through OpenShell.
 launch_hermes_gateway

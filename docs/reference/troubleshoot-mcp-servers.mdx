@@ -35,6 +35,11 @@ Inspect the OpenShell gateway's ephemeral CA generation and CA-file initializati
 
 If restart reports a missing provider and the original credential is not registered in OpenShell, export the same variable name used during add and retry.
 
+## Provider Uses the Legacy Generic Profile
+
+If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
+OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for exact cleanup.
+
 ## Add Transaction Is Incomplete
 
 If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL and environment-variable name.
@@ -294,7 +299,8 @@ Install the required OpenShell build and rerun onboarding.
 NemoClaw checks inspectable installed OpenShell artifacts for `protocol: mcp` capability and does not enable managed MCP from a version number alone.
 
 For image-backed or compressed supervisors without an inspectable host artifact, the onboarding check is provisional.
-Before a credential or provider side effect, the MCP command loads the exact generated policy with `policy set --wait` and exact-matches effective state.
+Before a credential or provider mutation, the MCP command imports or verifies the endpointless profile and loads the exact generated policy without a credential binding by using `policy set --wait`.
+After provider attachment, it applies and exact-matches the endpoint-bound policy before credential use.
 
 A runtime that rejects `protocol: mcp` therefore fails closed.
 

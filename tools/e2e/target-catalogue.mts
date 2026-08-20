@@ -8,6 +8,10 @@ import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import { type E2eAgentRuntime, validateE2eExecutionMetadata } from "./execution-coverage.mts";
+import {
+  INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+  ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
+} from "./onboard-timeout-contract.mts";
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -891,11 +895,12 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw + langchain-deepagents-code",
     environmentOrInferenceEndpoint: "Ubuntu; local compatible and HTTPS inference fixtures",
     profile: "standard",
-    timeoutMinutes: 45,
+    timeoutMinutes: INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
     installMode: "none",
     restoreCli: true,
     exposeCliBin: false,
     cloudflared: true,
+    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
   }),
   target("kimi-inference-compat", {
     displayName: "Inference: configures a Kimi-compatible endpoint",
@@ -1029,10 +1034,11 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "Ubuntu Docker host; local onboarding fixtures",
     profile: "standard",
-    timeoutMinutes: 45,
+    timeoutMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
     installMode: "credential-free",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["tools/e2e/onboard-timeout-contract.mts"],
     environment: { ...nonInteractive, NEMOCLAW_SANDBOX_NAME: "e2e-resume" },
   }),
   target("openclaw-discord-pairing", {

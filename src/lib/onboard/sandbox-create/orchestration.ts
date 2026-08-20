@@ -1191,6 +1191,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxWasLiveDefault,
         runtimeFields: sandboxRuntimeFields,
         messagingProviders,
+        inferenceProvider: provider,
         liveExists,
       },
       {
@@ -1199,6 +1200,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         scriptsDir: SCRIPTS,
         gatewayName: GATEWAY_NAME,
         providerExistsInGateway,
+        runOpenshell,
         armCancelRollback: sandboxCancelRollback.arm,
         dockerInfoFormat,
         runCapture,

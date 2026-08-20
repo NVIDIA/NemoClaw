@@ -315,6 +315,22 @@ export function ensureRebuildAgentBaseImage(
     } finally {
       restoreExplicitOverrideTrust();
     }
+    if (agentDef.name === "nemocua") {
+      if (!result.imageTag) throw new Error("NemoCUA caller image resolution returned no image");
+      if (isImmutableRemoteBaseImageRef(result.imageTag)) {
+        return { ok: true, imageRef: result.imageTag, overrideEnvVar };
+      }
+      const imageRef = pinAgentSandboxBaseImageRef(agentDef.name, result.imageTag, {
+        forceLocal: true,
+        temporary: true,
+      });
+      return {
+        ok: true,
+        imageRef,
+        overrideEnvVar,
+        disposeImageRef: createTemporaryBaseImageHandoffDisposer(imageRef),
+      };
+    }
     const reusedLocalResolution =
       result.resolutionMetadata?.source === "local" &&
       result.reusedResolutionHint === result.resolutionMetadata;

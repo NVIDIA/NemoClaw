@@ -102,12 +102,19 @@ export abstract class NemoClawCommand extends Command {
     }
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
+    if (this.isInteractiveConnect(commandId)) return await super._run<T>();
     return await withMcpLifecycleLock(sandboxName, () => {
       if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
         assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
       }
       return super._run<T>();
     });
+  }
+
+  private isInteractiveConnect(commandId: string | undefined): boolean {
+    return (
+      commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] !== true
+    );
   }
 
   private async resolveLifecycleSandboxName(
