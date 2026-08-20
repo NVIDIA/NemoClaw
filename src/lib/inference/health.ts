@@ -289,7 +289,7 @@ function validateChatCompletionsResponse(body: string): InferenceResponseValidat
     return hasChatCompletionsChoice(parsed, false)
       ? { ok: true }
       : notChatCompletionsResult(
-          "no choice carried a message with text content, reasoning, a refusal, or tool calls",
+          "no choice carried a message with text content, reasoning_content, reasoning, a refusal, or tool calls",
         );
   }
 
