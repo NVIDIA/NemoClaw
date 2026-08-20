@@ -406,6 +406,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           tempManagedRuntime ||
           managedWorkloadOnboard.shouldActivateStockManagedRuntime({
             portableLifecycle: sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
+            hermesPortableLifecycle: agentCreateInput.hermesPortableLifecycle,
             agentName: requestedAgentName,
           }),
         tempManagedRuntimeCatalog,
