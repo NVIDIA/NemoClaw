@@ -1525,7 +1525,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.run = (command) => {
   runCommands.push(Array.isArray(command) ? command.join(" ") : command);
   return { status: 0 };
@@ -1623,7 +1623,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.run = () => ({ status: 0 });
 runner.runShell = (command, opts = {}) => {
   shellCommands.push(command);
@@ -1737,7 +1737,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service disabled";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
   shellCommands.push(command);
   if (command.includes("cat") && command.includes("ollama.service.d/override.conf")) {
@@ -1812,7 +1812,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
   shellCommands.push(command);
   return { status: 0, stdout: "" };
@@ -1928,7 +1928,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.run = () => ({ status: 0 });
 runner.runShell = (command) => {
   shellCommands.push(command);
@@ -2012,7 +2012,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
   if (command.includes("ollama serve")) console.error("manual-start");
   return { status: 0 };
@@ -2069,7 +2069,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
   if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };
@@ -3594,7 +3594,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
 };
-runner.runCaptureEx = () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false });
+runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner();
 runner.runShell = (command) => {
   if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };

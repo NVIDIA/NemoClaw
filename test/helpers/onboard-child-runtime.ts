@@ -20,6 +20,72 @@ function supportedOllamaHostMetadataOutput(command) {
   return "";
 }
 
+function createSuccessfulOllamaServiceExecutionProofRunner(fallback) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const executablePath = path.join(process.env.HOME, "ollama-service-exec-fixture");
+  const interpreter = Buffer.from("/bin/sh\0", "utf8");
+  const programHeaderOffset = 64;
+  const interpreterOffset = programHeaderOffset + 56;
+  const elf = Buffer.alloc(interpreterOffset + interpreter.length);
+  elf.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1], 0);
+  elf.writeUInt16LE(2, 16);
+  elf.writeUInt16LE(0x3e, 18);
+  elf.writeUInt32LE(1, 20);
+  elf.writeBigUInt64LE(BigInt(programHeaderOffset), 32);
+  elf.writeUInt16LE(64, 52);
+  elf.writeUInt16LE(56, 54);
+  elf.writeUInt16LE(1, 56);
+  elf.writeUInt32LE(3, programHeaderOffset);
+  elf.writeBigUInt64LE(BigInt(interpreterOffset), programHeaderOffset + 8);
+  elf.writeBigUInt64LE(BigInt(interpreter.length), programHeaderOffset + 32);
+  interpreter.copy(elf, interpreterOffset);
+  fs.writeFileSync(executablePath, elf, { mode: 0o755 });
+  const runFallback =
+    typeof fallback === "function"
+      ? fallback
+      : () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false });
+
+  return (command, options) => {
+    const argv = Array.isArray(command) ? command : [];
+    const success = (stdout = "") => ({ stdout, stderr: "", exitCode: 0, timedOut: false });
+    if (
+      argv.length === 5 &&
+      argv[0] === "/usr/bin/systemctl" &&
+      argv[1] === "show" &&
+      argv[2] === "ollama.service" &&
+      argv[3] === "--property=User" &&
+      argv[4] === "--property=ExecStart"
+    ) {
+      return success(
+        "User=ollama\nExecStart={ path=" +
+          executablePath +
+          " ; argv[]=" +
+          executablePath +
+          " serve ; }",
+      );
+    }
+    if (
+      argv.length === 3 &&
+      argv[0] === "/usr/bin/id" &&
+      argv[1] === "-u" &&
+      argv[2] === "ollama"
+    ) {
+      return success("997\n");
+    }
+    const separator = argv.indexOf("--");
+    if (
+      separator >= 0 &&
+      argv.length === separator + 3 &&
+      argv[separator + 1] === executablePath &&
+      argv[separator + 2] === "--version"
+    ) {
+      return success("ollama version is 0.11.10\n");
+    }
+    return runFallback(command, options);
+  };
+}
+
 function installPromptQueue(target, configuredAnswers) {
   const answers = [...configuredAnswers];
   const messages = [];

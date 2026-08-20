@@ -17,6 +17,12 @@ import {
 
 const executablePath = "/usr/local/bin/ollama";
 const interpreterPath = "/lib64/ld-linux-x86-64.so.2";
+const serviceUserAccessScript = [
+  '/usr/bin/test -x "$1"',
+  "status=$?",
+  "/usr/bin/printf 'nemoclaw-service-user-access:%s\\n' \"$status\"",
+  'exit "$status"',
+].join("\n");
 const temporaryDirectories: string[] = [];
 
 function capture(
@@ -25,6 +31,15 @@ function capture(
   timedOut = false,
 ): OllamaExecutableCaptureResult {
   return { exitCode, stdout, timedOut };
+}
+
+function accessCapture(accessible: boolean): OllamaExecutableCaptureResult {
+  const exitCode = accessible ? 0 : 1;
+  return capture(exitCode, `nemoclaw-service-user-access:${exitCode}\n`);
+}
+
+function isServiceUserAccessCommand(command: readonly string[]): boolean {
+  return command.includes("/bin/sh") && command.includes(serviceUserAccessScript);
 }
 
 type CommandCase = readonly [
@@ -80,10 +95,10 @@ function proofFixture(initialMode = 0o644): {
       ],
       [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0, "997")],
       [
-        (candidate) => candidate.includes("/usr/bin/test") && candidate.at(-1) === executablePath,
-        () => capture(1),
+        (candidate) => isServiceUserAccessCommand(candidate) && candidate.at(-1) === executablePath,
+        () => accessCapture(false),
       ],
-      [(candidate) => candidate.includes("/usr/bin/test"), () => capture(0)],
+      [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(true)],
       [
         (candidate) => candidate.includes("/usr/bin/chmod"),
         (candidate) => {
@@ -201,9 +216,31 @@ describe("proveOllamaSystemdServiceExecutable", () => {
       ["/usr/bin/sudo", "-n", "-u", "ollama", "--", executablePath, "--version"],
       ["/usr/bin/sudo", "-n", "-u", "ollama", "--", executablePath, "--version"],
     ]);
-    expect(commands.filter((command) => command.includes("/usr/bin/test"))).toEqual([
-      ["/usr/bin/sudo", "-n", "-u", "ollama", "--", "/usr/bin/test", "-x", executablePath],
-      ["/usr/bin/sudo", "-n", "-u", "ollama", "--", "/usr/bin/test", "-x", interpreterPath],
+    expect(commands.filter((command) => isServiceUserAccessCommand(command))).toEqual([
+      [
+        "/usr/bin/sudo",
+        "-n",
+        "-u",
+        "ollama",
+        "--",
+        "/bin/sh",
+        "-c",
+        serviceUserAccessScript,
+        "nemoclaw-service-user-access-proof",
+        executablePath,
+      ],
+      [
+        "/usr/bin/sudo",
+        "-n",
+        "-u",
+        "ollama",
+        "--",
+        "/bin/sh",
+        "-c",
+        serviceUserAccessScript,
+        "nemoclaw-service-user-access-proof",
+        interpreterPath,
+      ],
     ]);
     expect(commands.filter((command) => command.includes("/usr/bin/chmod"))).toEqual([
       ["/usr/bin/sudo", "-n", "/usr/bin/chmod", "0755", "--", executablePath],
@@ -224,13 +261,12 @@ describe("proveOllamaSystemdServiceExecutable", () => {
             ),
         ],
         [
-          (candidate) => candidate.includes("/usr/bin/test") && candidate.at(-1) === executablePath,
-          () => capture(1),
+          (candidate) =>
+            isServiceUserAccessCommand(candidate) && candidate.at(-1) === executablePath,
+          () => accessCapture(false),
         ],
-        [
-          (candidate) => candidate[0] === "/usr/bin/id" || candidate.includes("/usr/bin/test"),
-          () => capture(0),
-        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(true)],
         [
           (candidate) => candidate.includes("/usr/bin/chmod"),
           (candidate) => {
@@ -275,13 +311,11 @@ describe("proveOllamaSystemdServiceExecutable", () => {
         ],
         [
           (candidate) =>
-            candidate.includes("/usr/bin/test") && candidate.at(-1) === "/opt/operator/ollama",
-          () => capture(1),
+            isServiceUserAccessCommand(candidate) && candidate.at(-1) === "/opt/operator/ollama",
+          () => accessCapture(false),
         ],
-        [
-          (candidate) => candidate[0] === "/usr/bin/id" || candidate.includes("/usr/bin/test"),
-          () => capture(0),
-        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(true)],
         [(candidate) => candidate.includes("/opt/operator/ollama"), () => capture(1)],
       ]),
     );
@@ -362,10 +396,11 @@ describe("proveOllamaSystemdServiceExecutable", () => {
         [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
         [(candidate) => candidate.at(-1) === "--version", () => capture(1)],
         [
-          (candidate) => candidate.includes("/usr/bin/test") && candidate.at(-1) === executablePath,
-          () => capture(1),
+          (candidate) =>
+            isServiceUserAccessCommand(candidate) && candidate.at(-1) === executablePath,
+          () => accessCapture(false),
         ],
-        [(candidate) => candidate.includes("/usr/bin/test"), () => capture(1)],
+        [(candidate) => isServiceUserAccessCommand(candidate), () => accessCapture(false)],
       ]),
     );
 
@@ -373,6 +408,36 @@ describe("proveOllamaSystemdServiceExecutable", () => {
       classification: "interpreter-inaccessible",
       ok: false,
     });
+  });
+
+  it("does not repair when sudo returns status 1 and the service-user access check returns no confirmed result (#9728)", () => {
+    const fixture = proofFixture();
+    fixture.runCaptureExImpl.mockImplementation((command: readonly string[]) =>
+      captureForCommand(command, [
+        [
+          (candidate) => candidate[0] === "/usr/bin/systemctl",
+          () =>
+            capture(
+              0,
+              `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; }`,
+            ),
+        ],
+        [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
+        [(candidate) => isServiceUserAccessCommand(candidate), () => capture(1)],
+        [(candidate) => candidate.includes(executablePath), () => capture(1)],
+      ]),
+    );
+
+    expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
+      classification: "execution-failed",
+      message: expect.stringContaining("returned no confirmed result from that user"),
+      ok: false,
+    });
+    expect(
+      fixture.runCaptureExImpl.mock.calls.some(([command]) =>
+        (command as readonly string[]).includes("/usr/bin/chmod"),
+      ),
+    ).toBe(false);
   });
 
   it.each([

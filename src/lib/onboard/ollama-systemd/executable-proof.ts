@@ -12,6 +12,13 @@ const MAX_PROGRAM_HEADERS = 1_024;
 const MAX_PROGRAM_HEADER_SIZE = 1_024;
 const MAX_INTERPRETER_PATH_BYTES = 4_096;
 const SYSTEMD_EXECUTION_PROPERTIES = new Set(["ExecStart", "User"]);
+const SERVICE_USER_ACCESS_MARKER = "nemoclaw-service-user-access";
+const SERVICE_USER_ACCESS_SCRIPT = [
+  '/usr/bin/test -x "$1"',
+  "status=$?",
+  `/usr/bin/printf '${SERVICE_USER_ACCESS_MARKER}:%s\\n' "$status"`,
+  'exit "$status"',
+].join("\n");
 
 export type OllamaExecutablePathMetadata = {
   dev: number;
@@ -372,12 +379,22 @@ function runServiceUserPathAccessProof(
       "-u",
       serviceUser,
       "--",
-      "/usr/bin/test",
-      "-x",
+      "/bin/sh",
+      "-c",
+      SERVICE_USER_ACCESS_SCRIPT,
+      "nemoclaw-service-user-access-proof",
       candidatePath,
     ],
     { timeout: METADATA_TIMEOUT_MS },
   );
+}
+
+function serviceUserPathAccessOutcome(
+  result: OllamaExecutableCaptureResult,
+): "accessible" | "inaccessible" | "invalid" {
+  if (result.exitCode !== 0 && result.exitCode !== 1) return "invalid";
+  if (result.stdout.trim() !== `${SERVICE_USER_ACCESS_MARKER}:${result.exitCode}`) return "invalid";
+  return result.exitCode === 0 ? "accessible" : "inaccessible";
 }
 
 /** Prove that systemd's configured Ollama user can execute the exact binary and PT_INTERP. */
@@ -461,6 +478,13 @@ export function proveOllamaSystemdServiceExecutable(
       `could not verify that systemd User '${metadata.serviceUser}' can execute Ollama ExecStart '${metadata.executablePath}' within 5 seconds`,
     );
   }
+  const executableAccess = serviceUserPathAccessOutcome(executableAccessResult);
+  if (executableAccess === "invalid") {
+    return failed(
+      "execution-failed",
+      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the execute-access check returned no confirmed result from that user`,
+    );
+  }
 
   const interpreterResult = runServiceUserPathAccessProof(
     metadata.serviceUser,
@@ -473,21 +497,28 @@ export function proveOllamaSystemdServiceExecutable(
       `could not verify that systemd User '${metadata.serviceUser}' can execute PT_INTERP '${interpreterPath}' within 5 seconds`,
     );
   }
-  if (interpreterResult.exitCode !== 0) {
+  const interpreterAccess = serviceUserPathAccessOutcome(interpreterResult);
+  if (interpreterAccess === "invalid") {
+    return failed(
+      "execution-failed",
+      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}', and the PT_INTERP execute-access check returned no confirmed result from that user`,
+    );
+  }
+  if (interpreterAccess === "inaccessible") {
     return failed(
       "interpreter-inaccessible",
       `systemd User '${metadata.serviceUser}' cannot execute PT_INTERP '${interpreterPath}'`,
     );
   }
-  if (executableAccessResult.exitCode !== 1) {
+  if (executableAccess !== "inaccessible") {
     const proofOutcome =
       initialProof.exitCode === null
         ? "did not return an exit status"
         : `exited ${initialProof.exitCode}`;
     const accessOutcome =
-      executableAccessResult.exitCode === 0
+      executableAccess === "accessible"
         ? "the service user still has execute access"
-        : `the execute-access check returned ${executableAccessResult.exitCode ?? "no status"}`;
+        : "the execute-access check did not confirm missing execute access";
     return failed(
       "execution-failed",
       `Ollama ExecStart '--version' ${proofOutcome} as systemd User '${metadata.serviceUser}', and ${accessOutcome}`,
