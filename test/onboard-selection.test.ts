@@ -19,6 +19,7 @@ import {
   applyOllamaRuntimeContextWindow,
   resetOllamaRuntimeContextWindowAutoState,
 } from "../src/lib/inference/ollama-runtime-context.js";
+import { SMALLEST_OLLAMA_MODEL_TAG } from "../src/lib/inference/ollama-model-registry.js";
 import {
   validateAnthropicModel,
   validateOpenAiLikeModel,
@@ -1417,14 +1418,15 @@ child_process.spawnSync = (cmd, args, opts) => {
 
 const runCommands = [];
 const shellCommands = [];
+let managedOllamaStarted = false;
 const { messages } = installPromptQueue(credentials, ["8", "1"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags"))
+    return managedOllamaStarted ? ${JSON.stringify(JSON.stringify({ models: [{ name: SMALLEST_OLLAMA_MODEL_TAG }] }))} : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
@@ -1435,16 +1437,14 @@ runner.run = (command) => {
 };
 runner.runShell = (command) => {
   shellCommands.push(command);
+  managedOllamaStarted ||= command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve");
   return { status: 0 };
 };
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
 wait.sleepSeconds = () => {};
-// installOllamaSystem probes loopback at tries=1 before launching, then
-// waits at tries=10 after launch. The fake curl in these tests answers 200
-// to any URL, so real waitForHttp would short-circuit the manual launch.
-// Differentiate by tries count.
+// Fail the tries=1 pre-launch probe; pass the tries=10 post-launch probe.
 wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});
@@ -3434,8 +3434,8 @@ nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 
-// Select option 8 (nim-local), then model 1
-const { messages } = installPromptQueue(credentials, ["8", "1"]);
+// Select option 8 (nim-local), then model 1, and enter the NGC credential.
+const { messages } = installPromptQueue(credentials, ["8", "1", "ngc-test"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
