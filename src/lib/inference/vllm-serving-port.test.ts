@@ -186,9 +186,10 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(errSpy.mock.calls.flat().join("\n")).toContain("port 8000 is already in use");
   });
 
-  it("fails closed when the managed container changes after recovery", async () => {
+  it("fails closed when the managed container changes immediately before replacement", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     mockSuccessfulVllmInstall(mocks, profile.containerName, [
+      () => vllmContainerRow(profile.containerName),
       () => vllmContainerRow(profile.containerName, { id: "c".repeat(64) }),
     ]);
     mocks.recoverHostLocalManagedVllmEndpoint.mockReturnValue({
@@ -205,7 +206,7 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     });
 
     expect(result).toEqual({ ok: false });
-    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalled();
     expect(mocks.dockerForceRm).not.toHaveBeenCalled();
     expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("changed after recovery"));
