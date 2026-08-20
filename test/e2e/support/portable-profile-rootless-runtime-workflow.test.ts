@@ -36,9 +36,11 @@ describe("portable profile rootless runtime workflow", () => {
     const packageInstallIndex = provision?.indexOf("sudo apt-get install") ?? -1;
     const packageVersionIndex = provision?.indexOf("dpkg-query --show") ?? -1;
     const runtimeVersionIndex = provision?.indexOf("podman --version") ?? -1;
+    const actionlintLabels = actionlint["self-hosted-runner"]?.labels;
 
     expect(job?.["runs-on"]).toBe("ubuntu-26.04");
-    expect(actionlint["self-hosted-runner"]?.labels).toContain("ubuntu-26.04");
+    expect(Array.isArray(actionlintLabels)).toBe(true);
+    expect(actionlintLabels).toContain("ubuntu-26.04");
     expect(job?.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(dependencyInstallIndex).toBeGreaterThanOrEqual(0);
     expect(catalogueCompileIndex).toBeGreaterThan(dependencyInstallIndex);
@@ -54,6 +56,12 @@ describe("portable profile rootless runtime workflow", () => {
     expect(provision).toContain('test "$version" = "podman version 5.7.0"');
     expect(policy).toContain("/etc/apparmor.d/usr.bin.pasta");
     expect(policy).toContain("signal (receive) peer=podman,");
+    expect(policy).toContain('test -f "$pasta_profile"');
+    expect(policy).toContain(
+      `test "$(grep -Fc 'include <abstractions/pasta>' "$pasta_profile")" -eq 1`,
+    );
+    expect(policy).toContain('if ! grep -Eq "$signal_rule" "$pasta_profile"; then');
+    expect(policy).toContain('test "$(grep -Ec "$signal_rule" "$pasta_profile")" -eq 1');
     expect(policy).toContain('apparmor_parser -r "$pasta_profile"');
   });
 });
