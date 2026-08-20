@@ -435,13 +435,13 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
-    refreshMcpProviderEnvironment(entry);
     waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? {
             previousRevision: previousCredentialRevision,
           }
         : {}),
+      refreshAfterObservedAbsence: () => refreshMcpProviderEnvironment(entry),
     });
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
