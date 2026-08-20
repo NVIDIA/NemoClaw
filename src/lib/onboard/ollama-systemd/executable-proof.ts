@@ -41,6 +41,7 @@ export type OllamaServiceExecutableProofFailureClassification =
   | "execution-failed"
   | "execution-timeout"
   | "executable-invalid"
+  | "executable-timeout"
   | "interpreter-inaccessible"
   | "interpreter-invalid"
   | "interpreter-timeout"
@@ -360,6 +361,25 @@ function runServiceUserProof(
   );
 }
 
+function runServiceUserPathAccessProof(
+  serviceUser: string,
+  candidatePath: string,
+  options: OllamaSystemdExecutableProofOptions,
+): OllamaExecutableCaptureResult {
+  return options.runCaptureExImpl(
+    [
+      ...commandPrefix(options.sudoPrefix),
+      "-u",
+      serviceUser,
+      "--",
+      "/usr/bin/test",
+      "-x",
+      candidatePath,
+    ],
+    { timeout: METADATA_TIMEOUT_MS },
+  );
+}
+
 /** Prove that systemd's configured Ollama user can execute the exact binary and PT_INTERP. */
 export function proveOllamaSystemdServiceExecutable(
   options: OllamaSystemdExecutableProofOptions,
@@ -391,7 +411,7 @@ export function proveOllamaSystemdServiceExecutable(
   if (userResult.timedOut) {
     return failed(
       "service-user-timeout",
-      `could not verify systemd User '${metadata.serviceUser}' within 5 seconds`,
+      `could not verify that systemd User '${metadata.serviceUser}' resolves to a host account within 5 seconds`,
     );
   }
   if (userResult.exitCode !== 0) {
@@ -430,17 +450,22 @@ export function proveOllamaSystemdServiceExecutable(
     );
   }
 
-  const interpreterResult = runCaptureExImpl(
-    [
-      ...commandPrefix(options.sudoPrefix),
-      "-u",
-      metadata.serviceUser,
-      "--",
-      "/usr/bin/test",
-      "-x",
-      interpreterPath,
-    ],
-    { timeout: METADATA_TIMEOUT_MS },
+  const executableAccessResult = runServiceUserPathAccessProof(
+    metadata.serviceUser,
+    metadata.executablePath,
+    options,
+  );
+  if (executableAccessResult.timedOut) {
+    return failed(
+      "executable-timeout",
+      `could not verify that systemd User '${metadata.serviceUser}' can execute Ollama ExecStart '${metadata.executablePath}' within 5 seconds`,
+    );
+  }
+
+  const interpreterResult = runServiceUserPathAccessProof(
+    metadata.serviceUser,
+    interpreterPath,
+    options,
   );
   if (interpreterResult.timedOut) {
     return failed(
@@ -454,14 +479,18 @@ export function proveOllamaSystemdServiceExecutable(
       `systemd User '${metadata.serviceUser}' cannot execute PT_INTERP '${interpreterPath}'`,
     );
   }
-  if (initialProof.exitCode !== 126) {
+  if (executableAccessResult.exitCode !== 1) {
     const proofOutcome =
       initialProof.exitCode === null
         ? "did not return an exit status"
         : `exited ${initialProof.exitCode}`;
+    const accessOutcome =
+      executableAccessResult.exitCode === 0
+        ? "the service user still has execute access"
+        : `the execute-access check returned ${executableAccessResult.exitCode ?? "no status"}`;
     return failed(
       "execution-failed",
-      `Ollama ExecStart '--version' ${proofOutcome} as systemd User '${metadata.serviceUser}'`,
+      `Ollama ExecStart '--version' ${proofOutcome} as systemd User '${metadata.serviceUser}', and ${accessOutcome}`,
     );
   }
 
@@ -470,7 +499,7 @@ export function proveOllamaSystemdServiceExecutable(
   if (repair === null) {
     return failed(
       "repair-outside-authority",
-      `Ollama ExecStart exited 126 as systemd User '${metadata.serviceUser}', and NemoClaw found no installer-owned executable permission change that it can safely apply`,
+      `Ollama ExecStart failed as systemd User '${metadata.serviceUser}'. The execute-access check failed, and NemoClaw found no executable permission change within its installer authority`,
     );
   }
 

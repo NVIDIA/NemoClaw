@@ -67,7 +67,7 @@ function proofFixture(initialMode = 0o644): {
   options: Parameters<typeof proveOllamaSystemdServiceExecutable>[0];
 } {
   let mode = initialMode;
-  const versionResults = [capture(126), capture(0, "ollama version is 0.11.10")];
+  const versionResults = [capture(1), capture(0, "ollama version is 0.11.10")];
   const runCaptureExImpl = vi.fn((command: readonly string[]) =>
     captureForCommand(command, [
       [
@@ -79,6 +79,10 @@ function proofFixture(initialMode = 0o644): {
           ),
       ],
       [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0, "997")],
+      [
+        (candidate) => candidate.includes("/usr/bin/test") && candidate.at(-1) === executablePath,
+        () => capture(1),
+      ],
       [(candidate) => candidate.includes("/usr/bin/test"), () => capture(0)],
       [
         (candidate) => candidate.includes("/usr/bin/chmod"),
@@ -184,7 +188,7 @@ describe("readElfInterpreterPath", () => {
 });
 
 describe("proveOllamaSystemdServiceExecutable", () => {
-  it("repairs the installer-owned executable mode and repeats the service-user execution verification once (#9728)", () => {
+  it("repairs and re-verifies the installer-owned executable when sudo returns status 1 and the execute-access check fails (#9728)", () => {
     const fixture = proofFixture();
 
     expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
@@ -196,6 +200,10 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     expect(commands.filter((command) => command.at(-1) === "--version")).toEqual([
       ["/usr/bin/sudo", "-n", "-u", "ollama", "--", executablePath, "--version"],
       ["/usr/bin/sudo", "-n", "-u", "ollama", "--", executablePath, "--version"],
+    ]);
+    expect(commands.filter((command) => command.includes("/usr/bin/test"))).toEqual([
+      ["/usr/bin/sudo", "-n", "-u", "ollama", "--", "/usr/bin/test", "-x", executablePath],
+      ["/usr/bin/sudo", "-n", "-u", "ollama", "--", "/usr/bin/test", "-x", interpreterPath],
     ]);
     expect(commands.filter((command) => command.includes("/usr/bin/chmod"))).toEqual([
       ["/usr/bin/sudo", "-n", "/usr/bin/chmod", "0755", "--", executablePath],
@@ -216,6 +224,10 @@ describe("proveOllamaSystemdServiceExecutable", () => {
             ),
         ],
         [
+          (candidate) => candidate.includes("/usr/bin/test") && candidate.at(-1) === executablePath,
+          () => capture(1),
+        ],
+        [
           (candidate) => candidate[0] === "/usr/bin/id" || candidate.includes("/usr/bin/test"),
           () => capture(0),
         ],
@@ -230,7 +242,7 @@ describe("proveOllamaSystemdServiceExecutable", () => {
             return capture(0);
           },
         ],
-        [(candidate) => candidate.includes(executablePath), () => capture(126)],
+        [(candidate) => candidate.includes(executablePath), () => capture(1)],
       ]),
     );
 
@@ -262,10 +274,15 @@ describe("proveOllamaSystemdServiceExecutable", () => {
             ),
         ],
         [
+          (candidate) =>
+            candidate.includes("/usr/bin/test") && candidate.at(-1) === "/opt/operator/ollama",
+          () => capture(1),
+        ],
+        [
           (candidate) => candidate[0] === "/usr/bin/id" || candidate.includes("/usr/bin/test"),
           () => capture(0),
         ],
-        [(candidate) => candidate.includes("/opt/operator/ollama"), () => capture(126)],
+        [(candidate) => candidate.includes("/opt/operator/ollama"), () => capture(1)],
       ]),
     );
 
@@ -299,12 +316,14 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     ).toBe(false);
   });
 
-  it("fails closed without chmod when mode 0755 still produces service-user status 126 (#9728)", () => {
+  it("fails closed without chmod when mode 0755 still fails the service-user execute-access check (#9728)", () => {
     const fixture = proofFixture(0o755);
 
     expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
       classification: "repair-outside-authority",
-      message: expect.stringContaining("no installer-owned executable permission change"),
+      message: expect.stringContaining(
+        "no executable permission change within its installer authority",
+      ),
       ok: false,
     });
     expect(
@@ -341,7 +360,11 @@ describe("proveOllamaSystemdServiceExecutable", () => {
             ),
         ],
         [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0)],
-        [(candidate) => candidate.includes(executablePath), () => capture(126)],
+        [(candidate) => candidate.at(-1) === "--version", () => capture(1)],
+        [
+          (candidate) => candidate.includes("/usr/bin/test") && candidate.at(-1) === executablePath,
+          () => capture(1),
+        ],
         [(candidate) => candidate.includes("/usr/bin/test"), () => capture(1)],
       ]),
     );
@@ -361,10 +384,16 @@ describe("proveOllamaSystemdServiceExecutable", () => {
     {
       call: 2,
       classification: "service-user-timeout",
-      message: "could not verify systemd User 'ollama' within 5 seconds",
+      message:
+        "could not verify that systemd User 'ollama' resolves to a host account within 5 seconds",
     },
     {
       call: 4,
+      classification: "executable-timeout",
+      message: `could not verify that systemd User 'ollama' can execute Ollama ExecStart '${executablePath}' within 5 seconds`,
+    },
+    {
+      call: 5,
       classification: "interpreter-timeout",
       message: `could not verify that systemd User 'ollama' can execute PT_INTERP '${interpreterPath}' within 5 seconds`,
     },
