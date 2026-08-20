@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -51,7 +52,11 @@ const imageManifest = YAML.parse(
     "utf8",
   ),
 ) as {
-  spec?: { publication?: { qualification?: { probes?: string[] } } };
+  spec?: {
+    publication?: {
+      qualification?: { probeBounds?: unknown; probes?: string[] } & Record<string, unknown>;
+    };
+  };
 };
 const attestationWorkflow = YAML.parse(
   fs.readFileSync(
@@ -75,6 +80,19 @@ function namedStep(job: Job, name: string): Step {
     job.steps?.find((candidate) => candidate.name === name),
     `llama.cpp image workflow is missing '${name}'`,
   );
+}
+
+function publicationQualificationFilter(step: Step): string {
+  const source = required(step.run, "publication gate script is missing");
+  const match = /if ! jq -e '\n(?<filter>[\s\S]*?)\n' <<< "\$QUALIFICATION"/u.exec(source);
+  return required(match?.groups?.filter, "publication qualification jq filter is missing");
+}
+
+function runPublicationQualificationFilter(filter: string, value: unknown) {
+  return spawnSync("jq", ["-e", filter], {
+    encoding: "utf8",
+    input: JSON.stringify(value),
+  });
 }
 
 function permissionValues(value: string | Record<string, string> | undefined): string[] {
@@ -238,6 +256,24 @@ describe("llama.cpp image PR workflow", () => {
         ),
       )}`,
     );
+    const qualification = required(
+      imageManifest.spec?.publication?.qualification,
+      "publication qualification is missing",
+    );
+    const filter = publicationQualificationFilter(gateStep);
+    const valid = runPublicationQualificationFilter(filter, qualification);
+    expect(valid.status, valid.stderr).toBe(0);
+
+    const missingBounds = structuredClone(qualification);
+    delete missingBounds.probeBounds;
+    expect(runPublicationQualificationFilter(filter, missingBounds).status).not.toBe(0);
+
+    const driftedBounds = structuredClone(qualification);
+    driftedBounds.probeBounds = {
+      ...(driftedBounds.probeBounds as Record<string, unknown>),
+      clientTimeoutMilliseconds: 251,
+    };
+    expect(runPublicationQualificationFilter(filter, driftedBounds).status).not.toBe(0);
     expect(preflight.needs).toEqual(["config", "publication-gate"]);
     expect(preflight.permissions).toEqual({ packages: "read" });
     expect(
