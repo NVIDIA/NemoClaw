@@ -8,7 +8,7 @@ interface SentRequest {
   readonly params: Record<string, unknown>;
 }
 
-/** Emits chat events for pinned OpenClaw v2026.7.1, including a repeated final sequence. */
+/** Emits pinned OpenClaw v2026.7.1 chat events for gateway integration tests. */
 export class PinnedOpenClawGateway {
   onopen: (() => void) | null = null;
   onmessage: ((event: { readonly data: unknown }) => void) | null = null;
@@ -17,7 +17,7 @@ export class PinnedOpenClawGateway {
   readonly sent: SentRequest[] = [];
   closed = false;
 
-  constructor() {
+  constructor(private readonly conversationContext?: Map<string, string>) {
     queueMicrotask(() => this.onopen?.());
   }
 
@@ -45,7 +45,14 @@ export class PinnedOpenClawGateway {
         this.respond(request.id, {});
       } else if (request.method === "chat.send") {
         this.respond(request.id, { runId: "pinned-openclaw-run" });
-        queueMicrotask(() => this.emitRecoveredTurn(String(request.params.sessionKey)));
+        queueMicrotask(() => {
+          const sessionKey = String(request.params.sessionKey);
+          if (this.conversationContext) {
+            this.emitContextTurn(sessionKey, String(request.params.message));
+          } else {
+            this.emitRecoveredTurn(sessionKey);
+          }
+        });
       }
     });
   }
@@ -87,6 +94,21 @@ export class PinnedOpenClawGateway {
       seq: 7,
       state: "final",
       message: this.assistantMessage("Hello world!"),
+    });
+  }
+
+  private emitContextTurn(sessionKey: string, message: string): void {
+    let response = this.conversationContext?.get(sessionKey) ?? "I do not know.";
+    if (message === "My project name is Apollo.") {
+      response = "I will remember Apollo.";
+      this.conversationContext?.set(sessionKey, "Apollo");
+    }
+    this.chat({
+      sessionKey,
+      runId: "pinned-openclaw-run",
+      seq: 1,
+      state: "final",
+      message: this.assistantMessage(response),
     });
   }
 

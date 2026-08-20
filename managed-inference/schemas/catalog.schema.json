@@ -9,17 +9,22 @@
     "compilerVersion",
     "sourceRevision",
     "readinessSchemaRef",
+    "models",
     "recipes",
     "presets",
     "sources",
     "catalogDigest"
   ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "compilerVersion": { "const": "1.2.0" },
+    "schemaVersion": { "const": "1.1.0" },
+    "compilerVersion": { "const": "1.4.0" },
     "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
     "readinessSchemaRef": {
       "const": "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json"
+    },
+    "models": {
+      "type": "array",
+      "items": { "$ref": "model.schema.json" }
     },
     "recipes": {
       "type": "array",
@@ -37,10 +42,10 @@
         "properties": {
           "path": {
             "type": "string",
-            "pattern": "^managed-inference/(?:recipes|presets)/.+\\.ya?ml$",
+            "pattern": "^managed-inference/(?:models|recipes|presets)/.+\\.ya?ml$",
             "maxLength": 512
           },
-          "kind": { "enum": ["ServingRecipe", "ServingPreset"] },
+          "kind": { "enum": ["ServingModel", "ServingRecipe", "ServingPreset"] },
           "id": { "type": "string", "minLength": 1, "maxLength": 160 },
           "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
         },

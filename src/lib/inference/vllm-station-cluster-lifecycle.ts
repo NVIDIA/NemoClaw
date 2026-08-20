@@ -60,7 +60,7 @@ const SAFE_GPU_UUID_PATTERN = /^GPU-[A-Za-z0-9-]{8,123}$/;
 const GPU_SMOKE_NONCE_PATTERN = /^[a-f0-9]{32}$/;
 const TRANSACTION_ID_PATTERN = /^[a-f0-9]{32}$/;
 const GPU_SMOKE_CONTAINER_PREFIX = "nemoclaw-vllm-gpu-smoke";
-export const DUAL_STATION_VLLM_LAUNCH_SCHEMA = "2";
+export const DUAL_STATION_VLLM_LAUNCH_SCHEMA = "3";
 const VLLM_FINGERPRINT_CONTEXT = "nemoclaw-dual-station-vllm-api-key\0";
 // Compatibility bridge for schema-less single-Station Ultra containers from
 // the v0.0.86 rollback window before dual launch schema 1.
@@ -749,7 +749,7 @@ function inspectManagedContainer(
     endpoint !== spec.endpoint ||
     clusterId !== spec.clusterId ||
     gpuUuid !== spec.gpuUuid ||
-    launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA ||
+    (launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA && launchSchema !== "2") ||
     !SHA256_HEX_PATTERN.test(launchContract) ||
     !SHA256_HEX_PATTERN.test(apiKeyFingerprint) ||
     !TRANSACTION_ID_PATTERN.test(transactionId)
@@ -757,6 +757,7 @@ function inspectManagedContainer(
     return { kind: "foreign" };
   }
   const reusable =
+    launchSchema === DUAL_STATION_VLLM_LAUNCH_SCHEMA &&
     launchContract === spec.launchContract &&
     (spec.apiKeyFingerprint === null || apiKeyFingerprint === spec.apiKeyFingerprint);
   return { kind: "managed", containerId, running: state === "running", transactionId, reusable };
@@ -1769,7 +1770,7 @@ export function getDualStationManagedVllmBaseUrl(
     role !== "head" ||
     !CLUSTER_ID_PATTERN.test(clusterId) ||
     !SAFE_GPU_UUID_PATTERN.test(gpuUuid) ||
-    launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA ||
+    (launchSchema !== DUAL_STATION_VLLM_LAUNCH_SCHEMA && launchSchema !== "2") ||
     !SHA256_HEX_PATTERN.test(launchContract) ||
     !TRANSACTION_ID_PATTERN.test(transactionId)
   ) {

@@ -11,19 +11,12 @@ metadata:
 spec:
   backend: vllm
 
-  model:
-    id: Inferact/Muse-Glimmer-30B-NVFP4-W4A4
-    revision: d35cb79050f419c457611b1cee5c5d15b176f285
-    servedName: muse-glimmer
-    downloadSizeBytes: 25447097878
-    gated: false
-    installFastSafetensors: false
-    preparation:
-      ref: none/v1
-
+  modelRef: vllm.muse-glimmer-30b-nvfp4-w4a4.v1
   runtime:
     image: vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204
     imageDownloadSizeBytes: 9699710136
+    minimumComputeCapability: 121
+    minimumGpuMemoryBytes: 25447097878
     pullTimeoutSeconds: 3600
     architecture: arm64
     networkMode: bridge
@@ -43,9 +36,14 @@ spec:
   execution:
     materializerRef: vllm.host-local/v1
     lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
 
   serve:
     authentication: bearer
+    directInstall:
+      authentication: bearer
+      fixedArguments: true
+      catalogReceipt: true
     executable: /usr/local/bin/vllm
     arguments:
       - name: --max-model-len

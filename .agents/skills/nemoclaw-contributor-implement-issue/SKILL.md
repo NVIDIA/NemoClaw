@@ -80,12 +80,24 @@ checked for that operation or failure class and the sensitive-workflow state out
 hold. Then make the direct change in the current behavior owner. Do not add speculative abstractions,
 configuration, compatibility, migration, or fallback behavior.
 
+Optimize the complete source-and-test change for deletion and consolidation. Compare a direct edit,
+reuse of an existing owner, and a refactor of current related code. Prefer a neutral or negative
+total line delta. Add a helper, abstraction, configuration surface, registry, fallback, or
+compatibility path only when current consumers adopt it in this change and the complete result
+removes more owners, concepts, branches, or lines than it adds. Possible future reuse is not enough.
+When a current correctness, security, or accepted-scope contract requires growth, keep the design
+direct and record why deletion or reuse cannot satisfy it.
+
 Add focused evidence as applicable:
 
 - positive behavior that must succeed;
 - negative or denied behavior that must fail;
 - error, interruption, recovery, or cleanup behavior;
 - boundary values, ambiguous state, and alternate entry paths.
+
+Preserve semantic regression coverage, not every existing fixture or assertion block. Extend or
+table-drive current coverage when that keeps one setup and one behavior owner. Do not create a
+one-use test helper, parallel matrix, or second test file merely to shorten an individual test.
 
 State why an evidence category does not apply when omission could hide risk. Use runtime or end-to-end
 evidence only when the real process, filesystem, network, container, hardware, workflow, or service
@@ -102,6 +114,11 @@ Review the full diff against the accepted slice and remove unrelated changes. Ap
 Consideration and all nine Security Rubric categories to the completed behavior. Record each changed
 security control and focused negative evidence that proves forbidden behavior remains denied. If no
 security control changed, state why and cite the reviewed trust boundaries.
+
+Record the reduction case for the completed design: the current code, owners, branches, parameters,
+fixtures, or files deleted or consolidated and the total source-and-test line direction. If the
+change grew, identify the current contract that requires that growth. Remove review-driven machinery
+when a direct solution is smaller; do not add another layer to compensate for an avoidable layer.
 
 Confirm that allowed, denied, error, and boundary behavior remains coherent across failure, retry,
 cleanup, cached, resumed, and compatibility paths that apply.
@@ -121,6 +138,7 @@ Use this structure:
 - Accepted scope authority:
 - Delivered capability:
 - Changed behavior:
+- Simplification result: <deleted or consolidated structure, total line direction, and required-growth justification when applicable>
 - Deferred scope:
 
 ## Changed files

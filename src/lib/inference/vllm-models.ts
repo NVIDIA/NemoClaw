@@ -29,13 +29,40 @@
 
 import net from "node:net";
 
+import { isHostLocalInferenceServingRecipe } from "./serving/adapter-registry.js";
+import { managedInferenceDigest } from "./serving/catalog-integrity.js";
+import { loadManagedInferenceCatalog } from "./serving/catalog-loader.js";
+import {
+  hostLocalVllmDockerRunArguments,
+  hostLocalVllmModelArguments,
+} from "./serving/host-local-vllm-materialization.js";
+import type {
+  CompiledManagedInferenceCatalog,
+  HostLocalInferenceServingRecipe,
+  ManagedInferenceServingPreset,
+  ServingArgument,
+  ServingModelCapabilities,
+  ServingStationPairOrchestration,
+} from "./serving/types.js";
+
 export type VllmPlatform = "spark" | "station" | "n1x" | "linux";
+export const STATION_PAIR_OPTIONAL_ORCHESTRATION = "vllm.station-pair-optional/v1";
+
+export interface VllmServingCatalogIdentity {
+  readonly catalogDigest: string;
+  readonly presetId: string;
+  readonly presetDigest: string;
+  readonly recipeId: string;
+  readonly recipeDigest: string;
+}
 
 export interface VllmRuntimeOverride {
   /** Model-specific runtime image, pinned by digest. */
   image: string;
   /** Compressed size of the selected platform manifest. */
   imageDownloadSizeBytes: number;
+  /** Measured uncompressed layer size for the exact image digest, when known. */
+  imageUnpackedSizeBytes?: number;
   /** Size of the pinned Hugging Face snapshot used for cache preflight. */
   modelDownloadSizeBytes?: number;
   /** Maximum time to wait for this model to become ready after launch. */
@@ -46,24 +73,60 @@ export interface VllmRuntimeOverride {
   dockerRunArgsMode?: "append" | "replace";
   /** Maximum time allowed for the immutable image pull. */
   pullTimeoutSec?: number;
+  /** Runtime-specific GPU floor, overriding the model-wide default. */
+  minComputeCapability?: number;
+  /** Minimum GPU or unified-memory capacity declared by the recipe. */
+  minGpuMemoryBytes?: number;
+  /** Catalog identity that produced this runtime. */
+  servingCatalog?: VllmServingCatalogIdentity;
+  /** Catalog preset that declared this runtime, independent of receipt ownership. */
+  catalogPresetId?: string;
+  /** Allowlisted orchestration adapter selected by the catalog recipe. */
+  orchestrationRef?: string;
+  /** Typed data consumed only by the allowlisted Station-pair adapter. */
+  stationPair?: ServingStationPairOrchestration;
 }
 
-export const NEMOTRON_ULTRA_STATION_IMAGE = {
-  tag: "vllm/vllm-openai:v0.22.0",
-  arm64: {
-    ref: "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
-    downloadSizeBytes: 10_670_087_425,
-  },
-} as const;
-
-/** Runtime pinned from the published dual-DGX-Station playbook. */
-export const NEMOTRON_ULTRA_DUAL_STATION_IMAGE = {
-  tag: "vllm/vllm-openai:v0.25.1-aarch64",
-  arm64: {
-    ref: "vllm/vllm-openai@sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37",
-    downloadSizeBytes: 10_238_912_364,
-  },
-} as const;
+/**
+ * A runtime override qualified for a host platform and architecture.
+ *
+ * Entries are ordered from general to specific. The resolver selects the last
+ * matching entry, which lets a conservative Linux baseline precede a
+ * device-specific optimized runtime without making an ARM64 image the fallback
+ * for an x86_64 host.
+ */
+export interface VllmRuntimeVariant extends VllmRuntimeOverride {
+  /** Higher-priority variants override the general hardware baseline. */
+  priority: number;
+  /** NemoClaw platform profiles this runtime can serve. */
+  platforms?: readonly VllmPlatform[];
+  /** Node.js host architectures this image was built for. */
+  architectures?: readonly NodeJS.Architecture[];
+  /** Model arguments supplied by this recipe. */
+  modelArgs: readonly string[];
+  /** Recipe-specific context length. */
+  maxModelLen: number;
+  /** Immutable model revision supplied by this recipe. */
+  revision: string;
+  /** Served model name supplied by this recipe. */
+  servedModelId: string;
+  /** Recipe environment passed to the serving process. */
+  serveEnv: Readonly<Record<string, string>>;
+  /** Whether startup installs the fastsafetensors extra. */
+  installFastSafetensors: boolean;
+  /** Direct installs may opt into a fixed serving command. */
+  fixedServeCommand?: true;
+  /** Direct installs may opt into managed bearer authentication. */
+  managedBearerAuth?: true;
+  /** Catalog images do not receive an implicit remote-code flag. */
+  trustRemoteCode: false;
+  /** Preset selection policy used for automatic hardware defaults. */
+  selection: "automatic" | "explicit-only";
+  /** Whether the interactive model picker displays this variant. */
+  interactive: boolean;
+  /** Catalog preset that declared this runtime. */
+  catalogPresetId: string;
+}
 
 export interface VllmModelDef {
   /** Hugging Face model id (also passed to `vllm serve`). */
@@ -81,18 +144,21 @@ export interface VllmModelDef {
   /** Stable model name exposed by the local OpenAI-compatible endpoint. */
   servedModelId?: string;
   /** Model-specific flags appended after the shared serving flags. */
-  modelArgs: string[];
+  modelArgs: readonly string[];
   /** True when the upstream HF repo requires accepting a licence. */
   gated: boolean;
   /**
-   * Platforms whose interactive picker should offer this entry. Models with
-   * platform-specific flags (the NVFP4 MoE checkpoint targets `sm_121a` only,
-   * the very large V4 Flash recipe wants Station-class VRAM) appear only on
-   * profiles they can actually run on. Direct `NEMOCLAW_VLLM_MODEL`
-   * overrides bypass the picker filter, so `runVllmInstall` rejects any
-   * override outside this list before the image pull and model download.
+   * Platforms on which managed vLLM may serve this entry. Direct
+   * `NEMOCLAW_VLLM_MODEL` overrides are checked against this list before an
+   * image pull or model download.
    */
   platforms: readonly VllmPlatform[];
+  /**
+   * Optional narrower list for the interactive picker. This keeps a newly
+   * added compatibility path explicit-only until it has completed broader
+   * hardware qualification without blocking an intentional env override.
+   */
+  pickerPlatforms?: readonly VllmPlatform[];
   minComputeCapability?: number;
   /**
    * Environment variables exported immediately before `vllm serve` (e.g.
@@ -100,9 +166,13 @@ export interface VllmModelDef {
    * `export K=V && …` so they apply to the serve process inside the
    * container shell.
    */
-  serveEnv?: Record<string, string>;
+  serveEnv?: Readonly<Record<string, string>>;
   /** Runtime overrides for recipes that cannot use the platform image. */
   runtime?: VllmRuntimeOverride;
+  /** Ordered, compatibility-qualified runtime overrides. */
+  runtimeVariants?: readonly VllmRuntimeVariant[];
+  /** Refuse the platform baseline when no runtime variant matches. */
+  requireRuntimeVariant?: true;
   /** Whether startup must install vLLM's fastsafetensors extra. Defaults to true. */
   installFastSafetensors?: boolean;
   /** Disable remote model code for a runtime image that contains native model support. */
@@ -111,290 +181,357 @@ export interface VllmModelDef {
   managedBearerAuth?: true;
   /** Reject environment-provided model and serving-argument overrides. */
   fixedServeCommand?: true;
+  /** Model behavior used by endpoint validation and agent compatibility checks. */
+  capabilities?: ServingModelCapabilities;
+  /** Allowlisted endpoint probe budget policy. */
+  probePolicyRef?: string;
 }
 
-export const VLLM_MODELS: readonly VllmModelDef[] = [
-  {
-    id: "Qwen/Qwen3.6-27B-FP8",
-    label: "Qwen3.6 27B FP8",
-    envValue: "qwen3.6-27b",
-    downloadSizeBytes: 30_900_000_000,
-    maxModelLen: 262144,
-    modelArgs: [
-      "--gpu-memory-utilization",
-      "0.7",
-      "--max-num-seqs",
-      "4",
-      "--reasoning-parser",
-      "qwen3",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder",
-      "--load-format",
-      "fastsafetensors",
-      "--enable-prefix-caching",
-    ],
-    gated: false,
-    platforms: ["spark", "station", "linux"],
-    minComputeCapability: 89,
-  },
-  {
-    id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
-    label: "DeepSeek-R1 Distill Llama 70B",
-    envValue: "deepseek-r1-distill-70b",
-    downloadSizeBytes: 141_000_000_000,
-    maxModelLen: 32768,
-    modelArgs: [
-      "--gpu-memory-utilization",
-      "0.7",
-      "--max-num-seqs",
-      "4",
-      "--reasoning-parser",
-      "deepseek_r1",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "hermes",
-    ],
-    gated: true,
-    platforms: ["spark", "station", "linux"],
-  },
-  {
-    id: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
-    label: "NVIDIA Nemotron-3 Nano 4B FP8",
-    envValue: "nemotron-3-nano-4b",
-    downloadSizeBytes: 5_280_000_000,
-    // Matches the model card's `max_position_embeddings` and the vLLM
-    // example NVIDIA publishes for this checkpoint. The previous value
-    // (262000) was an undocumented round-down with no headroom rationale.
-    maxModelLen: 262144,
-    // `--enable-auto-tool-choice` + `--tool-call-parser qwen3_coder` match
-    // the vLLM launch example on the model card at
-    // https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8. Without
-    // them a plain completion succeeds (HTTP 200) but any agent request
-    // that sends `tool_choice: "auto"` fails HTTP 400 with vLLM's
-    // "'auto' tool choice requires --enable-auto-tool-choice and
-    // --tool-call-parser to be set" (#6314) — which blocks every agent
-    // tool-call flow on the generic-Linux managed vLLM default (Spark and
-    // Station defaults already pin their own tool-call parser).
-    //
-    // `--reasoning-parser nemotron_v3` is likewise part of that same model
-    // card launch recipe: Nemotron-3-Nano is a reasoning model that emits a
-    // `<think>…</think>` trace. Without a reasoning parser vLLM leaves the
-    // trace — including the bare `</think>` marker the chat template does not
-    // pair with an opening `<think>` — inline in `content`, and the agent's
-    // streaming parser mishandles that orphan marker into an empty turn that
-    // wedges the session (#6915). `nemotron_v3` is a built-in parser in the
-    // pinned NGC vLLM image (it subclasses the DeepSeek-R1 parser) and moves
-    // the trace out of `content`, so no plugin file is required. The Spark and
-    // Station defaults already pin their own reasoning parser.
-    modelArgs: [
-      "--gpu-memory-utilization",
-      "0.7",
-      "--reasoning-parser",
-      "nemotron_v3",
-      "--load-format",
-      "fastsafetensors",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder",
-    ],
-    gated: false,
-    platforms: ["spark", "station", "linux"],
-    minComputeCapability: 89,
-  },
-  {
-    id: "deepseek-ai/DeepSeek-V4-Flash",
-    label: "DeepSeek V4 Flash",
-    envValue: "deepseek-v4-flash",
-    downloadSizeBytes: 352_381_000_000,
-    maxModelLen: 1048576,
-    modelArgs: [
-      "--kv-cache-dtype",
-      "fp8",
-      "--block-size",
-      "256",
-      "--enable-prefix-caching",
-      "--gpu-memory-utilization",
-      "0.92",
-      "--compilation-config",
-      `{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}`,
-      "--attention_config.use_fp4_indexer_cache",
-      "True",
-      "--tokenizer-mode",
-      "deepseek_v4",
-      "--tool-call-parser",
-      "deepseek_v4",
-      "--enable-auto-tool-choice",
-      "--reasoning-parser",
-      "deepseek_v4",
-      "--no-disable-hybrid-kv-cache-manager",
-      "--disable-uvicorn-access-log",
-      "--max-cudagraph-capture-size",
-      "128",
-      "--speculative-config",
-      `{"method":"mtp","num_speculative_tokens":3}`,
-      "--max-num-batched-tokens",
-      "8192",
-      "--max-num-seqs",
-      "16",
-      "--prefix-cache-retention-interval",
-      "auto",
-    ],
-    gated: false,
-    platforms: ["station"],
-    minComputeCapability: 100,
-  },
-  {
-    id: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
-    label: "NVIDIA Nemotron 3 Ultra 550B NVFP4",
-    envValue: "nemotron-3-ultra-550b-a55b",
-    downloadSizeBytes: 352_381_245_521,
-    maxModelLen: 262144,
-    revision: "183968f87ae4cedce3039313cac1fd43d112c578",
-    // Keep the route identity aligned with NemoClaw's existing managed
-    // Nemotron Ultra compatibility manifests and request adapters.
-    servedModelId: "nvidia/nemotron-3-ultra-550b-a55b",
-    modelArgs: [
-      "--host",
-      "0.0.0.0",
-      "--cpu-offload-gb",
-      "150",
-      "--cpu-offload-params",
-      "experts",
-      "--kernel_config",
-      `{"enable_flashinfer_autotune": false}`,
-      "--speculative-config",
-      `{"method":"nemotron_h_mtp","num_speculative_tokens":3}`,
-      "--max-num-seqs",
-      "256",
-      "--gpu-memory-utilization",
-      "0.9",
-      "--reasoning-parser",
-      "nemotron_v3",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder",
-      "--default-chat-template-kwargs",
-      `{"enable_thinking":true,"force_nonempty_content":true}`,
-    ],
-    gated: false,
-    platforms: ["station"],
-    minComputeCapability: 100,
-    serveEnv: {
-      VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: "1",
-      VLLM_NVFP4_GEMM_BACKEND: "flashinfer-trtllm",
-    },
-    runtime: {
-      image: NEMOTRON_ULTRA_STATION_IMAGE.arm64.ref,
-      imageDownloadSizeBytes: NEMOTRON_ULTRA_STATION_IMAGE.arm64.downloadSizeBytes,
-      modelDownloadSizeBytes: 352_381_245_521,
-      loadTimeoutSec: 3600,
-      // The single-host runtime keeps NemoClaw's bridge-networked local-
-      // inference boundary. The qualified dual-Station lifecycle intentionally
-      // builds a separate host-networked launch contract for NCCL/RDMA.
-      dockerRunArgs: ["--shm-size", "16g", "--ulimit", "memlock=-1", "--ulimit", "stack=67108864"],
-    },
-    // The digest-pinned vLLM image already contains the serving package, and
-    // this recipe does not use the fastsafetensors load format. Avoid mutating
-    // the reviewed runtime from the package index when the container starts.
-    installFastSafetensors: false,
-  },
-  {
-    id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
-    label: "Qwen3.6 35B-A3B NVFP4",
-    envValue: "qwen3.6-35b-a3b-nvfp4",
-    downloadSizeBytes: 23_500_000_000,
-    maxModelLen: 262144,
-    // Additive flags on top of the shared serving defaults. The shared flags
-    // already cover --tensor-parallel-size/--pipeline-parallel-size/
-    // --data-parallel-size (all 1 — harmless on one Spark or N1x host),
-    // --port 8000, and --trust-remote-code; --max-model-len comes from
-    // maxModelLen above.
-    modelArgs: [
-      "--gpu-memory-utilization",
-      "0.4",
-      "--dtype",
-      "auto",
-      "--quantization",
-      "modelopt",
-      "--kv-cache-dtype",
-      "fp8",
-      "--attention-backend",
-      "flashinfer",
-      "--moe-backend",
-      "marlin",
-      "--max-num-seqs",
-      "4",
-      "--max-num-batched-tokens",
-      "8192",
-      "--enable-chunked-prefill",
-      "--async-scheduling",
-      "--enable-prefix-caching",
-      "--enable-auto-tool-choice",
-      // `qwen3_coder`, not `qwen3_xml` (#6457). On DGX Spark this checkpoint's
-      // tool-call frames do not round-trip through vLLM's `qwen3_xml` parser: it
-      // logs `qwen3xml_tool_parser.py:303 Error when parsing XML elements: not
-      // well-formed (invalid token)` and emits truncated/extra-`}` tool
-      // arguments, so Deep Agents Code headless (`dcode -n`) tool calls fail
-      // with `POST /v1/chat/completions 400 Bad Request`
-      // (`json.decoder.JSONDecodeError: Extra data`) and `dcode` exits 1.
-      // `qwen3_coder` matches this Qwen3.6-family checkpoint's emitted tool-call
-      // format — the parser the other Qwen3.6 recipes in this registry already
-      // use (Qwen3.6-27B-FP8, Nemotron-3-Nano-4B). Validated end-to-end on real
-      // DGX Spark (GB10); see PR verification notes for the `dcode -n` transcript.
-      "--tool-call-parser",
-      "qwen3_coder",
-      "--reasoning-parser",
-      "qwen3",
-      // Keep MTP speculative decoding opt-in on DGX Spark. It increases the
-      // managed profile's cold-start memory pressure and long-context risk
-      // without being required for correct model or tool-call behavior (#7127).
-      "--load-format",
-      "fastsafetensors",
-    ],
-    gated: false,
-    platforms: ["spark", "n1x"],
-    minComputeCapability: 121,
-  },
-  {
-    id: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
-    label: "Muse Glimmer 30B NVFP4 W4A4 [Experimental]",
-    envValue: "muse-glimmer-30b",
-    downloadSizeBytes: 25_447_097_878,
-    maxModelLen: 32768,
-    revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
-    servedModelId: "muse-glimmer",
-    modelArgs: [
-      "--gpu-memory-utilization",
-      "0.75",
-      "--max-num-seqs",
-      "1",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "muse_glimmer",
-      "--reasoning-parser",
-      "muse_glimmer",
-      "--generation-config",
-      "auto",
-    ],
-    gated: false,
-    platforms: ["spark"],
-    minComputeCapability: 121,
-    runtime: {
-      image:
-        "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
-      imageDownloadSizeBytes: 9_699_710_136,
-      modelDownloadSizeBytes: 25_447_097_878,
-    },
-    installFastSafetensors: false,
-    trustRemoteCode: false,
-    managedBearerAuth: true,
-  },
-] as const;
+interface CatalogModelVariant {
+  readonly id: string;
+  readonly label: string;
+  readonly envValue: string;
+  readonly menuOrder: number;
+  readonly downloadSizeBytes: number;
+  readonly gated: boolean;
+  readonly capabilities?: ServingModelCapabilities;
+  readonly probePolicyRef?: string;
+  readonly platform: VllmPlatform;
+  readonly variant: VllmRuntimeVariant;
+}
 
-export const DEFAULT_VLLM_MODEL: VllmModelDef = VLLM_MODELS[0];
+function argumentValue(arguments_: readonly ServingArgument[], name: string): string | undefined {
+  const matches = arguments_.filter((argument) => argument.name === name);
+  if (matches.length !== 1) return undefined;
+  const value = matches[0]!.value;
+  return value === undefined ? undefined : String(value);
+}
+
+function nodeArchitecture(architecture: string): NodeJS.Architecture {
+  if (architecture === "amd64") return "x64";
+  if (architecture === "arm64") return "arm64";
+  throw new Error(`Managed vLLM recipe uses unsupported architecture ${architecture}.`);
+}
+
+function catalogModelVariant(
+  catalogDigest: string,
+  preset: ManagedInferenceServingPreset,
+  recipe: HostLocalInferenceServingRecipe,
+): CatalogModelVariant {
+  const maxModelLen = Number(argumentValue(recipe.spec.serve.arguments, "--max-model-len"));
+  if (!Number.isSafeInteger(maxModelLen) || maxModelLen <= 0) {
+    throw new Error(`Managed vLLM recipe ${recipe.metadata.id} has no valid --max-model-len.`);
+  }
+  const platform = preset.spec.plan.platform;
+  if (!platform) {
+    throw new Error(`Managed vLLM preset ${preset.metadata.id} has no platform.`);
+  }
+  const serveEnv = {
+    ...recipe.spec.runtime.environment,
+    HF_HOME: recipe.spec.runtime.modelCache.target,
+    HF_HUB_OFFLINE: "1",
+    TRANSFORMERS_OFFLINE: "1",
+  };
+  const directInstall = recipe.spec.serve.directInstall;
+  if (!directInstall) {
+    throw new Error(`Managed vLLM recipe ${recipe.metadata.id} has no direct-install policy.`);
+  }
+  const servingCatalog = {
+    catalogDigest,
+    presetId: preset.metadata.id,
+    presetDigest: managedInferenceDigest(preset),
+    recipeId: recipe.metadata.id,
+    recipeDigest: managedInferenceDigest(recipe),
+  };
+  return {
+    id: recipe.spec.model.id,
+    label: recipe.spec.model.displayName,
+    envValue: recipe.spec.model.environmentValue,
+    menuOrder: recipe.spec.model.menuOrder,
+    downloadSizeBytes: recipe.spec.model.downloadSizeBytes,
+    gated: recipe.spec.model.gated,
+    capabilities: recipe.spec.model.capabilities,
+    probePolicyRef: recipe.spec.model.probePolicyRef,
+    platform,
+    variant: {
+      priority: preset.spec.priority,
+      platforms: [platform],
+      architectures: [nodeArchitecture(recipe.spec.runtime.architecture)],
+      image: recipe.spec.runtime.image,
+      imageDownloadSizeBytes: recipe.spec.runtime.imageDownloadSizeBytes,
+      imageUnpackedSizeBytes: recipe.spec.runtime.imageUnpackedSizeBytes,
+      modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
+      loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
+      pullTimeoutSec: recipe.spec.runtime.pullTimeoutSeconds,
+      minComputeCapability:
+        recipe.spec.runtime.minimumComputeCapability > 0
+          ? recipe.spec.runtime.minimumComputeCapability
+          : undefined,
+      minGpuMemoryBytes: recipe.spec.runtime.minimumGpuMemoryBytes,
+      dockerRunArgs: hostLocalVllmDockerRunArguments(recipe),
+      dockerRunArgsMode: "replace",
+      modelArgs: hostLocalVllmModelArguments(recipe),
+      maxModelLen,
+      revision: recipe.spec.model.revision,
+      servedModelId: recipe.spec.model.servedName,
+      serveEnv,
+      installFastSafetensors: recipe.spec.model.installFastSafetensors,
+      ...(directInstall.fixedArguments ? { fixedServeCommand: true as const } : {}),
+      ...(directInstall.authentication === "bearer"
+        ? { managedBearerAuth: true as const }
+        : {}),
+      trustRemoteCode: false,
+      selection: preset.spec.selection === "automatic" ? "automatic" : "explicit-only",
+      interactive: preset.spec.plan.interactive !== false,
+      catalogPresetId: preset.metadata.id,
+      orchestrationRef: recipe.spec.execution.orchestrationRef,
+      stationPair: recipe.spec.execution.stationPair,
+      ...(directInstall.catalogReceipt ? { servingCatalog } : {}),
+    },
+  };
+}
+
+function assertSameCatalogModel(left: CatalogModelVariant, right: CatalogModelVariant): void {
+  const fields = [
+    "id",
+    "label",
+    "envValue",
+    "menuOrder",
+    "downloadSizeBytes",
+    "gated",
+    "probePolicyRef",
+  ] as const;
+  const mismatch = fields.find((field) => left[field] !== right[field]);
+  if (mismatch) {
+    throw new Error(
+      `Managed vLLM recipes for ${left.envValue} disagree on model field ${mismatch}.`,
+    );
+  }
+  if (JSON.stringify(left.capabilities) !== JSON.stringify(right.capabilities)) {
+    throw new Error(
+      `Managed vLLM recipes for ${left.envValue} disagree on model field capabilities.`,
+    );
+  }
+}
+
+export function vllmModelsFromCatalog(
+  catalog: CompiledManagedInferenceCatalog,
+): readonly VllmModelDef[] {
+  const recipes = new Map(catalog.recipes.map((recipe) => [recipe.metadata.id, recipe]));
+  const variants = catalog.presets.flatMap((preset) => {
+    if (preset.spec.selection === "disabled" || preset.spec.plan.backend !== "vllm") return [];
+    const recipe = recipes.get(preset.spec.plan.recipeRef);
+    if (!recipe || !isHostLocalInferenceServingRecipe(recipe)) return [];
+    return [catalogModelVariant(catalog.catalogDigest, preset, recipe)];
+  });
+  const grouped = new Map<string, CatalogModelVariant[]>();
+  for (const variant of variants) {
+    const entries = grouped.get(variant.envValue) ?? [];
+    if (entries[0]) assertSameCatalogModel(entries[0], variant);
+    entries.push(variant);
+    grouped.set(variant.envValue, entries);
+  }
+  return [...grouped.values()]
+    .map((entries): VllmModelDef => {
+      const ordered = [...entries].sort(
+        (left, right) =>
+          left.variant.priority - right.variant.priority ||
+          left.variant.catalogPresetId.localeCompare(right.variant.catalogPresetId),
+      );
+      const base = ordered[0]!;
+      const platformOrder: readonly VllmPlatform[] = ["spark", "station", "n1x", "linux"];
+      const supportedPlatforms = new Set(ordered.map(({ platform }) => platform));
+      const platforms = platformOrder.filter((platform) => supportedPlatforms.has(platform));
+      const pickerPlatformSet = new Set(
+        ordered
+          .filter(({ variant }) => variant.interactive)
+          .map(({ platform }) => platform),
+      );
+      const pickerPlatforms = [
+        ...platformOrder.filter((platform) => pickerPlatformSet.has(platform)),
+      ];
+      const runtime =
+        ordered.length === 1
+          ? {
+              image: base.variant.image,
+              imageDownloadSizeBytes: base.variant.imageDownloadSizeBytes,
+              imageUnpackedSizeBytes: base.variant.imageUnpackedSizeBytes,
+              modelDownloadSizeBytes: base.variant.modelDownloadSizeBytes,
+              loadTimeoutSec: base.variant.loadTimeoutSec,
+              dockerRunArgs: base.variant.dockerRunArgs,
+              dockerRunArgsMode: base.variant.dockerRunArgsMode,
+              pullTimeoutSec: base.variant.pullTimeoutSec,
+              minComputeCapability: base.variant.minComputeCapability,
+              minGpuMemoryBytes: base.variant.minGpuMemoryBytes,
+              orchestrationRef: base.variant.orchestrationRef,
+              stationPair: base.variant.stationPair,
+            }
+          : undefined;
+      const computeCapabilityFloors = ordered.flatMap(({ variant }) =>
+        variant.minComputeCapability === undefined ? [] : [variant.minComputeCapability],
+      );
+      return {
+        id: base.id,
+        label: base.label,
+        envValue: base.envValue,
+        downloadSizeBytes: base.downloadSizeBytes,
+        maxModelLen: base.variant.maxModelLen,
+        revision: base.variant.revision,
+        servedModelId: base.variant.servedModelId,
+        modelArgs: base.variant.modelArgs,
+        serveEnv: base.variant.serveEnv,
+        gated: base.gated,
+        platforms,
+        pickerPlatforms,
+        minComputeCapability:
+          computeCapabilityFloors.length > 0 ? Math.min(...computeCapabilityFloors) : undefined,
+        runtimeVariants: ordered.map(({ variant }) => variant),
+        requireRuntimeVariant: true,
+        ...(runtime ? { runtime } : {}),
+        installFastSafetensors: base.variant.installFastSafetensors,
+        fixedServeCommand: base.variant.fixedServeCommand,
+        managedBearerAuth: base.variant.managedBearerAuth,
+        trustRemoteCode: base.variant.trustRemoteCode,
+        capabilities: base.capabilities,
+        probePolicyRef: base.probePolicyRef,
+      };
+    })
+    .sort((left, right) => {
+      const leftOrder = grouped.get(left.envValue)![0]!.menuOrder;
+      const rightOrder = grouped.get(right.envValue)![0]!.menuOrder;
+      return leftOrder - rightOrder || left.envValue.localeCompare(right.envValue);
+    });
+}
+
+export const VLLM_MODELS: readonly VllmModelDef[] = vllmModelsFromCatalog(
+  loadManagedInferenceCatalog(),
+);
+
+const defaultVllmModel = VLLM_MODELS[0];
+if (!defaultVllmModel) {
+  throw new Error("Managed inference catalog has no host-local vLLM models.");
+}
+export const DEFAULT_VLLM_MODEL: VllmModelDef = defaultVllmModel;
+
+/**
+ * Rank a runtime platform declaration for a target host. Every specialized
+ * NVIDIA appliance is still a Linux host, so a Linux declaration is the
+ * baseline when no appliance-specific recipe exists. Exact declarations win.
+ */
+export function vllmPlatformSpecificity(
+  platforms: readonly VllmPlatform[] | undefined,
+  target: VllmPlatform,
+): number {
+  if (!platforms || platforms.length === 0) return 0;
+  if (platforms.includes(target)) return 2;
+  if (target !== "linux" && platforms.includes("linux")) return 1;
+  return -1;
+}
+
+export function vllmModelForOrchestration(
+  orchestrationRef: string,
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): VllmModelDef | undefined {
+  const matches = VLLM_MODELS.filter((model) =>
+    (model.runtimeVariants ?? []).some(
+      (variant) =>
+        variant.orchestrationRef === orchestrationRef &&
+        vllmPlatformSpecificity(variant.platforms, platform) >= 0 &&
+        (!variant.architectures || variant.architectures.includes(architecture)),
+    ),
+  );
+  if (matches.length > 1) {
+    throw new Error(
+      `Managed vLLM catalog has ambiguous ${orchestrationRef} models for ${platform} on ${architecture}.`,
+    );
+  }
+  return matches[0];
+}
+
+export function vllmModelUsesOrchestration(
+  model: VllmModelDef,
+  orchestrationRef: string,
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): boolean {
+  return (model.runtimeVariants ?? []).some(
+    (variant) =>
+      variant.orchestrationRef === orchestrationRef &&
+      vllmPlatformSpecificity(variant.platforms, platform) >= 0 &&
+      (!variant.architectures || variant.architectures.includes(architecture)),
+  );
+}
+
+export function vllmStationPairForOrchestration(
+  model: VllmModelDef,
+  orchestrationRef: string,
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): ServingStationPairOrchestration | undefined {
+  const matches = (model.runtimeVariants ?? []).filter(
+    (variant) =>
+      variant.orchestrationRef === orchestrationRef &&
+      vllmPlatformSpecificity(variant.platforms, platform) >= 0 &&
+      (!variant.architectures || variant.architectures.includes(architecture)),
+  );
+  if (matches.length > 1) {
+    throw new Error(
+      `Managed vLLM catalog has ambiguous ${orchestrationRef} runtimes for ${model.envValue} on ${platform}/${architecture}.`,
+    );
+  }
+  return matches[0]?.stationPair;
+}
+
+function defaultVllmCandidateForPlatform(
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): { readonly model: VllmModelDef; readonly variant: VllmRuntimeVariant } {
+  const candidates = VLLM_MODELS.flatMap((model) =>
+    (model.runtimeVariants ?? [])
+      .filter(
+        (variant) =>
+          variant.selection === "automatic" &&
+          vllmPlatformSpecificity(variant.platforms, platform) >= 0 &&
+          (!variant.architectures || variant.architectures.includes(architecture)),
+      )
+      .map((variant) => ({ model, variant })),
+  ).sort(
+    (left, right) =>
+      vllmPlatformSpecificity(right.variant.platforms, platform) -
+        vllmPlatformSpecificity(left.variant.platforms, platform) ||
+      right.variant.priority - left.variant.priority ||
+      left.model.envValue.localeCompare(right.model.envValue),
+  );
+  if (candidates.length === 0) {
+    throw new Error(`Managed vLLM catalog has no automatic ${platform} model for ${architecture}.`);
+  }
+  if (
+    candidates[1] &&
+    vllmPlatformSpecificity(candidates[1].variant.platforms, platform) ===
+      vllmPlatformSpecificity(candidates[0]!.variant.platforms, platform) &&
+    candidates[1].variant.priority === candidates[0]!.variant.priority
+  ) {
+    throw new Error(
+      `Managed vLLM catalog has ambiguous automatic ${platform} models at priority ${String(candidates[0]!.variant.priority)}.`,
+    );
+  }
+  return candidates[0]!;
+}
+
+export function defaultVllmModelForPlatform(
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): VllmModelDef {
+  return defaultVllmCandidateForPlatform(platform, architecture).model;
+}
+
+export function defaultVllmRuntimeForPlatform(
+  platform: VllmPlatform,
+  architecture: NodeJS.Architecture = process.arch,
+): VllmRuntimeVariant {
+  return defaultVllmCandidateForPlatform(platform, architecture).variant;
+}
 
 /**
  * Subset of the registry that should appear in the interactive picker for a
@@ -402,7 +539,9 @@ export const DEFAULT_VLLM_MODEL: VllmModelDef = VLLM_MODELS[0];
  * the recommended entry by id rather than position.
  */
 export function modelsForPlatform(platform: VllmPlatform): readonly VllmModelDef[] {
-  return VLLM_MODELS.filter((model) => model.platforms.includes(platform));
+  return VLLM_MODELS.filter((model) =>
+    (model.pickerPlatforms ?? model.platforms).includes(platform),
+  );
 }
 
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
@@ -626,40 +765,46 @@ export function buildNemotronUltraDistributedServeCommand(
     throw new Error("Nemotron Ultra Ray head nodeAddr must match masterAddr.");
   }
 
-  const model = VLLM_MODELS.find(
-    (candidate) => candidate.envValue === "nemotron-3-ultra-550b-a55b",
-  );
-  if (!model?.revision || !model.servedModelId) {
+  const model = vllmModelForOrchestration(STATION_PAIR_OPTIONAL_ORCHESTRATION, "station", "arm64");
+  const stationPair = model
+    ? vllmStationPairForOrchestration(
+        model,
+        STATION_PAIR_OPTIONAL_ORCHESTRATION,
+        "station",
+        "arm64",
+      )
+    : undefined;
+  if (!model?.revision || !stationPair) {
     throw new Error(
-      "Nemotron Ultra distributed serving requires a pinned revision and served model id.",
+      "Station-pair distributed serving requires a pinned revision and orchestration config.",
     );
   }
 
-  const sharedArgs = rewriteVllmArgs(SHARED_VLLM_ARGS, {
-    "--tensor-parallel-size": "1",
-    "--pipeline-parallel-size": "2",
+  const sharedArgs = rewriteVllmArgs(FIXED_HOST_LOCAL_VLLM_ARGS, {
+    "--tensor-parallel-size": String(stationPair.tensorParallelSize),
+    "--pipeline-parallel-size": String(stationPair.pipelineParallelSize),
   });
   const modelArgs = rewriteVllmArgs(
     model.modelArgs,
     {
-      // Rank 0 binds only to the selected direct-attach RoCE address. This
-      // keeps the API off the management network while still giving the
-      // OpenShell route a host-reachable endpoint. The lifecycle also enables
-      // vLLM bearer authentication. The Ray worker exposes no API.
-      "--host": masterAddr,
       "--max-num-seqs": "256",
       "--gpu-memory-utilization": "0.9",
     },
     new Set([
       "--cpu-offload-gb",
       "--cpu-offload-params",
-      "--kernel_config",
+      "--kernel-config",
       "--speculative-config",
       "--default-chat-template-kwargs",
     ]),
   );
   const args = [
     ...sharedArgs,
+    // Rank 0 binds only to the selected direct-attach RoCE address. This
+    // keeps the API off the management network while still giving the
+    // OpenShell route a host-reachable endpoint. The Ray worker exposes no API.
+    "--host",
+    masterAddr,
     "--distributed-executor-backend",
     "ray",
     "--kv-cache-dtype",
@@ -672,7 +817,7 @@ export function buildNemotronUltraDistributedServeCommand(
     "--revision",
     model.revision,
     "--served-model-name",
-    "nemotron-ultra",
+    stationPair.servedName,
     ...modelArgs,
   ];
   const bootstrap = [
@@ -714,7 +859,7 @@ export function buildNemotronUltraDistributedServeCommand(
     "    time.sleep(5)",
     "print(ray.cluster_resources())",
     "PY",
-    `exec vllm serve ${model.id} ${args.join(" ")}`,
+    `exec vllm serve ${[model.id, ...args].map(shellQuote).join(" ")}`,
   ].join("\n");
 }
 
