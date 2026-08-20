@@ -479,6 +479,72 @@ describe("Hermes managed-tool gateway broker", () => {
     BROKER_TEST_TIMEOUT_MS,
   );
 
+  it(
+    "keeps a stale broker-like non-listener alive while replacement startup clears its records",
+    async ({ resources, skip }) => {
+      const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-broker-stale-non-listener-"));
+      vi.stubEnv("HOME", home);
+      delete require.cache[require.resolve(BROKER_WRAPPER)];
+      const broker = require(BROKER_WRAPPER);
+      const brokerLikeProcess = resources.ownChild(
+        spawn(
+          process.execPath,
+          [
+            "--input-type=commonjs",
+            "--eval",
+            'process.stdout.write("ready\\n"); setInterval(() => {}, 1_000);',
+            "tool-gateway-broker.ts",
+          ],
+          { stdio: ["ignore", "pipe", "pipe"] },
+        ),
+      );
+      let brokerLikeOutput = "";
+      brokerLikeProcess.stdout?.on("data", (chunk) => {
+        brokerLikeOutput += chunk.toString();
+      });
+      await waitForBrokerCondition(
+        "broker-like non-listener",
+        brokerLikeProcess,
+        () => brokerLikeOutput,
+        () => brokerLikeOutput.includes("ready"),
+      );
+
+      const credsDir = path.dirname(broker.HERMES_TOOL_GATEWAY_STATE_DIR);
+      const pidPath = path.join(credsDir, "hermes-tool-gateway-broker.pid");
+      const hashPath = path.join(credsDir, "hermes-tool-gateway-broker.hash");
+      fs.mkdirSync(credsDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(pidPath, `${String(brokerLikeProcess.pid)}\n`, { mode: 0o600 });
+      fs.writeFileSync(hashPath, "stale-hash\n", { mode: 0o600 });
+      fs.writeFileSync(broker.HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH, "stale", { mode: 0o600 });
+
+      let replacementPid = brokerLikeProcess.pid!;
+      try {
+        try {
+          expect(broker.ensureHermesToolGatewayBroker({ startWithoutCredential: true })).toBe(true);
+        } catch (error) {
+          skip(
+            String(error).includes("EADDRINUSE"),
+            `port ${String(broker.HERMES_TOOL_GATEWAY_PORT)} is already held`,
+          );
+          throw error;
+        }
+        replacementPid = Number.parseInt(fs.readFileSync(pidPath, "utf8").trim(), 10);
+        expect(replacementPid).not.toBe(brokerLikeProcess.pid);
+        expect(fs.readFileSync(hashPath, "utf8").trim()).toBe(broker.brokerRuntimeHash());
+        expect(fs.statSync(broker.HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH).isSocket()).toBe(true);
+        expect(() => process.kill(brokerLikeProcess.pid!, 0)).not.toThrow();
+      } finally {
+        try {
+          process.kill(replacementPid, "SIGTERM");
+        } catch {
+          // The recorded process can exit before test cleanup.
+        }
+        delete require.cache[require.resolve(BROKER_WRAPPER)];
+      }
+    },
+    BROKER_TEST_TIMEOUT_MS,
+  );
+
   it("reports a missing listener inspector once and fails ownership closed", () => {
     delete require.cache[require.resolve(BROKER_WRAPPER)];
     const broker = require(BROKER_WRAPPER);

@@ -698,7 +698,7 @@ function isHermesToolGatewayBrokerHealthy() {
 
 function killStaleHermesToolGatewayBroker() {
   const pid = readPid();
-  if (isHermesToolGatewayBrokerProcess(pid)) {
+  if (isHermesToolGatewayBrokerPortOwner(pid)) {
     run(["kill", String(pid)], { ignoreError: true, suppressOutput: true });
   }
   clearPid();
