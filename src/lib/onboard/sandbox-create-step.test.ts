@@ -249,6 +249,10 @@ describe("runSandboxCreateStep", () => {
       .calls[0][3] as { readyCheck: () => boolean; onPoll: () => void };
 
     expect(streamOpts.readyCheck()).toBe(true);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], {
+      ignoreError: true,
+      timeout: 5_000,
+    });
     expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
 
     (deps.isSandboxReady as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);

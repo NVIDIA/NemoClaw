@@ -22,6 +22,8 @@ import type {
 type LaunchInput = SandboxCreateLaunchWithPrebuildInput;
 type GpuPatchDeps = Parameters<typeof createDockerGpuSandboxCreatePatch>[0]["deps"];
 
+const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
+
 export type SandboxCreateStepContext = {
   agent: LaunchInput["agent"];
   observabilityEnabled: boolean;
@@ -123,7 +125,10 @@ export async function runSandboxCreateStep(
     sandboxEnv,
     {
       readyCheck: () => {
-        const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+        const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+          ignoreError: true,
+          timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
+        });
         return deps.isSandboxReady(list, context.sandboxName);
       },
       onPoll: () => {
