@@ -43,6 +43,8 @@ import {
   ensureDualStationVllmApiKey,
   loadDualStationVllmApiKey,
   type MaterializedHostLocalVllmSelection,
+  NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV,
+  NEMOCLAW_SERVING_PRESET_ENV,
   persistHostLocalVllmRuntimeReceipt,
   recoverHostLocalManagedVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
@@ -108,6 +110,8 @@ import {
   type StorageCapacity,
   type StorageProbeResult,
 } from "./vllm-storage";
+
+export { selectVllmModelFromEnv } from "./vllm-models";
 
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
@@ -1657,33 +1661,54 @@ async function runVllmInstall(
 ): Promise<{ ok: boolean }> {
   const explicitModel = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim();
   const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
-  if (profile.defaultModel.fixedServeCommand) {
-    if (String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
+  const fixedServeCommand = profile.defaultModel.fixedServeCommand === true;
+  if (fixedServeCommand) {
+    if (explicitModel || String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
       console.error(
-        `  vLLM install failed: this local model profile does not accept ${VLLM_EXTRA_ARGS_ENV}.`,
+        `  vLLM install failed: this local model profile does not accept NEMOCLAW_VLLM_MODEL or ${VLLM_EXTRA_ARGS_ENV}.`,
+      );
+      return { ok: false };
+    }
+    const configuredManagedClusterPeers = String(
+      process.env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "",
+    ).trim();
+    const configuredServingPreset = String(process.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
+    if (configuredManagedClusterPeers) {
+      console.error(
+        `  vLLM install failed: this local model profile does not accept ${NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV}.`,
+      );
+      return { ok: false };
+    }
+    if (configuredServingPreset && configuredServingPreset !== profile.servingCatalog?.presetId) {
+      console.error(
+        `  vLLM install failed: ${NEMOCLAW_SERVING_PRESET_ENV} must match this local model profile's catalog preset.`,
       );
       return { ok: false };
     }
   }
-  const managedCluster = hostLocalSelection
-    ? { kind: "not-selected" as const }
-    : await tryInstallManagedClusterManagedVllm(
-        {
-          platform: profile.platform,
-          nonInteractive: opts.nonInteractive,
-          promptFn: opts.promptFn,
-          beforeInstall: opts.beforeInstall,
-        },
-        {
-          prerequisites: dockerPrereqsOk,
-          pullImage,
-          downloadModel,
-          printDownloadAuthentication: printHfDownloadAuthentication,
-        },
-      );
-  if (managedCluster.kind === "handled") return managedCluster.result;
+  if (!hostLocalSelection && !fixedServeCommand) {
+    const managedCluster = await tryInstallManagedClusterManagedVllm(
+      {
+        platform: profile.platform,
+        nonInteractive: opts.nonInteractive,
+        promptFn: opts.promptFn,
+        beforeInstall: opts.beforeInstall,
+      },
+      {
+        prerequisites: dockerPrereqsOk,
+        pullImage,
+        downloadModel,
+        printDownloadAuthentication: printHfDownloadAuthentication,
+      },
+    );
+    if (managedCluster.kind === "handled") return managedCluster.result;
+  }
 
-  if (!hostLocalSelection && !(profile.platform === "station" && configuredPeer)) {
+  if (
+    !hostLocalSelection &&
+    !fixedServeCommand &&
+    !(profile.platform === "station" && configuredPeer)
+  ) {
     const selected = resolveHostLocalVllmSelection(profile, process.env, {
       automatic: opts.nonInteractive,
       readinessReports: opts.readinessReports,
@@ -1764,7 +1789,7 @@ async function runVllmInstall(
     resolved = { model: hostLocalSelection.model, source: "default" };
   } else {
     resolved = await resolveVllmInstallModel(profile, {
-      nonInteractive: opts.nonInteractive,
+      nonInteractive: opts.nonInteractive || fixedServeCommand,
       promptFn: opts.promptFn,
     });
   }
