@@ -443,7 +443,9 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
       probed: true,
       providerLabel: "NVIDIA Endpoints",
       endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
-      detail: "model invocation probe rejected the credential",
+      detail:
+        "NVIDIA Endpoints rejected the host credential in NVIDIA_INFERENCE_API_KEY. " +
+        "Check NVIDIA_INFERENCE_API_KEY where you run this command.",
       failureLabel: "unauthorized",
     };
 
@@ -459,6 +461,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(upstream).toMatchObject({ ok: true, probed: false });
     expect(upstream?.failureLabel).toBeUndefined();
     expect(upstream?.detail).toContain("rejected the host credential");
+    expect(upstream?.detail).toContain("NVIDIA_INFERENCE_API_KEY");
     expect(upstream?.detail).toContain("provider credential stored in the gateway");
     expect(upstream?.detail).toContain("does not attribute this result to the sandbox route");
   });

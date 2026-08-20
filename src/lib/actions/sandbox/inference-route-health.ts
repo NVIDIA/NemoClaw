@@ -117,7 +117,7 @@ function unattributedUpstreamProbe(probe: ProviderHealthStatus): ProviderHealthS
     ok: true,
     probed: false,
     detail:
-      `${probe.providerLabel} rejected the host credential this command resolved. The sandbox ` +
+      `${probe.detail} The sandbox ` +
       "route served an inference request with the provider credential stored in the gateway, so " +
       "NemoClaw does not attribute this result to the sandbox route.",
   };
