@@ -412,6 +412,7 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   const env = optionsWithEnv.env ?? process.env;
   const gatewayPort = Number(gatewayEnv.OPENSHELL_SERVER_PORT ?? GATEWAY_PORT);
   const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
+  assertDockerDriverGatewayBindAddressSafe(gatewayEnv);
   (
     assertNoCompetingService ??
     ((port) => assertNoCompetingOpenShellGatewayUserService(port, { env, home: effectiveHome }))
