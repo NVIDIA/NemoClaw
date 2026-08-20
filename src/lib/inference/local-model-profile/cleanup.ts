@@ -552,9 +552,6 @@ function cleanupLlamaCpp(
   const lease = journalStore.acquireExecution(journal.transactionId);
   try {
     journalStore.assertExecution(lease);
-    // The bridge publishes the runtime port on the host. Stop it before the
-    // container it forwards to is removed, or it outlives a destroy that
-    // reports success and keeps the port bound (#9598).
     const privateBridge =
       options.privateBridge ??
       (process.platform === "linux" ? createDockerLlamaCppPrivateBridgeController() : undefined);
@@ -644,6 +641,10 @@ export interface ManagedLlamaCppSandboxCleanupOptions {
   readonly deps?: Partial<CleanupDeps>;
 }
 
+export interface ManagedLlamaCppLifecycleCleanupOptions extends ManagedLlamaCppSandboxCleanupOptions {
+  readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
+}
+
 function requireManagedLlamaCppLifecycleCleanupReceipt(
   expectedReceipt: HostLocalInferenceReceipt,
 ): HostLocalInferenceReceipt & {
@@ -681,7 +682,7 @@ function requireManagedLlamaCppLifecycleCleanupReceipt(
 export function prepareManagedLlamaCppLifecycleCleanup(
   runtimeOwnerSandboxName: string,
   expectedReceipt: HostLocalInferenceReceipt,
-  options: ManagedLlamaCppSandboxCleanupOptions = {},
+  options: ManagedLlamaCppLifecycleCleanupOptions = {},
 ): HostLocalInferenceReceipt {
   const receipt = requireManagedLlamaCppLifecycleCleanupReceipt(expectedReceipt);
   const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
@@ -746,7 +747,7 @@ export function prepareManagedLlamaCppLifecycleCleanup(
 export function finalizeManagedLlamaCppLifecycleCleanup(
   runtimeOwnerSandboxName: string,
   expectedReceipt: HostLocalInferenceReceipt,
-  options: ManagedLlamaCppSandboxCleanupOptions = {},
+  options: ManagedLlamaCppLifecycleCleanupOptions = {},
 ): LocalModelRuntimeCleanupResult {
   const removed: string[] = [];
   const preserved: string[] = [];

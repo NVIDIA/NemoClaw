@@ -365,7 +365,6 @@ describe("host-local model cleanup", () => {
     const result = cleanupLocalModelRuntimes({
       homeDir,
       engine: harness.engine,
-      privateBridge: privateBridgeFixture(),
       deps: {
         capture: ambientCapture,
         forceRm: ambientForceRm,
@@ -509,7 +508,6 @@ describe("host-local model cleanup", () => {
     const result = cleanupLocalModelRuntimes({
       homeDir: homeAlias,
       engine: harness.engine,
-      privateBridge: privateBridgeFixture(),
     });
 
     expect(result).toMatchObject({ ok: true });
@@ -540,23 +538,25 @@ describe("host-local model cleanup", () => {
     expect(fs.lstatSync(paths.stateDir).isSymbolicLink()).toBe(true);
   });
 
-  it.each(["network-creating", "creating", "created", "started", "receipt-prepared"] as const)(
-    "rolls back an unfinished %s create journal before deleting state",
-    (phase) => {
-      const homeDir = temporaryHome();
-      const harness = engineHarness({ containerPresent: phase !== "network-creating" });
-      createManagedState(homeDir, harness.engine, { phase });
+  it.each([
+    "network-creating",
+    "creating",
+    "created",
+    "started",
+    "receipt-prepared",
+  ] as const)("rolls back an unfinished %s create journal before deleting state", (phase) => {
+    const homeDir = temporaryHome();
+    const harness = engineHarness({ containerPresent: phase !== "network-creating" });
+    createManagedState(homeDir, harness.engine, { phase });
 
-      const result = cleanupLocalModelRuntimes({
-        homeDir,
-        engine: harness.engine,
-        privateBridge: privateBridgeFixture(),
-      });
+    const result = cleanupLocalModelRuntimes({
+      homeDir,
+      engine: harness.engine,
+    });
 
-      expect(result).toMatchObject({ ok: true });
-      expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
-    },
-  );
+    expect(result).toMatchObject({ ok: true });
+    expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);
+  });
 
   it("fails closed on a fresh uncertain create that has no exact container yet", () => {
     const homeDir = temporaryHome();
@@ -569,7 +569,6 @@ describe("host-local model cleanup", () => {
     const result = cleanupLocalModelRuntimes({
       homeDir,
       engine: harness.engine,
-      privateBridge: privateBridgeFixture(),
     });
 
     expect(result).toMatchObject({
@@ -610,7 +609,6 @@ describe("host-local model cleanup", () => {
     const result = cleanupLocalModelRuntimes({
       homeDir,
       engine: harness.engine,
-      privateBridge: privateBridgeFixture(),
     });
 
     expect(result).toMatchObject({
@@ -662,7 +660,6 @@ describe("host-local model cleanup", () => {
     const result = cleanupLocalModelRuntimes({
       homeDir,
       engine: harness.engine,
-      privateBridge: privateBridgeFixture(),
     });
 
     expect(result).toMatchObject({
@@ -694,7 +691,6 @@ describe("host-local model cleanup", () => {
       homeDir,
       gatewayPort,
       engine: harness.engine,
-      privateBridge: privateBridgeFixture(),
     });
     expect(removed).toMatchObject({ ok: true });
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir, gatewayPort).stateDir)).toBe(false);
