@@ -1559,24 +1559,28 @@ export async function connectSandbox(
   sandboxName: string,
   options: SandboxConnectOptions = {},
 ): Promise<void> {
-  const prepared = await withConnectSandboxLifecycleLock(sandboxName, async () => {
-    return prepareConnectSandboxWithinLifecycleFence(sandboxName, options);
+  const started = await withConnectSandboxLifecycleLock(sandboxName, async () => {
+    const prepared = await prepareConnectSandboxWithinLifecycleFence(sandboxName, options);
+    if (!prepared) return null;
+    return {
+      completion: runConnectChildWithShieldsRelockNotice(
+        prepared.binary,
+        prepared.args,
+        {
+          hostCwd: ROOT,
+          stdin: true,
+          ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
+        },
+        sandboxName,
+        prepared.watchShields,
+      ),
+    };
   });
-  if (!prepared) return;
+  if (!started) return;
 
-  // Keep preflight and child authority selection atomic, but do not hold the
-  // lifecycle lock while an interactive shell can remain open indefinitely.
-  const result = await runConnectChildWithShieldsRelockNotice(
-    prepared.binary,
-    prepared.args,
-    {
-      hostCwd: ROOT,
-      stdin: true,
-      ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
-    },
-    sandboxName,
-    prepared.watchShields,
-  );
+  // Start the selected child under the lifecycle lock, then release the lock
+  // before waiting for an interactive shell that can remain open indefinitely.
+  const result = await started.completion;
   result.releaseSignals?.();
   exitWithConnectSpawnResult(sandboxName, result);
 }

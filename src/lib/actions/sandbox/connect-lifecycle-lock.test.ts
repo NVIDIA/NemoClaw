@@ -54,14 +54,33 @@ describe("connectSandbox lifecycle lock", () => {
       expect(lockDepth).toBeGreaterThan(0);
       return { state: "present", output: "Name: alpha\nPhase: Ready\n" };
     });
-    harness.runSandboxExecChildSpy.mockImplementation(async () => {
-      expect(lockDepth).toBe(0);
-      return { status: 0, signal: null };
+    let childStarted!: () => void;
+    const childStarting = new Promise<void>((resolve) => {
+      childStarted = resolve;
+    });
+    let completeChild!: (result: { status: number; signal: null }) => void;
+    const childCompletion = new Promise<{ status: number; signal: null }>((resolve) => {
+      completeChild = resolve;
+    });
+    harness.runSandboxExecChildSpy.mockImplementation(() => {
+      expect(lockDepth).toBeGreaterThan(0);
+      childStarted();
+      return childCompletion;
     });
 
-    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+    const connect = harness.connectSandbox("alpha");
+    await childStarting;
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(lockEntries).toBeGreaterThan(0);
     expect(lockDepth).toBe(0);
+    let contenderEntered = false;
+    await gatewayState.withConnectSandboxLifecycleLock("alpha", async () => {
+      contenderEntered = true;
+      expect(lockDepth).toBe(1);
+    });
+    expect(contenderEntered).toBe(true);
+    completeChild({ status: 0, signal: null });
+    await expect(connect).rejects.toThrow("process.exit(0)");
   });
 });
