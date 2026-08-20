@@ -90,6 +90,20 @@ describe("sandbox inference invocation probe", () => {
     expect(probeSandboxInferenceInvocation(input, { execute })).toEqual({ ok: true });
   });
 
+  it("accepts a reasoning-only response when the reply budget ends before content", () => {
+    const body = JSON.stringify({
+      choices: [
+        {
+          finish_reason: "length",
+          message: { content: null, reasoning_content: null, reasoning: "Planning the reply." },
+        },
+      ],
+    });
+    const execute = vi.fn(() => ({ status: 0, stdout: `200\n${body}`, stderr: "" }));
+
+    expect(probeSandboxInferenceInvocation(input, { execute })).toEqual({ ok: true });
+  });
+
   it.each([
     ["openai-completions", '{"choices":[{"message":{"content":"OK"}}]}'],
     [

@@ -129,6 +129,7 @@ export function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlo
     handleInstallOllamaSelection: async () => unexpected("Ollama install selection"),
     installVllm: async () => unexpected("vLLM install"),
     handleVllmSelection: async () => unexpected("vLLM selection"),
+    selectVllmModelFromEnv: () => null,
     handleRoutedSelection: async () => unexpected("routed selection"),
     coerceAgentInferenceApi: (_agent, preferredInferenceApi) => preferredInferenceApi,
     resolveAgentInferenceApi: (_agentName, _provider, preferredInferenceApi) =>
