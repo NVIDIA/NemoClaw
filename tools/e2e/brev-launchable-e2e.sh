@@ -569,7 +569,7 @@ else
 fi
 reported_boot_image="$(jq -Rr '
   if (length <= 256) and
-      test("^projects/[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?/global/images/[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$")
+      test("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/global/images/[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$")
   then . else "<redacted>" end' <<<"$boot_image")"
 jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
   --arg bootImage "$reported_boot_image" --arg expectedBootImage "$expected_boot_image" \

@@ -657,7 +657,7 @@ describe("focused staging Brev Launchable lane", () => {
   }, 90_000);
 
   it("redacts a malformed boot-image value before retaining failure evidence", () => {
-    const credentialBearingValue = "token=guest-controlled-boot-secret";
+    const credentialBearingValue = "projects/1/global/images/guest-controlled-boot-secret";
     const boot = fixture({ bootImage: credentialBearingValue });
     const result = run(boot.env);
     expect(result.status).not.toBe(0);
