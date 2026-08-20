@@ -58,8 +58,8 @@ describe("Docker runtime-provider state mutation surface", () => {
     const executable = runtime.capture.mock.calls[0]?.[0] as string;
 
     expect(path.isAbsolute(executable)).toBe(true);
-    expect(executable.startsWith(`${runtime.root}${path.sep}`)).toBe(true);
-    expect(runtime.context.environment).toMatchObject({ PATH: path.dirname(executable) });
+    expect(executable).toBe(fs.realpathSync(path.join(runtime.root, "bin", "docker")));
+    expect(runtime.context.environment).toMatchObject({ PATH: path.join(runtime.root, "bin") });
   });
 
   it("resolves one full labeled runtime and records authority only on synchronous acquire", () => {
