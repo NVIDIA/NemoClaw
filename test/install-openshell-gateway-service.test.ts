@@ -430,8 +430,7 @@ describe("install.sh OpenShell gateway service", () => {
       const home = makeTempRoot();
       const gatewayBin = userGatewayBin(home);
       const systemctl = writeGatewayDiscoverySystemctlStub(home, {
-        activeServices: ["openshell-gateway.service"],
-        activationServices: ["nemoclaw-openshell-gateway.service", "renamed-gateway.service"],
+        activationServices: ["renamed-gateway.service"],
         services: {
           "renamed-gateway.service": {
             activeState: "inactive",
@@ -452,8 +451,6 @@ describe("install.sh OpenShell gateway service", () => {
       expect(calls).toContain("show renamed-gateway.service");
       expect(calls).not.toContain("list-unit-files");
       expect(calls).not.toContain("property=Environment");
-      expect(calls).not.toContain("show openshell-gateway.service");
-      expect(calls).not.toContain("show nemoclaw-openshell-gateway.service");
       expect(fs.existsSync(servicePath(home))).toBe(false);
     },
   );

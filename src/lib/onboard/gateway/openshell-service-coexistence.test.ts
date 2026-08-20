@@ -267,7 +267,7 @@ function activationScanOptions(
   };
 }
 
-it("excludes canonical services before a custom-port metadata query (#9705)", () => {
+it("excludes canonical services before a default-port metadata query (#9705)", () => {
   const unrelated = "unrelated.service";
   const activation = activationScanOptions([`${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`]);
   const spawnSyncImpl = competingServiceSpawn({
@@ -280,7 +280,7 @@ it("excludes canonical services before a custom-port metadata query (#9705)", ()
   });
 
   expect(() =>
-    assertNoCompetingOpenShellGatewayUserService(9090, {
+    assertNoCompetingOpenShellGatewayUserService(8080, {
       ...activation.options,
       commandExists: () => true,
       platform: "linux",
@@ -296,6 +296,101 @@ it("excludes canonical services before a custom-port metadata query (#9705)", ()
   ]);
   expect(spawnSyncImpl.mock.calls.some(([, args]) => args.includes("list-unit-files"))).toBe(false);
 });
+
+it.each([
+  ["active upstream", `${OPENSHELL_GATEWAY_USER_SERVICE}.service`, true],
+  ["activation-linked NemoClaw", `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`, false],
+])(
+  "blocks a canonical %s service on the selected custom port (#9705)",
+  (_case, serviceName, active) => {
+    const activation = activationScanOptions(active ? [] : [serviceName]);
+    const spawnSyncImpl = competingServiceSpawn({
+      active: active ? [serviceName] : [],
+      metadata: {
+        [serviceName]: showOutput({
+          ActiveState: active ? "active" : "inactive",
+          ExecStart: `{ path=${TRUSTED_GATEWAY} ; argv[]=${TRUSTED_GATEWAY} --port=18080 ; }`,
+          UnitFileState: active ? "disabled" : "static",
+        }),
+      },
+    });
+
+    expect(() =>
+      assertNoCompetingOpenShellGatewayUserService(18_080, {
+        ...activation.options,
+        commandExists: () => true,
+        platform: "linux",
+        spawnSyncImpl,
+      }),
+    ).toThrow("selected port 18080");
+    const showCall = spawnSyncImpl.mock.calls.find(([, args]) => args.includes("show"));
+    expect(showCall?.[1]).toContain(serviceName);
+    expect(showCall?.[1]).not.toContain("--property=Environment");
+  },
+);
+
+it.each([
+  ["active upstream", `${OPENSHELL_GATEWAY_USER_SERVICE}.service`, true],
+  ["activation-linked NemoClaw", `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`, false],
+])(
+  "allows a canonical %s service on a proved different port (#9705)",
+  (_case, serviceName, active) => {
+    const activation = activationScanOptions(active ? [] : [serviceName]);
+    const spawnSyncImpl = competingServiceSpawn({
+      active: active ? [serviceName] : [],
+      metadata: {
+        [serviceName]: showOutput({
+          ActiveState: active ? "active" : "inactive",
+          ExecStart: `{ path=${TRUSTED_GATEWAY} ; argv[]=${TRUSTED_GATEWAY} --port=9090 ; }`,
+          UnitFileState: active ? "disabled" : "static",
+        }),
+      },
+    });
+
+    expect(() =>
+      assertNoCompetingOpenShellGatewayUserService(18_080, {
+        ...activation.options,
+        commandExists: () => true,
+        platform: "linux",
+        spawnSyncImpl,
+      }),
+    ).not.toThrow();
+    const showCall = spawnSyncImpl.mock.calls.find(([, args]) => args.includes("show"));
+    expect(showCall?.[1]).toContain(serviceName);
+    expect(showCall?.[1]).not.toContain("--property=Environment");
+  },
+);
+
+it.each([
+  ["active upstream", `${OPENSHELL_GATEWAY_USER_SERVICE}.service`, true],
+  ["activation-linked NemoClaw", `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`, false],
+])(
+  "blocks a canonical %s custom-port service with ambiguous port metadata (#9705)",
+  (_case, serviceName, active) => {
+    const activation = activationScanOptions(active ? [] : [serviceName]);
+    const spawnSyncImpl = competingServiceSpawn({
+      active: active ? [serviceName] : [],
+      metadata: {
+        [serviceName]: showOutput({
+          ActiveState: active ? "active" : "inactive",
+          ExecStart: `{ path=${TRUSTED_GATEWAY} ; argv[]=${TRUSTED_GATEWAY} ; }`,
+          UnitFileState: active ? "disabled" : "static",
+        }),
+      },
+    });
+
+    expect(() =>
+      assertNoCompetingOpenShellGatewayUserService(18_080, {
+        ...activation.options,
+        commandExists: () => true,
+        platform: "linux",
+        spawnSyncImpl,
+      }),
+    ).toThrow("ambiguous port configuration");
+    const showCall = spawnSyncImpl.mock.calls.find(([, args]) => args.includes("show"));
+    expect(showCall?.[1]).not.toContain("--property=Environment");
+  },
+);
 
 it("retains the fixed-name activation scan when the user manager is unavailable (#9705)", () => {
   const serviceName = `${OPENSHELL_GATEWAY_USER_SERVICE}.service`;

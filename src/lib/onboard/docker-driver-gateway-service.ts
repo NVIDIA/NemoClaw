@@ -1120,7 +1120,7 @@ function assertCompetingServiceVerdictAllowed(
   );
 }
 
-/** Refuse a noncanonical same-user service that can claim the selected gateway port. */
+/** Refuse a same-user service that can compete for the selected gateway port. */
 export function assertNoCompetingOpenShellGatewayUserService(
   gatewayPort: number,
   opts: OpenShellGatewayUserServiceOptions = {},
@@ -1203,7 +1203,7 @@ export function assertNoCompetingOpenShellGatewayUserService(
     `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`,
   ]);
   const serviceNames = [...new Set([...activeNames, ...activationNames])].filter(
-    (serviceName) => !canonicalNames.has(serviceName),
+    (serviceName) => gatewayPort !== 8080 || !canonicalNames.has(serviceName),
   );
   for (const serviceName of serviceNames) {
     const metadata = runSystemctlUser(

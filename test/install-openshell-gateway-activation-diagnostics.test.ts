@@ -91,6 +91,173 @@ function writeUnavailableSystemctlStub(home: string) {
   return { bin, busctlLog, log };
 }
 
+function writeReachableCanonicalSystemctlStub(
+  home: string,
+  options: { active: boolean; port: number | null; serviceName: string },
+) {
+  const bin = path.join(home, "reachable-systemctl-bin");
+  const log = path.join(home, "reachable-systemctl.log");
+  const managerRoot = path.join(home, "manager-unit-root");
+  const gatewayBin = "/usr/local/bin/openshell-gateway";
+  const execStart =
+    options.port === null
+      ? `{ path=${gatewayBin} ; argv[]=${gatewayBin} ; }`
+      : `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port=${options.port} ; }`;
+  fs.mkdirSync(managerRoot, { recursive: true });
+  options.active ||
+    (() => {
+      const activationPath = path.join(managerRoot, "default.target.wants", options.serviceName);
+      fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+      fs.symlinkSync(path.join(home, `missing-${options.serviceName}`), activationPath);
+    })();
+  fs.mkdirSync(bin, { recursive: true });
+  writeExecutable(
+    path.join(bin, "systemctl"),
+    [
+      "#!/usr/bin/env bash",
+      `printf '%s\\n' "$*" >> ${JSON.stringify(log)}`,
+      'case "$*" in',
+      '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
+      ...(options.active
+        ? [
+            `    printf '%s\\n' ${JSON.stringify(`${options.serviceName} loaded active running test service`)}`,
+          ]
+        : []),
+      "    ;;",
+      `  "--user show ${options.serviceName} --property=ExecStart --property=ActiveState --property=UnitFileState")`,
+      `    printf '%s\\n' ${JSON.stringify(`ExecStart=${execStart}`)}`,
+      `    printf '%s\\n' ${JSON.stringify(`ActiveState=${options.active ? "active" : "inactive"}`)}`,
+      `    printf '%s\\n' ${JSON.stringify(`UnitFileState=${options.active ? "disabled" : "static"}`)}`,
+      "    ;;",
+      "  *) exit 97 ;;",
+      "esac",
+      "",
+    ].join("\n"),
+  );
+  writeExecutable(
+    path.join(bin, "busctl"),
+    [
+      "#!/usr/bin/env bash",
+      `printf '%s\\n' ${JSON.stringify(JSON.stringify({ type: "as", data: [managerRoot] }))}`,
+      "",
+    ].join("\n"),
+  );
+  return { bin, log };
+}
+
+it.each([
+  ["active upstream", "openshell-gateway.service", true],
+  ["activation-linked NemoClaw", "nemoclaw-openshell-gateway.service", false],
+] as const)(
+  "blocks a canonical %s service on the selected custom port (#9705)",
+  (_case, serviceName, active) => {
+    const home = makeTempRoot();
+    const lifecycleMarker = path.join(home, "gateway-lifecycle-effect");
+    const systemctl = writeReachableCanonicalSystemctlStub(home, {
+      active,
+      port: 18_080,
+      serviceName,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "require_no_competing_openshell_gateway_user_service 18080",
+        `printf 'changed\\n' > ${JSON.stringify(lifecycleMarker)}`,
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+    const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stderr).toContain("selected port 18080");
+    expect(calls).toContain(`show ${serviceName}`);
+    expect(calls).not.toContain("property=Environment");
+    expect(fs.existsSync(lifecycleMarker)).toBe(false);
+  },
+);
+
+it.each([
+  ["active upstream", "openshell-gateway.service", true],
+  ["activation-linked NemoClaw", "nemoclaw-openshell-gateway.service", false],
+] as const)(
+  "allows a canonical %s service on a proved different port (#9705)",
+  (_case, serviceName, active) => {
+    const home = makeTempRoot();
+    const lifecycleMarker = path.join(home, "gateway-lifecycle-effect");
+    const systemctl = writeReachableCanonicalSystemctlStub(home, {
+      active,
+      port: 9090,
+      serviceName,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "require_no_competing_openshell_gateway_user_service 18080",
+        `printf 'qualified\\n' > ${JSON.stringify(lifecycleMarker)}`,
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+    const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(calls).toContain(`show ${serviceName}`);
+    expect(calls).not.toContain("property=Environment");
+    expect(fs.readFileSync(lifecycleMarker, "utf-8")).toBe("qualified\n");
+  },
+);
+
+it.each([
+  ["active upstream", "openshell-gateway.service", true],
+  ["activation-linked NemoClaw", "nemoclaw-openshell-gateway.service", false],
+] as const)(
+  "blocks a canonical %s custom-port service with ambiguous port metadata (#9705)",
+  (_case, serviceName, active) => {
+    const home = makeTempRoot();
+    const lifecycleMarker = path.join(home, "gateway-lifecycle-effect");
+    const systemctl = writeReachableCanonicalSystemctlStub(home, {
+      active,
+      port: null,
+      serviceName,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "require_no_competing_openshell_gateway_user_service 18080",
+        `printf 'changed\\n' > ${JSON.stringify(lifecycleMarker)}`,
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stderr).toContain("ambiguous port configuration");
+    expect(fs.existsSync(lifecycleMarker)).toBe(false);
+  },
+);
+
+it("leaves default-port canonical services for lifecycle selection (#9705)", () => {
+  const home = makeTempRoot();
+  const systemctl = writeReachableCanonicalSystemctlStub(home, {
+    active: true,
+    port: 8080,
+    serviceName: "openshell-gateway.service",
+  });
+
+  const result = runInstallHelper(
+    home,
+    "require_no_competing_openshell_gateway_user_service 8080",
+    {
+      PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+    },
+  );
+  const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+  expect(calls).not.toContain("show openshell-gateway.service");
+});
+
 it("blocks offline canonical activation before legacy retirement (#9705)", () => {
   const home = makeTempRoot();
   const activationPath = createCanonicalActivation(home, path.join(home, ".config"));

@@ -64,7 +64,9 @@ export function createInstallerCheckout(prefix: string): InstallerCheckout {
   const workspace = createHostProcessWorkspace(prefix);
   const { root, binDir } = workspace;
   const prefixDir = path.join(root, "prefix");
+  const userManagerUnitRoot = path.join(root, "systemd-user-unit-root");
   fs.mkdirSync(path.join(prefixDir, "bin"), { recursive: true });
+  fs.mkdirSync(userManagerUnitRoot, { recursive: true });
   workspace.writeExecutable(
     "systemctl",
     `#!/usr/bin/env bash
@@ -74,6 +76,21 @@ esac
 exit 1
 `,
   );
+  workspace.writeCommand("busctl", [
+    {
+      args: [
+        "--user",
+        "--json=short",
+        "get-property",
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "UnitPath",
+      ],
+      repeat: true,
+      stdout: `${JSON.stringify({ type: "as", data: [userManagerUnitRoot] })}\n`,
+    },
+  ]);
   return {
     root,
     binDir,

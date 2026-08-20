@@ -1901,9 +1901,11 @@ inspect_noncanonical_openshell_gateway_user_services() {
 
   if [[ "${#service_names[@]}" -gt 0 ]]; then
     for service_name in "${service_names[@]}"; do
-      case "$service_name" in
-        openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service") continue ;;
-      esac
+      if [[ "$selected_port" == "8080" ]]; then
+        case "$service_name" in
+          openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service") continue ;;
+        esac
+      fi
       already_inspected=0
       if [[ "${#inspected_names[@]}" -gt 0 ]]; then
         for inspected_name in "${inspected_names[@]}"; do
