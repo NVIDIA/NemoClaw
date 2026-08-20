@@ -549,22 +549,23 @@ function cleanupLlamaCpp(
     throw new Error("managed llama.cpp finalized receipt is missing");
   }
 
-  const privateBridge =
-    options.privateBridge ??
-    (process.platform === "linux" ? createDockerLlamaCppPrivateBridgeController() : undefined);
-  if (privateBridge) {
-    privateBridge.stopTransaction(journal.transactionId);
-    privateBridge.assertStopped(journal.transactionId);
-  }
-  const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
-  requireQualifiedEngine(receipt?.engineAuthority ?? journal.engineAuthority, engine);
-  requireEngineSuccess(
-    "engine availability check",
-    engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
-  );
-
   const lease = journalStore.acquireExecution(journal.transactionId);
   try {
+    journalStore.assertExecution(lease);
+    const privateBridge =
+      options.privateBridge ??
+      (process.platform === "linux" ? createDockerLlamaCppPrivateBridgeController() : undefined);
+    if (privateBridge) {
+      privateBridge.stopTransaction(journal.transactionId);
+      privateBridge.assertStopped(journal.transactionId);
+    }
+    journalStore.assertExecution(lease);
+    const engine = options.engine ?? createManagedLlamaCppEngine(options.env ?? process.env);
+    requireQualifiedEngine(receipt?.engineAuthority ?? journal.engineAuthority, engine);
+    requireEngineSuccess(
+      "engine availability check",
+      engine.capture(["info"], DOCKER_INSPECT_TIMEOUT_MS),
+    );
     journalStore.assertExecution(lease);
     removeExactContainerForJournal(engine, journal, removed);
     journalStore.assertExecution(lease);

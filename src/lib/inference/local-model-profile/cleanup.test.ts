@@ -625,6 +625,7 @@ describe("host-local model cleanup", () => {
   it("does not race cleanup against a live lifecycle execution lease", () => {
     const homeDir = temporaryHome();
     const harness = engineHarness();
+    const privateBridge = privateBridgeFixture();
     createManagedState(homeDir, harness.engine, { phase: "started" });
     const store = createHostLocalCreateJournalStore(managedLlamaCppStatePaths(homeDir).stateDir);
     const lease = store.acquireExecution(TRANSACTION_ID);
@@ -632,6 +633,7 @@ describe("host-local model cleanup", () => {
       const result = cleanupLocalModelRuntimes({
         homeDir,
         engine: harness.engine,
+        privateBridge,
       });
 
       expect(result).toMatchObject({
@@ -642,6 +644,8 @@ describe("host-local model cleanup", () => {
         ["rm", "--force", RUNTIME_ID],
         expect.any(Number),
       );
+      expect(privateBridge.stopTransaction).not.toHaveBeenCalled();
+      expect(privateBridge.assertStopped).not.toHaveBeenCalled();
       expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(true);
     } finally {
       store.releaseExecution(lease);
