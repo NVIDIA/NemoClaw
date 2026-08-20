@@ -41,7 +41,10 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
       stdout:
         "gateway startup failed: Authorization: Bearer abc.def.ghi rejected\n" +
         'gateway startup failed: api_key="nv-secret-123" invalid\n' +
-        "gateway startup failed: \u001b[31mboom\u001b[0m Process will stay alive\n",
+        "gateway startup failed: \u001b[31mboom\u001b[0m Process will stay alive\n" +
+        "gateway startup failed: env OPENAI_API_KEY=example-not-a-real-value-0001\n" +
+        "gateway startup failed: SLACK_BOT_TOKEN=example-not-a-real-value-0002\n" +
+        "Process will stay alive; TELEGRAM_BOT_TOKEN=example-not-a-real-value-0003\n",
       stderr: "",
     }));
     expect(lines[0]).toBe("gateway startup failed: Authorization: Bearer [REDACTED] rejected");
@@ -50,6 +53,12 @@ describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
     // operator-terminal content.
     expect(lines[2]).toBe("gateway startup failed: [31mboom[0m Process will stay alive");
     expect(lines[2]).not.toContain("\u001b");
+    // Underscore-separated credential env names need the shared redactor: `\b`
+    // does not match between `_` and a word character, so the local patterns
+    // above never reach the assignment.
+    expect(lines[3]).toBe("gateway startup failed: env OPENAI_API_KEY=<REDACTED>");
+    expect(lines[4]).toBe("gateway startup failed: SLACK_BOT_TOKEN=<REDACTED>");
+    expect(lines[5]).toBe("Process will stay alive; TELEGRAM_BOT_TOKEN=<REDACTED>");
   });
 });
 

@@ -18,6 +18,7 @@
 // defaulted off.
 
 import { shellQuote } from "../../runner";
+import { redactFull } from "../../security/redact";
 import type { SandboxCommandResult } from "./process-recovery";
 
 export type SandboxExec = (sandboxName: string, command: string) => SandboxCommandResult | null;
@@ -29,6 +30,8 @@ const WEDGE_LOG_SIGNATURE =
 // strip terminal control characters (no escape-sequence forgery in operator
 // terminals) and redact common credential shapes before printing.
 const CONTROL_CHARS_RE = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]", "g");
+// These local patterns run after redactFull and stay: their `nvapi-\S+` catch-all
+// is unbounded where the shared one requires ten or more characters.
 const SECRET_PATTERNS: RegExp[] = [
   /\b(authorization\s*:\s*bearer)\s+\S+/gi,
   /\b(api[-_]?key|token|secret|password)(["']?\s*[=:]\s*["']?)\S+/gi,
@@ -37,6 +40,7 @@ const SECRET_PATTERNS: RegExp[] = [
 
 export function sanitizeWedgeLogLine(line: string): string {
   let sanitized = line.replace(CONTROL_CHARS_RE, "");
+  sanitized = redactFull(sanitized);
   sanitized = sanitized.replace(SECRET_PATTERNS[0], "$1 [REDACTED]");
   sanitized = sanitized.replace(SECRET_PATTERNS[1], "$1$2[REDACTED]");
   sanitized = sanitized.replace(SECRET_PATTERNS[2], "[REDACTED]");
