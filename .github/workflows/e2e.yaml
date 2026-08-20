@@ -3931,7 +3931,7 @@ jobs:
   # Manual PR qualification also requires the exact candidate activation contract.
   managed-image-multiarch-startup:
     name: Protected managed-image startup (${{ matrix.platform }})
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-multiarch-startup') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime')) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 210
@@ -4058,6 +4058,7 @@ jobs:
       - id: bases
         name: Resolve exact platform base images
         env:
+          DCODE_BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           PLATFORM: ${{ matrix.platform }}
         shell: bash
         run: |
@@ -4106,9 +4107,21 @@ jobs:
           resolve_base hermes \
             ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
-          resolve_base dcode \
-            ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest \
-            ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
+          dcode_reference="$(
+            jq -er --arg platform "$PLATFORM" \
+              '.platformReferences[$platform]' <<< "$DCODE_BASE_CONTRACT"
+          )"
+          [[ "$dcode_reference" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
+            echo "::error::dcode base publication returned an invalid exact platform reference" >&2
+            exit 1
+          }
+          dcode_digest="${dcode_reference##*@}"
+          docker buildx imagetools inspect "$dcode_reference" --raw > "$work_dir/dcode-exact.raw"
+          [[ "sha256:$(sha256sum "$work_dir/dcode-exact.raw" | awk '{print $1}')" == "$dcode_digest" ]] || {
+            echo "::error::dcode exact base bytes do not match the published platform digest" >&2
+            exit 1
+          }
+          printf 'dcode=%s\n' "$dcode_reference" >> "$GITHUB_OUTPUT"
 
       - name: Start isolated protected managed-image registry
         shell: bash

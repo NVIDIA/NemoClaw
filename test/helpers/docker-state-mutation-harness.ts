@@ -302,14 +302,16 @@ function createContainerStateMutationHarness(
         const containerPath = destination.slice(containerPrefix.length);
         const payload = fs.readFileSync(source);
         transportFiles.set(containerPath, payload);
-        if (containerPath.endsWith(".ready")) {
-          const identity = path.posix.basename(containerPath, ".ready");
-          if (/^[a-f0-9]{64}$/u.test(identity)) {
-            const requestPath = `${containerPath.slice(0, -6)}.request`;
-            const request = transportFiles.get(requestPath);
-            if (request) {
-              const envelope = JSON.parse(request.toString("utf8")) as { action?: string };
-              const action = envelope.action ?? "";
+        if (containerPath.endsWith(".incoming")) {
+          const incoming = /^([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming$/u.exec(
+            path.posix.basename(containerPath),
+          );
+          if (incoming) {
+            const [, identity, action] = incoming;
+            const request = payload;
+            const envelope = JSON.parse(request.toString("utf8")) as { action?: string };
+            if (envelope.action === action) {
+              transportFiles.delete(containerPath);
               const helperTimeout =
                 action === "acquire" || action === "assert"
                   ? 30_000
@@ -345,7 +347,7 @@ function createContainerStateMutationHarness(
                 );
               }
               transportFiles.set(
-                `${containerPath.slice(0, -6)}.response`,
+                `${path.posix.dirname(containerPath)}/${identity}.response`,
                 Buffer.from(
                   `${JSON.stringify({
                     schemaVersion: 1,
@@ -362,7 +364,7 @@ function createContainerStateMutationHarness(
           }
         } else if (containerPath.endsWith(".ack")) {
           const base = containerPath.slice(0, -4);
-          for (const suffix of [".request", ".ready", ".response", ".ack"]) {
+          for (const suffix of [".response", ".ack"]) {
             transportFiles.delete(`${base}${suffix}`);
           }
         }

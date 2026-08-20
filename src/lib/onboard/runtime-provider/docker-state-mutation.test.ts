@@ -484,7 +484,7 @@ describe("Docker state mutation owner", () => {
     expect(runtime.lifecycleStore.listUnfinished()[0]?.phase).toBe("fence-established");
   });
 
-  it("establishes helper transport before it host-stops managed Hermes (#9485)", () => {
+  it("publishes one content-addressed request after it host-stops managed Hermes (#9485)", () => {
     const runtime = harness({ stateMountType: "volume" });
 
     const acquired = runtime.owner.acquire({ ...runtime.context, plan: plan() });
@@ -503,9 +503,10 @@ describe("Docker state mutation owner", () => {
     });
     const stop = commands.findIndex((args) => args[1] === "kill");
     const broker = commands.findIndex((args) => args[1] === "exec" && args.includes("--detach"));
-    const request = commands.findIndex(
-      (args) => args[1] === "cp" && args.at(-1)?.endsWith(".request"),
+    const publications = commands.filter(
+      (args) => args[1] === "cp" && args.at(-1)?.endsWith(".acquire.incoming"),
     );
+    const request = commands.indexOf(publications[0] ?? []);
     expect(commands[stop]).toEqual(["container", "kill", "--signal", "SIGSTOP", RUNTIME_ID]);
     expect(runtime.capture.mock.calls.find(([, args]) => args[5] === "kill")?.[1]).toEqual([
       "--config",
@@ -520,7 +521,15 @@ describe("Docker state mutation owner", () => {
     ]);
     expect(broker).toBeGreaterThanOrEqual(0);
     expect(stop).toBeGreaterThan(broker);
+    expect(publications).toHaveLength(1);
     expect(request).toBeGreaterThan(stop);
+    expect(
+      commands.some(
+        (args) =>
+          args[1] === "cp" &&
+          (args.at(-1)?.endsWith(".request") || args.at(-1)?.endsWith(".ready")),
+      ),
+    ).toBe(false);
     expect(
       commands.some(
         (args) =>

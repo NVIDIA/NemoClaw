@@ -90,9 +90,10 @@ import time
 
 ROOT = "/run/nemoclaw/runtime-state-mutation"
 MAXIMUM = 128 * 1024
-ACTIONS = frozenset(("acquire", "assert", "publish", "recover", "rollback", "activate", "release"))
 TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": 300, "release": 300}
 IDENTITY = re.compile(r"[a-f0-9]{64}\Z")
+INCOMING = re.compile(r"([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming\Z")
+PUBLICATION_SETTLE_SECONDS = 5
 
 def fail(code):
     raise RuntimeError(code)
@@ -136,6 +137,29 @@ def private_file(path):
     finally:
         os.close(descriptor)
 
+def copied_file(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        before = os.fstat(descriptor)
+        payload = bytearray()
+        while len(payload) <= MAXIMUM:
+            chunk = os.read(descriptor, min(64 * 1024, MAXIMUM + 1 - len(payload)))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        after = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0 or
+            before.st_nlink != 1 or len(payload) > MAXIMUM or
+            (before.st_dev, before.st_ino, before.st_nlink, before.st_uid, before.st_gid,
+             before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
+            (after.st_dev, after.st_ino, after.st_nlink, after.st_uid, after.st_gid,
+             after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+            fail("transport-copied-file-invalid")
+        os.fchmod(descriptor, 0o600)
+        return bytes(payload)
+    finally:
+        os.close(descriptor)
+
 def response_payload(action, identity, status, stdout, stderr):
     return json.dumps({"schemaVersion": 1, "action": action, "identity": identity,
         "status": status, "stdout": stdout, "stderr": stderr},
@@ -169,30 +193,31 @@ try:
 except BlockingIOError:
     raise SystemExit(0)
 atomic(os.path.join(session, "ready"), (transaction + "\n").encode("ascii"))
+pending = {}
 
 while True:
     names = sorted(os.listdir(session))
     for name in names:
-        if not name.endswith(".ready"):
+        incoming = INCOMING.fullmatch(name)
+        if incoming is None:
             continue
-        identity = name[:-6]
-        if IDENTITY.fullmatch(identity) is None:
-            continue
-        request_path = os.path.join(session, identity + ".request")
+        identity, action = incoming.groups()
+        request_path = os.path.join(session, name)
         response_path = os.path.join(session, identity + ".response")
-        if os.path.exists(response_path) or not os.path.exists(request_path):
+        if os.path.exists(response_path):
             continue
-        action = "invalid"
+        validated = False
         try:
-            if private_file(os.path.join(session, name)) != (identity + "\n").encode("ascii"):
-                fail("transport-ready-invalid")
-            request = private_file(request_path)
+            request = copied_file(request_path)
             if not request.endswith(b"\n") or hashlib.sha256(request).hexdigest() != identity:
                 fail("transport-request-invalid")
             envelope = json.loads(request.decode("utf-8", "strict"))
-            action = envelope.get("action") if isinstance(envelope, dict) else "invalid"
-            if action not in ACTIONS or envelope.get("transactionId") != transaction:
+            if (not isinstance(envelope, dict) or envelope.get("action") != action or
+                envelope.get("transactionId") != transaction):
                 fail("transport-request-invalid")
+            validated = True
+            pending.pop(name, None)
+            os.unlink(request_path)
             completed = run_helper(action, request)
             if len(completed.stdout) > MAXIMUM or len(completed.stderr) > MAXIMUM:
                 fail("transport-response-too-large")
@@ -202,14 +227,18 @@ while True:
         except subprocess.TimeoutExpired:
             response = response_payload(action, identity, 1, "", "helper-timeout")
         except (OSError, RuntimeError, UnicodeError, ValueError):
-            # docker cp publishes directly to the destination name. The broker
-            # can observe a just-created ready file before the copy has made its
-            # contents and metadata stable. Do not turn that publication window
-            # into a terminal response with an invalid action; retry the same
-            # transaction-bound request on the next broker pass.
-            if action == "invalid":
-                continue
-            response = response_payload(action, identity, 1, "", "transport-failed")
+            if not validated:
+                first_observed = pending.setdefault(name, time.monotonic())
+                if time.monotonic() - first_observed < PUBLICATION_SETTLE_SECONDS:
+                    continue
+                pending.pop(name, None)
+                try:
+                    os.unlink(request_path)
+                except FileNotFoundError:
+                    pass
+                response = response_payload(action, identity, 1, "", "transport-request-invalid")
+            else:
+                response = response_payload(action, identity, 1, "", "transport-failed")
         atomic(response_path, response)
     for name in names:
         if not name.endswith(".ack"):
@@ -222,10 +251,10 @@ while True:
             continue
         try:
             response = json.loads(private_file(response_path).decode("utf-8", "strict"))
-            if private_file(os.path.join(session, name)) != (identity + "\n").encode("ascii"):
+            if copied_file(os.path.join(session, name)) != (identity + "\n").encode("ascii"):
                 fail("transport-ack-invalid")
             successful_release = response.get("action") == "release" and response.get("status") == 0
-            for suffix in (".request", ".ready", ".response", ".ack"):
+            for suffix in (".response", ".ack"):
                 try:
                     os.unlink(os.path.join(session, identity + suffix))
                 except FileNotFoundError:
@@ -1425,24 +1454,15 @@ function invokeHelperTransport(
   const sessionPath = helperTransportSessionPath(transactionId);
   const result = withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
     const request = path.join(temporary, "request");
-    const ready = path.join(temporary, "ready");
     writePrivateTransportFile(request, input);
-    writePrivateTransportFile(ready, Buffer.from(`${identity}\n`, "ascii"));
     requireCommandSuccess(
       copyHelperTransportFile(
         capture,
         helperTransportCopyToCommand(
           options.runtimeId,
           request,
-          `${sessionPath}/${identity}.request`,
+          `${sessionPath}/${identity}.${action}.incoming`,
         ),
-      ),
-      "root helper transport request",
-    );
-    requireCommandSuccess(
-      copyHelperTransportFile(
-        capture,
-        helperTransportCopyToCommand(options.runtimeId, ready, `${sessionPath}/${identity}.ready`),
       ),
       "root helper transport request publication",
     );

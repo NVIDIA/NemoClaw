@@ -775,6 +775,65 @@ describe("MessagingSetupApplier", () => {
     });
   });
 
+  it("removes hook-created WeChat config when the channel is disabled", async () => {
+    const enabledPlan = await buildOnboardPlan(
+      {
+        WECHAT_BOT_TOKEN: "wechat-token",
+        WECHAT_ACCOUNT_ID: "wechat-account",
+      },
+      ["wechat"],
+    );
+    const stoppedPlan = await planner().buildChannelStopPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      channelId: "wechat",
+      sandboxEntry: {
+        name: "demo",
+        messaging: {
+          schemaVersion: 1,
+          plan: compactSandboxMessagingPlanForPersistence(
+            enabledPlan,
+          ) as unknown as SandboxMessagingPlan,
+        },
+      },
+    });
+    expect(stoppedPlan?.disabledChannels).toEqual(["wechat"]);
+
+    const files: Record<string, string> = {
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          "openclaw-weixin": {
+            accounts: {
+              "wechat-account": { enabled: true },
+            },
+          },
+        },
+        plugins: {
+          entries: {
+            "openclaw-weixin": { enabled: true },
+          },
+        },
+        preserved: true,
+      }),
+    };
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(stoppedPlan!, {
+      runOpenshell: (args, options) => {
+        const target = String(args.at(-1));
+        const reading = args.includes("cat") && options?.input === undefined;
+        const written = options?.input;
+        Object.assign(files, written === undefined ? {} : { [target]: written });
+        return reading
+          ? { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" }
+          : { status: written === undefined ? 1 : 0 };
+      },
+    });
+
+    const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
+    expect(openclawConfig.channels["openclaw-weixin"]).toBeUndefined();
+    expect(openclawConfig.plugins.entries["openclaw-weixin"]).toBeUndefined();
+    expect(openclawConfig.preserved).toBe(true);
+  });
+
   it("runs post-install hook implementations and writes their build-file outputs", async () => {
     const plan = await buildOnboardPlan(
       {
