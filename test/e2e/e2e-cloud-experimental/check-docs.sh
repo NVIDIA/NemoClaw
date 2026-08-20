@@ -336,7 +336,6 @@ JSON
 
     local _flags
     _flags="$(printf '%s\n' "$_flag_line" | tr ' ' '\n' | grep -v '^$' | LC_ALL=C sort -u || true)"
-    [[ -z "$_flags" ]] && continue
 
     local _section
     _section="$(extract_md_section "$cmd_line" "$COMMANDS_MD")"
@@ -362,6 +361,7 @@ JSON
         | grep -vxE -- '--help|--version' \
         | LC_ALL=C sort -u || true
     )"
+    [[ -z "$_flags" && -z "$_doc_flags" ]] && continue
 
     local _needs_rendered_help=0
     while IFS= read -r flag; do

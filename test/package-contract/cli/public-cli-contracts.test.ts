@@ -45,10 +45,17 @@ exec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI_ENTRYPOINT)} "$@"
 `,
       { mode: 0o755 },
     );
+    // Remove ordinary metadata flags for one command whose documentation
+    // requires its custom rendered help. The fallback must still run.
     fs.writeFileSync(
       nodeShim,
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >>${JSON.stringify(nodeInvocationLog)}
+if [[ "$2" == "--dump-command-flags" ]]; then
+  set -o pipefail
+  ${JSON.stringify(process.execPath)} "$@" | LC_ALL=C awk -F '\\t' '$1 == "nemoclaw <name> agent" { print $1 "\\t"; next } { print }'
+  exit $?
+fi
 exec ${JSON.stringify(process.execPath)} "$@"
 `,
       { mode: 0o755 },
