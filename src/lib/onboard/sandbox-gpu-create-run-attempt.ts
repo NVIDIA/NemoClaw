@@ -401,6 +401,7 @@ export function createSandboxGpuCreateAttemptRunner(
             } else {
               const list = deps.runCaptureOpenshell(["sandbox", "list"], {
                 ignoreError: true,
+                timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
               if (!isSandboxReady(list, input.sandboxName)) {
                 throw new Error(
