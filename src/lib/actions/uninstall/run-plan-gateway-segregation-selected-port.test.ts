@@ -254,4 +254,78 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
+
+  it("prunes selected rows after recovering an abandoned registry lock", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-stale-lock-"));
+    const port = 9124;
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+      vi.resetModules();
+      const runPortUninstall = bindManagedGatewayAuthority(
+        (await import("./run-plan")).runUninstallPlan,
+      );
+      const shared = path.join(tmpHome, ".nemoclaw");
+      const selected = path.join(shared, "gateways", String(port));
+      fs.mkdirSync(selected, { recursive: true });
+      fs.writeFileSync(
+        path.join(shared, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "default-box",
+          sandboxes: { "default-box": { name: "default-box" } },
+        }),
+      );
+      const selectedRegistry = path.join(selected, "sandboxes.json");
+      fs.writeFileSync(
+        selectedRegistry,
+        JSON.stringify({
+          defaultSandbox: "port-box",
+          sandboxes: {
+            "port-box": {
+              name: "port-box",
+              gatewayName: `nemoclaw-${String(port)}`,
+              gatewayPort: port,
+            },
+          },
+        }),
+      );
+      // An uninstall killed inside its own critical section leaves an
+      // owner-less lock directory that no live process holds.
+      const abandonedLock = `${selectedRegistry}.lock`;
+      fs.mkdirSync(abandonedLock, { mode: 0o700 });
+      const abandonedAt = new Date(Date.now() - 600_000);
+      fs.utimesSync(abandonedLock, abandonedAt, abandonedAt);
+      writeScopedGatewayState(tmpHome, port);
+
+      const result = runPortUninstall(
+        {
+          assumeYes: true,
+          deleteModels: false,
+          destroyUserData: false,
+          gatewayName: `nemoclaw-${String(port)}`,
+          keepOpenShell: true,
+        },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
+          error: vi.fn(),
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          log: vi.fn(),
+          run: () => ok(),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(fs.existsSync(abandonedLock)).toBe(false);
+      expect(
+        Object.keys(
+          (JSON.parse(fs.readFileSync(selectedRegistry, "utf8")) as { sandboxes: object })
+            .sandboxes,
+        ),
+      ).toEqual([]);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
 });
