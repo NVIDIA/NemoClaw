@@ -199,8 +199,29 @@ describe("buildDockerDriverGatewayEnv", () => {
   });
 });
 
-
 describe("writeDockerGatewayDebEnvOverride", () => {
+  it("checks competing services before custom-port managed-service fallback (#9705)", async () => {
+    const assertNoCompetingService = vi.fn();
+    const hasService = vi.fn();
+
+    await expect(
+      startPackageManagedDockerDriverGatewayWithEnvOverride({
+        assertNoCompetingOpenShellGatewayUserService: assertNoCompetingService,
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayEnv: { OPENSHELL_SERVER_PORT: "9090" },
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: hasService,
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).resolves.toBe(false);
+
+    expect(assertNoCompetingService).toHaveBeenCalledWith(9090);
+    expect(hasService).not.toHaveBeenCalled();
+  });
 
   it("rejects an env file swapped to a symlink after opening without writing its target", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
@@ -243,7 +264,6 @@ describe("writeDockerGatewayDebEnvOverride", () => {
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
   });
-
 
   it("uses the provided HOME as the config root fallback when XDG_CONFIG_HOME is unset", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-home-"));
@@ -289,6 +309,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          assertNoCompetingOpenShellGatewayUserService: vi.fn(),
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env: homeEnv(tempHome),
           exitOnFailure: false,

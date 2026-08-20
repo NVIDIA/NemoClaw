@@ -1266,6 +1266,8 @@ ONBOARD_RAN=false
 _CLI_PATH=""
 _NEMOCLAW_CLI_INSTALL_PREPARED=false
 _NEMOCLAW_CLI_INSTALL_MODE=""
+_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE=""
+_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_DIGEST=""
 _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
 _PREEXISTING_SANDBOX_COUNT=0
 _PREEXISTING_SANDBOX_RECOVERY_RAN=false
@@ -1284,6 +1286,80 @@ _OPENSHELL_SANDBOX_NAME_MAX_LENGTH=19
 # reported a failure. A failed/destructive rebuild must not be reported as a
 # clean install, so print_done downgrades the final banner when this is true.
 _UPGRADE_SANDBOXES_FAILED=false
+
+require_stable_installer_gateway_management() {
+  local gateway_management_module management_output management_status
+  local management_mode management_digest unexpected
+  gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/src/lib/onboard/gateway-management.ts"
+  [[ -f "$gateway_management_module" ]] \
+    || error "Invalid gateway management declaration: the gateway management parser is unavailable."
+  command -v node >/dev/null 2>&1 \
+    || error "Invalid gateway management declaration: Node.js is unavailable for gateway management validation."
+
+  if management_output="$(node --no-warnings --experimental-strip-types \
+    --input-type=module --eval '
+      import { createHash } from "node:crypto";
+      import { pathToFileURL } from "node:url";
+
+      let gatewayManagement;
+      try {
+        gatewayManagement = await import(pathToFileURL(process.argv[1]).href);
+      } catch {
+        console.error("Invalid gateway management declaration: the gateway management parser could not be loaded.");
+        process.exit(1);
+      }
+      let loaded;
+      try {
+        loaded = gatewayManagement.loadGatewayManagementDeclaration();
+      } catch {
+        console.error(
+          gatewayManagement.invalidGatewayManagementDeclarationError(
+            "gateway management declaration could not be loaded",
+          ).message,
+        );
+        process.exit(1);
+      }
+      if (!loaded.ok) {
+        console.error(
+          gatewayManagement.invalidGatewayManagementDeclarationError(
+            "declaration failed validation",
+          ).message,
+        );
+        process.exit(1);
+      }
+      const mode = loaded.declaration?.mode === "externally-supervised" ? "external" : "managed";
+      const digest = createHash("sha256")
+        .update(JSON.stringify(loaded.declaration))
+        .digest("hex");
+      process.stdout.write(mode + " " + digest);
+    ' "$gateway_management_module" 2>&1)"; then
+    :
+  else
+    management_status=$?
+    if [[ "$management_output" == "Invalid gateway management declaration: "* &&
+      "$management_output" != *$'\n'* &&
+      "$management_output" != *$'\r'* ]]; then
+      error "$management_output"
+    fi
+    error "Invalid gateway management declaration: validation failed with status ${management_status}."
+  fi
+  read -r management_mode management_digest unexpected <<<"$management_output"
+  if [[ -n "$unexpected" ||
+    ("$management_mode" != "managed" && "$management_mode" != "external") ||
+    ! "$management_digest" =~ ^[a-f0-9]{64}$ ]]; then
+    error "Invalid gateway management declaration: validation returned an unexpected result."
+  fi
+
+  if [[ -z "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" ]]; then
+    _NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE="$management_mode"
+    _NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_DIGEST="$management_digest"
+    return 0
+  fi
+  if [[ "$management_mode" != "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" ||
+    "$management_digest" != "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_DIGEST" ]]; then
+    error "The gateway management declaration changed during installation. The installer stopped before changing gateway lifecycle state."
+  fi
+}
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 # Rejects prerelease suffixes (e.g. "22.19.0-rc.1") to avoid arithmetic errors.
@@ -1457,6 +1533,8 @@ NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE="# ${NEMOCLAW_GATEWAY_SERVICE_MARKER}"
 NEMOCLAW_GATEWAY_SERVICE_NAME="nemoclaw-openshell-gateway"
 UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
 UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
+NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
+NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 
 upstream_openshell_gateway_user_service_installed() {
   [[ "$(uname -s)" == "Linux" ]] || return 1
@@ -1679,6 +1757,179 @@ trusted_openshell_gateway_bin_for_service() {
   esac
 }
 
+classify_noncanonical_openshell_gateway_user_service() {
+  local service_name="${1:-}" selected_port="${2:-}" service_output service_status
+  local classifier_module classifier_output classifier_status
+  NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
+  NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
+
+  if service_output="$(LC_ALL=C systemctl --user show "$service_name" \
+    --property=ExecStart --property=ActiveState --property=UnitFileState 2>&1)"; then
+    :
+  else
+    service_status=$?
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The metadata query for ${service_name} failed with status ${service_status}."
+    return 3
+  fi
+
+  classifier_module="${NEMOCLAW_SOURCE_ROOT}/src/lib/onboard/gateway/openshell-service-coexistence.ts"
+  if [[ ! -f "$classifier_module" ]] || ! command_exists node; then
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The shared service classifier is unavailable."
+    return 3
+  fi
+  if classifier_output="$(
+    printf '%s' "$service_output" \
+      | node --no-warnings --experimental-strip-types --input-type=module --eval '
+          import fs from "node:fs";
+          import path from "node:path";
+          import { pathToFileURL } from "node:url";
+
+          const [modulePath, selectedPort] = process.argv.slice(1);
+          try {
+            const { classifyOpenShellGatewayServiceMetadata } = await import(
+              pathToFileURL(modulePath).href
+            );
+            const home = process.env.HOME ?? "";
+            if (!path.isAbsolute(home)) process.exit(2);
+            const configuredBinHome = process.env.XDG_BIN_HOME?.trim();
+            const userBinHome =
+              configuredBinHome && path.isAbsolute(configuredBinHome)
+                ? path.normalize(configuredBinHome)
+                : path.join(home, ".local", "bin");
+            const verdict = classifyOpenShellGatewayServiceMetadata({
+              gatewayPort: Number(selectedPort),
+              metadata: fs.readFileSync(0, "utf8"),
+              trustedExecutablePaths: [
+                path.join(userBinHome, "openshell-gateway"),
+                "/usr/local/bin/openshell-gateway",
+                "/usr/bin/openshell-gateway",
+              ],
+            });
+            process.stdout.write(verdict);
+          } catch {
+            process.exit(2);
+          }
+        ' "$classifier_module" "$selected_port" 2>/dev/null
+  )"; then
+    :
+  else
+    classifier_status=$?
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The shared service classifier failed with status ${classifier_status}."
+    return 3
+  fi
+  case "$classifier_output" in
+    unrelated | different-port | block-invalid-selected-port | block-malformed-metadata | block-ambiguous-executable | block-untrusted-executable | block-ambiguous-port | block-selected-port)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT="$classifier_output"
+      ;;
+    *)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The shared service classifier returned an unexpected result."
+      return 3
+      ;;
+  esac
+}
+
+inspect_noncanonical_openshell_gateway_user_services() {
+  local selected_port="${1:-}" active_output enabled_output query_status line service_name
+  local inspected_name already_inspected
+  local -a service_names=() inspected_names=() row_columns=()
+  command_exists systemctl || return 2
+
+  if active_output="$(LC_ALL=C systemctl --user list-units --type=service \
+    --state=active,activating,reloading,deactivating \
+    --no-legend --plain --no-pager 2>&1)"; then
+    :
+  else
+    query_status=$?
+    if systemd_user_manager_unavailable_diagnostic "$active_output"; then
+      return 2
+    fi
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The active service query failed with status ${query_status}."
+    return 3
+  fi
+  if enabled_output="$(LC_ALL=C systemctl --user list-unit-files --type=service \
+    --state=enabled,enabled-runtime --no-legend --plain --no-pager 2>&1)"; then
+    :
+  else
+    query_status=$?
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The enabled service query failed with status ${query_status}."
+    return 3
+  fi
+
+  while IFS= read -r line; do
+    row_columns=()
+    read -r -a row_columns <<<"$line"
+    [[ "${#row_columns[@]}" -gt 0 ]] || continue
+    service_name="${row_columns[0]}"
+    if [[ "${#row_columns[@]}" -lt 4 ||
+      ! "$service_name" =~ ^([A-Za-z0-9_]|\\x[0-9A-Fa-f]{2})([A-Za-z0-9_.@:-]|\\x[0-9A-Fa-f]{2})*[.]service$ ||
+      ("${row_columns[2]}" != "active" && "${row_columns[2]}" != "activating" && "${row_columns[2]}" != "reloading" && "${row_columns[2]}" != "deactivating") ]]; then
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The active service list returned invalid metadata."
+      return 3
+    fi
+    service_names+=("$service_name")
+  done <<<"$active_output"
+  while IFS= read -r line; do
+    row_columns=()
+    read -r -a row_columns <<<"$line"
+    [[ "${#row_columns[@]}" -gt 0 ]] || continue
+    service_name="${row_columns[0]}"
+    if [[ "${#row_columns[@]}" -lt 2 || "${#row_columns[@]}" -gt 3 ||
+      ! "$service_name" =~ ^([A-Za-z0-9_]|\\x[0-9A-Fa-f]{2})([A-Za-z0-9_.@:-]|\\x[0-9A-Fa-f]{2})*[.]service$ ||
+      ("${row_columns[1]}" != "enabled" && "${row_columns[1]}" != "enabled-runtime") ]]; then
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The enabled service list returned invalid metadata."
+      return 3
+    fi
+    service_names+=("$service_name")
+  done <<<"$enabled_output"
+
+  if [[ "${#service_names[@]}" -gt 0 ]]; then
+    for service_name in "${service_names[@]}"; do
+      case "$service_name" in
+        openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service") continue ;;
+      esac
+      already_inspected=0
+      if [[ "${#inspected_names[@]}" -gt 0 ]]; then
+        for inspected_name in "${inspected_names[@]}"; do
+          if [[ "$inspected_name" == "$service_name" ]]; then
+            already_inspected=1
+            break
+          fi
+        done
+      fi
+      [[ "$already_inspected" -eq 0 ]] || continue
+      inspected_names+=("$service_name")
+
+      if classify_noncanonical_openshell_gateway_user_service "$service_name" "$selected_port"; then
+        case "$NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT" in
+          unrelated | different-port) continue ;;
+          block-selected-port)
+            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled user service ${service_name} uses OpenShell gateway on selected port ${selected_port}. NemoClaw did not change this service. Inspect or disable it, then rerun the installer."
+            ;;
+          block-ambiguous-port)
+            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled OpenShell gateway user service ${service_name} has ambiguous port configuration and could claim selected port ${selected_port}. NemoClaw did not change this service. Inspect or disable it, then rerun the installer."
+            ;;
+          block-ambiguous-executable)
+            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled OpenShell gateway user service ${service_name} has ambiguous executable metadata. NemoClaw did not change this service."
+            ;;
+          block-untrusted-executable)
+            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled OpenShell gateway user service ${service_name} uses an untrusted executable. NemoClaw did not change this service."
+            ;;
+          block-malformed-metadata)
+            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. ${service_name} returned malformed metadata."
+            ;;
+          *)
+            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The selected OpenShell gateway port is invalid."
+            ;;
+        esac
+        return 3
+      else
+        return 3
+      fi
+    done
+  fi
+  return 0
+}
+
 is_nemoclaw_openshell_gateway_user_service() {
   local service_path="${1:-}"
   [[ -f "$service_path" ]] || return 1
@@ -1773,8 +2024,20 @@ enabled_openshell_gateway_user_service_activation_path() {
 }
 
 install_nemoclaw_openshell_gateway_user_service() {
+  require_stable_installer_gateway_management
+  [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "external" ]] && return 0
   [[ "$(uname -s)" == "Linux" ]] || return 0
-  [[ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ]] || return 0
+  local gateway_port discovery_status
+  gateway_port="$(resolve_nemoclaw_gateway_port)"
+  if inspect_noncanonical_openshell_gateway_user_services "$gateway_port"; then
+    :
+  else
+    discovery_status=$?
+    if [[ "$discovery_status" -ne 2 ]]; then
+      error "${NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR:-Could not inspect active or enabled user services.}"
+    fi
+  fi
+  [[ "$gateway_port" -eq 8080 ]] || return 0
 
   local service_dir
   service_dir="$(openshell_user_config_home)/systemd/user"
@@ -1948,6 +2211,8 @@ NODE
 maybe_install_openshell_during_install() {
   local mode="${1:-force}"
   local explicit_openshell_bin="${NEMOCLAW_OPENSHELL_BIN:-}"
+  require_stable_installer_gateway_management
+  [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "external" ]] && return 0
   if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
     info "Deferring OpenShell CLI installation until after pre-upgrade backup."
     return 0
@@ -2130,7 +2395,7 @@ ensure_supported_runtime() {
 }
 
 # Fail fast when a host dependency that scripts/install-openshell.sh relies on
-# is missing, before any clone/build/download work. install-openshell.sh uses
+# is missing, before any OpenShell clone/build/download work. install-openshell.sh uses
 # `strings` (binutils) to confirm the OpenShell CLI binary carries the
 # credential-rewrite endpoints; without it the install ran for ~5 minutes
 # (Node.js, clone, npm install, tsc build, OpenShell download + checksum)
@@ -3244,6 +3509,8 @@ stop_nemoclaw_openshell_gateway_user_service() {
 }
 
 preinstall_backup_and_retire_legacy_gateway() {
+  require_stable_installer_gateway_management
+  [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "external" ]] && return 0
   local reg_file gateway_name
   reg_file="$(nemoclaw_state_dir)/sandboxes.json"
   if [ ! -f "$reg_file" ] && [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ]; then
@@ -3292,6 +3559,7 @@ preinstall_backup_and_retire_legacy_gateway() {
 
   confirm_legacy_managed_image_recovery "$reg_file"
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
+  require_stable_installer_gateway_management
   if ! run_preupgrade_backup; then
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
@@ -3315,6 +3583,7 @@ preinstall_backup_and_retire_legacy_gateway() {
     || error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
     || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
+    require_stable_installer_gateway_management
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
@@ -5625,7 +5894,6 @@ prepare_installer_host() {
   ensure_station_express_host
   prepare_portable_experimental_runtime_override
   ensure_docker
-  ensure_openshell_build_deps
 }
 
 # Prompt the user to opt into express install on qualified platforms or the
@@ -5925,6 +6193,10 @@ install_nemoclaw_before_onboarding() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
+  require_stable_installer_gateway_management
+  if [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "managed" ]]; then
+    ensure_openshell_build_deps
+  fi
   resolve_pending_express_wsl_provider
   ensure_station_express_pair
 

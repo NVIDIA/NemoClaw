@@ -179,7 +179,11 @@ export function createDockerDriverGatewayReuseApplication(
 
     function verifyNetworkWithoutLifecycleAuthority(): GatewayReuseState {
       const network = inspectNetwork(networkName);
-      if (network.kind === "present") return state;
+      if (network.kind === "present") {
+        throw new Error(
+          `Docker network ${JSON.stringify(networkName)} is present, but NemoClaw could not verify the running gateway's lifecycle authority. Use NEMOCLAW_GATEWAY_MANAGEMENT to declare its external supervisor, or stop the gateway through its current lifecycle authority, then rerun \`nemoclaw onboard\`.`,
+        );
+      }
       if (network.kind === "absent") {
         throw new Error(
           `Docker network ${JSON.stringify(networkName)} is absent, but NemoClaw could not verify the running gateway's lifecycle authority. Restart the gateway through its lifecycle authority, then rerun \`nemoclaw onboard\`.`,
@@ -231,8 +235,8 @@ export function createDockerDriverGatewayReuseApplication(
       return reconcileManagedGatewayNetwork();
     }
 
-    // OpenShell status already proved the selected gateway is reachable. Preserve it when
-    // the port probe cannot identify an owner, instead of deleting a potentially live gateway.
+    // OpenShell status proves reachability, not lifecycle authority. Stop when the port
+    // probe cannot identify an owner instead of reusing or deleting a potentially foreign gateway.
     if (!portCheck.ok && !portCheck.pid) return verifyNetworkWithoutLifecycleAuthority();
 
     return "stale";

@@ -8,6 +8,11 @@ import path from "node:path";
 
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
+import {
+  classifyOpenShellGatewayServiceMetadata,
+  COMPETING_OPENSHELL_GATEWAY_SERVICE_PROPERTIES,
+  type OpenShellGatewayServiceMetadataVerdict,
+} from "./gateway/openshell-service-coexistence";
 import { envInt } from "./env";
 import {
   createGatewayHealthWaitOptions,
@@ -727,7 +732,7 @@ function userManagerLooksUnavailable(reason: string): boolean {
 }
 
 function findSystemdUserServiceActivationPath(
-  service: OpenShellGatewayUserServiceTarget,
+  service: Pick<OpenShellGatewayUserServiceTarget, "manager">,
   home: string,
   env: NodeJS.ProcessEnv,
   existsSync: (filePath: string) => boolean,
@@ -879,6 +884,199 @@ function extractSystemdExecStartPath(execStart: string): string | null {
   );
   if (candidates.length !== 1 || !path.isAbsolute(candidates[0])) return null;
   return path.normalize(candidates[0]);
+}
+
+function isSafeSystemdServiceName(serviceName: string): boolean {
+  return /^(?:[A-Za-z0-9_]|\\x[0-9A-Fa-f]{2})(?:[A-Za-z0-9_.@:-]|\\x[0-9A-Fa-f]{2})*\.service$/.test(
+    serviceName,
+  );
+}
+
+function parseActiveSystemdServiceNames(output: string): string[] | null {
+  const names: string[] = [];
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const columns = line.split(/\s+/);
+    if (
+      columns.length < 4 ||
+      !isSafeSystemdServiceName(columns[0]) ||
+      !["active", "activating", "reloading", "deactivating"].includes(columns[2])
+    ) {
+      return null;
+    }
+    names.push(columns[0]);
+  }
+  return names;
+}
+
+function parseEnabledSystemdServiceNames(output: string): string[] | null {
+  const names: string[] = [];
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const columns = line.split(/\s+/);
+    if (
+      columns.length < 2 ||
+      columns.length > 3 ||
+      !isSafeSystemdServiceName(columns[0]) ||
+      (columns[1] !== "enabled" && columns[1] !== "enabled-runtime")
+    ) {
+      return null;
+    }
+    names.push(columns[0]);
+  }
+  return names;
+}
+
+function assertNoCanonicalGatewayActivationPath(
+  gatewayPort: number,
+  opts: OpenShellGatewayUserServiceOptions,
+): void {
+  if (gatewayPort !== 8080) return;
+  const env = opts.env ?? process.env;
+  const home = effectiveHome(opts.home, opts.env);
+  const activationPath = findSystemdUserServiceActivationPath(
+    { manager: "systemd" },
+    home,
+    env,
+    opts.existsSync ?? fs.existsSync,
+    opts.lstatSync ?? fs.lstatSync,
+    opts.readdirSync ?? fs.readdirSync,
+  );
+  if (!activationPath) return;
+  throw new OpenShellGatewayServiceTrustError(
+    `OpenShell gateway user service activation path ${activationPath} can later claim port ${String(gatewayPort)}.`,
+  );
+}
+
+function assertCompetingServiceVerdictAllowed(
+  serviceName: string,
+  gatewayPort: number,
+  verdict: OpenShellGatewayServiceMetadataVerdict,
+): void {
+  if (verdict === "unrelated" || verdict === "different-port") return;
+  if (verdict === "block-invalid-selected-port") {
+    throw new OpenShellGatewayServiceTrustError("The selected OpenShell gateway port is invalid.");
+  }
+  if (verdict === "block-malformed-metadata") {
+    throw new OpenShellGatewayServiceTrustError(
+      `Could not inspect same-user service ${serviceName} because systemd returned malformed metadata.`,
+    );
+  }
+  if (verdict === "block-ambiguous-executable") {
+    throw new OpenShellGatewayServiceTrustError(
+      `OpenShell gateway user service ${serviceName} has ambiguous executable metadata.`,
+    );
+  }
+  if (verdict === "block-untrusted-executable") {
+    throw new OpenShellGatewayServiceTrustError(
+      `OpenShell gateway user service ${serviceName} uses an untrusted executable.`,
+    );
+  }
+  if (verdict === "block-ambiguous-port") {
+    throw new OpenShellGatewayServiceTrustError(
+      `OpenShell gateway user service ${serviceName} has ambiguous port configuration and could claim selected port ${String(gatewayPort)}.`,
+    );
+  }
+  throw new OpenShellGatewayServiceTrustError(
+    `OpenShell gateway user service ${serviceName} can claim selected port ${String(gatewayPort)}. Stop or disable that independently managed service before continuing.`,
+  );
+}
+
+/** Refuse a noncanonical same-user service that can claim the selected gateway port. */
+export function assertNoCompetingOpenShellGatewayUserService(
+  gatewayPort: number,
+  opts: OpenShellGatewayUserServiceOptions = {},
+): void {
+  if (!Number.isSafeInteger(gatewayPort) || gatewayPort < 1 || gatewayPort > 65_535) {
+    throw new OpenShellGatewayServiceTrustError("The selected OpenShell gateway port is invalid.");
+  }
+  if ((opts.platform ?? process.platform) !== "linux") return;
+  const env = opts.env ?? process.env;
+  const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
+  if (!commandExists("systemctl")) {
+    assertNoCanonicalGatewayActivationPath(gatewayPort, opts);
+    return;
+  }
+  const commandOptions = { env, spawnSyncImpl: opts.spawnSyncImpl ?? spawnSync };
+  const active = runSystemctlUser(
+    [
+      "list-units",
+      "--type=service",
+      "--state=active,activating,reloading,deactivating",
+      "--no-legend",
+      "--plain",
+      "--no-pager",
+    ],
+    commandOptions,
+  );
+  if (!active.ok) {
+    if (userManagerLooksUnavailable(active.reason ?? "")) {
+      assertNoCanonicalGatewayActivationPath(gatewayPort, opts);
+      return;
+    }
+    throw new OpenShellGatewayServiceTrustError(
+      "Could not inspect same-user OpenShell gateway services during active enumeration.",
+    );
+  }
+  const enabled = runSystemctlUser(
+    [
+      "list-unit-files",
+      "--type=service",
+      "--state=enabled,enabled-runtime",
+      "--no-legend",
+      "--plain",
+      "--no-pager",
+    ],
+    commandOptions,
+  );
+  if (!enabled.ok) {
+    throw new OpenShellGatewayServiceTrustError(
+      "Could not inspect same-user OpenShell gateway services during enabled enumeration.",
+    );
+  }
+  const activeNames = parseActiveSystemdServiceNames(active.stdout ?? "");
+  const enabledNames = parseEnabledSystemdServiceNames(enabled.stdout ?? "");
+  if (!activeNames || !enabledNames) {
+    throw new OpenShellGatewayServiceTrustError(
+      "Could not inspect same-user OpenShell gateway services because systemd returned malformed service enumeration metadata.",
+    );
+  }
+  const canonicalNames = new Set([
+    `${OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+  ]);
+  const serviceNames = [...new Set([...activeNames, ...enabledNames])].filter(
+    (serviceName) => !canonicalNames.has(serviceName),
+  );
+  for (const serviceName of serviceNames) {
+    const metadata = runSystemctlUser(
+      [
+        "show",
+        serviceName,
+        ...COMPETING_OPENSHELL_GATEWAY_SERVICE_PROPERTIES.map(
+          (property) => `--property=${property}`,
+        ),
+      ],
+      commandOptions,
+    );
+    if (!metadata.ok) {
+      throw new OpenShellGatewayServiceTrustError(
+        "Could not inspect same-user OpenShell gateway services during service metadata query.",
+      );
+    }
+    const home = effectiveHome(opts.home, opts.env);
+    assertCompetingServiceVerdictAllowed(
+      serviceName,
+      gatewayPort,
+      classifyOpenShellGatewayServiceMetadata({
+        gatewayPort,
+        metadata: metadata.stdout ?? "",
+        trustedExecutablePaths: getNemoclawOpenShellGatewayUserServiceBinaryPaths(home, env),
+      }),
+    );
+  }
 }
 
 function validateSystemdServiceIdentity(

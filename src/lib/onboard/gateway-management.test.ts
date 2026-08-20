@@ -129,13 +129,17 @@ describe("gateway management declaration", () => {
   });
 
   it("rejects unknown fields so credentials cannot ride the contract (#6576)", () => {
+    const secretField = "provider-secret-field";
+    const secretValue = "provider-secret-value";
     const result = parseGatewayManagementDeclaration(
-      externalDeclaration({ apiToken: "sk-live-not-a-real-token" }),
+      externalDeclaration({ [secretField]: secretValue }),
     );
 
-    expect(result.ok === false && result.reason).toMatch(
-      /unknown declaration field\(s\): apiToken/,
+    expect(result.ok === false && result.reason).toBe(
+      "unknown declaration fields are not supported",
     );
+    expect(result.ok === false && result.reason).not.toContain(secretField);
+    expect(result.ok === false && result.reason).not.toContain(secretValue);
   });
 
   it("rejects an endpoint that embeds credentials (#6576)", () => {

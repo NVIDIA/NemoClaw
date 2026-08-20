@@ -174,6 +174,7 @@ export default defineConfig({
             "test/package-contract/**",
             "test/install-express-prompt.test.ts",
             "test/install-express-wsl-ollama.test.ts",
+            "test/install-external-gateway-supervision.test.ts",
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
@@ -208,6 +209,7 @@ export default defineConfig({
           include: [
             "test/install-express-prompt.test.ts",
             "test/install-express-wsl-ollama.test.ts",
+            "test/install-external-gateway-supervision.test.ts",
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",

@@ -21,6 +21,7 @@ import {
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
+  assertNoCompetingOpenShellGatewayUserService,
   getOpenShellGatewayManagedServiceLogCommand,
   getOpenShellUserConfigHome,
   hasOpenShellGatewayUserService,
@@ -82,6 +83,7 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
   PackageManagedDockerDriverGatewayOptions,
   "prepareOpenShellGatewayUserServiceEnv"
 > & {
+  assertNoCompetingOpenShellGatewayUserService?: (gatewayPort: number) => void;
   env?: NodeJS.ProcessEnv;
   gatewayEnv: Record<string, string>;
   home?: string;
@@ -400,12 +402,22 @@ export function writeDockerGatewayDebEnvOverrideOrThrow(
 export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   optionsWithEnv: PackageManagedDockerDriverGatewayWithEnvOverrideOptions,
 ): Promise<boolean> {
-  const { env: _env, gatewayEnv, home, ...options } = optionsWithEnv;
+  const {
+    assertNoCompetingOpenShellGatewayUserService: assertNoCompetingService,
+    env: _env,
+    gatewayEnv,
+    home,
+    ...options
+  } = optionsWithEnv;
   const env = optionsWithEnv.env ?? process.env;
   const gatewayPort = Number(gatewayEnv.OPENSHELL_SERVER_PORT ?? GATEWAY_PORT);
+  const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
+  (
+    assertNoCompetingService ??
+    ((port) => assertNoCompetingOpenShellGatewayUserService(port, { env, home: effectiveHome }))
+  )(gatewayPort);
   if (gatewayPort !== DEFAULT_GATEWAY_PORT) return Promise.resolve(false);
   assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
-  const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
   return startPackageManagedDockerDriverGateway({
     ...options,
     hasOpenShellGatewayUserService:

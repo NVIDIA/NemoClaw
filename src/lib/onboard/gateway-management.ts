@@ -25,12 +25,12 @@ import path from "node:path";
 import {
   type GatewayCapability,
   SUPPORTED_GATEWAY_CAPABILITIES,
-} from "../core/gateway-capabilities";
+} from "../core/gateway-capabilities.ts";
 
 export {
   type GatewayCapability,
   SUPPORTED_GATEWAY_CAPABILITIES,
-} from "../core/gateway-capabilities";
+} from "../core/gateway-capabilities.ts";
 
 /** Bump only for a breaking change to the declaration shape. */
 export const GATEWAY_MANAGEMENT_CONTRACT_VERSION = 1;
@@ -125,12 +125,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function rejectUnknownKeys(value: Record<string, unknown>, allowed: Set<string>, where: string) {
-  const unknown = Object.keys(value).filter((key) => !allowed.has(key));
-  if (unknown.length > 0) {
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
     // Fail closed rather than ignore: an unknown key is either a newer contract
     // this build cannot honor, or an attempt to route data (a credential, a
     // control-plane detail) through a surface that gets persisted and emitted.
-    return `unknown ${where} field(s): ${unknown.sort().join(", ")}`;
+    return `unknown ${where} fields are not supported`;
   }
   return null;
 }

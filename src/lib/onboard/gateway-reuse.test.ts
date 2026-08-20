@@ -306,7 +306,7 @@ describe("Docker-driver gateway reuse application", () => {
     expect(rememberDockerDriverGatewayPid).not.toHaveBeenCalled();
   });
 
-  it("preserves a reachable selected gateway when the port owner is ambiguous", async () => {
+  it("stops before reusing a selected gateway when lifecycle authority is ambiguous (#9705)", async () => {
     const rememberDockerDriverGatewayPid = vi.fn();
     const inspectDockerDriverNetwork = vi.fn(() => ({ kind: "present" as const }));
     const application = createDockerDriverReuseApplication({
@@ -318,8 +318,8 @@ describe("Docker-driver gateway reuse application", () => {
       rememberDockerDriverGatewayPid,
     });
 
-    await expect(application.refreshDockerDriverGatewayReuseState("healthy")).resolves.toBe(
-      "healthy",
+    await expect(application.refreshDockerDriverGatewayReuseState("healthy")).rejects.toThrow(
+      'Docker network "openshell-docker" is present, but NemoClaw could not verify the running gateway\'s lifecycle authority. Use NEMOCLAW_GATEWAY_MANAGEMENT to declare its external supervisor, or stop the gateway through its current lifecycle authority, then rerun `nemoclaw onboard`.',
     );
     expect(inspectDockerDriverNetwork).toHaveBeenCalledWith("openshell-docker");
     expect(rememberDockerDriverGatewayPid).not.toHaveBeenCalled();
