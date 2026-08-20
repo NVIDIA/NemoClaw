@@ -441,7 +441,18 @@ async function addMcpBridgeUnlocked(
             previousRevision: previousCredentialRevision,
           }
         : {}),
-      refreshAfterObservedAbsence: () => refreshMcpProviderEnvironment(entry),
+      refreshAfterObservedAbsence: () => {
+        // OpenShell 0.0.106 can coalesce a no-field provider refresh without
+        // publishing the credential into fresh sandbox execs. The add still
+        // owns the host credential here, so republish it once after the bound
+        // policy is active. Crash recovery without the host value retains the
+        // credential-free refresh path.
+        const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
+          allowExisting: true,
+          expectedProviderId: entry.providerId,
+        });
+        if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
+      },
     });
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
