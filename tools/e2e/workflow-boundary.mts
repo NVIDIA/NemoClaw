@@ -2537,6 +2537,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
     errors.push("live job must run on the matrix runner");
   }
+  if (liveTargets["timeout-minutes"] !== "${{ matrix.timeout_minutes }}") {
+    errors.push("live job timeout must come from the typed target matrix");
+  }
   if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
     errors.push("live job must depend on base-image-publication and generate-matrix");
   }

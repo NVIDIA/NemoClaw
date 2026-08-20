@@ -646,9 +646,13 @@
     {
       "live": "test/e2e/live/registry-targets.test.ts",
       "fast": [
+        "test/e2e/support/e2e-matrix.test.ts",
+        "test/e2e/support/e2e-phase-onboarding.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
     },
