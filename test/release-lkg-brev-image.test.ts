@@ -156,7 +156,7 @@ describe("LKG production image workflow", () => {
 
     const dispatch = workflow.jobs["dispatch-production-image"];
     expect(dispatch.if).toBe(
-      "${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false }}",
+      "${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false && github.run_attempt == 1 }}",
     );
     expect(dispatch.permissions).toBeUndefined();
     expect(dispatch["runs-on"]).toBe("ubuntu-latest");
