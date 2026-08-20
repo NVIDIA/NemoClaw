@@ -201,8 +201,11 @@ function parseElfLayout(header: Buffer): ElfLayout {
 
 /** Read the exact ELF PT_INTERP path without executing the file. */
 export function readElfInterpreterPath(executablePath: string): string {
-  const descriptor = fs.openSync(executablePath, fs.constants.O_RDONLY);
+  const descriptor = fs.openSync(executablePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
   try {
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error("Ollama ExecStart is not a regular file");
+    }
     const header = readExact(descriptor, 64, 0);
     const layout = parseElfLayout(header);
     const candidates: Array<{ offset: number; size: number }> = [];
@@ -275,6 +278,10 @@ export function parseOllamaSystemdExecutionMetadata(
 
 function commandPrefix(sudoPrefix: "sudo" | "sudo -n"): string[] {
   return sudoPrefix === "sudo -n" ? ["/usr/bin/sudo", "-n"] : ["/usr/bin/sudo"];
+}
+
+function sudoServiceUserArgument(serviceUser: string): string {
+  return /^[0-9]+$/u.test(serviceUser) ? `#${serviceUser}` : serviceUser;
 }
 
 function sameFile(
@@ -363,7 +370,14 @@ function runServiceUserProof(
   options: OllamaSystemdExecutableProofOptions,
 ): OllamaExecutableCaptureResult {
   return options.runCaptureExImpl(
-    [...commandPrefix(options.sudoPrefix), "-u", serviceUser, "--", executablePath, "--version"],
+    [
+      ...commandPrefix(options.sudoPrefix),
+      "-u",
+      sudoServiceUserArgument(serviceUser),
+      "--",
+      executablePath,
+      "--version",
+    ],
     { timeout: EXECUTION_PROOF_TIMEOUT_MS },
   );
 }
@@ -377,7 +391,7 @@ function runServiceUserPathAccessProof(
     [
       ...commandPrefix(options.sudoPrefix),
       "-u",
-      serviceUser,
+      sudoServiceUserArgument(serviceUser),
       "--",
       "/bin/sh",
       "-c",

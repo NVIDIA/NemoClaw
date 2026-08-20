@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -75,7 +76,10 @@ function rootDirectoryMetadata(): OllamaExecutablePathMetadata {
   return metadataFor(0o755, { ino: 1, isDirectory: true, isFile: false });
 }
 
-function proofFixture(initialMode = 0o644): {
+function proofFixture(
+  initialMode = 0o644,
+  serviceUser = "ollama",
+): {
   currentMode: () => number;
   runCaptureExImpl: ReturnType<typeof vi.fn>;
   setMode: (nextMode: number) => void;
@@ -90,7 +94,7 @@ function proofFixture(initialMode = 0o644): {
         () =>
           capture(
             0,
-            `User=ollama\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; ignore_errors=no ; }`,
+            `User=${serviceUser}\nExecStart={ path=${executablePath} ; argv[]=${executablePath} serve ; ignore_errors=no ; }`,
           ),
       ],
       [(candidate) => candidate[0] === "/usr/bin/id", () => capture(0, "997")],
@@ -200,9 +204,37 @@ describe("readElfInterpreterPath", () => {
   it("rejects an ELF file that has no PT_INTERP entry (#9728)", () => {
     expect(() => readElfInterpreterPath(writeElf64(null))).toThrow(/PT_INTERP/u);
   });
+
+  it("rejects a FIFO without waiting for a writer (#9728)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-fifo-"));
+    temporaryDirectories.push(directory);
+    const fifoPath = path.join(directory, "ollama");
+    const result = spawnSync("mkfifo", [fifoPath], { timeout: 1_000 });
+
+    expect(result.status).toBe(0);
+    expect(() => readElfInterpreterPath(fifoPath)).toThrow(/not a regular file/u);
+  });
 });
 
 describe("proveOllamaSystemdServiceExecutable", () => {
+  it("uses sudo's numeric UID form for every service-user command (#9728)", () => {
+    const fixture = proofFixture(0o755, "997");
+
+    expect(proveOllamaSystemdServiceExecutable(fixture.options)).toMatchObject({
+      classification: "repair-outside-authority",
+      ok: false,
+    });
+    const commands = fixture.runCaptureExImpl.mock.calls.map(([command]) => command as string[]);
+    const serviceUserCommands = commands.filter(
+      (command) => command[0] === "/usr/bin/sudo" && command.includes("-u"),
+    );
+    expect(serviceUserCommands).toHaveLength(3);
+    expect(
+      serviceUserCommands.every((command) => command[command.indexOf("-u") + 1] === "#997"),
+    ).toBe(true);
+    expect(commands).toContainEqual(["/usr/bin/id", "-u", "997"]);
+  });
+
   it("repairs and re-verifies the installer-owned executable when sudo returns status 1 and the execute-access check fails (#9728)", () => {
     const fixture = proofFixture();
 
