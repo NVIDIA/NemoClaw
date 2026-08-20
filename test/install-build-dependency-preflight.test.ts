@@ -98,6 +98,7 @@ describe("installer build-dependency preflight (#4415)", { timeout: 30_000 }, ()
 printf '%s\\n' "$*" >> "$CURL_LOG"
 exit 90`,
     );
+    const homeContentsBefore = fs.readdirSync(tmp, { recursive: true }).sort();
 
     const result = spawnSync("bash", [OPENSHELL_INSTALLER], {
       cwd: path.join(import.meta.dirname, ".."),
@@ -113,6 +114,7 @@ exit 90`,
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/'strings' \(from binutils\) is required/);
     expect(fs.existsSync(curlLog)).toBe(false);
+    expect(fs.readdirSync(tmp, { recursive: true }).sort()).toEqual(homeContentsBefore);
   });
 
   it("fails fast when binutils strings is missing, before clone/build work", () => {
