@@ -142,7 +142,7 @@ function proveAdmission(
         DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
         networkName,
       ]),
-      commandResult(0, JSON.stringify([{ Subnet: "169.254.1.0/24" }])),
+      commandResult(0, JSON.stringify([{ Subnet: "10.87.0.0/24" }])),
     ],
     [
       JSON.stringify([

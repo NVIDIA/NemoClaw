@@ -89,7 +89,7 @@ export function createPortablePodmanCapture(
             ipv6_enabled: false,
             dns_enabled: true,
             network_interface: "podman9",
-            subnets: [{ subnet: "169.254.1.0/24", gateway: "169.254.1.1" }],
+            subnets: [{ subnet: "10.87.0.0/24", gateway: "10.87.0.1" }],
             labels: authorityState.networkLabels ?? {},
             ipam_options: {},
             options: {},
@@ -114,7 +114,7 @@ export function createPortablePodmanCapture(
           Networks: {
             "openshell-docker": {
               NetworkID: authorityState.registryNetworkId ?? authorityState.networkId,
-              IPAddress: "169.254.1.3",
+              IPAddress: "10.87.0.3",
             },
           },
         },

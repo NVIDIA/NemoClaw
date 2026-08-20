@@ -153,13 +153,21 @@ describe("preparePortableExperimentalHost", () => {
     const portableSandboxAddresses = new BlockList();
     portableSandboxAddresses.addSubnet(networkAddress!, Number(prefixText), "ipv4");
 
-    expect(PORTABLE_DOCKER_NETWORK_SUBNET).toBe("169.254.1.0/24");
-    expect(PORTABLE_REGISTRY_IP).toBe("169.254.1.3");
+    expect(PORTABLE_DOCKER_NETWORK_SUBNET).toBe("10.87.0.0/24");
+    expect(PORTABLE_REGISTRY_IP).toBe("10.87.0.3");
     expect(PORTABLE_HOST_GATEWAY_IP).toBe("169.254.2.2");
-    expect(portableSandboxAddresses.check("169.254.1.2", "ipv4")).toBe(true);
     expect(portableSandboxAddresses.check(PORTABLE_REGISTRY_IP, "ipv4")).toBe(true);
     expect(portableSandboxAddresses.check(PORTABLE_HOST_GATEWAY_IP, "ipv4")).toBe(false);
     expect(PORTABLE_HOST_GATEWAY_IP).not.toBe(PORTABLE_REGISTRY_IP);
+  });
+
+  it("keeps the sandbox subnet outside the link-local block netavark refuses (#9707)", () => {
+    const linkLocal = new BlockList();
+    linkLocal.addSubnet("169.254.0.0", 16, "ipv4");
+    const [networkAddress] = PORTABLE_DOCKER_NETWORK_SUBNET.split("/");
+
+    expect(linkLocal.check(networkAddress!, "ipv4")).toBe(false);
+    expect(linkLocal.check(PORTABLE_REGISTRY_IP, "ipv4")).toBe(false);
   });
 
   it("does nothing unless the portable profile is explicit", () => {
@@ -767,7 +775,13 @@ describe("preparePortableExperimentalHost", () => {
   it.each<[SpawnResult, string]>([
     [
       result(0, JSON.stringify([{ Subnet: "10.88.0.0/16" }])),
-      "Refusing to reuse network 'openshell-docker' with unexpected subnet '10.88.0.0/16'. Expected 169.254.1.0/24.",
+      "Refusing to reuse network 'openshell-docker' with unexpected subnet '10.88.0.0/16'. Expected 10.87.0.0/24.",
+    ],
+    [
+      result(0, JSON.stringify([{ Subnet: "169.254.1.0/24" }])),
+      "Network 'openshell-docker' still uses the retired portable subnet 169.254.1.0/24. " +
+        "Remove it with `podman network rm openshell-docker`, then rerun " +
+        "`nemoclaw onboard --experimental-profile portable`.",
     ],
     [
       {

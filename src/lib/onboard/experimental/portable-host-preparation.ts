@@ -46,6 +46,11 @@ const REGISTRY_LABEL = "com.nvidia.nemoclaw.portable=1";
 // host gateway outside the sandbox subnet. Keep the retired value here so an
 // upgraded host cannot silently retain a route that captures sandbox traffic.
 const RETIRED_PORTABLE_HOST_GATEWAY_IP = "169.254.1.2";
+// Portable onboarding created the sandbox network on this subnet before #9707
+// moved it out of the link-local block that netavark refuses. Name the retired
+// value so an upgraded host gets the removal command instead of the generic
+// unexpected-subnet refusal.
+const RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET = "169.254.1.0/24";
 const REGISTRY_IMAGE =
   "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
@@ -444,6 +449,13 @@ function ensurePortableSandboxNetwork(
     const subnets = (parseDockerNetworkIpamEntries(String(networkInspection.stdout ?? "")) ?? [])
       .map((entry) => entry.subnet)
       .filter((subnet): subnet is string => Boolean(subnet));
+    if (subnets.length === 1 && subnets[0] === RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET) {
+      throw new Error(
+        `Network '${networkName}' still uses the retired portable subnet ${RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET}. ` +
+          `Remove it with \`podman network rm ${networkName}\`, then rerun ` +
+          "`nemoclaw onboard --experimental-profile portable`.",
+      );
+    }
     if (subnets.length !== 1 || subnets[0] !== PORTABLE_DOCKER_NETWORK_SUBNET) {
       throw new Error(
         `Refusing to reuse network '${networkName}' with unexpected subnet '${subnets.join(", ") || "none"}'. Expected ${PORTABLE_DOCKER_NETWORK_SUBNET}.`,
