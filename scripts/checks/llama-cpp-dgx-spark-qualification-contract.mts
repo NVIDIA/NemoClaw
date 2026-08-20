@@ -23,7 +23,7 @@ export const LLAMA_CPP_DGX_SPARK_MODEL_DIGEST =
   "sha256:627f5b04aedc97f967332f331bd75b7a4ed2f33ca83e6ee74b44235cc1887890" as const;
 export const LLAMA_CPP_DGX_SPARK_SERVED_MODEL_ID = "nvidia-nemotron-3-nano-30b-a3b" as const;
 export const LLAMA_CPP_DGX_SPARK_SOURCE_REVISION =
-  "22dc605c4ead20e36f447cc67b55ef87e523bd55" as const;
+  "8e7f22b67ef4667b4ddd50230771287f328cfb3f" as const;
 export const LLAMA_CPP_DGX_SPARK_QUALIFICATION_IMAGE_REPOSITORY =
   "localhost:5000/nemoclaw-llama-cpp-dgx-spark/llama-cpp-server" as const;
 export const LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY =
@@ -31,7 +31,7 @@ export const LLAMA_CPP_DGX_SPARK_OWNED_IMAGE_REPOSITORY =
 export const LLAMA_CPP_DGX_SPARK_SOURCE_REPOSITORY =
   "https://github.com/ggml-org/llama.cpp" as const;
 export const LLAMA_CPP_DGX_SPARK_SOURCE_ARCHIVE_SHA256 =
-  "sha256:975f70723e053785e894f4e1d9cf770f2f1a7bc762fd3af174ff5635014108b6" as const;
+  "sha256:45a24299e7a24410624489d19924d492bc71a120fa17d9b7cb32f6d5c4f1aed0" as const;
 export const LLAMA_CPP_DGX_SPARK_CUDA_DEVELOPMENT_BASE =
   "docker.io/nvidia/cuda@sha256:ef2203909e80b8b976cfc672f7e2ae2b00bc0e25c404ee86d89e10a3802f1c52" as const;
 export const LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE =
@@ -39,6 +39,7 @@ export const LLAMA_CPP_DGX_SPARK_CUDA_RUNTIME_BASE =
 export const LLAMA_CPP_DGX_SPARK_TOOL_IMAGE =
   "nvcr.io/nvidia/vllm@sha256:94e21552f644e0c1627464ba89d2f7a4ce7442e196f72afa0bb5d7fba23cbb03" as const;
 export const LLAMA_CPP_DGX_SPARK_MINIMUM_DRIVER_VERSION = "580.65.06" as const;
+export const LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES = 50_000 as const;
 export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "health",
   "models",
@@ -54,6 +55,7 @@ export const LLAMA_CPP_DGX_SPARK_PROTOCOL_PROBES = [
   "context-window",
   "authentication",
   "malformed-request",
+  "request-body-limit",
   "cancellation",
   "client-timeout",
 ] as const;
@@ -468,6 +470,17 @@ export type LlamaCppDgxSparkQualificationReceipt = {
     readonly malformedRequest: {
       readonly httpStatus: 400;
       readonly ok: true;
+    };
+    readonly requestBodyLimit: {
+      readonly acceptedBytes: number;
+      readonly acceptedHttpStatus: 200;
+      readonly continuationHealthHttpStatus: 200;
+      readonly continuationHttpStatus: 200;
+      readonly errorCode: "request_body_too_large";
+      readonly errorType: "invalid_request_error";
+      readonly ok: true;
+      readonly rejectedBytes: typeof LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES;
+      readonly rejectedHttpStatus: 413;
     };
     readonly models: {
       readonly httpStatus: 200;
@@ -1341,6 +1354,7 @@ export function parseLlamaCppDgxSparkExecutionPlan(
     serve.idleSleepSeconds !== -1 ||
     serve.flashAttention !== "enabled" ||
     serve.speculativeDecoding !== "disabled" ||
+    maxRequestBodyBytes !== 32_768 ||
     upstreamPort === serve.port ||
     typeof kvCache.key !== "string" ||
     !allowedKvTypes.has(kvCache.key) ||
@@ -1799,6 +1813,7 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
       "health",
       "logRedaction",
       "malformedRequest",
+      "requestBodyLimit",
       "metrics",
       "models",
       "properties",
@@ -1909,6 +1924,22 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
   requireExactKeys(authentication, ["httpStatus", "ok"], "authentication probe");
   const malformedRequest = record(probes.malformedRequest, "malformed-request probe");
   requireExactKeys(malformedRequest, ["httpStatus", "ok"], "malformed-request probe");
+  const requestBodyLimit = record(probes.requestBodyLimit, "request-body limit probe");
+  requireExactKeys(
+    requestBodyLimit,
+    [
+      "acceptedBytes",
+      "acceptedHttpStatus",
+      "continuationHealthHttpStatus",
+      "continuationHttpStatus",
+      "errorCode",
+      "errorType",
+      "ok",
+      "rejectedBytes",
+      "rejectedHttpStatus",
+    ],
+    "request-body limit probe",
+  );
   const cancellation = record(probes.cancellation, "cancellation probe");
   requireExactKeys(cancellation, ["aborted", "ok", "recovered"], "cancellation probe");
   const clientTimeout = record(probes.clientTimeout, "client-timeout probe");
@@ -1973,6 +2004,15 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
     authentication.httpStatus !== 401 ||
     malformedRequest.ok !== true ||
     malformedRequest.httpStatus !== 400 ||
+    requestBodyLimit.ok !== true ||
+    requestBodyLimit.acceptedBytes !== expectedPlan.recipe.serve.limits.maxRequestBodyBytes ||
+    requestBodyLimit.acceptedHttpStatus !== 200 ||
+    requestBodyLimit.rejectedBytes !== LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES ||
+    requestBodyLimit.rejectedHttpStatus !== 413 ||
+    requestBodyLimit.errorCode !== "request_body_too_large" ||
+    requestBodyLimit.errorType !== "invalid_request_error" ||
+    requestBodyLimit.continuationHealthHttpStatus !== 200 ||
+    requestBodyLimit.continuationHttpStatus !== 200 ||
     cancellation.ok !== true ||
     cancellation.aborted !== true ||
     cancellation.recovered !== true ||
@@ -2049,6 +2089,17 @@ export function parseLlamaCppDgxSparkQualificationReceipt(
       health: { httpStatus: 200, ok: true },
       logRedaction: { ok: true },
       malformedRequest: { httpStatus: 400, ok: true },
+      requestBodyLimit: {
+        acceptedBytes: expectedPlan.recipe.serve.limits.maxRequestBodyBytes,
+        acceptedHttpStatus: 200,
+        continuationHealthHttpStatus: 200,
+        continuationHttpStatus: 200,
+        errorCode: "request_body_too_large",
+        errorType: "invalid_request_error",
+        ok: true,
+        rejectedBytes: LLAMA_CPP_DGX_SPARK_REJECTED_REQUEST_BODY_BYTES,
+        rejectedHttpStatus: 413,
+      },
       metrics: {
         httpStatus: 200,
         ok: true,

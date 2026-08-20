@@ -16,7 +16,7 @@ export type ManagedImageLocalInferenceKind = (typeof MANAGED_IMAGE_LOCAL_INFEREN
 
 export type ManagedImageProtectedRouteKind = ManagedImageLocalInferenceKind | "rollback";
 
-// OpenShell 0.0.101 caps routable sandbox names at 19 characters. Keep the
+// OpenShell 0.0.106 caps routable sandbox names at 19 characters. Keep the
 // protected-runtime ownership prefix and every agent/route discriminator
 // explicit so the qualification matrix remains deterministic and collision
 // free without relying on truncation.

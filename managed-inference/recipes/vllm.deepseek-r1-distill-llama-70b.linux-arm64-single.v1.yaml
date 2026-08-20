@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: vllm.deepseek-r1-distill-llama-70b.linux-arm64-single.v1
+  displayName: DeepSeek-R1 Distill Llama 70B with vLLM on Linux arm64
+
+spec:
+  backend: vllm
+
+  modelRef: vllm.deepseek-r1-distill-llama-70b.v1
+  runtime:
+    image: nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4
+    imageDownloadSizeBytes: 9278081698
+    minimumComputeCapability: 0
+    minimumGpuMemoryBytes: 141000000000
+    pullTimeoutSeconds: 43200
+    architecture: arm64
+    networkMode: bridge
+    ipcMode: host
+    sharedMemoryBytes: 68719476736
+    gpuRequest: all
+    devices: []
+    ulimits:
+      memlock: -1
+      stackBytes: 67108864
+    modelCache:
+      source: huggingface-cache
+      target: /root/.cache/huggingface
+    temporaryFilesystems: []
+    environment: {}
+
+  execution:
+    materializerRef: vllm.host-local/v1
+    lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
+
+  serve:
+    authentication: bearer
+    directInstall:
+      authentication: none
+      fixedArguments: false
+      catalogReceipt: false
+    executable: /usr/local/bin/vllm
+    arguments:
+      - name: --max-model-len
+        value: 32768
+      - name: --gpu-memory-utilization
+        value: 0.7
+      - name: --max-num-seqs
+        value: 4
+      - name: --reasoning-parser
+        value: deepseek_r1
+      - name: --enable-auto-tool-choice
+      - name: --tool-call-parser
+        value: hermes
+
+  readiness:
+    timeoutSeconds: 1800
+    expectedModel: deepseek-ai/DeepSeek-R1-Distill-Llama-70B

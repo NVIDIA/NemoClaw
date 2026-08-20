@@ -5,11 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildRiskPlan } from "../../tools/advisors/risk-plan.mts";
-import { normalizeReviewResult } from "../../tools/pr-review-advisor/analyze.mts";
+import type { ReviewAdvisorResult, ReviewMetadata } from "../../tools/pr-review-advisor/analyze.mts";
 
 export const ROOT = path.resolve(import.meta.dirname, "../..");
-
-export type ReviewMetadata = Parameters<typeof normalizeReviewResult>[1];
 
 export function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
   const deterministic = {
@@ -28,8 +26,7 @@ export function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadat
       candidateExistingCoverage: [],
     },
     simplificationSignals: [],
-    previousAdvisorReview: null,
-    workflowSignals: [],
+        workflowSignals: [],
     localizedPatchSignals: [],
     driftEvidence: [],
     github: null,
@@ -49,13 +46,15 @@ export function loadAdvisorSchema(): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(schemaPath, "utf-8")) as Record<string, unknown>;
 }
 
-export function validResult(overrides = {}) {
+export function validResult(
+  overrides: Record<string, unknown> = {},
+): ReviewAdvisorResult {
   return {
     version: 1,
-    baseRef: "wrong",
-    headRef: "wrong",
-    headSha: "wrong",
-    changedFiles: [],
+    baseRef: "origin/main",
+    headRef: "HEAD",
+    headSha: "abc123def456",
+    changedFiles: ["tools/pr-review-advisor/analyze.mts"],
     summary: {
       recommendation: "merge_after_fixes",
       confidence: "high",
@@ -77,6 +76,11 @@ export function validResult(overrides = {}) {
         evidence: "advisor scripts are invoked from ADVISOR_DIR",
       },
     ],
+    terminologyReview: {
+      status: "clear",
+      decisions: [],
+      noChangesReason: "No semantic terminology candidates were selected.",
+    },
     acceptanceCoverage: [
       {
         clause: "post a sticky advisory comment",
@@ -115,6 +119,7 @@ export function validResult(overrides = {}) {
       },
       targets: {
         relevantChangedFiles: [],
+        changedCredentialFreeTests: [],
         required: [],
         optional: [],
         noTargetE2eReason: "No E2E target impact.",
@@ -132,5 +137,5 @@ export function validResult(overrides = {}) {
       requiresHumanReview: true,
     },
     ...overrides,
-  };
+  } as ReviewAdvisorResult;
 }

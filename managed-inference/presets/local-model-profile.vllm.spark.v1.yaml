@@ -7,6 +7,9 @@ kind: ServingPreset
 metadata:
   id: local-model-profile.vllm.spark.v1
   displayName: Local model profile with vLLM
+  validation:
+    level: schema
+    evidence: managed-inference-catalog-compiler-v1
 
 spec:
   selection: disabled
@@ -98,4 +101,7 @@ spec:
 
   plan:
     backend: vllm
+    platform: spark
+    interactive: false
     recipeRef: vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1
+    installPolicyRef: vllm.fixed-authenticated/v1

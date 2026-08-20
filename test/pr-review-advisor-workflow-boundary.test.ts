@@ -322,39 +322,6 @@ function advisorAnalysisInput(overrides: Record<string, string> = {}) {
   };
 }
 
-function throwReadTextError(error: Error): never {
-  throw error;
-}
-
-function readTextBySuffix(
-  entries: ReadonlyArray<readonly [suffix: string, text: string | Error]>,
-): (file: string) => string {
-  return (file: string): string => {
-    const text = entries.find(([suffix]) => file.endsWith(suffix))?.[1];
-    return text instanceof Error
-      ? throwReadTextError(text)
-      : (text ?? throwReadTextError(new Error(`unexpected read: ${file}`)));
-  };
-}
-
-function supportedAdvisorReadText(input: ReturnType<typeof advisorAnalysisInput>) {
-  return readTextBySuffix([
-    ["session.mts", "provider constants import"],
-    ["provider-constants.mts", input.model],
-    ["analyze.mts", "PR_REVIEW_ADVISOR_MODEL"],
-    ["comment.mts", "PR_REVIEW_ADVISOR_COMMENT_MARKER"],
-  ]);
-}
-
-function missingSessionReadText() {
-  return readTextBySuffix([
-    ["session.mts", new Error("missing session.mts")],
-    ["provider-constants.mts", new Error("missing provider-constants.mts")],
-    ["analyze.mts", "PR_REVIEW_ADVISOR_MODEL"],
-    ["comment.mts", "PR_REVIEW_ADVISOR_COMMENT_MARKER"],
-  ]);
-}
-
 describe("PR review advisor workflow boundary", () => {
   it("keeps the target-event workflow inside the split privilege boundary", () => {
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
@@ -823,80 +790,58 @@ process.exitCode = valid ? 0 : 1;`,
     }
   });
 
-  it("runs analyze normally when the trusted checkout supports the advisor model", () => {
-    const appendedEnv: Array<[string, string]> = [];
-    const runCalls: Array<{
-      script: string;
-      args: string[];
-      env: NodeJS.ProcessEnv;
-      cwd: string;
-    }> = [];
-    const input = advisorAnalysisInput({ runAnalysis: "0" });
-    const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
-    const previousRunAnalysis = process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS;
-    process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS = "1";
+  it.each(["azure/openai/gpt-5.6-terra", "nvidia/nvidia/nemotron-3-ultra"])(
+    "runs analyze directly for matrix model %s without source probing",
+    (model) => {
+      const runCalls: Array<{
+        script: string;
+        args: string[];
+        env: NodeJS.ProcessEnv;
+        cwd: string;
+      }> = [];
+      const input = advisorAnalysisInput({ model, runAnalysis: "0" });
+      const analyzePath = path.join(
+        input.advisorDir,
+        "tools",
+        "pr-review-advisor",
+        "analyze.mts",
+      );
+      const previousRunAnalysis = process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS;
+      process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS = "1";
 
-    try {
-      runPrReviewAdvisorAnalysis(input, {
-        fileExists: (file) => file === analyzePath,
-        readText: supportedAdvisorReadText(input),
-        runNode: (script, args, env, cwd) => {
-          runCalls.push({ script, args, env, cwd });
-          return 0;
-        },
-        appendEnv: (key, value) => appendedEnv.push([key, value]),
-      });
-    } finally {
-      restoreEnv("PR_REVIEW_ADVISOR_RUN_ANALYSIS", previousRunAnalysis);
-    }
-
-    expect(appendedEnv).toEqual([["PR_REVIEW_ADVISOR_SUPPORTED", "1"]]);
-    expect(runCalls).toHaveLength(1);
-    expect(runCalls[0]).toMatchObject({
-      script: analyzePath,
-      args: [
-        "--base",
-        input.baseRef,
-        "--head",
-        input.headRef,
-        "--schema",
-        path.join(input.advisorDir, "tools", "pr-review-advisor", "schema.json"),
-        "--out-dir",
-        input.outDir,
-      ],
-      cwd: input.advisorWorkdir,
-    });
-    expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBeUndefined();
-    expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
-  });
-
-  it("appends support status only to an existing GitHub env file", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-env-"));
-    const envFile = path.join(tmp, "github-env");
-    const input = advisorAnalysisInput({ envFile });
-    const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
-    try {
-      fs.writeFileSync(envFile, "");
-      runPrReviewAdvisorAnalysis(input, {
-        fileExists: (file) => file === analyzePath,
-        readText: supportedAdvisorReadText(input),
-        runNode: () => 0,
-      });
-
-      expect(fs.readFileSync(envFile, "utf8")).toBe("PR_REVIEW_ADVISOR_SUPPORTED=1\n");
-      fs.rmSync(envFile);
-      expect(() =>
+      try {
         runPrReviewAdvisorAnalysis(input, {
           fileExists: (file) => file === analyzePath,
-          readText: supportedAdvisorReadText(input),
-          runNode: () => 0,
-        }),
-      ).toThrow();
-      expect(fs.existsSync(envFile)).toBe(false);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+          runNode: (script, args, env, cwd) => {
+            runCalls.push({ script, args, env, cwd });
+            return 0;
+          },
+        });
+      } finally {
+        restoreEnv("PR_REVIEW_ADVISOR_RUN_ANALYSIS", previousRunAnalysis);
+      }
+
+      expect(runCalls).toHaveLength(1);
+      expect(runCalls[0]).toMatchObject({
+        script: analyzePath,
+        args: [
+          "--base",
+          input.baseRef,
+          "--head",
+          input.headRef,
+          "--schema",
+          path.join(input.advisorDir, "tools", "pr-review-advisor", "schema.json"),
+          "--out-dir",
+          input.outDir,
+        ],
+        cwd: input.advisorWorkdir,
+      });
+      expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_MODEL).toBe(model);
+      expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBeUndefined();
+      expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
+    },
+  );
+
 
   it("writes failure artifacts when analysis exits before producing artifacts", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-failure-"));
@@ -907,7 +852,6 @@ process.exitCode = valid ? 0 : 1;`,
       expect(() =>
         runPrReviewAdvisorAnalysis(input, {
           fileExists: (file) => file === analyzePath,
-          readText: supportedAdvisorReadText(input),
           runGit: () => HEAD_SHA,
           runNode: () => 17,
         }),
@@ -947,7 +891,6 @@ process.exitCode = valid ? 0 : 1;`,
       expect(() =>
         runPrReviewAdvisorAnalysis(input, {
           fileExists: (file) => file === analyzePath || fs.existsSync(file),
-          readText: supportedAdvisorReadText(input),
           runGit: () => HEAD_SHA,
           runNode: () => 17,
         }),
@@ -963,86 +906,13 @@ process.exitCode = valid ? 0 : 1;`,
     }
   });
 
-  it("runs analyze in unavailable-result mode when the trusted checkout lacks model support", () => {
-    const appendedEnv: Array<[string, string]> = [];
-    const runCalls: Array<{
-      script: string;
-      args: string[];
-      env: NodeJS.ProcessEnv;
-      cwd: string;
-    }> = [];
-    const input = advisorAnalysisInput();
-    const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
-
-    runPrReviewAdvisorAnalysis(input, {
-      fileExists: (file) => file === analyzePath,
-      readText: (file) =>
-        file.endsWith("session.mts") ? "legacy primary model only" : "trusted helper text",
-      runNode: (script, args, env, cwd) => {
-        runCalls.push({ script, args, env, cwd });
-        return 0;
-      },
-      appendEnv: (key, value) => appendedEnv.push([key, value]),
-    });
-
-    expect(appendedEnv).toEqual([["PR_REVIEW_ADVISOR_SUPPORTED", "0"]]);
-    expect(runCalls).toHaveLength(1);
-    expect(runCalls[0]).toMatchObject({
-      script: analyzePath,
-      args: [
-        "--base",
-        input.baseRef,
-        "--head",
-        input.headRef,
-        "--schema",
-        path.join(input.advisorDir, "tools", "pr-review-advisor", "schema.json"),
-        "--out-dir",
-        input.outDir,
-      ],
-      cwd: input.advisorWorkdir,
-    });
-    expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
-    expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toContain(input.model);
-  });
-
-  it("treats missing model-support probe files as unsupported rollout skew", () => {
-    const appendedEnv: Array<[string, string]> = [];
-    const runCalls: Array<{ env: NodeJS.ProcessEnv }> = [];
-    const input = advisorAnalysisInput();
-    const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
-
-    runPrReviewAdvisorAnalysis(input, {
-      fileExists: (file) => file === analyzePath,
-      readText: missingSessionReadText(),
-      runNode: (_script, _args, env) => {
-        runCalls.push({ env });
-        return 0;
-      },
-      appendEnv: (key, value) => appendedEnv.push([key, value]),
-    });
-
-    expect(appendedEnv).toEqual([["PR_REVIEW_ADVISOR_SUPPORTED", "0"]]);
-    expect(runCalls).toHaveLength(1);
-    expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
-    expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toContain(input.model);
-  });
-
-  it("fails unavailable artifact generation for unsupported model rollout skew", () => {
-    const appendedEnv: Array<[string, string]> = [];
-    expect(() =>
-      runPrReviewAdvisorAnalysis(advisorAnalysisInput(), {
-        fileExists: (file) => file.endsWith("analyze.mts"),
-        readText: (file) =>
-          file.endsWith("session.mts") ? "legacy primary model only" : "trusted helper text",
-        runNode: () => 17,
-        appendEnv: (key, value) => appendedEnv.push([key, value]),
-      }),
-    ).toThrow("PR review advisor unavailable-result generation exited with status 17");
-    expect(appendedEnv).toEqual([["PR_REVIEW_ADVISOR_SUPPORTED", "0"]]);
-  });
-
-  it("accepts bounded same-head primary and secondary artifacts for publication", () => {
-    const result = runArtifactValidation(validPrimaryResult());
+  it("accepts the legacy sinceLastReview field in bounded same-head artifacts", () => {
+    const artifact = validPrimaryResult();
+    artifact.summary = {
+      ...(artifact.summary as Record<string, unknown>),
+      sinceLastReview: { resolved: 2, stillApplies: 1, newItems: 3 },
+    };
+    const result = runArtifactValidation(artifact);
     try {
       expect(result.status, result.stderr).toBe(0);
       expect(result.githubOutput).toBe("secondary_artifact_validated=true\n");
@@ -1363,17 +1233,13 @@ process.exitCode = valid ? 0 : 1;`,
     );
   });
 
-  it("keeps mutable review history disabled and runtime dependencies pinned", () => {
+  it("keeps runtime dependencies pinned", () => {
     const errors = validateMutation((source) =>
       source
         .replace('      FD_FIND_VERSION: "9.0.0-1"', '      FD_FIND_VERSION: "latest"')
         .replace('      UNDICI_VERSION: "8.10.0"', '      UNDICI_VERSION: "latest"')
         .replace('      VITEST_VERSION: "4.1.9"', '      VITEST_VERSION: "latest"')
-        .replace('      YAML_VERSION: "2.8.3"', '      YAML_VERSION: "latest"')
-        .replace(
-          '      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false"',
-          "      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}",
-        ),
+        .replace('      YAML_VERSION: "2.8.3"', '      YAML_VERSION: "latest"'),
     );
 
     expect(errors).toEqual(
@@ -1382,7 +1248,6 @@ process.exitCode = valid ? 0 : 1;`,
         "review job env.UNDICI_VERSION must be 8.10.0",
         "review job env.VITEST_VERSION must be 4.1.9",
         "review job env.YAML_VERSION must be 2.8.3",
-        "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be false",
       ]),
     );
   });

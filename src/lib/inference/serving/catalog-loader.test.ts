@@ -20,47 +20,26 @@ import {
 import type { CompiledServingCatalog, ServingPreset, ServingRecipe } from "./types";
 
 const EMPTY_CATALOG: CompiledServingCatalog = {
-  schemaVersion: "1.0.0",
-  compilerVersion: "1.2.0",
+  schemaVersion: "1.1.0",
+  compilerVersion: "1.4.0",
   sourceRevision: "a".repeat(40),
   readinessSchemaRef: "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
+  models: [],
   recipes: [],
   presets: [],
   sources: [],
   catalogDigest: `sha256:${"b".repeat(64)}`,
 };
-const EXPECTED_MANAGED_RECIPE_IDS = [
-  "llama-cpp.muse-glimmer-30b.spark-single.v1",
-  "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
-  "vllm.deepseek-v4-flash-0731.spark-dual.v1",
-  "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
-  "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1",
-  "vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1",
-];
-const EXPECTED_MANAGED_PRESET_IDS = [
-  "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b",
-  "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
-  "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b",
-  "local-model-profile.vllm.spark.v1",
-  "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
-  "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4",
-  "vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
-];
-const EXPECTED_MANAGED_SOURCE_IDS = [
-  "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b",
-  "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
-  "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b",
-  "local-model-profile.vllm.spark.v1",
-  "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
-  "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4",
-  "vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
-  "llama-cpp.muse-glimmer-30b.spark-single.v1",
-  "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
-  "vllm.deepseek-v4-flash-0731.spark-dual.v1",
-  "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
-  "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1",
-  "vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1",
-];
+const MANAGED_MATERIALIZER_REFS: ReadonlySet<string> = new Set([
+  HOST_LOCAL_VLLM_MATERIALIZER_REF,
+  LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF,
+  MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
+]);
+const MANAGED_LIFECYCLE_REFS: ReadonlySet<string> = new Set([
+  HOST_LOCAL_VLLM_LIFECYCLE_REF,
+  LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF,
+  MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
+]);
 
 const INCOMPLETE_MANAGED_RECIPE: ServingRecipe = {
   apiVersion: "nemoclaw.nvidia.com/managed-inference/v1",
@@ -124,13 +103,44 @@ function managedCatalogValidationError(catalog: CompiledServingCatalog): string 
   }
 }
 
-function expectManagedRuntimeDefinitions(catalog: CompiledServingCatalog): void {
+function expectManagedRuntimeDefinitions(
+  catalog: CompiledServingCatalog,
+  servingCatalog: CompiledServingCatalog = loadServingCatalog(),
+): void {
   const { catalogDigest, ...catalogContents } = catalog;
+  const expectedRecipes = servingCatalog.recipes.filter(
+    ({ spec }) =>
+      MANAGED_MATERIALIZER_REFS.has(spec.execution.materializerRef) ||
+      MANAGED_LIFECYCLE_REFS.has(spec.execution.lifecycleRef),
+  );
+  const expectedRecipeIds = new Set(expectedRecipes.map(({ metadata }) => metadata.id));
+  const expectedModelIds = new Set(
+    expectedRecipes.flatMap(({ spec }) => (spec.modelRef ? [spec.modelRef] : [])),
+  );
+  const expectedPresets = servingCatalog.presets.filter(({ spec }) =>
+    expectedRecipeIds.has(spec.plan.recipeRef),
+  );
+  const expectedDefinitionIds = new Set([
+    ...expectedModelIds,
+    ...expectedRecipeIds,
+    ...expectedPresets.map(({ metadata }) => metadata.id),
+  ]);
 
   expect(catalogDigest).toBe(servingCatalogDigest(catalogContents));
-  expect(catalog.recipes.map(({ metadata }) => metadata.id)).toEqual(EXPECTED_MANAGED_RECIPE_IDS);
-  expect(catalog.presets.map(({ metadata }) => metadata.id)).toEqual(EXPECTED_MANAGED_PRESET_IDS);
-  expect(catalog.sources.map(({ id }) => id)).toEqual(EXPECTED_MANAGED_SOURCE_IDS);
+  expect(catalog.recipes.map(({ metadata }) => metadata.id)).toEqual(
+    expectedRecipes.map(({ metadata }) => metadata.id),
+  );
+  expect(catalog.models.map(({ metadata }) => metadata.id)).toEqual(
+    servingCatalog.models
+      .filter(({ metadata }) => expectedModelIds.has(metadata.id))
+      .map(({ metadata }) => metadata.id),
+  );
+  expect(catalog.presets.map(({ metadata }) => metadata.id)).toEqual(
+    expectedPresets.map(({ metadata }) => metadata.id),
+  );
+  expect(catalog.sources.map(({ id }) => id)).toEqual(
+    servingCatalog.sources.filter(({ id }) => expectedDefinitionIds.has(id)).map(({ id }) => id),
+  );
 }
 
 describe("managed inference catalog loader", () => {

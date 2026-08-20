@@ -74,11 +74,7 @@ process.exit(result.status ?? 99);
 `;
 }
 
-function installChildSource(
-  onboardModuleUrl: string,
-  statfsLogPath: string,
-  model: string,
-): string {
+function installChildSource(vllmModuleUrl: string, statfsLogPath: string, model: string): string {
   return `
 const fs = (await import("node:fs")).default;
 const originalStatfsSync = fs.statfsSync.bind(fs);
@@ -95,9 +91,54 @@ process.env.NEMOCLAW_NON_INTERACTIVE = "1";
 process.env.NEMOCLAW_PROVIDER = "install-vllm";
 process.env.NEMOCLAW_VLLM_MODEL = ${JSON.stringify(model)};
 delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
-const onboardModule = await import(${JSON.stringify(onboardModuleUrl)});
-const { setupNim } = onboardModule.default ?? onboardModule;
-await setupNim({ platform: "linux", type: "nvidia" }, null, null, false);
+const vllmModule = await import(${JSON.stringify(vllmModuleUrl)});
+const { detectVllmProfile, installVllm } = vllmModule.default ?? vllmModule;
+const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+if (!profile) throw new Error("managed vLLM has no generic Linux profile");
+const capabilities = [
+  "host.platform.supported",
+  "host.docker.available",
+  "host.docker.daemon_reachable",
+  "host.docker.runtime_supported",
+  "host.docker.storage_compatible",
+  "host.gpu.nvidia_available",
+  "host.gpu.container_toolkit_available",
+  "host.gpu.cdi_healthy",
+].map((id) => ({ id, state: "present" }));
+const report = {
+  schemaVersion: "1.1.0",
+  status: "supported",
+  exitCode: 0,
+  mutated: false,
+  provenance: {
+    nemoclawVersion: "0.0.0-test",
+    sourceRevision: "${"a".repeat(40)}",
+    observedAt: new Date().toISOString(),
+  },
+  observations: [
+    { id: "host.os.platform", state: "present", value: "linux" },
+    { id: "host.os.architecture", state: "present", value: process.arch },
+    { id: "host.docker.runtime", state: "present", value: "docker" },
+    { id: "host.gpu.count", state: "present", value: 1 },
+    { id: "host.gpu.driver_version", state: "present", value: "580.65.06" },
+    { id: "host.gpu.memory_total_bytes", state: "present", value: 34359738368 },
+    { id: "host.gpu.memory_available_bytes", state: "present", value: 34359738368 },
+    { id: "host.gpu.memory_per_device_bytes", state: "present", value: 34359738368 },
+    { id: "host.gpu.unified_memory", state: "absent", value: false },
+    { id: "host.gpu.compute_constrained", state: "absent", value: false },
+  ],
+  capabilities,
+  qualifications: [],
+  findings: [],
+  evidence: [],
+};
+const result = await installVllm(profile, {
+  hasImage: false,
+  nonInteractive: true,
+  promptFn: async () => "",
+  readinessReports: [{ nodeId: "storage-proof", report }],
+});
+process.exitCode = result.ok ? 0 : 1;
 `;
 }
 
@@ -216,7 +257,7 @@ realDockerTest(
           "--input-type=module",
           "--eval",
           installChildSource(
-            pathToFileURL(path.resolve("src/lib/onboard.ts")).href,
+            pathToFileURL(path.resolve("src/lib/inference/vllm.ts")).href,
             statfsLogPath,
             profile.defaultModel.envValue,
           ),
@@ -238,9 +279,7 @@ realDockerTest(
         `managed-vLLM express subprocess did not reach the intentional post-guard abort:\n${installResult.stderr}\n${installResult.stdout}`,
       ).toBe(1);
       expect(installResult.stderr).toContain("could not create Hugging Face cache directory");
-      expect(installResult.stderr).toContain(
-        "[non-interactive] Aborting: vLLM install failed. See errors above.",
-      );
+      expect(installResult.stderr).not.toContain("Readiness requirement");
       expect(installResult.stderr).not.toContain("Docker storage for the managed vLLM image");
       expect(`${installResult.stdout}\n${installResult.stderr}`).not.toContain("Continue anyway");
       const dockerCommands = fs
@@ -250,13 +289,8 @@ realDockerTest(
         .map((line) => JSON.parse(line) as string[]);
       installDockerCommands = dockerCommands.map((args) => args.slice(0, 2).join(" "));
       expect(new Set(installDockerCommands)).toEqual(
-        new Set(["container inspect", "container ls", "image inspect", "info --format"]),
+        new Set(["container ls", "image inspect", "info --format"]),
       );
-      expect(dockerCommands).toContainEqual([
-        "container",
-        "inspect",
-        HOST_LOCAL_VLLM_CONTAINER_NAME,
-      ]);
       const rejectedInspection = spawnSync(
         path.join(fakeBinDir, "docker"),
         ["container", "inspect", `${HOST_LOCAL_VLLM_CONTAINER_NAME}-other`],
