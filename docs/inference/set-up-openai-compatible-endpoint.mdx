@@ -32,7 +32,8 @@ For the no-authentication path on bundled host-gateway ports, bind the backend t
 NemoClaw places a token-protected proxy in front of the endpoint.
 At startup, NemoClaw normally inspects the backend listeners.
 NemoClaw rejects an observed non-loopback listener because it would bypass the proxy token check.
-If listener inspection is unavailable, the proxy warns and starts without verifying the backend bind.
+If listener inspection is unavailable, the proxy starts without verifying the backend bind.
+NemoClaw does not surface this degraded inspection result during onboarding, so verify that the backend listens only on loopback before continuing.
 Endpoints configured with `COMPATIBLE_API_KEY` use a different authenticated path and do not use this loopback-only proxy requirement.
 </Warning>
 
