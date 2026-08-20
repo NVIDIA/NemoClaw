@@ -1,5 +1,5 @@
 /**
- * Aggregate bounded per-test and per-file durations from recent retained NemoClaw CLI Vitest artifacts. Reject compressed artifacts above 25,000,000 bytes.
+ * Aggregate bounded per-test and per-file durations from recent retained NemoClaw CLI Vitest artifacts. Reject compressed artifacts above 25,000,000 bytes. Requires GNU find for bounded extracted-file inventories.
  */
 export default async function analyze_recent_cli_timings(input: {
   workdir: string;
@@ -111,31 +111,30 @@ export default async function analyze_recent_cli_timings(input: {
   }
   const seen = new Set();
   const artifacts = [];
+  const failures = [];
   for (const artifact of artifactData.artifacts ?? []) {
     const runId = Number(artifact.runId ?? 0);
     if (!runId || artifact.expired || seen.has(runId)) continue;
     seen.add(runId);
+    const size = artifact.size;
+    if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0 || size > 25000000) {
+      failures.push({
+        runId,
+        detail: "Artifact has an invalid compressed size or exceeds the 25,000,000-byte limit",
+      });
+      continue;
+    }
     artifacts.push({
       artifactId: Number(artifact.id),
       runId,
       createdAt: String(artifact.createdAt),
       headSha: String(artifact.headSha),
-      size: Number(artifact.size),
+      size,
     });
     if (artifacts.length >= limit) break;
   }
   if (artifacts.length < 2)
-    throw new Error(`Found ${artifacts.length} retained reports; at least 2 are required`);
-  const failures = [];
-  const downloadable = artifacts.filter((artifact) => {
-    if (Number.isFinite(artifact.size) && artifact.size >= 0 && artifact.size <= 25000000)
-      return true;
-    failures.push({
-      runId: artifact.runId,
-      detail: "Artifact exceeds the 25,000,000-byte compressed-size limit",
-    });
-    return false;
-  });
+    throw new Error(`Found ${artifacts.length} eligible retained reports; at least 2 are required`);
   const temporary = await run(
     'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-cli-timings.XXXXXXXXXX"',
     30000,
@@ -145,7 +144,7 @@ export default async function analyze_recent_cli_timings(input: {
   if (!root) throw new Error("Could not create private temporary directory");
   const reports = [];
   try {
-    for (const artifact of downloadable) {
+    for (const artifact of artifacts) {
       const directory = root + "/" + artifact.runId;
       const downloaded = await run(
         "mkdir -p " +
@@ -167,7 +166,7 @@ export default async function analyze_recent_cli_timings(input: {
         continue;
       }
       const inventory = await run(
-        `find ${quote(directory)} -mindepth 1 -printf '%y %s\n' | awk 'BEGIN { files=0; bytes=0 } $1 == "d" { next } $1 != "f" { print "unsafe"; exit } { files++; bytes += $2; if (files > 100) { print "files"; exit } if (bytes > 100000000) { print "bytes"; exit } } END { if (files <= 100 && bytes <= 100000000) print "ok " files " " bytes }' | head -n 1`,
+        `inventory=$(umask 077; mktemp "\${TMPDIR:-/tmp}/nemoclaw-cli-inventory.XXXXXXXXXX") || { printf 'unsafe\n'; exit 0; }; trap 'rm -f -- "$inventory"' EXIT; set -o pipefail; find ${quote(directory)} -mindepth 1 -printf '%y %s\0' 2>/dev/null | head -z -n 101 > "$inventory"; pipeline_status=$?; awk -v pipeline_status="$pipeline_status" 'BEGIN { RS="\0"; records=0; bytes=0; state="ok" } NF { records++; if (records == 101) { state="files"; next } if ($1 == "d") next; if ($1 != "f" || $2 !~ /^[0-9]+$/) { state="unsafe"; next } bytes += $2; if (bytes > 100000000 && state == "ok") state="bytes" } END { if (records == 101) print "files"; else if (pipeline_status != 0) print "unsafe"; else print state }' "$inventory"`,
         30000,
       );
       const inventoryState = inventory.stdout.text.trim().split(/\s+/, 1)[0];

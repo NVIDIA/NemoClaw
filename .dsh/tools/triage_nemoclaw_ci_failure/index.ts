@@ -1,5 +1,5 @@
 /**
- * Classify a NemoClaw GitHub Actions failure with caller-selected head/tail log clipping, explicit truncation metadata, and optional bounded artifact inspection. Reject compressed artifacts above 25,000,000 bytes.
+ * Classify a NemoClaw GitHub Actions failure with caller-selected head/tail log clipping, explicit truncation metadata, and optional bounded artifact inspection. Reject compressed artifacts above 25,000,000 bytes. Requires GNU find for bounded extracted-file inventories.
  */
 export default async function triage_nemoclaw_ci_failure(input: {
   workdir: string;
@@ -203,9 +203,16 @@ export default async function triage_nemoclaw_ci_failure(input: {
     const inventory = JSON.parse(inventoryResult.stdout);
     const found = (inventory.artifacts ?? []).find((entry) => entry.name === artifactName);
     if (!found) throw new Error(`Artifact ${artifactName} was not found for run ${job.runId}`);
-    const sizeBytes = Number(found.size_in_bytes ?? 0);
-    if (!Number.isFinite(sizeBytes) || sizeBytes < 0 || sizeBytes > 25000000)
-      throw new Error(`Artifact ${artifactName} is too large for bounded inspection`);
+    const sizeBytes = found.size_in_bytes;
+    if (
+      typeof sizeBytes !== "number" ||
+      !Number.isSafeInteger(sizeBytes) ||
+      sizeBytes < 0 ||
+      sizeBytes > 25000000
+    )
+      throw new Error(
+        `Artifact ${artifactName} has an invalid size or is too large for bounded inspection`,
+      );
     const temp = await run(
       'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-triage.XXXXXX"',
       "Create temporary artifact directory",
@@ -221,7 +228,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
       );
       if (download.exitCode !== 0) throw new Error("Could not download selected artifact");
       const measured = await run(
-        `find ${q(dir)} -mindepth 1 -printf '%y %s\n' | awk 'BEGIN { files=0; bytes=0 } $1 == "d" { next } $1 != "f" { print "unsafe"; exit } { files++; bytes += $2; if (files > 100) { print "files"; exit } if (bytes > 100000000) { print "bytes"; exit } } END { if (files <= 100 && bytes <= 100000000) print "ok " files " " bytes }' | head -n 1`,
+        `inventory=$(umask 077; mktemp "\${TMPDIR:-/tmp}/nemoclaw-ci-inventory.XXXXXXXXXX") || { printf 'unsafe\n'; exit 0; }; trap 'rm -f -- "$inventory"' EXIT; set -o pipefail; find ${q(dir)} -mindepth 1 -printf '%y %s\0' 2>/dev/null | head -z -n 101 > "$inventory"; pipeline_status=$?; awk -v pipeline_status="$pipeline_status" 'BEGIN { RS="\0"; records=0; bytes=0; state="ok" } NF { records++; if (records == 101) { state="files"; next } if ($1 == "d") next; if ($1 != "f" || $2 !~ /^[0-9]+$/) { state="unsafe"; next } bytes += $2; if (bytes > 100000000 && state == "ok") state="bytes" } END { if (records == 101) print "files"; else if (pipeline_status != 0) print "unsafe"; else print state }' "$inventory"`,
         "Measure extracted artifact inventory",
       );
       const inventoryState = measured.stdout.text.trim().split(/\s+/, 1)[0];
