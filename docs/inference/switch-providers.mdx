@@ -53,6 +53,9 @@ $$nemoclaw <name> shields up
 For OpenClaw, NemoClaw updates the provider namespace and selected model in the running configuration.
 Changes within the current API family hot-reload without replacing the gateway process.
 When the API family changes, NemoClaw commits the route and configuration, then restarts only the OpenClaw gateway and verifies its health.
+After every changed synchronized route, NemoClaw verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success.
+If pairing does not converge, the route and configuration remain committed.
+Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 </AgentOnly>
 

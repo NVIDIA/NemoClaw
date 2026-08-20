@@ -21,7 +21,7 @@ import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
 } from "../tools/e2e/workflow-boundary.mts";
-import { classifyTestDepth } from "../tools/pr-review-advisor/analyze.mts";
+import { classifyTestDepth } from "../tools/pr-review-advisor/deterministic-context.mts";
 
 const HEAD_SHA = "a".repeat(40);
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
