@@ -148,10 +148,10 @@ function proveAdmission(
       JSON.stringify([
         "inspect",
         "--format",
-        `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
+        `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }}|{{.State.Running}}|{{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
         registryContainer,
       ]),
-      commandResult(0, `1 true ${PORTABLE_REGISTRY_IP}`),
+      commandResult(0, `1|true|${PORTABLE_REGISTRY_IP}`),
     ],
   ]);
   const ipResults: ReadonlyMap<string, readonly [string, SpawnResult]> = new Map([
