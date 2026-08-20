@@ -29,16 +29,27 @@ describe("public compiled CLI contracts", () => {
   it("keeps compiled CLI commands aligned with their documentation headings (#7616)", {
     timeout: 150_000,
   }, () => {
-    // `npm run test:package` builds the CLI before this project, so the shim
-    // exercises the same compiled entrypoint shipped by the package.
+    // `npm run test:package` builds the CLI before this project. The Node.js
+    // shim records every compiled entrypoint invocation so this check cannot
+    // return to one cold CLI start for each documented command.
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docs-cli-parity-"));
     const binDir = path.join(fixtureRoot, "bin");
     const shim = path.join(binDir, "nemoclaw");
+    const nodeShim = path.join(binDir, "node");
+    const nodeInvocationLog = path.join(fixtureRoot, "node-invocations.log");
     fs.mkdirSync(binDir, { recursive: true });
     fs.writeFileSync(
       shim,
       `#!/usr/bin/env bash
 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI_ENTRYPOINT)} "$@"
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      nodeShim,
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >>${JSON.stringify(nodeInvocationLog)}
+exec ${JSON.stringify(process.execPath)} "$@"
 `,
       { mode: 0o755 },
     );
@@ -51,7 +62,7 @@ exec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI_ENTRYPOINT)} "$@"
           ...process.env,
           CHECK_DOC_LINKS_REMOTE: "0",
           HOME: fixtureRoot,
-          NODE: process.execPath,
+          NODE: nodeShim,
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },
         killSignal: "SIGKILL",
@@ -63,6 +74,24 @@ exec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI_ENTRYPOINT)} "$@"
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(result.stdout).toContain("check-docs: running: [cli]");
       expect(result.stdout).toContain("command-level parity OK");
+      expect(result.stdout).toContain("flag-level parity OK");
+      expect(fs.readFileSync(nodeInvocationLog, "utf-8").trim().split("\n")).toEqual([
+        `${CLI_ENTRYPOINT} --dump-commands`,
+        `${CLI_ENTRYPOINT} --dump-command-flags`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox agent --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox agents add --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox agents apply --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox agents delete --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox agents list --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox mcp add --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox mcp list --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox mcp remove --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox mcp status --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox sessions --help`,
+        `${CLI_ENTRYPOINT} placeholder-sandbox sessions list --help`,
+        `${CLI_ENTRYPOINT} uninstall --help`,
+        `${path.join(REPO_ROOT, "dist", "nemoclaw.js")} internal uninstall run-plan --help`,
+      ]);
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
