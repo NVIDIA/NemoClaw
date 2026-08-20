@@ -38,7 +38,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
 )
 
 _EXPECTED_RELAY_VERSION = "0.4.0"
-_EXPECTED_LANGGRAPH_VERSION = "1.2.6"
+_EXPECTED_LANGGRAPH_VERSION = "1.2.10"
 _EXPECTED_PRODUCTION_ENDPOINT = "http://host.openshell.internal:4318/v1/traces"
 _EXPECTED_REQUEST_COUNT = 13
 _EXPECTED_WIRE_HEADERS = {

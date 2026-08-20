@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+metadata:
+  id: vllm.muse-glimmer-30b-nvfp4-w4a4.v1
+  displayName: Muse Glimmer 30B NVFP4 W4A4
+spec:
+  id: Inferact/Muse-Glimmer-30B-NVFP4-W4A4
+  revision: d35cb79050f419c457611b1cee5c5d15b176f285
+  environmentValue: muse-glimmer-30b
+  displayName: Muse Glimmer 30B NVFP4 W4A4 [Experimental]
+  menuOrder: 70
+  servedName: muse-glimmer
+  downloadSizeBytes: 25447097878
+  gated: false
+  installFastSafetensors: false
+  preparation:
+    ref: none/v1
+  probePolicyRef: nvidia.endpoint-validation.standard/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: false
+    reasoning: true
+    multimodal: false

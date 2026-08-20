@@ -46,7 +46,13 @@ function registeredPolicy(
     : { addresses: [address] };
   return {
     name: buildMcpBridgePolicyName(server),
-    content: buildMcpBridgePolicyYaml(server, `https://${host}/mcp`, ADAPTER, target),
+    content: buildMcpBridgePolicyYaml(
+      server,
+      `https://${host}/mcp`,
+      ADAPTER,
+      target,
+      `sandbox-mcp-${server}`,
+    ),
     sourcePath: MCP_BRIDGE_POLICY_SOURCE,
   };
 }

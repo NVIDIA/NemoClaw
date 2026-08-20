@@ -85,6 +85,7 @@ import {
   type UninstallPlan,
 } from "./plan";
 import {
+  assertHermesPortableUninstallAvailable,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   portableRetirementPreservationEntries,
@@ -599,6 +600,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
       deps.runManagedLlamaCppRuntimeCleanup ??
       ((sandboxName, gatewayPort) => {
         const result = cleanupManagedLlamaCppRuntimeForSandbox(sandboxName, {
+          env,
           gatewayPort,
           homeDir: env.HOME || os.homedir(),
         });
@@ -1669,26 +1671,87 @@ function removeAliases(paths: UninstallPaths, runtime: UninstallRuntime): void {
   }
 }
 
+/** Direct entries of `dir`, or none when it is absent or unreadable. */
+function dirEntries(dir: string): fs.Dirent[] {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function nvmPackageBinTargets(packageDir: string): Map<string, string> {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8")) as {
+      bin?: unknown;
+    };
+    if (!manifest.bin || typeof manifest.bin !== "object" || Array.isArray(manifest.bin)) {
+      return new Map();
+    }
+    const packageRoot = `${path.resolve(packageDir)}${path.sep}`;
+    return new Map(
+      Object.entries(manifest.bin).flatMap(([binName, rawTarget]) => {
+        if (typeof rawTarget !== "string") return [];
+        const target = path.resolve(packageDir, rawTarget);
+        return target.startsWith(packageRoot) ? ([[binName, target]] as const) : [];
+      }),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function nvmBinBelongsToPackage(target: string, expectedTarget: string): boolean {
+  try {
+    if (fs.realpathSync(target) === fs.realpathSync(expectedTarget)) return true;
+    const targetStat = fs.statSync(target);
+    const expectedStat = fs.statSync(expectedTarget);
+    return targetStat.dev === expectedStat.dev && targetStat.ino === expectedStat.ino;
+  } catch {
+    try {
+      return (
+        path.resolve(path.dirname(target), fs.readlinkSync(target)) === path.resolve(expectedTarget)
+      );
+    } catch {
+      return false;
+    }
+  }
+}
+
 function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const nodeVersionsDir = path.join(paths.nvmDir, "versions", "node");
   if (!runtime.existsSync(nodeVersionsDir)) return;
-  const stack = [nodeVersionsDir];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const target = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        if (target.endsWith(path.join("lib", "node_modules", "nemoclaw"))) {
-          runtime.rmSync(target, { force: true, recursive: true });
-          runtime.log(`Removed leftover nemoclaw module at ${target}`);
-        } else {
-          stack.push(target);
-        }
-      } else if (entry.isFile() && target.endsWith(path.join("bin", "nemoclaw"))) {
-        runtime.rmSync(target, { force: true });
-        runtime.log(`Removed leftover nemoclaw binary at ${target}`);
+  // npm publishes every declared bin as a symlink, so an `isFile()` test never matched them.
+  const cliBinNames = ["nemoclaw", ...paths.agentAliasShimPaths.map((shim) => shim.binName)];
+  for (const version of dirEntries(nodeVersionsDir)) {
+    if (!version.isDirectory()) continue;
+    const versionDir = path.join(nodeVersionsDir, version.name);
+    const modulesDir = path.join(versionDir, "lib", "node_modules");
+    const packageEntry = dirEntries(modulesDir).find(
+      (entry) =>
+        (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
+    );
+    const packageDir = packageEntry ? path.join(modulesDir, packageEntry.name) : null;
+    const packageBins = packageDir ? nvmPackageBinTargets(packageDir) : new Map<string, string>();
+    const binDir = path.join(versionDir, "bin");
+    for (const entry of dirEntries(binDir)) {
+      const removable = entry.isFile() || entry.isSymbolicLink();
+      const target = path.join(binDir, entry.name);
+      const expectedTarget = packageBins.get(entry.name);
+      if (
+        !removable ||
+        !cliBinNames.includes(entry.name) ||
+        !expectedTarget ||
+        !nvmBinBelongsToPackage(target, expectedTarget)
+      ) {
+        continue;
       }
+      runtime.rmSync(target, { force: true });
+      runtime.log(`Removed leftover ${entry.name} binary at ${target}`);
+    }
+    if (packageDir && packageEntry?.isDirectory()) {
+      runtime.rmSync(packageDir, { force: true, recursive: true });
+      runtime.log(`Removed leftover nemoclaw module at ${packageDir}`);
     }
   }
 }
@@ -1965,49 +2028,59 @@ function managedLlamaCppCleanupTargets(
   }
 }
 
+interface ManagedLlamaCppCleanupOutcome {
+  readonly failedStateDirs: readonly string[];
+  readonly ok: boolean;
+}
+
 function removeManagedLlamaCppRuntimes(
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
-): boolean {
+): ManagedLlamaCppCleanupOutcome {
   const targets = managedLlamaCppCleanupTargets(runtime, scopedToSelectedGateway);
-  if (targets === null) return false;
+  if (targets === null) return { failedStateDirs: [], ok: false };
   for (const target of targets) {
     const result = runtime.runManagedLlamaCppRuntimeCleanup(target.sandboxName, target.gatewayPort);
     for (const removed of splitNonEmptyLines(result.stdout)) runtime.log(`Removed ${removed}`);
     if (result.status !== 0) {
       runtime.error(
-        `Managed llama.cpp cleanup for sandbox '${target.sandboxName}' on gateway port ${String(target.gatewayPort)} did not complete: ${result.stderr.trim() || "unknown cleanup error"}. NemoClaw did not start the remaining uninstall steps.`,
+        `Managed llama.cpp cleanup for sandbox '${target.sandboxName}' on gateway port ${String(target.gatewayPort)} did not complete: ${result.stderr.trim() || "unknown cleanup error"}. NemoClaw will preserve its ownership state and continue unrelated uninstall steps.`,
       );
-      return false;
+      return { failedStateDirs: [target.stateDir], ok: true };
     }
     if (fs.lstatSync(target.stateDir, { throwIfNoEntry: false }) !== undefined) {
       runtime.error(
-        `Managed llama.cpp cleanup for sandbox '${target.sandboxName}' on gateway port ${String(target.gatewayPort)} returned without retiring its ownership state. NemoClaw did not start the remaining uninstall steps.`,
+        `Managed llama.cpp cleanup for sandbox '${target.sandboxName}' on gateway port ${String(target.gatewayPort)} returned without retiring its ownership state. NemoClaw will preserve its ownership state and continue unrelated uninstall steps.`,
       );
-      return false;
+      return { failedStateDirs: [target.stateDir], ok: true };
     }
   }
-  return true;
+  return { failedStateDirs: [], ok: true };
 }
 
 function removeManagedModelRuntimes(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
-): boolean {
-  if (!removeManagedLlamaCppRuntimes(runtime, scopedToSelectedGateway)) return false;
-  if (scopedToSelectedGateway) return true;
+): ManagedLlamaCppCleanupOutcome {
+  const llama = removeManagedLlamaCppRuntimes(runtime, scopedToSelectedGateway);
+  if (!llama.ok || llama.failedStateDirs.length > 0) return llama;
+  if (scopedToSelectedGateway) return llama;
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const hasDistributedReceipt = [
     MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
     DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
-  if (!removeManagedDistributedVllmRuntime(paths, runtime, !hasDistributedReceipt)) return false;
-  if (!removeHostLocalModelRuntimes(paths, runtime)) return false;
+  if (!removeManagedDistributedVllmRuntime(paths, runtime, !hasDistributedReceipt)) {
+    return { failedStateDirs: [], ok: false };
+  }
+  if (!removeHostLocalModelRuntimes(paths, runtime)) {
+    return { failedStateDirs: [], ok: false };
+  }
   if (!hasDistributedReceipt) {
     removePath(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE), runtime);
   }
-  if (!runtime.commandExists("docker")) return true;
+  if (!runtime.commandExists("docker")) return llama;
   const inventory = runtime.runDocker(["ps", "-a", "--format", "{{.Names}}"], {
     env: runtime.env,
     timeout: 10_000,
@@ -2016,16 +2089,29 @@ function removeManagedModelRuntimes(
     runtime.error(
       "Docker could not inventory reserved managed inference container names. NemoClaw refused the remaining uninstall steps so it cannot report incomplete cleanup as success.",
     );
-    return false;
+    return { failedStateDirs: [], ok: false };
   }
   const residual = splitNonEmptyLines(inventory.stdout).find((name) =>
     MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name),
   );
-  if (!residual) return true;
+  if (!residual) return llama;
   runtime.error(
     `Managed inference container '${residual}' remains after ownership-aware cleanup. NemoClaw refused the remaining uninstall steps; restore its ownership state or remove it after manual review, then retry.`,
   );
-  return false;
+  return { failedStateDirs: [], ok: false };
+}
+
+function recordManagedModelCleanup(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+  failedStateDirs: string[],
+  onPartialFailure: () => void,
+): boolean {
+  const result = removeManagedModelRuntimes(paths, runtime, scopedToSelectedGateway);
+  failedStateDirs.push(...result.failedStateDirs);
+  if (result.failedStateDirs.length > 0) onPartialFailure();
+  return result.ok;
 }
 
 function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): void {
@@ -2217,7 +2303,12 @@ function removeHostModelStores(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
+  preserveForFailedLlamaCleanup: boolean,
 ): boolean {
+  if (preserveForFailedLlamaCleanup) {
+    runtime.log("Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.");
+    return true;
+  }
   if (scopedToSelectedGateway) {
     runtime.log(
       "Sibling gateways remain; kept host-shared Ollama models and the Hugging Face model cache.",
@@ -2690,6 +2781,7 @@ function executePlan(
     return { ok: false };
   }
   let ok = true;
+  const failedManagedLlamaStateDirs: string[] = [];
   const branding = runtimeBranding(runtime);
   const preserveSharedOpenShell =
     options.keepOpenShell || externallySupervised || portableRuntimeCleanup;
@@ -2731,7 +2823,15 @@ function executePlan(
     if (step.name === "Stopping services") {
       if (
         !portableRuntimeCleanup &&
-        !removeManagedModelRuntimes(paths, runtime, scopedToSelectedGateway)
+        !recordManagedModelCleanup(
+          paths,
+          runtime,
+          scopedToSelectedGateway,
+          failedManagedLlamaStateDirs,
+          () => {
+            ok = false;
+          },
+        )
       ) {
         return { ok: false };
       }
@@ -2852,7 +2952,15 @@ function executePlan(
           if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
       }
     } else if (step.name === "Model stores") {
-      if (!removeHostModelStores(paths, options, runtime, scopedToSelectedGateway)) {
+      if (
+        !removeHostModelStores(
+          paths,
+          options,
+          runtime,
+          scopedToSelectedGateway,
+          failedManagedLlamaStateDirs.length > 0,
+        )
+      ) {
         ok = false;
       }
     } else if (step.name === "State and binaries") {
@@ -2895,6 +3003,12 @@ function executePlan(
           [
             ...preserveUnderStateDir,
             ...portableStateEntries,
+            ...failedManagedLlamaStateDirs.flatMap((stateDir) => {
+              const relative = path.relative(paths.nemoclawStateDir, stateDir);
+              return relative && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+                ? [relative.split(path.sep)[0]!]
+                : [];
+            }),
             ...(selectedIsDefault
               ? [GATEWAYS_SUBDIR, path.basename(paths.managedSwapMarkerPath)]
               : []),
@@ -3156,9 +3270,10 @@ export async function runUninstallPlanProduction(
   const env = { ...process.env, ...(deps.env ?? {}) };
   const home = env.HOME || os.homedir();
   try {
-    return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () =>
-      runUninstallPlan(options, { ...deps, env }),
-    );
+    return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () => {
+      assertHermesPortableUninstallAvailable(env);
+      return runUninstallPlan(options, { ...deps, env });
+    });
   } catch (error) {
     (deps.error ?? ((message: string) => console.error(message)))(
       `Uninstall could not acquire or release portable host authority: ${formatError(error)}`,

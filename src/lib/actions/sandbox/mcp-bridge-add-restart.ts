@@ -11,8 +11,10 @@ import {
   replayTrustedPrivateEndpoint,
 } from "../../security/trusted-private-endpoint";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/credential-ownership";
 import {
   assertAgentMcpConfigMutationAllowed,
   assertAgentMcpMutationRuntimeCapability,
@@ -31,11 +33,12 @@ import {
 } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
-  assertNoAttachedProviderCredentialCollisions,
+  assertNoProviderCredentialCollisions,
   attachProvider,
   deleteProvider,
   detachMissingProviderReference,
   detachProvider,
+  ensureMcpBridgeProviderProfile,
   inspectMcpProvider,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
@@ -123,7 +126,13 @@ function assertPreparedMcpAddResourcesAbsent(
       `MCP add preflight for '${entry.server}' found an existing policy ownership record '${entry.policyName}'. The durable add manifest was preserved without claiming it.`,
     );
   }
-  const policyContent = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, target);
+  const policyContent = buildMcpBridgePolicyYaml(
+    entry.server,
+    entry.url,
+    adapter,
+    target,
+    entry.providerName ?? "",
+  );
   const policyState = policies.getPresetContentGatewayState(sandboxName, policyContent);
   if (policyState !== "absent") {
     throw new McpBridgeError(
@@ -136,7 +145,10 @@ export async function addMcpBridge(
   sandboxName: string,
   options: McpBridgeAddOptions,
 ): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () => addMcpBridgeUnlocked(sandboxName, options));
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:add");
+    return addMcpBridgeUnlocked(sandboxName, options);
+  });
 }
 
 async function addMcpBridgeUnlocked(
@@ -300,18 +312,22 @@ async function addMcpBridgeUnlocked(
   // Bind the static credential-name deny-list to the OpenShell binary before
   // persisting ownership or mutating a provider, policy, or adapter.
   assertMcpCredentialBoundaryRuntimeVersion();
-  // This is the durable ownership manifest for every resource created below.
-  // It intentionally precedes gateway selection and all OpenShell mutations,
-  // so process death can never leave an unowned provider/policy/adapter entry.
-  if (!existingEntry) writeBridgeEntry(sandboxName, entry);
-
+  await ensureSandboxGatewaySelected(sandboxName);
+  if (!existingEntry) {
+    await withMcpCredentialOwnershipLock(() => {
+      // Publish the durable MCP reservation under the same cross-command lock
+      // used by credentials add. Neither command can pass its collision check
+      // before the other records its credential-key reservation.
+      assertNoProviderCredentialCollisions(sandboxName, [entry]);
+      writeBridgeEntry(sandboxName, entry);
+    });
+  }
   let providerCreated = false;
   let providerAttachAttempted = false;
   let policyApplied = false;
   let adapterMutationAttempted = false;
   let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
   try {
-    await ensureSandboxGatewaySelected(sandboxName);
     let detachedMissingProviderReference = false;
     if (resumingPreflightedAdd) {
       const providerInspection = inspectMcpProvider(entry.providerName);
@@ -372,11 +388,13 @@ async function addMcpBridgeUnlocked(
     // Credential keys are sandbox-global. Prove this key is not already
     // supplied by a foreign attachment before opening its MCP route, then check
     // again after provider creation to close the intervening race.
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
-    // Loading the real protocol:mcp policy with --wait is the authoritative
-    // running-supervisor capability check. Do it before any host credential is
-    // created or updated so unsupported runtimes fail without that side effect.
-    applyGeneratedPolicy(sandboxName, entry, target);
+    assertNoProviderCredentialCollisions(sandboxName, [entry]);
+    ensureMcpBridgeProviderProfile();
+    // Load the real protocol:mcp policy without a credential binding before
+    // provider mutation. OpenShell requires the endpointless provider to be
+    // attached before it accepts credential_binding.provider, and withholds
+    // that provider's static credential until the bound policy is active.
+    applyGeneratedPolicy(sandboxName, entry, target, { bindCredential: false });
     policyApplied = true;
     const providerResult = upsertMcpProvider(providerName ?? "", options.env, {
       // A first mutation must still observe the absence proven above. Only a
@@ -407,7 +425,7 @@ async function addMcpBridgeUnlocked(
       // adapter mutations. A process death before this write fails closed.
       writeBridgeEntry(sandboxName, entry);
     }
-    assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoProviderCredentialCollisions(sandboxName, [entry]);
     if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
       throw new McpBridgeError(
         `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,
@@ -415,6 +433,7 @@ async function addMcpBridgeUnlocked(
     }
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
+    applyGeneratedPolicy(sandboxName, entry, target);
     waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? {
@@ -448,6 +467,9 @@ async function addMcpBridgeUnlocked(
         envValues: adapterEnvValues,
       });
     }
+    if (policyApplied) {
+      removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
+    }
     const detachOutcome = providerAttachAttempted
       ? detachProvider(sandboxName, entry, { bestEffort: true })
       : "absent";
@@ -460,10 +482,6 @@ async function addMcpBridgeUnlocked(
         reservationCleanupProved = false;
       }
     }
-    if (policyApplied && reservationCleanupProved)
-      removeGeneratedPolicy(sandboxName, entry, {
-        bestEffort: true,
-      });
     if (providerCreated && rollbackProviderOwned && reservationCleanupProved) {
       const beforeDelete = inspectMcpProvider(providerName);
       if (providerMatchesCredential(beforeDelete, entry.env[0], entry.providerId)) {

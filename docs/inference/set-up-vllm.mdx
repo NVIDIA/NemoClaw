@@ -20,12 +20,12 @@ The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, 
 
 <Warning>
 Local vLLM does not require authentication by default.
-Existing-server and single-host managed-vLLM paths need port `8000` on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
+Existing-server and single-host managed-vLLM paths use `NEMOCLAW_VLLM_PORT`, which defaults to `8000`, on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
 Use a host firewall with default-deny inbound rules.
-Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
+Allow the configured TCP port only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
 
-An authenticated fixed profile publishes Docker port `8000` on exactly two host addresses: `127.0.0.1` and the exact private IPv4 gateway of the `openshell-docker` bridge.
+An authenticated fixed profile publishes the configured host port on exactly two host addresses: `127.0.0.1` and the exact private IPv4 gateway of the `openshell-docker` bridge. The container continues to listen on its recipe-owned internal port `8000`.
 It never publishes that host port on `0.0.0.0` or `::`.
 The provider route remains `https://inference.local` inside the sandbox, and OpenShell reaches the server through the private bridge binding.
 The managed Muse Glimmer profile uses the same bearer-protected listener and two-address publication boundary.
@@ -36,7 +36,7 @@ Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up
 
 ## Use an Existing Server
 
-On hosts other than N1x, when vLLM is already running on `localhost:8000`, NemoClaw detects it and queries `/v1/models` for the loaded model.
+On hosts other than N1x, when vLLM is already running on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`, NemoClaw detects it and queries `/v1/models` for the loaded model.
 
 Run onboarding.
 
@@ -48,6 +48,10 @@ Select **Local vLLM**.
 On generic hosts, the entry includes an experimental label.
 N1x does not offer the existing-server entry; it offers only the managed **Install vLLM** or **Start vLLM** entry with the **Deferred preview** label.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
+
+When you request a vLLM serving profile, the detected server must report the profile's served model alias or a safe `root` that matches the profile's declared model.
+NemoClaw stops onboarding when neither identifier matches, rather than recording a route that the profile does not declare.
+Stop the server and rerun the original command, or unset `NEMOCLAW_SERVING_PRESET` and `NEMOCLAW_PROVIDER` before you start fresh onboarding to keep the detected model.
 
 On hosts other than N1x, when an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.
 On N1x, explicit managed-preview intent never reuses an already-running server.
@@ -122,7 +126,7 @@ The same profile selector works with interactive and non-interactive onboarding.
 NemoClaw selects the inference provider required by the profile's backend, so onboarding does not show the provider menu.
 If the profile's backend has no corresponding inference provider, onboarding exits before it changes runtime resources.
 NemoClaw rejects unknown, ambiguous, disabled, incompatible, or conflicting selections before image or model downloads begin.
-Before confirmation, the review screen shows the resolved profile and recipe IDs, model, immutable runtime image, support state, and estimated image and model downloads.
+Before confirmation, the review screen shows the resolved profile and recipe IDs, declared model, served model alias, immutable runtime image, support state, and estimated image and model downloads.
 Do not combine `--profile` with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_MANAGED_CLUSTER_PEERS`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` overrides.
 If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable profile ID; a different ID conflicts with `--profile`.
 
@@ -135,13 +139,16 @@ Legacy sessions that predate profile provenance still resume with their original
 In an interactive run, the managed path lists the supported model registry for your host profile.
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
-The single-host path pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, and starts the `nemoclaw-vllm` container on `localhost:8000`.
+The single-host path pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, and starts the `nemoclaw-vllm` container with the configured host port (`8000` by default).
+For a bearer-protected profile, Docker publishes that port only on `127.0.0.1` and the exact private IPv4 gateway of the `openshell-docker` bridge.
+For a bearerless profile, Docker publishes the host port on all host interfaces and vLLM does not require NemoClaw's managed bearer key.
+Before starting a bearerless profile, configure the host firewall to allow the port only from the OpenShell Docker subnet and loopback, and deny it on management, LAN, and internet-facing interfaces.
 The distributed DGX pages document their separate container names, endpoints, and lifecycle checks.
 The container carries NemoClaw ownership and immutable catalog labels so later onboarding, recovery, and uninstall runs can distinguish it from a bring-your-own server without trusting the container name alone.
 NemoClaw also records an owner-only, credential-free runtime receipt that binds those labels to the exact container ID and API-key fingerprint.
 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
-On hosts other than N1x, if another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.
+On hosts other than N1x, if another vLLM server already occupies the configured vLLM port, NemoClaw selects the existing-server path and applies the model-identity checks described above.
 On N1x, NemoClaw stops managed onboarding and requires you to stop that server before trying the Deferred preview again.
 If another process holds the configured single-host port, NemoClaw stops the managed install before it persists a bearer key or records the selected model.
 NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
@@ -151,8 +158,9 @@ Managed profiles and model-specific recipes use immutable image digests:
 
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
   N1x uses the same image.
-- The DGX Spark Muse Glimmer recipe uses the `linux/arm64` post-merge vLLM nightly digest `sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204` with a compressed layer size of `9.70 GB` under `vllm/vllm-openai`.
-  The image was built from vLLM commit `ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9`, which contains merged Muse Glimmer support commit `6adad08767583f52eb4d2122111af0bf638ed5e6`.
+- The DGX Spark Muse Glimmer recipe uses the `linux/arm64` post-fix vLLM nightly digest `sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965` with a compressed layer size of `9.71 GB` under `vllm/vllm-openai`.
+  The image was built from vLLM commit `5a4c8d99242e9e069b604d0e9b969e77f7dd501d`, which contains merged Muse Glimmer support commit `6adad08767583f52eb4d2122111af0bf638ed5e6` and the vLLM dependency fix from commit `90984ddbed27a09409506d6d6c0eea87f54b04b5`.
+  The image includes `huggingface_hub` `1.28.0`, which preserves the pinned model revision when vLLM transfers configuration to the engine process.
   It pins Hugging Face revision `d35cb79050f419c457611b1cee5c5d15b176f285` for the approximately `25.45 GB` model download.
 - The DGX Spark Nemotron 3.5 Lightning recipe uses the `linux/arm64` digest `sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78` with a compressed layer size of approximately `12.69 GB` under `vllm/vllm-openai`.
   It pins Hugging Face revision `0dcd680e5585c791728c83342b311d0a0026dbeb` for the approximately `21.56 GB` model download.
@@ -377,10 +385,10 @@ On a host that still meets the N1x identity checks, `rebuild` reuses the recorde
 
 - The sandbox registry records provider `vllm-local`.
 - The registry records model `nvidia/Qwen3.6-35B-A3B-NVFP4`.
-- If the registry records `endpointUrl` as `null`, NemoClaw derives `http://host.openshell.internal:8000/v1`; otherwise, `endpointUrl` must equal that URL.
+- If the registry records `endpointUrl` as `null`, NemoClaw derives `http://host.openshell.internal:${NEMOCLAW_VLLM_PORT:-8000}/v1`; otherwise, `endpointUrl` must equal that URL.
 - The registry records `endpointSource` as `onboard` and `openshellDriver` as `docker`.
 - The replacement keeps the recorded provider and model, then re-derives the canonical local endpoint.
-- `hostLocalInferenceReceipt` is absent or `null`, or contains a canonical vLLM receipt for `host.openshell.internal:8000` and the same model.
+- `hostLocalInferenceReceipt` is absent or `null`, or contains a canonical vLLM receipt for `host.openshell.internal:${NEMOCLAW_VLLM_PORT:-8000}` and the same model.
 
 NemoClaw v0.0.109 can omit `hostLocalInferenceReceipt` or record it as `null`.
 Matching sandboxes from that release remain eligible only when every condition above passes.
@@ -401,8 +409,8 @@ Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for 
 
 On DGX Spark, Express keeps automatic managed-vLLM serving-profile selection as option 1, the default.
 It offers the fixed local vLLM profile as option 2.
-When you select option 2, the serving catalog supplies the pinned model, runtime image, port, and serve arguments.
-The installer rejects provider and model overrides for that fixed profile, and the dedicated onboarder rejects vLLM model, port, and serve-argument overrides before it starts the managed container.
+When you select option 2, the serving catalog supplies the pinned model, runtime image, container port, and serve arguments.
+The installer rejects provider and model overrides for that fixed profile, and the dedicated onboarder rejects vLLM model and serve-argument overrides before it starts the managed container. `NEMOCLAW_VLLM_PORT` may select another host listener.
 Explicit `NEMOCLAW_MODEL` or `NEMOCLAW_VLLM_MODEL` intent retains the customizable managed-vLLM path and skips the fixed-profile choice.
 If onboarding stops after you select option 2, `$$nemoclaw onboard --resume` reuses the recorded fixed profile instead of returning to automatic serving-profile selection.
 Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-vllm-profile) for fixed-profile installation and verification.

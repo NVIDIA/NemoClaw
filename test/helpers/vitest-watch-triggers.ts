@@ -41,7 +41,12 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
-    pattern: /(?:^|\/)managed-inference\/(?:presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/release-lkg-brev-image\.yaml|scripts\/release-lkg-brev-image\.sh)$/,
+    testsToRun: runTests("test/release-lkg-brev-image.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)managed-inference\/(?:models|presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,
     testsToRun: runTests(
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",
@@ -114,10 +119,26 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
+    testsToRun: runTests(
+      "test/managed-image-publication-workflow.test.ts",
+      "test/pull-public-exact-digest.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)\.github\/actions\/build-base-image-platform\/action\.yaml$/,
     testsToRun: runTests(
       "test/dcode-base-image-workflow.test.ts",
       "test/openclaw-dependency-review.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/base-image-platform\.yaml$/,
+    testsToRun: runTests(
+      "test/dcode-base-image-workflow.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/perl-critical-cve-remediation.test.ts",
+      "test/pi-candidate-runtime-artifacts.test.ts",
     ),
   },
   {
@@ -131,6 +152,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/validate-managed-base-index.test.ts",
       "test/managed-image-publication-workflow.test.ts",
       "test/dcode-base-image-workflow.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/checks\/pull-public-exact-digest\.sh$/,
+    testsToRun: runTests(
+      "test/pull-public-exact-digest.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
     ),
   },
   {

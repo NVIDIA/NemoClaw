@@ -446,7 +446,7 @@ check_git_configuration() {
       "Set repository-local user.name and user.email before committing."
   fi
 
-  sign_enabled="$(git_config commit.gpgsign)"
+  sign_enabled="$(git -C "${REPO_ROOT}" config --get --type=bool commit.gpgsign 2>/dev/null || true)"
   if ! sign_format="$(git -C "${REPO_ROOT}" config --get gpg.format 2>/dev/null)"; then
     sign_format="openpgp"
   fi

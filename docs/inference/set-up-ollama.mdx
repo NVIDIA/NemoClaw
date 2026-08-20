@@ -18,7 +18,29 @@ NemoClaw detects Ollama on the host and can install, start, or upgrade it on sup
 ## Prerequisites
 
 - Install NemoClaw by following the [Quickstart](../../get-started/quickstart).
-- Use a host where Ollama is running or where the onboard wizard can install or start it.
+- For the host Ollama path, use a host where Ollama is running or where the onboard wizard can install or start it.
+
+<AgentOnly variant="hermes">
+
+## Use Portable Ollama with Hermes
+
+Fresh Hermes Portable onboarding does not use the host Ollama setup described in the remaining sections.
+It creates a receipt-owned Ollama runner through the current user's rootless Podman authority.
+Run the fresh Portable command in the [Hermes quickstart](../../get-started/quickstart#use-portable-ollama) with `NEMOCLAW_PROVIDER=ollama` and an explicit `NEMOCLAW_MODEL`.
+
+Before the provider-selection step completes, NemoClaw verifies the Portable network, registry, GPU, and Podman authority.
+It then creates the runner, sends one validation request for the selected model, and confirms that the exact model is loaded.
+This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
+
+<Warning title="Portable Cleanup Boundary">
+This path covers fresh onboarding and provider selection.
+It does not establish complete `destroy` or `uninstall` cleanup for the Portable Ollama runner.
+Portable uninstall stops when it cannot prove exact cleanup authority for a Portable lifecycle receipt with schema `5`.
+It exits nonzero before deleting the runner or its receipt.
+Preserve the Portable Ollama runner and its lifecycle receipt.
+</Warning>
+
+</AgentOnly>
 
 ## Install or Upgrade Ollama
 

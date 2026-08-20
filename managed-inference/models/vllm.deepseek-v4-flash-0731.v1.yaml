@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+metadata:
+  id: vllm.deepseek-v4-flash-0731.v1
+  displayName: DeepSeek V4 Flash 0731
+spec:
+  id: deepseek-ai/DeepSeek-V4-Flash-0731
+  revision: 9e165c30e2704aec5d9d593cce3eebd58bbef1cb
+  environmentValue: deepseek-v4-flash-0731
+  displayName: DeepSeek V4 Flash 0731
+  menuOrder: 90
+  servedName: deepseek-v4-flash-0731
+  downloadSizeBytes: 166898661074
+  gated: false
+  installFastSafetensors: false
+  preparation:
+    ref: snapshot-copy-and-exact-text-replacement/v1
+    snapshotCopy:
+      sourcePath: encoding/encoding_dsv4.py
+      digest: sha256:abc0d26120250dda0ae077dc64aa28836026e61e970854aaeb792445e6a0dde6
+      targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py
+    exactTextReplacement:
+      targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4.py
+      expectedText: |2-
+                    elif reasoning_effort in ("max", "xhigh"):
+                        reasoning_effort = "max"
+                    else:
+                        reasoning_effort = "high"
+      replacementText: |2-
+                    elif reasoning_effort in ("max", "xhigh"):
+                        reasoning_effort = "max"
+                    elif reasoning_effort == "high":
+                        reasoning_effort = "high"
+                    else:
+                        reasoning_effort = "low"
+  probePolicyRef: nvidia.endpoint-validation.standard/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: false
+    reasoning: true
+    multimodal: false

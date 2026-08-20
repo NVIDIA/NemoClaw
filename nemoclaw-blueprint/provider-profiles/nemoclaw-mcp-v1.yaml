@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: nemoclaw-mcp-v1
+display_name: NemoClaw MCP
+description: Endpointless profile for credentials bound by generated MCP policies
+category: agent
+credentials: []
+endpoints: []
+binaries: []
+inference_capable: false

@@ -92,6 +92,7 @@ const localProviderScenarios = [
           persistAndProbeOllamaProxy: async () => undefined,
           localInference: {
             validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
           },
           OLLAMA_PROXY_CREDENTIAL_ENV: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
           ...unusedCommonInferenceDeps,

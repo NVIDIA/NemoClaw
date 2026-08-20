@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 
-import { createOpenshellSandboxIdReader, parseOpenShellSandboxId } from "./sandbox-identity";
+import {
+  createOpenshellSandboxIdReader,
+  fingerprintOpenShellSandboxLiveIdentity,
+  parseOpenShellSandboxId,
+} from "./sandbox-identity";
 
 describe("OpenShell sandbox identity parsing", () => {
   it("accepts one exact durable ID with optional terminal color", () => {
@@ -17,6 +23,13 @@ describe("OpenShell sandbox identity parsing", () => {
     expect(parseOpenShellSandboxId("ID: first\nID: second\n")).toBeNull();
     expect(parseOpenShellSandboxId("ID: sandbox/alpha\n")).toBeNull();
     expect(parseOpenShellSandboxId("id: sandbox-alpha\n")).toBeNull();
+  });
+
+  it("fingerprints only one bounded durable ID (#9203)", () => {
+    expect(fingerprintOpenShellSandboxLiveIdentity("Name: alpha\nId: sandbox-alpha\n")).toBe(
+      createHash("sha256").update("sandbox-alpha").digest("hex"),
+    );
+    expect(fingerprintOpenShellSandboxLiveIdentity("Name: alpha\nPhase: Ready\n")).toBeNull();
   });
 });
 

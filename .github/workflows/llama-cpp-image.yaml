@@ -288,9 +288,10 @@ jobs:
             exit 1
           fi
           if ! jq -e '
-            (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probes", "profile", "recipeRef", "required", "runner"]
+            (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probeBounds", "probes", "profile", "recipeRef", "requestGuard", "required", "runner"]
             and .required == true
             and .execution == "enabled"
+            and .requestGuard == "required"
             and .profile == "dgx-spark-gb10-single"
             and .recipeRef == "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1"
             and .platform == "linux/arm64"
@@ -298,7 +299,8 @@ jobs:
             and (.environment | type) == "string" and (.environment | length) > 0
             and (.model.hostPath | type) == "string" and (.model.hostPath | startswith("/"))
             and .gpu == {vendor:"nvidia", fullOffload:true, cpuFallback:"reject"}
-            and .probes == ["health", "completion"]
+            and .probeBounds == {cancellationMaxTokens:4096,clientTimeoutMilliseconds:250,maxResponseBytes:16777216,maxStreamEvents:512,maxTokens:{synchronousChat:16,streamingChat:32,structuredOutput:64,toolCall:256,toolResultContinuation:64}}
+            and .probes == ["health","models","properties","metrics","disabled-surfaces","synchronous-chat","streaming-chat","usage","structured-output","tool-call","tool-result-continuation","context-window","authentication","malformed-request","request-body-limit","cancellation","client-timeout","log-redaction"]
           ' <<< "$QUALIFICATION" >/dev/null; then
             echo "ERROR: protected DGX Spark qualification infrastructure is incomplete." >&2
             exit 1

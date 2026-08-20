@@ -39,7 +39,6 @@ import {
   SNAPSHOT_DATA_PREFIX,
   SNAPSHOT_FILE_PREFIX,
   SNAPSHOT_PROBE_PID_PREFIX,
-  scanForbiddenLeaks,
 } from "./bedrock-runtime-compatible-anthropic-leaks.ts";
 import {
   BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_INVALID_STATE,
@@ -1144,11 +1143,7 @@ async function assertNoBedrockLeaks(options: {
     { name: "fake user key", value: COMPATIBLE_KEY },
     { name: "adapter token", value: adapterToken },
     { name: "AWS bearer env name", value: "AWS_BEARER_TOKEN_BEDROCK" },
-    {
-      name: "adapter token env name",
-      value: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
-      allowInSnapshotProbeEnvironment: true,
-    },
+    { name: "adapter token env name", value: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN" },
     { name: "raw Bedrock hostname", value: BEDROCK_HOSTNAME },
   ];
   const snapshot = await runRawCommand(
@@ -1178,18 +1173,13 @@ async function assertNoBedrockLeaks(options: {
     options.redact(hostLogs, [COMPATIBLE_KEY, adapterToken]),
   );
 
-  const sandboxLeakScan = scanForbiddenLeaks(snapshot.stdout, "sandbox snapshot", patterns);
-  expect(
-    sandboxLeakScan.snapshotProbeEnvironmentExemptions.some(
-      (entry) => entry.name === "adapter token env name",
-    ),
-    "OpenShell no longer projects the adapter placeholder into the snapshot child; remove the probe-environment exemption",
-  ).toBe(true);
-  const leaks = [...sandboxLeakScan.leaks, ...findForbiddenLeaks(hostLogs, "host logs", patterns)];
+  const leaks = [
+    ...findForbiddenLeaks(snapshot.stdout, "sandbox snapshot", patterns),
+    ...findForbiddenLeaks(hostLogs, "host logs", patterns),
+  ];
   await options.artifacts.writeJson("sandbox-snapshot-bedrock-runtime-summary.json", {
     ...summarizeSandboxSnapshot(snapshot.stdout),
     forbiddenLeakCount: leaks.length,
-    snapshotProbeEnvironmentExemptions: sandboxLeakScan.snapshotProbeEnvironmentExemptions,
     rawContentPublished: false,
   });
   expect(leaks).toEqual([]);

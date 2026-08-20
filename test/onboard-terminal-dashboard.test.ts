@@ -105,7 +105,13 @@ runner.runFile = (file, args = [], opts = {}) => {
 runner.runCapture = (command) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: null });
-  if (normalized.includes("sandbox exec -n " + sandboxName + " -- dcode identity")) {
+  if (
+    normalized.includes(
+      "sandbox exec --name " +
+        sandboxName +
+        " --gateway nemoclaw -- /usr/local/bin/dcode identity",
+    )
+  ) {
     return [
       "Route:    inference",
       "Provider: nvidia-prod",

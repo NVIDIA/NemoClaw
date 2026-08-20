@@ -10,6 +10,7 @@ vi.mock("../inference/local", () => ({
   applyOllamaRuntimeContextWindow: vi.fn(),
   findReachableOllamaHost: vi.fn(),
   isLocalProviderHostHealthy: vi.fn(),
+  OLLAMA_LOCALHOST: "127.0.0.1",
   validateOllamaModel: vi.fn(),
 }));
 vi.mock("../inference/ollama/proxy", () => ({
@@ -164,7 +165,9 @@ describe("repairLocalInferenceSystemdOverrideOrExit (#6760)", () => {
     expect(mockedApplyRuntimeContext).toHaveBeenCalledWith(recordedModel, {
       contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
     });
-    expect(callOrder).toEqual(["systemd", "host", "warm", "runtime-context"]);
+    // The topology probe runs first so a Windows-host daemon can skip the
+    // override; the post-override probe still proves the restarted daemon (#8596).
+    expect(callOrder).toEqual(["host", "systemd", "host", "warm", "runtime-context"]);
   });
 
   it("preserves the legacy OpenClaw loopback-only repair", () => {
@@ -179,9 +182,47 @@ describe("repairLocalInferenceSystemdOverrideOrExit (#6760)", () => {
       isNonInteractive,
       contextWindowFloor: MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
     });
-    expect(mockedFindReachableHost).not.toHaveBeenCalled();
+    expect(mockedFindReachableHost).toHaveBeenCalledTimes(1);
     expect(mockedValidateModel).not.toHaveBeenCalled();
     expect(mockedApplyRuntimeContext).not.toHaveBeenCalled();
+  });
+
+  it("skips the Linux systemd loopback override for a Windows-host Ollama daemon on resume (#8596)", () => {
+    mockedFindReachableHost.mockReturnValue("host.docker.internal");
+
+    repairHermesResume();
+
+    expect(mockedEnsureSystemdOverride).not.toHaveBeenCalled();
+    expect(mockedValidateModel).toHaveBeenCalledWith(recordedModel);
+    expect(mockedApplyRuntimeContext).toHaveBeenCalledWith(recordedModel, {
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+    });
+  });
+
+  it("still applies the override on resume when a loopback Ollama answers (#8596)", () => {
+    mockedFindReachableHost.mockReturnValue("127.0.0.1");
+
+    repairHermesResume();
+
+    expect(mockedEnsureSystemdOverride).toHaveBeenCalledWith({
+      isNonInteractive,
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+    });
+  });
+
+  it("still applies the override on resume when no Ollama daemon answers (#8596)", () => {
+    mockedFindReachableHost.mockReturnValue(null);
+    mockedEnsureSystemdOverride.mockReturnValue("ready");
+
+    expectFailure(
+      repairHermesResume,
+      "Ollama is not reachable, so the recorded model's runtime context window cannot be verified.",
+    );
+
+    expect(mockedEnsureSystemdOverride).toHaveBeenCalledWith({
+      isNonInteractive,
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+    });
   });
 
   it("rejects a strict resume when the recorded model is missing", () => {
@@ -195,7 +236,7 @@ describe("repairLocalInferenceSystemdOverrideOrExit (#6760)", () => {
         }),
       "The recorded Ollama model is missing, so its runtime context window cannot be verified.",
     );
-    expect(mockedFindReachableHost).not.toHaveBeenCalled();
+    expect(mockedFindReachableHost).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a strict resume when Ollama is unreachable", () => {

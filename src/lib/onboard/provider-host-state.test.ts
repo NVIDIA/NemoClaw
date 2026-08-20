@@ -65,18 +65,19 @@ function detectWithDeps(
 }
 
 describe("detectInferenceProviderHostState", () => {
-  it("suppresses local endpoint probes when route preflight disallows them (#6315)", () => {
+  it("suppresses local and Windows-host Ollama probes when provider discovery disables them (#6315, #9604)", () => {
     const runCapture = vi.fn<DetectInferenceProviderHostStateDeps["runCapture"]>(() => "{}");
     const findReachableOllamaHost = vi.fn(() => "127.0.0.1");
+    const detectWindowsHostOllama = vi.fn(() => ({
+      installed: true,
+      installedPath: "C:\\Ollama\\ollama.exe",
+      loopbackOnly: false,
+    }));
     const deps = buildDeps({
       runCapture,
       findReachableOllamaHost,
       isWsl: vi.fn(() => true),
-      detectWindowsHostOllama: vi.fn(() => ({
-        installed: true,
-        installedPath: "C:\\Ollama\\ollama.exe",
-        loopbackOnly: false,
-      })),
+      detectWindowsHostOllama,
     });
 
     const state = detectInferenceProviderHostState({
@@ -91,6 +92,7 @@ describe("detectInferenceProviderHostState", () => {
     });
 
     expect(findReachableOllamaHost).not.toHaveBeenCalled();
+    expect(detectWindowsHostOllama).not.toHaveBeenCalled();
     expect(state.ollamaRunning).toBe(false);
     expect(state.vllmRunning).toBe(false);
     expect(state.windowsOllamaReachable).toBe(false);
@@ -261,7 +263,12 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.ollamaInstallMenu.entry?.label).toBe("Install Ollama (WSL Linux)");
   });
 
-  it("does not treat a non-Ollama body from host.docker.internal as a live Windows daemon (#9348)", () => {
+  it.each([
+    ["an HTML response", "<html>captive portal</html>"],
+    ["a null model entry", '{"models":[null]}'],
+    ["a primitive model entry", '{"models":[1]}'],
+    ["a nested-array model entry", '{"models":[[]]}'],
+  ])("does not treat %s as a live Windows daemon (#9348)", (_label, body) => {
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
       getContainerRuntime: vi.fn<DetectInferenceProviderHostStateDeps["getContainerRuntime"]>(
@@ -272,9 +279,7 @@ describe("detectInferenceProviderHostState", () => {
         installedPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
         loopbackOnly: false,
       })),
-      dockerCapture: vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() =>
-        "<html>captive portal</html>",
-      ),
+      dockerCapture: vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() => body),
     });
 
     const state = detectWithDeps(deps);

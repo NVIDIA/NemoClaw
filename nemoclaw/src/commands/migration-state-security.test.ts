@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { listSnapshots, pruneSnapshots } from "../blueprint/snapshot-management.js";
 import type { PluginLogger } from "../index.js";
 import * as credentialFilter from "../security/credential-filter.js";
 import * as snapshotSanitizer from "../security/snapshot-sanitizer.js";
@@ -96,10 +97,61 @@ function expectSnapshotFailure(
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
+});
+
+describe("migration-state snapshot directory reservation", () => {
+  it("takes its snapshot directory from the shared reservation (#9433)", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-18T06:43:16.500Z"));
+    const { home, configPath, logger } = makeMinimalHostSnapshot();
+    const hostState = makeHostState(home, configPath);
+
+    const first = createSnapshotBundle(hostState, logger, { persist: true });
+    expectSnapshotBundle(first);
+    const second = createSnapshotBundle(hostState, logger, { persist: true });
+    expectSnapshotBundle(second);
+
+    // The clock has not moved, so an unreserved leaf would be the first snapshot's directory.
+    // Reservation grammar and same-second advance are owned by snapshot-directory.test.ts.
+    expect(second.snapshotDir).not.toBe(first.snapshotDir);
+    expect(path.basename(first.snapshotDir)).toBe(first.manifest.timestamp);
+    expect(path.basename(second.snapshotDir)).toBe(second.manifest.timestamp);
+  });
+
+  it("publishes persisted migration snapshots to the retention reader (#9433)", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-18T06:43:16.500Z"));
+    const { home, configPath, logger } = makeMinimalHostSnapshot();
+    const bundle = createSnapshotBundle(makeHostState(home, configPath), logger, {
+      persist: true,
+    });
+    expectSnapshotBundle(bundle);
+    const snapshotsDir = path.join(home, ".nemoclaw", "snapshots");
+
+    expect(listSnapshots({ snapshotsDir })).toEqual([
+      expect.objectContaining({
+        path: bundle.snapshotDir,
+        timestamp: bundle.manifest.timestamp,
+      }),
+    ]);
+
+    const result = pruneSnapshots(0, {
+      snapshotsDir,
+      deleteDirectory: (root, name) => {
+        expect(root).toBe(snapshotsDir);
+        expect(name).toBe(bundle.manifest.timestamp);
+        rmSync(path.join(root, name), { force: true, recursive: true });
+        return true;
+      },
+    });
+    expect(result).toEqual({ deleted: [bundle.snapshotDir], failed: [], kept: [] });
+    expect(listSnapshots({ snapshotsDir })).toEqual([]);
+  });
 });
 
 describe("migration-state prepared config security", () => {

@@ -6,6 +6,7 @@ import {
   applyOllamaRuntimeContextWindow,
   findReachableOllamaHost,
   isLocalProviderHostHealthy,
+  OLLAMA_LOCALHOST,
   validateOllamaModel,
 } from "../inference/local";
 import { ensureOllamaAuthProxy, isProxyHealthy } from "../inference/ollama/proxy";
@@ -163,6 +164,14 @@ function failOllamaResumeRepair(message: string): never {
   throw new Error(message);
 }
 
+// True when Ollama answers on a non-loopback host, which on WSL means the
+// Windows-host daemon reached through host.docker.internal. Mirrors the
+// loopback check the model-list path already applies in inference/local.
+function respondingOllamaIsWindowsHost(): boolean {
+  const host = findReachableOllamaHost();
+  return host !== null && host !== OLLAMA_LOCALHOST;
+}
+
 // Repair the Ollama systemd loopback override for recorded ollama-local
 // providers. Agents with a strict context floor also warm the exact recorded
 // model and verify the running daemon before resume can skip provider setup.
@@ -173,11 +182,18 @@ export function repairLocalInferenceSystemdOverrideOrExit(
   const { provider, model, isNonInteractive } = options;
   if (provider !== "ollama-local") return;
   const contextWindowFloor = resolveOllamaContextWindowFloor(options.contextWindowFloor);
-  const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
-  if (state === "failed") {
-    failOllamaResumeRepair(
-      "Ollama systemd restart did not recover after applying the loopback override.",
-    );
+  // A Windows-host Ollama daemon reached at host.docker.internal is not a Linux
+  // systemd service, so the override restarts an unrelated ollama.service and
+  // exits 1. Provider selection already skips it, but it records the same
+  // "ollama-local" provider for both topologies, so resume carries no Windows
+  // marker and has to re-derive the distinction here (#8596).
+  if (!respondingOllamaIsWindowsHost()) {
+    const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
+    if (state === "failed") {
+      failOllamaResumeRepair(
+        "Ollama systemd restart did not recover after applying the loopback override.",
+      );
+    }
   }
   if (contextWindowFloor <= MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW) return;
   if (!model) {

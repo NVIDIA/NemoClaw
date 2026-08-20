@@ -4,7 +4,7 @@
 import { stripAnsi } from "../../adapters/openshell/client";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
-import type { McpBridgeEntry } from "../../state/registry";
+import { listExtraProviders, type McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
@@ -13,6 +13,8 @@ import {
   normalizeMcpServerUrl,
   preflightMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-validation";
+
+export const MCP_BRIDGE_PROVIDER_TYPE = "nemoclaw-mcp-v1";
 
 export type McpProviderInspection = {
   exists: boolean | null;
@@ -169,6 +171,7 @@ export function assertNoAttachedProviderCredentialCollisions(
   entries: readonly McpBridgeEntry[],
 ): void {
   if (entries.length === 0) return;
+  for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const inspection = inspectMcpProviderAttachments(sandboxName);
   if (!inspection.attachments) {
     throw new McpBridgeError(
@@ -190,12 +193,74 @@ export function assertNoAttachedProviderCredentialCollisions(
   }
 }
 
+export function assertNoRegisteredProviderCredentialCollisions(
+  entries: readonly McpBridgeEntry[],
+  deps: {
+    listExtraProviders?: () => string[];
+    inspectProvider?: (providerName: string) => McpProviderInspection;
+  } = {},
+): void {
+  if (entries.length === 0) return;
+  for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
+  const queryExtraProviders = deps.listExtraProviders ?? listExtraProviders;
+  const inspectProvider = deps.inspectProvider ?? inspectMcpProvider;
+  for (const providerName of queryExtraProviders()) {
+    const provider = inspectProvider(providerName);
+    if (provider.exists === false) continue;
+    if (provider.exists !== true || !provider.id || !provider.credentialKeys) {
+      throw new McpBridgeError(
+        provider.error ??
+          `Could not inspect registered provider '${providerName}' before managed MCP reconciliation.`,
+      );
+    }
+    for (const entry of entries) {
+      const credentialKey = entry.env[0];
+      if (
+        provider.credentialKeys.includes(credentialKey) &&
+        !(providerName === entry.providerName && provider.id === entry.providerId)
+      ) {
+        throw new McpBridgeError(
+          `Credential key '${credentialKey}' is already supplied by registered provider '${providerName}' with ID '${provider.id}'. Refusing to continue managed MCP because this provider will attach during sandbox rebuild.`,
+        );
+      }
+    }
+  }
+}
+
+export function assertNoProviderCredentialCollisions(
+  sandboxName: string,
+  entries: readonly McpBridgeEntry[],
+): void {
+  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
+  assertNoRegisteredProviderCredentialCollisions(entries);
+}
+
 export function providerMatchesCredential(
   inspection: McpProviderInspection,
   expectedCredential: string | undefined,
   expectedProviderId: string | undefined,
 ): boolean {
   return (
+    inspection.exists === true &&
+    expectedProviderId !== undefined &&
+    inspection.id === expectedProviderId &&
+    inspection.resourceVersion !== null &&
+    inspection.type === MCP_BRIDGE_PROVIDER_TYPE &&
+    expectedCredential !== undefined &&
+    inspection.credentialKeys?.length === 1 &&
+    inspection.credentialKeys[0] === expectedCredential
+  );
+}
+
+export function providerMatchesManagedCredential(
+  inspection: McpProviderInspection,
+  expectedCredential: string | undefined,
+  expectedProviderId: string | undefined,
+  options: { allowLegacyGeneric?: boolean } = {},
+): boolean {
+  if (providerMatchesCredential(inspection, expectedCredential, expectedProviderId)) return true;
+  return (
+    options.allowLegacyGeneric === true &&
     inspection.exists === true &&
     expectedProviderId !== undefined &&
     inspection.id === expectedProviderId &&
@@ -229,9 +294,16 @@ export function providerShapeDetail(
   if (inspection.resourceVersion === null) {
     return "OpenShell provider metadata did not include a valid resource version.";
   }
+  if (
+    providerMatchesManagedCredential(inspection, expectedCredential, expectedProviderId, {
+      allowLegacyGeneric: true,
+    })
+  ) {
+    return `Provider type 'generic' predates the OpenShell 0.0.106 endpoint-binding contract. Remove this MCP server, then add it again with '${expectedCredential ?? "<missing>"}' exported.`;
+  }
   const type = inspection.type ?? "unparseable";
   const keys = inspection.credentialKeys?.join(", ") || "none or unparseable";
-  return `Expected generic provider with only credential key '${expectedCredential ?? "<missing>"}', found type '${type}' with keys '${keys}'.`;
+  return `Expected ${MCP_BRIDGE_PROVIDER_TYPE} provider with only credential key '${expectedCredential ?? "<missing>"}', found type '${type}' with keys '${keys}'.`;
 }
 
 export function assertMcpProviderRecoverable(entry: McpBridgeEntry): McpProviderInspection {
@@ -249,6 +321,16 @@ export function assertMcpProviderRecoverable(entry: McpBridgeEntry): McpProvider
     );
   }
   if (inspection.exists) {
+    if (
+      inspection.type === "generic" &&
+      providerMatchesManagedCredential(inspection, expectedCredential, entry.providerId, {
+        allowLegacyGeneric: true,
+      })
+    ) {
+      throw new McpBridgeError(
+        `OpenShell provider '${entry.providerName}' uses the legacy generic profile, which OpenShell 0.0.106 cannot bind to an MCP endpoint. Run mcp remove for '${entry.server}', then add it again with '${expectedCredential}' exported.`,
+      );
+    }
     if (!providerMatchesCredential(inspection, expectedCredential, entry.providerId)) {
       throw new McpBridgeError(
         `OpenShell provider '${entry.providerName}' no longer exactly matches MCP server '${entry.server}'. ${providerShapeDetail(inspection, expectedCredential, entry.providerId)}`,

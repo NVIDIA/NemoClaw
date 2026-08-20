@@ -4,6 +4,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { isErrnoException } from "../core/errno";
@@ -99,6 +100,34 @@ const tails = new Map<string, Promise<void>>();
 export const portableHostFencePath = (homeDir: string): string =>
   path.join(homeDir, ".nemoclaw-portable-host.lock");
 
+/** Resolve the portable state root while admitting only the isolated Vitest override. */
+export function defaultPortableStateDir(env: NodeJS.ProcessEnv): string {
+  if (
+    env.VITEST === "true" &&
+    (env.HOME ?? "") === env.NEMOCLAW_TEST_BASE_HOME &&
+    env.NEMOCLAW_TEST_STATE_DIR &&
+    path.isAbsolute(env.NEMOCLAW_TEST_STATE_DIR)
+  ) {
+    return env.NEMOCLAW_TEST_STATE_DIR;
+  }
+  return path.join(env.HOME || os.homedir(), ".nemoclaw");
+}
+
+/** Count bounded schema-5 authority leaves while the caller holds the host fence. */
+export function getHermesPortableHostAuthorityEntryCount(stateDir: string): number {
+  return readPortableAuthorityDirectory(path.join(stateDir, "hermes-portable-lifecycle"), false)
+    .entries.length;
+}
+
+/** Reject host-wide legacy work while schema-5 receipt authority exists. */
+export function assertNoHermesPortableHostAuthority(stateDir: string, commandId: string): void {
+  if (getHermesPortableHostAuthorityEntryCount(stateDir) > 0) {
+    throw new Error(
+      `Command '${commandId}' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.`,
+    );
+  }
+}
+
 function releaseFenceReference(owner: FenceOwner): void {
   owner.references -= 1;
   if (owner.references === 0) owner.resolveDrained();
@@ -172,6 +201,11 @@ export async function withPortableHostFence<T>(
   }
 }
 
+/** Hold the portable host fence for the current process home without a second state owner. */
+export function withCurrentPortableHostFence<T>(operation: () => Promise<T> | T): Promise<T> {
+  return withPortableHostFence(process.env.HOME || os.homedir(), operation);
+}
+
 const root = (homeDir: string): string => path.join(homeDir, ".nemoclaw");
 const paths = (homeDir: string) =>
   Object.fromEntries(
@@ -205,9 +239,18 @@ function sameStat(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
     (key) => left[key as keyof fs.BigIntStats] === right[key as keyof fs.BigIntStats],
   );
 }
+/**
+ * Read one portable authority directory.
+ *
+ * `permitAnyMode` is for the uninstall leftover check alone, which reads a
+ * directory an abandoned run left behind rather than one NemoClaw created, so
+ * the owner-private requirement cannot apply to it. The owner, symlink, link
+ * count, identity and entry-count checks still bound what it can read.
+ */
 export function readPortableAuthorityDirectory(
   directory: string,
   required: boolean,
+  permitAnyMode = false,
 ): PortableAuthorityDirectorySnapshot {
   let descriptor: number | null = null;
   try {
@@ -224,7 +267,7 @@ export function readPortableAuthorityDirectory(
       named.isSymbolicLink() ||
       !sameStat(before, named) ||
       before.uid !== BigInt(uid) ||
-      (before.mode & 0o777n) !== 0o700n ||
+      (!permitAnyMode && (before.mode & 0o777n) !== 0o700n) ||
       before.nlink < 1n
     )
       throw new Error(`Unsafe portable authority directory: ${directory}`);

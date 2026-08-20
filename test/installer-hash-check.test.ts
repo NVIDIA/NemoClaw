@@ -692,6 +692,22 @@ ${capabilityMarker}`,
   return result;
 }
 
+function removeV00106OperationalTrust(source: string): string {
+  const identityStart = source.indexOf("is_pinned_openshell_v00106_linux_x86_64_install() {");
+  const sandboxStart = source.indexOf("pinned_sandbox_build_version() {", identityStart);
+  expect([identityStart, sandboxStart], "v0.0.106 helper boundaries").not.toContain(-1);
+  const withoutIdentity = `${source.slice(0, identityStart)}${source.slice(sandboxStart)}`;
+  const capabilityStart = withoutIdentity.indexOf(
+    "  # The v0.0.106 release binaries are stripped and no longer retain every",
+  );
+  const fallbackStart = withoutIdentity.indexOf(
+    "  # OpenShell #1865 has no authoritative CLI/RPC capability query yet.",
+    capabilityStart,
+  );
+  expect([capabilityStart, fallbackStart], "v0.0.106 proof boundaries").not.toContain(-1);
+  return `${withoutIdentity.slice(0, capabilityStart)}${withoutIdentity.slice(fallbackStart)}`;
+}
+
 function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
   const selected = INSTALLER_TEMPLATE.replace(
     /^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
@@ -709,7 +725,11 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
     pinFunction,
   );
   const operationalTemplate =
-    openshellVersion === "0.0.106" ? addV00106OperationalTrust(withPinFunction) : withPinFunction;
+    openshellVersion === "0.0.106"
+      ? withPinFunction.includes("is_pinned_openshell_v00106_linux_x86_64_install() {")
+        ? withPinFunction
+        : addV00106OperationalTrust(withPinFunction)
+      : removeV00106OperationalTrust(withPinFunction);
   const sandboxFunctionStart = operationalTemplate.indexOf("pinned_sandbox_build_version() {");
   const sandboxFunctionEnd = operationalTemplate.indexOf(
     "\ncomponent_build_version() {",

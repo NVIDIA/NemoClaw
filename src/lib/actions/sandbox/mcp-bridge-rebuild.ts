@@ -15,14 +15,14 @@ import {
 import {
   assertGeneratedPolicyMutationSafe,
   assertGeneratedPolicyRegistrationMutationSafe,
+  removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
-  assertNoAttachedProviderCredentialCollisions,
-  attachProvider,
+  assertNoProviderCredentialCollisions,
+  assertNoRegisteredProviderCredentialCollisions,
   detachProvider,
   preflightMcpEntryTargets,
-  waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
@@ -106,6 +106,7 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
     assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
   }
   for (const entry of entries) assertMcpProviderRecoverable(entry);
+  assertNoRegisteredProviderCredentialCollisions(entries);
   return {
     entries,
     detachedProviderEntries: [],
@@ -130,9 +131,10 @@ export async function prepareMcpBridgesForRebuild(
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
-  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
+  assertNoProviderCredentialCollisions(sandboxName, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpBridgeEntry[] = [];
+  const removedPolicies: McpBridgeEntry[] = [];
   try {
     for (const entry of entries) {
       // `/sandbox` may be a retained PVC. Scrub before delete so a replacement
@@ -140,6 +142,10 @@ export async function prepareMcpBridgesForRebuild(
       // is intentionally detached during recreate.
       scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
       scrubbedAdapters.push(entry);
+    }
+    for (const entry of entries) {
+      removeGeneratedPolicy(sandboxName, entry);
+      removedPolicies.push(entry);
     }
     for (const entry of entries) {
       // Keep the provider and its host-only credentials for the replacement
@@ -159,20 +165,24 @@ export async function prepareMcpBridgesForRebuild(
     }
   } catch (error) {
     const rollbackFailures: string[] = [];
-    for (const entry of detached.reverse()) {
+    let runtimeRestored = false;
+    if (removedPolicies.length > 0) {
       try {
-        inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-        attachProvider(sandboxName, entry);
-        // Reattach preserves the provider value, so presence is sufficient;
-        // still wait before reloading an adapter that may connect immediately.
-        waitForAttachedMcpCredential(sandboxName, entry);
+        await restoreExistingMcpBridgeRuntime(sandboxName, removedPolicies, {
+          lifecyclePhase: "teardown-rollback",
+        });
+        runtimeRestored = true;
       } catch (rollbackError) {
         rollbackFailures.push(
           rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
         );
       }
     }
-    rollbackFailures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters));
+    if (!runtimeRestored) {
+      rollbackFailures.push(
+        ...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters),
+      );
+    }
     const detail = error instanceof Error ? error.message : String(error);
     throw new McpBridgeError(
       rollbackFailures.length > 0
@@ -201,19 +211,20 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   ]);
 
   const failures: string[] = [];
-  for (const entry of entries) {
+  let runtimeRestored = false;
+  if (entries.length > 0) {
     try {
-      // Rebuild abort helpers are exported and may run after a long sandbox
-      // delete attempt; re-prove the immutable provider identity immediately
-      // before reattaching by its mutable name.
-      assertMcpProviderRecoverable(entry);
-      attachProvider(sandboxName, entry);
-      waitForAttachedMcpCredential(sandboxName, entry);
+      await restoreExistingMcpBridgeRuntime(sandboxName, entries, {
+        lifecyclePhase: "teardown-rollback",
+      });
+      runtimeRestored = true;
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
-  failures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapterEntries));
+  if (!runtimeRestored) {
+    failures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapterEntries));
+  }
   if (failures.length > 0) {
     throw new McpBridgeError(failures.join("; "));
   }

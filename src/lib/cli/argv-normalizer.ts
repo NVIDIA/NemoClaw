@@ -3,6 +3,7 @@
 
 export type NormalizedRootHelpArgv = { kind: "rootHelp" };
 export type NormalizedDumpCommandsArgv = { kind: "dumpCommands" };
+export type NormalizedDumpCommandFlagsArgv = { kind: "dumpCommandFlags" };
 export type NormalizedGlobalArgv = { kind: "global"; command: string; args: string[] };
 export type NormalizedSandboxArgv = {
   kind: "sandbox";
@@ -15,6 +16,7 @@ export type NormalizedSandboxArgv = {
 export type NormalizedArgv =
   | NormalizedRootHelpArgv
   | NormalizedDumpCommandsArgv
+  | NormalizedDumpCommandFlagsArgv
   | NormalizedGlobalArgv
   | NormalizedSandboxArgv;
 
@@ -32,6 +34,10 @@ export function normalizeArgv(argv: readonly string[], opts: NormalizeArgvOption
 
   if (cmd === "--dump-commands") {
     return { kind: "dumpCommands" };
+  }
+
+  if (cmd === "--dump-command-flags") {
+    return { kind: "dumpCommandFlags" };
   }
 
   if (opts.globalCommands.has(cmd)) {

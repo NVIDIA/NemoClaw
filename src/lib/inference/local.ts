@@ -15,6 +15,7 @@ import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-pr
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
+import { isObjectRecord } from "../core/json-types";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 
 import { retryUntil } from "../core/retry";
@@ -364,30 +365,36 @@ export function probeVllmModels(
 // `{ "models": [...] }`. An empty array is fine — that just means no models
 // pulled yet — but a body that doesn't parse as JSON-with-array-`models` did
 // not come from Ollama and the probe should not call it healthy. (#4275)
-export function isValidOllamaTagsResponseBody(body: string): boolean {
-  if (!body) return false;
+function parseModelInventory(provider: string, body: string): string[] | null {
   try {
     const parsed = JSON.parse(body);
-    return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.models);
-  } catch {
-    return false;
-  }
-}
-
-function modelInventory(provider: string, body: string): string[] | null {
-  try {
-    const parsed = JSON.parse(body) as Record<string, unknown>;
+    if (!isObjectRecord(parsed)) return null;
     const entries = provider === "ollama-local" ? parsed.models : parsed.data;
     if (!Array.isArray(entries)) return null;
-    return entries.flatMap((entry) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-      const record = entry as Record<string, unknown>;
-      const values = provider === "ollama-local" ? [record.name, record.model] : [record.id];
-      return values.filter((value): value is string => typeof value === "string" && value !== "");
-    });
+    if (provider !== "ollama-local") {
+      return entries.flatMap((entry) => {
+        if (!isObjectRecord(entry)) return [];
+        return typeof entry.id === "string" && entry.id !== "" ? [entry.id] : [];
+      });
+    }
+    const inventory: string[] = [];
+    for (const entry of entries) {
+      if (!isObjectRecord(entry)) return null;
+      const values = [entry.name, entry.model];
+      const names = values.filter(
+        (value): value is string => typeof value === "string" && value.trim() !== "",
+      );
+      if (names.length === 0) return null;
+      inventory.push(...names);
+    }
+    return inventory;
   } catch {
     return null;
   }
+}
+
+export function isValidOllamaTagsResponseBody(body: string): boolean {
+  return parseOllamaModelInventory(body) !== null;
 }
 
 function normalizeOllamaModel(value: string): string {
@@ -400,9 +407,27 @@ function inventoryContainsModel(provider: string, inventory: string[], model: st
   return inventory.some((candidate) => normalizeOllamaModel(candidate) === expected);
 }
 
+/** Parse a complete Ollama `/api/tags` inventory, or return null when any entry is malformed. */
+export function parseOllamaModelInventory(body: string): string[] | null {
+  return parseModelInventory("ollama-local", body);
+}
+
+export function ollamaInventoryContainsModel(inventory: string[], model: string): boolean {
+  return inventoryContainsModel("ollama-local", inventory, model);
+}
+
 function sanitizeModelNameForDisplay(value: string): string {
   const sanitized = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
   return sanitized.length > 120 ? `${sanitized.slice(0, 117)}...` : sanitized;
+}
+
+/** Render a model inventory for an operator-facing message, bounded and sanitised. */
+export function describeModelInventory(inventory: readonly string[]): string {
+  if (inventory.length === 0) return "none";
+  return inventory
+    .slice(0, 5)
+    .map((entry) => sanitizeModelNameForDisplay(entry) || "<invalid>")
+    .join(", ");
 }
 
 export function validateOllamaPortConfiguration(): ValidationResult {
@@ -585,9 +610,30 @@ export function getManagedVllmProviderState(
     throw new Error("Multiple managed vLLM runtimes are present; refusing to select an endpoint.");
   }
   if (hostLocalEndpoint) {
+    let recoveredUrl: URL;
+    try {
+      recoveredUrl = new URL(hostLocalEndpoint.baseUrl);
+    } catch {
+      throw new Error("Managed host-local vLLM returned an invalid loopback endpoint.");
+    }
+    const recoveredPort = Number(recoveredUrl.port);
+    if (
+      recoveredUrl.protocol !== "http:" ||
+      recoveredUrl.hostname !== "127.0.0.1" ||
+      recoveredUrl.pathname !== "/" ||
+      recoveredUrl.username ||
+      recoveredUrl.password ||
+      recoveredUrl.search ||
+      recoveredUrl.hash ||
+      !Number.isSafeInteger(recoveredPort) ||
+      recoveredPort < 1024 ||
+      recoveredPort > 65_535
+    ) {
+      throw new Error("Managed host-local vLLM returned an invalid loopback endpoint.");
+    }
     return {
       kind: "ready",
-      baseUrl: `${HOST_GATEWAY_URL}:${String(VLLM_PORT)}/v1`,
+      baseUrl: `${HOST_GATEWAY_URL}:${String(recoveredPort)}/v1`,
       validationBaseUrl: `${hostLocalEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
       apiKey: hostLocalEndpoint.apiKey,
     };
@@ -952,11 +998,12 @@ export function probeLocalProviderHealth(
   const attachProbeLabel = probeLabel ? { probeLabel } : {};
 
   if (result.ok) {
+    const inventory = parseModelInventory(provider, result.body);
     // For ollama-local, a 200 is necessary but not sufficient: a captive
     // HTTP_PROXY, a stale listener on 11434, or any other HTTP responder
     // can return 200 with an arbitrary body. Treat the probe as healthy
     // only when the response is the Ollama /api/tags JSON shape. (#4275)
-    if (provider === "ollama-local" && !isValidOllamaTagsResponseBody(result.body)) {
+    if (provider === "ollama-local" && !inventory) {
       return {
         ok: false,
         providerLabel,
@@ -974,7 +1021,6 @@ export function probeLocalProviderHealth(
     const configuredModel = options.model?.trim();
     if (configuredModel) {
       const configuredModelDisplay = sanitizeModelNameForDisplay(configuredModel) || "<invalid>";
-      const inventory = modelInventory(provider, result.body);
       if (!inventory) {
         return {
           ok: false,
@@ -989,13 +1035,6 @@ export function probeLocalProviderHealth(
         };
       }
       if (!inventoryContainsModel(provider, inventory, configuredModel)) {
-        const available =
-          inventory.length > 0
-            ? inventory
-                .slice(0, 5)
-                .map((model) => sanitizeModelNameForDisplay(model) || "<invalid>")
-                .join(", ")
-            : "none";
         return {
           ok: false,
           providerLabel,
@@ -1003,7 +1042,7 @@ export function probeLocalProviderHealth(
           failureLabel: "unhealthy",
           detail:
             `${providerLabel} is reachable on ${endpoint}, but configured model ` +
-            `'${configuredModelDisplay}' is unavailable (reported models: ${available}).`,
+            `'${configuredModelDisplay}' is unavailable (reported models: ${describeModelInventory(inventory)}).`,
           ...attachProbeLabel,
           ...attachSubprobes,
         };
@@ -1029,7 +1068,18 @@ export function probeLocalProviderHealth(
   };
 }
 
-export function getLocalProviderContainerReachabilityCheck(provider: string): string[] | null {
+export function getLocalProviderContainerReachabilityCheck(
+  provider: "ollama-local",
+  responseMode: "body",
+): string[] | null;
+export function getLocalProviderContainerReachabilityCheck(
+  provider: string,
+  responseMode?: "status",
+): string[] | null;
+export function getLocalProviderContainerReachabilityCheck(
+  provider: string,
+  responseMode: "status" | "body" = "status",
+): string[] | null {
   switch (provider) {
     case "vllm-local": {
       const managed = recoveredManagedVllmBinding();
@@ -1057,14 +1107,16 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
           : `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
       ];
     }
-    case "ollama-local":
-      // Check the auth proxy port, not Ollama directly. The proxy listens
-      // on 0.0.0.0 and is reachable from containers; Ollama is on 127.0.0.1.
+    case "ollama-local": {
+      // Check the host port reachable from containers: raw Ollama when host
+      // loopback is reachable, otherwise the auth proxy.
       // Use -w %{http_code} (instead of -sf) so an authenticated-but-401
       // response still proves the network path works — the proxy now
       // requires a Bearer token on every endpoint (#3338) and the ephemeral
       // probe container doesn't carry one, but the goal here is connectivity
       // not authorisation.
+      const containerPort = getOllamaContainerPort();
+      if (responseMode === "body" && containerPort !== OLLAMA_PORT) return null;
       return [
         "docker",
         "run",
@@ -1076,18 +1128,71 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
         "5",
         "--max-time",
         "10",
-        "-s",
-        "-o",
-        "/dev/null",
-        "-w",
-        "%{http_code}",
-        `http://host.openshell.internal:${getOllamaContainerPort()}/api/tags`,
+        ...(responseMode === "status"
+          ? ["-s", "-o", "/dev/null", "-w", "%{http_code}"]
+          : ["-sf"]),
+        `http://host.openshell.internal:${containerPort}/api/tags`,
       ];
+    }
     default:
       return null;
   }
 }
 
+/** Read the validated inventory from one raw Ollama daemon. */
+export function probeOllamaEndpointInventory(
+  host: string,
+  runCaptureImpl?: RunCaptureFn,
+): string[] | null {
+  const capture = runCaptureImpl ?? runCapture;
+  const body = capture(
+    [
+      "curl",
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "5",
+        `http://${host}:${OLLAMA_PORT}/api/tags`,
+      ]),
+    ],
+    { ignoreError: true },
+  );
+  return parseOllamaModelInventory(body);
+}
+
+/**
+ * Confirm the selected model exists on the host-bridge daemon recorded for the sandbox.
+ * Only a valid inventory that lacks the model fails; an inconclusive Docker probe cannot
+ * override the host-side validation already performed by `validateLocalProvider`.
+ */
+export function validateSandboxFacingOllamaModel(
+  model: string,
+  runCaptureImpl?: RunCaptureFn,
+): ValidationResult {
+  const command = getLocalProviderContainerReachabilityCheck("ollama-local", "body");
+  if (!command) return { ok: true };
+  const selected = String(model ?? "").trim();
+  if (!selected) return { ok: true };
+
+  const capture = runCaptureImpl ?? runCapture;
+  const inventory = parseOllamaModelInventory(capture(command, { ignoreError: true }));
+  if (!inventory || ollamaInventoryContainsModel(inventory, selected)) return { ok: true };
+
+  const selectedDisplay = sanitizeModelNameForDisplay(selected) || "<invalid>";
+  return {
+    ok: false,
+    message:
+      `Selected Ollama model '${selectedDisplay}' is available on ` +
+      `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}, but the daemon answering ` +
+      `http://host.openshell.internal:${getOllamaContainerPort()} reports it as unavailable ` +
+      `(reported models: ${describeModelInventory(inventory)}). NemoClaw read that endpoint ` +
+      `from a Docker probe container; two Ollama daemons are answering different endpoints. ` +
+      `On WSL 2 that is a WSL daemon and a Windows-host daemon. Select a model that the ` +
+      `probed endpoint reports, or stop one daemon so one daemon answers both endpoints.`,
+  };
+}
 
 const CONTAINER_CHECK_MAX_ATTEMPTS = 3;
 const CONTAINER_CHECK_RETRY_DELAY_SECS = 2;
@@ -1362,17 +1467,6 @@ export function parseOllamaList(output: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
-export function parseOllamaTags(output: string | null | undefined): string[] {
-  try {
-    const parsed = JSON.parse(String(output || ""));
-    return Array.isArray(parsed?.models)
-      ? parsed.models.map((model: { name?: string }) => model && model.name).filter(Boolean)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 export {
   getOllamaContextWindowFloorForAgent,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
@@ -1446,10 +1540,12 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
     ],
     { ignoreError: true },
   );
-  const tagsParsed = parseOllamaTags(tagsOutput);
-  if (tagsParsed.length > 0) {
-    return tagsParsed;
-  }
+  const tagsParsed = parseOllamaModelInventory(String(tagsOutput || ""));
+  // Do not select a model from a different discovery path after the endpoint
+  // returned a malformed inventory. A valid empty inventory may still use the
+  // local CLI fallback below.
+  if (tagsParsed === null) return [];
+  if (tagsParsed.length > 0) return tagsParsed;
 
   // The `ollama list` CLI fallback talks to the local daemon. Skip it when
   // the resolved host is not loopback (e.g. host.docker.internal pointing

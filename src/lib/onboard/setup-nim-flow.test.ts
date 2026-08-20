@@ -843,7 +843,7 @@ describe("createSetupNim", () => {
     expect(handleVllmSelection).toHaveBeenCalledOnce();
     expect(handleVllmSelection).toHaveBeenCalledWith(
       expect.objectContaining({ model: "vllm-model" }),
-      { managedInstall: true, sparkHost: false },
+      { managedInstall: true, sparkHost: false, servingProfileModel: null },
     );
     expect(result).toMatchObject({
       model: "vllm-model",
@@ -1046,7 +1046,7 @@ describe("createSetupNim", () => {
     });
     expect(handleVllmSelection).toHaveBeenCalledWith(
       expect.objectContaining({ model: servedModel }),
-      { managedInstall: true, sparkHost: false },
+      { managedInstall: true, sparkHost: false, servingProfileModel: null },
     );
     expect(result).toMatchObject({
       model: servedModel,
