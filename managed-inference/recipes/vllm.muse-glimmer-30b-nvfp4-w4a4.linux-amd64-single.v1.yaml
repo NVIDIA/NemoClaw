@@ -5,20 +5,20 @@ apiVersion: nemoclaw.nvidia.com/managed-inference/v1
 kind: ServingRecipe
 
 metadata:
-  id: vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1
-  displayName: Muse Glimmer 30B NVFP4 W4A4 with vLLM
+  id: vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1
+  displayName: Muse Glimmer 30B NVFP4 W4A4 with vLLM on Linux x86_64
 
 spec:
   backend: vllm
 
   modelRef: vllm.muse-glimmer-30b-nvfp4-w4a4.v1
   runtime:
-    image: vllm/vllm-openai@sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965
-    imageDownloadSizeBytes: 9706339423
-    minimumComputeCapability: 121
-    minimumGpuMemoryBytes: 25447097878
+    image: vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f
+    imageDownloadSizeBytes: 8632473449
+    minimumComputeCapability: 120
+    minimumGpuMemoryBytes: 96000000000
     pullTimeoutSeconds: 3600
-    architecture: arm64
+    architecture: amd64
     networkMode: bridge
     ipcMode: host
     sharedMemoryBytes: 34359738368
@@ -46,6 +46,10 @@ spec:
       catalogReceipt: true
     executable: /usr/local/bin/vllm
     arguments:
+      - name: --tokenizer
+        value: /root/.cache/huggingface/hub/models--Inferact--Muse-Glimmer-30B-NVFP4-W4A4/snapshots/d35cb79050f419c457611b1cee5c5d15b176f285
+      - name: --tokenizer-revision
+        value: d35cb79050f419c457611b1cee5c5d15b176f285
       - name: --max-model-len
         value: 32768
       - name: --gpu-memory-utilization

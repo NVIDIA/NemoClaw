@@ -36,6 +36,20 @@ import type {
 
 const NOW = new Date("2026-08-02T18:00:00.000Z");
 const SOURCE_REVISION = "a".repeat(40);
+const LINUX_VLLM_PROFILES = [
+  {
+    presetId: "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4",
+    recipeId: "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
+    model: "muse-glimmer-30b",
+    minimumGpuMemoryBytes: 96_000_000_000,
+  },
+  {
+    presetId: "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
+    recipeId: "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
+    model: "nemotron-3.5-lightning-30b",
+    minimumGpuMemoryBytes: 96_000_000_000,
+  },
+] as const;
 
 function shippedCatalog(): CompiledManagedInferenceCatalog {
   return structuredClone(loadManagedInferenceCatalog());
@@ -319,6 +333,102 @@ function catalogWithSecondProfile(options: {
 }
 
 describe("managed inference resolver", () => {
+  it.each(LINUX_VLLM_PROFILES)(
+    "selects the shipped Linux amd64 profile for direct model $model (#9673)",
+    ({ presetId, recipeId, model }) => {
+      const catalog = shippedCatalog();
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      expect(preset).toBeDefined();
+
+      const result = resolveManagedInferenceServing(
+        {
+          readinessReports: [
+            { nodeId: "linux-host", report: readinessReport({}, preset!) },
+          ],
+          topologyQualifications: [],
+          intent: { provider: "vllm", vllmModel: model },
+          now: NOW,
+        },
+        catalog,
+      );
+
+      expect(result).toMatchObject({
+        outcome: "selected",
+        selection: "explicit",
+        preset: { metadata: { id: presetId } },
+        recipe: { metadata: { id: recipeId } },
+      });
+    },
+  );
+
+  it.each(LINUX_VLLM_PROFILES)(
+    "enforces the Linux amd64 $model GPU memory boundary (#9673)",
+    ({ presetId, model, minimumGpuMemoryBytes }) => {
+      const catalog = shippedCatalog();
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      expect(preset).toBeDefined();
+      const base = readinessReport({}, preset!);
+      const resolveAtMemory = (memoryBytes: number) => {
+        const report = {
+          ...base,
+          observations: base.observations.map((observation) =>
+            observation.id === "host.gpu.memory_total_bytes" ||
+            observation.id === "host.gpu.memory_per_device_bytes"
+              ? { ...observation, value: memoryBytes }
+              : observation,
+          ),
+        } as SystemReadinessReport;
+        return resolveManagedInferenceServing(
+          {
+            readinessReports: [{ nodeId: "linux-host", report }],
+            topologyQualifications: [],
+            intent: { provider: "vllm", vllmModel: model },
+            now: NOW,
+          },
+          catalog,
+        );
+      };
+
+      expect(resolveAtMemory(minimumGpuMemoryBytes - 1)).toMatchObject({
+        outcome: "rejected",
+        code: "requirements-not-met",
+      });
+      expect(resolveAtMemory(minimumGpuMemoryBytes)).toMatchObject({
+        outcome: "selected",
+        selection: "explicit",
+        preset: { metadata: { id: presetId } },
+      });
+    },
+  );
+
+  it("rejects the Linux amd64 Muse profile on arm64 (#9673)", () => {
+    const catalog = shippedCatalog();
+    const { presetId, model } = LINUX_VLLM_PROFILES[0];
+    const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+    expect(preset).toBeDefined();
+    const base = readinessReport({}, preset!);
+    const report = {
+      ...base,
+      observations: base.observations.map((observation) =>
+        observation.id === "host.os.architecture"
+          ? { ...observation, value: "arm64" }
+          : observation,
+      ),
+    } as SystemReadinessReport;
+
+    expect(
+      resolveManagedInferenceServing(
+        {
+          readinessReports: [{ nodeId: "linux-host", report }],
+          topologyQualifications: [],
+          intent: { provider: "vllm", vllmModel: model },
+          now: NOW,
+        },
+        catalog,
+      ),
+    ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
+  });
+
   it("resolves an explicit host-local vLLM preset without topology data (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
     const presetId = catalog.presets[0]!.metadata.id;

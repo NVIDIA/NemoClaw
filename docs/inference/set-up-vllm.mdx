@@ -158,8 +158,9 @@ Managed profiles and model-specific recipes use immutable image digests:
 
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
   N1x uses the same image.
-- The DGX Spark Muse Glimmer recipe uses the `linux/arm64` post-merge vLLM nightly digest `sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204` with a compressed layer size of `9.70 GB` under `vllm/vllm-openai`.
-  The image was built from vLLM commit `ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9`, which contains merged Muse Glimmer support commit `6adad08767583f52eb4d2122111af0bf638ed5e6`.
+- The DGX Spark Muse Glimmer recipe uses the `linux/arm64` post-fix vLLM nightly digest `sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965` with a compressed layer size of `9.71 GB` under `vllm/vllm-openai`.
+  The image was built from vLLM commit `5a4c8d99242e9e069b604d0e9b969e77f7dd501d`, which contains merged Muse Glimmer support commit `6adad08767583f52eb4d2122111af0bf638ed5e6` and the vLLM dependency fix from commit `90984ddbed27a09409506d6d6c0eea87f54b04b5`.
+  The image includes `huggingface_hub` `1.28.0`, which preserves the pinned model revision when vLLM transfers configuration to the engine process.
   It pins Hugging Face revision `d35cb79050f419c457611b1cee5c5d15b176f285` for the approximately `25.45 GB` model download.
 - The DGX Spark Nemotron 3.5 Lightning recipe uses the `linux/arm64` digest `sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78` with a compressed layer size of approximately `12.69 GB` under `vllm/vllm-openai`.
   It pins Hugging Face revision `0dcd680e5585c791728c83342b311d0a0026dbeb` for the approximately `21.56 GB` model download.

@@ -13,6 +13,23 @@ function rootlessLinuxStep(name: string): WorkflowStep {
 }
 
 describe("portable profile rootless runtime workflow", () => {
+  // source-shape-contract: compatibility -- The rootless workflow must compile the exact candidate managed inference catalogue before the live E2E test imports it
+  it("compiles the managed inference catalogue after dependency installation and before the live E2E test (#9680)", () => {
+    const workflow = readYaml<Workflow>(".github/workflows/portable-profile-e2e.yaml");
+    const steps = workflow.jobs["rootless-linux"]?.steps ?? [];
+    const dependencyInstallIndex = steps.findIndex(
+      (step) => step.name === "Install root dependencies",
+    );
+    const catalogueCompileIndex = steps.findIndex((step) => step.run === "npm run catalog:compile");
+    const liveTestIndex = steps.findIndex(
+      (step) => step.name === "Exercise portable profile in the rootless environment",
+    );
+
+    expect(dependencyInstallIndex).toBeGreaterThanOrEqual(0);
+    expect(catalogueCompileIndex).toBeGreaterThan(dependencyInstallIndex);
+    expect(liveTestIndex).toBeGreaterThan(catalogueCompileIndex);
+  });
+
   it("uses Ubuntu's Podman package with its installed OCI runtime", () => {
     const provision = rootlessLinuxStep("Provision restricted rootless Linux runtime").run ?? "";
     const packageInstallIndex = provision.indexOf("sudo apt-get install");
