@@ -178,9 +178,9 @@ jobs:
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_HEAD_SHA: ee6762b9941777d64dad832994b03ca2a572d4c9
+          PUBLICATION_HEAD_SHA: d34dab56a2430e08a11f906bffb98b355edaebec
           PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32204372443"
+          PUBLICATION_RUN_ID: "32272535380"
         run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"
 
       - id: validate_dcode_base
@@ -196,9 +196,9 @@ jobs:
         name: Validate reused Deep Agents Code base
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
-          PUBLICATION_HEAD_SHA: ee6762b9941777d64dad832994b03ca2a572d4c9
+          PUBLICATION_HEAD_SHA: d34dab56a2430e08a11f906bffb98b355edaebec
           PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32204372443"
+          PUBLICATION_RUN_ID: "32272535380"
         run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"
 
   generate-matrix:

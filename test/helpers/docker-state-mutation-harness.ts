@@ -139,6 +139,7 @@ export interface DockerStateMutationHarnessOptions {
   readonly lifecycleGeneration?: string;
   readonly loseAcquireResponseOnce?: boolean;
   readonly loseReleaseResponseOnce?: boolean;
+  readonly signalHelperOnce?: boolean;
   readonly stateMountType?: "bind" | "volume";
 }
 
@@ -184,6 +185,7 @@ function createContainerStateMutationHarness(
   let lostAcquireResponsesRemaining = options.loseAcquireResponseOnce ? 1 : 0;
   let releaseFailuresRemaining = options.failReleaseOnce ? 1 : 0;
   let lostReleaseResponsesRemaining = options.loseReleaseResponseOnce ? 1 : 0;
+  let signalledHelpersRemaining = options.signalHelperOnce ? 1 : 0;
   let marker: Record<string, unknown> | null = null;
   let releasedMarker: Record<string, unknown> | null = null;
   let deferredAcquireRequest: string | null = null;
@@ -314,7 +316,7 @@ function createContainerStateMutationHarness(
                   : action === "activate" || action === "release"
                     ? 5 * 60_000
                     : 15 * 60_000;
-              const helperResult = capture(
+              let helperResult = capture(
                 "docker",
                 [
                   "container",
@@ -327,6 +329,21 @@ function createContainerStateMutationHarness(
                 helperTimeout,
                 request,
               );
+              if (helperResult.status !== null && helperResult.status < 0) {
+                helperResult = capture(
+                  "docker",
+                  [
+                    "container",
+                    "exec",
+                    "--nemoclaw-broker",
+                    DOCKER_STATE_MUTATION_RUNTIME_ID,
+                    "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+                    action,
+                  ],
+                  helperTimeout,
+                  request,
+                );
+              }
               transportFiles.set(
                 `${containerPath.slice(0, -6)}.response`,
                 Buffer.from(
@@ -466,6 +483,10 @@ function createContainerStateMutationHarness(
       }
     } else if (releasedMarker === marker) {
       marker = null;
+    }
+    if (signalledHelpersRemaining > 0) {
+      signalledHelpersRemaining -= 1;
+      return { status: -15, stdout: "", stderr: "" };
     }
     return { status: 0, stdout: `${JSON.stringify(response)}\n`, stderr: "" };
   });

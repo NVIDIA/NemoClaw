@@ -531,6 +531,16 @@ describe("Docker state mutation owner", () => {
     ).toBe(false);
   });
 
+  it("replays one signal-terminated helper invocation through the established transport", () => {
+    const runtime = harness({ signalHelperOnce: true, stateMountType: "volume" });
+
+    const acquired = runtime.owner.acquire({ ...runtime.context, plan: plan() });
+
+    expect(acquired.providerHandle).toMatch(/^docker-state-mutation-v1:/u);
+    expect(runtime.helperActions).toEqual(["acquire", "acquire"]);
+    expect(runtime.lifecycleStore.listUnfinished()[0]?.phase).toBe("fence-established");
+  });
+
   it("recovers a durable-volume fence when acquire succeeds after its response is lost (#9485)", () => {
     const runtime = harness({ loseAcquireResponseOnce: true, stateMountType: "volume" });
     expect(runtime.state).toMatchObject({

@@ -141,6 +141,19 @@ def response_payload(action, identity, status, stdout, stderr):
         "status": status, "stdout": stdout, "stderr": stderr},
         ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
 
+def run_helper(action, request):
+    completed = None
+    for attempt in range(2):
+        completed = subprocess.run([sys.executable, "-I", helper, action], input=request,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=TIMEOUTS[action], check=False,
+            start_new_session=True)
+        if completed.returncode >= 0:
+            return completed
+        # Every helper action is transaction-bound and idempotent. Replay only
+        # a signal-terminated invocation once; ordinary nonzero exits remain
+        # authoritative and are never retried.
+    return completed
+
 helper = sys.argv[1]
 transaction = sys.argv[2]
 if IDENTITY.fullmatch(transaction) is None:
@@ -180,11 +193,11 @@ while True:
             action = envelope.get("action") if isinstance(envelope, dict) else "invalid"
             if action not in ACTIONS or envelope.get("transactionId") != transaction:
                 fail("transport-request-invalid")
-            completed = subprocess.run([sys.executable, "-I", helper, action], input=request,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=TIMEOUTS[action], check=False)
+            completed = run_helper(action, request)
             if len(completed.stdout) > MAXIMUM or len(completed.stderr) > MAXIMUM:
                 fail("transport-response-too-large")
-            response = response_payload(action, identity, completed.returncode,
+            status = completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
+            response = response_payload(action, identity, status,
                 completed.stdout.decode("utf-8", "strict"), completed.stderr.decode("utf-8", "strict"))
         except subprocess.TimeoutExpired:
             response = response_payload(action, identity, 1, "", "helper-timeout")

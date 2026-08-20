@@ -85,10 +85,6 @@ function hasExactTokens(value: unknown, expected: readonly string[]): boolean {
   );
 }
 
-function isReviewedEmptyCommand(value: unknown): boolean {
-  return value === null || value === undefined || hasExactTokens(value, []);
-}
-
 function reviewedManagedRuntimeWorkload(environment: unknown): string[] | null {
   if (!Array.isArray(environment) || !environment.every((entry) => typeof entry === "string")) {
     return null;
@@ -122,11 +118,16 @@ function reviewedManagedRuntimeWorkload(environment: unknown): string[] | null {
   }
 }
 
-function hasReviewedManagedRuntimeProcess(config: Record<string, unknown>): boolean {
+function hasReviewedOpenShellManagedSource(
+  config: Record<string, unknown>,
+  managedWorkload: readonly string[] | null,
+): boolean {
+  const labels = config.Labels;
   return (
-    hasExactTokens(config.Entrypoint, OPENSHELL_SANDBOX_ENTRYPOINT) &&
-    (isReviewedEmptyCommand(config.Cmd) || hasExactTokens(config.Cmd, OPENSHELL_WORKDIR_COMMAND)) &&
-    reviewedManagedRuntimeWorkload(config.Env) !== null
+    managedWorkload !== null &&
+    typeof labels === "object" &&
+    labels !== null &&
+    (labels as Record<string, unknown>)["openshell.ai/managed-by"] === "openshell"
   );
 }
 
@@ -161,7 +162,7 @@ export function rewriteManagedInspectForLegacyKeepalive(
   );
   const configRecord = config as Record<string, unknown>;
   const managedWorkload = reviewedManagedRuntimeWorkload(configRecord.Env);
-  const isManagedRuntimeSource = hasReviewedManagedRuntimeProcess(configRecord);
+  const isManagedRuntimeSource = hasReviewedOpenShellManagedSource(configRecord, managedWorkload);
   requireFixtureInput(
     (hasExactTokens(configRecord.Entrypoint, MANAGED_IMAGE_ENTRYPOINT) &&
       hasExactTokens(configRecord.Cmd, MANAGED_IMAGE_COMMAND)) ||
