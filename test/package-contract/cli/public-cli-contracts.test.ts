@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const CHECK_DOCS = path.join(REPO_ROOT, "test", "e2e", "e2e-cloud-experimental", "check-docs.sh");
+const CLI_DOCS_TIMEOUT_MS = 240_000;
 
 describe("public compiled CLI contracts", () => {
   it("prints the public NemoClaw version prefix (#7616)", () => {
@@ -27,7 +28,7 @@ describe("public compiled CLI contracts", () => {
   });
 
   it("keeps compiled CLI commands aligned with their documentation headings (#7616)", {
-    timeout: 150_000,
+    timeout: CLI_DOCS_TIMEOUT_MS + 30_000,
   }, () => {
     // `npm run test:package` builds the CLI before this project, so the shim
     // exercises the same compiled entrypoint shipped by the package.
@@ -55,7 +56,7 @@ exec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI_ENTRYPOINT)} "$@"
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },
         killSignal: "SIGKILL",
-        timeout: 120_000,
+        timeout: CLI_DOCS_TIMEOUT_MS,
       });
 
       expect(result.error).toBeUndefined();

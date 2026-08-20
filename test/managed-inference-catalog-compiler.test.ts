@@ -190,6 +190,7 @@ describe("managed inference YAML profile contract", () => {
       serve: {
         authentication: "bearer",
         contextSize: 262144,
+        limits: { maxRequestBodyBytes: 32768 },
         batchSize: 2048,
         microBatchSize: 512,
         flashAttention: "enabled",
@@ -246,6 +247,7 @@ describe("managed inference YAML profile contract", () => {
         chatTemplate: "model-embedded-jinja",
         chatTemplateArguments: { reasoningStrength: "low" },
         contextSize: 131072,
+        limits: { maxRequestBodyBytes: 16384 },
         slots: 1,
         speculativeDecoding: "disabled",
       },
@@ -315,7 +317,7 @@ describe("managed inference YAML profile contract", () => {
       runtime: {
         architecture: "arm64",
         image:
-          "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+          "vllm/vllm-openai@sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965",
       },
       execution: {
         materializerRef: "vllm.host-local/v1",

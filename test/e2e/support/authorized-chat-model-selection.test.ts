@@ -1,14 +1,44 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { selectAuthorizedChatModel } from "../lib/select-authorized-chat-model.mts";
 
 const endpoint = "https://inference.example.test/v1";
 const currentModel = "nvidia/nvidia/nemotron-3-ultra";
+const selectorPath = path.resolve("test/e2e/lib/select-authorized-chat-model.mts");
+const tsxPath = path.resolve("node_modules/.bin/tsx");
 
 describe("authorized alternate chat model selection", () => {
+  it("rejects unsafe credential transport when tsx executes the selector", () => {
+    const result = spawnSync(
+      tsxPath,
+      [
+        selectorPath,
+        "--endpoint",
+        "http://inference.example.test/v1",
+        "--current-model",
+        currentModel,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, COMPATIBLE_API_KEY: "placeholder-key" },
+        killSignal: "SIGKILL",
+        timeout: 10_000,
+      },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "authorized model selection failed: the endpoint must use HTTPS unless it targets loopback",
+    );
+  });
+
   it.each([endpoint, "http://127.0.0.1:8000/v1"])(
     "selects the highest-priority catalog model at %s",
     async (permittedEndpoint) => {
