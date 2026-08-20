@@ -56,7 +56,11 @@ describe("dedicated local model profile onboarder", () => {
       prompt: vi.fn(async () => ""),
       error: vi.fn(),
     });
-    const vllmProfile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
+    const vllmProfile = {
+      name: "DGX Spark",
+      platform: "spark",
+      architecture: "arm64",
+    } as VllmProfile;
 
     await expect(
       onboard(
@@ -95,7 +99,11 @@ describe("dedicated local model profile onboarder", () => {
         {
           hasVllmImage: false,
           sparkHost: true,
-          vllmProfile: { name: "DGX Spark", platform: "spark" } as VllmProfile,
+          vllmProfile: {
+            name: "DGX Spark",
+            platform: "spark",
+            architecture: "arm64",
+          } as VllmProfile,
           vllmRunning: false,
         },
         state(),
@@ -125,7 +133,11 @@ describe("dedicated local model profile onboarder", () => {
         {
           hasVllmImage: false,
           sparkHost: true,
-          vllmProfile: { name: "DGX Spark", platform: "spark" } as VllmProfile,
+          vllmProfile: {
+            name: "DGX Spark",
+            platform: "spark",
+            architecture: "arm64",
+          } as VllmProfile,
           vllmRunning: false,
         },
         state(),
