@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 
@@ -307,13 +307,12 @@ RUN set -eu; \
     test -x /usr/local/bin/hermes; \
     /usr/local/bin/hermes --version
 
-# Managed MCP requires the packaged Hermes client surface. A published base can
-# carry the expected Hermes version while still having been built without the
-# optional `mcp` dependency group, in which case Hermes silently disables both
-# MCP discovery and Streamable HTTP support. This is a build-time import guard;
-# the live MCP E2E proves authenticated HTTPS execution through OpenShell.
-RUN /opt/hermes/.venv/bin/python -c \
-    'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
+# Managed MCP and ACP require their packaged Hermes client surfaces. A
+# published base can carry the expected Hermes version while omitting either
+# optional dependency group. This is a build-time package/import guard; live
+# protocol behavior remains a separate E2E concern.
+RUN /opt/hermes/.venv/bin/python -I -c \
+    'import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit("Hermes ACP SDK version is unavailable"); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit("Hermes MCP client runtime is unavailable"); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit("Hermes MCP Streamable HTTP runtime is unavailable")'
 
 RUN chmod -R a+rX /opt/hermes/.venv \
     && test -r /opt/hermes/.venv/pyvenv.cfg \

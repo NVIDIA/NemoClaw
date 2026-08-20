@@ -58,14 +58,38 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern:
+      /(?:^|\/)internal\/security-reviews\/hermes-0\.19\.0-dependency-review\.md$/,
+    testsToRun: runTests("test/hermes-dependency-review.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/actions\/resolve-hermes-base-image\/action\.yaml$/,
+    testsToRun: runTests("test/base-image-resolver-helper.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/Dockerfile\.base$/,
+    testsToRun: runTests(
+      "test/hermes-dependency-review.test.ts",
+      "test/hermes-share-mount-deps.test.ts",
+      "test/sandbox-provisioning.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)(agents\/(?:hermes|langchain-deepagents-code)\/)?Dockerfile$/,
-    testsToRun: (_file, match) =>
-      match[1]
+    testsToRun: (_file, match) => {
+      if (match[1] === "agents/hermes/") {
+        return [
+          "src/lib/onboard/managed-startup-profile.test.ts",
+          "test/hermes-mcp-runtime-capability.test.ts",
+        ];
+      }
+      return match[1]
         ? ["src/lib/onboard/managed-startup-profile.test.ts"]
         : [
             "src/lib/onboard/managed-startup-profile.test.ts",
             "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
-          ],
+          ];
+    },
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,
