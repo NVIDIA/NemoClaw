@@ -14,7 +14,7 @@ const selectorPath = path.resolve("test/e2e/lib/select-authorized-chat-model.mts
 const tsxPath = path.resolve("node_modules/.bin/tsx");
 
 describe("authorized alternate chat model selection", () => {
-  it("reports a missing credential through the live E2E tsx command", () => {
+  it("reports a missing credential when tsx executes the selector", () => {
     const result = spawnSync(
       tsxPath,
       [selectorPath, "--endpoint", endpoint, "--current-model", currentModel],
