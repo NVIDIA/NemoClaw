@@ -79,6 +79,21 @@ Open an issue when you encounter one of the following situations.
 Use [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) for questions, design exploration, and larger feature proposals before implementation.
 Maintainers may ask you to move broad or still-forming proposals from an issue to a discussion so the design can settle before code review.
 
+### Maintainer Triage and Decision
+
+For a substantive product, architecture, security, integration, or supported-surface proposal, a maintainer must record a decision in the issue or linked discussion.
+The maintainer must record the decision before implementation starts.
+
+The decision record must include these items:
+
+- **Decision:** `Accept`, `Request changes`, `Defer`, or `Decline`.
+- **Reason and placement:** State the reason. For `Accept`, record core NemoClaw or NemoClaw Community. Use `Not applicable` when the decision is not `Accept`.
+- **Accountable maintainer:** Name one maintainer when the decision is `Accept`. Use `Not applicable` when the decision is not `Accept`.
+- **Validation plan:** List the required validation evidence when the decision is `Accept`. Use `Not applicable` when the decision is not `Accept`.
+
+Contributors must not start implementing a substantive contribution until a maintainer records `Accept`, names one accountable maintainer, and states an explicit validation plan.
+Small documentation changes and low-risk fixes may continue directly to a pull request.
+
 ## Community Response Expectations
 
 NemoClaw is an alpha project, and maintainer availability varies with release, security, and stability work.
@@ -511,8 +526,7 @@ For Markdown docs routing, user-skill guidance, and release-prep documentation w
 
 ## Pull Requests
 
-We welcome contributions. Every PR requires maintainer review before merge. Contributors may have up to 5 open PRs at one time.
-Core maintainers listed in `.github/workflows/pr-limit.yaml` are exempt from this limit.
+We welcome contributions. Every PR requires maintainer review before merge. The default limit is 5 open PRs at one time.
 Maintainers review pull requests according to project priority, security impact, release readiness, and reviewer availability.
 PRs that solve issues with Priority set to Urgent or High are more likely to receive earlier review when maintainers have capacity.
 For substantial features or behavior changes, start with a GitHub Discussion before opening a large implementation PR.
@@ -561,8 +575,9 @@ If the PR description is missing the DCO declaration, update the PR description 
 If any commit is missing GitHub verification, fix the branch before opening a PR.
 If force-push is not allowed after an unverified commit is published, open a fresh branch and fresh PR with a clean compliant history.
 
-> [!WARNING]
-> Non-exempt accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.
+When an opened or reopened PR exceeds the account's limit, automation comments on and closes that PR.
+
+> Accounts that submit automated bulk PRs may have their PRs closed or their access restricted.
 
 ### No External Project Links
 

@@ -267,6 +267,13 @@ Back up those paths outside the sandbox before you approve legacy recovery.
 $$nemoclaw <sandbox-name> rebuild
 ```
 
+<AgentOnly variant="openclaw">
+
+After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
+If verification fails, NemoClaw restores Shields, exits nonzero, and does not report a successful rebuild.
+
+</AgentOnly>
+
 ### Resolve Rebuild Preflight Stops
 
 Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state.

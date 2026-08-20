@@ -63,12 +63,13 @@ import {
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
 import {
-  completeInferenceGatewayRestart,
+  completeInferencePostCommit,
   defaultInferenceGatewayRestart,
   finalizeInferenceMutation,
   type InferenceGatewayRestartDeps,
   type InferenceMutation,
   readPreviousOpenClawInferenceApi,
+  settleInferenceSetOpenClawPairing,
 } from "./inference-set-gateway-restart";
 import {
   type InferenceSetSandboxRouteProbe,
@@ -280,6 +281,7 @@ function defaultDeps(): InferenceSetDeps {
     sleep: sleepInferenceSetRouteConvergence,
     withGatewayRouteMutationLock,
     restartSandboxGateway: defaultInferenceGatewayRestart,
+    settleOpenClawPairing: settleInferenceSetOpenClawPairing,
     isSandboxConfigMutable: (sandboxName) => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
       return isShieldsDown(sandboxName, true);
@@ -1401,6 +1403,15 @@ async function runInferenceSetWithoutHostLock(
         agentName,
         configChanged: patched.changed,
         nextApi: patched.route.inferenceApi,
+        openClawPairingTarget:
+          agentName === "openclaw"
+            ? {
+                sandboxName,
+                gatewayName: expectedGatewayName,
+                openclawVersion: entry.agentVersion ?? "",
+                stateDirectory: target.configDir,
+              }
+            : undefined,
         previousApi: previousOpenClawInferenceApi,
         result: {
           sandboxName,
@@ -1501,10 +1512,11 @@ export async function runInferenceSet(
         ),
       ),
     );
-    // Release the config transition lock before the managed restart reacquires
-    // it, but retain the outer sandbox lifecycle lock so another process cannot
-    // destroy/recreate this name between the committed write and restart.
-    completeInferenceGatewayRestart(mutation, deps);
+    // Release the config transition lock before post-commit gateway work
+    // reacquires its own route state. Retain the outer sandbox lifecycle lock
+    // so another process cannot replace this sandbox between the committed
+    // write, an optional restart, and device-scope convergence.
+    completeInferencePostCommit(mutation, deps);
     if (mutation.result.dashboardConverged === false) {
       throw new InferenceSetError(
         `Inference route and main Hermes config were updated for '${mutation.result.sandboxName}', ` +

@@ -407,17 +407,27 @@ describe("credentials oclif commands", () => {
     }
   });
 
-  it("credentials add does not record an extra provider when the gateway rejects the call", async () => {
+  it("credentials add rolls back its provider reservation when the gateway rejects the call", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-12345";
-    const extraProviderCalls: string[] = [];
+    const lifecycleCalls: string[] = [];
+    const extraProviders = new Set<string>();
+    const rejectGatewayCall = () => {
+      expect(extraProviders.has("tavily-search")).toBe(true);
+      lifecycleCalls.push("gateway:tavily-search");
+      return { status: 1, stderr: "gateway unavailable" };
+    };
     installRuntimeBridge({
       runOpenshell: (args) =>
-        args.includes("profile")
-          ? { status: 0, stdout: "" }
-          : { status: 1, stderr: "gateway unavailable" },
+        args.includes("profile") ? { status: 0, stdout: "" } : rejectGatewayCall(),
       recordExtraProvider: (name) => {
-        extraProviderCalls.push(name);
-        return true;
+        lifecycleCalls.push(`record:${name}`);
+        const sizeBefore = extraProviders.size;
+        extraProviders.add(name);
+        return extraProviders.size !== sizeBefore;
+      },
+      forgetExtraProvider: (name) => {
+        lifecycleCalls.push(`forget:${name}`);
+        return extraProviders.delete(name);
       },
     });
     const { CredentialsAddCommand } = loadCommands();
@@ -437,7 +447,12 @@ describe("credentials oclif commands", () => {
         ),
       );
 
-      expect(extraProviderCalls).toEqual([]);
+      expect(lifecycleCalls).toEqual([
+        "record:tavily-search",
+        "gateway:tavily-search",
+        "forget:tavily-search",
+      ]);
+      expect([...extraProviders]).toEqual([]);
     } finally {
       delete process.env.TAVILY_API_KEY;
     }

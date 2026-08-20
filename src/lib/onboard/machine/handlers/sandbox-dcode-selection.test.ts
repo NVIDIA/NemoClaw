@@ -207,6 +207,7 @@ describe("handleSandboxState live DCode selection", () => {
       "provider",
       "model",
       "openai-completions",
+      null,
     );
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
       resolved: expect.any(Object),
@@ -253,6 +254,37 @@ describe("handleSandboxState live DCode selection", () => {
     await handleSandboxState(dcodeOptions(deps));
 
     expect(getDcodeSelectionDrift).toHaveBeenCalledOnce();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
+  });
+
+  it("reuses a ready OpenRouter-compatible sandbox after endpoint-aware verification (#9555)", async () => {
+    const endpointUrl = "https://openrouter.ai/api/v1/";
+    const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getDcodeSelectionDrift,
+      getSandboxRegistryEntry: (name) =>
+        dcodeRegistryEntry(name, {
+          provider: "compatible-endpoint",
+          model: "nvidia/nemotron-3-ultra-550b-a55b",
+        }),
+    });
+
+    await handleSandboxState({
+      ...dcodeOptions(deps),
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      endpointUrl,
+    });
+
+    expect(getDcodeSelectionDrift).toHaveBeenCalledWith(
+      "saved",
+      "compatible-endpoint",
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "openai-completions",
+      endpointUrl,
+    );
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
   });

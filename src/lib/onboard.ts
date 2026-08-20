@@ -111,7 +111,7 @@ const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const {
-  getDcodeSelectionDrift,
+  createDcodeSelectionDriftReader,
   requiresSelectionRecreate,
   usesManagedDcodeIdentity,
 }: typeof import("./onboard/dcode-selection-drift") = require("./onboard/dcode-selection-drift");
@@ -742,8 +742,7 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
 const { refreshDockerDriverGatewayReuseState } =
   gatewayReuse.createDockerDriverGatewayReuseApplication({
     gatewayName: () => GATEWAY_NAME,
-    getGatewayCompatContainerName: () =>
-      gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+    getGatewayCompatContainerName: () => gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
     resolveOpenShellGatewayBinary,
     getDockerDriverGatewayEnv,
@@ -756,6 +755,7 @@ const { refreshDockerDriverGatewayReuseState } =
     checkGatewayPortAvailable,
     getDockerDriverGatewayPortListenerPid,
     rememberDockerDriverGatewayPid,
+    runDockerNetworkInspect: docker.dockerRun,
   });
 
 const { getSandboxReuseState, getSandboxRecreateObservation, waitForSandboxRecreateDeleteAbsence } =
@@ -936,8 +936,8 @@ const {
 const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawReady } =
   sandboxLifecycle.createSandboxLifecycleHelpers({
     runCaptureOpenshell,
-    fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
-      fetchGatewayAuthTokenFromSandbox(sandboxName),
+    getGatewayName: () => GATEWAY_NAME,
+    fetchGatewayAuthTokenFromSandbox: (name: string) => fetchGatewayAuthTokenFromSandbox(name),
     agentProductName,
     prompt,
     isAffirmativeAnswer,
@@ -1582,7 +1582,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  getDcodeSelectionDrift,
+  readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
   getHermesToolGatewayBroker,
@@ -1667,6 +1667,7 @@ const createSandboxWithBaseImageResolution =
   sandboxCreateOrchestration.createSandboxWithBaseImageResolution(
     sandboxCreateOrchestrationRuntime,
   );
+
 
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
@@ -3178,7 +3179,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 recoverySessionId,
               ),
             setupInference,
-            resolveHostLocalInferenceStartupSelection: () => null,
+            resolveHostLocalInferenceStartupSelection: setupNimFlow.createHermesPortableOllamaInferenceResolver({ runtimeContext: lockedRuntime.portableRuntimeContext, credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV, getReservationSessionId: () => session?.sessionId, runGatewayOpenshell: runCoreGatewayOpenshell }),
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
@@ -3231,6 +3232,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             },
           },
         },
+
         sandbox: {
           gatewayName: GATEWAY_NAME,
           hermesPortableLifecycle:
@@ -3263,10 +3265,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             messagingChannelConfigsEqual,
             getSandboxReuseState,
             getSandboxRecreateObservation,
-            getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
-              getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
-                runCaptureOpenshell,
-              }),
+            getDcodeSelectionDrift: sandboxCreateOrchestrationRuntime.readDcodeSelectionDrift,
             hasSandboxGpuDrift,
             getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
             getSandboxRegistryEntry: registry.getSandbox,
@@ -3315,6 +3314,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                   hermesApiPortReservationScope,
                   ...createArgs,
                 ),
+
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),

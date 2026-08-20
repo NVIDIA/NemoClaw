@@ -420,6 +420,14 @@ function buildInvocationProbeDetail(
       `as proof that the model ran. (${result.message})`
     );
   }
+  if (classifyHealthProbeFailureLabel(result) === "unauthorized") {
+    return (
+      `${endpoint} rejected the ${route} request. ` +
+      `This probe authenticates with the host credential in ${credentialEnv}, not the provider ` +
+      `credential stored in the gateway. Check ${credentialEnv} where you run this command. ` +
+      `(${result.message})`
+    );
+  }
   return (
     `${route} at ${endpoint} did not succeed. ` +
     `Check your network connection or ${credentialEnv}. (${result.message})`

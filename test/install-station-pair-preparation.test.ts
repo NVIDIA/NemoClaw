@@ -1417,7 +1417,7 @@ ensure_station_express_pair
     }
   });
 
-  it("defers host preparation only for a complete running managed dual-head candidate", () => {
+  it("defers host preparation only for a complete current or schema-2 managed dual-head candidate", () => {
     const valid = [
       "/nemoclaw-vllm",
       "true",
@@ -1437,6 +1437,14 @@ station_managed_dual_head_running
 `,
       { DOCKER_INSPECTION: valid },
     );
+    const previousSchemaAccepted = runInstallerBody(
+      `
+command_exists() { return 0; }
+docker() { printf '%s\n' "$DOCKER_INSPECTION"; }
+station_managed_dual_head_running
+`,
+      { DOCKER_INSPECTION: valid.replace(` head ${DUAL_STATION_VLLM_LAUNCH_SCHEMA} `, " head 2 ") },
+    );
     const malformed = runInstallerBody(
       `
 command_exists() { return 0; }
@@ -1447,9 +1455,11 @@ station_managed_dual_head_running
     );
     try {
       expect(accepted.result.status, accepted.output).toBe(0);
+      expect(previousSchemaAccepted.result.status, previousSchemaAccepted.output).toBe(0);
       expect(malformed.result.status, malformed.output).not.toBe(0);
     } finally {
       fs.rmSync(accepted.home, { recursive: true, force: true });
+      fs.rmSync(previousSchemaAccepted.home, { recursive: true, force: true });
       fs.rmSync(malformed.home, { recursive: true, force: true });
     }
   });

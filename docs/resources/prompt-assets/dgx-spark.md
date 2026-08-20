@@ -28,8 +28,8 @@ For option 1:
 For option 2:
 
 - Set `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1` and `NEMOCLAW_LOCAL_MODEL_RUNTIME=vllm`.
-- Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset.
-- Explain that the serving catalog selects the fixed model, runtime image, port, and vLLM arguments.
+- Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset. Preserve an existing `NEMOCLAW_VLLM_PORT` host-port override.
+- Explain that the serving catalog selects the fixed model, runtime image, container port, and vLLM arguments. `NEMOCLAW_VLLM_PORT` may select another host listener.
 - Explain that the fixed profile serves `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 
 For either accepted Express option:
