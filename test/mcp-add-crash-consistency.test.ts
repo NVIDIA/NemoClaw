@@ -17,6 +17,7 @@ type CrashBoundary =
   | "policy-drift"
   | "credential-collision"
   | "credential-command-race"
+  | "credential-revision-stale"
   | "registered-credential-collision"
   | "registered-late-collision"
   | "adapter"
@@ -39,6 +40,9 @@ includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete proc
 const fs = require("node:fs");
 const path = require("node:path");
 const crashAfter = ${JSON.stringify(crashAfter)};
+if (crashAfter === "credential-revision-stale") {
+  process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "1";
+}
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const mark = (name) => fs.writeFileSync(marker(name), "yes\n", { mode: 0o600 });
 const marked = (name) => fs.existsSync(marker(name));
@@ -105,7 +109,12 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         throw new Error("Unexpected provider update: " + args.join(" "));
       }
       setProviderVersion(providerVersion() + 1);
-      if (isCredentialUpdate) mark("updated");
+      if (isCredentialUpdate) {
+        mark("updated");
+        if (crashAfter === "credential-revision-stale" && marked("bound-policy")) {
+          mark("credential-revision-ready");
+        }
+      }
     }
     mark("provider");
     if (crashAfter === "registered-late-collision") registry.addExtraProvider("foreign-registered");
@@ -161,6 +170,7 @@ policies.applyPresetContent = () => {
   if (crashAfter === "policy-failure") return false;
   fs.appendFileSync(marker("policy-apply-log"), "apply\n", { mode: 0o600 });
   mark("policy");
+  if (marked("attached")) mark("bound-policy");
   if (crashAfter === "policy") process.exit(86);
   return true;
 };
@@ -181,7 +191,17 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   isPreupdateObservation && mark("observation");
   return {
     status: crashAfter === "preupdate-observation-forbidden" && isPreupdateObservation ? 1 : 0,
-    stdout: isObservation ? (marked("updated") ? "v" + providerVersion() : marked("provider") ? "v1" : "absent") : "",
+    stdout: isObservation
+      ? crashAfter === "credential-revision-stale"
+        ? marked("credential-revision-ready")
+          ? "v" + providerVersion()
+          : "absent"
+        : marked("updated")
+          ? "v" + providerVersion()
+          : marked("provider")
+            ? "v1"
+            : "absent"
+      : "",
     stderr: "",
   };
 };
@@ -786,6 +806,44 @@ describe("MCP add crash consistency", () => {
       });
       credentialChild?.kill();
       mcpChild?.kill();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("commits one serialized duplicate add after a fresh exec observes the bound credential revision (#9764)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-revision-race-"));
+    try {
+      const first = runAddProcess(home, "credential-revision-stale");
+      const second = runAddProcess(home, "credential-revision-stale");
+      const results = [first, second];
+      const winners = results.filter((result) => result.status === 0);
+      const duplicates = results.filter(
+        (result) =>
+          result.status === 2 &&
+          result.stderr.includes("MCP server 'fake' already exists on sandbox 'crash-test'"),
+      );
+
+      expect(winners, results.map((result) => result.stderr).join("\n")).toHaveLength(1);
+      expect(duplicates, results.map((result) => result.stderr).join("\n")).toHaveLength(1);
+      expect(results.map((result) => `${result.stdout}\n${result.stderr}`).join("\n")).not.toContain(
+        "host-only-secret",
+      );
+      expect(readBridge(home)).toMatchObject({
+        server: "fake",
+        env: ["FAKE_MCP_SECRET"],
+        policyName: "mcp-bridge-fake",
+      });
+      expect(readBridge(home).addState).toBeUndefined();
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+
+      const removed = runRemoveProcess(home, false);
+      expect(removed.status, `${removed.stdout}\n${removed.stderr}`).toBe(0);
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
+    } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
