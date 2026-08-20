@@ -16,7 +16,7 @@ spec:
     image: vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f
     imageDownloadSizeBytes: 8632473449
     minimumComputeCapability: 120
-    minimumGpuMemoryBytes: 25447097878
+    minimumGpuMemoryBytes: 96000000000
     pullTimeoutSeconds: 3600
     architecture: amd64
     networkMode: bridge

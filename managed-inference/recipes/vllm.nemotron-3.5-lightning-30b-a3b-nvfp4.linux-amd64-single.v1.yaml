@@ -20,7 +20,7 @@ spec:
     # NVIDIA's published vLLM recipe matrix starts at H100. Lower compute
     # capabilities require separate qualification before they can use this profile.
     minimumComputeCapability: 90
-    minimumGpuMemoryBytes: 21561882284
+    minimumGpuMemoryBytes: 96000000000
     pullTimeoutSeconds: 3600
     architecture: amd64
     networkMode: bridge

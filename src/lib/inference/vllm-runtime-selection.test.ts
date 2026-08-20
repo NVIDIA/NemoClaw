@@ -14,7 +14,7 @@ const LINUX_VLLM_RUNTIMES = [
     image:
       "vllm/vllm-openai@sha256:7eb4028507367e69cb0abfa213042d1814c27c1b499af45fbffec8f16d9cbc6f",
     minimumComputeCapability: 120,
-    minimumGpuMemoryBytes: 25447097878,
+    minimumGpuMemoryBytes: 96_000_000_000,
   },
   {
     model: "nemotron-3.5-lightning-30b",
@@ -23,7 +23,7 @@ const LINUX_VLLM_RUNTIMES = [
     image:
       "vllm/vllm-openai@sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2",
     minimumComputeCapability: 90,
-    minimumGpuMemoryBytes: 21561882284,
+    minimumGpuMemoryBytes: 96_000_000_000,
   },
 ] as const;
 

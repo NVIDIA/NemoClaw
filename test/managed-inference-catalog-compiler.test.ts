@@ -75,6 +75,18 @@ describe("managed inference YAML profile contract", () => {
     ["vllm.qwen3-6-27b-fp8.linux-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
     ["vllm.qwen3-6-27b-fp8.optimized-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
     ["vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1", 64_000_000_000, 0.4, 23_500_000_000],
+    [
+      "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
+      96_000_000_000,
+      0.75,
+      25_447_097_878,
+    ],
+    [
+      "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
+      96_000_000_000,
+      0.75,
+      21_561_882_284,
+    ],
   ])(
     "reserves model-weight headroom within the %s GPU utilization budget",
     (recipeId, minimumGpuMemoryBytes, utilization, downloadSizeBytes) => {

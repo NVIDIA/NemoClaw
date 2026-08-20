@@ -41,11 +41,13 @@ const LINUX_VLLM_PROFILES = [
     presetId: "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4",
     recipeId: "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
     model: "muse-glimmer-30b",
+    minimumGpuMemoryBytes: 96_000_000_000,
   },
   {
     presetId: "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
     recipeId: "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
     model: "nemotron-3.5-lightning-30b",
+    minimumGpuMemoryBytes: 96_000_000_000,
   },
 ] as const;
 
@@ -359,34 +361,45 @@ describe("managed inference resolver", () => {
     },
   );
 
-  it("rejects the Linux amd64 Lightning profile below its GPU memory floor (#9673)", () => {
-    const catalog = shippedCatalog();
-    const { presetId, model } = LINUX_VLLM_PROFILES[1];
-    const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
-    expect(preset).toBeDefined();
-    const base = readinessReport({}, preset!);
-    const report = {
-      ...base,
-      observations: base.observations.map((observation) =>
-        observation.id === "host.gpu.memory_total_bytes" ||
-        observation.id === "host.gpu.memory_per_device_bytes"
-          ? { ...observation, value: 1 }
-          : observation,
-      ),
-    } as SystemReadinessReport;
+  it.each(LINUX_VLLM_PROFILES)(
+    "enforces the Linux amd64 $model GPU memory boundary (#9673)",
+    ({ presetId, model, minimumGpuMemoryBytes }) => {
+      const catalog = shippedCatalog();
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      expect(preset).toBeDefined();
+      const base = readinessReport({}, preset!);
+      const resolveAtMemory = (memoryBytes: number) => {
+        const report = {
+          ...base,
+          observations: base.observations.map((observation) =>
+            observation.id === "host.gpu.memory_total_bytes" ||
+            observation.id === "host.gpu.memory_per_device_bytes"
+              ? { ...observation, value: memoryBytes }
+              : observation,
+          ),
+        } as SystemReadinessReport;
+        return resolveManagedInferenceServing(
+          {
+            readinessReports: [{ nodeId: "linux-host", report }],
+            topologyQualifications: [],
+            intent: { provider: "vllm", vllmModel: model },
+            now: NOW,
+          },
+          catalog,
+        );
+      };
 
-    expect(
-      resolveManagedInferenceServing(
-        {
-          readinessReports: [{ nodeId: "linux-host", report }],
-          topologyQualifications: [],
-          intent: { provider: "vllm", vllmModel: model },
-          now: NOW,
-        },
-        catalog,
-      ),
-    ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
-  });
+      expect(resolveAtMemory(minimumGpuMemoryBytes - 1)).toMatchObject({
+        outcome: "rejected",
+        code: "requirements-not-met",
+      });
+      expect(resolveAtMemory(minimumGpuMemoryBytes)).toMatchObject({
+        outcome: "selected",
+        selection: "explicit",
+        preset: { metadata: { id: presetId } },
+      });
+    },
+  );
 
   it("rejects the Linux amd64 Muse profile on arm64 (#9673)", () => {
     const catalog = shippedCatalog();
