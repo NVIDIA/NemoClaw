@@ -33,11 +33,13 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
     rebuildSelection: Parameters<
       typeof isRecordedN1xManagedVllmRebuildEligible
     >[1] = n1xExpressSelection,
+    vllmPort = 8000,
   ) =>
     isRecordedN1xManagedVllmRebuildEligible(
       sandboxEntry,
       rebuildSelection,
       parseHostLocalInferenceReceipt,
+      vllmPort,
     );
 
   it.each([
@@ -73,6 +75,31 @@ describe("recorded N1x managed-vLLM rebuild eligibility", () => {
     });
 
     expect(eligible({ ...n1xExpressEntry, hostLocalInferenceReceipt: n1xReceipt })).toBe(true);
+  });
+
+  it("uses the configured vLLM port for the recorded endpoint and receipt", () => {
+    const genericReceipt = hostLocalInferenceReceipt("docker");
+    const n1xReceipt = serializeHostLocalInferenceReceipt({
+      ...genericReceipt,
+      endpoint: {
+        ...genericReceipt.endpoint,
+        host: "host.openshell.internal",
+        port: 18000,
+      },
+      inference: {
+        protocol: "openai-chat-completions",
+        model: n1xExpressEntry.model,
+        toolCallingRequired: true,
+      },
+    });
+    const sandboxEntry = {
+      ...n1xExpressEntry,
+      endpointUrl: "http://host.openshell.internal:18000/v1",
+      hostLocalInferenceReceipt: n1xReceipt,
+    };
+
+    expect(eligible(sandboxEntry, n1xExpressSelection, 18000)).toBe(true);
+    expect(eligible(sandboxEntry, n1xExpressSelection, 8000)).toBe(false);
   });
 
   it.each([

@@ -1,10 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import * as onboardProbes from "../../../src/lib/inference/onboard-probes.ts";
-import * as providerModels from "../../../src/lib/inference/provider-models.ts";
-import * as urlUtils from "../../../src/lib/core/url-utils.ts";
+import * as urlUtilsModule from "../../../src/lib/core/url-utils.ts";
+import * as onboardProbesModule from "../../../src/lib/inference/onboard-probes.ts";
+import * as providerModelsModule from "../../../src/lib/inference/provider-models.ts";
 import type { ModelCatalogFetchResult } from "../../../src/lib/onboard/types.ts";
+
+function unwrapCommonJsModule<T extends object>(module: T): T {
+  return (module as T & { default?: T }).default ?? module;
+}
+
+const { isLoopbackHostname } = unwrapCommonJsModule(urlUtilsModule);
+const { probeOpenAiLikeEndpointOptimized } = unwrapCommonJsModule(onboardProbesModule);
+const { fetchOpenAiLikeModels } = unwrapCommonJsModule(providerModelsModule);
 
 const CHAT_MODEL_HINT = /(?:claude|deepseek|gemma|gpt|kimi|llama|mistral|nemotron|phi|qwen)/iu;
 const NON_CHAT_MODEL_HINT =
@@ -15,17 +23,6 @@ const PREFERRED_MODELS = [
   "nvidia/nemotron-3-super-120b-a12b",
 ];
 const MAX_CANDIDATES = 6;
-
-function moduleExports<T extends object>(namespace: T): T {
-  const defaultExport = (namespace as { default?: unknown }).default;
-  return defaultExport !== null && typeof defaultExport === "object"
-    ? (defaultExport as T)
-    : namespace;
-}
-
-const { probeOpenAiLikeEndpointOptimized } = moduleExports(onboardProbes);
-const { fetchOpenAiLikeModels } = moduleExports(providerModels);
-const { isLoopbackHostname } = moduleExports(urlUtils);
 
 if (
   typeof probeOpenAiLikeEndpointOptimized !== "function" ||

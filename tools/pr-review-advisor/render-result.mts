@@ -45,18 +45,6 @@ type ReviewAdvisorRenderResult = {
   summary: { oneLine: string; [key: string]: unknown };
   findings: RenderFinding[];
   terminologyReview: RenderTerminologyReview;
-  acceptanceCoverage: Array<{ clause: string; status: string; evidence: string }>;
-  securityCategories: Array<{ category: string; verdict: string; justification: string }>;
-  sourceOfTruthReview: Array<{
-    surface: string;
-    status: string;
-    invalidState: string;
-    sourceBoundary: string;
-    whyNotSourceFix: string;
-    regressionTest: string;
-    removalCondition: string;
-    evidence: string;
-  }>;
   e2e: RenderE2eResult;
   positives: string[];
 };
@@ -138,40 +126,6 @@ function appendE2eSummary(lines: string[], e2e: RenderE2eResult): void {
 
 function combinedE2eIds(targets: Array<{ id: string }>, coverage: Array<{ id: string }>): string[] {
   return [...new Set([...targets.map(({ id }) => id), ...coverage.map(({ id }) => id)])];
-}
-
-export function renderDetailedReview(result: ReviewAdvisorRenderResult): string {
-  const lines = renderSummary(result).trimEnd().split("\n");
-  lines.push("");
-  lines.push("## Acceptance coverage");
-  if (result.acceptanceCoverage.length === 0) {
-    lines.push("- _No linked acceptance clauses were analyzed._");
-  } else {
-    for (const clause of result.acceptanceCoverage.slice(0, 100)) {
-      lines.push(`- **${clause.status}** — ${clause.clause}: ${clause.evidence}`);
-    }
-  }
-  lines.push("");
-  lines.push("## Security review");
-  for (const category of result.securityCategories.slice(0, 20)) {
-    lines.push(`- **${category.verdict}** — ${category.category}: ${category.justification}`);
-  }
-  lines.push("");
-  lines.push("## Source-of-truth review");
-  if (result.sourceOfTruthReview.length === 0) {
-    lines.push("- _No localized patch or workaround surfaces were analyzed._");
-  } else {
-    for (const review of result.sourceOfTruthReview.slice(0, 50)) {
-      lines.push(`- **${review.status}** — ${review.surface}: ${review.evidence}`);
-      lines.push(`  - Invalid state: ${review.invalidState}`);
-      lines.push(`  - Source boundary: ${review.sourceBoundary}`);
-      lines.push(`  - Why not source fix: ${review.whyNotSourceFix}`);
-      lines.push(`  - Regression test: ${review.regressionTest}`);
-      lines.push(`  - Removal condition: ${review.removalCondition}`);
-    }
-  }
-  lines.push("");
-  return `${lines.join("\n")}\n`;
 }
 
 function appendFindings(lines: string[], heading: string, findings: RenderFinding[]): void {

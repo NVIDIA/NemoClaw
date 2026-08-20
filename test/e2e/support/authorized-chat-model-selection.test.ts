@@ -10,6 +10,8 @@ import { selectAuthorizedChatModel } from "../lib/select-authorized-chat-model.m
 
 const endpoint = "https://inference.example.test/v1";
 const currentModel = "nvidia/nvidia/nemotron-3-ultra";
+const selectorPath = path.resolve("test/e2e/lib/select-authorized-chat-model.mts");
+const tsxPath = path.resolve("node_modules/.bin/tsx");
 
 describe("authorized alternate chat model selection", () => {
   it("loads through the standalone tsx entrypoint", () => {
@@ -31,6 +33,31 @@ describe("authorized alternate chat model selection", () => {
     expect(result.stderr).toContain("COMPATIBLE_API_KEY is required");
     expect(result.stderr).not.toContain("SyntaxError");
     expect(result.stderr).not.toContain("helpers did not load through tsx");
+  });
+
+  it("rejects unsafe credential transport when tsx executes the selector", () => {
+    const result = spawnSync(
+      tsxPath,
+      [
+        selectorPath,
+        "--endpoint",
+        "http://inference.example.test/v1",
+        "--current-model",
+        currentModel,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, COMPATIBLE_API_KEY: "placeholder-key" },
+        killSignal: "SIGKILL",
+        timeout: 10_000,
+      },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "authorized model selection failed: the endpoint must use HTTPS unless it targets loopback",
+    );
   });
 
   it.each([endpoint, "http://127.0.0.1:8000/v1"])(
