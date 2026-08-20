@@ -328,6 +328,7 @@ describe("credential rotation detection", () => {
         { name: D, envKey: "SLACK_APP_TOKEN", token: "sl-app-new" },
       ]);
 
+      expect(result.changed).toBe(true);
       expect(result.changedProviders).toEqual([C, D]);
       expect(result.changedProviders).not.toContain(A);
       expect(result.changedProviders).not.toContain(B);
