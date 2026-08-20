@@ -22,7 +22,7 @@ import {
   RESOLVER_MODEL_ID,
   resolverModelConfiguration,
 } from "../pr-merge-conflict-fixer/resolve.mts";
-import { allowedDocumentationPath, readBoundedFile } from "./contract.mts";
+import { allowedDocumentationPath, nextPatchReleaseTag, readBoundedFile } from "./contract.mts";
 
 const PATCH_FILE = "docs.patch";
 const MAX_PATCH_BYTES = 5_242_880;
@@ -58,15 +58,8 @@ function exactSha(value: string | undefined, name: string): string {
 
 function targetReleaseTag(rangeStartTag: string): string {
   const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
-  const parts = match?.slice(1).map(Number);
-  if (
-    !parts ||
-    parts.length !== 3 ||
-    !parts.every(Number.isSafeInteger) ||
-    parts[2] === Number.MAX_SAFE_INTEGER
-  )
-    fail("RANGE_START_TAG cannot produce a release target");
-  return "v" + parts[0] + "." + parts[1] + "." + (parts[2]! + 1);
+  if (!match) fail("RANGE_START_TAG cannot produce a release target");
+  return nextPatchReleaseTag(rangeStartTag);
 }
 
 function git(repository: string, args: readonly string[]): string {

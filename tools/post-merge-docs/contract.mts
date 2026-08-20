@@ -64,6 +64,12 @@ export function allowedDocumentationPath(file: string): boolean {
   );
 }
 
+export function nextPatchReleaseTag(rangeStartTag: string): string {
+  const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
+  if (!match) throw new Error("release range start tag cannot produce a release target");
+  return `v${BigInt(match[1]!)}.${BigInt(match[2]!)}.${BigInt(match[3]!) + 1n}`;
+}
+
 export function readBoundedFile(file: string, maximum: number, allowEmpty = false): Buffer {
   const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {

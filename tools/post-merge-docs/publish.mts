@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { allowedDocumentationPath, readBoundedFile } from "./contract.mts";
+import { allowedDocumentationPath, nextPatchReleaseTag, readBoundedFile } from "./contract.mts";
 
 const PREFIX = "automation/post-merge-docs-";
 const SIGN_OFF =
@@ -53,15 +53,8 @@ type Approval = {
 };
 function targetReleaseTag(rangeStartTag: string): string {
   const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
-  const parts = match?.slice(1).map(Number);
-  if (
-    !parts ||
-    parts.length !== 3 ||
-    !parts.every(Number.isSafeInteger) ||
-    parts[2] === Number.MAX_SAFE_INTEGER
-  )
-    fail("review range start tag cannot produce a release target");
-  return `v${parts[0]}.${parts[1]}.${parts[2]! + 1}`;
+  if (!match) fail("review range start tag cannot produce a release target");
+  return nextPatchReleaseTag(rangeStartTag);
 }
 function approvedPatch(directory: string, repository: string, mainSha: string): Approval {
   const patch = readBoundedFile(path.join(directory, "docs.patch"), 5_242_880, true);

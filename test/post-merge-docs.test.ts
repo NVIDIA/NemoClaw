@@ -279,7 +279,7 @@ const credentials =
     " ",
   );
 type RunnerStage = "create" | "agent" | "export" | "download";
-function runnerFixture(phase: "author" | "review") {
+function runnerFixture(phase: "author" | "review", startTag = rangeStartTag) {
   const { mainSha, source } = sourceFixture();
   fs.writeFileSync(path.join(source, "docs/guide.mdx"), "later\n");
   git(source, ["commit", "-am", "docs: advance source"]);
@@ -303,7 +303,7 @@ function runnerFixture(phase: "author" | "review") {
       POST_MERGE_DOCS_PHASE: phase,
       POST_MERGE_DOCS_WORKDIR: path.join(root, "work"),
       RANGE_START_SHA: mainSha,
-      RANGE_START_TAG: "v1.0.0",
+      RANGE_START_TAG: startTag,
       RUNNER_TEMP: path.join(root, "runner-temp"),
       SANDBOX_NAME: `docs-${phase}`,
       TRUSTED_CHECKOUT: source,
@@ -627,6 +627,23 @@ describe("post-merge documentation runner", () => {
       targetReleaseTag,
       version: 2,
     });
+  });
+  it("produces and accepts an exact release target above the safe-integer range", async () => {
+    const input = runnerFixture("review", "v9007199254740992.0.0");
+    const { tools } = runnerTools(input);
+    executePostMergeDocs(input.env, tools);
+    const approved = path.join(input.root, "artifact");
+    const review = JSON.parse(fs.readFileSync(path.join(approved, "review.json"), "utf8"));
+    expect(review.targetReleaseTag).toBe("v9007199254740992.0.1");
+    const value: Fixture = {
+      finalTree: git(input.env.TRUSTED_CHECKOUT, ["rev-parse", `${input.env.GITHUB_SHA}^{tree}`]),
+      mainSha: input.env.GITHUB_SHA,
+      patch: Buffer.alloc(0),
+      source: input.env.TRUSTED_CHECKOUT,
+    };
+    const api = new FakeGitHub(value);
+    await publish(value, api, approved);
+    expect(writeCount(api)).toBe(0);
   });
   it("rejects an independent review denial and deletes the sandbox", () => {
     const input = runnerFixture("review");
