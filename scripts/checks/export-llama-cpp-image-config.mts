@@ -168,6 +168,7 @@ const recipePath = path.join(
   "recipes",
   "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
 );
+const modelSchemaPath = path.join(repoRoot, "managed-inference", "schemas", "model.schema.json");
 const recipeSchemaPath = path.join(repoRoot, "managed-inference", "schemas", "recipe.schema.json");
 
 const nvidiaCudaDigestReference = /^docker\.io\/nvidia\/cuda@sha256:[0-9a-f]{64}$/u;
@@ -243,7 +244,9 @@ function parseQualificationRecipe(
   }
   const value = document.toJS({ maxAliasCount: 0 }) as unknown;
   const schema = JSON.parse(schemaSource) as object;
-  const validate = new Ajv2020({ allErrors: true, strict: true }).compile(schema);
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  ajv.addSchema(JSON.parse(fs.readFileSync(modelSchemaPath, "utf8")) as object);
+  const validate = ajv.compile(schema);
   if (!validate(value)) {
     const details = (validate.errors ?? [])
       .map((error) => `${error.instancePath || "/"} ${error.message ?? "is invalid"}`)
@@ -625,11 +628,11 @@ export function loadLlamaCppImageConfig(
     "build-essential": "12.10ubuntu1",
     "ca-certificates": "20260601~24.04.1",
     cmake: "3.28.3-1build7",
-    curl: "8.5.0-2ubuntu10.11",
+    curl: "8.5.0-2ubuntu10.12",
     "g++-14": "14.2.0-4ubuntu2~24.04.1",
     "gcc-14": "14.2.0-4ubuntu2~24.04.1",
     "golang-go": "2:1.22~2build1",
-    "libcurl4-openssl-dev": "8.5.0-2ubuntu10.11",
+    "libcurl4-openssl-dev": "8.5.0-2ubuntu10.12",
     "libssl-dev": "3.0.13-0ubuntu3.12",
   };
   const expectedCompiler = {
@@ -639,7 +642,7 @@ export function loadLlamaCppImageConfig(
   };
   const expectedRuntimePackages = {
     "ca-certificates": "20260601~24.04.1",
-    libcurl4t64: "8.5.0-2ubuntu10.11",
+    libcurl4t64: "8.5.0-2ubuntu10.12",
     libgomp1: "14.2.0-4ubuntu2~24.04.1",
   };
   const expectedRequiredPaths = [

@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import catalogSchema from "../../../../managed-inference/schemas/catalog.schema.json" with { type: "json" };
+import modelSchema from "../../../../managed-inference/schemas/model.schema.json" with { type: "json" };
 import presetSchema from "../../../../managed-inference/schemas/preset.schema.json" with { type: "json" };
 import recipeSchema from "../../../../managed-inference/schemas/recipe.schema.json" with { type: "json" };
 import {
@@ -21,6 +22,7 @@ const IMAGE_DIGEST = "b".repeat(64);
 const MODEL_REVISION = "c".repeat(40);
 const SCHEMAS: ServingCatalogSchemas = {
   catalog: catalogSchema,
+  model: modelSchema,
   preset: presetSchema,
   recipe: recipeSchema,
 };
@@ -29,20 +31,82 @@ const REGISTRIES: ServingCatalogRegistries = {
   materializers: new Set(["test.materializer/v1"]),
   lifecycles: new Set(["test.lifecycle/v1"]),
   readinessContracts: new Set(["test.readiness/v1"]),
+  installPolicies: new Set(["test.install-policy/v1"]),
+  probePolicies: new Set(["nvidia.endpoint-validation.standard/v1"]),
   readiness: new Map([
     ["test.runtime.present", { kind: "capability" }],
     ["test.runtime.other", { kind: "capability" }],
-    ["test.os", { kind: "observation", valueType: "string", role: "operating-system" }],
-    ["test.architecture", { kind: "observation", valueType: "string", role: "architecture" }],
+    [
+      "test.os",
+      { kind: "observation", valueType: "string", role: "operating-system" },
+    ],
+    [
+      "test.architecture",
+      { kind: "observation", valueType: "string", role: "architecture" },
+    ],
     [
       "test.container-runtime",
       { kind: "observation", valueType: "string", role: "container-runtime" },
     ],
-    ["test.gpu-count", { kind: "observation", valueType: "number", role: "gpu-count" }],
-    ["test.driver-version", { kind: "observation", valueType: "version", role: "driver-version" }],
+    [
+      "test.gpu-count",
+      { kind: "observation", valueType: "number", role: "gpu-count" },
+    ],
+    [
+      "test.driver-version",
+      { kind: "observation", valueType: "version", role: "driver-version" },
+    ],
     ["test.agent.qualified", { kind: "qualification" }],
   ]),
 };
+
+function modelSource(
+  id = "test.model.v1",
+  probePolicyRef = "nvidia.endpoint-validation.standard/v1",
+): ServingCatalogSource {
+  return {
+    path: `managed-inference/models/test/${id}.yaml`,
+    contents: `
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+metadata:
+  id: ${id}
+spec:
+  id: test/catalog-model
+  revision: ${MODEL_REVISION}
+  environmentValue: catalog-model
+  displayName: Catalog model
+  menuOrder: 1
+  servedName: catalog-model
+  downloadSizeBytes: 1024
+  gated: false
+  installFastSafetensors: false
+  preparation:
+    ref: none/v1
+  probePolicyRef: ${probePolicyRef}
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: false
+    reasoning: true
+    multimodal: false
+`,
+  };
+}
+
+function referencedRecipeSource(
+  modelRef = "test.model.v1",
+  id = "test.recipe.v1",
+): ServingCatalogSource {
+  const source = recipeSource(id);
+  const start = source.contents.indexOf("  model:\n");
+  const end = source.contents.indexOf("  runtime:\n", start);
+  return {
+    ...source,
+    contents: `${source.contents.slice(0, start)}  modelRef: ${modelRef}\n${source.contents.slice(end)}`,
+  };
+}
 
 function recipeSource(
   id = "test.recipe.v1",
@@ -234,7 +298,9 @@ spec:
   };
 }
 
-function llamaCppPresetSource(selection = "explicit-only"): ServingCatalogSource {
+function llamaCppPresetSource(
+  selection = "explicit-only",
+): ServingCatalogSource {
   return {
     path: "managed-inference/presets/test/test.llama.preset.yaml",
     contents: `
@@ -301,7 +367,10 @@ function replaceSource(
   return { ...source, contents };
 }
 
-function compile(sources: readonly ServingCatalogSource[], registries = REGISTRIES) {
+function compile(
+  sources: readonly ServingCatalogSource[],
+  registries = REGISTRIES,
+) {
   return compileTrustedServingCatalog({
     sources,
     sourceRevision: SOURCE_REVISION,
@@ -310,7 +379,10 @@ function compile(sources: readonly ServingCatalogSource[], registries = REGISTRI
   });
 }
 
-function requireValidationFailure(run: () => void, expectedMessage: string): void {
+function requireValidationFailure(
+  run: () => void,
+  expectedMessage: string,
+): void {
   expect(run).toThrow(expectedMessage);
 }
 
@@ -322,17 +394,129 @@ describe("managed inference serving catalog compiler", () => {
     const first = compile([recipe, preset]);
     const second = compile([preset, recipe]);
 
-    expect(serializeCompiledServingCatalog(first)).toBe(serializeCompiledServingCatalog(second));
+    expect(serializeCompiledServingCatalog(first)).toBe(
+      serializeCompiledServingCatalog(second),
+    );
     expect(first.readinessSchemaRef).toBe(
       "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
     );
-    expect(first.compilerVersion).toBe("1.2.0");
-    expect(first.recipes.map((definition) => definition.metadata.id)).toEqual(["test.recipe.v1"]);
-    expect(first.presets.map((definition) => definition.metadata.id)).toEqual(["test.preset.auto"]);
+    expect(first.compilerVersion).toBe("1.4.0");
+    expect(first.recipes.map((definition) => definition.metadata.id)).toEqual([
+      "test.recipe.v1",
+    ]);
+    expect(first.presets.map((definition) => definition.metadata.id)).toEqual([
+      "test.preset.auto",
+    ]);
     expect(first.sources.map((source) => source.path)).toEqual([
       "managed-inference/presets/test/test.preset.auto.yaml",
       "managed-inference/recipes/test/test.recipe.v1.yaml",
     ]);
+  });
+
+  it("expands reusable model definitions into recipes and catalog provenance", () => {
+    const catalog = compile([
+      modelSource(),
+      referencedRecipeSource(),
+      presetSource(),
+    ]);
+
+    expect(catalog.models).toHaveLength(1);
+    expect(catalog.recipes[0]).toMatchObject({
+      spec: {
+        modelRef: "test.model.v1",
+        model: {
+          id: "test/catalog-model",
+          capabilities: { toolCalls: true, reasoning: true },
+        },
+      },
+    });
+    expect(catalog.sources.map(({ kind }) => kind)).toContain("ServingModel");
+  });
+
+  it("rejects unknown, unused, mismatched, and unregistered model contracts", () => {
+    expect(() => compile([referencedRecipeSource("test.missing.v1")])).toThrow(
+      "references unknown model test.missing.v1",
+    );
+    expect(() => compile([modelSource()])).toThrow(
+      "is not referenced by a recipe",
+    );
+    expect(() =>
+      compile([
+        modelSource(),
+        replaceSource(
+          referencedRecipeSource(),
+          "  modelRef: test.model.v1",
+          `  modelRef: test.model.v1\n  model:\n    id: test/other\n    revision: ${MODEL_REVISION}`,
+        ),
+      ]),
+    ).toThrow("model does not match test.model.v1");
+    expect(() =>
+      compile([
+        modelSource("test.model.v1", "nvidia.endpoint-validation.unknown/v1"),
+        referencedRecipeSource(),
+      ]),
+    ).toThrow("references unknown probe policy");
+  });
+
+  it("validates referenced install policies and restricts them to host-local vLLM", () => {
+    expect(() =>
+      compile([
+        recipeSource(),
+        replaceSource(
+          presetSource(),
+          "    recipeRef: test.recipe.v1",
+          "    recipeRef: test.recipe.v1\n    installPolicyRef: test.unknown/v1",
+        ),
+      ]),
+    ).toThrow("references unknown install policy test.unknown/v1");
+
+    expect(() =>
+      compile([
+        recipeSource(),
+        replaceSource(
+          presetSource(),
+          "    recipeRef: test.recipe.v1",
+          "    recipeRef: test.recipe.v1\n    installPolicyRef: test.install-policy/v1",
+        ),
+      ]),
+    ).toThrow("can only select an install policy for a host-local vLLM recipe");
+  });
+
+  it("rejects model selection aliases that collide across identity fields", () => {
+    const secondModelWithId = replaceSource(
+      modelSource("test.second-model.v1"),
+      "  id: test/catalog-model",
+      "  id: test/second-model",
+    );
+    const secondModelWithEnvironment = replaceSource(
+      secondModelWithId,
+      "  environmentValue: catalog-model",
+      "  environmentValue: second-model",
+    );
+    const collidingModel = replaceSource(
+      secondModelWithEnvironment,
+      "  servedName: catalog-model",
+      "  servedName: test/catalog-model",
+    );
+    expect(() =>
+      compile([
+        modelSource(),
+        collidingModel,
+        referencedRecipeSource(),
+        referencedRecipeSource("test.second-model.v1", "test.recipe.second.v1"),
+      ]),
+    ).toThrow("share selection alias test/catalog-model");
+  });
+
+  it("requires hardware evidence before a preset can claim supported status", () => {
+    const supported = replaceSource(
+      presetSource(),
+      "metadata:\n  id: test.preset.auto",
+      "metadata:\n  id: test.preset.auto\n  supportState: supported",
+    );
+    expect(() => compile([recipeSource(), supported])).toThrow(
+      "cannot be supported without hardware validation evidence",
+    );
   });
 
   it("compiles a complete synthetic llama.cpp recipe and explicit-only preset (#8181)", () => {
@@ -342,7 +526,9 @@ describe("managed inference serving catalog compiler", () => {
     const first = compile([recipe, preset]);
     const second = compile([preset, recipe]);
 
-    expect(serializeCompiledServingCatalog(first)).toBe(serializeCompiledServingCatalog(second));
+    expect(serializeCompiledServingCatalog(first)).toBe(
+      serializeCompiledServingCatalog(second),
+    );
     expect(first.recipes[0]?.spec).toMatchObject({
       providerId: "llama-cpp-local",
       server: { technology: "llama.cpp" },
@@ -374,27 +560,47 @@ describe("managed inference serving catalog compiler", () => {
       capabilities: { agents: [], protocols: ["openai-completions"] },
     });
     expect(first.presets[0]?.spec.selection).toBe("explicit-only");
-    expect(first.sources.every((source) => /^sha256:[0-9a-f]{64}$/.test(source.digest))).toBe(true);
+    expect(
+      first.sources.every((source) =>
+        /^sha256:[0-9a-f]{64}$/.test(source.digest),
+      ),
+    ).toBe(true);
     expect(first.catalogDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
   it.each([
-    ["a missing server source revision", `      revision: ${"e".repeat(40)}\n`, ""],
+    [
+      "a missing server source revision",
+      `      revision: ${"e".repeat(40)}\n`,
+      "",
+    ],
     [
       "a mutable server source revision",
       `      revision: ${"e".repeat(40)}`,
       "      revision: main",
     ],
-    ["a mutable model revision", `    revision: ${"f".repeat(40)}`, "    revision: latest"],
+    [
+      "a mutable model revision",
+      `    revision: ${"f".repeat(40)}`,
+      "    revision: latest",
+    ],
     ["a missing GGUF digest", `        digest: sha256:${"1".repeat(64)}\n`, ""],
     ["a missing GGUF byte size", "        sizeBytes: 4294967296\n", ""],
-    ["a non-GGUF file", "      - path: test-model.Q4_K_M.gguf", "      - path: model.bin"],
+    [
+      "a non-GGUF file",
+      "      - path: test-model.Q4_K_M.gguf",
+      "      - path: model.bin",
+    ],
     [
       "an unsupported acquisition transport",
       "      ref: hugging-face-exact-file/v1",
       "      ref: arbitrary-url/v1",
     ],
-    ["a required acquisition credential", "        mode: optional", "        mode: required"],
+    [
+      "a required acquisition credential",
+      "        mode: optional",
+      "        mode: required",
+    ],
     [
       "an arbitrary acquisition endpoint",
       "      ref: hugging-face-exact-file/v1",
@@ -405,9 +611,21 @@ describe("managed inference serving catalog compiler", () => {
       "        environment: HF_TOKEN",
       "        environment: HF_TOKEN\n        token: test-secret",
     ],
-    ["a private cache owner", "      sharing: host-user", "      sharing: owner-only"],
-    ["deleting the shared cache", "      cleanup: preserve", "      cleanup: delete"],
-    ["unverified cache reuse", "      reuse: verify-exact-file", "      reuse: trust-existing"],
+    [
+      "a private cache owner",
+      "      sharing: host-user",
+      "      sharing: owner-only",
+    ],
+    [
+      "deleting the shared cache",
+      "      cleanup: preserve",
+      "      cleanup: delete",
+    ],
+    [
+      "unverified cache reuse",
+      "      reuse: verify-exact-file",
+      "      reuse: trust-existing",
+    ],
     [
       "a mutable server image",
       `    image: registry.example/test/llama-server@sha256:${"2".repeat(64)}`,
@@ -419,15 +637,27 @@ describe("managed inference serving catalog compiler", () => {
       "      baseImage: registry.example/nvidia/cuda:12.8",
     ],
     ["incomplete platform coverage", "      - linux/arm64\n", ""],
-    ["a missing image byte size", "    imageDownloadSizeBytes: 1073741824\n", ""],
+    [
+      "a missing image byte size",
+      "    imageDownloadSizeBytes: 1073741824\n",
+      "",
+    ],
     ["missing process limits", "      pidsLimit: 256\n", ""],
     [
       "an embedded credential",
       `      revision: ${"e".repeat(40)}`,
       `      revision: ${"e".repeat(40)}\n      credential: test-secret`,
     ],
-    ["a host model path", "      - path: test-model.Q4_K_M.gguf", "      - path: /tmp/model.gguf"],
-    ["shell syntax", "    chatTemplate: nemotron-v3-embedded", "    chatTemplate: $(id)"],
+    [
+      "a host model path",
+      "      - path: test-model.Q4_K_M.gguf",
+      "      - path: /tmp/model.gguf",
+    ],
+    [
+      "shell syntax",
+      "    chatTemplate: nemotron-v3-embedded",
+      "    chatTemplate: $(id)",
+    ],
     [
       "environment expansion",
       "    chatTemplate: nemotron-v3-embedded",
@@ -439,34 +669,77 @@ describe("managed inference serving catalog compiler", () => {
       "    protocol: openai-responses",
     ],
     ["CPU fallback", "      cpuFallback: reject", "      cpuFallback: allow"],
-    ["external network exposure", "    networkExposure: loopback", "    networkExposure: lan"],
+    [
+      "external network exposure",
+      "    networkExposure: loopback",
+      "    networkExposure: lan",
+    ],
     ["missing authentication", "    authentication: bearer\n", ""],
     ["a missing guard limit", "      shutdownTimeoutSeconds: 25\n", ""],
-    ["a colliding guard port", "      upstreamPort: 8082", "      upstreamPort: 8081"],
+    [
+      "a colliding guard port",
+      "      upstreamPort: 8082",
+      "      upstreamPort: 8081",
+    ],
     ["an unsafe KV cache type", "      key: f16", "      key: q4_0"],
-    ["disabled flash attention", "    flashAttention: enabled", "    flashAttention: disabled"],
+    [
+      "disabled flash attention",
+      "    flashAttention: enabled",
+      "    flashAttention: disabled",
+    ],
     [
       "enabled speculative decoding",
       "    speculativeDecoding: disabled",
       "    speculativeDecoding: enabled",
     ],
     ["server egress", "    egress: disabled", "    egress: enabled"],
-    ["a remote model source", "    modelSource: verified-local", "    modelSource: remote"],
+    [
+      "a remote model source",
+      "    modelSource: verified-local",
+      "    modelSource: remote",
+    ],
     [
       "an arbitrary launch argument",
       "    protocol: openai-completions",
       "    protocol: openai-completions\n    arguments:\n      - name: --unsafe",
     ],
-    ["an unsupported capability", "    responsesApi: false", "    responsesApi: true"],
-    ["a malformed agent qualification", "    agents: []", "    agents: [openclaw]"],
-    ["a path-based served model name", "    servedName: test-model", "    servedName: test/model"],
-  ])("rejects %s in a llama.cpp recipe (#8181)", (_case, expected, replacement) => {
-    const recipe = replaceSource(llamaCppRecipeSource(), expected, replacement);
+    [
+      "an unsupported capability",
+      "    responsesApi: false",
+      "    responsesApi: true",
+    ],
+    [
+      "a malformed agent qualification",
+      "    agents: []",
+      "    agents: [openclaw]",
+    ],
+    [
+      "a path-based served model name",
+      "    servedName: test-model",
+      "    servedName: test/model",
+    ],
+  ])(
+    "rejects %s in a llama.cpp recipe (#8181)",
+    (_case, expected, replacement) => {
+      const recipe = replaceSource(
+        llamaCppRecipeSource(),
+        expected,
+        replacement,
+      );
 
-    expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
-  });
+      expect(() => compile([recipe])).toThrow(
+        "does not satisfy the ServingRecipe schema",
+      );
+    },
+  );
 
   it.each([
+    [
+      "a model reference",
+      "  backend: install-llama-cpp",
+      `  backend: install-llama-cpp
+  modelRef: vllm.test-model.v1`,
+    ],
     [
       "top-level topology bindings",
       "  backend: install-llama-cpp",
@@ -486,10 +759,22 @@ describe("managed inference serving catalog compiler", () => {
       ref: none/v1`,
     ],
     [
+      "a model probe policy",
+      "    servedName: test-model",
+      `    servedName: test-model
+    probePolicyRef: vllm.default/v1`,
+    ],
+    [
       "managed runtime networking",
       "    networkExposure: loopback",
       `    networkExposure: loopback
     networkMode: host`,
+    ],
+    [
+      "managed runtime GPU memory sizing",
+      "    networkExposure: loopback",
+      `    networkExposure: loopback
+    minimumGpuMemoryBytes: 32000000000`,
     ],
     [
       "managed cluster execution sizing",
@@ -498,16 +783,40 @@ describe("managed inference serving catalog compiler", () => {
     nodeCount: 1`,
     ],
     [
+      "managed orchestration",
+      "    receiptRef: test.receipt/v1",
+      `    receiptRef: test.receipt/v1
+    orchestrationRef: vllm.host-local.standard/v1`,
+    ],
+    [
       "an executable override",
       "    authentication: bearer",
       `    authentication: bearer
     executable: /usr/local/bin/llama-server`,
     ],
-  ])("rejects generic-only %s in a llama.cpp recipe (#8173)", (_case, expected, replacement) => {
-    const recipe = replaceSource(llamaCppRecipeSource(), expected, replacement);
+    [
+      "a direct-install policy",
+      "    authentication: bearer",
+      `    authentication: bearer
+    directInstall:
+      authentication: none
+      fixedArguments: false
+      catalogReceipt: false`,
+    ],
+  ])(
+    "rejects generic-only %s in a llama.cpp recipe (#8173)",
+    (_case, expected, replacement) => {
+      const recipe = replaceSource(
+        llamaCppRecipeSource(),
+        expected,
+        replacement,
+      );
 
-    expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
-  });
+      expect(() => compile([recipe])).toThrow(
+        "does not satisfy the ServingRecipe schema",
+      );
+    },
+  );
 
   it.each([
     [
@@ -531,11 +840,16 @@ describe("managed inference serving catalog compiler", () => {
       sharing: host-user
       cleanup: preserve`,
     ],
-  ])("rejects llama.cpp model %s on a generic recipe (#8279)", (_field, expected, replacement) => {
-    const recipe = replaceSource(recipeSource(), expected, replacement);
+  ])(
+    "rejects llama.cpp model %s on a generic recipe (#8279)",
+    (_field, expected, replacement) => {
+      const recipe = replaceSource(recipeSource(), expected, replacement);
 
-    expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
-  });
+      expect(() => compile([recipe])).toThrow(
+        "does not satisfy the ServingRecipe schema",
+      );
+    },
+  );
 
   it("rejects a llama.cpp readiness model that differs from the served name (#8181)", () => {
     const wrongExpectedModel = replaceSource(
@@ -562,17 +876,30 @@ describe("managed inference serving catalog compiler", () => {
   });
 
   it.each([
-    ["a backend that does not match llama.cpp", "  backend: install-llama-cpp", "  backend: vllm"],
+    [
+      "a backend that does not match llama.cpp",
+      "  backend: install-llama-cpp",
+      "  backend: vllm",
+    ],
     [
       "a GGUF byte size above Number.MAX_SAFE_INTEGER",
       "        sizeBytes: 4294967296",
       "        sizeBytes: 9007199254740992",
     ],
-  ])("rejects %s in the typed llama.cpp contract (#8181)", (_case, expected, replacement) => {
-    const recipe = replaceSource(llamaCppRecipeSource(), expected, replacement);
+  ])(
+    "rejects %s in the typed llama.cpp contract (#8181)",
+    (_case, expected, replacement) => {
+      const recipe = replaceSource(
+        llamaCppRecipeSource(),
+        expected,
+        replacement,
+      );
 
-    expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
-  });
+      expect(() => compile([recipe])).toThrow(
+        "does not satisfy the ServingRecipe schema",
+      );
+    },
+  );
 
   it("reserves the install-llama-cpp backend for typed llama.cpp recipes (#8181)", () => {
     const escapedRecipe = replaceSource(
@@ -581,20 +908,38 @@ describe("managed inference serving catalog compiler", () => {
       "  backend: install-llama-cpp",
     );
 
-    expect(() => compile([escapedRecipe])).toThrow("does not satisfy the ServingRecipe schema");
+    expect(() => compile([escapedRecipe])).toThrow(
+      "does not satisfy the ServingRecipe schema",
+    );
   });
 
   it.each([
-    ["receipt contract", { receipts: new Set<string>() }, "unknown receipt contract"],
-    ["materializer", { materializers: new Set<string>() }, "unknown materializer"],
-    ["lifecycle adapter", { lifecycles: new Set<string>() }, "unknown lifecycle adapter"],
-    ["readiness contract", { readinessContracts: new Set<string>() }, "unknown readiness contract"],
+    [
+      "receipt contract",
+      { receipts: new Set<string>() },
+      "unknown receipt contract",
+    ],
+    [
+      "materializer",
+      { materializers: new Set<string>() },
+      "unknown materializer",
+    ],
+    [
+      "lifecycle adapter",
+      { lifecycles: new Set<string>() },
+      "unknown lifecycle adapter",
+    ],
+    [
+      "readiness contract",
+      { readinessContracts: new Set<string>() },
+      "unknown readiness contract",
+    ],
   ])(
     "rejects a llama.cpp recipe with an unknown %s reference (#8181)",
     (_name, registry, message) => {
-      expect(() => compile([llamaCppRecipeSource()], { ...REGISTRIES, ...registry })).toThrow(
-        message,
-      );
+      expect(() =>
+        compile([llamaCppRecipeSource()], { ...REGISTRIES, ...registry }),
+      ).toThrow(message);
     },
   );
 
@@ -609,16 +954,22 @@ describe("managed inference serving catalog compiler", () => {
       "  readiness:\n    contractRef: test.readiness/v1\n",
     );
 
-    expect(() => compile([receiptRecipe], { ...REGISTRIES, receipts: new Set() })).toThrow(
-      "unknown receipt contract test.receipt/v1",
-    );
     expect(() =>
-      compile([readinessRecipe], { ...REGISTRIES, readinessContracts: new Set() }),
+      compile([receiptRecipe], { ...REGISTRIES, receipts: new Set() }),
+    ).toThrow("unknown receipt contract test.receipt/v1");
+    expect(() =>
+      compile([readinessRecipe], {
+        ...REGISTRIES,
+        readinessContracts: new Set(),
+      }),
     ).toThrow("unknown readiness contract test.readiness/v1");
   });
 
   it("accepts automatic selection for a llama.cpp recipe", () => {
-    const catalog = compile([llamaCppRecipeSource(), llamaCppPresetSource("automatic")]);
+    const catalog = compile([
+      llamaCppRecipeSource(),
+      llamaCppPresetSource("automatic"),
+    ]);
 
     expect(catalog.presets[0]?.spec.selection).toBe("automatic");
   });
@@ -630,9 +981,9 @@ describe("managed inference serving catalog compiler", () => {
       "  plan:",
     );
 
-    expect(() => compile([llamaCppRecipeSource(), presetWithoutReadiness])).toThrow(
-      "must declare readiness requirements for llama.cpp recipe",
-    );
+    expect(() =>
+      compile([llamaCppRecipeSource(), presetWithoutReadiness]),
+    ).toThrow("must declare readiness requirements for llama.cpp recipe");
   });
 
   it("allows an explicit llama.cpp preset to narrow a multiarch image to arm64 (#8173)", () => {
@@ -695,7 +1046,10 @@ describe("managed inference serving catalog compiler", () => {
       format: deepseek
       mode: auto`,
     ],
-    ["missing arguments for embedded Jinja", "    chatTemplate: model-embedded-jinja"],
+    [
+      "missing arguments for embedded Jinja",
+      "    chatTemplate: model-embedded-jinja",
+    ],
     [
       "an unsupported embedded-Jinja reasoning strength",
       `    chatTemplate: model-embedded-jinja
@@ -721,15 +1075,31 @@ describe("managed inference serving catalog compiler", () => {
   });
 
   it.each([
-    ["operating-system", "            value: linux", "            value: windows"],
+    [
+      "operating-system",
+      "            value: linux",
+      "            value: windows",
+    ],
     ["architecture", "              - arm64", "              - riscv64"],
-    ["container-runtime", "            value: docker", "            value: podman"],
+    [
+      "container-runtime",
+      "            value: docker",
+      "            value: podman",
+    ],
     ["gpu-count", "            value: 1", "            value: 0"],
-    ["driver-version", "            value: 570.0.0", "            value: 1.0.0"],
+    [
+      "driver-version",
+      "            value: 570.0.0",
+      "            value: 1.0.0",
+    ],
   ])(
     "rejects a llama.cpp preset whose %s contradicts its recipe (#8181)",
     (role, expected, replacement) => {
-      const preset = replaceSource(llamaCppPresetSource(), expected, replacement);
+      const preset = replaceSource(
+        llamaCppPresetSource(),
+        expected,
+        replacement,
+      );
 
       expect(() => compile([llamaCppRecipeSource(), preset])).toThrow(
         `must require ${role} matching llama.cpp recipe`,
@@ -819,7 +1189,9 @@ describe("managed inference serving catalog compiler", () => {
         qualificationRef: test.other.qualified`,
     );
 
-    expect(() => compile([duplicateAgent])).toThrow("repeats agent capability test.agent");
+    expect(() => compile([duplicateAgent])).toThrow(
+      "repeats agent capability test.agent",
+    );
   });
 
   it("rejects duplicate and contradictory readiness requirements (#8181)", () => {
@@ -852,11 +1224,19 @@ describe("managed inference serving catalog compiler", () => {
 
   it("rejects a readiness comparison whose value type conflicts with its registry entry (#8181)", () => {
     const readiness = new Map(REGISTRIES.readiness);
-    readiness.set("test.gpu-count", { kind: "observation", valueType: "string" });
+    readiness.set("test.gpu-count", {
+      kind: "observation",
+      valueType: "string",
+    });
 
     expect(() =>
-      compile([llamaCppRecipeSource(), llamaCppPresetSource()], { ...REGISTRIES, readiness }),
-    ).toThrow("compares test.gpu-count as number, but the readiness registry declares string");
+      compile([llamaCppRecipeSource(), llamaCppPresetSource()], {
+        ...REGISTRIES,
+        readiness,
+      }),
+    ).toThrow(
+      "compares test.gpu-count as number, but the readiness registry declares string",
+    );
   });
 
   it("rejects duplicate definition IDs and dangling recipe references (#8144)", () => {
@@ -864,7 +1244,9 @@ describe("managed inference serving catalog compiler", () => {
       ...recipeSource(),
       path: "managed-inference/recipes/test/duplicate.yaml",
     };
-    expect(() => compile([recipeSource(), duplicate])).toThrow("ID test.recipe.v1 is duplicated");
+    expect(() => compile([recipeSource(), duplicate])).toThrow(
+      "ID test.recipe.v1 is duplicated",
+    );
     expect(() =>
       compile([
         recipeSource(),
@@ -898,7 +1280,11 @@ describe("managed inference serving catalog compiler", () => {
     (revision) => {
       expect(() =>
         compile([
-          replaceSource(recipeSource(), `revision: ${MODEL_REVISION}`, `revision: ${revision}`),
+          replaceSource(
+            recipeSource(),
+            `revision: ${MODEL_REVISION}`,
+            `revision: ${revision}`,
+          ),
         ]),
       ).not.toThrow();
     },
@@ -909,7 +1295,11 @@ describe("managed inference serving catalog compiler", () => {
     (revision) => {
       expect(() =>
         compile([
-          replaceSource(recipeSource(), `revision: ${MODEL_REVISION}`, `revision: ${revision}`),
+          replaceSource(
+            recipeSource(),
+            `revision: ${MODEL_REVISION}`,
+            `revision: ${revision}`,
+          ),
         ]),
       ).toThrow("does not satisfy the ServingRecipe schema");
     },
@@ -937,14 +1327,18 @@ describe("managed inference serving catalog compiler", () => {
       "      - name: --port\n        value: 8081",
       "      - name: --port\n        value: 8081\n      - name: --port\n        value: 8082",
     );
-    expect(() => compile([duplicateArgument])).toThrow("repeats structured argument --port");
+    expect(() => compile([duplicateArgument])).toThrow(
+      "repeats structured argument --port",
+    );
 
     const duplicateModelFile = replaceSource(
       recipeSource("test.recipe.duplicate-model-file"),
       `      - path: model.gguf\n        digest: sha256:${"d".repeat(64)}`,
       `      - path: model.gguf\n        digest: sha256:${"d".repeat(64)}\n      - path: model.gguf\n        digest: sha256:${"e".repeat(64)}`,
     );
-    expect(() => compile([duplicateModelFile])).toThrow("repeats model file model.gguf");
+    expect(() => compile([duplicateModelFile])).toThrow(
+      "repeats model file model.gguf",
+    );
   });
 
   it.each([
@@ -956,7 +1350,9 @@ describe("managed inference serving catalog compiler", () => {
     "C:\\model.gguf",
   ])("rejects the noncanonical model path %j (#8144)", (path) => {
     expect(() =>
-      compile([replaceSource(recipeSource(), "path: model.gguf", `path: ${path}`)]),
+      compile([
+        replaceSource(recipeSource(), "path: model.gguf", `path: ${path}`),
+      ]),
     ).toThrow("does not satisfy the ServingRecipe schema");
   });
 
@@ -982,7 +1378,10 @@ describe("managed inference serving catalog compiler", () => {
         recipeSource(),
         {
           ...mismatchedKind,
-          contents: mismatchedKind.contents.replace("kind: capability", "kind: observation"),
+          contents: mismatchedKind.contents.replace(
+            "kind: capability",
+            "kind: observation",
+          ),
         },
       ]),
     ).toThrow(
@@ -1017,7 +1416,9 @@ describe("managed inference serving catalog compiler", () => {
   });
 
   it("accepts only compiled JSON whose digest matches its content (#8144)", () => {
-    const serialized = serializeCompiledServingCatalog(compile([recipeSource(), presetSource()]));
+    const serialized = serializeCompiledServingCatalog(
+      compile([recipeSource(), presetSource()]),
+    );
     const parsed = parseCompiledServingCatalogJson(serialized, SCHEMAS);
     const tampered = serialized.replace("test/model", "test/other-model");
     requireValidationFailure(
@@ -1027,6 +1428,17 @@ describe("managed inference serving catalog compiler", () => {
     requireValidationFailure(
       () => parseCompiledServingCatalogJson("apiVersion: v1", SCHEMAS),
       "is not valid JSON",
+    );
+    requireValidationFailure(
+      () =>
+        parseCompiledServingCatalogJson(
+          serialized.replace(
+            '"schemaVersion":"1.1.0"',
+            '"schemaVersion":"2.0.0"',
+          ),
+          SCHEMAS,
+        ),
+      "must be rebuilt as 1.1.0",
     );
 
     expect(parsed.catalogDigest).toMatch(/^sha256:[0-9a-f]{64}$/);

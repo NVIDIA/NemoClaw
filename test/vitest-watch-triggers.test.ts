@@ -43,6 +43,7 @@ const E2E_WORKFLOW_CONTRACTS = [
 const OPAQUE_INPUTS = [
   ".github/workflows/release-lkg-brev-image.yaml",
   "scripts/release-lkg-brev-image.sh",
+  "managed-inference/models/example.yaml",
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile",
@@ -101,6 +102,11 @@ describe("Vitest opaque-input watch triggers", () => {
     ".github/scripts/docker-auth-setup.sh",
     ".github/scripts/docker-auth-cleanup.sh",
   ])("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
+    expect(triggeredBy("managed-inference/models/example.yaml")).toEqual([
+      "src/lib/inference/serving/catalog.test.ts",
+      "src/lib/inference/serving/resolver.test.ts",
+      "test/managed-inference-catalog-compiler.test.ts",
+    ]);
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",
