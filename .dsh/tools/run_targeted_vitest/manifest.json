@@ -1,0 +1,65 @@
+{
+  "formatVersion": 0,
+  "name": "run_targeted_vitest",
+  "description": "Run focused Vitest files with selected projects and optional coverage.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "files": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[A-Za-z0-9_./@-]+$"
+        }
+      },
+      "projects": {
+        "type": "array",
+        "maxItems": 6,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "enum": ["cli", "integration", "installer-integration", "package-contract", "plugin", "e2e-support"]
+        }
+      },
+      "coverage": {
+        "type": "boolean"
+      },
+      "timeoutMs": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir", "files"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "command": {
+        "type": "string"
+      },
+      "code": {
+        "type": "integer"
+      },
+      "stdout": {
+        "type": "string"
+      },
+      "stderr": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": ["command", "code", "stdout", "stderr", "truncated"],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

@@ -1,0 +1,218 @@
+{
+  "formatVersion": 0,
+  "name": "inspect_nemoclaw_workflow_inline_growth",
+  "description": "Measure bounded executable run and script block growth in workflow YAML at exact pull request commits without changing local Git state.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": ["workdir", "number"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "title": {
+        "type": "string"
+      },
+      "url": {
+        "type": "string"
+      },
+      "baseRefOid": {
+        "type": "string"
+      },
+      "headRefOid": {
+        "type": "string"
+      },
+      "workflowCount": {
+        "type": "integer"
+      },
+      "workflows": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "additions": {
+              "type": "integer"
+            },
+            "deletions": {
+              "type": "integer"
+            },
+            "before": {
+              "type": "object",
+              "properties": {
+                "totalLines": {
+                  "type": "integer"
+                },
+                "blockCount": {
+                  "type": "integer"
+                },
+                "executableLines": {
+                  "type": "integer"
+                },
+                "largestBlock": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "enum": ["run", "script"]
+                        },
+                        "line": {
+                          "type": "integer"
+                        },
+                        "executableLines": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": ["key", "line", "executableLines"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "blocks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "enum": ["run", "script"]
+                      },
+                      "line": {
+                        "type": "integer"
+                      },
+                      "executableLines": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["key", "line", "executableLines"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["totalLines", "blockCount", "executableLines", "largestBlock", "blocks"],
+              "additionalProperties": false
+            },
+            "after": {
+              "type": "object",
+              "properties": {
+                "totalLines": {
+                  "type": "integer"
+                },
+                "blockCount": {
+                  "type": "integer"
+                },
+                "executableLines": {
+                  "type": "integer"
+                },
+                "largestBlock": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "enum": ["run", "script"]
+                        },
+                        "line": {
+                          "type": "integer"
+                        },
+                        "executableLines": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": ["key", "line", "executableLines"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "blocks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "enum": ["run", "script"]
+                      },
+                      "line": {
+                        "type": "integer"
+                      },
+                      "executableLines": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["key", "line", "executableLines"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": ["totalLines", "blockCount", "executableLines", "largestBlock", "blocks"],
+              "additionalProperties": false
+            },
+            "executableLineDelta": {
+              "type": "integer"
+            },
+            "totalLineDelta": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "path",
+            "additions",
+            "deletions",
+            "before",
+            "after",
+            "executableLineDelta",
+            "totalLineDelta"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "repo",
+      "number",
+      "title",
+      "url",
+      "baseRefOid",
+      "headRefOid",
+      "workflowCount",
+      "workflows"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

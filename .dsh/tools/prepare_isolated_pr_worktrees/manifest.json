@@ -1,0 +1,129 @@
+{
+  "formatVersion": 0,
+  "name": "prepare_isolated_pr_worktrees",
+  "description": "Plan or prepare caller-isolated pull request worktrees by delegating each exact-commit worktree to the singular preparation tool.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "numbers": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 50,
+        "items": {
+          "type": "integer"
+        }
+      },
+      "repo": {
+        "type": "string"
+      },
+      "root": {
+        "type": "string"
+      },
+      "isolationKey": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "reuseExisting": {
+        "type": "boolean"
+      },
+      "replaceExisting": {
+        "type": "boolean"
+      },
+      "requirePrimaryClean": {
+        "type": "boolean"
+      },
+      "requireOpen": {
+        "type": "boolean"
+      },
+      "failure": {
+        "type": "string",
+        "enum": ["fail-fast", "settled"]
+      },
+      "dryRun": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": ["workdir", "numbers", "root"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "dryRun": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "root": {
+        "type": "string"
+      },
+      "isolationKey": {
+        "type": "string"
+      },
+      "failure": {
+        "type": "string",
+        "enum": ["fail-fast", "settled"]
+      },
+      "count": {
+        "type": "integer"
+      },
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "errors": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": ["number", "message"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "dryRun",
+      "apply",
+      "mutated",
+      "repo",
+      "remote",
+      "root",
+      "isolationKey",
+      "failure",
+      "count",
+      "results",
+      "errors"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 6
+}

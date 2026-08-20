@@ -1,0 +1,290 @@
+{
+  "formatVersion": 0,
+  "name": "monitor_nemoclaw_e2e_run_group",
+  "description": "Monitor a bounded NemoClaw E2E run group and return bounded run and job summaries.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "runIds": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "candidateSha": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "workflow": {
+        "type": "string"
+      },
+      "branch": {
+        "type": "string"
+      },
+      "timeoutMs": {
+        "type": "integer"
+      },
+      "intervalMs": {
+        "type": "integer"
+      },
+      "runLimit": {
+        "type": "integer"
+      },
+      "includeJobs": {
+        "type": "boolean"
+      }
+    },
+    "required": ["workdir", "runIds", "candidateSha"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "checkedAt": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "workflow": {
+        "type": "string"
+      },
+      "branch": {
+        "type": "string"
+      },
+      "candidateSha": {
+        "type": "string"
+      },
+      "terminal": {
+        "type": "boolean"
+      },
+      "reason": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "polls": {
+        "type": "integer"
+      },
+      "runs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "integer"
+            },
+            "title": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "headSha": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "conclusion": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "url": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "missing": {
+              "type": "boolean"
+            }
+          },
+          "required": ["runId", "title", "headSha", "status", "conclusion", "url", "missing"],
+          "additionalProperties": false
+        }
+      },
+      "jobSummaries": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "integer"
+            },
+            "attempt": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "conclusion": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "counts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer"
+                  }
+                },
+                "required": ["state", "count"],
+                "additionalProperties": false
+              }
+            },
+            "failures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "failedSteps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": ["name", "url", "failedSteps"],
+                "additionalProperties": false
+              }
+            },
+            "remaining": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "url": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["name", "status", "url"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "runId",
+            "attempt",
+            "status",
+            "conclusion",
+            "counts",
+            "failures",
+            "remaining"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "checkedAt",
+      "repo",
+      "workflow",
+      "branch",
+      "candidateSha",
+      "terminal",
+      "reason",
+      "polls",
+      "runs",
+      "jobSummaries"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

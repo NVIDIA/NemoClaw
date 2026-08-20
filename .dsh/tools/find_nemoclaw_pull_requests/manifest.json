@@ -1,0 +1,235 @@
+{
+  "formatVersion": 0,
+  "name": "find_nemoclaw_pull_requests",
+  "description": "List NemoClaw pull requests with draft selection, commit identity, source details, and bounded completeness evidence.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "state": {
+        "type": "string",
+        "enum": ["open", "closed", "merged", "all"]
+      },
+      "draft": {
+        "type": "string",
+        "enum": ["include", "exclude", "only"]
+      },
+      "author": {
+        "type": "string"
+      },
+      "search": {
+        "type": "string"
+      },
+      "touches": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "limit": {
+        "type": "integer"
+      },
+      "retry5xx": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "requestedState": {
+        "type": "string"
+      },
+      "draft": {
+        "type": "string"
+      },
+      "author": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "search": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "touches": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "limit": {
+        "type": "integer"
+      },
+      "attempts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "attempt": {
+              "type": "integer"
+            },
+            "code": {
+              "type": "integer"
+            }
+          },
+          "required": ["attempt", "code"],
+          "additionalProperties": false
+        }
+      },
+      "completeness": {
+        "type": "object",
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "limitReached": {
+            "type": "boolean"
+          },
+          "rowsRequested": {
+            "type": "integer"
+          },
+          "rowsReceived": {
+            "type": "integer"
+          }
+        },
+        "required": ["complete", "limitReached", "rowsRequested", "rowsReceived"],
+        "additionalProperties": false
+      },
+      "count": {
+        "type": "integer"
+      },
+      "pullRequests": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "isDraft": {
+              "type": "boolean"
+            },
+            "author": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "headRefName": {
+              "type": "string"
+            },
+            "headRefOid": {
+              "type": "string"
+            },
+            "baseRefName": {
+              "type": "string"
+            },
+            "baseRefOid": {
+              "type": "string"
+            },
+            "headRepository": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "headRepositoryOwner": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "maintainerCanModify": {
+              "type": "boolean"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "touchedFiles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "number",
+            "title",
+            "url",
+            "state",
+            "isDraft",
+            "author",
+            "headRefName",
+            "headRefOid",
+            "baseRefName",
+            "baseRefOid",
+            "headRepository",
+            "headRepositoryOwner",
+            "maintainerCanModify",
+            "updatedAt",
+            "touchedFiles"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "repo",
+      "requestedState",
+      "draft",
+      "author",
+      "search",
+      "touches",
+      "limit",
+      "attempts",
+      "completeness",
+      "count",
+      "pullRequests"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

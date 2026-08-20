@@ -1,0 +1,164 @@
+{
+  "formatVersion": 0,
+  "name": "analyze_recent_cli_timings",
+  "description": "Aggregate bounded per-test and per-file durations from recent retained NemoClaw CLI Vitest artifacts.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer"
+      },
+      "top": {
+        "type": "integer"
+      },
+      "minSampleRatio": {
+        "type": "number"
+      },
+      "artifactName": {
+        "type": "string"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "artifactName": {
+        "type": "string"
+      },
+      "reportsRequested": {
+        "type": "integer"
+      },
+      "reportsFound": {
+        "type": "integer"
+      },
+      "reportsAnalyzed": {
+        "type": "integer"
+      },
+      "downloadFailures": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "integer"
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": ["runId", "detail"],
+          "additionalProperties": false
+        }
+      },
+      "minSamples": {
+        "type": "integer"
+      },
+      "runs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "integer"
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "headSha": {
+              "type": "string"
+            },
+            "totalTests": {
+              "type": "integer"
+            },
+            "testFiles": {
+              "type": "integer"
+            }
+          },
+          "required": ["runId", "createdAt", "headSha", "totalTests", "testFiles"],
+          "additionalProperties": false
+        }
+      },
+      "slowTests": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "samples": {
+              "type": "integer"
+            },
+            "medianMs": {
+              "type": "number"
+            },
+            "p90Ms": {
+              "type": "number"
+            },
+            "minMs": {
+              "type": "number"
+            },
+            "maxMs": {
+              "type": "number"
+            }
+          },
+          "required": ["file", "name", "samples", "medianMs", "p90Ms", "minMs", "maxMs"],
+          "additionalProperties": false
+        }
+      },
+      "slowFiles": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "samples": {
+              "type": "integer"
+            },
+            "medianWallMs": {
+              "type": "number"
+            },
+            "p90WallMs": {
+              "type": "number"
+            },
+            "maxWallMs": {
+              "type": "number"
+            }
+          },
+          "required": ["file", "samples", "medianWallMs", "p90WallMs", "maxWallMs"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "repo",
+      "artifactName",
+      "reportsRequested",
+      "reportsFound",
+      "reportsAnalyzed",
+      "downloadFailures",
+      "minSamples",
+      "runs",
+      "slowTests",
+      "slowFiles"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

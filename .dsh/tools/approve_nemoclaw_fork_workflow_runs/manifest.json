@@ -1,0 +1,159 @@
+{
+  "formatVersion": 0,
+  "name": "approve_nemoclaw_fork_workflow_runs",
+  "description": "Check action-required workflow runs for NemoClaw fork pull requests and approve them only when apply is true.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "expectedHeadSha": {
+              "type": "string"
+            }
+          },
+          "required": ["number", "expectedHeadSha"],
+          "additionalProperties": false
+        }
+      },
+      "repo": {
+        "type": "string"
+      },
+      "workflowNames": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "allowWorkflowChanges": {
+        "type": "boolean"
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean"
+      }
+    },
+    "required": ["items", "workdir", "apply"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "apply": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "requestedPrs": {
+        "type": "integer"
+      },
+      "actionRequiredRuns": {
+        "type": "integer"
+      },
+      "approvedRuns": {
+        "type": "integer"
+      },
+      "prs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "url": {
+              "type": "string"
+            },
+            "headSha": {
+              "type": "string"
+            },
+            "maintainerCanModify": {
+              "type": "boolean"
+            },
+            "workflowFiles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "runs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "workflow": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "action": {
+                    "type": "string"
+                  }
+                },
+                "required": ["id", "workflow", "url", "action"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["number", "url", "headSha", "maintainerCanModify", "workflowFiles", "runs"],
+          "additionalProperties": false
+        }
+      },
+      "approvals": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "headSha": {
+              "type": "string"
+            },
+            "runId": {
+              "type": "integer"
+            },
+            "workflow": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string"
+            }
+          },
+          "required": ["number", "headSha", "runId", "workflow", "url", "action"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "apply",
+      "mutated",
+      "repo",
+      "requestedPrs",
+      "actionRequiredRuns",
+      "approvedRuns",
+      "prs",
+      "approvals"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

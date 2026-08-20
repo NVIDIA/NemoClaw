@@ -1,0 +1,63 @@
+{
+  "formatVersion": 0,
+  "name": "finalize_nemoclaw_cached_reviews",
+  "description": "Plan or submit guarded final reviews from exact-commit cached recommendations.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "cacheRoot": {
+        "type": "string"
+      },
+      "numbers": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "repository": {
+        "type": "string"
+      },
+      "concurrency": {
+        "type": "integer"
+      },
+      "apply": {
+        "type": "boolean"
+      }
+    },
+    "required": ["workdir", "numbers", "cacheRoot"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["dry-run", "read-only", "apply", "blocked"]
+      },
+      "plan": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "resultJson": {
+        "type": "string"
+      }
+    },
+    "required": ["applied", "mode", "plan", "notes", "resultJson"],
+    "additionalProperties": false
+  },
+  "revision": 5
+}

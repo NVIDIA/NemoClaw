@@ -1,0 +1,90 @@
+{
+  "formatVersion": 0,
+  "name": "infer_validation_for_changed_files",
+  "description": "Infer targeted NemoClaw validation from branch and working-tree changes.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "baseRef": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "pattern": "^[^-]"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "baseRef": {
+        "type": "string"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "branchFiles": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "workingTreeFiles": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "untrackedFiles": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "projects": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "targetedFiles": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "commands": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "baseRef",
+      "files",
+      "branchFiles",
+      "workingTreeFiles",
+      "untrackedFiles",
+      "projects",
+      "targetedFiles",
+      "commands",
+      "notes"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

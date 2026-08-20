@@ -1,0 +1,78 @@
+{
+  "formatVersion": 0,
+  "name": "inspect_gh_job_log",
+  "description": "Inspect a GitHub Actions job log with regex filtering and bounded output.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "jobId": {
+        "oneOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "repo": {
+        "type": "string"
+      },
+      "pattern": {
+        "type": "string"
+      },
+      "contextLines": {
+        "type": "integer"
+      },
+      "tailLines": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir", "jobId"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "jobId": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "pattern": {
+        "oneOf": [{ "type": "string" }, { "type": "null" }]
+      },
+      "code": {
+        "type": "integer"
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "matchedLines": {
+        "type": "integer"
+      },
+      "stdout": {
+        "type": "string"
+      },
+      "stderr": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "jobId",
+      "repo",
+      "pattern",
+      "code",
+      "truncated",
+      "matchedLines",
+      "stdout",
+      "stderr"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

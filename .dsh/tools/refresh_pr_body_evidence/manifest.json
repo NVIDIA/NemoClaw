@@ -1,0 +1,131 @@
+{
+  "formatVersion": 0,
+  "name": "refresh_pr_body_evidence",
+  "description": "Refresh pull request evidence only when the selected checkout commit exactly matches the open pull request commit.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "number": {
+        "type": "integer"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "docsReceipt": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string",
+            "enum": ["blocked", "docs-updated", "no-docs-needed"]
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          }
+        },
+        "required": ["result", "evidence", "agent"],
+        "additionalProperties": false
+      },
+      "targetedValidationLine": {
+        "type": "string"
+      },
+      "broadGate": {
+        "type": "object",
+        "properties": {
+          "passed": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": ["passed", "evidence"],
+        "additionalProperties": false
+      },
+      "headWaitMs": {
+        "type": "integer"
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "expectedHeadSha": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean"
+      }
+    },
+    "required": ["number", "workdir", "apply"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "ok": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "wouldUpdate": {
+        "type": "boolean"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "prState": {
+        "type": "string"
+      },
+      "headSha": {
+        "type": "string"
+      },
+      "agentsBlob": {
+        "type": "string"
+      },
+      "bodyChanged": {
+        "type": "boolean"
+      },
+      "polls": {
+        "type": "integer"
+      },
+      "waitedMs": {
+        "type": "integer"
+      },
+      "updatedAt": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "ok",
+      "apply",
+      "mutated",
+      "number",
+      "repo",
+      "workdir",
+      "headSha",
+      "agentsBlob",
+      "polls",
+      "waitedMs"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

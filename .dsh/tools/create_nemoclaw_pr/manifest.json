@@ -1,0 +1,147 @@
+{
+  "formatVersion": 0,
+  "name": "create_nemoclaw_pr",
+  "description": "Preview or create a NemoClaw pull request with exact-commit, DCO, verification, permission, and existing-PR guards.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "headBranch": {
+        "type": "string"
+      },
+      "baseBranch": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "draft": {
+        "type": "boolean"
+      },
+      "assignee": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": ["@me"]
+          },
+          {
+            "type": "boolean",
+            "const": false
+          }
+        ]
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "expectedHeadSha": {
+        "type": "string"
+      }
+    },
+    "required": ["title", "body", "workdir", "apply", "expectedHeadSha"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "ok": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "step": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "baseBranch": {
+        "type": "string"
+      },
+      "headBranch": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "draft": {
+        "type": "boolean"
+      },
+      "assignee": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "commitCount": {
+        "type": "integer"
+      },
+      "verificationPending": {
+        "type": "boolean"
+      },
+      "url": {
+        "type": "string"
+      },
+      "unverified": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sha": {
+              "type": "string"
+            },
+            "reason": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": ["sha", "reason"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "ok",
+      "apply",
+      "mutated",
+      "repo",
+      "remote",
+      "baseBranch",
+      "headBranch",
+      "draft",
+      "assignee",
+      "commitCount",
+      "verificationPending",
+      "unverified"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 5
+}

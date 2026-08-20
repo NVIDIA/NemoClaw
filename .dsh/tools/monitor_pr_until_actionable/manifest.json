@@ -1,0 +1,57 @@
+{
+  "formatVersion": 0,
+  "name": "monitor_pr_until_actionable",
+  "description": "Poll exact-commit pull request snapshots until checks settle, unignored findings appear, or the latest PR commit changes.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repository": {
+        "type": "string"
+      },
+      "pullNumber": {
+        "type": "integer"
+      },
+      "expectedHeadSha": {
+        "type": "string"
+      },
+      "timeoutMs": {
+        "type": "integer"
+      },
+      "intervalMs": {
+        "type": "integer"
+      },
+      "ignoreChecks": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "ignoreReviewIds": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "ignoreCommentIds": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      }
+    },
+    "required": [
+      "workdir",
+      "pullNumber",
+      "expectedHeadSha"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "revision": 4
+}

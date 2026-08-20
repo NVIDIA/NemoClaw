@@ -1,0 +1,926 @@
+{
+  "formatVersion": 0,
+  "name": "summarize_nemoclaw_merge_queue",
+  "description": "Summarize open NemoClaw pull requests and exclude candidates that lack required-check, review, or merge data.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer"
+      },
+      "base": {
+        "type": "string"
+      },
+      "includeStacked": {
+        "type": "boolean"
+      },
+      "enrichLimit": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "checkedAt": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "filters": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer"
+          },
+          "base": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "includeStacked": {
+            "type": "boolean"
+          },
+          "enrichLimit": {
+            "type": "integer"
+          }
+        },
+        "required": ["limit", "base", "includeStacked", "enrichLimit"],
+        "additionalProperties": false
+      },
+      "counts": {
+        "type": "object",
+        "properties": {
+          "approvedGreen": {
+            "type": "integer"
+          },
+          "enriched": {
+            "type": "integer"
+          },
+          "unenriched": {
+            "type": "integer"
+          },
+          "strictReady": {
+            "type": "integer"
+          },
+          "directNearMisses": {
+            "type": "integer"
+          },
+          "stackedReady": {
+            "type": "integer"
+          },
+          "stackedNearMisses": {
+            "type": "integer"
+          },
+          "reviewQueue": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "approvedGreen",
+          "enriched",
+          "unenriched",
+          "strictReady",
+          "directNearMisses",
+          "stackedReady",
+          "stackedNearMisses",
+          "reviewQueue"
+        ],
+        "additionalProperties": false
+      },
+      "strictReady": {
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "author": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "base": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": "string"
+                },
+                "mergeable": {
+                  "type": "string"
+                },
+                "reviewDecision": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "headSha": {
+                  "type": "string"
+                },
+                "mergeableState": {
+                  "type": "string"
+                },
+                "checksExitCode": {
+                  "type": "integer"
+                },
+                "failedChecks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "pendingChecks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unresolvedThreadCount": {
+                  "type": "integer"
+                },
+                "threadsTruncated": {
+                  "type": "boolean"
+                },
+                "advisor": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "advisorCurrent": {
+                  "type": "boolean"
+                },
+                "advisorFindings": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "author",
+                "base",
+                "head",
+                "mergeable",
+                "reviewDecision",
+                "updatedAt",
+                "url",
+                "headSha",
+                "mergeableState",
+                "checksExitCode",
+                "failedChecks",
+                "pendingChecks",
+                "unresolvedThreadCount",
+                "threadsTruncated",
+                "advisor",
+                "advisorCurrent",
+                "advisorFindings"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "author": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "base": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": "string"
+                },
+                "mergeable": {
+                  "type": "string"
+                },
+                "reviewDecision": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "enrichmentError": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "author",
+                "base",
+                "head",
+                "mergeable",
+                "reviewDecision",
+                "updatedAt",
+                "url",
+                "enrichmentError"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "directNearMisses": {
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "author": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "base": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": "string"
+                },
+                "mergeable": {
+                  "type": "string"
+                },
+                "reviewDecision": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "headSha": {
+                  "type": "string"
+                },
+                "mergeableState": {
+                  "type": "string"
+                },
+                "checksExitCode": {
+                  "type": "integer"
+                },
+                "failedChecks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "pendingChecks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unresolvedThreadCount": {
+                  "type": "integer"
+                },
+                "threadsTruncated": {
+                  "type": "boolean"
+                },
+                "advisor": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "advisorCurrent": {
+                  "type": "boolean"
+                },
+                "advisorFindings": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "author",
+                "base",
+                "head",
+                "mergeable",
+                "reviewDecision",
+                "updatedAt",
+                "url",
+                "headSha",
+                "mergeableState",
+                "checksExitCode",
+                "failedChecks",
+                "pendingChecks",
+                "unresolvedThreadCount",
+                "threadsTruncated",
+                "advisor",
+                "advisorCurrent",
+                "advisorFindings"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "author": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "base": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": "string"
+                },
+                "mergeable": {
+                  "type": "string"
+                },
+                "reviewDecision": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "enrichmentError": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "author",
+                "base",
+                "head",
+                "mergeable",
+                "reviewDecision",
+                "updatedAt",
+                "url",
+                "enrichmentError"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "stackedReady": {
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "author": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "base": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": "string"
+                },
+                "mergeable": {
+                  "type": "string"
+                },
+                "reviewDecision": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "headSha": {
+                  "type": "string"
+                },
+                "mergeableState": {
+                  "type": "string"
+                },
+                "checksExitCode": {
+                  "type": "integer"
+                },
+                "failedChecks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "pendingChecks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unresolvedThreadCount": {
+                  "type": "integer"
+                },
+                "threadsTruncated": {
+                  "type": "boolean"
+                },
+                "advisor": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "advisorCurrent": {
+                  "type": "boolean"
+                },
+                "advisorFindings": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "author",
+                "base",
+                "head",
+                "mergeable",
+                "reviewDecision",
+                "updatedAt",
+                "url",
+                "headSha",
+                "mergeableState",
+                "checksExitCode",
+                "failedChecks",
+                "pendingChecks",
+                "unresolvedThreadCount",
+                "threadsTruncated",
+                "advisor",
+                "advisorCurrent",
+                "advisorFindings"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "author": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "base": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": "string"
+                },
+                "mergeable": {
+                  "type": "string"
+                },
+                "reviewDecision": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "enrichmentError": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "author",
+                "base",
+                "head",
+                "mergeable",
+                "reviewDecision",
+                "updatedAt",
+                "url",
+                "enrichmentError"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "stackedNearMisses": {
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "author": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "base": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": "string"
+                },
+                "mergeable": {
+                  "type": "string"
+                },
+                "reviewDecision": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "headSha": {
+                  "type": "string"
+                },
+                "mergeableState": {
+                  "type": "string"
+                },
+                "checksExitCode": {
+                  "type": "integer"
+                },
+                "failedChecks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "pendingChecks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unresolvedThreadCount": {
+                  "type": "integer"
+                },
+                "threadsTruncated": {
+                  "type": "boolean"
+                },
+                "advisor": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "advisorCurrent": {
+                  "type": "boolean"
+                },
+                "advisorFindings": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "author",
+                "base",
+                "head",
+                "mergeable",
+                "reviewDecision",
+                "updatedAt",
+                "url",
+                "headSha",
+                "mergeableState",
+                "checksExitCode",
+                "failedChecks",
+                "pendingChecks",
+                "unresolvedThreadCount",
+                "threadsTruncated",
+                "advisor",
+                "advisorCurrent",
+                "advisorFindings"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "number": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "author": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "base": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": "string"
+                },
+                "mergeable": {
+                  "type": "string"
+                },
+                "reviewDecision": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "enrichmentError": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "number",
+                "title",
+                "author",
+                "base",
+                "head",
+                "mergeable",
+                "reviewDecision",
+                "updatedAt",
+                "url",
+                "enrichmentError"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "unenriched": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "author": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "base": {
+              "type": "string"
+            },
+            "head": {
+              "type": "string"
+            },
+            "mergeable": {
+              "type": "string"
+            },
+            "reviewDecision": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "readiness": {
+              "type": "string",
+              "enum": ["not-inspected"]
+            }
+          },
+          "required": [
+            "number",
+            "title",
+            "author",
+            "base",
+            "head",
+            "mergeable",
+            "reviewDecision",
+            "updatedAt",
+            "url",
+            "readiness"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "reviewQueue": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "author": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "base": {
+              "type": "string"
+            },
+            "head": {
+              "type": "string"
+            },
+            "mergeable": {
+              "type": "string"
+            },
+            "reviewDecision": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "number",
+            "title",
+            "author",
+            "base",
+            "head",
+            "mergeable",
+            "reviewDecision",
+            "updatedAt",
+            "url"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "checkedAt",
+      "repo",
+      "filters",
+      "counts",
+      "strictReady",
+      "directNearMisses",
+      "stackedReady",
+      "stackedNearMisses",
+      "unenriched",
+      "reviewQueue"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

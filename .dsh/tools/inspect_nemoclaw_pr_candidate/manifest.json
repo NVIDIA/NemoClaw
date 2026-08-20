@@ -1,0 +1,34 @@
+{
+  "formatVersion": 0,
+  "name": "inspect_nemoclaw_pr_candidate",
+  "description": "Inspect branch, DCO, verification, permissions, changes, and publication blockers for one NemoClaw pull request candidate.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repository": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "baseBranch": {
+        "type": "string"
+      },
+      "refreshBase": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "workdir"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "revision": 5
+}

@@ -1,0 +1,195 @@
+{
+  "formatVersion": 0,
+  "name": "summarize_nemoclaw_planning_items",
+  "description": "Summarize explicit NemoClaw issues and pull requests with bounded body and comment excerpts.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "issues": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "prs": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "repo": {
+        "type": "string"
+      },
+      "relevantPattern": {
+        "type": "string"
+      },
+      "maxBodyMatches": {
+        "type": "integer"
+      },
+      "maxComments": {
+        "type": "integer"
+      },
+      "commentMarker": {
+        "type": "string"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "count": {
+        "type": "integer"
+      },
+      "relevantPattern": {
+        "type": "string"
+      },
+      "limits": {
+        "type": "object",
+        "properties": {
+          "maxBodyMatches": {
+            "type": "integer"
+          },
+          "maxComments": {
+            "type": "integer"
+          }
+        },
+        "required": ["maxBodyMatches", "maxComments"],
+        "additionalProperties": false
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": ["issue", "pr"]
+            },
+            "headRefOid": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "headRefName": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseRefName": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "isDraft": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "relevantBodyLines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "line": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": ["line", "text"],
+                "additionalProperties": false
+              }
+            },
+            "recentComments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "author": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  },
+                  "hasMarker": {
+                    "type": "boolean"
+                  },
+                  "preview": {
+                    "type": "string"
+                  }
+                },
+                "required": ["author", "createdAt", "hasMarker", "preview"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "number",
+            "title",
+            "state",
+            "url",
+            "kind",
+            "headRefOid",
+            "headRefName",
+            "baseRefName",
+            "isDraft",
+            "relevantBodyLines",
+            "recentComments"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["repo", "count", "relevantPattern", "limits", "items"],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

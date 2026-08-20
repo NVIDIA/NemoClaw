@@ -1,0 +1,52 @@
+{
+  "formatVersion": 0,
+  "name": "inspect_failed_pr_checks",
+  "description": "Inspect failed pull request checks with bounded output.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer"
+      },
+      "number": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir", "number"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "summary": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "required": ["repo", "kind", "truncated", "items", "summary"],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

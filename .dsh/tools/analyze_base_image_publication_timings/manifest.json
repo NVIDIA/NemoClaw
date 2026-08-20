@@ -1,0 +1,1064 @@
+{
+  "formatVersion": 0,
+  "name": "analyze_base_image_publication_timings",
+  "description": "Measure bounded base-image publication gate latency samples from recent NemoClaw main-push E2E runs.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "e2eLimit": {
+        "type": "integer"
+      },
+      "baseLimit": {
+        "type": "integer"
+      },
+      "maxPerStratum": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "measuredAt": {
+        "type": "string"
+      },
+      "population": {
+        "type": "object",
+        "properties": {
+          "completedE2eRuns": {
+            "type": "integer"
+          },
+          "range": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "classified": {
+            "type": "object",
+            "properties": {
+              "same-commit-publication": {
+                "type": "integer"
+              },
+              "reuse-prior-publication": {
+                "type": "integer"
+              }
+            },
+            "required": ["same-commit-publication", "reuse-prior-publication"],
+            "additionalProperties": false
+          },
+          "method": {
+            "type": "string"
+          }
+        },
+        "required": ["completedE2eRuns", "range", "classified", "method"],
+        "additionalProperties": false
+      },
+      "sameCommitPublication": {
+        "type": "object",
+        "properties": {
+          "selectedRuns": {
+            "type": "integer"
+          },
+          "successfulJobs": {
+            "type": "integer"
+          },
+          "atLeast30SuccessfulJobs": {
+            "type": "boolean"
+          },
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                }
+              },
+              "required": ["name", "count"],
+              "additionalProperties": false
+            }
+          },
+          "jobExecution": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verifier": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workflowCreationToCompletion": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runnerQueue": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "boundaryToMatrixStart": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "selectedRuns",
+          "successfulJobs",
+          "atLeast30SuccessfulJobs",
+          "outcomes",
+          "jobExecution",
+          "verifier",
+          "workflowCreationToCompletion",
+          "runnerQueue",
+          "boundaryToMatrixStart"
+        ],
+        "additionalProperties": false
+      },
+      "reusePriorPublication": {
+        "type": "object",
+        "properties": {
+          "selectedRuns": {
+            "type": "integer"
+          },
+          "successfulJobs": {
+            "type": "integer"
+          },
+          "atLeast30SuccessfulJobs": {
+            "type": "boolean"
+          },
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                }
+              },
+              "required": ["name", "count"],
+              "additionalProperties": false
+            }
+          },
+          "jobExecution": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verifier": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workflowCreationToCompletion": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runnerQueue": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "boundaryToMatrixStart": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "selectedRuns",
+          "successfulJobs",
+          "atLeast30SuccessfulJobs",
+          "outcomes",
+          "jobExecution",
+          "verifier",
+          "workflowCreationToCompletion",
+          "runnerQueue",
+          "boundaryToMatrixStart"
+        ],
+        "additionalProperties": false
+      },
+      "combined": {
+        "type": "object",
+        "properties": {
+          "selectedRuns": {
+            "type": "integer"
+          },
+          "successfulJobs": {
+            "type": "integer"
+          },
+          "atLeast30SuccessfulJobs": {
+            "type": "boolean"
+          },
+          "outcomes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                }
+              },
+              "required": ["name", "count"],
+              "additionalProperties": false
+            }
+          },
+          "jobExecution": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verifier": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workflowCreationToCompletion": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runnerQueue": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "boundaryToMatrixStart": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "n": {
+                    "type": "integer"
+                  },
+                  "minSeconds": {
+                    "type": "number"
+                  },
+                  "medianSeconds": {
+                    "type": "number"
+                  },
+                  "median95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "meanSeconds": {
+                    "type": "number"
+                  },
+                  "mean95CiSeconds": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  },
+                  "p90Seconds": {
+                    "type": "number"
+                  },
+                  "p95Seconds": {
+                    "type": "number"
+                  },
+                  "maxSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "n",
+                  "minSeconds",
+                  "medianSeconds",
+                  "median95CiSeconds",
+                  "meanSeconds",
+                  "mean95CiSeconds",
+                  "p90Seconds",
+                  "p95Seconds",
+                  "maxSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "selectedRuns",
+          "successfulJobs",
+          "atLeast30SuccessfulJobs",
+          "outcomes",
+          "jobExecution",
+          "verifier",
+          "workflowCreationToCompletion",
+          "runnerQueue",
+          "boundaryToMatrixStart"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "measuredAt",
+      "population",
+      "sameCommitPublication",
+      "reusePriorPublication",
+      "combined"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

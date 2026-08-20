@@ -1,0 +1,68 @@
+{
+  "formatVersion": 0,
+  "name": "run_nemoclaw_focused_repair_validation",
+  "description": "Run guarded focused validation for a NemoClaw repair.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "testFiles": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "projects": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "baseRef": {
+        "type": "string"
+      },
+      "formatWrite": {
+        "type": "boolean"
+      },
+      "typecheckCli": {
+        "type": "boolean"
+      },
+      "typecheckPlugin": {
+        "type": "boolean"
+      },
+      "repoChecks": {
+        "type": "boolean"
+      },
+      "diffCheck": {
+        "type": "boolean"
+      },
+      "nulCheck": {
+        "type": "boolean"
+      },
+      "docs": {
+        "type": "boolean"
+      },
+      "timeoutMs": {
+        "type": "integer"
+      },
+      "dryRun": {
+        "type": "boolean"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "revision": 1
+}

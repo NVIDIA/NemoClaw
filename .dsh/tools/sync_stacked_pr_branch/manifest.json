@@ -1,0 +1,64 @@
+{
+  "formatVersion": 0,
+  "name": "sync_stacked_pr_branch",
+  "description": "Plan or apply guarded synchronization of one stacked pull request branch.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "headBranch": {
+        "type": "string"
+      },
+      "baseBranch": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "resetToRemote": {
+        "type": "boolean"
+      },
+      "requireClean": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": ["workdir", "headBranch", "baseBranch"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["dry-run", "read-only", "apply", "blocked"]
+      },
+      "plan": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "resultJson": {
+        "type": "string"
+      }
+    },
+    "required": ["applied", "mode", "plan", "notes", "resultJson"],
+    "additionalProperties": false
+  },
+  "revision": 4
+}

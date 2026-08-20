@@ -1,0 +1,510 @@
+{
+  "formatVersion": 0,
+  "name": "diagnose_nemoclaw_pr_e2e_gate",
+  "description": "Diagnose the direct NemoClaw E2E PR gate by correlating bounded check, controller, and child-run reads.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "maxControllerPages": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir", "number"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "checkedAt": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "pr": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "head": {
+            "type": "object",
+            "properties": {
+              "sha": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              }
+            },
+            "required": ["sha", "ref"],
+            "additionalProperties": false
+          },
+          "base": {
+            "type": "object",
+            "properties": {
+              "sha": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              }
+            },
+            "required": ["sha", "ref"],
+            "additionalProperties": false
+          },
+          "mergeableState": {
+            "type": "string"
+          }
+        },
+        "required": ["number", "title", "state", "url", "head", "base", "mergeableState"],
+        "additionalProperties": false
+      },
+      "externalId": {
+        "type": "string"
+      },
+      "check": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "conclusion": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "headSha": {
+                "type": "string"
+              },
+              "externalId": {
+                "type": "string"
+              },
+              "detailsUrl": {
+                "type": "string"
+              },
+              "startedAt": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "completedAt": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "summary": {
+                    "type": "string"
+                  }
+                },
+                "required": ["title", "summary"],
+                "additionalProperties": false
+              },
+              "suiteId": {
+                "type": "integer"
+              },
+              "app": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "slug": {
+                    "type": "string"
+                  }
+                },
+                "required": ["id", "slug"],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "status",
+              "conclusion",
+              "headSha",
+              "externalId",
+              "detailsUrl",
+              "startedAt",
+              "completedAt",
+              "output",
+              "suiteId",
+              "app"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "suite": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              },
+              "conclusion": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "headSha": {
+                "type": "string"
+              },
+              "headBranch": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "app": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "slug": {
+                    "type": "string"
+                  }
+                },
+                "required": ["id", "slug"],
+                "additionalProperties": false
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "conclusion": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "detailsUrl": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id", "name", "status", "conclusion", "detailsUrl"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["id", "status", "conclusion", "headSha", "headBranch", "app", "checks"],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "latestController": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              },
+              "event": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "conclusion": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "event",
+              "status",
+              "conclusion",
+              "createdAt",
+              "updatedAt",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "controllerRuns": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "event": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "conclusion": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "event",
+            "status",
+            "conclusion",
+            "createdAt",
+            "updatedAt",
+            "url"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "controllerFailure": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              },
+              "relevant": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["runId", "url", "relevant"],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "childRun": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              },
+              "conclusion": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "url": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              }
+            },
+            "required": ["id", "status", "conclusion", "url", "createdAt", "updatedAt"],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "diagnosis": {
+        "type": "string",
+        "enum": [
+          "gate-not-reported",
+          "waiting-for-prerequisite-ci",
+          "gate-in-progress",
+          "successful-gate-not-refreshed-after-ci-rerun",
+          "gate-passed",
+          "gate-completed-without-success"
+        ]
+      },
+      "nextAction": {
+        "type": "string"
+      },
+      "pagination": {
+        "type": "object",
+        "properties": {
+          "maxCheckPages": {
+            "type": "integer"
+          },
+          "maxControllerPages": {
+            "type": "integer"
+          },
+          "checksFound": {
+            "type": "integer"
+          },
+          "exactChecksFound": {
+            "type": "integer"
+          },
+          "controllerRunsFound": {
+            "type": "integer"
+          },
+          "controllerRunsTruncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "maxCheckPages",
+          "maxControllerPages",
+          "checksFound",
+          "exactChecksFound",
+          "controllerRunsFound",
+          "controllerRunsTruncated"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "checkedAt",
+      "repo",
+      "pr",
+      "externalId",
+      "check",
+      "suite",
+      "latestController",
+      "controllerRuns",
+      "controllerFailure",
+      "childRun",
+      "diagnosis",
+      "nextAction",
+      "pagination"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

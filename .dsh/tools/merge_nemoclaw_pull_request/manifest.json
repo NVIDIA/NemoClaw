@@ -1,0 +1,143 @@
+{
+  "formatVersion": 0,
+  "name": "merge_nemoclaw_pull_request",
+  "description": "Check exact-commit NemoClaw merge conditions and merge one pull request only when apply is true.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "expectedHeadSha": {
+        "type": "string"
+      },
+      "expectedBaseRef": {
+        "type": "string"
+      },
+      "method": {
+        "type": "string",
+        "enum": ["merge", "squash", "rebase"]
+      },
+      "apply": {
+        "type": "boolean"
+      }
+    },
+    "required": ["workdir", "number", "expectedHeadSha", "expectedBaseRef", "method", "apply"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "apply": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "url": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "disposition": {
+        "type": "string",
+        "enum": ["would-merge", "merged", "stale", "blocked", "not-merged", "inconclusive"]
+      },
+      "expectedHeadSha": {
+        "type": "string"
+      },
+      "observedHeadSha": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "expectedBaseRef": {
+        "type": "string"
+      },
+      "observedBaseRef": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "method": {
+        "type": "string"
+      },
+      "mergeCommit": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "blockers": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "checks": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "detail": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "apply",
+      "mutated",
+      "repo",
+      "number",
+      "url",
+      "disposition",
+      "expectedHeadSha",
+      "observedHeadSha",
+      "expectedBaseRef",
+      "observedBaseRef",
+      "method",
+      "mergeCommit",
+      "blockers",
+      "checks",
+      "detail"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

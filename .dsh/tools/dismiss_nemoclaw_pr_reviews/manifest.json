@@ -1,0 +1,147 @@
+{
+  "formatVersion": 0,
+  "name": "dismiss_nemoclaw_pr_reviews",
+  "description": "Dismiss bounded CHANGES_REQUESTED reviews only at expected pull request heads, or preview all writes when apply is false.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "reviewId": {
+              "type": "integer"
+            },
+            "expectedHeadSha": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": ["number", "reviewId", "expectedHeadSha", "message"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["workdir", "apply", "items"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "count": {
+        "type": "integer"
+      },
+      "dismissed": {
+        "type": "integer"
+      },
+      "alreadyDismissed": {
+        "type": "integer"
+      },
+      "reviews": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "reviewId": {
+              "type": "integer"
+            },
+            "action": {
+              "type": "string"
+            },
+            "prUrl": {
+              "type": "string"
+            },
+            "headSha": {
+              "type": "string"
+            },
+            "reviewUrl": {
+              "type": "string"
+            },
+            "author": {
+              "type": "string"
+            },
+            "reviewedCommit": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "number",
+            "reviewId",
+            "action",
+            "prUrl",
+            "headSha",
+            "reviewUrl",
+            "author",
+            "reviewedCommit",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "reviewDecisions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "url": {
+              "type": "string"
+            },
+            "headRefOid": {
+              "type": "string"
+            },
+            "reviewDecision": {
+              "type": "string"
+            }
+          },
+          "required": ["number", "url", "headRefOid", "reviewDecision"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "applied",
+      "mutated",
+      "repo",
+      "count",
+      "dismissed",
+      "alreadyDismissed",
+      "reviews",
+      "reviewDecisions"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

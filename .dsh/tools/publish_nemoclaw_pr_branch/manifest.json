@@ -1,0 +1,39 @@
+{
+  "formatVersion": 0,
+  "name": "publish_nemoclaw_pr_branch",
+  "description": "Push an exact clean NemoClaw candidate branch and return bounded GitHub commit-verification evidence.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repository": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "baseBranch": {
+        "type": "string"
+      },
+      "expectedHeadSha": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "workdir",
+      "expectedHeadSha"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "revision": 3
+}

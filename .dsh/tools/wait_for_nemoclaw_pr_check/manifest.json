@@ -1,0 +1,185 @@
+{
+  "formatVersion": 0,
+  "name": "wait_for_nemoclaw_pr_check",
+  "description": "Wait for one named GitHub check on the latest PR commit.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "name": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "expectedHeadSha": {
+        "type": "string"
+      },
+      "timeoutMs": {
+        "type": "integer"
+      },
+      "intervalMs": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir", "number", "name"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "done": {
+        "type": "boolean"
+      },
+      "stale": {
+        "type": "boolean"
+      },
+      "reason": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "repo": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "prUrl": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "headSha": {
+        "type": "string"
+      },
+      "currentHeadSha": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "name": {
+        "type": "string"
+      },
+      "check": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "conclusion": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "detailsUrl": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "startedAt": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "completedAt": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "app": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "conclusion",
+              "detailsUrl",
+              "startedAt",
+              "completedAt",
+              "app"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "done",
+      "stale",
+      "reason",
+      "repo",
+      "number",
+      "prUrl",
+      "headSha",
+      "currentHeadSha",
+      "name",
+      "check"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 3
+}

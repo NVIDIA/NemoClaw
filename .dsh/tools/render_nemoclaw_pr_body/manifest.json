@@ -1,0 +1,254 @@
+{
+  "formatVersion": 0,
+  "name": "render_nemoclaw_pr_body",
+  "description": "Render the trusted NemoClaw pull request template from typed evidence without writing to GitHub.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "baseRef": {
+        "type": "string"
+      },
+      "summary": {
+        "type": "string"
+      },
+      "changes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "relatedIssue": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "integer"
+          },
+          "keyword": {
+            "type": "string",
+            "enum": [
+              "Fixes",
+              "Closes"
+            ]
+          }
+        },
+        "required": [
+          "number",
+          "keyword"
+        ],
+        "additionalProperties": false
+      },
+      "typeOfChange": {
+        "type": "string",
+        "enum": [
+          "code",
+          "code-with-docs",
+          "docs-prose",
+          "docs-code-samples"
+        ]
+      },
+      "tests": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string",
+            "enum": [
+              "added-or-updated",
+              "existing",
+              "not-applicable"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "justification": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "additionalProperties": false
+      },
+      "sensitivePath": {
+        "type": "object",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "reviewEvidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "changed"
+        ],
+        "additionalProperties": false
+      },
+      "ciWaiver": {
+        "type": "object",
+        "properties": {
+          "check": {
+            "type": "string"
+          },
+          "approval": {
+            "type": "string"
+          },
+          "followUpIssue": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "check",
+          "approval",
+          "followUpIssue"
+        ],
+        "additionalProperties": false
+      },
+      "hooks": {
+        "type": "object",
+        "properties": {
+          "passed": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "passed"
+        ],
+        "additionalProperties": false
+      },
+      "broadGate": {
+        "type": "object",
+        "properties": {
+          "passed": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "passed",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "docs": {
+        "type": "object",
+        "properties": {
+          "buildPassed": {
+            "type": "boolean"
+          },
+          "styleReviewed": {
+            "type": "boolean"
+          },
+          "newPagesValidated": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "dgxStation": {
+        "type": "object",
+        "properties": {
+          "testedCommit": {
+            "type": "string"
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "evidenceUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "testedCommit",
+          "scenario",
+          "result",
+          "evidenceUrl"
+        ],
+        "additionalProperties": false
+      },
+      "dco": {
+        "type": "object",
+        "properties": {
+          "commitsVerified": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "commitsVerified",
+          "name",
+          "email"
+        ],
+        "additionalProperties": false
+      },
+      "noSecrets": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "workdir",
+      "summary",
+      "changes",
+      "typeOfChange",
+      "tests",
+      "hooks",
+      "dco",
+      "noSecrets"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "body": {
+        "type": "string"
+      },
+      "templateSha": {
+        "type": "string"
+      },
+      "selectedChecks": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "blockers": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "warnings": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "body",
+      "templateSha",
+      "selectedChecks",
+      "blockers",
+      "warnings"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

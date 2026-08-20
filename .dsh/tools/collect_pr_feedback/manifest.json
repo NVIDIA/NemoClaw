@@ -1,0 +1,168 @@
+{
+  "formatVersion": 0,
+  "name": "collect_pr_feedback",
+  "description": "Collect a bounded GitHub pull request snapshot with status, checks, reviews, inline comments, and discussion comments for review follow-up.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "repository": {
+        "type": "string"
+      },
+      "pullNumber": {
+        "type": "integer"
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "bodyLimit": {
+        "type": "integer"
+      }
+    },
+    "required": ["repository", "pullNumber", "workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "pull": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "headRefOid": {
+            "type": "string"
+          },
+          "baseRefOid": {
+            "type": "string"
+          },
+          "mergeStateStatus": {
+            "type": "string"
+          },
+          "reviewDecision": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "state",
+          "headRefOid",
+          "baseRefOid",
+          "mergeStateStatus",
+          "reviewDecision"
+        ],
+        "additionalProperties": false
+      },
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "bucket": {
+              "type": "string"
+            },
+            "link": {
+              "type": "string"
+            }
+          },
+          "required": ["name", "state", "bucket", "link"],
+          "additionalProperties": false
+        }
+      },
+      "reviews": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "user": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "commitId": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            }
+          },
+          "required": ["id", "user", "state", "commitId", "body"],
+          "additionalProperties": false
+        }
+      },
+      "inlineComments": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "user": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "line": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": ["id", "user", "path", "line", "body", "url"],
+          "additionalProperties": false
+        }
+      },
+      "discussionComments": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer"
+            },
+            "user": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": ["id", "user", "body", "url"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["pull", "checks", "reviews", "inlineComments", "discussionComments"],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

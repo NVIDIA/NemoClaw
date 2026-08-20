@@ -1,0 +1,104 @@
+{
+  "formatVersion": 0,
+  "name": "remove_isolated_pr_worktrees",
+  "description": "Plan or remove explicit clean detached worktrees under one guarded isolation root.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "paths": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 50,
+        "items": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "root": {
+        "type": "string"
+      },
+      "failure": {
+        "type": "string",
+        "enum": ["fail-fast", "settled"]
+      },
+      "dryRun": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean",
+        "const": true
+      },
+      "isolationKey": {
+        "type": "string"
+      }
+    },
+    "required": ["workdir", "paths", "root", "isolationKey"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "dryRun": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "root": {
+        "type": "string"
+      },
+      "failure": {
+        "type": "string",
+        "enum": ["fail-fast", "settled"]
+      },
+      "count": {
+        "type": "integer"
+      },
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "head": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string",
+              "enum": ["planned", "removed"]
+            }
+          },
+          "required": ["path", "head", "action"],
+          "additionalProperties": false
+        }
+      },
+      "errors": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": ["path", "message"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["dryRun", "apply", "mutated", "root", "failure", "count", "results", "errors"],
+    "additionalProperties": false
+  },
+  "revision": 4
+}

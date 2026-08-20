@@ -1,0 +1,205 @@
+{
+  "formatVersion": 0,
+  "name": "summarize_pr_readiness",
+  "description": "Summarize bounded pull request status, checks, reviews, comments, and unresolved review comments.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "number": {
+        "type": "integer"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "includeComments": {
+        "type": "boolean"
+      },
+      "includeReviewContext": {
+        "type": "boolean"
+      }
+    },
+    "required": ["number", "workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "pull": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "headRefOid": {
+            "type": "string"
+          },
+          "mergeStateStatus": {
+            "type": "string"
+          },
+          "reviewDecision": {
+            "type": "string"
+          }
+        },
+        "required": ["url", "state", "headRefOid", "mergeStateStatus", "reviewDecision"],
+        "additionalProperties": false
+      },
+      "failedChecks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "link": {
+              "type": "string"
+            }
+          },
+          "required": ["name", "state", "link"],
+          "additionalProperties": false
+        }
+      },
+      "pendingChecks": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "latestReviews": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "user": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": ["user", "state"],
+          "additionalProperties": false
+        }
+      },
+      "unresolvedComments": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "user": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "line": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": ["user", "path", "line", "body", "url"],
+          "additionalProperties": false
+        }
+      },
+      "recentComments": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "user": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": ["user", "body", "url"],
+          "additionalProperties": false
+        }
+      },
+      "context": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "changedFiles": {
+                "type": "integer"
+              },
+              "additions": {
+                "type": "integer"
+              },
+              "deletions": {
+                "type": "integer"
+              },
+              "body": {
+                "type": "string"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "commits": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            },
+            "required": ["changedFiles", "additions", "deletions", "body", "files", "commits"],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "repo",
+      "number",
+      "pull",
+      "failedChecks",
+      "pendingChecks",
+      "latestReviews",
+      "unresolvedComments",
+      "recentComments",
+      "context"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

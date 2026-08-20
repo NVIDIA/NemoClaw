@@ -1,0 +1,268 @@
+{
+  "formatVersion": 0,
+  "name": "triage_nemoclaw_ci_failure",
+  "description": "Classify a NemoClaw GitHub Actions failure and inspect one bounded test artifact when requested.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "jobId": {
+        "oneOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "repo": {
+        "type": "string"
+      },
+      "tailLines": {
+        "type": "integer"
+      },
+      "artifactName": {
+        "type": "string"
+      }
+    },
+    "required": ["workdir", "jobId"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "jobId": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "job": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "runId": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "conclusion": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "runId", "name", "status", "conclusion", "url"],
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "string",
+        "enum": ["classified", "unclassified", "log-error"]
+      },
+      "categories": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "suggestion": {
+              "type": "string"
+            }
+          },
+          "required": ["type", "detail", "suggestion"],
+          "additionalProperties": false
+        }
+      },
+      "nextActions": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "artifact": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "sizeBytes": {
+                "type": "integer"
+              },
+              "inventoryTruncated": {
+                "type": "boolean"
+              },
+              "filesRead": {
+                "type": "integer"
+              },
+              "filesTruncated": {
+                "type": "boolean"
+              },
+              "failures": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "exitCode": {
+                      "oneOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "signal": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "timedOut": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "command": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["path", "exitCode", "signal", "timedOut", "error", "command"],
+                  "additionalProperties": false
+                }
+              },
+              "failuresTruncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "sizeBytes",
+              "inventoryTruncated",
+              "filesRead",
+              "filesTruncated",
+              "failures",
+              "failuresTruncated"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "log": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "code": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "matchedLines": {
+            "type": "integer"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "pattern": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "jobId",
+          "repo",
+          "pattern",
+          "code",
+          "truncated",
+          "matchedLines",
+          "stdout",
+          "stderr"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "jobId",
+      "repo",
+      "job",
+      "result",
+      "categories",
+      "findings",
+      "nextActions",
+      "artifact",
+      "log"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 3
+}

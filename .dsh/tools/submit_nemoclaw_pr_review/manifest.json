@@ -1,0 +1,109 @@
+{
+  "formatVersion": 0,
+  "name": "submit_nemoclaw_pr_review",
+  "description": "Submit a NemoClaw pull request review only while the latest PR commit equals the expected commit.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "number": {
+        "type": "integer"
+      },
+      "event": {
+        "type": "string",
+        "enum": ["approve", "request-changes", "comment"]
+      },
+      "body": {
+        "type": "string"
+      },
+      "expectedHeadSha": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean"
+      }
+    },
+    "required": ["number", "event", "body", "expectedHeadSha", "workdir", "apply"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "title": {
+        "type": "string"
+      },
+      "prUrl": {
+        "type": "string"
+      },
+      "headSha": {
+        "type": "string"
+      },
+      "event": {
+        "type": "string"
+      },
+      "reviewer": {
+        "type": "string"
+      },
+      "review": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "state": {
+                "type": "string"
+              },
+              "commitId": {
+                "type": "string"
+              },
+              "submittedAt": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": ["id", "state", "commitId", "submittedAt", "url"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "required": [
+      "applied",
+      "mutated",
+      "repo",
+      "number",
+      "title",
+      "prUrl",
+      "headSha",
+      "event",
+      "reviewer",
+      "review"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 3
+}

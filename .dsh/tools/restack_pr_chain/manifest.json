@@ -1,0 +1,64 @@
+{
+  "formatVersion": 0,
+  "name": "restack_pr_chain",
+  "description": "Plan or apply a guarded stacked-branch restack with validation and pushes.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "branches": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "base": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "validateEach": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": ["workdir", "branches"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["dry-run", "read-only", "apply", "blocked"]
+      },
+      "plan": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "resultJson": {
+        "type": "string"
+      }
+    },
+    "required": ["applied", "mode", "plan", "notes", "resultJson"],
+    "additionalProperties": false
+  },
+  "revision": 3
+}

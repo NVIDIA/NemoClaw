@@ -1,0 +1,110 @@
+{
+  "formatVersion": 0,
+  "name": "audit_nemoclaw_request_changes",
+  "description": "Audit changes-requested reviews at exact commits with guarded read-only agent sessions.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "cacheRoot": {
+        "type": "string"
+      },
+      "numbers": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "repository": {
+        "type": "string"
+      },
+      "concurrency": {
+        "type": "integer"
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "full",
+          "blocking-only"
+        ]
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "model": {
+        "type": "string"
+      },
+      "thinking": {
+        "type": "string",
+        "enum": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "timeoutMs": {
+        "type": "integer"
+      },
+      "sessionMode": {
+        "type": "string",
+        "enum": [
+          "resume",
+          "one-shot"
+        ]
+      }
+    },
+    "required": [
+      "workdir",
+      "numbers",
+      "cacheRoot"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "dry-run",
+          "read-only",
+          "apply",
+          "blocked"
+        ]
+      },
+      "plan": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "resultJson": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "applied",
+      "mode",
+      "plan",
+      "notes",
+      "resultJson"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 5
+}

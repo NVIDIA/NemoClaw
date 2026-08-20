@@ -1,0 +1,100 @@
+{
+  "formatVersion": 0,
+  "name": "commit_push_refresh_pr",
+  "description": "Plan or apply a signed commit, conditional push, and pull request evidence refresh with latest-PR-commit checks.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "pullNumber": {
+        "type": "integer"
+      },
+      "message": {
+        "type": "string"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "all": {
+        "type": "boolean"
+      },
+      "repository": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "branch": {
+        "type": "string"
+      },
+      "push": {
+        "type": "boolean"
+      },
+      "refreshBody": {
+        "type": "boolean"
+      },
+      "docsResult": {
+        "type": "string",
+        "enum": ["blocked", "docs-updated", "no-docs-needed"]
+      },
+      "docsEvidence": {
+        "type": "string"
+      },
+      "docsAgent": {
+        "type": "string"
+      },
+      "targetedValidationLine": {
+        "type": "string"
+      },
+      "broadGatePassed": {
+        "type": "boolean"
+      },
+      "broadGateEvidence": {
+        "type": "string"
+      },
+      "monitor": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean"
+      }
+    },
+    "required": ["workdir", "pullNumber", "message"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["dry-run", "read-only", "apply", "blocked"]
+      },
+      "plan": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "resultJson": {
+        "type": "string"
+      }
+    },
+    "required": ["applied", "mode", "plan", "notes", "resultJson"],
+    "additionalProperties": false
+  },
+  "revision": 6
+}

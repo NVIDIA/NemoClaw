@@ -1,0 +1,88 @@
+{
+  "formatVersion": 0,
+  "name": "check_changed_files_for_nul_bytes",
+  "description": "Report NUL bytes in existing branch and working-tree files.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "baseRef": {
+        "type": "string"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "ok": {
+        "type": "boolean"
+      },
+      "checked": {
+        "type": "integer"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "count": {
+              "type": "integer"
+            }
+          },
+          "required": ["file", "count"],
+          "additionalProperties": false
+        }
+      },
+      "changed": {
+        "type": "object",
+        "properties": {
+          "baseRef": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "branchFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "workingTreeFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "untrackedFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["baseRef", "files", "branchFiles", "workingTreeFiles", "untrackedFiles"],
+        "additionalProperties": false
+      }
+    },
+    "required": ["ok", "checked", "files", "findings", "changed"],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

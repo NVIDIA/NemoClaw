@@ -1,0 +1,116 @@
+{
+  "formatVersion": 0,
+  "name": "carry_nemoclaw_cached_review_recommendations",
+  "description": "Carry cached APPROVE recommendations only when every pull request file keeps the same Git blob across an exact guarded refresh.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "fromHeadSha": {
+              "type": "string"
+            },
+            "toHeadSha": {
+              "type": "string"
+            }
+          },
+          "required": ["number", "fromHeadSha", "toHeadSha"],
+          "additionalProperties": false
+        }
+      },
+      "repo": {
+        "type": "string"
+      },
+      "overwrite": {
+        "type": "boolean"
+      },
+      "failure": {
+        "type": "string",
+        "enum": ["fail-fast", "settled"]
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "cacheRoot": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean"
+      }
+    },
+    "required": ["items", "workdir", "cacheRoot", "apply"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "failure": {
+        "type": "string"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "carried": {
+        "type": "integer"
+      },
+      "notCarried": {
+        "type": "integer"
+      },
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "url": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "fromHeadSha": {
+              "type": "string"
+            },
+            "toHeadSha": {
+              "type": "string"
+            },
+            "changedFiles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fileCount": {
+              "type": "integer"
+            },
+            "destinationPath": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            }
+          },
+          "required": ["number", "status", "fromHeadSha", "toHeadSha"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["repo", "apply", "failure", "mutated", "carried", "notCarried", "results"],
+    "additionalProperties": false
+  },
+  "revision": 2
+}

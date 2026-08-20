@@ -1,0 +1,105 @@
+{
+  "formatVersion": 0,
+  "name": "review_nemoclaw_pull_requests",
+  "description": "Run bounded exact-commit pull request review cycles with guarded refresh, cache, and finalization stages.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "cacheRoot": {
+        "type": "string"
+      },
+      "numbers": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "repository": {
+        "type": "string"
+      },
+      "concurrency": {
+        "type": "integer"
+      },
+      "metadataConcurrency": {
+        "type": "integer"
+      },
+      "maxRefreshesPerCycle": {
+        "type": "integer"
+      },
+      "maxNewReviewsPerCycle": {
+        "type": "integer"
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "model": {
+        "type": "string"
+      },
+      "thinking": {
+        "type": "string",
+        "enum": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "timeoutMs": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "workdir",
+      "numbers",
+      "cacheRoot"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "dry-run",
+          "read-only",
+          "apply",
+          "blocked"
+        ]
+      },
+      "plan": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "resultJson": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "applied",
+      "mode",
+      "plan",
+      "notes",
+      "resultJson"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 4
+}

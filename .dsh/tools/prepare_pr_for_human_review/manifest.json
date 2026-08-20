@@ -1,0 +1,122 @@
+{
+  "formatVersion": 0,
+  "name": "prepare_pr_for_human_review",
+  "description": "Plan or apply validation, push, evidence refresh, and the handoff from draft to human review.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "pullNumber": {
+        "type": "integer"
+      },
+      "repository": {
+        "type": "string"
+      },
+      "validation": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "testFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "baseRef": {
+            "type": "string"
+          },
+          "typecheckCli": {
+            "type": "boolean"
+          },
+          "typecheckPlugin": {
+            "type": "boolean"
+          },
+          "repoChecks": {
+            "type": "boolean"
+          },
+          "docs": {
+            "type": "boolean"
+          },
+          "timeoutMs": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "docsResult": {
+        "type": "string",
+        "enum": ["blocked", "docs-updated", "no-docs-needed"]
+      },
+      "docsEvidence": {
+        "type": "string"
+      },
+      "docsAgent": {
+        "type": "string"
+      },
+      "validationLine": {
+        "type": "string"
+      },
+      "broadGatePassed": {
+        "type": "boolean"
+      },
+      "broadGateEvidence": {
+        "type": "string"
+      },
+      "markReady": {
+        "type": "boolean"
+      },
+      "push": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": ["workdir", "pullNumber", "docsResult", "docsEvidence", "docsAgent"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["dry-run", "read-only", "apply", "blocked"]
+      },
+      "plan": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "resultJson": {
+        "type": "string"
+      }
+    },
+    "required": ["applied", "mode", "plan", "notes", "resultJson"],
+    "additionalProperties": false
+  },
+  "revision": 4
+}

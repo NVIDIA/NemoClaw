@@ -1,0 +1,105 @@
+{
+  "formatVersion": 0,
+  "name": "reply_and_resolve_pr_review_thread",
+  "description": "Reply to one review comment and resolve its thread only while the latest PR commit equals the expected commit.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "number": {
+        "type": "integer"
+      },
+      "commentId": {
+        "type": "integer"
+      },
+      "body": {
+        "type": "string"
+      },
+      "expectedHeadSha": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean"
+      }
+    },
+    "required": ["number", "commentId", "body", "expectedHeadSha", "workdir", "apply"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "applied": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "prUrl": {
+        "type": "string"
+      },
+      "headSha": {
+        "type": "string"
+      },
+      "commentId": {
+        "type": "integer"
+      },
+      "threadId": {
+        "type": "string"
+      },
+      "alreadyResolved": {
+        "type": "boolean"
+      },
+      "pagesRead": {
+        "type": "integer"
+      },
+      "wouldReply": {
+        "type": "boolean"
+      },
+      "wouldResolve": {
+        "type": "boolean"
+      },
+      "replyUrl": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "resolved": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "applied",
+      "mutated",
+      "repo",
+      "number",
+      "prUrl",
+      "headSha",
+      "commentId",
+      "threadId",
+      "alreadyResolved",
+      "pagesRead",
+      "wouldReply",
+      "wouldResolve",
+      "replyUrl",
+      "resolved"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 3
+}

@@ -1,0 +1,42 @@
+{
+  "formatVersion": 0,
+  "name": "checkout_pr_for_local_repair",
+  "description": "Replace the active checkout with a pull request repair branch. Prefer prepare_isolated_pr_worktree for concurrent work.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "localBranch": {
+        "type": "string"
+      },
+      "requireClean": {
+        "type": "boolean"
+      },
+      "dryRun": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": ["workdir", "number"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "revision": 3
+}

@@ -1,0 +1,49 @@
+{
+  "formatVersion": 0,
+  "name": "summarize_changes_requested_pull_requests",
+  "description": "List bounded open NemoClaw pull requests with changes requested.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "repo": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "summary": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "required": ["repo", "kind", "truncated", "items", "summary"],
+    "additionalProperties": false
+  },
+  "revision": 1
+}

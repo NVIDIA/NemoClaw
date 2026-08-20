@@ -24,6 +24,7 @@ The contributor lifecycle has one owner for each stage: `nemoclaw-contributor-on
 Component-specific guidance belongs in the `AGENTS.md` file of the package it describes, not in a skill.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 Skills that write or review explanatory text must follow the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract.
+Before creating, editing, promoting, or reviewing project-authored DSH tools, read and follow [the tool authoring instructions](.dsh/tools/AGENTS.md).
 
 ## Architecture
 

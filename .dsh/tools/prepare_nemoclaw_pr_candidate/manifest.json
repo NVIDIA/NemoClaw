@@ -1,0 +1,238 @@
+{
+  "formatVersion": 0,
+  "name": "prepare_nemoclaw_pr_candidate",
+  "description": "Compose candidate inspection, validation inference, and optional typed PR body rendering without publishing.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repository": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "baseBranch": {
+        "type": "string"
+      },
+      "refreshBase": {
+        "type": "boolean"
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "relatedIssue": {
+            "type": "object",
+            "properties": {
+              "number": {
+                "type": "integer"
+              },
+              "keyword": {
+                "type": "string",
+                "enum": [
+                  "Fixes",
+                  "Closes"
+                ]
+              }
+            },
+            "required": [
+              "number",
+              "keyword"
+            ],
+            "additionalProperties": false
+          },
+          "typeOfChange": {
+            "type": "string",
+            "enum": [
+              "code",
+              "code-with-docs",
+              "docs-prose",
+              "docs-code-samples"
+            ]
+          },
+          "tests": {
+            "type": "object",
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "added-or-updated",
+                  "existing",
+                  "not-applicable"
+                ]
+              },
+              "evidence": {
+                "type": "string"
+              },
+              "justification": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "additionalProperties": false
+          },
+          "sensitivePath": {
+            "type": "object",
+            "properties": {
+              "changed": {
+                "type": "boolean"
+              },
+              "reviewEvidence": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "changed"
+            ],
+            "additionalProperties": false
+          },
+          "ciWaiver": {
+            "type": "object",
+            "properties": {
+              "check": {
+                "type": "string"
+              },
+              "approval": {
+                "type": "string"
+              },
+              "followUpIssue": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "check",
+              "approval",
+              "followUpIssue"
+            ],
+            "additionalProperties": false
+          },
+          "hooks": {
+            "type": "object",
+            "properties": {
+              "passed": {
+                "type": "boolean"
+              },
+              "evidence": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "passed"
+            ],
+            "additionalProperties": false
+          },
+          "broadGate": {
+            "type": "object",
+            "properties": {
+              "passed": {
+                "type": "boolean"
+              },
+              "evidence": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "passed",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "docs": {
+            "type": "object",
+            "properties": {
+              "buildPassed": {
+                "type": "boolean"
+              },
+              "styleReviewed": {
+                "type": "boolean"
+              },
+              "newPagesValidated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "dgxStation": {
+            "type": "object",
+            "properties": {
+              "testedCommit": {
+                "type": "string"
+              },
+              "scenario": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string"
+              },
+              "evidenceUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "testedCommit",
+              "scenario",
+              "result",
+              "evidenceUrl"
+            ],
+            "additionalProperties": false
+          },
+          "dco": {
+            "type": "object",
+            "properties": {
+              "commitsVerified": {
+                "type": "boolean"
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "commitsVerified",
+              "name",
+              "email"
+            ],
+            "additionalProperties": false
+          },
+          "noSecrets": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "summary",
+          "changes",
+          "typeOfChange",
+          "tests",
+          "hooks",
+          "dco",
+          "noSecrets"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "workdir"
+    ],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "revision": 2
+}

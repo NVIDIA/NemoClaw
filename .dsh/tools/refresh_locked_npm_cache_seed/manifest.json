@@ -1,0 +1,41 @@
+{
+  "formatVersion": 0,
+  "name": "refresh_locked_npm_cache_seed",
+  "description": "Inspect, plan, or regenerate a lock-pinned npm cache seed with atomic replacement and rollback.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "lockfile": {
+        "type": "string"
+      },
+      "destination": {
+        "type": "string"
+      },
+      "os": {
+        "type": "string"
+      },
+      "cpu": {
+        "type": "string"
+      },
+      "libc": {
+        "type": "string"
+      },
+      "chunkBytes": {
+        "type": "integer"
+      },
+      "dryRun": {
+        "type": "boolean"
+      }
+    },
+    "required": ["workdir", "lockfile", "destination", "os", "cpu", "libc"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "revision": 3
+}

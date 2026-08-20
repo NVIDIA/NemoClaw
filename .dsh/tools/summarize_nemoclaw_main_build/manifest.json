@@ -1,0 +1,364 @@
+{
+  "formatVersion": 0,
+  "name": "summarize_nemoclaw_main_build",
+  "description": "Summarize a NemoClaw main build and compare its commit with the latest main commit through bounded GitHub reads.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "sha": {
+        "type": "string"
+      },
+      "workflow": {
+        "type": "string"
+      },
+      "includeCurrentMain": {
+        "type": "boolean"
+      },
+      "maxRuns": {
+        "type": "integer"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "checkedAt": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "workflow": {
+        "type": "string"
+      },
+      "targetSha": {
+        "type": "string"
+      },
+      "currentMain": {
+        "type": "string"
+      },
+      "targetIsCurrent": {
+        "type": "boolean"
+      },
+      "result": {
+        "type": "string",
+        "enum": [
+          "main-build-not-found",
+          "main-build-in-progress",
+          "main-build-passed",
+          "main-build-superseded",
+          "main-build-did-not-pass"
+        ]
+      },
+      "targetRun": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "sha": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "conclusion": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "jobs": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer"
+                  },
+                  "counts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "count": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": ["name", "count"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "nonPassing": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "conclusion": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "started_at": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "completed_at": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "html_url": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "status",
+                        "conclusion",
+                        "started_at",
+                        "completed_at",
+                        "html_url"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["total", "counts", "nonPassing", "truncated"],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "sha",
+              "title",
+              "status",
+              "conclusion",
+              "createdAt",
+              "updatedAt",
+              "url",
+              "jobs"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "currentRun": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "sha": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "conclusion": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "jobs": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer"
+                  },
+                  "counts": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "count": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": ["name", "count"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "nonPassing": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "conclusion": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "started_at": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "completed_at": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "html_url": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "status",
+                        "conclusion",
+                        "started_at",
+                        "completed_at",
+                        "html_url"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["total", "counts", "nonPassing", "truncated"],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "sha",
+              "title",
+              "status",
+              "conclusion",
+              "createdAt",
+              "updatedAt",
+              "url",
+              "jobs"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "checkedAt",
+      "repo",
+      "workflow",
+      "targetSha",
+      "currentMain",
+      "targetIsCurrent",
+      "result",
+      "targetRun",
+      "currentRun"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 3
+}

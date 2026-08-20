@@ -1,0 +1,39 @@
+{
+  "formatVersion": 0,
+  "name": "run_nemoclaw_release_preflight",
+  "description": "Inspect release prerequisites without dispatching a release workflow.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "branch": {
+        "type": "string"
+      },
+      "bump": {
+        "type": "string",
+        "enum": ["patch", "minor", "major"]
+      },
+      "runLimit": {
+        "type": "integer"
+      },
+      "dryRun": {
+        "type": "boolean"
+      }
+    },
+    "required": ["workdir"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "revision": 1
+}

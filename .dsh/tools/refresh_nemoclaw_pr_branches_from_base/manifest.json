@@ -1,0 +1,283 @@
+{
+  "formatVersion": 0,
+  "name": "refresh_nemoclaw_pr_branches_from_base",
+  "description": "Check and conditionally refresh multiple NemoClaw pull request branches at their expected latest PR commits.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "expectedHeadSha": {
+              "type": "string"
+            }
+          },
+          "required": ["number", "expectedHeadSha"],
+          "additionalProperties": false
+        }
+      },
+      "repo": {
+        "type": "string"
+      },
+      "workdir": {
+        "type": "string"
+      },
+      "apply": {
+        "type": "boolean"
+      }
+    },
+    "required": ["items", "workdir", "apply"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "apply": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "requested": {
+        "type": "integer"
+      },
+      "counts": {
+        "type": "object",
+        "properties": {
+          "updated": {
+            "type": "integer"
+          },
+          "unchanged": {
+            "type": "integer"
+          },
+          "eligible": {
+            "type": "integer"
+          },
+          "ineligible": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          }
+        },
+        "required": ["updated", "unchanged", "eligible", "ineligible", "failed"],
+        "additionalProperties": false
+      },
+      "results": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "error": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "apply": {
+              "type": "boolean"
+            },
+            "mutated": {
+              "type": "boolean"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "eligible": {
+              "type": "boolean"
+            },
+            "updated": {
+              "type": "boolean"
+            },
+            "wouldRequestBaseUpdate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "before": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "isDraft": {
+                      "type": "boolean"
+                    },
+                    "headRefOid": {
+                      "type": "string"
+                    },
+                    "baseRefName": {
+                      "type": "string"
+                    },
+                    "headRefName": {
+                      "type": "string"
+                    },
+                    "mergeable": {
+                      "type": "string"
+                    },
+                    "mergeStateStatus": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "url",
+                    "state",
+                    "isDraft",
+                    "headRefOid",
+                    "baseRefName",
+                    "headRefName",
+                    "mergeable",
+                    "mergeStateStatus"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "after": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "isDraft": {
+                      "type": "boolean"
+                    },
+                    "headRefOid": {
+                      "type": "string"
+                    },
+                    "baseRefName": {
+                      "type": "string"
+                    },
+                    "headRefName": {
+                      "type": "string"
+                    },
+                    "mergeable": {
+                      "type": "string"
+                    },
+                    "mergeStateStatus": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "url",
+                    "state",
+                    "isDraft",
+                    "headRefOid",
+                    "baseRefName",
+                    "headRefName",
+                    "mergeable",
+                    "mergeStateStatus"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "apiMessage": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "response": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "stdout": {
+                      "type": "string"
+                    },
+                    "stderr": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code", "stdout", "stderr"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "number",
+            "ok",
+            "error",
+            "apply",
+            "mutated",
+            "repo",
+            "eligible",
+            "updated",
+            "wouldRequestBaseUpdate",
+            "reason",
+            "before",
+            "after",
+            "apiMessage",
+            "response"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["apply", "mutated", "repo", "requested", "counts", "results"],
+    "additionalProperties": false
+  },
+  "revision": 3
+}

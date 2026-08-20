@@ -1,0 +1,141 @@
+{
+  "formatVersion": 0,
+  "name": "prepare_isolated_pr_worktree",
+  "description": "Plan or prepare one caller-isolated exact-commit pull request worktree without changing the primary checkout.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "workdir": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "root": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "isolationKey": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "reuseExisting": {
+        "type": "boolean"
+      },
+      "replaceExisting": {
+        "type": "boolean"
+      },
+      "requirePrimaryClean": {
+        "type": "boolean"
+      },
+      "requireOpen": {
+        "type": "boolean"
+      },
+      "dryRun": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": ["workdir", "number", "root"],
+    "additionalProperties": false
+  },
+  "output": {
+    "type": "object",
+    "properties": {
+      "dryRun": {
+        "type": "boolean"
+      },
+      "apply": {
+        "type": "boolean"
+      },
+      "mutated": {
+        "type": "boolean"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "remote": {
+        "type": "string"
+      },
+      "root": {
+        "type": "string"
+      },
+      "isolationKey": {
+        "type": "string"
+      },
+      "number": {
+        "type": "integer"
+      },
+      "url": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "commit": {
+        "type": "string"
+      },
+      "baseCommit": {
+        "type": "string"
+      },
+      "baseBranch": {
+        "type": "string"
+      },
+      "sourceRepository": {
+        "type": "string"
+      },
+      "sourceBranch": {
+        "type": "string"
+      },
+      "maintainerCanModify": {
+        "type": "boolean"
+      },
+      "isDraft": {
+        "type": "boolean"
+      },
+      "state": {
+        "type": "string"
+      },
+      "action": {
+        "type": "string",
+        "enum": ["planned", "created", "reused", "replaced"]
+      },
+      "warning": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "dryRun",
+      "apply",
+      "mutated",
+      "repo",
+      "remote",
+      "root",
+      "isolationKey",
+      "number",
+      "url",
+      "path",
+      "commit",
+      "baseCommit",
+      "baseBranch",
+      "sourceRepository",
+      "sourceBranch",
+      "maintainerCanModify",
+      "isDraft",
+      "state",
+      "action"
+    ],
+    "additionalProperties": false
+  },
+  "revision": 3
+}
