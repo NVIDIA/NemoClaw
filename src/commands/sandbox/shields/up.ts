@@ -20,7 +20,10 @@ export default class ShieldsUpCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(ShieldsUpCommand);
-    assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:up");
-    shields.shieldsUp(args.sandboxName, { throwOnError: true });
+    shields.shieldsUp(args.sandboxName, {
+      throwOnError: true,
+      assertCommandAvailable: () =>
+        assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:up"),
+    });
   }
 }

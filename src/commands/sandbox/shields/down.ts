@@ -26,12 +26,13 @@ export default class ShieldsDownCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(ShieldsDownCommand);
-    assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:down");
     shields.shieldsDown(args.sandboxName, {
       timeout: flags.timeout ?? null,
       reason: flags.reason ?? null,
       policy: flags.policy ?? "permissive",
       throwOnError: true,
+      assertCommandAvailable: () =>
+        assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:shields:down"),
     });
   }
 }
