@@ -60,18 +60,19 @@ Select checks that apply to the diff.
 
 When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step, then classify every finding in that collection.
 
-Group valid code-changing findings by root cause. Route each valid code-changing finding to `nemoclaw-contributor-implement-issue` as part of its root-cause group. That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for the group instead of one commit or push per finding.
+This workflow owns the push gate. Before routing a repair, enter the ordered remediation sequence
+in the [Handle results](../_shared/pr-follow-up.md#handle-results) section and complete its
+count-and-approval decision. The shared workflow owns the single count-and-approval state machine
+for the complete PR task. Carry its recorded progress across every routed repair.
 
-This workflow owns the push gate. After the routed repair returns, follow the numbered steps under
-`After editing:` in the [Handle results](../_shared/pr-follow-up.md#handle-results) section for
-validation, the commit, the final collection, evidence removal, and the push. Push after no
+Group valid code-changing findings by root cause. Route each valid code-changing finding to
+`nemoclaw-contributor-implement-issue` as part of its root-cause group. That workflow owns the
+repair, its validation, and its evidence. Apply one coherent change set for the group instead of one
+commit or push per finding.
+
+After the routed repair returns with validation evidence, resume the shared sequence at the commit
+step. Complete the final collection and evidence-removal steps before pushing. Push after no
 unresolved finding requires a change.
-
-Keep one automated-review remediation-push count for the complete PR task. Routing a finding to
-another workflow does not reset the count. The shared follow-up workflow permits at most two such
-pushes without new user approval. When the count is two or more, stop before another repair, commit,
-or push. Report the latest complete review cycle. Ask the user to approve one named finding group
-and one additional push. Record the approval before editing. The approval does not reset the count.
 
 Immediately before pushing, repeat the complete collection. Confirm that its initial and final `headRefOid` values match.
 
@@ -84,7 +85,6 @@ Apply these push conditions:
 - If the host retained no artifact, record `retained evidence: none`.
 - If the user tells you to stop, stop without pushing.
 - The user may defer only a non-blocking suggestion. Record that disposition before pushing.
-- Apply the shared automated-review remediation-push limit before every review-driven push.
 
 ### Hook Evidence
 

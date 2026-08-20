@@ -144,28 +144,30 @@ It does not authorize merge with an unresolved required finding.
 - **Style comment or false positive:** Avoid unnecessary changes. Explain your decision in the final report. Comment on the PR when reviewers need the explanation.
 - **Ambiguous, risky, broad, or design-changing feedback:** Stop and ask the user before you change code.
 
-After editing:
+Run this ordered remediation sequence:
 
-1. Run targeted validation.
-2. Commit the candidate change set after validation passes.
-3. Run one final complete collection for the latest PR commit. Restart the collection if `headRefOid` changes.
-4. Classify every finding.
-5. After classification, remove retained collection evidence by its exact artifact path or identifier. Verify its absence.
-6. Determine which unresolved findings require a change. If the user explicitly defers a non-blocking suggestion, that suggestion does not require a change in this review cycle.
-7. If any unresolved finding requires a change, do not push. Complete these actions:
-    - Repair each unresolved finding that requires a change.
-    - Rerun affected validation.
-    - Commit the corrections.
-    - Repeat the final collection.
-8. Before an automated-review remediation push, apply one condition:
+1. Start from a complete collection for the unchanged latest PR commit. Classify every finding and
+   determine which unresolved findings require a change. An explicitly deferred non-blocking
+   suggestion does not require a change in this review cycle.
+2. Before routing, editing, validating, or committing a required change, apply one condition:
     - If the recorded count is less than two, proceed without new user approval.
     - If the recorded count is two or more, require recorded approval for one named finding group and one additional push.
-9. Push once when no unresolved finding requires a change.
-10. If step 9 was an automated-review remediation push, increment the count after the push succeeds.
-11. Monitor the latest PR commit for new findings that require a change.
+3. Repair every unresolved finding that requires a change as one coherent root-cause change set.
+4. Run targeted validation.
+5. Commit the candidate change set after validation passes.
+6. Run one final complete collection for the latest PR commit. Restart the collection if
+   `headRefOid` changes.
+7. Classify every finding in that collection.
+8. If any unresolved finding requires a change, return to step 2 without pushing.
+9. After no unresolved finding requires a change, remove retained collection evidence by its exact
+   artifact path or identifier and verify its absence.
+10. Push once.
+11. If step 10 was an automated-review remediation push, increment the count after the push
+    succeeds.
+12. Monitor the latest PR commit for new findings that require a change. When a new finding requires
+    a change, return to step 1.
 
-When a new finding requires a change, apply the remediation-push limit before another edit, commit,
-or push. Stop if the user tells you to stop.
+Stop if the user tells you to stop.
 
 If a push or GitHub query has an access error, follow [Git and GitHub Access Hard Stop](git-github-hard-stop.md).
 Resolve merge conflicts and dirty-worktree problems in the PR workflow.

@@ -183,10 +183,25 @@ describe("repo skill markdown files", () => {
     expect(followUp).not.toContain(
       "Repeat the applicable steps whenever an unresolved finding requires a change",
     );
-    expect(createPr).toContain("Keep one automated-review remediation-push count");
-    expect(createPr).toContain("does not reset the count");
-    expect(createPr).toContain("permits at most two such");
-    expect(createPr).toContain("When the count is two or more");
+    expect(followUp).toContain("When a new finding requires");
+    expect(followUp).toContain("return to step 1");
+
+    const approvalGate = followUp.indexOf("If the recorded count is two or more");
+    expect(approvalGate).toBeGreaterThanOrEqual(0);
+    expect(followUp.indexOf("Repair every unresolved finding")).toBeGreaterThan(approvalGate);
+    expect(followUp.indexOf("Run targeted validation")).toBeGreaterThan(approvalGate);
+    expect(followUp.indexOf("Commit the candidate change set")).toBeGreaterThan(approvalGate);
+
+    const delegateBeforeRepair = createPr.indexOf("Before routing a repair");
+    expect(delegateBeforeRepair).toBeGreaterThanOrEqual(0);
+    expect(createPr.indexOf("Route each valid code-changing finding")).toBeGreaterThan(
+      delegateBeforeRepair,
+    );
+    expect(createPr).toContain("shared workflow owns the single count-and-approval state machine");
+    expect(createPr).toContain("returns with validation evidence");
+    expect(createPr).not.toMatch(
+      /count is two or more|permits at most two such|does not reset the count/iu,
+    );
   });
 
   it.each(
