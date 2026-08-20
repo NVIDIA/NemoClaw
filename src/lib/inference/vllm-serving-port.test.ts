@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
   recoverHostLocalManagedVllmEndpoint: vi.fn(),
+  resolveHostLocalVllmSelection: vi.fn(),
   runCapture: vi.fn(),
   tryInstallManagedClusterManagedVllm: vi.fn(async () => ({ kind: "not-selected" as const })),
 }));
@@ -61,6 +62,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
     ...actual,
     ensureDualStationVllmApiKey: mocks.ensureDualStationVllmApiKey,
     recoverHostLocalManagedVllmEndpoint: mocks.recoverHostLocalManagedVllmEndpoint,
+    resolveHostLocalVllmSelection: mocks.resolveHostLocalVllmSelection,
     tryInstallManagedClusterManagedVllm: mocks.tryInstallManagedClusterManagedVllm,
   };
 });
@@ -96,6 +98,7 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     applyVllmInstallProbeDefaults(mocks);
     mocks.getGpuIndicesByName.mockReturnValue([0]);
     mocks.recoverHostLocalManagedVllmEndpoint.mockReturnValue(null);
+    mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
     mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({ kind: "not-selected" });
     ({ errSpy, restore: restoreSpies } = createVllmInstallSpies());
     resetVllmInstallEnv();
@@ -131,6 +134,31 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(reported).toContain("port 8000 is already in use");
     expect(reported).toContain("PID 4242");
     expect(reported).not.toContain("exit 125");
+  });
+
+  it("keeps the fixed local-model profile command when installing vLLM", async () => {
+    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const model = {
+      ...baseProfile.defaultModel,
+      fixedServeCommand: true as const,
+      managedBearerAuth: true as const,
+    };
+    const profile = { ...baseProfile, defaultModel: model };
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+    await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+
+    expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
+    const command = mocks.dockerRunDetached.mock.calls
+      .flatMap((call: unknown[]) => (call[0] as readonly string[]).map(String))
+      .find((value) => value.includes("vllm serve"));
+    expect(command).toBeDefined();
+    expect(command).not.toContain("--trust-remote-code");
   });
 
   it("replaces a validated interrupted managed container that holds the serving port", async () => {
