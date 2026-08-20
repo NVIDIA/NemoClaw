@@ -510,23 +510,14 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
         "esac",
       ]);
 
-      const result = spawnSync(process.execPath, [CLI, "my-assist", "status"], {
-        encoding: "utf-8",
-        timeout: 30_000,
-        env: {
-          ...process.env,
-          HOME: home,
-          PATH: `${binDir}:${process.env.PATH || ""}`,
-          NEMOCLAW_HEALTH_POLL_COUNT: "1",
-          NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
-          NEMOCLAW_STATUS_PROBE_TIMEOUT_MS: "2000",
-          NEMOCLAW_TEST_NO_SLEEP: "1",
-          NEMOCLAW_GATEWAY_PORT: String(port),
-        },
+      const result = runCli(["my-assist", "status"], {
+        NEMOCLAW_GATEWAY_PORT: String(port),
       });
-      const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      expectCliCompleted(result);
+      const { code, stdout, stderr } = result;
+      const combined = `${stdout}\n${stderr}`;
       expect(combined).toContain("container_exited_port_conflict");
-      expect(result.status).not.toBe(0);
+      expect(code).not.toBe(0);
     } finally {
       await new Promise<void>((resolve) => listener.close(() => resolve()));
     }
