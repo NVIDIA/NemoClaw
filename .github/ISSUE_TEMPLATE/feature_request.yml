@@ -30,6 +30,66 @@ body:
       required: false
 
   - type: textarea
+    id: scope
+    attributes:
+      label: Scope and Exclusions
+      description: |
+        What should be included, and what should stay out of scope?
+        Use "unknown" or "not applicable" with a short explanation when needed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: owner
+    attributes:
+      label: Proposed Ongoing Owner
+      description: |
+        Who would own compatibility, upgrades, security review, testing, and user support after merge?
+        Use "unknown" or "not applicable" with a short explanation when needed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: placement
+    attributes:
+      label: Requested Placement and Support Expectations
+      description: |
+        Should this live in canonical NemoClaw, NemoClaw Community, documentation, examples, tests, or another existing project area?
+        Describe the support expectation users should have after merge.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation Plan
+      description: |
+        Which tests, checks, or live evidence should prove the behavior?
+        Use "unknown" with a short explanation when the validation boundary needs maintainer guidance.
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Supported Versions and Platforms
+      description: |
+        Which NemoClaw versions, operating systems, hardware targets, providers, sandboxes, or deployment modes should this support?
+        Use "not applicable" with a short explanation for changes that do not affect compatibility.
+    validations:
+      required: true
+
+  - type: textarea
+    id: security_privacy
+    attributes:
+      label: Security or Privacy Impact
+      description: |
+        Does this affect credentials, policy, sandboxing, networking, user data, logs, telemetry, or external services?
+        Use "none expected" with a short explanation when there is no expected impact.
+    validations:
+      required: true
+
+  - type: textarea
     id: implementation
     attributes:
       label: Implementation Idea
@@ -59,4 +119,6 @@ body:
         - label: I searched existing issues and this is not a duplicate
           required: true
         - label: I described the problem and desired behavior
+          required: true
+        - label: I included scope, ownership, placement, validation, compatibility, and security or privacy impact, using "unknown" or "not applicable" with explanations where needed
           required: true

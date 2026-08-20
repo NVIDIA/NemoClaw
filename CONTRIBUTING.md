@@ -534,6 +534,20 @@ Before opening or approving such a PR, confirm that an accepted issue or design 
 If that decision is missing, stop implementation or review and request maintainer direction.
 Route independent solutions, complete use-case examples, and third-party integrations through [Community Solutions](docs/resources/community-contributions.mdx).
 
+Feature requests must provide enough information for that decision without creating a separate intake system. Use the GitHub feature-request template and answer each scope, ownership, placement, validation, compatibility, and security or privacy question. "Unknown" or "not applicable" is acceptable when it includes a short explanation.
+
+When maintainers accept, request changes to, defer, or decline substantive work, record the decision in the issue, discussion, or pull request before implementation proceeds. Use this public format:
+
+```text
+Decision: accept | request changes | defer | decline
+Reason:
+Placement:
+Accountable maintainer:
+Required validation plan:
+```
+
+For accepted substantive work, name one accountable maintainer and the required validation plan. Small documentation changes and low-risk fixes may still proceed directly to a pull request without a separate decision record.
+
 ### DCO Sign-Off
 
 This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off declaration in every pull request description.
