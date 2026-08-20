@@ -470,12 +470,16 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.readFileSync(path.join(workDir, "full-e2e.log"), "utf8")).not.toContain(
       "nvapi-test-value",
     );
-    expect(
-      JSON.parse(fs.readFileSync(path.join(workDir, "launchable-e2e.json"), "utf8")),
-    ).toMatchObject({
+    const evidence = JSON.parse(fs.readFileSync(path.join(workDir, "launchable-e2e.json"), "utf8"));
+    expect(evidence).toMatchObject({
       candidateSha,
       fullE2e: "passed",
       producer: { runId: "123", status: "success" },
+      validation: {
+        imageSelection: { status: "passed" },
+        runtimeProvenance: { status: "passed" },
+        fullE2E: "passed",
+      },
       boot: {
         bootImage: "projects/brevdevprod/global/images/nemoclaw-test-image",
         sourcePath: "/opt/nemoclaw-image/NemoClaw",
@@ -486,9 +490,39 @@ describe("focused staging Brev Launchable lane", () => {
       },
       workspace: { id: "ws-1" },
     });
+    expect(evidence.validation.runtimeProvenance.checks).toEqual([
+      { field: "schemaVersion", expected: 1, observed: 1, status: "passed" },
+      {
+        field: "sourceRepository",
+        expected: "NVIDIA/NemoClaw",
+        observed: "NVIDIA/NemoClaw",
+        status: "passed",
+      },
+      {
+        field: "sourcePath",
+        expected: "/opt/nemoclaw-image/NemoClaw",
+        observed: "/opt/nemoclaw-image/NemoClaw",
+        status: "passed",
+      },
+      { field: "repoSha", expected: candidateSha, observed: candidateSha, status: "passed" },
+      {
+        field: "provisionSha",
+        expected: candidateSha,
+        observed: candidateSha,
+        status: "passed",
+      },
+      {
+        field: "imageRepositorySha",
+        expected: "b".repeat(40),
+        observed: "b".repeat(40),
+        status: "passed",
+      },
+      { field: "repoClean", expected: true, observed: true, status: "passed" },
+      { field: "runtimeOverrides", expected: false, observed: false, status: "passed" },
+    ]);
   });
 
-  it("blocks E2E for a wrong receipt, incomplete readiness, or booted checkout mismatch", () => {
+  it("blocks workspace execution for a wrong receipt, incomplete readiness, or wrong boot image", () => {
     const receipt = fixture({ receiptSha: "b".repeat(40) });
     const receiptResult = run(receipt.env);
     expect(receiptResult.status).not.toBe(0);
@@ -522,26 +556,157 @@ describe("focused staging Brev Launchable lane", () => {
     expect(wrongImageResult.stderr).toContain("booted image does not match the producer handoff");
     expect(fs.readFileSync(wrongImage.calls, "utf8")).not.toContain("full-e2e.test.ts");
     expect(fs.existsSync(wrongImage.state)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(wrongImage.workDir, "launchable-e2e.json"), "utf8")),
+    ).toMatchObject({
+      validation: {
+        imageSelection: {
+          status: "failed",
+          expected: "projects/brevdevprod/global/images/nemoclaw-test-image",
+          observed: "<redacted>",
+        },
+        runtimeProvenance: { status: "not-run", checks: [] },
+        fullE2E: "not-run",
+      },
+    });
+  });
 
-    [
-      fixture({ repoSha: "b".repeat(40) }),
-      fixture({ provisionSha: "b".repeat(40) }),
-      fixture({ provisionImageRepositorySha: "c".repeat(40) }),
-      fixture({ repoClean: false }),
-      fixture({ runtimeOverrides: true }),
-      fixture({ schemaVersion: 2 }),
-      fixture({ sourceRepository: "example/NemoClaw" }),
-      fixture({ sourcePath: "/home/ubuntu/NemoClaw" }),
-    ].forEach((boot) => {
+  it("records and reports each runtime provenance mismatch before full E2E", () => {
+    const cases = [
+      {
+        options: { repoSha: "b".repeat(40) },
+        field: "repoSha",
+        expected: candidateSha,
+        observed: "b".repeat(40),
+      },
+      {
+        options: { provisionSha: "b".repeat(40) },
+        field: "provisionSha",
+        expected: candidateSha,
+        observed: "b".repeat(40),
+      },
+      {
+        options: { provisionImageRepositorySha: "c".repeat(40) },
+        field: "imageRepositorySha",
+        expected: "b".repeat(40),
+        observed: "c".repeat(40),
+      },
+      { options: { repoClean: false }, field: "repoClean", expected: true, observed: false },
+      {
+        options: { runtimeOverrides: true },
+        field: "runtimeOverrides",
+        expected: false,
+        observed: true,
+      },
+      { options: { schemaVersion: 2 }, field: "schemaVersion", expected: 1, observed: 2 },
+      {
+        options: { sourceRepository: "example/NemoClaw" },
+        field: "sourceRepository",
+        expected: "NVIDIA/NemoClaw",
+        observed: "<redacted>",
+      },
+      {
+        options: { sourcePath: "/home/ubuntu/NemoClaw" },
+        field: "sourcePath",
+        expected: "/opt/nemoclaw-image/NemoClaw",
+        observed: "<redacted>",
+      },
+    ];
+
+    cases.forEach(({ options, field, expected, observed }) => {
+      const boot = fixture(options);
       const bootResult = run(boot.env);
       expect(bootResult.status).not.toBe(0);
-      expect(bootResult.stderr).toContain(
-        "booted image runtime does not match the producer handoff",
+      expect(emittedOutput(bootResult, boot.workDir)).toContain(
+        `Runtime provenance check failed: ${field} expected ${JSON.stringify(expected)}, observed ${JSON.stringify(observed)}`,
       );
       expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
       expect(fs.existsSync(boot.state)).toBe(false);
+      const evidence = JSON.parse(
+        fs.readFileSync(path.join(boot.workDir, "launchable-e2e.json"), "utf8"),
+      );
+      expect(evidence.boot).toMatchObject({
+        bootImage: "projects/brevdevprod/global/images/nemoclaw-test-image",
+        [String(field)]: observed,
+      });
+      expect(evidence.validation).toMatchObject({
+        imageSelection: { status: "passed" },
+        runtimeProvenance: { status: "failed" },
+        fullE2E: "not-run",
+      });
+      expect(evidence.validation.runtimeProvenance.checks).toHaveLength(8);
+      expect(
+        evidence.validation.runtimeProvenance.checks.filter(
+          (check: { status: string }) => check.status === "failed",
+        ),
+      ).toEqual([{ field, expected, observed, status: "failed" }]);
     });
+
+    const multiple = fixture({
+      repoClean: false,
+      repoSha: "b".repeat(40),
+      runtimeOverrides: true,
+    });
+    const multipleResult = run(multiple.env);
+    const multipleOutput = emittedOutput(multipleResult, multiple.workDir);
+    expect(multipleResult.status).not.toBe(0);
+    expect(multipleOutput).toContain("Runtime provenance check failed: repoSha");
+    expect(multipleOutput).toContain("Runtime provenance check failed: repoClean");
+    expect(multipleOutput).toContain("Runtime provenance check failed: runtimeOverrides");
+    expect(fs.readFileSync(multiple.calls, "utf8")).not.toContain("full-e2e.test.ts");
   }, 90_000);
+
+  it("redacts a mismatched boot-image value before retaining failure evidence", () => {
+    const credentialBearingValue =
+      "projects/brevdevprod/global/images/guest-controlled-boot-secret";
+    const boot = fixture({ bootImage: credentialBearingValue });
+    const result = run(boot.env);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("booted image does not match the producer handoff");
+    expect(emittedOutput(result, boot.workDir)).not.toContain(credentialBearingValue);
+    expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
+    const artifact = fs.readFileSync(path.join(boot.workDir, "launchable-e2e.json"), "utf8");
+    expect(artifact).not.toContain(credentialBearingValue);
+    expect(JSON.parse(artifact)).toMatchObject({
+      boot: { bootImage: "<redacted>" },
+      validation: {
+        imageSelection: {
+          status: "failed",
+          expected: "projects/brevdevprod/global/images/nemoclaw-test-image",
+          observed: "<redacted>",
+        },
+        runtimeProvenance: { status: "not-run", checks: [] },
+        fullE2E: "not-run",
+      },
+    });
+  });
+
+  it("redacts unconstrained runtime provenance before retaining or logging it", () => {
+    const credentialBearingValue = "NVIDIA/guest-controlled-secret";
+    const boot = fixture({ sourceRepository: credentialBearingValue });
+    const result = run(boot.env);
+    expect(result.status).not.toBe(0);
+    const output = emittedOutput(result, boot.workDir);
+    expect(output).not.toContain(credentialBearingValue);
+    expect(output).toContain(
+      'Runtime provenance check failed: sourceRepository expected "NVIDIA/NemoClaw", observed "<redacted>"',
+    );
+    expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
+    const artifact = fs.readFileSync(path.join(boot.workDir, "launchable-e2e.json"), "utf8");
+    expect(artifact).not.toContain(credentialBearingValue);
+    const evidence = JSON.parse(artifact);
+    expect(evidence.boot.sourceRepository).toBe("<redacted>");
+    expect(
+      evidence.validation.runtimeProvenance.checks.find(
+        (check: { field: string }) => check.field === "sourceRepository",
+      ),
+    ).toEqual({
+      field: "sourceRepository",
+      expected: "NVIDIA/NemoClaw",
+      observed: "<redacted>",
+      status: "failed",
+    });
+  });
 
   it("reports E2E failure only after verified workspace cleanup", () => {
     const { env, state, workDir } = fixture({ e2eFails: true });
@@ -549,6 +714,16 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("full E2E failed");
     expect(fs.existsSync(state)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "launchable-e2e.json"), "utf8")),
+    ).toMatchObject({
+      fullE2e: "failed",
+      validation: {
+        imageSelection: { status: "passed" },
+        runtimeProvenance: { status: "passed" },
+        fullE2E: "failed",
+      },
+    });
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
     });
@@ -820,6 +995,11 @@ describe("focused staging Brev Launchable lane", () => {
       candidateSha,
       boot: { bootImage: "projects/brevdevprod/global/images/nemoclaw-test-image" },
       fullE2e: "pending",
+      validation: {
+        imageSelection: { status: "passed" },
+        runtimeProvenance: { status: "not-run", checks: [] },
+        fullE2E: "not-run",
+      },
     });
   });
 
