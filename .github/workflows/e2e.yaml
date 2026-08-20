@@ -4000,8 +4000,17 @@ jobs:
           resolve_base openclaw \
             ghcr.io/nvidia/nemoclaw/sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/sandbox-base
+          hermes_index="$(
+            sed -nE \
+              's|^ARG BASE_IMAGE=(ghcr\.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[0-9a-f]{64})$|\1|p' \
+              agents/hermes/Dockerfile
+          )"
+          [[ "$hermes_index" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
+            echo "::error::Hermes Dockerfile must select one immutable reviewed base index" >&2
+            exit 1
+          }
           resolve_base hermes \
-            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest \
+            "$hermes_index" \
             ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
           resolve_base dcode \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest \
@@ -4633,8 +4642,17 @@ jobs:
           resolve_base openclaw \
             ghcr.io/nvidia/nemoclaw/sandbox-base:latest \
             ghcr.io/nvidia/nemoclaw/sandbox-base
+          hermes_index="$(
+            sed -nE \
+              's|^ARG BASE_IMAGE=(ghcr\.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[0-9a-f]{64})$|\1|p' \
+              agents/hermes/Dockerfile
+          )"
+          [[ "$hermes_index" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || {
+            echo "::error::Hermes Dockerfile must select one immutable reviewed base index" >&2
+            exit 1
+          }
           resolve_base hermes \
-            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest \
+            "$hermes_index" \
             ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
           resolve_base dcode \
             ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest \
