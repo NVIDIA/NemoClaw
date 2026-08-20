@@ -563,7 +563,7 @@ describe("focused staging Brev Launchable lane", () => {
         imageSelection: {
           status: "failed",
           expected: "projects/brevdevprod/global/images/nemoclaw-test-image",
-          observed: "projects/brevdevprod/global/images/wrong-image",
+          observed: "<redacted>",
         },
         runtimeProvenance: { status: "not-run", checks: [] },
         fullE2E: "not-run",
@@ -656,8 +656,9 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.readFileSync(multiple.calls, "utf8")).not.toContain("full-e2e.test.ts");
   }, 90_000);
 
-  it("redacts a malformed boot-image value before retaining failure evidence", () => {
-    const credentialBearingValue = "projects/1/global/images/guest-controlled-boot-secret";
+  it("redacts a mismatched boot-image value before retaining failure evidence", () => {
+    const credentialBearingValue =
+      "projects/brevdevprod/global/images/guest-controlled-boot-secret";
     const boot = fixture({ bootImage: credentialBearingValue });
     const result = run(boot.env);
     expect(result.status).not.toBe(0);

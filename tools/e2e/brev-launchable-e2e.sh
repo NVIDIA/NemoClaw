@@ -564,13 +564,11 @@ boot_image="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
 
 if [ "$boot_image" = "$expected_boot_image" ]; then
   image_selection_status=passed
+  reported_boot_image="$boot_image"
 else
   image_selection_status=failed
+  reported_boot_image="<redacted>"
 fi
-reported_boot_image="$(jq -Rr '
-  if (length <= 256) and
-      test("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/global/images/[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$")
-  then . else "<redacted>" end' <<<"$boot_image")"
 jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
   --arg bootImage "$reported_boot_image" --arg expectedBootImage "$expected_boot_image" \
   --arg imageSelectionStatus "$image_selection_status" \
