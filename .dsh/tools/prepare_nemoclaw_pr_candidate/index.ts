@@ -1,43 +1,66 @@
-// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-// SPDX-License-Identifier: Apache-2.0
-
-/* eslint-env node */
-/* global input, tools */
-/* oxlint-disable no-undef -- DSH injects input and tools into authored tool bodies. */
-
-const preflight = await tools.inspect_nemoclaw_pr_candidate({
-  workdir: input.workdir,
-  ...(input.repository ? { repository: input.repository } : {}),
-  ...(input.remote ? { remote: input.remote } : {}),
-  ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
-  refreshBase: input.refreshBase ?? false,
-});
-const validation = await tools.infer_validation_for_changed_files({
-  workdir: input.workdir,
-  baseRef: (input.remote ?? "origin") + "/" + (input.baseBranch ?? "main"),
-});
-const blockers = [...preflight.blockers],
-  warnings = [...preflight.warnings];
-let rendered = null;
-if (input.body) {
-  rendered = await tools.render_nemoclaw_pr_body({
-    ...input.body,
+/**
+ * Compose candidate inspection, validation inference, and optional typed PR body rendering without publishing.
+ */
+export default async function prepare_nemoclaw_pr_candidate(input: {
+  workdir: string;
+  repository?: string;
+  remote?: string;
+  baseBranch?: string;
+  refreshBase?: boolean;
+  body?: {
+    summary: string;
+    changes: string[];
+    relatedIssue?: { number: Integer; keyword: "Fixes" | "Closes" };
+    typeOfChange: "code" | "code-with-docs" | "docs-prose" | "docs-code-samples";
+    tests: {
+      result: "added-or-updated" | "existing" | "not-applicable";
+      evidence?: string;
+      justification?: string;
+    };
+    sensitivePath?: { changed: boolean; reviewEvidence?: string };
+    ciWaiver?: { check: string; approval: string; followUpIssue: Integer };
+    hooks: { passed: boolean; evidence?: string };
+    broadGate?: { passed: boolean; evidence: string };
+    docs?: { buildPassed?: boolean; styleReviewed?: boolean; newPagesValidated?: boolean };
+    dgxStation?: { testedCommit: string; scenario: string; result: string; evidenceUrl: string };
+    dco: { commitsVerified: boolean; name: string; email: string };
+    noSecrets: boolean;
+  };
+}): Promise<Open<{}>> {
+  const preflight = await tools.inspect_nemoclaw_pr_candidate({
+    workdir: input.workdir,
+    ...(input.repository ? { repository: input.repository } : {}),
+    ...(input.remote ? { remote: input.remote } : {}),
+    ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
+    refreshBase: input.refreshBase ?? false,
+  });
+  const validation = await tools.infer_validation_for_changed_files({
     workdir: input.workdir,
     baseRef: (input.remote ?? "origin") + "/" + (input.baseBranch ?? "main"),
   });
-  blockers.push(...rendered.blockers);
-  warnings.push(...rendered.warnings);
-} else
-  warnings.push({
-    code: "body-input-required",
-    message: "Typed PR body evidence is required before publication.",
-  });
-return {
-  preflight,
-  validation,
-  body: rendered?.body ?? null,
-  templateSha: rendered?.templateSha ?? null,
-  readyToPublish: blockers.length === 0 && Boolean(rendered),
-  blockers,
-  warnings,
-};
+  const blockers = [...preflight.blockers],
+    warnings = [...preflight.warnings];
+  let rendered = null;
+  if (input.body) {
+    rendered = await tools.render_nemoclaw_pr_body({
+      ...input.body,
+      workdir: input.workdir,
+      baseRef: (input.remote ?? "origin") + "/" + (input.baseBranch ?? "main"),
+    });
+    blockers.push(...rendered.blockers);
+    warnings.push(...rendered.warnings);
+  } else
+    warnings.push({
+      code: "body-input-required",
+      message: "Typed PR body evidence is required before publication.",
+    });
+  return {
+    preflight,
+    validation,
+    body: rendered?.body ?? null,
+    templateSha: rendered?.templateSha ?? null,
+    readyToPublish: blockers.length === 0 && Boolean(rendered),
+    blockers,
+    warnings,
+  };
+}

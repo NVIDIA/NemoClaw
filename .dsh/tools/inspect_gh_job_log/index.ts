@@ -1,126 +1,151 @@
-// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-// SPDX-License-Identifier: Apache-2.0
-
-/* eslint-env node */
-/* global input, tools */
-/* oxlint-disable no-undef -- DSH injects input and tools into authored tool bodies. */
-
-const repo = input.repo ?? "NVIDIA/NemoClaw";
-const jobId = String(input.jobId);
-if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
-if (!/^\d+$/.test(jobId) || jobId === "0") throw new Error("jobId must be positive");
-const maxLines = Math.max(1, Math.min(500, input.maxLines ?? input.tailLines ?? 120));
-const clipMode = input.clipMode ?? "tail";
-if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
-const contextLines = Math.max(0, Math.min(80, input.contextLines ?? 20));
-const pattern = input.pattern ?? "";
-if (pattern.length > 500) throw new Error("pattern is too long");
-let matcher;
-try {
-  matcher = new RegExp(pattern, "iu");
-} catch (error) {
-  throw new Error(`Invalid pattern: ${String(error)}`);
-}
-const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-const redact = (value) =>
-  String(value)
-    .replace(/(authorization\s*:)[^\r\n]*/gi, "$1 [REDACTED]")
-    .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)\s*=)\s*[^\s]+/g, "$1[REDACTED]")
-    .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
-    .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
-const run = async (command, description, timeoutMs = 30000) => {
-  const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
-  if (result.kind !== "foreground") throw new Error("Unexpected background result");
-  return result;
-};
-const temporary = await run(
-  'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-job-log.XXXXXX"',
-  "Create temporary job log directory",
-);
-if (temporary.exitCode !== 0) throw new Error("Could not create temporary job log directory");
-const directory = temporary.stdout.text.trim();
-if (!directory) throw new Error("Could not create temporary job log directory");
-let code = -1;
-let stderr = "";
-let lines = [];
-let sourceTruncated = false;
-try {
-  const rawPath = directory + "/job.log";
-  const boundedPath = directory + "/job.tail.log";
-  const downloaded = await run(
-    `gh api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} > ${q(rawPath)}`,
-    "Download GitHub Actions job log",
-    60000,
+/**
+ * Inspect a GitHub Actions job log with regex filtering, caller-selected head/tail clipping, and explicit truncation metadata.
+ */
+export default async function inspect_gh_job_log(input: {
+  workdir: string;
+  jobId: Integer | string;
+  repo?: string;
+  pattern?: string;
+  contextLines?: Integer /** Maximum log lines to return after filtering; defaults to 120 and is capped at 500. */;
+  maxLines?: Integer /** Which end of filtered output to retain when clipping; defaults to tail. */;
+  clipMode?: "head" | "tail";
+}): Promise<{
+  jobId: string;
+  repo: string;
+  pattern: string | null;
+  code: Integer;
+  truncated: boolean;
+  matchedLines: Integer;
+  stdout: string;
+  stderr: string;
+  truncationNotice: string | null;
+  truncationReasons: string[];
+  clipMode: "head" | "tail";
+  maxLines: Integer;
+  selectedLines: Integer;
+  returnedLines: Integer;
+  omittedLines: Integer;
+}> {
+  const repo = input.repo ?? "NVIDIA/NemoClaw";
+  const jobId = String(input.jobId);
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("repo must be owner/name");
+  if (!/^\d+$/.test(jobId) || jobId === "0") throw new Error("jobId must be positive");
+  const maxLines = Math.max(1, Math.min(500, input.maxLines ?? 120));
+  const clipMode = input.clipMode ?? "tail";
+  if (!new Set(["head", "tail"]).has(clipMode)) throw new Error("clipMode must be head or tail");
+  const contextLines = Math.max(0, Math.min(80, input.contextLines ?? 20));
+  const pattern = input.pattern ?? "";
+  if (pattern.length > 500) throw new Error("pattern is too long");
+  let matcher;
+  try {
+    matcher = new RegExp(pattern, "iu");
+  } catch (error) {
+    throw new Error(`Invalid pattern: ${String(error)}`);
+  }
+  const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+  const redact = (value) =>
+    String(value)
+      .replace(/(authorization\s*:)[^\r\n]*/gi, "$1 [REDACTED]")
+      .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)\s*=)\s*[^\s]+/g, "$1[REDACTED]")
+      .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
+      .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
+  const run = async (command, description, timeoutMs = 30000) => {
+    const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
+    if (result.kind !== "foreground") throw new Error("Unexpected background result");
+    return result;
+  };
+  const temporary = await run(
+    'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-job-log.XXXXXX"',
+    "Create temporary job log directory",
   );
-  code = downloaded.exitCode ?? -1;
-  stderr = redact(downloaded.stderr.text).slice(-12000);
-  if (code === 0) {
-    const bounded = await run(
-      `bytes=$(wc -c < ${q(rawPath)}); lines=$(wc -l < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d'; else cat -- ${q(rawPath)}; fi | tail -n 20000 > ${q(boundedPath)}; printf '%s %s' "$bytes" "$lines"`,
-      "Bound downloaded GitHub job log",
+  if (temporary.exitCode !== 0) throw new Error("Could not create temporary job log directory");
+  const directory = temporary.stdout.text.trim();
+  if (!directory) throw new Error("Could not create temporary job log directory");
+  let code = -1;
+  let stderr = "";
+  let lines = [];
+  let sourceTruncated = false;
+  try {
+    const rawPath = directory + "/job.log";
+    const boundedPath = directory + "/job.tail.log";
+    const downloaded = await run(
+      `gh api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} > ${q(rawPath)}`,
+      "Download GitHub Actions job log",
+      60000,
     );
-    if (bounded.exitCode !== 0) throw new Error("Could not bound downloaded job log");
-    const [byteText, lineText] = bounded.stdout.text.trim().split(/\s+/, 2);
-    const byteCount = Number(byteText);
-    const lineCount = Number(lineText);
-    sourceTruncated =
-      (Number.isFinite(byteCount) && byteCount > 4000000) ||
-      (Number.isFinite(lineCount) && lineCount > 20000);
-    const content = await tools.read({ file_path: boundedPath, limit: 20000 });
-    lines = content.lines.map((line) => line.text);
-    sourceTruncated ||= content.totalLines > content.lines.length;
+    code = downloaded.exitCode ?? -1;
+    stderr = redact(downloaded.stderr.text).slice(-12000);
+    if (code === 0) {
+      const bounded = await run(
+        `bytes=$(wc -c < ${q(rawPath)}); lines=$(wc -l < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d'; else cat -- ${q(rawPath)}; fi | tail -n 20000 > ${q(boundedPath)}; printf '%s %s' "$bytes" "$lines"`,
+        "Bound downloaded GitHub job log",
+      );
+      if (bounded.exitCode !== 0) throw new Error("Could not bound downloaded job log");
+      const [byteText, lineText] = bounded.stdout.text.trim().split(/\s+/, 2);
+      const byteCount = Number(byteText);
+      const lineCount = Number(lineText);
+      sourceTruncated =
+        (Number.isFinite(byteCount) && byteCount > 4000000) ||
+        (Number.isFinite(lineCount) && lineCount > 20000);
+      const content = await tools.read({ file_path: boundedPath, limit: 20000 });
+      lines = content.lines.map((line) => line.text);
+      sourceTruncated ||= content.totalLines > content.lines.length;
+    }
+  } finally {
+    await run(`rm -rf -- ${q(directory)}`, "Remove temporary job log directory");
   }
-} finally {
-  await run(`rm -rf -- ${q(directory)}`, "Remove temporary job log directory");
-}
-let matchedLines = 0;
-let selected = lines;
-if (pattern) {
-  const indexes = new Set();
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!matcher.test(lines[index])) continue;
-    matchedLines += 1;
-    const start = Math.max(0, index - contextLines);
-    const end = Math.min(lines.length, index + contextLines + 1);
-    for (let selectedIndex = start; selectedIndex < end; selectedIndex += 1)
-      indexes.add(selectedIndex);
+  let matchedLines = 0;
+  let selected = lines;
+  if (pattern) {
+    const indexes = new Set();
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!matcher.test(lines[index])) continue;
+      matchedLines += 1;
+      const start = Math.max(0, index - contextLines);
+      const end = Math.min(lines.length, index + contextLines + 1);
+      for (let selectedIndex = start; selectedIndex < end; selectedIndex += 1)
+        indexes.add(selectedIndex);
+    }
+    selected = [...indexes].sort((a, b) => a - b).map((index) => lines[index]);
   }
-  selected = [...indexes].sort((a, b) => a - b).map((index) => lines[index]);
+  const lineClipped = selected.length > maxLines;
+  const candidates = clipMode === "head" ? selected.slice(0, maxLines) : selected.slice(-maxLines);
+  const output = [];
+  let size = 0;
+  let characterClipped = false;
+  for (const candidate of clipMode === "head" ? candidates : [...candidates].reverse()) {
+    characterClipped ||= candidate.length > 4000;
+    const line = candidate.slice(0, 4000);
+    if (size + line.length + 1 > 40000) break;
+    output.push(line);
+    size += line.length + 1;
+  }
+  if (clipMode === "tail") output.reverse();
+  const byteClipped = output.length < candidates.length;
+  const truncated = sourceTruncated || lineClipped || characterClipped || byteClipped;
+  const truncationReasons = [
+    ...(sourceTruncated ? ["source-log-bounded-before-filtering"] : []),
+    ...(lineClipped ? ["selected-lines-exceeded-maxLines"] : []),
+    ...(characterClipped ? ["selected-line-exceeded-4000-characters"] : []),
+    ...(byteClipped ? ["selected-text-exceeded-40000-characters"] : []),
+  ];
+  return {
+    jobId,
+    repo,
+    pattern: input.pattern ?? null,
+    code,
+    truncated,
+    truncationNotice: truncated
+      ? "TRUNCATED OUTPUT: do not assume omitted log lines are irrelevant or absent."
+      : null,
+    truncationReasons,
+    clipMode,
+    maxLines,
+    selectedLines: selected.length,
+    returnedLines: output.length,
+    omittedLines: Math.max(0, selected.length - output.length),
+    matchedLines,
+    stdout: redact(output.join("\n")),
+    stderr,
+  };
 }
-const lineClipped = selected.length > maxLines;
-const candidates = clipMode === "head" ? selected.slice(0, maxLines) : selected.slice(-maxLines);
-const output = [];
-let size = 0;
-for (const candidate of clipMode === "head" ? candidates : [...candidates].reverse()) {
-  const line = candidate.slice(0, 4000);
-  if (size + line.length + 1 > 40000) break;
-  output.push(line);
-  size += line.length + 1;
-}
-if (clipMode === "tail") output.reverse();
-const byteClipped = output.length < candidates.length;
-const truncated = sourceTruncated || lineClipped || byteClipped;
-const truncationReasons = [
-  ...(sourceTruncated ? ["source-log-bounded-before-filtering"] : []),
-  ...(lineClipped ? ["selected-lines-exceeded-maxLines"] : []),
-  ...(byteClipped ? ["selected-text-exceeded-40000-characters"] : []),
-];
-return {
-  jobId,
-  repo,
-  pattern: input.pattern ?? null,
-  code,
-  truncated,
-  truncationNotice: truncated
-    ? "TRUNCATED OUTPUT: do not assume omitted log lines are irrelevant or absent."
-    : null,
-  truncationReasons,
-  clipMode,
-  maxLines,
-  selectedLines: selected.length,
-  returnedLines: output.length,
-  omittedLines: Math.max(0, selected.length - output.length),
-  matchedLines,
-  stdout: redact(output.join("\n")),
-  stderr,
-};

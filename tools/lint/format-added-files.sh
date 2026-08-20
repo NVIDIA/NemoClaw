@@ -53,7 +53,6 @@ for file in "${candidates[@]}"; do
   fi
   case "${file}" in
     *.cjs | *.cts | *.js | *.jsx | *.mjs | *.mts | *.ts | *.tsx) ;;
-    .dsh/tools/*.json) ;;
     *) continue ;;
   esac
   if [[ "${file}" == .dsh/tools/* ]] || ! git cat-file -e "${base_commit}:${file}" 2>/dev/null; then
