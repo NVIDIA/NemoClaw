@@ -21,6 +21,7 @@ import {
   DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   isPortableExperimentalProfile,
   parseDockerNetworkIpamEntries,
+  PORTABLE_DOCKER_NETWORK_NAME,
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_LOCAL_REGISTRY,
@@ -41,7 +42,9 @@ import {
 } from "./portable-cpu-delegation-preflight";
 
 const REGISTRY_CONTAINER = "nemoclaw-portable-registry";
-const REGISTRY_LABEL = "com.nvidia.nemoclaw.portable=1";
+const REGISTRY_LABEL_NAME = "com.nvidia.nemoclaw.portable";
+const REGISTRY_LABEL_VALUE = "1";
+const REGISTRY_LABEL = `${REGISTRY_LABEL_NAME}=${REGISTRY_LABEL_VALUE}`;
 // Portable onboarding assigned this address to loopback before #9587 moved the
 // host gateway outside the sandbox subnet. Keep the retired value here so an
 // upgraded host cannot silently retain a route that captures sandbox traffic.
@@ -55,6 +58,10 @@ const DOCKER_FIELD_SEPARATOR = "|";
 // value so an upgraded host gets the removal command instead of the generic
 // unexpected-subnet refusal.
 const RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET = "169.254.1.0/24";
+const RETIRED_PORTABLE_DOCKER_NETWORK_GATEWAY = "169.254.1.1";
+const RETIRED_PORTABLE_REGISTRY_IP = "169.254.1.3";
+const FULL_PODMAN_ID_PATTERN = /^[a-f0-9]{64}$/u;
+const AUTO_PODMAN_BRIDGE_INTERFACE_PATTERN = /^podman(?:0|[1-9][0-9]{0,8})$/u;
 const REGISTRY_IMAGE =
   "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 const HOST_COMMAND_TIMEOUT_MS = 30_000;
@@ -122,6 +129,117 @@ function requireCommand(result: SpawnResult, description: string): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseFullPodmanIds(raw: string): readonly string[] {
+  if (raw === "") return [];
+  const lines = raw.split(/\r?\n/u);
+  if (lines.at(-1) === "") lines.pop();
+  if (
+    lines.length === 0 ||
+    lines.some(
+      (line) => line === "" || line !== line.trim() || !FULL_PODMAN_ID_PATTERN.test(line),
+    ) ||
+    new Set(lines).size !== lines.length
+  ) {
+    throw new Error("invalid Podman IDs");
+  }
+  return lines;
+}
+
+function quoteRecoveryArgument(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+interface RetiredPortableNetworkEvidence {
+  readonly networkId: string;
+}
+
+function parseRetiredPortableNetwork(
+  raw: string,
+  expectedName: string,
+): RetiredPortableNetworkEvidence {
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed) || parsed.length !== 1 || !isRecord(parsed[0])) {
+    throw new Error("invalid retired network evidence");
+  }
+  const network = parsed[0];
+  const subnets = network.subnets;
+  const subnet = Array.isArray(subnets) && subnets.length === 1 ? subnets[0] : null;
+  const ipamOptions = network.ipam_options;
+  const labels = network.labels;
+  const options = network.options;
+  const routes = network.routes;
+  if (
+    typeof network.id !== "string" ||
+    !FULL_PODMAN_ID_PATTERN.test(network.id) ||
+    expectedName !== PORTABLE_DOCKER_NETWORK_NAME ||
+    network.name !== expectedName ||
+    network.driver !== "bridge" ||
+    network.internal !== false ||
+    network.ipv6_enabled !== false ||
+    network.dns_enabled !== true ||
+    typeof network.network_interface !== "string" ||
+    !AUTO_PODMAN_BRIDGE_INTERFACE_PATTERN.test(network.network_interface) ||
+    Object.hasOwn(network, "network_dns_servers") ||
+    !isRecord(subnet) ||
+    subnet.subnet !== RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET ||
+    subnet.gateway !== RETIRED_PORTABLE_DOCKER_NETWORK_GATEWAY ||
+    Object.hasOwn(subnet, "lease_range") ||
+    !isRecord(ipamOptions) ||
+    ipamOptions.driver !== "host-local" ||
+    (labels !== undefined &&
+      labels !== null &&
+      (!isRecord(labels) || Object.keys(labels).length)) ||
+    (options !== undefined &&
+      options !== null &&
+      (!isRecord(options) || Object.keys(options).length)) ||
+    (routes !== undefined && routes !== null && (!Array.isArray(routes) || routes.length !== 0))
+  ) {
+    throw new Error("ambiguous retired network evidence");
+  }
+  return { networkId: network.id };
+}
+
+interface RetiredPortableRegistryEvidence {
+  readonly containerId: string;
+  readonly running: boolean;
+}
+
+function parseOwnedRetiredRegistry(
+  raw: string,
+  expectedContainerId: string,
+  networkId: string,
+  networkName: string,
+): RetiredPortableRegistryEvidence {
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed) || parsed.length !== 1 || !isRecord(parsed[0])) {
+    throw new Error("invalid retired registry evidence");
+  }
+  const registry = parsed[0];
+  const config = isRecord(registry.Config) ? registry.Config : null;
+  const labels = config && isRecord(config.Labels) ? config.Labels : null;
+  const state = isRecord(registry.State) ? registry.State : null;
+  const networkSettings = isRecord(registry.NetworkSettings) ? registry.NetworkSettings : null;
+  const networks =
+    networkSettings && isRecord(networkSettings.Networks) ? networkSettings.Networks : null;
+  const networkNames = networks ? Object.keys(networks) : [];
+  const attachment = networks && isRecord(networks[networkName]) ? networks[networkName] : null;
+  if (
+    typeof registry.Id !== "string" ||
+    registry.Id !== expectedContainerId ||
+    !FULL_PODMAN_ID_PATTERN.test(registry.Id) ||
+    registry.Name !== REGISTRY_CONTAINER ||
+    labels?.[REGISTRY_LABEL_NAME] !== REGISTRY_LABEL_VALUE ||
+    typeof state?.Running !== "boolean" ||
+    networkNames.length !== 1 ||
+    networkNames[0] !== networkName ||
+    attachment?.NetworkID !== networkId ||
+    attachment.IPAddress !== RETIRED_PORTABLE_REGISTRY_IP
+  ) {
+    throw new Error("ambiguous retired registry evidence");
+  }
+  return { containerId: registry.Id, running: state.Running };
 }
 
 /**
@@ -437,114 +555,97 @@ function validateOwnedConfigAuthority(input: {
   if (socketPath) assertOwnedDescendants(runtimeDir, path.dirname(socketPath));
 }
 
-interface RetiredNetworkOccupancy {
-  /** Full network ID, so recovery never names an ambiguous network. */
-  readonly networkId: string;
-  /**
-   * Full ID of the sole connected container when that container is the
-   * verified NemoClaw registry. Null when the network has no connected
-   * container.
-   */
-  readonly ownedRegistryId: string | null;
-}
-
-/**
- * Enumerate every container connected to a network still on the retired subnet.
- *
- * `podman network rm` exits non-zero while any container is connected, and
- * `--force` would delete containers NemoClaw does not own. Recovery therefore
- * has to prove the network is empty, or that the verified NemoClaw registry is
- * its only connected container, before it names anything for removal. Anything
- * else — a foreign container, an unreadable probe — yields no removal command
- * at all (#9707).
- *
- * Throws when the local Podman probe cannot be read, so an inspection failure
- * is never mistaken for an empty network.
- */
-function inspectRetiredNetworkOccupancy(
+function retiredPortableNetworkRecovery(
   env: NodeJS.ProcessEnv,
-  docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  podman: NonNullable<PortableHostPreparationDeps["podman"]>,
+  podmanUrl: string,
   networkName: string,
-): RetiredNetworkOccupancy {
-  const identity = docker(["network", "inspect", "--format", "{{.Id}}", networkName], env);
-  requireCommand(identity, "Inspecting the retired portable network identity");
-  const networkId = String(identity.stdout ?? "").trim();
-  if (!networkId) {
-    throw new Error("Inspecting the retired portable network identity returned no network ID");
-  }
-  // `ps -a` covers stopped containers too: a stopped container keeps its
-  // endpoint on the network and still blocks a non-force removal.
-  const connected = docker(
-    [
+  assertSocketAuthority: () => void,
+): never {
+  const run = (args: readonly string[]): SpawnResult => {
+    assertSocketAuthority();
+    try {
+      return podman(["--url", podmanUrl, ...args], env, HOST_COMMAND_TIMEOUT_MS);
+    } finally {
+      assertSocketAuthority();
+    }
+  };
+  const blocked = (): never => {
+    throw new Error(
+      `Network '${networkName}' still uses the retired portable subnet ${RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET}, ` +
+        "but NemoClaw could not verify that it is safe to show recovery commands. No removal " +
+        "commands were produced. Leave the network and connected containers unchanged. Resolve " +
+        "each resource through the lifecycle that created it, then rerun " +
+        "`nemoclaw onboard --experimental-profile portable`.",
+    );
+  };
+
+  let networkId: string;
+  let attachmentIds: readonly string[];
+  let registry: RetiredPortableRegistryEvidence | null = null;
+  try {
+    const networkInspection = run(["network", "inspect", networkName]);
+    requireCommand(networkInspection, "Inspecting the retired portable sandbox network");
+    ({ networkId } = parseRetiredPortableNetwork(
+      String(networkInspection.stdout ?? ""),
+      networkName,
+    ));
+
+    const attachmentInspection = run([
       "ps",
-      "-a",
+      "--all",
       "--no-trunc",
       "--filter",
-      `network=${networkName}`,
+      `network=${networkId}`,
       "--format",
-      `{{.ID}}${DOCKER_FIELD_SEPARATOR}{{.Names}}`,
-    ],
-    env,
-  );
-  requireCommand(connected, "Listing containers connected to the retired portable network");
-  const rows = String(connected.stdout ?? "")
-    .split("\n")
-    .map((row) => row.trim())
-    .filter(Boolean)
-    .map((row) => {
-      const [id, name] = row.split(DOCKER_FIELD_SEPARATOR);
-      return { id: (id ?? "").trim(), name: (name ?? "").trim() };
-    });
-  if (rows.length === 0) return { networkId, ownedRegistryId: null };
-  const [only] = rows;
-  if (rows.length > 1 || !only || only.name !== REGISTRY_CONTAINER || !only.id) {
-    throw retiredPortableSubnetForeignContainerError(networkName);
+      "{{.ID}}",
+    ]);
+    requireCommand(attachmentInspection, "Inspecting retired portable network attachments");
+    attachmentIds = parseFullPodmanIds(String(attachmentInspection.stdout ?? ""));
+    if (attachmentIds.length > 1) return blocked();
+    if (attachmentIds.length === 1) {
+      const containerId = attachmentIds[0]!;
+      const registryInspection = run(["container", "inspect", containerId]);
+      requireCommand(registryInspection, "Inspecting the retired portable registry candidate");
+      registry = parseOwnedRetiredRegistry(
+        String(registryInspection.stdout ?? ""),
+        containerId,
+        networkId,
+        networkName,
+      );
+    }
+  } catch {
+    return blocked();
   }
-  // A same-name container is not proof of ownership. Require the label.
-  const inspection = docker(registryInspectionArgs(networkName), env);
-  requireCommand(inspection, "Inspecting the managed portable registry");
-  const [owner] = String(inspection.stdout ?? "")
-    .trim()
-    .split(DOCKER_FIELD_SEPARATOR);
-  if (owner !== "1") throw retiredPortableSubnetForeignContainerError(networkName);
-  return { networkId, ownedRegistryId: only.id };
-}
 
-function retiredPortableSubnetState(networkName: string): string {
-  return `Network '${networkName}' still uses the retired portable subnet ${RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET}.`;
-}
-
-function retiredPortableSubnetForeignContainerError(networkName: string): Error {
-  return new Error(
-    `${retiredPortableSubnetState(networkName)} A container NemoClaw does not own is connected to it, ` +
-      "so NemoClaw will not name that network or any container for removal. Disconnect or resolve the " +
-      "other container yourself, then rerun `nemoclaw onboard --experimental-profile portable`.",
-  );
-}
-
-function retiredPortableSubnetError(
-  networkName: string,
-  occupancy: RetiredNetworkOccupancy,
-): Error {
-  const rerun = "then rerun `nemoclaw onboard --experimental-profile portable`.";
-  if (occupancy.ownedRegistryId) {
-    return new Error(
-      `${retiredPortableSubnetState(networkName)} The verified NemoClaw registry is its only connected ` +
-        "container. Stop and remove the registry, then remove the network. No step uses `--force`: " +
-        `\`podman stop ${occupancy.ownedRegistryId}\`, \`podman rm ${occupancy.ownedRegistryId}\`, ` +
-        `then \`podman network rm ${occupancy.networkId}\`, ${rerun}`,
+  const commandPrefix = `podman --url ${quoteRecoveryArgument(podmanUrl)}`;
+  const networkCommand = `${commandPrefix} network rm ${networkId}`;
+  if (attachmentIds.length === 0) {
+    throw new Error(
+      `Network '${networkName}' still uses the retired portable subnet ${RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET}. ` +
+        `Run \`${networkCommand}\`. Continue only after this succeeds. Then rerun ` +
+        "`nemoclaw onboard --experimental-profile portable`.",
     );
   }
-  return new Error(
-    `${retiredPortableSubnetState(networkName)} No container is connected to it. Remove it without ` +
-      `\`--force\`: \`podman network rm ${occupancy.networkId}\`, ${rerun}`,
+  if (!registry || attachmentIds[0] !== registry.containerId) return blocked();
+  const stopStep = registry.running
+    ? `Run \`${commandPrefix} container stop ${registry.containerId}\`. Continue only after this succeeds. `
+    : "";
+  throw new Error(
+    `Network '${networkName}' still uses the retired portable subnet ${RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET}. ` +
+      `${stopStep}Run \`${commandPrefix} container rm ${registry.containerId}\`. Continue only after this succeeds. ` +
+      `Then run \`${networkCommand}\`. Continue only after this succeeds. Then rerun ` +
+      "`nemoclaw onboard --experimental-profile portable`.",
   );
 }
 
 function ensurePortableSandboxNetwork(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  podman: NonNullable<PortableHostPreparationDeps["podman"]>,
+  podmanUrl: string,
   networkName: string,
+  assertSocketAuthority: () => void,
 ): void {
   const networkInspection = docker(
     ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
@@ -558,10 +659,7 @@ function ensurePortableSandboxNetwork(
       .map((entry) => entry.subnet)
       .filter((subnet): subnet is string => Boolean(subnet));
     if (subnets.length === 1 && subnets[0] === RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET) {
-      throw retiredPortableSubnetError(
-        networkName,
-        inspectRetiredNetworkOccupancy(env, docker, networkName),
-      );
+      retiredPortableNetworkRecovery(env, podman, podmanUrl, networkName, assertSocketAuthority);
     }
     if (subnets.length !== 1 || subnets[0] !== PORTABLE_DOCKER_NETWORK_SUBNET) {
       throw new Error(
@@ -820,6 +918,12 @@ export function preparePortableExperimentalHost(
   const socketAuthority = readiness.authority;
   deps.qualifyPodman?.(socketAuthority);
   const dockerHost = readiness.dockerHost;
+  const assertVerifiedSocketAuthority = (): void =>
+    (
+      deps.assertSocketAuthority ??
+      deps.runtimeReadiness?.assertSocketAuthority ??
+      assertPodmanSocketAuthority
+    )(socketAuthority);
   console.log(
     `  Portable Podman readiness: ${readiness.timing.mode}; activation ${String(readiness.timing.activationMs)} ms; API ${String(readiness.timing.apiMs)} ms; total ${String(readiness.timing.totalMs)} ms.`,
   );
@@ -852,16 +956,17 @@ export function preparePortableExperimentalHost(
         timeout: HOST_COMMAND_TIMEOUT_MS,
       }));
   rejectRetiredPortableHostGatewayAlias(podmanEnv, ip);
-  ensurePortableSandboxNetwork(podmanEnv, docker, dockerNetworkName);
+  ensurePortableSandboxNetwork(
+    podmanEnv,
+    docker,
+    podman,
+    dockerHost,
+    dockerNetworkName,
+    assertVerifiedSocketAuthority,
+  );
   ensurePortableHostGatewayAlias(podmanEnv, ip, sudo);
   ensureRegistryContainer(podmanEnv, docker, dockerNetworkName);
-  if (socketAuthority) {
-    (
-      deps.assertSocketAuthority ??
-      deps.runtimeReadiness?.assertSocketAuthority ??
-      assertPodmanSocketAuthority
-    )(socketAuthority);
-  }
+  assertVerifiedSocketAuthority();
   return {
     authority: runtimeAuthority,
     socketAuthority,

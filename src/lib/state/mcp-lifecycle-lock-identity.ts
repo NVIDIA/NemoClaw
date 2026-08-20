@@ -72,7 +72,27 @@ export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLo
   );
 }
 
+function readLinuxProcessState(pid: number): string | null {
+  if (process.platform !== "linux") return null;
+  try {
+    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const closeParen = statText.lastIndexOf(")");
+    if (closeParen < 0) return null;
+    return (
+      statText
+        .slice(closeParen + 2)
+        .trim()
+        .split(/\s+/)[0] ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
 function processIsAlive(pid: number): boolean {
+  // kill(pid, 0) succeeds for an unreaped zombie even though it can no longer
+  // own or release a lifecycle lock.
+  if (readLinuxProcessState(pid) === "Z") return false;
   try {
     process.kill(pid, 0);
     return true;
