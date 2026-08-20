@@ -1943,10 +1943,9 @@ require_no_competing_openshell_gateway_user_service() {
   else
     discovery_status=$?
   fi
-  if [[ "$discovery_status" -eq 2 ]]; then
-    return 2
+  if [[ "$discovery_status" -ne 2 ]]; then
+    error "${NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR:-Could not inspect active or enabled user services.}"
   fi
-  error "${NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR:-Could not inspect active or enabled user services.}"
 }
 
 is_nemoclaw_openshell_gateway_user_service() {
@@ -2046,13 +2045,9 @@ install_nemoclaw_openshell_gateway_user_service() {
   require_stable_installer_gateway_management
   [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "external" ]] && return 0
   [[ "$(uname -s)" == "Linux" ]] || return 0
-  local gateway_port competition_status=0 upstream_service_present=false
+  local gateway_port
   gateway_port="$(resolve_nemoclaw_gateway_port)"
-  if require_no_competing_openshell_gateway_user_service "$gateway_port"; then
-    :
-  else
-    competition_status=$?
-  fi
+  require_no_competing_openshell_gateway_user_service "$gateway_port"
   [[ "$gateway_port" -eq 8080 ]] || return 0
 
   local service_dir
@@ -2065,13 +2060,6 @@ install_nemoclaw_openshell_gateway_user_service() {
   fi
 
   if upstream_openshell_gateway_user_service_installed; then
-    upstream_service_present=true
-  fi
-  if [[ "$competition_status" -eq 2 && "$upstream_service_present" == false ]]; then
-    error "The systemd user manager is unavailable, so the installer cannot inspect active or enabled user services before staging the NemoClaw gateway service. Restore the user manager, then rerun NemoClaw."
-  fi
-
-  if [[ "$upstream_service_present" == true ]]; then
     if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
       error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
     fi
@@ -3607,9 +3595,7 @@ preinstall_backup_and_retire_legacy_gateway() {
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
     || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
     require_stable_installer_gateway_management
-    if ! require_no_competing_openshell_gateway_user_service; then
-      error "The systemd user manager is unavailable, so the installer cannot inspect active or enabled user services before retiring the legacy OpenShell gateway. Restore the user manager, then rerun NemoClaw."
-    fi
+    require_no_competing_openshell_gateway_user_service
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \

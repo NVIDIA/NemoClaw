@@ -444,12 +444,11 @@ describe("installer external gateway supervision", () => {
     expect(fixture.output).toContain("competing OpenShell gateway service");
   });
 
-  it("backs up but does not retire a gateway when the user manager is unavailable (#9705)", () => {
+  it("keeps legacy retirement when the user manager is initially unavailable (#9705)", () => {
     const fixture = runLegacyGatewayRetirement("nemoclaw-managed", undefined, false, true);
 
-    expect(fixture.result.status, fixture.output).toBe(1);
-    expect(fixture.effects).toEqual(["backup-all"]);
-    expect(fixture.output).toContain("before retiring the legacy OpenShell gateway");
+    expect(fixture.result.status, fixture.output).toBe(0);
+    expect(fixture.effects).toEqual(["backup-all", "openshell gateway destroy -g nemoclaw"]);
   });
 
   it.each([
