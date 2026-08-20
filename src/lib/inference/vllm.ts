@@ -1671,12 +1671,15 @@ async function runVllmInstall(
       process.env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "",
     ).trim();
     const configuredServingPreset = String(process.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
-    if (
-      configuredManagedClusterPeers ||
-      (configuredServingPreset && configuredServingPreset !== profile.servingCatalog?.presetId)
-    ) {
+    if (configuredManagedClusterPeers) {
       console.error(
-        `  vLLM install failed: this local model profile does not accept ${NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV} or a different ${NEMOCLAW_SERVING_PRESET_ENV}.`,
+        `  vLLM install failed: this local model profile does not accept ${NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV}.`,
+      );
+      return { ok: false };
+    }
+    if (configuredServingPreset && configuredServingPreset !== profile.servingCatalog?.presetId) {
+      console.error(
+        `  vLLM install failed: ${NEMOCLAW_SERVING_PRESET_ENV} must match this local model profile's catalog preset.`,
       );
       return { ok: false };
     }

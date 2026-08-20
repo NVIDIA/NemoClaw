@@ -175,18 +175,28 @@ describe("managed vLLM serving-port guard (#8685)", () => {
   });
 
   it.each([
-    { variable: "NEMOCLAW_VLLM_MODEL", value: "qwen3.6-27b" },
     {
+      label: "NEMOCLAW_VLLM_MODEL",
+      variable: "NEMOCLAW_VLLM_MODEL",
+      value: "qwen3.6-27b",
+    },
+    {
+      label: "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
       variable: "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
       value: JSON.stringify(["--max-num-seqs", "2"]),
     },
-    { variable: "NEMOCLAW_MANAGED_CLUSTER_PEERS", value: "spark-worker.local" },
     {
+      label: "NEMOCLAW_MANAGED_CLUSTER_PEERS",
+      variable: "NEMOCLAW_MANAGED_CLUSTER_PEERS",
+      value: "spark-worker.local",
+    },
+    {
+      label: "a mismatched NEMOCLAW_SERVING_PRESET",
       variable: "NEMOCLAW_SERVING_PRESET",
       value: "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
     },
   ])(
-    "rejects $variable before installing a fixed vLLM local model profile",
+    "rejects $label before installing a fixed vLLM local model profile",
     async ({ variable, value }) => {
       process.env[variable] = value;
       const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
