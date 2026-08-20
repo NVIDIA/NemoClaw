@@ -644,9 +644,15 @@ describe("complete managed-image publication workflow", () => {
     expect(discovery.env?.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
     expect(discovery.env?.NEMOCLAW_E2E_SHARD).toBe("openclaw");
     expect(discovery.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
-    expect(discovery.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
+    const stableSupervisorImage = required(
       stableMcp.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      "stable MCP job is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
     );
+    const discoverySupervisorImage = required(
+      discovery.env?.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      "OpenClaw MCP discovery is missing OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
+    );
+    expect(discoverySupervisorImage).toBe(stableSupervisorImage);
     expect(discovery.env).not.toHaveProperty("E2E_MANAGED_IMAGE_REVISION");
     expect(JSON.stringify(discovery)).not.toContain("secrets.");
     expect(JSON.stringify(discovery)).not.toContain("github.token");
