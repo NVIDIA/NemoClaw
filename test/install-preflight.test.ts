@@ -499,112 +499,120 @@ exit 89
     expect(gitCalls).not.toMatch(/submodule/);
   });
 
-  it("source-checkout: installs OpenShell when missing from PATH (#3989)", {
-    timeout: 20000,
-  }, () => {
-    const {
-      root: tmp,
-      binDir: fakeBin,
-      prefixDir: prefix,
-    } = installerCheckout("nemoclaw-install-source-osh-");
-    const npmLog = path.join(tmp, "npm.log");
-    const openshellLog = path.join(tmp, "install-openshell.log");
-    fs.mkdirSync(path.join(tmp, ".git"));
+  it(
+    "source-checkout: installs OpenShell when missing from PATH (#3989)",
+    {
+      timeout: 20000,
+    },
+    () => {
+      const {
+        root: tmp,
+        binDir: fakeBin,
+        prefixDir: prefix,
+      } = installerCheckout("nemoclaw-install-source-osh-");
+      const npmLog = path.join(tmp, "npm.log");
+      const openshellLog = path.join(tmp, "install-openshell.log");
+      fs.mkdirSync(path.join(tmp, ".git"));
 
-    writeNodeStub(fakeBin);
-    writeDockerOkStub(fakeBin);
-    writeSourceCheckoutNpmStub(fakeBin, { commandLog: true });
+      writeNodeStub(fakeBin);
+      writeDockerOkStub(fakeBin);
+      writeSourceCheckoutNpmStub(fakeBin, { commandLog: true });
 
-    writeSourceCheckoutPackages(tmp);
+      writeSourceCheckoutPackages(tmp);
 
-    fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
-    writeExecutable(
-      path.join(tmp, "scripts", "install-openshell.sh"),
-      `#!/usr/bin/env bash
+      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      writeExecutable(
+        path.join(tmp, "scripts", "install-openshell.sh"),
+        `#!/usr/bin/env bash
 printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
 exit 0
 `,
-    );
-    fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
-    fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
-    fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
+      );
+      fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
 
-    const result = spawnSync("bash", [INSTALLER], {
-      cwd: tmp,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-        NEMOCLAW_REPO_ROOT: tmp,
-        NPM_PREFIX: prefix,
-        NPM_LOG_PATH: npmLog,
-        INSTALL_OPENSHELL_LOG: openshellLog,
-      },
-    });
+      const result = spawnSync("bash", [INSTALLER], {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_REPO_ROOT: tmp,
+          NPM_PREFIX: prefix,
+          NPM_LOG_PATH: npmLog,
+          INSTALL_OPENSHELL_LOG: openshellLog,
+        },
+      });
 
-    expect(result.status).toBe(0);
-    expect(fs.existsSync(openshellLog)).toBe(true);
-    expect(fs.readFileSync(openshellLog, "utf-8")).toMatch(/install-openshell\.sh invoked/);
-  });
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(openshellLog)).toBe(true);
+      expect(fs.readFileSync(openshellLog, "utf-8")).toMatch(/install-openshell\.sh invoked/);
+    },
+  );
 
-  it("source-checkout: skips OpenShell install when openshell is already on PATH (#3989)", {
-    timeout: 20000,
-  }, () => {
-    const {
-      root: tmp,
-      binDir: fakeBin,
-      prefixDir: prefix,
-    } = installerCheckout("nemoclaw-install-source-osh-skip-");
-    const npmLog = path.join(tmp, "npm.log");
-    const openshellLog = path.join(tmp, "install-openshell.log");
-    fs.mkdirSync(path.join(tmp, ".git"));
+  it(
+    "source-checkout: skips OpenShell install when openshell is already on PATH (#3989)",
+    {
+      timeout: 20000,
+    },
+    () => {
+      const {
+        root: tmp,
+        binDir: fakeBin,
+        prefixDir: prefix,
+      } = installerCheckout("nemoclaw-install-source-osh-skip-");
+      const npmLog = path.join(tmp, "npm.log");
+      const openshellLog = path.join(tmp, "install-openshell.log");
+      fs.mkdirSync(path.join(tmp, ".git"));
 
-    writeNodeStub(fakeBin);
-    writeExecutable(
-      path.join(fakeBin, "openshell"),
-      `#!/usr/bin/env bash
+      writeNodeStub(fakeBin);
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "openshell 0.0.39"; exit 0; fi
 exit 0
 `,
-    );
-    writeSourceCheckoutNpmStub(fakeBin, { commandLog: true });
+      );
+      writeSourceCheckoutNpmStub(fakeBin, { commandLog: true });
 
-    writeSourceCheckoutPackages(tmp);
+      writeSourceCheckoutPackages(tmp);
 
-    fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
-    writeExecutable(
-      path.join(tmp, "scripts", "install-openshell.sh"),
-      `#!/usr/bin/env bash
+      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      writeExecutable(
+        path.join(tmp, "scripts", "install-openshell.sh"),
+        `#!/usr/bin/env bash
 printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
 exit 0
 `,
-    );
-    fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
-    fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
-    fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
+      );
+      fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
 
-    const result = spawnSync("bash", [INSTALLER], {
-      cwd: tmp,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-        NEMOCLAW_REPO_ROOT: tmp,
-        NPM_PREFIX: prefix,
-        NPM_LOG_PATH: npmLog,
-        INSTALL_OPENSHELL_LOG: openshellLog,
-      },
-    });
+      const result = spawnSync("bash", [INSTALLER], {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_REPO_ROOT: tmp,
+          NPM_PREFIX: prefix,
+          NPM_LOG_PATH: npmLog,
+          INSTALL_OPENSHELL_LOG: openshellLog,
+        },
+      });
 
-    expect(result.status).toBe(0);
-    expect(fs.existsSync(openshellLog)).toBe(false);
-  });
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(openshellLog)).toBe(false);
+    },
+  );
 
   it("auto-resumes an interrupted onboarding session after Ubuntu 26.04 installer preflight (#3245)", () => {
     const {
@@ -849,21 +857,24 @@ exit 0
     ["the gateway is externally supervised", "externally-supervised", true, 1, false],
     ["gateway lifecycle authority is invalid", "invalid", true, 1, false],
     ["storage remediation is unavailable", "nemoclaw-managed", false, 1, false],
-  ] as const)("applies installer storage admission when %s", (_context, gatewayMode, storageRemediationAvailable, status, onboardRan) => {
-    const fixture = runStorageRemediationInstallerPreflight({
-      gatewayMode,
-      onboardModuleDir: INSTALLER_ONBOARD_MODULE_DIR,
-      readinessModuleDir: INSTALLER_READINESS_MODULE_DIR,
-      storageRemediationAvailable,
-    });
-    expect(fixture.result.status, fixture.output).toBe(status);
-    expect(fixture.onboardRan).toBe(onboardRan);
-    expect(fixture.output).not.toMatch(/unsafe|injected/);
-    expect(fixture.output.includes("Host preflight found issues")).toBe(!onboardRan);
-    expect(fixture.output.includes("Admission finding IDs: host.docker.storage_incompatible")).toBe(
-      !onboardRan,
-    );
-  });
+  ] as const)(
+    "applies installer storage admission when %s",
+    (_context, gatewayMode, storageRemediationAvailable, status, onboardRan) => {
+      const fixture = runStorageRemediationInstallerPreflight({
+        gatewayMode,
+        onboardModuleDir: INSTALLER_ONBOARD_MODULE_DIR,
+        readinessModuleDir: INSTALLER_READINESS_MODULE_DIR,
+        storageRemediationAvailable,
+      });
+      expect(fixture.result.status, fixture.output).toBe(status);
+      expect(fixture.onboardRan).toBe(onboardRan);
+      expect(fixture.output).not.toMatch(/unsafe|injected/);
+      expect(fixture.output.includes("Host preflight found issues")).toBe(!onboardRan);
+      expect(
+        fixture.output.includes("Admission finding IDs: host.docker.storage_incompatible"),
+      ).toBe(!onboardRan);
+    },
+  );
 
   it("rejects Podman through canonical installer admission (#7411)", () => {
     const {
@@ -1040,23 +1051,7 @@ fi`,
       prefixDir: prefix,
     } = installerCheckout("nemoclaw-install-shim-");
     fs.mkdirSync(path.join(tmp, ".local"), { recursive: true });
-
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.19.0"
-  exit 0
-fi
-if [ -n "\${1:-}" ] && [ -f "$1" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
-fi
-if [ "$1" = "-e" ]; then
-  exit 1
-fi
-exit 99
-`,
-    );
+    writeNodeStub(fakeBin, { failInlineEval: true });
 
     writeExecutable(
       path.join(fakeBin, "git"),
@@ -1142,23 +1137,7 @@ exit 0
     fs.mkdirSync(prefixBin, { recursive: true });
     fs.mkdirSync(nvmDir, { recursive: true });
     fs.writeFileSync(path.join(nvmDir, "nvm.sh"), "# stub nvm\n");
-
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.19.0"
-  exit 0
-fi
-if [ -n "\${1:-}" ] && [ -f "$1" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
-fi
-if [ "$1" = "-e" ]; then
-  exit 1
-fi
-exit 99
-`,
-    );
+    writeNodeStub(fakeBin, { failInlineEval: true });
 
     writeExecutable(
       path.join(fakeBin, "git"),
@@ -2313,16 +2292,7 @@ describe("curl-pipe installer release-tag resolution", () => {
     const prefix = checkout.prefixDir;
     const gitLog = path.join(tmp, "git.log");
 
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.19.0"; exit 0; fi
-if [ -n "\${1:-}" ] && [ -f "$1" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
-fi
-if [ "$1" = "-e" ]; then exit 1; fi
-exit 99`,
-    );
+    writeNodeStub(fakeBin, { failInlineEval: true });
 
     writeInstallerLinkNpmStub(fakeBin, { createCli: true, cliVersion: "0.5.0-test" });
 
@@ -2714,6 +2684,7 @@ exit 0`,
       `#!/usr/bin/env bash
 echo "node $*" >> ${JSON.stringify(phaseLog)}
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.19.0"; exit 0; fi
+if [ "\${1:-}" = "--input-type=module" ] && [ "\${2:-}" = "--eval" ]; then exec ${JSON.stringify(process.execPath)} "$@"; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then exit 0; fi
 exit 0`,
     );

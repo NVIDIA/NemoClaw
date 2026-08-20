@@ -7,17 +7,21 @@ import os from "node:os";
 import path from "node:path";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH, writeExecutable } from "./installer-sourced-env";
 
-/** Fake node that reports v22.19.0. */
-export function writeNodeStub(fakeBin: string): void {
+/** Fake node that reports v22.19.0 and can reject short inline probes. */
+export function writeNodeStub(fakeBin: string, options: { failInlineEval?: boolean } = {}): void {
+  const inlineEval = options.failInlineEval
+    ? "exit 1"
+    : `exec ${JSON.stringify(process.execPath)} "$@"`;
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
 if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
+if [ "\${1:-}" = "--input-type=module" ] && [ "\${2:-}" = "--eval" ]; then exec ${JSON.stringify(process.execPath)} "$@"; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
 if [ "$1" = "-e" ]; then
-  exec ${JSON.stringify(process.execPath)} "$@"
+  ${inlineEval}
 fi
 exit 99`,
   );
