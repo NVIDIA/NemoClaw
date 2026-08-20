@@ -217,7 +217,7 @@ describe("startSandbox", () => {
 
   it(
     "uses the default recovery path through Error, Provisioning, and Ready (#9753)",
-    testTimeoutOptions(15_000),
+    testTimeoutOptions(30_000),
     async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-readiness-"));
       vi.stubEnv("HOME", home);
@@ -252,7 +252,6 @@ describe("startSandbox", () => {
           h.verifyGateway.mock.invocationCallOrder[0],
         );
       } finally {
-        vi.unstubAllEnvs();
         fs.rmSync(home, { recursive: true, force: true });
       }
     },

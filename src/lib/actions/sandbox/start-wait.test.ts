@@ -1,15 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
 
 describe("sandbox start readiness", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it("waits through the stopped sandbox Error phase after start (#9753)", () => {
     const harness = createConnectHarness({
       listOutputs: ["alpha Error", "alpha Provisioning", "alpha Ready"],
