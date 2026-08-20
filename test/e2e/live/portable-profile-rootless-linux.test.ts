@@ -127,7 +127,9 @@ async function main(progress: TestProgress): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
 
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-e2e-"));
+  const root = fs.mkdtempSync(
+    path.join(os.userInfo().homedir, ".nemoclaw-portable-e2e-"),
+  );
   const home = path.join(root, "home");
   const binDir = path.join(root, "bin");
   const stateDir = path.join(root, "gateway-state");
@@ -136,6 +138,7 @@ async function main(progress: TestProgress): Promise<void> {
   const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
     .split("\n")
     .some((line) => line.includes(`inet ${PORTABLE_HOST_GATEWAY_IP}/32`));
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
   installPortableProfileSystemctlShim(binDir);
 
@@ -155,12 +158,21 @@ async function main(progress: TestProgress): Promise<void> {
     assert.equal(installerDockerHost, `unix://${runtimeDir}/podman/podman.sock`);
 
     progress.phase("prepare the rootless container runtime");
-    preparePortableExperimentalHost(process.env);
+    const prepared = preparePortableExperimentalHost(process.env, { home });
+    assert.equal(prepared?.authority.configHome, configHome);
     assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
     assert.equal(fs.statSync(path.join(runtimeDir, "podman")).mode & 0o777, 0o700);
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
       /default_rootless_network_cmd = "pasta"/,
+    );
+    const registryConfig = path.join(
+      configHome,
+      "containers/registries.conf.d/99-nemoclaw-portable.conf",
+    );
+    assert.equal(
+      fs.readFileSync(registryConfig, "utf-8"),
+      '[[registry]]\nlocation = "localhost:5000"\ninsecure = true\n',
     );
     assert.match(
       run("ip", ["-o", "-4", "address", "show", "dev", "lo"]),

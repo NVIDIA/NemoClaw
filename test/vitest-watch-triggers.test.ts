@@ -203,6 +203,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test/e2e/support/portable-profile-systemctl-shim.test.ts",
     ]);
+    expect(triggeredBy("test/e2e/live/portable-profile-rootless-linux.test.ts")).toEqual([
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+    ]);
     expect(triggeredBy("test/e2e/fixtures/portable-profile-systemctl-shim.sh")).toEqual([
       "test/e2e/support/portable-profile-systemctl-shim.test.ts",
     ]);
