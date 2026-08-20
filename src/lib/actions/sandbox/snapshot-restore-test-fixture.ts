@@ -199,7 +199,9 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
 );
 export const registerSandboxMock = vi.fn();
 export const reserveSandboxInferenceRouteMock = vi.fn(() => true);
+export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
+export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
 export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
   (
@@ -329,8 +331,9 @@ vi.mock("../../state/registry", () => ({
   }),
   registerSandbox: registerSandboxMock,
   reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
-  removeSandbox: vi.fn(),
+  removeSandbox: removeSandboxMock,
   updateSandbox: updateSandboxMock,
+  finalizePendingSandboxRegistration: finalizePendingSandboxRegistrationMock,
 }));
 
 vi.mock("../../state/sandbox", () => ({
@@ -405,8 +408,10 @@ export function resetSnapshotRestoreMocks(): void {
   }));
   registerSandboxMock.mockReset();
   reserveSandboxInferenceRouteMock.mockReset().mockReturnValue(true);
+  removeSandboxMock.mockReset();
   removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
-  updateSandboxMock.mockReset();
+  updateSandboxMock.mockReset().mockReturnValue(true);
+  finalizePendingSandboxRegistrationMock.mockReset().mockReturnValue(true);
   restoreSandboxStateMock.mockReturnValue({
     success: true,
     restoredDirs: [],

@@ -588,37 +588,40 @@ async function autoCreateSandboxFromSource(
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
   try {
-    registry.registerSandbox({
-      ...srcEntry,
-      name: dstName,
-      createdAt: new Date().toISOString(),
-      policies: [],
-      observabilityEnabled: sourceObservabilityEnabled,
-      // dst has its own lifecycle; don't inherit src's local NIM container
-      // reference, or destroying dst would stop src's NIM.
-      nimContainer: null,
-      // No CUDA proof has run for dst (this auto-create path passes no GPU flags),
-      // so clear src's proof rather than inheriting it — otherwise dst could show
-      // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
-      sandboxGpuProof: null,
-      dashboardPort: dstDashboardPort,
-      // The spread above carries the source's API port; the clone owns its own.
-      hermesApiPort: dstHermesApiPort,
-      // The shared image keeps Hermes' image-baked internal listener port, but
-      // the public WebUI port is a per-sandbox host resource and must follow the
-      // clone's newly allocated dashboard port so rebuild validation converges.
-      hermesDashboardPort:
-        (srcEntry as SandboxEntry).hermesDashboardEnabled === true
-          ? dstDashboardPort
-          : (srcEntry as SandboxEntry).hermesDashboardPort,
-      // A legacy source may have only a gateway name (or neither binding
-      // field). Register the new clone with the complete canonical binding so
-      // stop/start, recovery, and later snapshots can address its gateway.
-      gatewayName: sourceGatewayName,
-      gatewayPort: sourceGatewayPort,
-      ...finalLifecycleRegistration,
-    });
-    cloneHostLocalReservation = null;
+    registry.registerSandbox(
+      {
+        ...srcEntry,
+        name: dstName,
+        createdAt: new Date().toISOString(),
+        policies: [],
+        observabilityEnabled: sourceObservabilityEnabled,
+        // dst has its own lifecycle; don't inherit src's local NIM container
+        // reference, or destroying dst would stop src's NIM.
+        nimContainer: null,
+        // No CUDA proof has run for dst (this auto-create path passes no GPU flags),
+        // so clear src's proof rather than inheriting it — otherwise dst could show
+        // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
+        sandboxGpuProof: null,
+        dashboardPort: dstDashboardPort,
+        // The spread above carries the source's API port; the clone owns its own.
+        hermesApiPort: dstHermesApiPort,
+        // The shared image keeps Hermes' image-baked internal listener port, but
+        // the public WebUI port is a per-sandbox host resource and must follow the
+        // clone's newly allocated dashboard port so rebuild validation converges.
+        hermesDashboardPort:
+          (srcEntry as SandboxEntry).hermesDashboardEnabled === true
+            ? dstDashboardPort
+            : (srcEntry as SandboxEntry).hermesDashboardPort,
+        // A legacy source may have only a gateway name (or neither binding
+        // field). Register the new clone with the complete canonical binding so
+        // stop/start, recovery, and later snapshots can address its gateway.
+        gatewayName: sourceGatewayName,
+        gatewayPort: sourceGatewayPort,
+        ...finalLifecycleRegistration,
+      },
+      undefined,
+      { pending: true },
+    );
   } catch {
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
@@ -626,13 +629,16 @@ async function autoCreateSandboxFromSource(
 
   const sourceAgent = (srcEntry as SandboxEntry).agent || "openclaw";
   if (sourceAgent === "openclaw" && !waitForRestoredSandboxGatewaySupervisor(dstName)) {
-    console.error(
-      `  Sandbox '${dstName}' reached OpenShell Ready, but its managed OpenClaw supervisor did not become ready.`,
-    );
-    console.error("  Snapshot state was not restored into the incomplete clone.");
-    snapshotExit(1);
+    registry.removeSandbox(dstName);
+    releaseCloneHostLocalReservation();
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
-
+  if (!registry.finalizePendingSandboxRegistration(dstName)) {
+    registry.removeSandbox(dstName);
+    releaseCloneHostLocalReservation();
+    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
+  }
+  cloneHostLocalReservation = null;
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }
 

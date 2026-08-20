@@ -625,6 +625,60 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
   });
 
+  it("removes a pending clone registration when finalization fails before snapshot restore", async () => {
+    const entries = new Map<string, f.SandboxRecord>([
+      [
+        "alpha",
+        {
+          name: "alpha",
+          agent: "openclaw",
+          imageTag: "nemoclaw-alpha:test",
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+        },
+      ],
+    ]);
+    f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
+    f.registerSandboxMock.mockImplementation((entry) => entries.set(entry.name, entry));
+    f.removeSandboxMock.mockImplementation((name) => entries.delete(name));
+    f.finalizePendingSandboxRegistrationMock.mockReturnValue(false);
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({
+      exitCode: 1,
+      lines: expect.arrayContaining([
+        "  Snapshot state was not restored and the clone was not registered.",
+      ]),
+    });
+
+    expect(f.registerSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "beta" }),
+      undefined,
+      { pending: true },
+    );
+    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.removeSandboxMock).toHaveBeenCalledWith("beta");
+    expect(f.registerSandboxMock.mock.invocationCallOrder[0]).toBeLessThan(
+      f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0],
+    );
+    expect(f.finalizePendingSandboxRegistrationMock.mock.invocationCallOrder[0]).toBeLessThan(
+      f.removeSandboxMock.mock.invocationCallOrder[0],
+    );
+    expect(entries.has("beta")).toBe(false);
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(f.establishRestoredSandboxGatewayPairingMock).not.toHaveBeenCalled();
+  });
+
   it("blocks a cross-sandbox clone before deleting the target when source policy repair is pending (#7178)", async () => {
     const common = {
       agent: "openclaw",
