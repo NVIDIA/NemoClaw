@@ -120,7 +120,7 @@ esac
   writeExecutable("sleep", "#!/usr/bin/env bash\nexit 0\n");
   writeExecutable(
     "tee",
-    '#!/usr/bin/env bash\n/usr/bin/tee "$@"\nstatus="$?"\nif [[ "$NEMOCLAW_TEST_TEE_FAILURE_MODE" == "always" ]]; then exit 43; fi\nexit "$status"\n',
+    '#!/usr/bin/env bash\nPATH="$NEMOCLAW_TEST_REAL_PATH" command tee "$@"\nstatus="$?"\nif [[ "$NEMOCLAW_TEST_TEE_FAILURE_MODE" == "always" ]]; then exit 43; fi\nexit "$status"\n',
   );
   writeExecutable(
     "curl",
@@ -242,6 +242,7 @@ function runBuild(sourceRoot: string, extraArgs: readonly string[] = []) {
         NEMOCLAW_TEST_REGISTRY_CURL_EXIT: registryCurlExit,
         NEMOCLAW_TEST_REGISTRY_LOG: registryLog,
         NEMOCLAW_TEST_REGISTRY_STATUS: registryStatus,
+        NEMOCLAW_TEST_REAL_PATH: process.env.PATH ?? "",
         NEMOCLAW_TEST_SEED_LOG: seedLog,
         NEMOCLAW_TEST_TEE_FAILURE_MODE: teeFailureMode,
         PATH: `${stubBin}:${process.env.PATH ?? ""}`,
@@ -317,14 +318,17 @@ describe("protected managed-image build-cache boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
 
-    expect(
-      recordedBuildInvocations().every(
-        (invocation) =>
-          !invocation.includes("--cache-to") &&
-          !invocation.includes("--cache-from") &&
-          !invocation.includes("--network none"),
+    expect({
+      openclaw: recordedBuildInvocation("openclaw"),
+      hermes: recordedBuildInvocation("hermes"),
+      "langchain-deepagents-code": recordedBuildInvocation("langchain-deepagents-code"),
+    }).toEqual({
+      openclaw: expect.not.stringMatching(/--cache-to|--cache-from|--network none/),
+      hermes: expect.not.stringMatching(/--cache-to|--cache-from|--network none/),
+      "langchain-deepagents-code": expect.not.stringMatching(
+        /--cache-to|--cache-from|--network none/,
       ),
-    ).toBe(true);
+    });
   });
 
   it("passes each agent one empty absolute cache export root", () => {
@@ -337,13 +341,21 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(cacheRoot)).toBe(true);
     expect(recordedBuildInvocations()).toHaveLength(3);
 
-    expect(
-      ["openclaw", "hermes", "langchain-deepagents-code"].every((agent) =>
-        recordedBuildInvocation(agent).includes(
-          `--cache-to type=local,dest=${realpathSync(cacheRoot)}/${agent},mode=max`,
-        ),
+    expect({
+      openclaw: recordedBuildInvocation("openclaw"),
+      hermes: recordedBuildInvocation("hermes"),
+      "langchain-deepagents-code": recordedBuildInvocation("langchain-deepagents-code"),
+    }).toEqual({
+      openclaw: expect.stringContaining(
+        `--cache-to type=local,dest=${realpathSync(cacheRoot)}/openclaw,mode=max`,
       ),
-    ).toBe(true);
+      hermes: expect.stringContaining(
+        `--cache-to type=local,dest=${realpathSync(cacheRoot)}/hermes,mode=max`,
+      ),
+      "langchain-deepagents-code": expect.stringContaining(
+        `--cache-to type=local,dest=${realpathSync(cacheRoot)}/langchain-deepagents-code,mode=max`,
+      ),
+    });
 
     expect(readFileSync(seedLog, "utf8")).toContain(
       `materialize-locked-npm-cache-seed.mts export --lockfile ${REPO_ROOT}/nemoclaw/package-lock.json --output ${realpathSync(cacheRoot)}/npm-cache-seed`,
@@ -461,19 +473,27 @@ describe("protected managed-image build-cache boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
-    expect(
-      ["openclaw", "hermes", "langchain-deepagents-code"].every((agent) =>
-        recordedBuildInvocation(agent).includes("--network none"),
-      ),
-    ).toBe(true);
+    expect({
+      openclaw: recordedBuildInvocation("openclaw"),
+      hermes: recordedBuildInvocation("hermes"),
+      "langchain-deepagents-code": recordedBuildInvocation("langchain-deepagents-code"),
+    }).toEqual({
+      openclaw: expect.stringContaining("--network none"),
+      hermes: expect.stringContaining("--network none"),
+      "langchain-deepagents-code": expect.stringContaining("--network none"),
+    });
     expect(recordedBuildInvocation("openclaw")).not.toContain("--cache-from");
-    expect(
-      ["hermes", "langchain-deepagents-code"].every((agent) =>
-        recordedBuildInvocation(agent).includes(
-          `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent}`,
-        ),
+    expect({
+      hermes: recordedBuildInvocation("hermes"),
+      "langchain-deepagents-code": recordedBuildInvocation("langchain-deepagents-code"),
+    }).toEqual({
+      hermes: expect.stringContaining(
+        `--cache-from type=local,src=${realpathSync(cacheRoot)}/hermes`,
       ),
-    ).toBe(true);
+      "langchain-deepagents-code": expect.stringContaining(
+        `--cache-from type=local,src=${realpathSync(cacheRoot)}/langchain-deepagents-code`,
+      ),
+    });
     expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
     expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");
     expect(recordedBuildInvocation("langchain-deepagents-code").split(" ")).not.toContain(
@@ -522,8 +542,8 @@ describe("protected managed-image BuildKit transport retry", () => {
     expect(result.status, output).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(4);
     expect(recordedBuildInvocations()[1]).toBe(recordedBuildInvocations()[0]);
-    expect(readFileSync(registryLog, "utf8")).toContain(
-      `/v2/nemoclaw-managed-protected/openclaw/manifests/${REVISION}`,
+    expect(readFileSync(registryLog, "utf8").trim()).toBe(
+      `--silent --show-error --output /dev/null --write-out %{http_code} --head --connect-timeout 5 --max-time 15 --header Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json http://localhost:5000/v2/nemoclaw-managed-protected/openclaw/manifests/${REVISION}`,
     );
     expect(output).toContain(
       "Protected managed-image build retry state agent=openclaw revision-tag=present",
@@ -543,6 +563,7 @@ describe("protected managed-image BuildKit transport retry", () => {
 
     expect(result.status, output).toBe(42);
     expect(recordedBuildInvocations()).toHaveLength(1);
+    expect(existsSync(registryLog)).toBe(false);
     expect(output).toContain("outcome=failed-no-retry agent=openclaw attempt=1/2 docker-exit=42");
   });
 
@@ -592,6 +613,7 @@ describe("protected managed-image BuildKit transport retry", () => {
 
     expect(result.status, output).toBe(43);
     expect(recordedBuildInvocations()).toHaveLength(1);
+    expect(existsSync(registryLog)).toBe(false);
     expect(output).toContain("outcome=failed-no-retry agent=openclaw attempt=1/2 evidence-exit=43");
   });
 

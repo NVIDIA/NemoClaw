@@ -238,16 +238,21 @@ contracts="$work_dir/contracts.jsonl"
 
 confirm_build_retry_state() {
   local agent="$1"
+  local image_repository="$2"
   local manifest_status
   local manifest_state
-  local manifest_url="http://127.0.0.1:5000/v2/nemoclaw-managed-protected/${agent}/manifests/${revision}"
+  local registry_host="${image_repository%%/*}"
+  local repository_path="${image_repository#*/}"
+  local manifest_url="http://${registry_host}/v2/${repository_path}/manifests/${revision}"
 
   if ! manifest_status="$(curl \
     --silent \
     --show-error \
     --output /dev/null \
     --write-out '%{http_code}' \
-    --request HEAD \
+    --head \
+    --connect-timeout 5 \
+    --max-time 15 \
     --header 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json' \
     "$manifest_url")"; then
     echo "::error::Protected managed-image build retry state check failed agent=${agent} transport=curl" >&2
@@ -267,7 +272,8 @@ confirm_build_retry_state() {
 
 run_build_with_retry() {
   local agent="$1"
-  shift
+  local image_repository="$2"
+  shift 2
   local -a build_command=("$@")
   local attempt_log="$work_dir/${agent}-build-attempt.log"
   local max_attempts=2
@@ -310,7 +316,7 @@ run_build_with_retry() {
       return "$build_status"
     fi
 
-    if ! confirm_build_retry_state "$agent"; then
+    if ! confirm_build_retry_state "$agent" "$image_repository"; then
       echo "::error::Protected managed-image build outcome=failed-no-retry agent=${agent} attempt=${attempt}/${max_attempts} failure=state-check" >&2
       return "$build_status"
     fi
@@ -384,7 +390,7 @@ build_agent() {
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
     "$source_root")
-  run_build_with_retry "$agent" "${build_command[@]}"
+  run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
 
   local digest
   digest="$(jq -er '."containerimage.digest"' "$metadata")"
