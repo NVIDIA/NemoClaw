@@ -310,7 +310,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     expect(layerIndex).toBeLessThan(laterIndex);
   }
 
-  it("nemoclaw list never produces silent empty output when openshell is broken", () => {
+  it("nemoclaw list never produces silent empty output when openshell is broken (#2666)", () => {
     const result = runCli(["list"]);
     expectCliCompleted(result);
     const { code, stdout, stderr } = result;
