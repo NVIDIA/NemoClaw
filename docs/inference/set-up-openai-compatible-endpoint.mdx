@@ -154,11 +154,24 @@ $$nemoclaw onboard --experimental-profile portable
 Do not run the loopback deletion command when onboarding reports another interface or prefix.
 Investigate and resolve the conflicting assignment before you rerun onboarding.
 
-If Portable onboarding reports that the `openshell-docker` network still uses the retired `169.254.1.0/24` subnet, remove that network, then rerun Portable onboarding:
+If Portable onboarding reports that the `openshell-docker` network still uses the retired `169.254.1.0/24` subnet, follow the recovery that onboarding prints.
+
+When no registry is attached, remove the network:
 
 ```bash
 podman network rm openshell-docker
 ```
+
+When the managed `nemoclaw-portable-registry` is attached, remove it first, then the network. Run the commands in this order and do not add `--force` to the network removal, which would also delete containers NemoClaw does not own:
+
+```bash
+podman rm -f nemoclaw-portable-registry
+podman network rm openshell-docker
+```
+
+When onboarding reports a container named `nemoclaw-portable-registry` that does not carry the NemoClaw ownership label, NemoClaw does not name it for removal. Resolve that container yourself before you remove the network.
+
+Rerun Portable onboarding after the network is gone.
 </Warning>
 
 The portable profile handles the descriptor as follows:

@@ -433,6 +433,57 @@ function validateOwnedConfigAuthority(input: {
   if (socketPath) assertOwnedDescendants(runtimeDir, path.dirname(socketPath));
 }
 
+/**
+ * Classify the managed registry against a network still on the retired subnet.
+ *
+ * `podman network rm` exits non-zero while a container is attached, and
+ * `--force` would delete containers NemoClaw does not own. Recovery guidance
+ * therefore has to know whether the attached registry carries the NemoClaw
+ * ownership label before it names anything for removal (#9707).
+ */
+function retiredNetworkRegistryAttachment(
+  env: NodeJS.ProcessEnv,
+  docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  networkName: string,
+): "detached" | "owned-attached" | "unmanaged" {
+  const inspection = docker(registryInspectionArgs(networkName), env);
+  if (inspection.error) {
+    requireCommand(inspection, "Inspecting the managed portable registry");
+  }
+  if (inspection.status !== 0) return "detached";
+  const [owner, , networkIp] = String(inspection.stdout ?? "")
+    .trim()
+    .split(/\s+/u);
+  // An absent label, an unexpected label value, or unreadable evidence is an
+  // unmanaged or ambiguous container. Never name it for removal.
+  if (owner !== "1") return "unmanaged";
+  return networkIp ? "owned-attached" : "detached";
+}
+
+function retiredPortableSubnetError(
+  networkName: string,
+  attachment: "detached" | "owned-attached" | "unmanaged",
+): Error {
+  const state = `Network '${networkName}' still uses the retired portable subnet ${RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET}.`;
+  const rerun = "then rerun `nemoclaw onboard --experimental-profile portable`.";
+  if (attachment === "unmanaged") {
+    return new Error(
+      `${state} A container named '${REGISTRY_CONTAINER}' is attached to it but does not carry the ` +
+        "NemoClaw ownership label, so NemoClaw will not name it for removal. Resolve that container " +
+        `yourself, remove the network with \`podman network rm ${networkName}\`, ${rerun}`,
+    );
+  }
+  if (attachment === "owned-attached") {
+    return new Error(
+      `${state} Remove the managed registry first, then the network, without \`--force\`: ` +
+        `\`podman rm -f ${REGISTRY_CONTAINER}\` and \`podman network rm ${networkName}\`, ${rerun}`,
+    );
+  }
+  return new Error(
+    `${state} Remove it with \`podman network rm ${networkName}\`, ${rerun}`,
+  );
+}
+
 function ensurePortableSandboxNetwork(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
@@ -450,10 +501,9 @@ function ensurePortableSandboxNetwork(
       .map((entry) => entry.subnet)
       .filter((subnet): subnet is string => Boolean(subnet));
     if (subnets.length === 1 && subnets[0] === RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET) {
-      throw new Error(
-        `Network '${networkName}' still uses the retired portable subnet ${RETIRED_PORTABLE_DOCKER_NETWORK_SUBNET}. ` +
-          `Remove it with \`podman network rm ${networkName}\`, then rerun ` +
-          "`nemoclaw onboard --experimental-profile portable`.",
+      throw retiredPortableSubnetError(
+        networkName,
+        retiredNetworkRegistryAttachment(env, docker, networkName),
       );
     }
     if (subnets.length !== 1 || subnets[0] !== PORTABLE_DOCKER_NETWORK_SUBNET) {
@@ -469,20 +519,21 @@ function ensurePortableSandboxNetwork(
   }
 }
 
+function registryInspectionArgs(networkName: string): readonly string[] {
+  return [
+    "inspect",
+    "--format",
+    `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
+    REGISTRY_CONTAINER,
+  ];
+}
+
 function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
   networkName: string,
 ): void {
-  const inspection = docker(
-    [
-      "inspect",
-      "--format",
-      `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
-      REGISTRY_CONTAINER,
-    ],
-    env,
-  );
+  const inspection = docker(registryInspectionArgs(networkName), env);
   if (inspection.error) {
     requireCommand(inspection, "Inspecting the managed portable registry");
   }
