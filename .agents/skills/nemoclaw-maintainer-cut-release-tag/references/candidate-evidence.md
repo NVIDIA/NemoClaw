@@ -118,34 +118,83 @@ run_or_stop "merged documentation PR selection" jq -c --arg prefix "$DOCS_PREFIX
 ' "$MERGED_DOCS_PRS" >"$EVIDENCE_DIR/managed-docs-pr-candidates.jsonl"
 ```
 
-For each candidate PR in order, run
-`git merge-base --is-ancestor <mergeCommit.oid> "$CANDIDATE_SHA"`. Keep the first match.
-Record its number, URL, merge commit, final PR commit,
-review decision, and complete check rollup. If there is no match, record `None` for these fields.
+For each candidate PR in order, test its merge commit against `CANDIDATE_SHA`. Keep the first
+ancestor. Stop on an ancestry-check error. Record the selected PR as JSON and assign every field
+before a later command reads it. If there is no match, record `null`, assign `None` to the PR
+fields, and use `PREVIOUS_TAG_SHA` as the conservative coverage point.
 
-For the selected PR, read all commits and files:
+```bash
+SELECTED_DOCS_PR="$EVIDENCE_DIR/selected-docs-pr.json"
+: >"$SELECTED_DOCS_PR"
+while IFS= read -r DOCS_PR_CANDIDATE; do
+  DOCS_PR_MERGE_SHA="$(printf '%s\n' "$DOCS_PR_CANDIDATE" | jq -er '.mergeCommit.oid')"
+  if git merge-base --is-ancestor "$DOCS_PR_MERGE_SHA" "$CANDIDATE_SHA"; then
+    printf '%s\n' "$DOCS_PR_CANDIDATE" >"$SELECTED_DOCS_PR"
+    break
+  else
+    ANCESTRY_STATUS=$?
+    [[ "$ANCESTRY_STATUS" == 1 ]] || stop \
+      "documentation PR ancestry check failed with status $ANCESTRY_STATUS"
+  fi
+done <"$EVIDENCE_DIR/managed-docs-pr-candidates.jsonl"
+
+DOCS_PR_FIELDS="$EVIDENCE_DIR/selected-docs-pr-fields.tsv"
+if [[ -s "$SELECTED_DOCS_PR" ]]; then
+  run_or_stop "selected documentation PR read" jq -er '
+    [
+      (.number | tostring),
+      .url,
+      .mergeCommit.oid,
+      .headRefOid,
+      (.reviewDecision // "None")
+    ] | @tsv
+  ' "$SELECTED_DOCS_PR" >"$DOCS_PR_FIELDS"
+  IFS=$'\t' read -r DOCS_PR_NUMBER DOCS_PR_URL DOCS_PR_MERGE_SHA \
+    DOCS_PR_HEAD_SHA DOCS_PR_REVIEW_DECISION <"$DOCS_PR_FIELDS"
+else
+  printf 'null\n' >"$SELECTED_DOCS_PR"
+  DOCS_PR_NUMBER='None'
+  DOCS_PR_URL='None'
+  DOCS_PR_MERGE_SHA='None'
+  DOCS_PR_HEAD_SHA='None'
+  DOCS_PR_REVIEW_DECISION='None'
+  DOCS_COVERAGE_SHA="$PREVIOUS_TAG_SHA"
+  printf 'None\tNone\tNone\tNone\tNone\n' >"$DOCS_PR_FIELDS"
+fi
+```
+
+Only when a PR was selected, read all of its commits and files and derive its coverage point.
+Otherwise, preserve empty API evidence and the previous-release coverage point without making a
+selected-PR API request.
 
 ```bash
 DOCS_PR_COMMITS="$EVIDENCE_DIR/docs-pr-commits.json"
 DOCS_PR_FILES="$EVIDENCE_DIR/docs-pr-files.json"
-run_or_stop "documentation PR commit read" gh api --paginate --slurp \
-  "repos/NVIDIA/NemoClaw/pulls/${DOCS_PR_NUMBER}/commits?per_page=100" >"$DOCS_PR_COMMITS"
-run_or_stop "documentation PR file read" gh api --paginate --slurp \
-  "repos/NVIDIA/NemoClaw/pulls/${DOCS_PR_NUMBER}/files?per_page=100" >"$DOCS_PR_FILES"
-run_or_stop "documentation coverage commit selection" jq -er \
-  --arg message $'docs: catch up after main\n\nSigned-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>' '
-  [.[][] | select(
-    .commit.message == $message and
-    .commit.author.email == "41898282+github-actions[bot]@users.noreply.github.com" and
-    .commit.verification.verified == true and
-    ((.parents | length) == 1 or (.parents | length) == 2)
-  )] | last | .parents[-1].sha
-' "$DOCS_PR_COMMITS" >"$EVIDENCE_DIR/docs-coverage-sha"
-IFS= read -r DOCS_COVERAGE_SHA <"$EVIDENCE_DIR/docs-coverage-sha"
-run_or_stop "documentation coverage ancestry" git merge-base --is-ancestor \
-  "$DOCS_COVERAGE_SHA" "$CANDIDATE_SHA"
-run_or_stop "documentation changed-path read" jq -r '.[].[] | .filename' \
-  "$DOCS_PR_FILES" >"$EVIDENCE_DIR/docs-changed-paths.txt"
+if [[ "$DOCS_PR_NUMBER" != 'None' ]]; then
+  run_or_stop "documentation PR commit read" gh api --paginate --slurp \
+    "repos/NVIDIA/NemoClaw/pulls/${DOCS_PR_NUMBER}/commits?per_page=100" >"$DOCS_PR_COMMITS"
+  run_or_stop "documentation PR file read" gh api --paginate --slurp \
+    "repos/NVIDIA/NemoClaw/pulls/${DOCS_PR_NUMBER}/files?per_page=100" >"$DOCS_PR_FILES"
+  run_or_stop "documentation coverage commit selection" jq -er \
+    --arg message $'docs: catch up after main\n\nSigned-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>' '
+    [.[][] | select(
+      .commit.message == $message and
+      .commit.author.email == "41898282+github-actions[bot]@users.noreply.github.com" and
+      .commit.verification.verified == true and
+      ((.parents | length) == 1 or (.parents | length) == 2)
+    )] | last | .parents[-1].sha
+  ' "$DOCS_PR_COMMITS" >"$EVIDENCE_DIR/docs-coverage-sha"
+  IFS= read -r DOCS_COVERAGE_SHA <"$EVIDENCE_DIR/docs-coverage-sha"
+  run_or_stop "documentation coverage ancestry" git merge-base --is-ancestor \
+    "$DOCS_COVERAGE_SHA" "$CANDIDATE_SHA"
+  run_or_stop "documentation changed-path read" jq -r '.[].[] | .filename' \
+    "$DOCS_PR_FILES" >"$EVIDENCE_DIR/docs-changed-paths.txt"
+else
+  printf '[]\n' >"$DOCS_PR_COMMITS"
+  printf '[]\n' >"$DOCS_PR_FILES"
+  printf '%s\n' "$DOCS_COVERAGE_SHA" >"$EVIDENCE_DIR/docs-coverage-sha"
+  : >"$EVIDENCE_DIR/docs-changed-paths.txt"
+fi
 ```
 
 Confirm that every changed path is under `docs/**`, `fern/docs.yml`, or `fern/assets/**`. Report
