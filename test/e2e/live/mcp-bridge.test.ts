@@ -45,6 +45,7 @@ import {
 import {
   assertMcpBridgeManagedImageReceipt,
   buildMcpBridgeExactMainEnv,
+  buildMcpBridgeOnboardArgs,
   buildMcpBridgeOnboardEnv,
   requireMcpBridgeTlsCaCert,
 } from "./mcp-bridge-onboard-env.ts";
@@ -126,7 +127,7 @@ async function onboardAgent(
     timeoutMs: 15 * 60_000,
   });
   const result = await host.nemoclaw(
-    ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+    buildMcpBridgeOnboardArgs(),
     {
       artifactName: options.artifactName,
       env: buildMcpBridgeOnboardEnv({

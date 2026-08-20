@@ -17,6 +17,28 @@ const MCP_BRIDGE_QUALIFICATION_ENV_KEYS = [
   "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
 ] as const;
 
+const MCP_BRIDGE_ONBOARD_ARGS = [
+  "onboard",
+  "--non-interactive",
+  "--yes",
+  "--yes-i-accept-third-party-software",
+] as const;
+
+export function buildMcpBridgeOnboardArgs(
+  environment: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const catalogPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
+  return catalogPath
+    ? [
+        "onboard",
+        "--temp-managed-runtime",
+        "--temp-managed-runtime-catalog",
+        catalogPath,
+        ...MCP_BRIDGE_ONBOARD_ARGS.slice(1),
+      ]
+    : [...MCP_BRIDGE_ONBOARD_ARGS];
+}
+
 export function assertMcpBridgeManagedImageReceipt(options: {
   environment?: NodeJS.ProcessEnv;
   workload?: Record<string, unknown>;

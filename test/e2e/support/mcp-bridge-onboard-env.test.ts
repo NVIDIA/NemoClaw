@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertMcpBridgeManagedImageReceipt,
   buildMcpBridgeExactMainEnv,
+  buildMcpBridgeOnboardArgs,
   buildMcpBridgeOnboardEnv,
   requireMcpBridgeTlsCaCert,
 } from "../live/mcp-bridge-onboard-env.ts";
@@ -77,6 +78,34 @@ describe("MCP bridge onboarding environment", () => {
         workload: { kind: "dockerfile" },
       }),
     ).toThrow("must use the exact managed image instead of a Dockerfile build");
+  });
+
+  it("rejects a managed image from a different candidate revision", () => {
+    expect(() =>
+      assertMcpBridgeManagedImageReceipt({
+        environment: {
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
+        },
+        workload: { kind: "managed-image", sourceRevision: "b".repeat(40) },
+      }),
+    ).toThrow("must use the exact managed image instead of a Dockerfile build");
+  });
+
+  it("activates the exact managed runtime when the qualification catalog is present", () => {
+    expect(
+      buildMcpBridgeOnboardArgs({
+        NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: "/tmp/managed-pr-catalog.json",
+      }),
+    ).toEqual([
+      "onboard",
+      "--temp-managed-runtime",
+      "--temp-managed-runtime-catalog",
+      "/tmp/managed-pr-catalog.json",
+      "--non-interactive",
+      "--yes",
+      "--yes-i-accept-third-party-software",
+    ]);
   });
 
   it("passes only exact-main OpenShell overrides after fixed onboarding values", () => {
