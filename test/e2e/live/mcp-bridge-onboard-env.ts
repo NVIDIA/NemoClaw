@@ -10,10 +10,39 @@ const EXACT_MAIN_OVERLAY_KEYS = new Set([
   "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
 ]);
 
+const MCP_BRIDGE_QUALIFICATION_ENV_KEYS = [
+  "NEMOCLAW_E2E_EXPECTED_SHA",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
+  "NEMOCLAW_RUN_LIVE_E2E",
+  "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
+] as const;
+
+export function assertMcpBridgeManagedImageReceipt(options: {
+  environment?: NodeJS.ProcessEnv;
+  workload?: Record<string, unknown>;
+}): void {
+  const environment = options.environment ?? process.env;
+  if (!environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim()) return;
+
+  const expectedRevision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  if (!/^[0-9a-f]{40}$/u.test(expectedRevision)) {
+    throw new Error("managed-image MCP qualification requires an exact candidate revision");
+  }
+  if (
+    options.workload?.kind !== "managed-image" ||
+    options.workload.sourceRevision !== expectedRevision
+  ) {
+    throw new Error(
+      "MCP qualification must use the exact managed image instead of a Dockerfile build",
+    );
+  }
+}
+
 export function buildMcpBridgeExactMainEnv(options: {
   baseEnv?: NodeJS.ProcessEnv;
   envOverlay?: NodeJS.ProcessEnv;
 }): NodeJS.ProcessEnv {
+  const baseEnv = options.baseEnv ?? process.env;
   const envOverlay = options.envOverlay ?? {};
   for (const key of Object.keys(envOverlay)) {
     if (!EXACT_MAIN_OVERLAY_KEYS.has(key)) {
@@ -21,8 +50,14 @@ export function buildMcpBridgeExactMainEnv(options: {
     }
   }
 
+  const qualificationEnv = Object.fromEntries(
+    MCP_BRIDGE_QUALIFICATION_ENV_KEYS.flatMap((key) =>
+      baseEnv[key] === undefined ? [] : [[key, baseEnv[key]]],
+    ),
+  );
   return {
-    ...buildAvailabilityProbeEnv(options.baseEnv),
+    ...buildAvailabilityProbeEnv(baseEnv),
+    ...qualificationEnv,
     ...envOverlay,
   };
 }
