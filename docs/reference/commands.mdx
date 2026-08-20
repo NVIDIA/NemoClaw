@@ -2833,7 +2833,7 @@ $$nemoclaw my-assistant hosts-remove searxng.local
 List the messaging channels supported by the sandbox's agent runtime with a short description.
 Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams are available for OpenClaw and Hermes.
 WeChat, WhatsApp, and Microsoft Teams are experimental.
-OpenClaw also supports experimental Google Chat.
+OpenClaw and Hermes also support experimental Google Chat.
 
 The command reads the sandbox registry to select agent-compatible channel manifests.
 It does not inspect messaging credentials or the live sandbox runtime.
@@ -2858,8 +2858,10 @@ Channel enrollment uses these credential and pairing flows:
   NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes; after rebuild, run `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes.
   This intentionally leaves QR-created mutable session state in the sandbox until you unpair it or clear the durable agent state.
 
-The OpenClaw-only Google Chat channel uses an experimental token-paste flow for the service-account JSON.
-It also requires interactive public-webhook confirmation and prompts for optional app-principal configuration during enrollment.
+Google Chat uses an experimental token-paste flow for the service-account JSON on both agents.
+OpenClaw also requires interactive public-webhook confirmation and prompts for optional app-principal configuration during enrollment.
+Hermes instead prompts for the Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist.
+It pulls inbound events from Pub/Sub over REST and does not create a public webhook endpoint.
 
 After registering the channel, NemoClaw asks whether to rebuild immediately.
 Running `add` for an already-configured channel overwrites the stored credentials where applicable.
