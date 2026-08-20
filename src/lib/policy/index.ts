@@ -57,6 +57,7 @@ import {
   isPolicyDocument,
   isPolicyObject,
   isPresetPolicyMap,
+  materializeLocalInferencePresetPorts,
   type PolicyDocument,
   type PolicyObject,
   type PolicyValue,
@@ -156,7 +157,8 @@ function loadCentralPreset(name: string, options: { reportMissing?: boolean } = 
     if (options.reportMissing !== false) console.error(`  Preset not found: ${name}`);
     return null;
   }
-  return fs.readFileSync(file, "utf-8");
+  const content = fs.readFileSync(file, "utf-8");
+  return name === "local-inference" ? materializeLocalInferencePresetPorts(content) : content;
 }
 
 function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): string | null {
