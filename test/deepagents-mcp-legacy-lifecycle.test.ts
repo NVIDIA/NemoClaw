@@ -53,7 +53,10 @@ const registry = await import("../src/lib/state/registry");
 const bridge = await import("../src/lib/actions/sandbox/mcp-bridge");
 
 const providerId = "11111111-2222-4333-8444-555555555555";
+type ProviderType = "generic" | "nemoclaw-mcp-v1";
+
 let providerExists = true;
+let providerType: ProviderType = "generic";
 let attached = true;
 let adapterRegistered = true;
 let adapterRemovalOutcome = "";
@@ -67,6 +70,7 @@ function lifecycleResult() {
     attached,
     adapterRegistered,
     providerExists,
+    policyState,
     policyApplyCalls,
     markerCalls: adapterCalls.filter((call) =>
       call.includes("deepagents-code --nemoclaw-mcp-capability"),
@@ -96,6 +100,7 @@ beforeEach(() => {
   restoreEnvironmentVariable("OPENSHELL_GATEWAY", ORIGINAL_OPENSHELL_GATEWAY);
 
   providerExists = true;
+  providerType = "generic";
   attached = true;
   adapterRegistered = true;
   adapterRemovalOutcome = "";
@@ -115,7 +120,7 @@ beforeEach(() => {
         return providerExists
           ? {
               status: 0,
-              stdout: `Id: ${providerId}\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n`,
+              stdout: `Id: ${providerId}\nType: ${providerType}\nResource version: 1\nCredential keys: GITHUB_TOKEN\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };
@@ -123,7 +128,7 @@ beforeEach(() => {
         return {
           status: 0,
           stdout: attached
-            ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github nemoclaw-mcp-v1 1 0\n"
+            ? `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-github ${providerType} 1 0\n`
             : "No providers attached to sandbox alpha.\n",
           stderr: "",
         };
@@ -304,7 +309,8 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
 
   it.each(teardownCases)(
     "%s teardown does not require the marker from the old image",
-    async (_label, method) => {
+    async (label, method) => {
+      if (label === "rebuild") providerType = "nemoclaw-mcp-v1";
       const preparation = await bridge[method]("alpha");
 
       expect({ entryCount: preparation.entries.length, ...lifecycleResult() }).toMatchObject({
@@ -319,7 +325,8 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
 
   it.each(teardownCases)(
     "%s teardown fails closed when adapter ownership is unproved",
-    async (_label, method) => {
+    async (label, method) => {
+      if (label === "rebuild") providerType = "nemoclaw-mcp-v1";
       adapterRemovalOutcome = "unowned";
 
       let error = "";
@@ -339,7 +346,27 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
     },
   );
 
+  it("rejects a legacy generic provider before rebuild teardown mutates managed state", async () => {
+    let error = "";
+    try {
+      await bridge.prepareMcpBridgesForRebuild("alpha");
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+
+    expect({ error, ...lifecycleResult() }).toMatchObject({
+      error: expect.stringMatching(/legacy generic profile/),
+      attached: true,
+      adapterRegistered: true,
+      providerExists: true,
+      policyState: "match",
+      policyApplyCalls: 0,
+      markerCalls: 0,
+    });
+  });
+
   it("proves the replacement image marker before post-rebuild reattachment", async () => {
+    providerType = "nemoclaw-mcp-v1";
     const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
     let error = "";
     try {
@@ -359,6 +386,7 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
   });
 
   it("restores the old image when destroy deletion aborts", async () => {
+    providerType = "nemoclaw-mcp-v1";
     const preparation = await bridge.prepareMcpBridgesForDestroy("alpha");
     await bridge.restoreMcpBridgesAfterDestroyAbort("alpha", preparation);
 
@@ -371,6 +399,7 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
   });
 
   it("restores the old image when rebuild deletion aborts", async () => {
+    providerType = "nemoclaw-mcp-v1";
     const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
     await bridge.reattachMcpProvidersAfterRebuildAbort(
       "alpha",
