@@ -44,6 +44,7 @@ import {
   observeMcpCredentialRevision,
   providerMatchesCredential,
   providerShapeDetail,
+  refreshMcpProviderEnvironment,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
@@ -434,6 +435,7 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
+    refreshMcpProviderEnvironment(entry);
     waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? {

@@ -30,6 +30,7 @@ export {
   detachMissingProviderReference,
   detachProvider,
   ensureMcpBridgeProviderProfile,
+  refreshMcpProviderEnvironment,
   providerDetachChangedState,
   upsertMcpProvider,
 } from "./mcp-bridge-provider-mutation";
