@@ -10,8 +10,6 @@
       },
       "numbers": {
         "type": "array",
-        "minItems": 1,
-        "maxItems": 50,
         "items": {
           "type": "integer"
         }
@@ -42,7 +40,10 @@
       },
       "failure": {
         "type": "string",
-        "enum": ["fail-fast", "settled"]
+        "enum": [
+          "fail-fast",
+          "settled"
+        ]
       },
       "dryRun": {
         "type": "boolean"
@@ -52,7 +53,11 @@
         "const": true
       }
     },
-    "required": ["workdir", "numbers", "root"],
+    "required": [
+      "workdir",
+      "numbers",
+      "root"
+    ],
     "additionalProperties": false
   },
   "output": {
@@ -81,7 +86,10 @@
       },
       "failure": {
         "type": "string",
-        "enum": ["fail-fast", "settled"]
+        "enum": [
+          "fail-fast",
+          "settled"
+        ]
       },
       "count": {
         "type": "integer"
@@ -105,7 +113,10 @@
               "type": "string"
             }
           },
-          "required": ["number", "message"],
+          "required": [
+            "number",
+            "message"
+          ],
           "additionalProperties": false
         }
       }

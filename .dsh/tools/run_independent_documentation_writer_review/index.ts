@@ -72,17 +72,16 @@ const run = async (command, description, limit = 30000) => {
     );
   return r.stdout.text;
 };
-const identity64 = await run(
-  'printf \'%s\0%s\0%s\0%s\0%s\0\' "$(git status --porcelain=v1)" "$(git rev-parse --show-toplevel)" "$(git rev-parse HEAD)" "$(git rev-parse ' +
+const identity = await run(
+  "{ git status --porcelain=v1 -z | base64 | tr -d '\n'; printf '\n'; git rev-parse --show-toplevel; git rev-parse HEAD; git rev-parse " +
     q(baseRef + "^{commit}") +
-    ')" "$(git rev-parse ' +
+    "; git rev-parse " +
     q(input.expectedHeadSha + ":AGENTS.md") +
-    ")\" | base64 | tr -d '\n'",
+    "; }",
   "Verify documentation review identity",
 );
-const [status, rootPath, headSha, baseSha, agentsBlobSha] = Buffer.from(identity64.trim(), "base64")
-  .toString("utf8")
-  .split("\0");
+const [status64 = "", rootPath, headSha, baseSha, agentsBlobSha] = identity.trim().split("\n");
+const status = Buffer.from(status64, "base64").toString("utf8");
 if (headSha !== input.expectedHeadSha)
   throw new Error("HEAD changed: expected " + input.expectedHeadSha + ", found " + headSha);
 const requireClean = input.requireClean ?? true;
@@ -173,10 +172,11 @@ const review = await tools.subagent({
 if (review.kind !== "foreground")
   throw new Error("Independent documentation review did not return a foreground result");
 const after64 = await run(
-  "printf '%s\0%s\0' \"$(git rev-parse HEAD)\" \"$(git status --porcelain=v1)\" | base64 | tr -d '\n'",
+  "{ git rev-parse HEAD; git status --porcelain=v1 -z | base64 | tr -d '\n'; printf '\n'; }",
   "Verify documentation review cleanup",
 );
-const [headAfter, statusAfter] = Buffer.from(after64.trim(), "base64").toString("utf8").split("\0");
+const [headAfter, statusAfter64 = ""] = after64.trim().split("\n", 2);
+const statusAfter = Buffer.from(statusAfter64, "base64").toString("utf8");
 if (headAfter !== headSha)
   throw new Error("HEAD changed during review from " + headSha + " to " + headAfter);
 if (requireClean && statusAfter)

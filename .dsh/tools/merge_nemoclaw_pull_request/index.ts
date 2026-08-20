@@ -142,14 +142,14 @@ const methodAllowed =
       ? settings.allow_squash_merge
       : settings.allow_rebase_merge;
 if (!methodAllowed) blockers.push("repository does not permit the selected merge method");
-const acceptedCheckStates = new Set(["SUCCESS", "SKIPPED", "NEUTRAL"]);
+const acceptedCheckStates = new Set(["SUCCESS", "NEUTRAL"]);
 for (const check of requiredChecks) {
   if (check.matches.length === 0) blockers.push("required check is missing: " + check.name);
   else if (
     !check.matches.some(
       (entry) =>
         acceptedCheckStates.has(String(entry.state).toUpperCase()) ||
-        ["pass", "skipping"].includes(String(entry.bucket).toLowerCase()),
+        String(entry.bucket).toLowerCase() === "pass",
     )
   )
     blockers.push("required check is not passing: " + check.name);

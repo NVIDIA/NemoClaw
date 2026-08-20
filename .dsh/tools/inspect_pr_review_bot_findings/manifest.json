@@ -48,5 +48,5 @@
     "required": ["repo", "kind", "truncated", "items", "summary"],
     "additionalProperties": false
   },
-  "revision": 1
+  "revision": 2
 }

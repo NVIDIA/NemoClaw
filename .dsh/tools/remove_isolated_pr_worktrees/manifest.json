@@ -10,11 +10,8 @@
       },
       "paths": {
         "type": "array",
-        "minItems": 1,
-        "maxItems": 50,
         "items": {
-          "type": "string",
-          "maxLength": 4096
+          "type": "string"
         }
       },
       "root": {
@@ -22,7 +19,10 @@
       },
       "failure": {
         "type": "string",
-        "enum": ["fail-fast", "settled"]
+        "enum": [
+          "fail-fast",
+          "settled"
+        ]
       },
       "dryRun": {
         "type": "boolean"
@@ -35,7 +35,12 @@
         "type": "string"
       }
     },
-    "required": ["workdir", "paths", "root", "isolationKey"],
+    "required": [
+      "workdir",
+      "paths",
+      "root",
+      "isolationKey"
+    ],
     "additionalProperties": false
   },
   "output": {
@@ -55,7 +60,10 @@
       },
       "failure": {
         "type": "string",
-        "enum": ["fail-fast", "settled"]
+        "enum": [
+          "fail-fast",
+          "settled"
+        ]
       },
       "count": {
         "type": "integer"
@@ -73,10 +81,17 @@
             },
             "action": {
               "type": "string",
-              "enum": ["planned", "removed"]
+              "enum": [
+                "planned",
+                "removed"
+              ]
             }
           },
-          "required": ["path", "head", "action"],
+          "required": [
+            "path",
+            "head",
+            "action"
+          ],
           "additionalProperties": false
         }
       },
@@ -92,12 +107,24 @@
               "type": "string"
             }
           },
-          "required": ["path", "message"],
+          "required": [
+            "path",
+            "message"
+          ],
           "additionalProperties": false
         }
       }
     },
-    "required": ["dryRun", "apply", "mutated", "root", "failure", "count", "results", "errors"],
+    "required": [
+      "dryRun",
+      "apply",
+      "mutated",
+      "root",
+      "failure",
+      "count",
+      "results",
+      "errors"
+    ],
     "additionalProperties": false
   },
   "revision": 4

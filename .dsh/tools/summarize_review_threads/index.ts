@@ -22,6 +22,8 @@ const s = await tools.collect_pr_feedback({
   workdir: input.workdir,
   bodyLimit: 1000,
 });
+if (s.truncation.inlineComments)
+  throw new Error("Review thread summary exceeded the bounded inline comment snapshot");
 return {
   repo,
   kind: "review-threads",

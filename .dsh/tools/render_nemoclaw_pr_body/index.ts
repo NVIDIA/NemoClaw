@@ -5,6 +5,14 @@
 /* global input, tools */
 /* oxlint-disable no-undef -- DSH injects input and tools into authored tool bodies. */
 
+const rejectControlCharacters = (value) => {
+  if (typeof value === "string" && /[\u0000-\u001f\u007f]/.test(value))
+    throw new Error("PR body inputs must not contain control characters");
+  if (Array.isArray(value)) value.forEach(rejectControlCharacters);
+  else if (value && typeof value === "object")
+    Object.values(value).forEach(rejectControlCharacters);
+};
+rejectControlCharacters(input);
 const baseRef = input.baseRef ?? "origin/main";
 const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 if (
@@ -177,7 +185,7 @@ out.push(
   "",
 );
 return {
-  body: out.join("\n").replaceAll("\u0000", "\u0060"),
+  body: out.join("\n"),
   templateSha: tree.stdout.text.trim(),
   selectedChecks: selected,
   blockers,

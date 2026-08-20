@@ -67,7 +67,11 @@ const readCache = async (path) => {
   return { exists: result.exitCode === 0, text: result.stdout.text };
 };
 const blobAt = async (file, ref) => {
-  const command = "gh api " + quote(`repos/${repo}/contents/${file}?ref=${ref}`) + " --jq .sha";
+  const encodedFile = file.split("/").map(encodeURIComponent).join("/");
+  const command =
+    "gh api " +
+    quote(`repos/${repo}/contents/${encodedFile}?ref=${encodeURIComponent(ref)}`) +
+    " --method GET --jq .sha";
   const result = await tools.bash({
     command,
     workdir: input.workdir,
@@ -84,13 +88,30 @@ const blobAt = async (file, ref) => {
     );
   throw new Error(`GitHub did not read ${file} at ${ref}.\n${detail.trim()}`);
 };
+const readPrFiles = async (number) => {
+  const files = [];
+  for (let page = 1; page <= 31; page += 1) {
+    const text = await run(
+      "gh api " +
+        quote(`repos/${repo}/pulls/${number}/files?per_page=100&page=${page}`) +
+        " --method GET --jq '.[].filename'",
+      "Read pull request files for cache carry",
+    );
+    const pageFiles = text.split("\n").filter(Boolean);
+    if (page === 31 && pageFiles.length)
+      throw new Error(`PR #${number} has more than 3000 files; refusing an incomplete cache carry`);
+    files.push(...pageFiles);
+    if (pageFiles.length < 100) return files;
+  }
+  throw new Error(`PR #${number} file pagination did not complete`);
+};
 const processItem = async (item) => {
   const prText = await run(
     "gh pr view " +
       item.number +
       " --repo " +
       quote(repo) +
-      " --json number,title,url,state,isDraft,headRefOid,files",
+      " --json number,title,url,state,isDraft,headRefOid,changedFiles",
     "Read pull request for cache carry",
   );
   const pr = JSON.parse(prText);
@@ -114,7 +135,11 @@ const processItem = async (item) => {
     source.recommendation?.result !== "APPROVE"
   )
     throw new Error(`PR #${item.number} source cache is not an exact APPROVE recommendation`);
-  const files = (pr.files ?? []).map((file) => String(file.path ?? ""));
+  const files = await readPrFiles(item.number);
+  if (files.length !== pr.changedFiles)
+    throw new Error(
+      `PR #${item.number} file list is incomplete: expected ${pr.changedFiles}, read ${files.length}`,
+    );
   const comparisons = [];
   for (const file of files) {
     const [from, to] = await Promise.all([

@@ -9,13 +9,12 @@
         "type": "string"
       },
       "baseRef": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200,
-        "pattern": "^[^-]"
+        "type": "string"
       }
     },
-    "required": ["workdir"],
+    "required": [
+      "workdir"
+    ],
     "additionalProperties": false
   },
   "output": {
@@ -49,7 +48,13 @@
         }
       }
     },
-    "required": ["baseRef", "files", "branchFiles", "workingTreeFiles", "untrackedFiles"],
+    "required": [
+      "baseRef",
+      "files",
+      "branchFiles",
+      "workingTreeFiles",
+      "untrackedFiles"
+    ],
     "additionalProperties": false
   },
   "revision": 2

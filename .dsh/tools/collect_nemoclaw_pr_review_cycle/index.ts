@@ -22,6 +22,8 @@ const s = await tools.collect_pr_feedback({
   workdir: input.workdir,
   bodyLimit: 2000,
 });
+if (Object.values(s.truncation).some(Boolean))
+  throw new Error("Pull request review cycle exceeded the bounded feedback snapshot");
 const items = [
   ...s.reviews.slice(0, limit).map((x) => ({ type: "review", ...x })),
   ...s.inlineComments.slice(0, limit).map((x) => ({ type: "inline-comment", ...x })),

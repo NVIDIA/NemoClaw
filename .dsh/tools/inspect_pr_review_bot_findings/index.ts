@@ -22,7 +22,10 @@ const s = await tools.collect_pr_feedback({
     workdir: input.workdir,
     bodyLimit: 4000,
   }),
-  bots = /^(github-code-quality|github-advanced-security|coderabbitai|github-actions)(\[bot\])?$/i,
+  completeness = s.truncation.inlineComments || s.truncation.discussionComments;
+if (completeness) throw new Error("Review bot findings exceeded the bounded feedback snapshot");
+const bots =
+    /^(github-code-quality|github-advanced-security|coderabbitai|github-actions)(\[bot\])?$/i,
   rows = [
     ...s.inlineComments.filter((c) => bots.test(c.user)).map((c) => ({ source: "inline", ...c })),
     ...s.discussionComments

@@ -91,6 +91,7 @@ const nulNames = async (cached) =>
     .filter(Boolean);
 const requested = new Set(input.files ?? []);
 const stagedBefore = await nulNames(true);
+const indexTreeBefore = (await run("git write-tree", "Record index state")).trim();
 if (!input.all) {
   const unexpected = stagedBefore.filter((file) => !requested.has(file));
   if (unexpected.length)
@@ -139,10 +140,12 @@ const stagedFiles = await nulNames(true);
 if (!stagedFiles.length) throw new Error("No staged changes after git add; nothing to commit");
 if (!input.all) {
   const unexpected = stagedFiles.filter((file) => !requested.has(file));
-  if (unexpected.length)
+  if (unexpected.length) {
+    await run("git read-tree " + quote(indexTreeBefore), "Restore index after rejected staging");
     throw new Error(
       "Refusing to commit files outside the requested set:\n" + unexpected.join("\n"),
     );
+  }
 }
 const staged = await run("git diff --cached --name-status", "Read staged change summary");
 await run("git commit -s -m " + quote(input.message.trim()), "Create signed-off commit", 120000);

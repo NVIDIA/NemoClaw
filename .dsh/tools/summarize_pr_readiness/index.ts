@@ -18,6 +18,12 @@ const s = await tools.collect_pr_feedback({
   workdir: input.workdir,
   bodyLimit: 4000,
 });
+if (
+  s.truncation.reviews ||
+  s.truncation.inlineComments ||
+  (input.includeComments && s.truncation.discussionComments)
+)
+  throw new Error("Pull request readiness requires a complete bounded feedback snapshot");
 const fail = new Set(["FAILURE", "FAIL", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"]),
   pending = new Set(["PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"]);
 const latest = new Map();

@@ -40,6 +40,8 @@ if (
   throw new Error("PR body must include the configured contributor DCO declaration");
 const head = (await run("git rev-parse HEAD", "Read candidate commit")).stdout.text.trim(),
   branch = (await run("git branch --show-current", "Read candidate branch")).stdout.text.trim();
+if (!branch || branch.startsWith("-") || !/^[A-Za-z0-9._/-]+$/.test(branch))
+  throw new Error("Could not resolve a valid current branch; HEAD may be detached");
 if (head !== input.expectedHeadSha) throw new Error("Local commit does not match expectedHeadSha");
 if (input.headBranch && input.headBranch !== branch)
   throw new Error("Current branch does not match headBranch");

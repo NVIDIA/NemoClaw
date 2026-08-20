@@ -279,5 +279,5 @@
     "required": ["apply", "mutated", "repo", "requested", "counts", "results"],
     "additionalProperties": false
   },
-  "revision": 3
+  "revision": 4
 }

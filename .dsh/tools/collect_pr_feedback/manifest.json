@@ -159,10 +159,27 @@
           "required": ["id", "user", "body", "url"],
           "additionalProperties": false
         }
+      },
+      "truncation": {
+        "type": "object",
+        "properties": {
+          "reviews": { "type": "boolean" },
+          "inlineComments": { "type": "boolean" },
+          "discussionComments": { "type": "boolean" }
+        },
+        "required": ["reviews", "inlineComments", "discussionComments"],
+        "additionalProperties": false
       }
     },
-    "required": ["pull", "checks", "reviews", "inlineComments", "discussionComments"],
+    "required": [
+      "pull",
+      "checks",
+      "reviews",
+      "inlineComments",
+      "discussionComments",
+      "truncation"
+    ],
     "additionalProperties": false
   },
-  "revision": 2
+  "revision": 3
 }

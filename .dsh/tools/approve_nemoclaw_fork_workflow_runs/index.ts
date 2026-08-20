@@ -59,6 +59,31 @@ if (input.workflowNames) {
     throw new Error("workflowNames must contain a non-empty name when provided");
 }
 const allowWorkflowChanges = input.allowWorkflowChanges === true;
+const readPrFiles = async (number) => {
+  const files = [];
+  for (let page = 1; page <= 31; page += 1) {
+    const result = await runGh(
+      [
+        "api",
+        `repos/${repo}/pulls/${number}/files?per_page=100&page=${page}`,
+        "--method",
+        "GET",
+        "--jq",
+        ".[].filename",
+      ],
+      "Read fork pull request files",
+    );
+    requireRead(result, `reading files for PR #${number}`);
+    const pageFiles = result.stdout.split("\n").filter(Boolean);
+    if (page === 31 && pageFiles.length)
+      throw new Error(
+        `PR #${number} has more than 3000 files; refusing an incomplete safety check`,
+      );
+    files.push(...pageFiles);
+    if (pageFiles.length < 100) return files;
+  }
+  throw new Error(`PR #${number} file pagination did not complete`);
+};
 const readPr = async (item) => {
   const result = await runGh(
     [
@@ -68,7 +93,7 @@ const readPr = async (item) => {
       "--repo",
       repo,
       "--json",
-      "number,title,url,state,isDraft,headRefOid,isCrossRepository,maintainerCanModify,files",
+      "number,title,url,state,isDraft,headRefOid,isCrossRepository,maintainerCanModify,changedFiles",
     ],
     "Read fork pull request state",
   );
@@ -84,9 +109,12 @@ const readPr = async (item) => {
     );
   if (pr.isCrossRepository !== true)
     throw new Error(`PR #${item.number} is not a cross-repository fork PR`);
-  const workflowFiles = (pr.files ?? [])
-    .map((x) => String(x.path ?? ""))
-    .filter((x) => x.startsWith(".github/workflows/"));
+  const files = await readPrFiles(item.number);
+  if (files.length !== pr.changedFiles)
+    throw new Error(
+      `PR #${item.number} file list is incomplete: expected ${pr.changedFiles}, read ${files.length}`,
+    );
+  const workflowFiles = files.filter((path) => path.startsWith(".github/workflows/"));
   if (workflowFiles.length && !allowWorkflowChanges)
     throw new Error(
       `PR #${item.number} changes workflow files; set allowWorkflowChanges=true only after reviewing them: ${workflowFiles.join(", ")}`,

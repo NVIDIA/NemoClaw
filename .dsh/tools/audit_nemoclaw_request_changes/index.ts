@@ -170,7 +170,7 @@ await Promise.all(
           '","verdict":"VALID|INVALID|HUMAN_REQUIRED","summary":"<evidence>","invalidFindings":[],"decisionQuestion":null}';
         const childPrompt = [prompt, "Use checkout " + input.workdir + "."].join("\n");
         const before = await run(
-          "printf '%s\0%s\0' \"$(git rev-parse HEAD)\" \"$(git status --porcelain=v1)\" | base64 | tr -d '\n'",
+          "{ git rev-parse HEAD; git status --porcelain=v1 -z | base64 | tr -d '\n'; printf '\n'; }",
           "Record audit checkout identity",
         );
         const agent = await tools.subagent({
@@ -190,7 +190,7 @@ await Promise.all(
           )
           .join("\n");
         const after = await run(
-          "printf '%s\0%s\0' \"$(git rev-parse HEAD)\" \"$(git status --porcelain=v1)\" | base64 | tr -d '\n'",
+          "{ git rev-parse HEAD; git status --porcelain=v1 -z | base64 | tr -d '\n'; printf '\n'; }",
           "Verify audit checkout identity",
         );
         if (after.stdout.text.trim() !== before.stdout.text.trim())

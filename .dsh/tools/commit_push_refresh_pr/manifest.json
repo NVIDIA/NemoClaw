@@ -96,5 +96,5 @@
     "required": ["applied", "mode", "plan", "notes", "resultJson"],
     "additionalProperties": false
   },
-  "revision": 6
+  "revision": 7
 }
