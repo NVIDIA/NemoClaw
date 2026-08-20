@@ -37,14 +37,15 @@ The ACP decision in this change is limited to installing Hermes' existing `acp` 
 `hermes acp --check` is an import-readiness check; it does not validate protocol sessions, editor compatibility, workspace or current-working-directory mapping, file and terminal permissions, or transport and authorization behavior.
 Those integration behaviors require separate product acceptance and end-to-end evidence before NemoClaw can describe them as supported.
 
-The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the patched multi-platform Open Container Initiative (OCI) index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`.
-GitHub Actions workflow `.github/workflows/base-image.yaml` run `31717470863`, attempt 1, built and published that replacement image from source commit `d243ea62509bae7832a23fe8636e947303c19c60`.
-It supersedes index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`, which workflow run `31636995117`, attempt 1, published from source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded`.
+The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the patched multi-platform Open Container Initiative (OCI) index `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5`.
+GitHub Actions workflow `.github/workflows/base-image.yaml` run `32413658315`, attempt 1, built and published that ACP-enabled base image from source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3`.
+It supersedes index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`, which workflow run `31717470863`, attempt 1, published from source commit `d243ea62509bae7832a23fe8636e947303c19c60`.
+That superseded index had replaced index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`, which workflow run `31636995117`, attempt 1, published from source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded`.
 That superseded index had replaced index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`, which workflow run `31031662054`, attempt 1, published from source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c`.
 Both platform base-image jobs completed successfully.
-BuildKit restored the package layers containing the exact `dpkg` assertions for `vim-common=2:9.2.0858-1`, `vim-tiny=2:9.2.0858-1`, and `libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2` from cache.
-The same run built and validated Hermes managed images from child manifests `sha256:da722766abb3c55d20242c3c62b434fd09583e4d92b5682aa98b374a74e05fa1` and `sha256:c7fe8f5664beaf5f10ba990f1317d17a976ece1093a72f9efb0effdf93f3f48d`.
-Both `Validate exact managed image before promotion` steps completed successfully, confirming that the completed-image verifier passed with the selected base image.
+The native package step ran the exact `dpkg` assertions for `vim-common=2:9.2.0858-1`, `vim-tiny=2:9.2.0858-1`, and `libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2`.
+The feature-branch publication intentionally skipped the final managed-image publisher.
+An ACP-enabled final managed image and its capability-union package count remain post-merge publication gates.
 The required live end-to-end (E2E) checks remain an approval gate.
 
 ## Reviewed identities
@@ -199,7 +200,9 @@ The four Microsoft Teams wheels and MSAL declare MIT; Dependency Injector ships 
 For the union-enabled build, the selected wheel stage is mounted read-only and installed with BuildKit networking disabled plus `UV_OFFLINE=true` and `UV_FIND_LINKS` restricted to that mount.
 The union-disabled selector instead resolves an empty scratch stage, so an ordinary custom-plan build does not fetch or depend on the managed-image wheel graph.
 The recorded 95-package amd64 and arm64 capability-union evidence predates ACP and does not validate this candidate.
-Trusted amd64 and arm64 publication probes from an exact source commit must record the updated installed-package count and compatibility before the immutable base selector and registry evidence are updated.
+Trusted base-image jobs from source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` installed and checked 90 packages on both amd64 and arm64, identified `agent-client-protocol==0.9.0`, and completed `hermes acp --check`.
+That evidence validates the selected base, not the managed capability union.
+The final managed-image publication probes must record the union's updated installed-package count and compatibility before an ACP-enabled final managed image is accepted.
 An August 7, 2026 point-in-time OSV query reports no advisory for any of the six overlay package versions; this statement is scoped to that overlay and is not a claim that the complete image is vulnerability-free.
 
 The base image also replaces `python-multipart==0.0.27` with `0.0.32`.
@@ -266,33 +269,50 @@ The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the following publi
 | Repository | `NVIDIA/NemoClaw` |
 | Workflow | `Images / Base Images` |
 | Workflow path | `.github/workflows/base-image.yaml` |
-| Trigger | `push` to `main` |
-| Producer run | `31717470863`, attempt 1, completed successfully |
-| Source commit | `d243ea62509bae7832a23fe8636e947303c19c60` |
-| OCI index | `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837` |
+| Trigger | `workflow_dispatch` on `codex/hermes-acp` |
+| Producer run | `32413658315`, attempt 1, completed successfully |
+| Source commit | `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` |
+| OCI index | `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5` |
 
 The selected index resolves to these platform manifests:
 
 | Platform | Child manifest |
 | --- | --- |
-| `linux/amd64` | `sha256:da722766abb3c55d20242c3c62b434fd09583e4d92b5682aa98b374a74e05fa1` |
-| `linux/arm64` | `sha256:c7fe8f5664beaf5f10ba990f1317d17a976ece1093a72f9efb0effdf93f3f48d` |
+| `linux/amd64` | `sha256:6b12109ac756c97ca723dae50e855372204898bd066d7f303c15f9ba0709930b` |
+| `linux/arm64` | `sha256:964df75c03a6b43a2b722a47e264ba795baaf6e71661784e4632467f5d6a9182` |
 
 Each child manifest has the following per-platform Supply-chain Levels for Software Artifacts (SLSA) provenance:
 
 | Platform | Attestation manifest | SLSA provenance layer | Builder ID |
 | --- | --- | --- | --- |
-| `linux/amd64` | `sha256:e64caf40f33b253c8952b09a4be9bb39c1adc8fd40bfff3f193accf8c722c49e` | `sha256:d1f23fb5dc32da33eae59caa719e331633867d6ed4c8e0662f6a372316314485` | `https://github.com/NVIDIA/NemoClaw/actions/runs/31717470863/attempts/1` |
-| `linux/arm64` | `sha256:77a5dafd8d55132c2fb4ef7af213957b2eebd9b9bfaeb5e24121d6947c5a38d1` | `sha256:11dff2b05f47bc57315490c3483d896ea1b46dc31dd195c283af690ce718fba3` | `https://github.com/NVIDIA/NemoClaw/actions/runs/31717470863/attempts/1` |
+| `linux/amd64` | `sha256:c2c98bb019f2fae9631ef53cf989cececfbe62202f2a74455a1504b8234f832b` | `sha256:0114e4a9c58e0b3f0d7bef1e2eea9fec96613f2d27c6f0173679edd99a44bacc` | `https://github.com/NVIDIA/NemoClaw/actions/runs/32413658315/attempts/1` |
+| `linux/arm64` | `sha256:2d8a5a8544c1d8bdd8ff0a3b1670dfe2d78047707fc04f1df44fba678a0b5d61` | `sha256:816ecdc658db8c6296ee47816db7f4692c1789cd655d4319eafe27d958c78e2a` | `https://github.com/NVIDIA/NemoClaw/actions/runs/32413658315/attempts/1` |
 
-Both in-toto layers use predicate type `https://slsa.dev/provenance/v1` and bind source `https://github.com/NVIDIA/NemoClaw` to revision `d243ea62509bae7832a23fe8636e947303c19c60`.
+Both in-toto layers use predicate type `https://slsa.dev/provenance/v1` and bind source `https://github.com/NVIDIA/NemoClaw` to revision `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3`.
 
 Both platform base-image jobs completed successfully.
-BuildKit restored the package layers containing the exact `dpkg` assertions for `vim-common=2:9.2.0858-1`, `vim-tiny=2:9.2.0858-1`, and `libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2` from cache.
-The same run built and validated Hermes managed images from child manifests `sha256:da722766abb3c55d20242c3c62b434fd09583e4d92b5682aa98b374a74e05fa1` and `sha256:c7fe8f5664beaf5f10ba990f1317d17a976ece1093a72f9efb0effdf93f3f48d`.
-Both `Validate exact managed image before promotion` steps completed successfully, confirming that the completed-image verifier passed with the selected base image.
+Each installed and checked 90 packages, identified `agent-client-protocol==0.9.0`, and printed `Hermes ACP check OK`.
+The feature-branch workflow intentionally skipped the final managed-image publisher, so this evidence does not represent a published ACP-enabled final managed image.
 
 The selected index supersedes the following historical base-image evidence:
+
+| Evidence | Value |
+| --- | --- |
+| Producer run | `31717470863`, attempt 1, completed successfully |
+| Source commit | `d243ea62509bae7832a23fe8636e947303c19c60` |
+| OCI index | `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837` |
+
+The superseded index resolved to the following platform evidence:
+
+| Platform | Child manifest | Attestation manifest | SLSA provenance layer |
+| --- | --- | --- | --- |
+| `linux/amd64` | `sha256:da722766abb3c55d20242c3c62b434fd09583e4d92b5682aa98b374a74e05fa1` | `sha256:e64caf40f33b253c8952b09a4be9bb39c1adc8fd40bfff3f193accf8c722c49e` | `sha256:d1f23fb5dc32da33eae59caa719e331633867d6ed4c8e0662f6a372316314485` |
+| `linux/arm64` | `sha256:c7fe8f5664beaf5f10ba990f1317d17a976ece1093a72f9efb0effdf93f3f48d` | `sha256:77a5dafd8d55132c2fb4ef7af213957b2eebd9b9bfaeb5e24121d6947c5a38d1` | `sha256:11dff2b05f47bc57315490c3483d896ea1b46dc31dd195c283af690ce718fba3` |
+
+The superseded run built and validated pre-ACP Hermes managed images from both exact child manifests.
+Those final-image checks remain historical evidence and do not validate ACP availability.
+
+That prior index had superseded this earlier base-image evidence:
 
 | Evidence | Value |
 | --- | --- |
@@ -300,14 +320,12 @@ The selected index supersedes the following historical base-image evidence:
 | Source commit | `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded` |
 | OCI index | `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c` |
 
-The superseded index resolved to the following platform evidence:
-
 | Platform | Child manifest | Attestation manifest | SLSA provenance layer |
 | --- | --- | --- | --- |
 | `linux/amd64` | `sha256:f82972cf3d1497e60741ae0c48a870030d792e56652ee35868d30099cd93d831` | `sha256:097d246b402e3483ddb408b9744c0e8db63a7cb33efcc781357d49c69fbee7b5` | `sha256:8e51f1fd6c647e30f1c2191862d013e7dbe07af28f4d29bcf09bb4770f04ba22` |
 | `linux/arm64` | `sha256:cbb5f8a11a17e5e5c7ce7499f3c6aff507bac15cc348310923436eb2e0f1536c` | `sha256:47ae417ac5e5c925674b727020ef1c5eaa5b1090bb862a7a2ed1c40ca7e79cf3` | `sha256:461eaf36474d1e02aed2acb60be69b37a4d464bc0805681d975522948ea258af` |
 
-The superseded build included the exact-source dashboard WhatsApp session-path patch and `libexpat1==2.8.3-1` for both supported architectures.
+That earlier build included the exact-source dashboard WhatsApp session-path patch and `libexpat1==2.8.3-1` for both supported architectures.
 Its base-image builds passed the exact-source patch guard, locked bridge install, bridge-to-Baileys option assertions, and controlled-proxy WebSocket `CONNECT` regression.
 
 Earlier reviewed provenance includes the security-refreshed multi-platform index published by run `31006872948`, attempt 1, from source commit `bd668121e918e7b1dda13062bed728f18150360e`:
@@ -369,7 +387,7 @@ Each reviewed commit in the following table is an ancestor of `bd668121e918e7b1d
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
 | `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, and fails the base image build on dependency inconsistency or installed-version drift. The `agents/hermes/Dockerfile` build checks `aiohttp==3.14.3` and `cryptography==50.0.0` in the Hermes sandbox image after messaging package installation. The check runs when `NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION` is `0` or `1`. The base image separately checksum-pins Node.js `24.18.1` and checks uv `0.11.33`. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings, and the WhatsApp bridge removes the Baileys RC9 critical, high, and medium advisory entries. Both architectures still require native bridge and message-path evidence. |
-| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30779271312`, attempt 1, built source commit `340c47857596e7cc347541a0b32fe9e24f201bcd` and published OCI index `sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634`. Run `31006872948`, attempt 1, published security-refreshed index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96` from source commit `bd668121e918e7b1dda13062bed728f18150360e`, whose platform histories check `aiohttp==3.14.3` and `cryptography==50.0.0`. Trusted workflow run `31031662054`, attempt 1, rebuilt source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c` with the exact-source dashboard WhatsApp session-path patch and published replacement OCI index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`. Run `31636995117`, attempt 1, rebuilt source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded` with `libexpat1==2.8.3-1` for amd64 and arm64 and published the superseded OCI index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`. Run `31717470863`, attempt 1, built source commit `d243ea62509bae7832a23fe8636e947303c19c60` and published OCI index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`. Both platform base-image jobs completed successfully, with BuildKit restoring the package layers containing the exact Vim and libssh2 `dpkg` assertions from cache. The same run built and validated Hermes managed images from both exact child manifests, and both `Validate exact managed image before promotion` steps completed successfully. The `agents/hermes/Dockerfile` pins that index. The live final-image WhatsApp evidence is recorded under `HERMES-22`. |
+| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30779271312`, attempt 1, built source commit `340c47857596e7cc347541a0b32fe9e24f201bcd` and published OCI index `sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634`. Run `31006872948`, attempt 1, published security-refreshed index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96` from source commit `bd668121e918e7b1dda13062bed728f18150360e`, whose platform histories check `aiohttp==3.14.3` and `cryptography==50.0.0`. Trusted workflow run `31031662054`, attempt 1, rebuilt source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c` with the exact-source dashboard WhatsApp session-path patch and published replacement OCI index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`. Run `31636995117`, attempt 1, rebuilt source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded` with `libexpat1==2.8.3-1` for amd64 and arm64 and published the superseded OCI index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`. Run `31717470863`, attempt 1, built source commit `d243ea62509bae7832a23fe8636e947303c19c60` and published OCI index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`; its managed-image validation predates ACP. Run `32413658315`, attempt 1, built GitHub-verified source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` and published replacement index `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5`. Both platform jobs installed and checked 90 packages, identified `agent-client-protocol==0.9.0`, and completed `hermes acp --check`; the index and both platform attestations bind the exact source revision. The `agents/hermes/Dockerfile` pins that index. The feature-branch run intentionally skipped final managed-image publication, which remains a post-merge gate. The live final-image WhatsApp evidence is recorded under `HERMES-22`. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |
 | `HERMES-14` | High | Migrate and test | The browser evaluation denylist changed from default-on to opt-in. Generated configuration explicitly writes `browser.restrict_evaluate: true`, including when managed browser-gateway settings are merged, so the upgrade does not broaden page-context access. |
 | `HERMES-15` | Medium | Migrate and test | The omitted gateway session-reset policy changed from bounded daily and idle expiry to no automatic reset. Generated configuration explicitly writes the complete outgoing reset and notification policy to preserve the retention bound without inheriting mutable dependency defaults. |
@@ -409,10 +427,10 @@ The review records the following source and test evidence.
 The review records the following publication and registry evidence.
 
 - Hermes CI run `29768400292`, PyPI publication run `29768427462`, and Docker publication run `29768440304` completed successfully.
-- GitHub Actions workflow `.github/workflows/base-image.yaml` run `31717470863`, attempt 1, published the selected patched `linux/amd64` and `linux/arm64` base images and OCI index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`; run `31636995117`, attempt 1, published the superseded index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`; run `31031662054`, attempt 1, published the preceding patched index; and run `31006872948`, attempt 1, published the security-refreshed index.
-- Both platform base-image jobs in run `31717470863` completed successfully. BuildKit restored the package layers containing the exact `dpkg` assertions for `vim-common=2:9.2.0858-1`, `vim-tiny=2:9.2.0858-1`, and `libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2` from cache.
-- The same run built and validated Hermes managed images from both exact child manifests.
-- Both `Validate exact managed image before promotion` steps completed successfully, confirming that the completed-image verifier passed with the selected base image.
+- GitHub Actions workflow `.github/workflows/base-image.yaml` run `32413658315`, attempt 1, published the selected ACP-enabled `linux/amd64` and `linux/arm64` base images and OCI index `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5`; run `31717470863`, attempt 1, published the superseded pre-ACP index; run `31636995117`, attempt 1, published the preceding index; run `31031662054`, attempt 1, published the preceding patched index; and run `31006872948`, attempt 1, published the security-refreshed index.
+- Both platform base-image jobs in run `32413658315` installed and checked 90 packages, identified `agent-client-protocol==0.9.0`, and completed `hermes acp --check`.
+- The selected index contains exact amd64 and arm64 image manifests plus SLSA provenance that binds source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3` to the workflow run.
+- The feature-branch workflow skipped the final managed-image publisher. ACP-enabled final managed-image validation and publication remain post-merge gates.
 - PyPI Trusted Publisher attestations bind both `hermes-agent==0.19.0` artifacts to source commit `3ef6bbd201263d354fd83ec55b3c306ded2eb72a`.
 - The npm registry-integrity check matches the `hermes-agent==0.19.0` cross-check value recorded in this review.
 - OCI inspection records the immutable index, both child manifests, both attestation manifests, and their per-platform SLSA provenance layers.
