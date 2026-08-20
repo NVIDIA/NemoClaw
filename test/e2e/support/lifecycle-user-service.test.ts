@@ -70,6 +70,8 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
 
       expect(fs.existsSync(unit)).toBe(false);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager",
+        "--user list-unit-files --type=service --state=enabled,enabled-runtime --no-legend --plain --no-pager",
         "--user daemon-reload",
         "--user cat openshell-gateway",
         "--user enable nemoclaw-openshell-gateway",
