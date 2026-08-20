@@ -11,6 +11,7 @@ import {
   createContextCapture as contextCapture,
   createDriftingContextCapture,
 } from "../../../../test/helpers/docker-operation-authority-test-helpers";
+import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { createDockerLlamaCppOperationAuthority } from "./docker-llama-cpp-operation";
 import {
   createDockerOperationAuthority,
@@ -136,6 +137,65 @@ describe("Docker operation authority", () => {
     });
 
     expect(second.engine.authorityId).not.toBe(first.engine.authorityId);
+  });
+
+  it("keeps managed llama.cpp Docker authority after onboarding resumes (#9585)", () => {
+    const executableRoot = fakeDocker("qualified");
+    const home = fakeExecutableRoot();
+    const localBin = path.join(home, ".local", "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeFakeExecutable(localBin, "openshell", "printf 'openshell\\n'");
+    const common = {
+      HOME: home,
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+    };
+    const installed = createDockerLlamaCppOperationAuthority({
+      ...common,
+      PATH: `${localBin}${path.delimiter}${executableRoot}`,
+    });
+    const resumedEnvironment = {
+      ...common,
+      PATH: executableRoot,
+    };
+    const resumed = createDockerLlamaCppOperationAuthority(resumedEnvironment);
+
+    expect(resumedEnvironment.PATH).toBe(executableRoot);
+    expect(resumed.engine.authorityId).toBe(installed.engine.authorityId);
+    expect(dockerOperationBindingSha256(resumed.engine)).toBe(
+      dockerOperationBindingSha256(installed.engine),
+    );
+  });
+
+  it("does not trust a non-executable user-local OpenShell path (#9585)", () => {
+    const executableRoot = fakeDocker("qualified");
+    const home = fakeExecutableRoot();
+    const localBin = path.join(home, ".local", "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(path.join(localBin, "openshell"), "not executable\n", { mode: 0o600 });
+    const environment = {
+      HOME: home,
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: executableRoot,
+    };
+    const baseline = createDockerOperationAuthority("host-local-inference", environment);
+    const managed = createDockerLlamaCppOperationAuthority(environment);
+
+    expect(managed.engine.authorityId).toBe(baseline.engine.authorityId);
+    expect(environment.PATH).toBe(executableRoot);
+  });
+
+  it("does not trust a user-local OpenShell directory (#9585)", () => {
+    const home = fakeExecutableRoot();
+    const localBin = path.join(home, ".local", "bin");
+    fs.mkdirSync(path.join(localBin, "openshell"), { recursive: true });
+    const environment = { HOME: home, PATH: "/usr/bin" };
+    const getFutureShellPathHint = vi.fn(() => "export PATH");
+
+    expect(
+      prependInstalledUserLocalOpenshellPath({ env: environment, getFutureShellPathHint }),
+    ).toBeNull();
+    expect(getFutureShellPathHint).not.toHaveBeenCalled();
+    expect(environment.PATH).toBe("/usr/bin");
   });
 
   it("keeps authority stable across SSH session metadata and does not forward it", () => {
