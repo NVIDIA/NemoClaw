@@ -25,6 +25,7 @@ export {
   classifySandboxInferenceRouteReservation,
   isCurrentSandboxInferenceRouteReservation,
   isPendingReservationForSession,
+  isPublishedSandboxRegistration,
   isRouteOnlySandboxReservation,
   normalizeSandboxInferenceRouteSelection,
   sandboxRegistrationMatchesInferenceRouteReservation,

@@ -368,9 +368,11 @@ describe("sandbox inference route reservation", () => {
       );
 
       expect(pending.pendingRouteReservation).toBe(true);
+      expect(registry.isPublishedSandboxRegistration(pending)).toBe(false);
       expect(registry.getDefault()).toBeNull();
 
       expect(registry.finalizePendingSandboxRegistration("clone")).toBe(true);
+      expect(registry.isPublishedSandboxRegistration(registry.getSandbox("clone")!)).toBe(true);
       expect(registry.getDefault()).toBe("clone");
 
       registry.registerSandbox({

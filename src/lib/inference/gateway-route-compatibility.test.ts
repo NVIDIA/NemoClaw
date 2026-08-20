@@ -87,6 +87,23 @@ describe("shared gateway inference route compatibility", () => {
     });
   });
 
+  it("ignores created pending registrations during route discovery and compatibility (#9733)", () => {
+    const pending = sandbox("pending-clone", {
+      provider: "openai",
+      model: "conflicting-model",
+      pendingRouteReservation: true,
+      createdAt: "2026-08-20T00:00:00.000Z",
+    });
+
+    expect(discover(discoveryRoute("nvidia-prod"), [pending])).toEqual({
+      ok: true,
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    expect(check(route("nvidia-prod", "nvidia/model-a"), [pending])).toEqual({ ok: true });
+  });
+
   it("constrains custom discovery to the durable endpoint and API family (#6315)", () => {
     expect(
       discover(discoveryRoute("compatible-endpoint"), [

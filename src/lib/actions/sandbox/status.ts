@@ -62,7 +62,10 @@ function inspectHermesPortableStatus(
   sandboxName: string,
 ): HermesPortableAgentLifecycleAuthority | null {
   const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, {
-    readRegistry: registry.getSandbox,
+    readRegistry: (name) => {
+      const entry = registry.getSandbox(name);
+      return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
+    },
   });
   return authority.kind === "hermes" ? authority : null;
 }
@@ -168,7 +171,9 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 }
 
 async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
-  const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
+  const entry = registry.getSandbox(sandboxName);
+  const published = entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
+  const preflight = await getSandboxStatusPreflight(published);
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
   // hanging when its container is stopped and the published port is held by a
   // foreign listener) suppress the sandbox header. The downstream switch
