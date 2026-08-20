@@ -148,10 +148,15 @@ describe("host-local managed vLLM recovery", () => {
   it("recovers the exact configured host port from the bounded Docker bindings", () => {
     expect(
       recoverHostLocalManagedVllmEndpoint({
-        dockerInspect: () => inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "172.18.0.1", "19000"),
+        dockerInspect: () =>
+          inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {}, "172.18.0.1", "19000"),
         loadApiKey: () => API_KEY,
       }),
-    ).toEqual({ baseUrl: "http://127.0.0.1:19000", apiKey: API_KEY });
+    ).toEqual({
+      baseUrl: "http://127.0.0.1:19000",
+      apiKey: API_KEY,
+      containerId: "a".repeat(64),
+    });
   });
 
   it.each(["80", "1e4", "019000", "65536"])(

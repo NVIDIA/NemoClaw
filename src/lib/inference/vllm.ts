@@ -1895,7 +1895,7 @@ async function runVllmInstall(
     // inspected container ID immediately before the new launch.
     try {
       const recovered = recoverHostLocalManagedVllmEndpoint();
-      if (recovered) {
+      if (recovered?.baseUrl === `http://127.0.0.1:${String(VLLM_PORT)}`) {
         recoveredHostLocalContainerId = recovered.containerId;
         // Continue through the ordinary managed-container replacement path.
       } else {
