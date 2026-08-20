@@ -114,8 +114,8 @@ describe("base-image publication workflow boundary (#7372)", () => {
       "workflow_dispatch",
       "a".repeat(40),
       "refs/heads/candidate",
-      "1",
       "0",
+      "1",
     ],
     [
       "pinned a4f9b59 diagnostic",
