@@ -1565,7 +1565,7 @@ export async function connectSandbox(
   if (!prepared) return;
 
   // Keep preflight and child authority selection atomic, but do not hold the
-  // lifecycle lock while an interactive shell may remain open indefinitely.
+  // lifecycle lock while an interactive shell can remain open indefinitely.
   const result = await runConnectChildWithShieldsRelockNotice(
     prepared.binary,
     prepared.args,
