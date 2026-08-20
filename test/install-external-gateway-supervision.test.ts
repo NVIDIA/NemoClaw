@@ -266,6 +266,7 @@ function runLegacyGatewayRetirement(
       `
 source "$INSTALLER_UNDER_TEST" >/dev/null
 NEMOCLAW_SOURCE_ROOT="$SOURCE_ROOT"
+uname() { printf '%s\\n' Linux; }
 nemoclaw_state_dir() { printf '%s\\n' "$STATE_DIR"; }
 resolve_nemoclaw_gateway_port() { printf '%s\\n' 8080; }
 nemoclaw_gateway_name() { printf '%s\\n' nemoclaw; }

@@ -1936,6 +1936,7 @@ inspect_noncanonical_openshell_gateway_user_services() {
 
 require_no_competing_openshell_gateway_user_service() {
   local gateway_port discovery_status
+  [[ "$(uname -s)" == "Linux" ]] || return 0
   gateway_port="${1:-$(resolve_nemoclaw_gateway_port)}"
   if inspect_noncanonical_openshell_gateway_user_services "$gateway_port"; then
     return 0
