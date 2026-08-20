@@ -94,9 +94,20 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       return { status: 1, stdout: "", stderr: "provider mutation preceded policy attestation" };
     }
     if (args[1] === "create") observedProviderName = args[args.indexOf("--name") + 1], setProviderVersion(1);
-    if (args[1] === "update") observedProviderName = args[2], setProviderVersion(providerVersion() + 1);
+    if (args[1] === "update") {
+      const isCredentialUpdate =
+        args.length === 5 &&
+        args[2] === observedProviderName &&
+        args[3] === "--credential" &&
+        args[4] === "FAKE_MCP_SECRET";
+      const isCredentialFreeRefresh = args.length === 3 && args[2] === observedProviderName;
+      if (!isCredentialUpdate && !isCredentialFreeRefresh) {
+        throw new Error("Unexpected provider update: " + args.join(" "));
+      }
+      setProviderVersion(providerVersion() + 1);
+      if (isCredentialUpdate) mark("updated");
+    }
     mark("provider");
-    if (args[1] === "update" && args.includes("--credential")) mark("updated");
     if (crashAfter === "registered-late-collision") registry.addExtraProvider("foreign-registered");
     if (crashAfter === "provider") process.exit(86);
     return { status: 0, stdout: args[1] === "create" ? "Created provider" : "Updated provider", stderr: "" };

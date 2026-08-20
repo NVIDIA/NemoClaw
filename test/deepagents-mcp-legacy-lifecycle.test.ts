@@ -140,7 +140,10 @@ beforeEach(() => {
       case args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach":
         attached = true;
         return { status: 0, stdout: "Attached provider", stderr: "" };
-      case args[0] === "provider" && args[1] === "update":
+      case args[0] === "provider" &&
+        args[1] === "update" &&
+        args[2] === "alpha-mcp-github" &&
+        args.length === 3:
         providerResourceVersion += 1;
         return { status: 0, stdout: "Updated provider", stderr: "" };
       case args[0] === "provider" && args[1] === "delete":
