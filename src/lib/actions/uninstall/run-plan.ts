@@ -2303,7 +2303,12 @@ function removeHostModelStores(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
+  preserveForFailedLlamaCleanup: boolean,
 ): boolean {
+  if (preserveForFailedLlamaCleanup) {
+    runtime.log("Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.");
+    return true;
+  }
   if (scopedToSelectedGateway) {
     runtime.log(
       "Sibling gateways remain; kept host-shared Ollama models and the Hugging Face model cache.",
@@ -2947,7 +2952,15 @@ function executePlan(
           if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
       }
     } else if (step.name === "Model stores") {
-      if (!removeHostModelStores(paths, options, runtime, scopedToSelectedGateway)) {
+      if (
+        !removeHostModelStores(
+          paths,
+          options,
+          runtime,
+          scopedToSelectedGateway,
+          failedManagedLlamaStateDirs.length > 0,
+        )
+      ) {
         ok = false;
       }
     } else if (step.name === "State and binaries") {
