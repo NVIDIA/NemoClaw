@@ -49,6 +49,10 @@ On generic hosts, the entry includes an experimental label.
 N1x does not offer the existing-server entry; it offers only the managed **Install vLLM** or **Start vLLM** entry with the **Deferred preview** label.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
 
+When you request a vLLM serving profile, the detected server must report the profile's served model alias or a safe `root` that matches the profile's declared model.
+NemoClaw stops onboarding when neither identifier matches, rather than recording a route that the profile does not declare.
+Stop the server and rerun the original command, or unset `NEMOCLAW_SERVING_PRESET` and `NEMOCLAW_PROVIDER` before you start fresh onboarding to keep the detected model.
+
 On hosts other than N1x, when an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.
 On N1x, explicit managed-preview intent never reuses an already-running server.
 Stop the server, then rerun managed onboarding.
@@ -122,7 +126,7 @@ The same profile selector works with interactive and non-interactive onboarding.
 NemoClaw selects the inference provider required by the profile's backend, so onboarding does not show the provider menu.
 If the profile's backend has no corresponding inference provider, onboarding exits before it changes runtime resources.
 NemoClaw rejects unknown, ambiguous, disabled, incompatible, or conflicting selections before image or model downloads begin.
-Before confirmation, the review screen shows the resolved profile and recipe IDs, model, immutable runtime image, support state, and estimated image and model downloads.
+Before confirmation, the review screen shows the resolved profile and recipe IDs, declared model, served model alias, immutable runtime image, support state, and estimated image and model downloads.
 Do not combine `--profile` with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_MANAGED_CLUSTER_PEERS`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` overrides.
 If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable profile ID; a different ID conflicts with `--profile`.
 

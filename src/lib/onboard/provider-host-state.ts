@@ -253,7 +253,10 @@ export function detectInferenceProviderHostState(
   const windowsHostOllamaDockerRequirement = deps.getWindowsHostOllamaDockerRequirement(
     isWsl ? deps.getContainerRuntime() : null,
   );
-  const winOllamaState = deps.detectWindowsHostOllama();
+  const winOllamaState =
+    input.probeOllama === false
+      ? { installed: false, installedPath: "", loopbackOnly: false }
+      : deps.detectWindowsHostOllama();
   const hasWindowsOllama = winOllamaState.installed;
   const windowsOllamaReachable =
     input.probeOllama === false
