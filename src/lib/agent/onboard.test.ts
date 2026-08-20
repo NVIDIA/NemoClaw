@@ -472,10 +472,7 @@ describe("agent setup session boundaries", () => {
     expect(context.recordStepComplete).not.toHaveBeenCalled();
   });
 
-  // Per-sandbox Hermes API ports (#9739):
-  // - the manifest names the default port, 8642
-  // - a second sandbox on one host serves its API on its own allocated port
-  // - probing the manifest default there reaches nothing and times out
+  // The manifest names 8642; a second sandbox is allocated its own port (#9739).
   const hermesProbeAgent = makeAgent({
     name: "hermes",
     displayName: "Hermes Agent",
@@ -529,6 +526,29 @@ describe("agent setup session boundaries", () => {
       "model-x",
       "provider-x",
       hermesProbeAgent,
+      false,
+      null,
+      context,
+    );
+
+    expect(probeUrlsFrom(runCaptureOpenshell)).toEqual(["http://localhost:8642/health"]);
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+  });
+
+  it("leaves a non-Hermes probe URL on its manifest port when the registry records a Hermes API port (#9739)", async () => {
+    getSandboxMock.mockReturnValue({ hermesApiPort: 8643 });
+    const runCaptureOpenshell = vi
+      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
+    const { context } = createAgentSetupContext(runCaptureOpenshell);
+
+    await handleAgentSetup(
+      "not-hermes",
+      "model-x",
+      "provider-x",
+      makeAgent({
+        healthProbe: { url: "http://localhost:8642/health", port: 8642, timeout_seconds: 1 },
+      }),
       false,
       null,
       context,

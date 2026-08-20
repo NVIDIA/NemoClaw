@@ -416,17 +416,16 @@ export function isHealthProbeOk(result: string | null | undefined): boolean {
 }
 
 /**
- * Resolve the health-probe URL to run inside `sandboxName`.
- *
- * - The manifest names the agent's default API port.
- * - Hermes allocates a per-sandbox port from the 8642-8652 range, so a second
- *   sandbox on one host serves its relay on another port. The manifest URL
- *   would probe a port nothing listens on there (#9739).
- * - Sandbox registration records the allocated port before agent setup runs,
- *   so the registry answers for the sandbox being onboarded.
- * - An agent with no per-sandbox port keeps the manifest URL unchanged.
+ * Hermes allocates a per-sandbox API port, so the manifest default names a port
+ * a second sandbox has no listener on (#9739). Step 6 records the allocated
+ * port before this step runs.
  */
-function resolveAgentHealthProbeUrl(sandboxName: string, probeUrl: string): string {
+function resolveAgentHealthProbeUrl(
+  agent: AgentDefinition,
+  sandboxName: string,
+  probeUrl: string,
+): string {
+  if (agent.name !== "hermes") return probeUrl;
   return retargetHermesApiPortInUrl(
     probeUrl,
     resolveSandboxHermesApiPort(registry.getSandbox(sandboxName) ?? {}),
@@ -526,7 +525,7 @@ export async function handleAgentSetup(
 
     const probe = agent.healthProbe;
     if (probe?.url) {
-      const probeUrl = resolveAgentHealthProbeUrl(sandboxName, probe.url);
+      const probeUrl = resolveAgentHealthProbeUrl(agent, sandboxName, probe.url);
       const result = runCaptureOpenshell(
         [
           "sandbox",
@@ -603,7 +602,7 @@ export async function handleAgentSetup(
   const probe = agent.healthProbe;
   if (probe?.url) {
     const timeoutSecs = probe.timeout_seconds || 60;
-    const probeUrl = resolveAgentHealthProbeUrl(sandboxName, probe.url);
+    const probeUrl = resolveAgentHealthProbeUrl(agent, sandboxName, probe.url);
     console.log(`  Waiting for ${agent.displayName} gateway (up to ${timeoutSecs}s)...`);
     const healthy = waitForAgentGatewayReady({
       timeoutSeconds: timeoutSecs,
