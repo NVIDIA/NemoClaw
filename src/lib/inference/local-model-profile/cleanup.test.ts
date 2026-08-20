@@ -707,6 +707,9 @@ describe("host-local model cleanup", () => {
     expect(privateBridge.stopTransaction.mock.invocationCallOrder[0]).toBeLessThan(
       harness.capture.mock.invocationCallOrder[containerRemovalCall]!,
     );
+    expect(privateBridge.stopTransaction.mock.invocationCallOrder[0]).toBeLessThan(
+      privateBridge.assertStopped.mock.invocationCallOrder[0]!,
+    );
     expect(privateBridge.assertStopped.mock.invocationCallOrder[0]).toBeLessThan(
       harness.capture.mock.invocationCallOrder[containerRemovalCall]!,
     );
