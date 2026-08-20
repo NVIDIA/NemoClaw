@@ -208,6 +208,7 @@ describe("Docker operation authority", () => {
       PATH: executableRoot,
       XDG_RUNTIME_DIR: "/run/user/1000",
     };
+    const callerTerm = "nemoclaw-caller-terminal";
     const first = createDockerOperationAuthority("host-local-inference", {
       ...common,
       XDG_SESSION_ID: "101",
@@ -220,16 +221,20 @@ describe("Docker operation authority", () => {
       XDG_SESSION_ID: "102",
       XDG_SESSION_CLASS: "background",
       XDG_SESSION_TYPE: "unspecified",
-      TERM: "dumb",
+      TERM: callerTerm,
     });
 
     expect(second.engine.authorityId).toBe(first.engine.authorityId);
     expect(dockerOperationBindingSha256(second.engine)).toBe(
       dockerOperationBindingSha256(first.engine),
     );
-    expect(second.engine.capture(["version"]).stdout).toBe(
-      "unset\nunset\nunset\nunset\n",
-    );
+    const [dockerTerm, ...dockerSessionMetadata] = second.engine
+      .capture(["version"])
+      .stdout.trimEnd()
+      .split("\n");
+    // macOS /bin/sh supplies TERM=dumb after NemoClaw removes the caller value.
+    expect(dockerTerm).not.toBe(callerTerm);
+    expect(dockerSessionMetadata).toEqual(["unset", "unset", "unset"]);
   });
 
   it("keeps host-local inference authority stable across terminal attachment changes (#9599)", () => {
