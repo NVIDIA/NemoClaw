@@ -1343,7 +1343,9 @@ function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentCo
       "%a %U:%G",
       target.configDir,
     ]).split(" ");
-    if (mode !== "3770") issues.push(`${target.configDir} mode=${mode} (expected 3770)`);
+    if (mode !== "700" && mode !== "3770") {
+      issues.push(`${target.configDir} mode=${mode} (expected 700 or 3770)`);
+    }
     if (owner !== "sandbox:sandbox") {
       issues.push(`${target.configDir} owner=${owner} (expected sandbox:sandbox)`);
     }

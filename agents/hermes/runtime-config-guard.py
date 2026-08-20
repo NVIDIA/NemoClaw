@@ -3117,6 +3117,8 @@ def _seal_shields_locked(
     hash_file: str,
     state_file: str,
     rollback_mode: str,
+    expected_hermes_device: int | None = None,
+    expected_hermes_inode: int | None = None,
 ) -> tuple[str, bool]:
     """Monotonically contain a mutable Hermes namespace.
 
@@ -3126,6 +3128,10 @@ def _seal_shields_locked(
     inputs or leaves a root-only unavailable posture.
     """
 
+    if (expected_hermes_device is None) != (expected_hermes_inode is None):
+        raise UnsafePathError(
+            "refusing incomplete provider-fenced Hermes state root identity"
+        )
     if os.path.exists(state_file):
         raise UnsafePathError("Hermes restart seal is already active")
     lock_token = secrets.token_hex(32)
@@ -3187,8 +3193,29 @@ def _seal_shields_locked(
         except FileNotFoundError:
             hermes_lstat = None
 
+        if expected_hermes_device is not None and (
+            hermes_lstat is None or not stat.S_ISDIR(hermes_lstat.st_mode)
+        ):
+            state_data["phase"] = "shields-transition-state-root-drift"
+            _write_restart_state(state_file, state_data, create=False)
+            raise UnsafePathError(
+                "refusing Hermes config root that differs from the provider fence"
+            )
+
         if hermes_lstat is not None and stat.S_ISDIR(hermes_lstat.st_mode):
-            if hermes_lstat.st_dev != parent_st.st_dev:
+            if expected_hermes_device is not None and (
+                hermes_lstat.st_dev != expected_hermes_device
+                or hermes_lstat.st_ino != expected_hermes_inode
+            ):
+                state_data["phase"] = "shields-transition-state-root-drift"
+                _write_restart_state(state_file, state_data, create=False)
+                raise UnsafePathError(
+                    "refusing Hermes config root that differs from the provider fence"
+                )
+            if (
+                hermes_lstat.st_dev != parent_st.st_dev
+                and expected_hermes_device is None
+            ):
                 state_data["phase"] = "shields-transition-cross-device"
                 _write_restart_state(state_file, state_data, create=False)
                 raise UnsafePathError(
@@ -3208,7 +3235,16 @@ def _seal_shields_locked(
             os.fchmod(hermes_fd, 0o700)
 
         hermes_st = os.fstat(hermes_fd)
-        if hermes_st.st_dev != parent_st.st_dev:
+        if expected_hermes_device is not None and (
+            hermes_st.st_dev != expected_hermes_device
+            or hermes_st.st_ino != expected_hermes_inode
+        ):
+            state_data["phase"] = "shields-transition-state-root-drift"
+            _write_restart_state(state_file, state_data, create=False)
+            raise UnsafePathError(
+                "refusing Hermes config root that differs from the provider fence"
+            )
+        if hermes_st.st_dev != parent_st.st_dev and expected_hermes_device is None:
             state_data["phase"] = "shields-transition-cross-device"
             _write_restart_state(state_file, state_data, create=False)
             raise UnsafePathError(
@@ -3573,6 +3609,8 @@ def begin_shields_transition(
     state_file: str,
     mode: str,
     rollback_mode: str = "",
+    expected_hermes_device: int | None = None,
+    expected_hermes_inode: int | None = None,
 ) -> tuple[str, bool]:
     if mode not in ("locked", "mutable"):
         raise UnsafePathError(f"refusing unsupported Hermes shields transition: {mode}")
@@ -3590,6 +3628,8 @@ def begin_shields_transition(
                 hash_file,
                 state_file,
                 rollback_mode or "mutable",
+                expected_hermes_device,
+                expected_hermes_inode,
             )
         resumed = _resume_shields_locked(hermes_dir, hash_file, state_file)
         if resumed is not None:
@@ -3599,6 +3639,8 @@ def begin_shields_transition(
             hash_file,
             state_file,
             rollback_mode or "mutable",
+            expected_hermes_device,
+            expected_hermes_inode,
         )
 
     # A fresh managed non-root Hermes start mints exactly one API_SERVER_KEY and
@@ -5067,6 +5109,8 @@ def main() -> int:
     parser.add_argument(
         "--rollback-shields-mode", choices=("locked", "mutable"), default=""
     )
+    parser.add_argument("--expected-hermes-device", default="")
+    parser.add_argument("--expected-hermes-inode", default="")
     parser.add_argument("--startup-owner", action="store_true")
     parser.add_argument("--mcp-state-exit-code", action="store_true")
     args = parser.parse_args()
@@ -5156,12 +5200,27 @@ def main() -> int:
                 raise UnsafePathError(
                     "begin-shields-transition requires --hash-file, --state-file, and --shields-mode"
                 )
+            expected_hermes_device = None
+            expected_hermes_inode = None
+            if args.expected_hermes_device or args.expected_hermes_inode:
+                if not re.fullmatch(
+                    r"[1-9][0-9]*", args.expected_hermes_device
+                ) or not re.fullmatch(
+                    r"[1-9][0-9]*", args.expected_hermes_inode
+                ):
+                    raise UnsafePathError(
+                        "begin-shields-transition requires a complete valid Hermes state-root identity"
+                    )
+                expected_hermes_device = int(args.expected_hermes_device)
+                expected_hermes_inode = int(args.expected_hermes_inode)
             lock_token, original_locked = begin_shields_transition(
                 args.hermes_dir,
                 args.hash_file,
                 args.state_file,
                 args.shields_mode,
                 args.rollback_shields_mode,
+                expected_hermes_device,
+                expected_hermes_inode,
             )
             print(f"lock_token={lock_token} original_locked={int(original_locked)}")
         elif args.action == "apply-shields-transition":
