@@ -9,7 +9,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash-command";
+import {
+  buildRefreshMutableOpenClawConfigHashCommand,
+  buildVerifyMutableOpenClawConfigHashCommand,
+} from "./rebuild-config-hash-command";
 
 function sha256Hex(filePath: string): string {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -22,6 +25,13 @@ function runRefresh(
   return spawnSync("bash", ["-c", buildRefreshMutableOpenClawConfigHashCommand(configDir)], {
     encoding: "utf-8",
     env,
+    timeout: 5000,
+  });
+}
+
+function runVerify(configDir: string): ReturnType<typeof spawnSync> {
+  return spawnSync("bash", ["-c", buildVerifyMutableOpenClawConfigHashCommand(configDir)], {
+    encoding: "utf-8",
     timeout: 5000,
   });
 }
@@ -49,6 +59,26 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
       expect(result.stderr).toBe("");
       expect(result.status).toBe(0);
       expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${sha256Hex(configPath)}  openclaw.json\n`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("verifies the final pair without changing a stale config hash (#9530)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-final-hash-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(configPath, '{"gateway":{"auth":{"token":"fresh"}}}\n');
+      fs.writeFileSync(hashPath, "stale  openclaw.json\n");
+
+      const result = runVerify(configDir);
+
+      expect(result.status).toBe(15);
+      expect(result.stderr).toBe("OpenClaw config hash does not match openclaw.json\n");
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe("stale  openclaw.json\n");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
