@@ -69,7 +69,7 @@ function stageService(home: string, gatewayBin: string, env: NodeJS.ProcessEnv =
   return runInstallHelper(
     home,
     [
-      "inspect_noncanonical_openshell_gateway_user_services() { return 2; }",
+      "inspect_noncanonical_openshell_gateway_user_services() { return 0; }",
       "upstream_openshell_gateway_user_service_installed() { return 1; }",
       `resolve_openshell_gateway_bin_for_service() { printf '%s\\n' ${JSON.stringify(gatewayBin)}; }`,
       "install_nemoclaw_openshell_gateway_user_service",
@@ -452,6 +452,24 @@ describe("install.sh OpenShell gateway service", () => {
     },
   );
 
+  it("stops before staging when the user manager is unavailable (#9705)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const systemctl = writeGatewayDiscoverySystemctlStub(home, {
+      failure: {
+        command: "list-units",
+        diagnostic: "Failed to connect to bus: No medium found",
+        status: 1,
+      },
+    });
+
+    const result = installWithGatewayDiscovery(home, gatewayBin, systemctl.bin);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("before staging the NemoClaw gateway service");
+    expect(fs.existsSync(servicePath(home))).toBe(false);
+  });
+
   it.each([
     ["a truncated active row", { activeRows: ["foreign-gateway.service loaded active"] }],
     [
@@ -525,6 +543,7 @@ describe("install.sh OpenShell gateway service", () => {
     const result = runInstallHelper(
       home,
       [
+        "inspect_noncanonical_openshell_gateway_user_services() { return 0; }",
         "upstream_openshell_gateway_user_service_installed() { return 1; }",
         "install_nemoclaw_openshell_gateway_user_service",
       ].join("\n"),

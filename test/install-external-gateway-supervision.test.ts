@@ -119,7 +119,7 @@ ${rejectNode ? "node() { return 91; }" : ""}
 uname() { printf '%s\\n' Linux; }
 resolve_nemoclaw_gateway_port() { printf '%s\\n' 8080; }
 upstream_openshell_gateway_user_service_installed() { return 1; }
-inspect_noncanonical_openshell_gateway_user_services() { return 2; }
+inspect_noncanonical_openshell_gateway_user_services() { return 0; }
 info() { :; }
 install_nemoclaw_openshell_gateway_user_service
 `,
@@ -208,8 +208,8 @@ install_nodejs() { printf '%s\\n' install-node >> "$EFFECT_LOG"; }
 ensure_supported_runtime() { printf '%s\\n' check-runtime >> "$EFFECT_LOG"; }
 ensure_openshell_build_deps() { printf '%s\\n' check-openshell-build-deps >> "$EFFECT_LOG"; }
 resolve_pending_express_wsl_provider() { :; }
-ensure_station_express_pair() { :; }
-fix_npm_permissions() { :; }
+ensure_station_express_pair() { printf '%s\\n' prepare-station-pair >> "$EFFECT_LOG"; }
+fix_npm_permissions() { printf '%s\\n' fix-npm-permissions >> "$EFFECT_LOG"; }
 preinstall_backup_and_retire_legacy_gateway() { :; }
 install_nemoclaw() { :; }
 verify_nemoclaw() { :; }
@@ -232,47 +232,11 @@ install_nemoclaw_before_onboarding
   };
 }
 
-function runGatewayManagementPreparation(mode: DeclarationMode) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-management-prepare-"));
-  const home = path.join(root, "home");
-  const effectLog = path.join(root, "effects.log");
-  const declarationPath = writeGatewayManagementDeclaration(root, mode);
-
-  const result = spawnSync(
-    "bash",
-    [
-      "-c",
-      `
-source "$INSTALLER_UNDER_TEST" >/dev/null
-NEMOCLAW_SOURCE_ROOT="$MISSING_SOURCE_ROOT"
-prepare_current_cli_with_openshell_deferred() {
-  printf '%s\\n' prepare-cli >> "$EFFECT_LOG"
-  NEMOCLAW_SOURCE_ROOT="$SOURCE_ROOT"
-}
-prepare_installer_gateway_management
-`,
-    ],
-    {
-      cwd: SOURCE_ROOT,
-      encoding: "utf-8",
-      env: installerEnv(home, declarationPath, {
-        EFFECT_LOG: effectLog,
-        MISSING_SOURCE_ROOT: path.join(root, "missing-source"),
-      }),
-    },
-  );
-
-  return {
-    effects: readEffects(effectLog),
-    output: `${result.stdout}${result.stderr}`,
-    result,
-  };
-}
-
 function runLegacyGatewayRetirement(
   mode: DeclarationMode,
   driftPoint?: DeclarationDriftPoint,
   competingService = false,
+  managerUnavailable = false,
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-external-retirement-"));
   const home = path.join(root, "home");
@@ -315,6 +279,9 @@ run_preupgrade_backup() {
 }
 resolve_current_openshell_version_range() { printf '%s\\n' '0.0.85 0.0.85'; }
 inspect_noncanonical_openshell_gateway_user_services() {
+  if [ "$MANAGER_UNAVAILABLE" = 1 ]; then
+    return 2
+  fi
   if [ "$COMPETING_SERVICE" = 1 ]; then
     NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="A competing OpenShell gateway service is active."
     return 3
@@ -335,6 +302,7 @@ preinstall_backup_and_retire_legacy_gateway
         EFFECT_LOG: effectLog,
         STATE_DIR: stateDir,
         COMPETING_SERVICE: competingService ? "1" : "0",
+        MANAGER_UNAVAILABLE: managerUnavailable ? "1" : "0",
       }),
     },
   );
@@ -411,17 +379,29 @@ describe("installer external gateway supervision", () => {
     [
       "skips OpenShell build dependencies for external supervision",
       "externally-supervised",
-      ["install-node", "check-runtime"],
+      ["install-node", "check-runtime", "prepare-station-pair", "fix-npm-permissions"],
     ],
     [
       "checks OpenShell build dependencies for managed supervision",
       "nemoclaw-managed",
-      ["install-node", "check-runtime", "check-openshell-build-deps"],
+      [
+        "install-node",
+        "check-runtime",
+        "check-openshell-build-deps",
+        "prepare-station-pair",
+        "fix-npm-permissions",
+      ],
     ],
     [
       "checks OpenShell build dependencies when no declaration exists",
       "absent",
-      ["install-node", "check-runtime", "check-openshell-build-deps"],
+      [
+        "install-node",
+        "check-runtime",
+        "check-openshell-build-deps",
+        "prepare-station-pair",
+        "fix-npm-permissions",
+      ],
     ],
   ] as const)("%s after Node setup (#9705)", (_context, mode, expectedEffects) => {
     const fixture = runPreOnboardingInstallPhases(mode);
@@ -430,18 +410,14 @@ describe("installer external gateway supervision", () => {
     expect(fixture.effects).toEqual(expectedEffects);
   });
 
-  it.each([
-    [
-      "loads the parser from prepared source for a declared supervisor",
-      "externally-supervised",
-      ["prepare-cli"],
-    ],
-    ["keeps the historical managed mode without preparing source", "absent", []],
-  ] as const)("%s (#9705)", (_context, mode, expectedEffects) => {
-    const fixture = runGatewayManagementPreparation(mode);
+  it("rejects an invalid declaration before mutable runtime setup (#9705)", () => {
+    const fixture = runPreOnboardingInstallPhases("invalid");
 
-    expect(fixture.result.status, fixture.output).toBe(0);
-    expect(fixture.effects).toEqual(expectedEffects);
+    expect(fixture.result.status, fixture.output).toBe(1);
+    expect(fixture.effects).toEqual(["install-node", "check-runtime"]);
+    expect(fixture.output).toContain("Invalid gateway management declaration");
+    expect(fixture.output).not.toContain("private-field-name");
+    expect(fixture.output).not.toContain("provider-secret-value");
   });
 
   it.each([
@@ -460,6 +436,14 @@ describe("installer external gateway supervision", () => {
     expect(fixture.result.status, fixture.output).toBe(1);
     expect(fixture.effects).toEqual(["backup-all"]);
     expect(fixture.output).toContain("competing OpenShell gateway service");
+  });
+
+  it("backs up but does not retire a gateway when the user manager is unavailable (#9705)", () => {
+    const fixture = runLegacyGatewayRetirement("nemoclaw-managed", undefined, false, true);
+
+    expect(fixture.result.status, fixture.output).toBe(1);
+    expect(fixture.effects).toEqual(["backup-all"]);
+    expect(fixture.output).toContain("before retiring the legacy OpenShell gateway");
   });
 
   it.each([

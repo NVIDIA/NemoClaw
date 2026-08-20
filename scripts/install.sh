@@ -1942,9 +1942,10 @@ require_no_competing_openshell_gateway_user_service() {
   else
     discovery_status=$?
   fi
-  if [[ "$discovery_status" -ne 2 ]]; then
-    error "${NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR:-Could not inspect active or enabled user services.}"
+  if [[ "$discovery_status" -eq 2 ]]; then
+    return 2
   fi
+  error "${NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR:-Could not inspect active or enabled user services.}"
 }
 
 is_nemoclaw_openshell_gateway_user_service() {
@@ -2044,9 +2045,13 @@ install_nemoclaw_openshell_gateway_user_service() {
   require_stable_installer_gateway_management
   [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "external" ]] && return 0
   [[ "$(uname -s)" == "Linux" ]] || return 0
-  local gateway_port
+  local gateway_port competition_status=0 upstream_service_present=false
   gateway_port="$(resolve_nemoclaw_gateway_port)"
-  require_no_competing_openshell_gateway_user_service "$gateway_port"
+  if require_no_competing_openshell_gateway_user_service "$gateway_port"; then
+    :
+  else
+    competition_status=$?
+  fi
   [[ "$gateway_port" -eq 8080 ]] || return 0
 
   local service_dir
@@ -2059,6 +2064,13 @@ install_nemoclaw_openshell_gateway_user_service() {
   fi
 
   if upstream_openshell_gateway_user_service_installed; then
+    upstream_service_present=true
+  fi
+  if [[ "$competition_status" -eq 2 && "$upstream_service_present" == false ]]; then
+    error "The systemd user manager is unavailable, so the installer cannot inspect active or enabled user services before staging the NemoClaw gateway service. Restore the user manager, then rerun NemoClaw."
+  fi
+
+  if [[ "$upstream_service_present" == true ]]; then
     if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
       error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
     fi
@@ -3107,8 +3119,7 @@ resolve_existing_cli_runner() {
   return 1
 }
 
-prepare_current_cli_with_openshell_deferred() {
-  local purpose="$1"
+prepare_current_cli_for_preupgrade_backup() {
   local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"
   local defer_was_set="${NEMOCLAW_DEFER_OPENSHELL_INSTALL+1}"
   local defer_declaration="" defer_was_exported=false
@@ -3116,7 +3127,7 @@ prepare_current_cli_with_openshell_deferred() {
     defer_declaration="$(declare -p NEMOCLAW_DEFER_OPENSHELL_INSTALL 2>/dev/null || true)"
     [[ "$defer_declaration" == declare\ -x* ]] && defer_was_exported=true
   fi
-  info "Preparing current ${_CLI_DISPLAY} CLI for ${purpose}…"
+  info "Preparing current ${_CLI_DISPLAY} CLI for pre-upgrade backup…"
   export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
   install_nemoclaw
   unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
@@ -3125,19 +3136,6 @@ prepare_current_cli_with_openshell_deferred() {
     [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
   fi
   verify_nemoclaw
-}
-
-prepare_current_cli_for_preupgrade_backup() {
-  prepare_current_cli_with_openshell_deferred "pre-upgrade backup"
-}
-
-prepare_installer_gateway_management() {
-  local gateway_management_module
-  gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/src/lib/onboard/gateway-management.ts"
-  if [[ -n "${NEMOCLAW_GATEWAY_MANAGEMENT-}" && ! -f "$gateway_management_module" ]]; then
-    prepare_current_cli_with_openshell_deferred "gateway management validation"
-  fi
-  require_stable_installer_gateway_management
 }
 
 resolve_prepared_cli_runner() {
@@ -3608,7 +3606,9 @@ preinstall_backup_and_retire_legacy_gateway() {
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
     || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
     require_stable_installer_gateway_management
-    require_no_competing_openshell_gateway_user_service
+    if ! require_no_competing_openshell_gateway_user_service; then
+      error "The systemd user manager is unavailable, so the installer cannot inspect active or enabled user services before retiring the legacy OpenShell gateway. Restore the user manager, then rerun NemoClaw."
+    fi
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
@@ -6218,6 +6218,10 @@ install_nemoclaw_before_onboarding() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
+  require_stable_installer_gateway_management
+  if [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "managed" ]]; then
+    ensure_openshell_build_deps
+  fi
   resolve_pending_express_wsl_provider
   ensure_station_express_pair
 
@@ -6226,10 +6230,6 @@ install_nemoclaw_before_onboarding() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
-  prepare_installer_gateway_management
-  if [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "managed" ]]; then
-    ensure_openshell_build_deps
-  fi
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw
