@@ -442,11 +442,18 @@ async function addMcpBridgeUnlocked(
           }
         : {}),
       refreshAfterObservedAbsence: () => {
-        // OpenShell 0.0.106 can coalesce a no-field provider refresh without
-        // publishing the credential into fresh sandbox execs. When this
-        // process still has the host credential value, republish it once after
-        // the bound policy is active. Crash recovery without the host value
-        // retains the credential-free refresh path.
+        // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
+        // refresh without publishing the credential into fresh sandbox execs.
+        // sourceBoundary: OpenShell owns provider revision projection.
+        // whyNotSourceFix: NemoClaw can only observe absence after the bound
+        // policy is active, then republish when this process still has the host
+        // credential value. Hostless recovery retains the credential-free path.
+        // regressionTest: mcp-add-crash-consistency.test.ts covers republish
+        // and hostless recovery; mcp-provider-ownership.test.ts covers loss of
+        // the persisted provider identity before republish.
+        // removalCondition: remove the credential-bearing republish when the
+        // supported OpenShell version guarantees that a post-policy no-field
+        // refresh projects the bound credential into fresh sandbox execs.
         const republished = upsertMcpProvider(entry.providerName ?? "", options.env, {
           allowExisting: true,
           expectedProviderId: entry.providerId,
