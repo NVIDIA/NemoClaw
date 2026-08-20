@@ -452,6 +452,14 @@ describe("Hermes managed-tool gateway broker", () => {
 
       try {
         const refusal = vi.spyOn(console, "error").mockImplementation(() => {});
+        let preflightError: unknown;
+        try {
+          broker.preflightHermesToolGatewayCloneBinding("clone");
+        } catch (error) {
+          preflightError = error;
+        }
+        expect(String(preflightError)).toContain(String(broker.HERMES_TOOL_GATEWAY_PORT));
+        expect(String(preflightError)).toContain("Stop the process holding that port, then retry.");
         // Process identity without listener ownership cannot authorize a
         // credential registration through the private control socket.
         expect(
@@ -470,6 +478,35 @@ describe("Hermes managed-tool gateway broker", () => {
     },
     BROKER_TEST_TIMEOUT_MS,
   );
+
+  it("reports a missing listener inspector once and fails ownership closed", () => {
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
+    const diagnostic = vi.fn();
+    const runCaptureEx = vi
+      .fn()
+      .mockReturnValueOnce({ stdout: "", exitCode: 1, timedOut: false })
+      .mockReturnValue({ stdout: "", exitCode: null, timedOut: false });
+    const deps = {
+      isBrokerProcess: () => true,
+      runCaptureEx,
+      reportError: diagnostic,
+    };
+
+    expect(broker.isHermesToolGatewayBrokerPortOwner(42, deps)).toBe(false);
+    expect(diagnostic).not.toHaveBeenCalled();
+    expect(broker.isHermesToolGatewayBrokerPortOwner(42, deps)).toBe(false);
+    expect(broker.isHermesToolGatewayBrokerPortOwner(42, deps)).toBe(false);
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("Install lsof, then retry."),
+    );
+    expect(runCaptureEx).toHaveBeenCalledWith([
+      "lsof",
+      "-ti",
+      `:${String(broker.HERMES_TOOL_GATEWAY_PORT)}`,
+      "-sTCP:LISTEN",
+    ]);
+  });
 
   it("preserves durable state when live credential unregister fails", () => {
     delete require.cache[require.resolve(BROKER_WRAPPER)];

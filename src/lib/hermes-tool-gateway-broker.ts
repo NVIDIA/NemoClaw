@@ -10,7 +10,7 @@ const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 
-const { ROOT, run, runCapture, validateName } = require("./runner");
+const { ROOT, run, runCapture, runCaptureEx, validateName } = require("./runner");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const { getCredsDir } = require("./credentials/store");
 const oauth = require("./oauth-device-code");
@@ -65,6 +65,7 @@ const HERMES_TOOL_GATEWAY_RUNTIME_MISMATCH_RECOVERY =
   "Reauthorize every managed-tool Hermes sandbox, then retry.";
 const HERMES_TOOL_GATEWAY_UNOWNED_LISTENER_RECOVERY =
   "Stop the process holding that port, then retry.";
+let reportedMissingListenerInspector = false;
 const HERMES_TOOL_GATEWAY_CONTROL_CLIENT_SOURCE = [
   'const http = require("node:http");',
   "const [socketPath, route, timeoutValue] = process.argv.slice(1);",
@@ -558,7 +559,11 @@ function preflightHermesToolGatewayCloneBinding(sandboxName) {
   const currentBrokerOwned = isHermesToolGatewayBrokerPortOwner(pid);
   const currentBrokerHealthy = isHermesToolGatewayBrokerHealthy();
   if (currentBrokerHealthy && !currentBrokerOwned) {
-    throw new Error("Hermes managed-tool broker health endpoint is not owned by NemoClaw");
+    throw new Error(
+      "Hermes managed-tool broker health endpoint is not owned by NemoClaw; " +
+        `port ${HERMES_TOOL_GATEWAY_PORT} is held by another process. ` +
+        HERMES_TOOL_GATEWAY_UNOWNED_LISTENER_RECOVERY,
+    );
   }
   if (!currentBrokerOwned || !currentBrokerHealthy) {
     probeHermesToolGatewayBrokerStart();
@@ -650,11 +655,26 @@ function isHermesToolGatewayBrokerProcess(pid) {
   return Boolean(cmdline && cmdline.includes("tool-gateway-broker.ts"));
 }
 
-function isHermesToolGatewayBrokerPortOwner(pid) {
-  if (!isHermesToolGatewayBrokerProcess(pid)) return false;
-  const listenerPids = runCapture(["lsof", "-ti", `:${HERMES_TOOL_GATEWAY_PORT}`, "-sTCP:LISTEN"], {
-    ignoreError: true,
-  })
+function isHermesToolGatewayBrokerPortOwner(pid, deps = {}) {
+  const isBrokerProcess = deps.isBrokerProcess ?? isHermesToolGatewayBrokerProcess;
+  if (!isBrokerProcess(pid)) return false;
+  const listener = (deps.runCaptureEx ?? runCaptureEx)([
+    "lsof",
+    "-ti",
+    `:${HERMES_TOOL_GATEWAY_PORT}`,
+    "-sTCP:LISTEN",
+  ]);
+  if (listener.exitCode === null && !listener.timedOut) {
+    if (!reportedMissingListenerInspector) {
+      (deps.reportError ?? console.error)(
+        "NemoClaw cannot verify Hermes managed-tool broker port ownership because lsof is " +
+          "unavailable. Install lsof, then retry.",
+      );
+      reportedMissingListenerInspector = true;
+    }
+    return false;
+  }
+  const listenerPids = listener.stdout
     .split(/\r?\n/u)
     .map((line) => Number.parseInt(line.trim(), 10));
   return listenerPids.includes(pid);
@@ -920,6 +940,7 @@ module.exports = {
   bindHermesToolGatewayCloneProviderState,
   planHermesToolGatewayBrokerRefresh,
   brokerRuntimeHash,
+  isHermesToolGatewayBrokerPortOwner,
   isHermesToolGatewayBrokerHealthy,
   killStaleHermesToolGatewayBroker,
   ensureHermesToolGatewayBroker,
