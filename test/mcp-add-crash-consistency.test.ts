@@ -50,6 +50,7 @@ const foreignProviderId = "99999999-8888-4777-8666-555555555555";
 let providerGetCount = 0;
 let observedProviderName = null;
 let attachmentAttemptedThisProcess = false;
+let credentialUpdatedThisProcess = false;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -105,7 +106,10 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         throw new Error("Unexpected provider update: " + args.join(" "));
       }
       setProviderVersion(providerVersion() + 1);
-      if (isCredentialUpdate) mark("updated");
+      if (isCredentialUpdate) {
+        credentialUpdatedThisProcess = true;
+        mark("updated");
+      }
     }
     mark("provider");
     if (crashAfter === "registered-late-collision") registry.addExtraProvider("foreign-registered");
@@ -176,7 +180,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const isPreupdateObservation =
     isObservation &&
     providerPresentAtStart &&
-    !marked("updated") &&
+    !credentialUpdatedThisProcess &&
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
   return {
@@ -533,6 +537,7 @@ describe("MCP add crash consistency", () => {
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "updated.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();
