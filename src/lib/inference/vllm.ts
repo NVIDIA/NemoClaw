@@ -1768,7 +1768,7 @@ async function runVllmInstall(
     resolved = { model: hostLocalSelection.model, source: "default" };
   } else {
     resolved = await resolveVllmInstallModel(profile, {
-      nonInteractive: opts.nonInteractive,
+      nonInteractive: opts.nonInteractive || profile.defaultModel.fixedServeCommand === true,
       promptFn: opts.promptFn,
     });
   }

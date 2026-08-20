@@ -137,7 +137,7 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(reported).not.toContain("exit 125");
   });
 
-  it("keeps the fixed local-model profile command when installing vLLM", async () => {
+  it("uses the fixed vLLM local model profile command after interactive confirmation", async () => {
     const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const model = {
       ...baseProfile.defaultModel,
@@ -147,15 +147,18 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     };
     const profile = { ...baseProfile, defaultModel: model };
     mockSuccessfulVllmInstall(mocks, profile.containerName);
+    const promptFn = vi.fn<(question: string) => Promise<string>>(async () => "y");
 
     const result = await installVllm(profile, {
       hasImage: true,
-      nonInteractive: true,
-      promptFn: vi.fn(),
+      nonInteractive: false,
+      promptFn,
       resolveManagedBridgeHost: () => "172.18.0.1",
     });
 
     expect(result).toEqual({ ok: true });
+    expect(promptFn).toHaveBeenCalledOnce();
+    expect(promptFn).toHaveBeenCalledWith("  Continue? [y/N]: ");
     expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
     const runArgs = mocks.dockerRunDetached.mock.calls[0]?.[0] as readonly string[];
     const serveCommand = runArgs[runArgs.indexOf("-lc") + 1];
@@ -164,31 +167,40 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(serveCommand).toBe(buildVllmServeCommand(model));
   });
 
-  it("rejects NEMOCLAW_VLLM_MODEL before installing a fixed vLLM local model profile", async () => {
-    process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
-    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const model = {
-      ...baseProfile.defaultModel,
-      fixedServeCommand: true as const,
-      managedBearerAuth: true as const,
-    };
-    const profile = { ...baseProfile, defaultModel: model };
-    mockSuccessfulVllmInstall(mocks, profile.containerName);
+  it.each([
+    { variable: "NEMOCLAW_VLLM_MODEL", value: "qwen3.6-27b" },
+    {
+      variable: "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
+      value: JSON.stringify(["--max-num-seqs", "2"]),
+    },
+  ])(
+    "rejects $variable before installing a fixed vLLM local model profile",
+    async ({ variable, value }) => {
+      process.env[variable] = value;
+      const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+      const model = {
+        ...baseProfile.defaultModel,
+        fixedServeCommand: true as const,
+        managedBearerAuth: true as const,
+      };
+      const profile = { ...baseProfile, defaultModel: model };
+      mockSuccessfulVllmInstall(mocks, profile.containerName);
 
-    const result = await installVllm(profile, {
-      hasImage: true,
-      nonInteractive: true,
-      promptFn: vi.fn(),
-    });
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+      });
 
-    expect(result).toEqual({ ok: false });
-    expect(mocks.tryInstallManagedClusterManagedVllm).not.toHaveBeenCalled();
-    expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
-    expect(mocks.ensureDualStationVllmApiKey).not.toHaveBeenCalled();
-    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
-    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
-    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_MODEL"));
-  });
+      expect(result).toEqual({ ok: false });
+      expect(mocks.tryInstallManagedClusterManagedVllm).not.toHaveBeenCalled();
+      expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
+      expect(mocks.ensureDualStationVllmApiKey).not.toHaveBeenCalled();
+      expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+      expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining(variable));
+    },
+  );
 
   it("replaces a validated interrupted managed container that holds the serving port", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
