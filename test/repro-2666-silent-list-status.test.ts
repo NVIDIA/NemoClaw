@@ -208,8 +208,8 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       { mode: 0o755 },
     );
 
-    // Keep gateway recovery inside the test-owned process boundary. The macOS
-    // runner has a package-managed gateway, which must not outlive this child.
+    // Use a failing test-owned gateway executable so the CLI cannot start a host-side
+    // Homebrew-installed OpenShell gateway that writes into the temporary home.
     fs.writeFileSync(path.join(binDir, "openshell-gateway"), "#!/usr/bin/env bash\nexit 1\n", {
       mode: 0o755,
     });
@@ -259,9 +259,9 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     };
   }
 
-  function expectCliCompleted(
-    result: ReturnType<typeof runCli>,
-  ): asserts result is ReturnType<typeof runCli> & {
+  function expectCliCompleted(result: ReturnType<typeof runCli>): asserts result is ReturnType<
+    typeof runCli
+  > & {
     code: number;
     error: undefined;
     signal: null;
@@ -302,9 +302,9 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     );
   }
 
-  function expectLayerBefore(combined: string, layer: string, laterText: string): void {
-    const layerIndex = combined.indexOf(`Failure layer: ${layer}`);
-    const laterIndex = combined.indexOf(laterText);
+  function expectLayerBefore(stdout: string, layer: string, laterText: string): void {
+    const layerIndex = stdout.indexOf(`Failure layer: ${layer}`);
+    const laterIndex = stdout.indexOf(laterText);
     expect(layerIndex).toBeGreaterThanOrEqual(0);
     expect(laterIndex).toBeGreaterThanOrEqual(0);
     expect(layerIndex).toBeLessThan(laterIndex);
