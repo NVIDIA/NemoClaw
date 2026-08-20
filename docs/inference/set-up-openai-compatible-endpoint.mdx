@@ -22,16 +22,15 @@ Start the compatible server before onboarding.
 The following example starts vLLM on port `8000`.
 
 ```bash
-vllm serve meta-llama/Llama-3.1-8B-Instruct --host 0.0.0.0 --port 8000
+vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000
 ```
 
 Port `8000` is one of NemoClaw's bundled host-gateway ports.
 
 <Warning>
-The examples on this page listen on every IPv4 interface so both host-side onboarding and a containerized gateway can reach the server.
-When the server does not require authentication, use a host firewall with default-deny inbound rules.
-Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
-Do not expose the port to your LAN or the internet.
+The no-authentication path on bundled host-gateway ports requires the backend to listen on loopback only.
+NemoClaw places a token-protected proxy in front of the endpoint and rejects a backend reachable on a non-loopback interface because that would bypass the token check.
+Endpoints configured with `COMPATIBLE_API_KEY` use a different authenticated path and are not subject to this loopback-only requirement.
 </Warning>
 
 ## Run Onboarding
@@ -53,7 +52,8 @@ Sandbox inference requests continue to use the base `inference.local` policy, so
 NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
-Make sure the server listens on an address reachable from containers, such as `0.0.0.0`; a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.
+For no-authentication endpoints on a bundled host-gateway port, keep the server bound to loopback.
+NemoClaw's protected route makes the loopback service reachable from the sandbox without exposing the backend on other host interfaces.
 
 If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.
 Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
@@ -195,7 +195,7 @@ The following example starts `llama-server` with a GGUF model.
 ```bash
 llama-server \
   -m /models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
-  --host 0.0.0.0 \
+  --host 127.0.0.1 \
   --port 8000 \
   -c 16384 \
   -ngl 999 \
