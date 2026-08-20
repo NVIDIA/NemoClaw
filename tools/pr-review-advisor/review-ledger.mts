@@ -42,8 +42,6 @@ type FindingBasisKind = (typeof REVIEW_FINDING_BASIS_KINDS)[number];
 
 export type ReviewFinding = Readonly<{
   id: string;
-  status: "open" | "resolved" | "superseded";
-  supersededBy: string | null;
   severity: Severity;
   category: Category;
   file: string | null;
@@ -64,7 +62,7 @@ export type ReviewFinding = Readonly<{
   }>;
 }>;
 
-export type ReviewFindingInput = Omit<ReviewFinding, "id" | "status" | "supersededBy">;
+export type ReviewFindingInput = Omit<ReviewFinding, "id">;
 export type CandidateFindingInput = ReviewFindingInput & {
   basis: {
     kind: FindingBasisKind;
@@ -73,31 +71,14 @@ export type CandidateFindingInput = ReviewFindingInput & {
   };
 };
 
-type LedgerHistory = Readonly<{
-  revision: number;
-  operation: "add";
-  id: string;
-  stage: "submit-review";
-  reason: null;
-  addedEvidence: readonly string[];
-  change: ReviewFindingInput;
-}>;
-
-export type ReviewFindingLedgerSnapshot = Readonly<{
+export type ReviewFindingSnapshot = Readonly<{
   version: 1;
-  revision: number;
   findings: readonly ReviewFinding[];
-  history: readonly LedgerHistory[];
 }>;
 
-const EMPTY_FINDINGS: readonly ReviewFinding[] = Object.freeze([]);
-const EMPTY_HISTORY: readonly LedgerHistory[] = Object.freeze([]);
-
-export const EMPTY_REVIEW_FINDING_LEDGER_SNAPSHOT: ReviewFindingLedgerSnapshot = Object.freeze({
+export const EMPTY_REVIEW_FINDING_SNAPSHOT: ReviewFindingSnapshot = Object.freeze({
   version: 1,
-  revision: 0,
-  findings: EMPTY_FINDINGS,
-  history: EMPTY_HISTORY,
+  findings: Object.freeze([]),
 });
 
 const ADMISSIBLE_CATEGORY_BASIS_PAIRS: ReadonlySet<string> = new Set([
@@ -124,44 +105,22 @@ const ADMISSIBLE_CATEGORY_BASIS_PAIRS: ReadonlySet<string> = new Set([
 export function validateReviewFindingSubmission(
   candidates: readonly CandidateFindingInput[],
   repositoryRoot: string,
-): ReviewFindingLedgerSnapshot {
+): ReviewFindingSnapshot {
   if (candidates.length > REVIEW_FINDING_LIMIT) {
     throw new Error(`findings must contain at most ${REVIEW_FINDING_LIMIT} items`);
   }
   const realRepositoryRoot = fs.realpathSync(repositoryRoot);
-  if (candidates.length === 0) return EMPTY_REVIEW_FINDING_LEDGER_SNAPSHOT;
+  if (candidates.length === 0) return EMPTY_REVIEW_FINDING_SNAPSHOT;
   const lineCounts = new Map<string, number>();
 
   const findings = candidates.map((candidate, index) => {
     validateCandidateFinding(candidate, realRepositoryRoot, lineCounts);
     const { basis: _basis, ...input } = candidate;
     const normalized = normalizeFinding(input);
-    return freezeFinding({
-      ...normalized,
-      id: findingId(index),
-      status: "open",
-      supersededBy: null,
-    });
-  });
-  const history = findings.map((finding, index) => {
-    const { id, status: _status, supersededBy: _supersededBy, ...change } = finding;
-    return deepFreeze({
-      revision: index + 1,
-      operation: "add" as const,
-      id,
-      stage: "submit-review" as const,
-      reason: null,
-      addedEvidence: [...finding.evidence],
-      change: structuredClone(change),
-    });
+    return freezeFinding({ ...normalized, id: findingId(index) });
   });
 
-  return Object.freeze({
-    version: 1,
-    revision: findings.length,
-    findings: Object.freeze(findings),
-    history: Object.freeze(history),
-  });
+  return Object.freeze({ version: 1, findings: Object.freeze(findings) });
 }
 
 function pairs(categories: readonly Category[], basisKinds: readonly FindingBasisKind[]): string[] {
@@ -174,7 +133,7 @@ function categoryBasisKey(category: Category, basisKind: FindingBasisKind): stri
   return `${category}:${basisKind}`;
 }
 
-function findingId(index: number): string {
+export function findingId(index: number): string {
   return `F-${String(index + 1).padStart(3, "0")}`;
 }
 
