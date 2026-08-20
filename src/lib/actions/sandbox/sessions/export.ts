@@ -28,7 +28,8 @@
 //       * Host-side: `src/lib/actions/sandbox/sessions/export.test.ts`
 //         covers tar argv construction, index parser shape tolerance, key
 //         canonicalisation, agent-scope refusal, leading-dash session id
-//         rejection, download-failure cleanup, and JSON manifest shape.
+//         rejection, download-failure cleanup, the remote cleanup warning on
+//         a non-zero `rm -f` exit, and JSON manifest shape.
 //       * E2E (stub openshell): `test/sandbox-sessions-export-cli.test.ts`
 //         exercises the full CLI through dispatch with a fake openshell
 //         binary, proving the `exec tar`, `download`, and `exec rm` wire
@@ -214,11 +215,20 @@ async function exportSandboxSessionsUnlocked(
     } finally {
       // Best-effort cleanup of the in-sandbox staging tarball. Runs even when
       // tar/download fail so a partial export cannot leave a bundle of session
-      // JSONL behind in the in-sandbox staging directory.
-      runOpenshell(
+      // JSONL behind in the in-sandbox staging directory. `stdio: "ignore"`
+      // discards the `rm` diagnostics, so the exit status is the only signal
+      // left: capture it and warn, exactly as the hermes path below does.
+      // Without that, a failed cleanup reports a clean export while a mode-0600
+      // tarball of session JSONL survives in the sandbox.
+      const remoteCleanup = runOpenshell(
         ["sandbox", "exec", "--name", opts.sandboxName, "--", "rm", "-f", tarballRemote],
         { ignoreError: true, stdio: "ignore" },
       );
+      if (remoteCleanup.status !== 0) {
+        console.warn(
+          `  Warning: failed to remove in-sandbox staging tarball '${tarballRemote}' from sandbox '${opts.sandboxName}' (exit ${remoteCleanup.status}). The tarball may still contain session JSONL with pasted secrets; remove it manually with \`${CLI_NAME} sandbox exec --name ${opts.sandboxName} -- rm -f ${tarballRemote}\`.`,
+        );
+      }
       removeHostStagingDir(hostStagingDir);
     }
 
