@@ -419,7 +419,7 @@ function completedOnboardAuthority(test: ReturnType<typeof fixture>, portable: b
     requiredCapabilities: [],
   };
   const session = createSession({
-    agent: "openclaw",
+    agent: null,
     sandboxName,
     sessionId,
     metadata: { gatewayName: gateway.gatewayName, fromDockerfile: null },
@@ -793,10 +793,16 @@ describe("portable runtime uninstall cleanup", () => {
     ["a profile mismatch", "session", (value: any) => (value.checkpoint.profile.value = "default")],
     ["a schema-old checkpoint", "session", (value: any) => (value.checkpoint.schemaVersion = 3)],
     ["a session identity drift", "session", (value: any) => (value.checkpoint.sessionId = "other")],
+    ["a missing session agent", "session", (value: any) => delete value.agent],
     [
       "a sandbox identity drift",
       "session",
       (value: any) => (value.checkpoint.sandboxIdentity.value.name = "other"),
+    ],
+    [
+      "an agent identity drift",
+      "session",
+      (value: any) => (value.checkpoint.sandboxIdentity.value.agent = "hermes"),
     ],
     [
       "a checkpoint gateway drift",

@@ -95,6 +95,7 @@ function completedSession(bytes: Buffer, expected?: Profile) {
     raw.sessionId.length === 0 ||
     typeof raw.sandboxName !== "string" ||
     raw.sandboxName.length === 0 ||
+    (raw.agent !== null && typeof raw.agent !== "string") ||
     raw.status !== "complete" ||
     raw.resumable !== false ||
     !rawMachine ||
@@ -117,7 +118,6 @@ function completedSession(bytes: Buffer, expected?: Profile) {
     session.machine.state !== "complete" ||
     session.machine.revision !== (rawMachine as Record<string, unknown>).revision ||
     session.sandboxName !== raw.sandboxName ||
-    session.agent === null ||
     !checkpoint ||
     checkpoint.machineState !== "complete" ||
     checkpoint.sessionId !== session.sessionId ||
@@ -126,7 +126,7 @@ function completedSession(bytes: Buffer, expected?: Profile) {
     (expected !== undefined && checkpoint.profile.value !== expected) ||
     checkpoint.sandboxIdentity.kind !== "selected" ||
     checkpoint.sandboxIdentity.value.name !== session.sandboxName ||
-    checkpoint.sandboxIdentity.value.agent !== session.agent ||
+    checkpoint.sandboxIdentity.value.agent !== (session.agent ?? "openclaw") ||
     checkpoint.gatewayAuthority.kind !== "selected" ||
     !rawMetadata ||
     typeof rawMetadata !== "object" ||

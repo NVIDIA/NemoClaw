@@ -126,10 +126,14 @@ function abandonedPortableConfig(host: ReturnType<typeof scope>, mode: number): 
   return directory;
 }
 
-function completedPortableAuthorityWithoutReceipt(host: ReturnType<typeof scope>): void {
+function completedOpenClawAuthority(
+  host: ReturnType<typeof scope>,
+  profile: "default" | "portable",
+): void {
+  const portable = profile === "portable";
   const uid = process.getuid?.() ?? 1001;
-  const sessionId = "completed-portable-session";
-  const sandboxName = "portable-sandbox";
+  const sessionId = "completed-openclaw-session";
+  const sandboxName = "openclaw-sandbox";
   const generation = "e".repeat(64);
   const gateway = {
     gatewayName: "nemoclaw",
@@ -142,7 +146,7 @@ function completedPortableAuthorityWithoutReceipt(host: ReturnType<typeof scope>
     requiredCapabilities: [],
   };
   const session = createSession({
-    agent: "openclaw",
+    agent: null,
     sandboxName,
     sessionId,
     metadata: { gatewayName: gateway.gatewayName, fromDockerfile: null },
@@ -160,20 +164,22 @@ function completedPortableAuthorityWithoutReceipt(host: ReturnType<typeof scope>
     sessionId,
     machineState: "complete",
     updatedAt: "2026-08-19T00:00:00.000Z",
-    profile: { kind: "selected", value: "portable" },
-    runtimeAuthority: {
-      kind: "selected",
-      value: {
-        schemaVersion: 1,
-        kind: "podman",
-        ownership: "current-user",
-        uid,
-        homeDir: host.homeDir,
-        configHome: path.join(host.homeDir, ".config"),
-        runtimeDir: `/run/user/${uid}`,
-        socketPath: `/run/user/${uid}/podman/podman.sock`,
-      },
-    },
+    profile: { kind: "selected", value: profile },
+    runtimeAuthority: portable
+      ? {
+          kind: "selected",
+          value: {
+            schemaVersion: 1,
+            kind: "podman",
+            ownership: "current-user",
+            uid,
+            homeDir: host.homeDir,
+            configHome: path.join(host.homeDir, ".config"),
+            runtimeDir: `/run/user/${uid}`,
+            socketPath: `/run/user/${uid}/podman/podman.sock`,
+          },
+        }
+      : { kind: "unset" },
     sandboxIdentity: { kind: "selected", value: { name: sandboxName, agent: "openclaw" } },
     webSearch: { kind: "unset" },
     messaging: { kind: "unset" },
@@ -206,8 +212,8 @@ function completedPortableAuthorityWithoutReceipt(host: ReturnType<typeof scope>
     })}\n`,
     { mode: 0o600 },
   );
-  abandonedPortableConfig(host, 0o700);
-  fs.mkdirSync(path.join(host.stateDir, "portable-demo-lifecycle"), { mode: 0o700 });
+  portable && abandonedPortableConfig(host, 0o700);
+  portable && fs.mkdirSync(path.join(host.stateDir, "portable-demo-lifecycle"), { mode: 0o700 });
 }
 
 afterEach(() => {
@@ -251,9 +257,16 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     },
   );
 
+  it("completes ordinary uninstall after completed default OpenClaw onboarding", () => {
+    const host = scope("nemoclaw-uninstall-completed-openclaw-");
+    completedOpenClawAuthority(host, "default");
+
+    expectOrdinaryUninstall(host);
+  });
+
   it("refuses completed portable authority after its lifecycle receipt disappears", () => {
     const host = scope("nemoclaw-uninstall-completed-portable-");
-    completedPortableAuthorityWithoutReceipt(host);
+    completedOpenClawAuthority(host, "portable");
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const result = uninstall(host);
