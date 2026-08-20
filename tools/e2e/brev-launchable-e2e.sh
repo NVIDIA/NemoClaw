@@ -604,8 +604,24 @@ identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
     "{schemaVersion:\$schemaVersion,sourceRepository:\$sourceRepository,sourcePath:\$sourcePath,repoSha:\$repoSha,provisionSha:\$provisionSha,imageRepositorySha:\$imageRepositorySha,repoClean:\$repoClean,runtimeOverrides:\$runtimeOverrides}"' \
   | sed -n 's/^NEMOCLAW_IDENTITY=//p' | tail -n 1)"
 runtime_checks="$(jq -c --arg sha "$CANDIDATE_SHA" --arg imageRepositorySha "$image_repository_sha" '
+  def reported($field; $observed):
+    if $field == "schemaVersion" then
+      if ($observed | type) == "number" and $observed == ($observed | floor) and
+          $observed >= 0 and $observed <= 999 then $observed else "<redacted>" end
+    elif $field == "sourceRepository" then
+      if ($observed | type) == "string" and ($observed | length) <= 200 and
+          ($observed | test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")) then $observed else "<redacted>" end
+    elif $field == "sourcePath" then
+      if ($observed | type) == "string" and ($observed | length) <= 256 and
+          ($observed | test("^/[A-Za-z0-9._/-]+$")) then $observed else "<redacted>" end
+    elif $field == "repoSha" or $field == "provisionSha" or $field == "imageRepositorySha" then
+      if ($observed | type) == "string" and ($observed | test("^[0-9a-f]{40}$")) then $observed else "<redacted>" end
+    elif $field == "repoClean" or $field == "runtimeOverrides" then
+      if ($observed | type) == "boolean" then $observed else "<redacted>" end
+    else "<redacted>"
+    end;
   def check($field; $expected; $observed):
-    {field:$field,expected:$expected,observed:$observed,
+    {field:$field,expected:$expected,observed:reported($field; $observed),
       status:(if $observed == $expected then "passed" else "failed" end)};
   [
     check("schemaVersion"; 1; .schemaVersion),
@@ -619,8 +635,10 @@ runtime_checks="$(jq -c --arg sha "$CANDIDATE_SHA" --arg imageRepositorySha "$im
   ]' <<<"$identity")" || die "booted image runtime identity is malformed"
 runtime_status="$(jq -r 'if all(.status == "passed") then "passed" else "failed" end' \
   <<<"$runtime_checks")"
+reported_identity="$(jq -c 'map({key:.field,value:.observed}) | from_entries' \
+  <<<"$runtime_checks")"
 
-jq --argjson identity "$identity" --arg status "$runtime_status" --argjson checks "$runtime_checks" '
+jq --argjson identity "$reported_identity" --arg status "$runtime_status" --argjson checks "$runtime_checks" '
   .boot += $identity | .validation.runtimeProvenance = {status:$status,checks:$checks}' \
   "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
 mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
