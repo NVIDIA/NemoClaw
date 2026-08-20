@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import reviewSchema from "../tools/pr-review-advisor/schema.json" with { type: "json" };
-import { persistReviewSubmissionTurn } from "../tools/pr-review-advisor/analyze.mts";
+import {
+  applyReviewSubmissionTurn,
+  persistSuccessfulReview,
+} from "../tools/pr-review-advisor/analyze.mts";
+import type { ArtifactPaths } from "../tools/pr-review-advisor/artifacts.mts";
 import {
   ACCEPTANCE_FINDING_REFERENCE_PAIRS,
   createReviewSubmissionController,
@@ -14,6 +16,7 @@ import {
   RECORD_REVIEW_RECEIPT_TOOL,
   RECOMMEND_E2E_TOOL,
   SUBMIT_REVIEW_TOOL,
+  type ReviewSubmissionController,
 } from "../tools/pr-review-advisor/review-submission.mts";
 import type { TerminologyTrace } from "../tools/pr-review-advisor/terminology.mts";
 import { readParsedTrustedSecurityRubric } from "../tools/pr-review-advisor/trusted-guidance.mts";
@@ -25,6 +28,7 @@ function controller(
   traces = new Map<string, TerminologyTrace>(),
   normalizeE2e = (draft: Record<string, unknown>) => draft,
   securityCategoryNames: readonly string[] = SECURITY_CATEGORY_NAMES,
+  hasOpenPrReplacement = false,
 ) {
   return createReviewSubmissionController({
     metadata: {
@@ -38,6 +42,7 @@ function controller(
           rationale: "A runtime boundary changed.",
           suggestedTests: ["deterministic runtime test"],
         },
+        hasOpenPrReplacement,
       },
     },
     schema: reviewSchema,
@@ -83,7 +88,7 @@ function receipt(
 ) {
   return {
     summary: {
-      recommendation: "merge_after_fixes",
+      recommendation: "merge_as_is",
       confidence: "high",
       oneLine: "One finding remains.",
     },
@@ -143,6 +148,29 @@ function e2e() {
   };
 }
 
+const ARTIFACTS: ArtifactPaths = {
+  result: "result.json",
+  finalResult: "final-result.json",
+  summary: "summary.md",
+  sessionHtml: "session.html",
+};
+
+function completedSubmission(result: unknown): ReviewSubmissionController {
+  return {
+    tools: [],
+    result: () => result,
+    findingSnapshot: () => ({ version: 1, findings: [] }),
+    terminologySnapshot: () => ({
+      version: 1,
+      revision: 1,
+      headSha: HEAD,
+      review: { status: "clear", decisions: [], noChangesReason: "No terminology changes." },
+    }),
+    finalize: vi.fn(),
+    discard: vi.fn(),
+  };
+}
+
 describe("PR review advisor submission tools", () => {
   it("exposes only the four two-turn batch tools", () => {
     expect(controller().tools.map((candidate) => candidate.name)).toEqual([
@@ -151,6 +179,82 @@ describe("PR review advisor submission tools", () => {
       RECOMMEND_E2E_TOOL,
       SUBMIT_REVIEW_TOOL,
     ]);
+  });
+
+  it.each(["needs_rework", "blocked"])(
+    "rejects unsupported model-authored summary recommendation %s",
+    async (recommendation) => {
+      const submission = controller();
+      await execute(submission, RECORD_FINDINGS_TOOL, { findings: [] });
+      const draft = receipt() as Record<string, any>;
+      draft.summary = { ...draft.summary, recommendation };
+      await expect(execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft)).rejects.toThrow(
+        "record_review_receipt failed schema validation",
+      );
+    },
+  );
+
+  it.each([
+    { findings: [finding()], confidence: "high", expected: "merge_after_fixes" },
+    { findings: [], confidence: "low", expected: "info_only" },
+    { findings: [], confidence: "medium", expected: "merge_as_is" },
+    { findings: [], confidence: "high", expected: "merge_as_is" },
+  ])("derives canonical recommendation $expected", async ({ findings, confidence, expected }) => {
+    const submission = controller();
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings });
+    const draft = receipt() as Record<string, any>;
+    draft.summary = { ...draft.summary, confidence };
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await execute(submission, SUBMIT_REVIEW_TOOL, {});
+    submission.finalize();
+    expect((submission.result() as Record<string, any>).summary.recommendation).toBe(expected);
+  });
+
+  it("preserves superseded with deterministic open-PR overlap and no findings", async () => {
+    const submission = controller(
+      new Map(),
+      (draft: Record<string, unknown>) => draft,
+      SECURITY_CATEGORY_NAMES,
+      true,
+    );
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [] });
+    const draft = receipt() as Record<string, any>;
+    draft.summary.recommendation = "superseded";
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await execute(submission, SUBMIT_REVIEW_TOOL, {});
+    submission.finalize();
+    expect((submission.result() as Record<string, any>).summary.recommendation).toBe("superseded");
+  });
+
+  it("rejects superseded without deterministic open-PR overlap atomically", async () => {
+    const submission = controller();
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [] });
+    const draft = receipt() as Record<string, any>;
+    draft.summary.recommendation = "superseded";
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "without deterministic open-PR overlap evidence",
+    );
+    expect(submission.result()).toBeNull();
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
+    expect(submission.terminologySnapshot().revision).toBe(0);
+  });
+
+  it("overrides superseded when open findings require fixes", async () => {
+    const submission = controller();
+    await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    const draft = receipt() as Record<string, any>;
+    draft.summary.recommendation = "superseded";
+    await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
+    await execute(submission, RECOMMEND_E2E_TOOL, e2e());
+    await execute(submission, SUBMIT_REVIEW_TOOL, {});
+    submission.finalize();
+    expect((submission.result() as Record<string, any>).summary.recommendation).toBe(
+      "merge_after_fixes",
+    );
   });
 
   it("requires findings before recording a review receipt", async () => {
@@ -275,36 +379,17 @@ describe("PR review advisor submission tools", () => {
       expect(responseText).not.toContain("acceptanceCoverage");
       expect(responseText).not.toContain("findingLedger");
       expect(responseText).not.toContain("terminologyLedger");
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-advisor-rejected-flow-"));
-      const paths = {
-        result: path.join(tmp, "result.json"),
-        findingLedger: path.join(tmp, "findings.json"),
-        terminologyLedger: path.join(tmp, "terminology.json"),
-      };
-      try {
-        persistReviewSubmissionTurn(
-          submission,
-          {
-            index: 2,
-            total: 2,
-            name: "challenge-and-record",
-            text: responseText,
-            status: "failed",
-            error: "terminal flow rejected",
-          },
-          paths,
-        );
-        expect(submission.result()).toBeNull();
-        expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
-        expect(submission.terminologySnapshot()).toMatchObject({ revision: 0 });
-        expect(JSON.parse(fs.readFileSync(paths.result, "utf8"))).toBeNull();
-        expect(JSON.parse(fs.readFileSync(paths.findingLedger, "utf8"))).toMatchObject({
-          revision: 0,
-          findings: [],
-        });
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
+      applyReviewSubmissionTurn(submission, {
+        index: 2,
+        total: 2,
+        name: "challenge-and-record",
+        text: responseText,
+        status: "failed",
+        error: "terminal flow rejected",
+      });
+      expect(submission.result()).toBeNull();
+      expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
+      expect(submission.terminologySnapshot()).toMatchObject({ revision: 0 });
     },
   );
 
@@ -314,33 +399,37 @@ describe("PR review advisor submission tools", () => {
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
     await execute(submission, SUBMIT_REVIEW_TOOL, {});
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-advisor-accepted-flow-"));
-    const paths = {
-      result: path.join(tmp, "result.json"),
-      findingLedger: path.join(tmp, "findings.json"),
-      terminologyLedger: path.join(tmp, "terminology.json"),
-    };
-    try {
-      persistReviewSubmissionTurn(
-        submission,
-        { index: 2, total: 2, name: "challenge-and-record", text: "", status: "completed" },
-        paths,
-      );
-      expect(submission.result()).not.toBeNull();
-      expect(submission.findingSnapshot()).toMatchObject({ revision: 1 });
-      expect(() =>
-        persistReviewSubmissionTurn(
-          submission,
-          { index: 2, total: 2, name: "challenge-and-record", text: "", status: "completed" },
-          paths,
-        ),
-      ).toThrow("no validated pending state");
-      expect(submission.result()).toBeNull();
-      expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
+    applyReviewSubmissionTurn(submission, {
+      index: 1,
+      total: 2,
+      name: "investigate",
+      text: "",
+      status: "completed",
+    });
+    expect(submission.result()).toBeNull();
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
+    applyReviewSubmissionTurn(submission, {
+      index: 2,
+      total: 2,
+      name: "challenge-and-record",
+      text: "",
+      status: "completed",
+    });
+    expect(submission.result()).not.toBeNull();
+    expect(submission.findingSnapshot()).toMatchObject({ version: 1, findings: [{ id: "F-001" }] });
+    expect(() =>
+      applyReviewSubmissionTurn(submission, {
+        index: 2,
+        total: 2,
+        name: "challenge-and-record",
+        text: "",
+        status: "completed",
+      }),
+    ).toThrow("no validated pending state");
+    expect(submission.result()).toBeNull();
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
   });
+
 
   it("enforces deterministic test depth without losing rationale or suggested tests", async () => {
     const submission = controller();
@@ -375,7 +464,7 @@ describe("PR review advisor submission tools", () => {
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow("placeholder impact");
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.result()).toBeNull();
   });
 
@@ -443,7 +532,7 @@ describe("PR review advisor submission tools", () => {
         ],
       },
     });
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.terminologySnapshot()).toMatchObject({ revision: 0 });
     expect(submission.result()).toBeNull();
     const submitted = await execute(submission, SUBMIT_REVIEW_TOOL, {});
@@ -454,7 +543,7 @@ describe("PR review advisor submission tools", () => {
     expect(submitted.terminate).toBe(true);
     expect(normalizeE2e).toHaveBeenCalledOnce();
     expect(submission.result()).toBeNull();
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.terminologySnapshot()).toMatchObject({ revision: 0 });
     submission.finalize();
     const result = submission.result() as Record<string, any>;
@@ -463,6 +552,7 @@ describe("PR review advisor submission tools", () => {
       recommendation: "merge_after_fixes",
       topItem: "The refusal is hidden",
     });
+    expect(result.summary).not.toHaveProperty("sinceLastReview");
     expect(result).toMatchObject({
       version: 1,
       headSha: HEAD,
@@ -476,9 +566,9 @@ describe("PR review advisor submission tools", () => {
     });
     expect(result.findings[0].title).not.toBe("Discarded draft");
     expect(result.findings[0]).not.toHaveProperty("basis");
-    expect(submission.findingSnapshot()).toMatchObject({
-      revision: 1,
-      findings: [{ id: "F-001", status: "open" }],
+    expect(submission.findingSnapshot()).toEqual({
+      version: 1,
+      findings: [expect.objectContaining({ id: "F-001" })],
     });
     expect(submission.terminologySnapshot()).toMatchObject({ revision: 1, headSha: HEAD });
   });
@@ -515,7 +605,7 @@ describe("PR review advisor submission tools", () => {
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
       "submit_review requires: review receipt, E2E recommendations",
     );
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.result()).toBeNull();
   });
 
@@ -533,7 +623,7 @@ describe("PR review advisor submission tools", () => {
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
       "No addition policy admits category=correctness with basis.kind=security_violation; admissible pairs:",
     );
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.result()).toBeNull();
 
     await execute(submission, RECORD_FINDINGS_TOOL, { findings: [finding()] });
@@ -544,10 +634,10 @@ describe("PR review advisor submission tools", () => {
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).resolves.toMatchObject({
       terminate: true,
     });
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 0 });
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.result()).toBeNull();
     submission.finalize();
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 1 });
+    expect(submission.findingSnapshot()).toMatchObject({ version: 1, findings: [{ id: "F-001" }] });
   });
 
   it("accepts a finding pair admitted by one canonical policy", async () => {
@@ -582,7 +672,7 @@ describe("PR review advisor submission tools", () => {
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
       "unsupported E2E selector model-invented",
     );
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
   });
 
   it("requires all security categories and canonical source-of-truth finding IDs", async () => {
@@ -681,7 +771,7 @@ describe("PR review advisor submission tools", () => {
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow();
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.result()).toBeNull();
   });
 
@@ -765,7 +855,7 @@ describe("PR review advisor submission tools", () => {
       await expect(execute(unrelated, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
         "does not fit this concern",
       );
-      expect(unrelated.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+      expect(unrelated.findingSnapshot()).toEqual({ version: 1, findings: [] });
       expect(unrelated.result()).toBeNull();
     },
   );
@@ -843,7 +933,7 @@ describe("PR review advisor submission tools", () => {
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
       "acceptanceCoverage[1] references finding F-001, which does not fit this concern",
     );
-    expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+    expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.result()).toBeNull();
   });
 
@@ -864,7 +954,7 @@ describe("PR review advisor submission tools", () => {
       await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, receipt());
       await execute(submission, RECOMMEND_E2E_TOOL, e2e());
       await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow();
-      expect(submission.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+      expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
       expect(submission.result()).toBeNull();
     },
   );
@@ -888,12 +978,10 @@ describe("PR review advisor submission tools", () => {
 
     const rejected = controller(new Map(), (value) => value, injected);
     await execute(rejected, RECORD_FINDINGS_TOOL, { findings: [finding()] });
-    await execute(rejected, RECORD_REVIEW_RECEIPT_TOOL, receipt());
-    await execute(rejected, RECOMMEND_E2E_TOOL, e2e());
-    await expect(execute(rejected, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
-      "securityCategories must contain each named category exactly once",
+    await expect(execute(rejected, RECORD_REVIEW_RECEIPT_TOOL, receipt())).rejects.toThrow(
+      "record_review_receipt failed schema validation",
     );
-    expect(rejected.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+    expect(rejected.findingSnapshot()).toEqual({ version: 1, findings: [] });
   });
 
   const acceptanceMissing = (draft: ReturnType<typeof receipt>) => {
@@ -1006,7 +1094,7 @@ describe("PR review advisor submission tools", () => {
       await execute(rejected, RECORD_REVIEW_RECEIPT_TOOL, draft);
       await execute(rejected, RECOMMEND_E2E_TOOL, e2e());
       await expect(execute(rejected, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow("requires");
-      expect(rejected.findingSnapshot()).toMatchObject({ revision: 0, findings: [] });
+      expect(rejected.findingSnapshot()).toEqual({ version: 1, findings: [] });
       expect(rejected.result()).toBeNull();
     },
   );
@@ -1025,6 +1113,7 @@ describe("PR review advisor submission tools", () => {
             rationale: "Unit coverage is sufficient.",
             suggestedTests: ["focused unit test"],
           },
+          hasOpenPrReplacement: false,
         },
       },
       schema: reviewSchema,
@@ -1129,5 +1218,36 @@ describe("PR review advisor submission tools", () => {
       traceId: trace.id,
       source: { file: "tools/pr-review-advisor/review-submission.mts", line: 9, headSha: HEAD },
     });
+  });
+
+  it.each([
+    [
+      "SDK execution errors",
+      ["provider failed"],
+      completedSubmission({ submitted: true }),
+      "PR review advisor SDK execution failed: provider failed",
+    ],
+    [
+      "missing atomic submission",
+      [],
+      completedSubmission(null),
+      "PR review advisor did not atomically submit a review result",
+    ],
+  ] as const)("writes no canonical artifacts for %s", (_name, errors, submission, reason) => {
+    const write = vi.fn();
+    expect(() => persistSuccessfulReview(errors, submission, ARTIFACTS, write)).toThrow(reason);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("writes each canonical artifact exactly once after finalized success", () => {
+    const result = { submitted: true };
+    const submission = completedSubmission(result);
+    const write = vi.fn();
+
+    expect(persistSuccessfulReview([], submission, ARTIFACTS, write)).toBe(result);
+    expect(write.mock.calls).toEqual([
+      [ARTIFACTS.result, result],
+      [ARTIFACTS.finalResult, result],
+    ]);
   });
 });

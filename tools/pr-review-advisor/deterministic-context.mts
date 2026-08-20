@@ -4,7 +4,7 @@
 import { getCommits, getDiffStat } from "../advisors/git.mts";
 import { buildRiskPlan, isPrE2ePlanningJob, type RiskPlan } from "../advisors/risk-plan.mts";
 import { focusedE2eJobsForChangedFiles } from "../e2e/workflow-boundary.mts";
-import type { GitHubReviewContext, PreviousAdvisorReview } from "./github-context.mts";
+import type { GitHubReviewContext } from "./github-context.mts";
 import {
   collectDriftEvidence,
   detectLocalizedPatchSignals,
@@ -33,7 +33,6 @@ export type DeterministicReviewContext = {
   workflowSignals: string[];
   localizedPatchSignals: LocalizedPatchSignal[];
   driftEvidence: DriftEvidence[];
-  previousAdvisorReview: PreviousAdvisorReview | null;
   github: GitHubReviewContext | null;
 };
 
@@ -73,7 +72,6 @@ export async function collectDeterministicContext(
     testDepth: classifyTestDepth(options.changedFiles, riskPlan, options.diff),
     staticTestInventory: collectStaticTestInventory(options.changedFiles),
     simplificationSignals: detectSimplificationSignals(options.diff),
-    previousAdvisorReview: github?.previousAdvisorReview || null,
     workflowSignals: detectWorkflowSignals(options.changedFiles, options.diff),
     localizedPatchSignals: detectLocalizedPatchSignals(options.diff),
     driftEvidence: collectDriftEvidence(options.baseRef, options.changedFiles),

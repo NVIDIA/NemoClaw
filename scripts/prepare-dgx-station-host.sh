@@ -1326,7 +1326,13 @@ check_vllm_container_conflicts() {
 }
 
 check_agent_and_inference_conflicts() {
-  local processes agent_matches inference_matches listeners
+  local processes agent_matches inference_matches listeners vllm_port
+  vllm_port="$(printf '%s' "${NEMOCLAW_VLLM_PORT:-8000}" | awk '{gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print}')"
+  if [[ ! "$vllm_port" =~ ^[0-9]{4,5}$ ]] \
+    || ((10#$vllm_port < 1024 || 10#$vllm_port > 65535)); then
+    fatal "NEMOCLAW_VLLM_PORT must be an integer from 1024 to 65535."
+  fi
+  vllm_port="$((10#$vllm_port))"
   processes="$(ps -eo pid=,ppid=,comm=,args=)"
   agent_matches="$(awk -v self="$$" -v parent="$PPID" '
     {
@@ -1371,11 +1377,11 @@ check_agent_and_inference_conflicts() {
   [[ -z "$inference_matches" ]] \
     || existing_vllm_conflict "vLLM inference workload is active: ${inference_matches}. NemoClaw did not stop or modify it."
 
-  listeners="$(ss -H -ltn 2>/dev/null | awk '$4 ~ /:8000$/ {print}')"
+  listeners="$(ss -H -ltn 2>/dev/null | awk -v port="$vllm_port" '$4 ~ (":" port "$") {print}')"
   [[ -z "$listeners" ]] \
-    || fatal "Port 8000 is already listening: ${listeners}. Stop the service that owns port 8000 before Station Express. Then rerun the installer."
+    || fatal "Port ${vllm_port} is already listening: ${listeners}. Stop the service that owns port ${vllm_port} before Station Express. Then rerun the installer."
 
-  info "agent_inference_workloads=none port_8000=free"
+  info "agent_inference_workloads=none vllm_port=${vllm_port} free"
 }
 
 check_initial_workload_quiescence() {

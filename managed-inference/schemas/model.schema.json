@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/model.schema.json",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "nemoclaw.nvidia.com/managed-inference/v1" },
+    "kind": { "const": "ServingModel" },
+    "metadata": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": ["id", "revision", "environmentValue", "displayName", "menuOrder", "servedName", "downloadSizeBytes", "gated", "installFastSafetensors", "preparation", "capabilities", "probePolicyRef"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "maxLength": 256 },
+        "revision": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$" },
+        "environmentValue": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "menuOrder": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "servedName": { "$ref": "#/$defs/stableId" },
+        "downloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
+        "gated": { "type": "boolean" },
+        "installFastSafetensors": { "type": "boolean" },
+        "preparation": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["ref"],
+              "properties": { "ref": { "const": "none/v1" } },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["ref", "snapshotCopy", "exactTextReplacement"],
+              "properties": {
+                "ref": { "const": "snapshot-copy-and-exact-text-replacement/v1" },
+                "snapshotCopy": {
+                  "type": "object",
+                  "required": ["sourcePath", "digest", "targetPath"],
+                  "properties": {
+                    "sourcePath": { "$ref": "#/$defs/relativePath" },
+                    "digest": { "$ref": "#/$defs/sha256" },
+                    "targetPath": { "$ref": "#/$defs/absolutePath" }
+                  },
+                  "additionalProperties": false
+                },
+                "exactTextReplacement": {
+                  "type": "object",
+                  "required": ["targetPath", "expectedText", "replacementText"],
+                  "properties": {
+                    "targetPath": { "$ref": "#/$defs/absolutePath" },
+                    "expectedText": { "type": "string", "minLength": 1, "maxLength": 16384 },
+                    "replacementText": { "type": "string", "minLength": 1, "maxLength": 16384 }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "capabilities": {
+          "type": "object",
+          "required": ["chatCompletions", "streaming", "toolCalls", "structuredOutputs", "reasoning", "multimodal"],
+          "properties": {
+            "chatCompletions": { "type": "boolean" },
+            "streaming": { "type": "boolean" },
+            "toolCalls": { "type": "boolean" },
+            "structuredOutputs": { "type": "boolean" },
+            "reasoning": { "type": "boolean" },
+            "multimodal": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "probePolicyRef": { "$ref": "#/$defs/stableId" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "stableId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$" },
+    "positiveSafeInteger": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "relativePath": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!\\.{1,2}(?:/|$))(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" },
+    "absolutePath": { "type": "string", "minLength": 2, "maxLength": 512, "pattern": "^/(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$" }
+  }
+}

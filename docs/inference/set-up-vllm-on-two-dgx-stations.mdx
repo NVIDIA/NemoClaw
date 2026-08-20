@@ -47,6 +47,16 @@ Set `NEMOCLAW_DGX_STATION_PEER` to request one exact already-trusted peer.
 The installer stops instead of falling back when that peer does not qualify.
 An explicit `NEMOCLAW_VLLM_MODEL` remains authoritative.
 
+<Warning>
+Before installation, inspect any running `nemoclaw-vllm-head` and `nemoclaw-vllm-worker` containers.
+When both containers carry NemoClaw's complete schema-2 ownership labels, the default-port endpoint, and the matching historical launch contracts for this exact pair, NemoClaw authenticates them as prior managed state but does not reuse them.
+Installation interrupts serving while it removes both schema-2 containers and creates a schema-3 pair with the configured vLLM port.
+The replacement preserves the shared Hugging Face model cache and the persisted host bearer key; it does not preserve the old containers.
+If the new pair fails to start or validate, rollback removes only containers from the new transaction and reports any cleanup errors.
+It does not restore the schema-2 pair, so the route remains unavailable until you correct the reported failure and rerun the same installer command.
+A missing, malformed, or mismatched ownership field remains foreign state and stops installation without removal.
+</Warning>
+
 For the first non-interactive setup, pass the managed provider and exact peer to the shell installer.
 The installer qualifies the pair and creates the peer binding that managed vLLM requires.
 Do not set `NEMOCLAW_DGX_STATION_SSH_BINDING` yourself or run `$$nemoclaw onboard` directly for the first pair setup.
@@ -133,12 +143,12 @@ The worker does not receive the serving key.
 
 Treat both Stations and their direct rails as one trusted runtime boundary.
 
-- Allow port `8000` from the OpenShell Docker subnet only to the selected rank-0 rail address.
-- Deny port `8000` on management and LAN interfaces.
+- Allow the configured vLLM port, `${NEMOCLAW_VLLM_PORT:-8000}`, from the OpenShell Docker subnet only to the selected rank-0 rail address.
+- Deny the configured vLLM port on management and LAN interfaces.
 - Restrict Ray, NCCL, and serving traffic to the reciprocal addresses on the two qualified private rails.
 - Keep Ray TCP port `6379` and Ray worker ports off untrusted or routed networks.
 
-The single-Station fallback uses the bridge-networked managed-inference topology and publishes port `8000` through Docker.
+The single-Station fallback uses the bridge-networked managed-inference topology and publishes the configured host port through Docker while the container listens on port `8000`.
 Follow [Set Up vLLM](set-up-vllm) for that workflow.
 
 ## Preserve Cleanup Ownership
