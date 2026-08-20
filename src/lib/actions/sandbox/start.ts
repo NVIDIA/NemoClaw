@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { cliName } from "../../onboard/branding";
+import type { captureOpenshell } from "../../adapters/openshell/runtime";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
@@ -40,10 +41,21 @@ function restoreLockedStartupAccess(sandboxName: string): void {
   restoreLockedStateDirStartupAccess(sandboxName);
 }
 
-function waitForSandboxReady(sandboxName: string): void {
+/** Wait for a just-started sandbox while tolerating its bounded transient Error phase. */
+function waitForSandboxReady(
+  sandboxName: string,
+  captureSandboxList?: (
+    args: string[],
+    options: { readonly ignoreError: true; readonly timeout: number },
+  ) => ReturnType<typeof captureOpenshell>,
+  allowDockerRuntimeInspection = true,
+): void {
   const { waitForSandboxReadyOrExit, SANDBOX_REPAIR_READY_TIMEOUT_SEC } =
     require("./connect") as typeof import("./connect");
   waitForSandboxReadyOrExit(sandboxName, {
+    allowInitialErrorAfterStart: true,
+    allowDockerRuntimeInspection,
+    ...(captureSandboxList ? { captureSandboxList } : {}),
     defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
     retryCommand: "start",
   });
@@ -68,8 +80,15 @@ export function restoreStoppedSandboxStartupState(
 }
 
 export interface SandboxStartDeps {
+  allowDockerRuntimeInspection?: boolean;
+  captureSandboxList?: (
+    args: string[],
+    options: { readonly ignoreError: true; readonly timeout: number },
+  ) => ReturnType<typeof captureOpenshell>;
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
+  restoreLockedStartupAccess?: (sandboxName: string) => void;
+  restoreProcessState?: (sandboxName: string) => SandboxStartupRecoveryResult;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   restoreStartupState?: (sandboxName: string) => SandboxStartupRecoveryResult;
   waitForManagedGatewaySupervisor?: (sandboxName: string) => boolean;
@@ -199,6 +218,14 @@ async function startSandboxWithinLifecycleFence(
       ((sandboxNameToRestore: string) =>
         restoreStoppedSandboxStartupState(sandboxNameToRestore, {
           agent: resolved.sandbox.agent,
+          restoreLockedStartupAccess: deps.restoreLockedStartupAccess,
+          restoreProcessState: deps.restoreProcessState,
+          waitForSandboxReady: (readyName) =>
+            waitForSandboxReady(
+              readyName,
+              deps.captureSandboxList,
+              deps.allowDockerRuntimeInspection,
+            ),
         }));
     let recovery: SandboxStartupRecoveryResult;
     try {

@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -11,6 +12,7 @@ import YAML from "yaml";
 type Step = {
   env?: Record<string, unknown>;
   id?: string;
+  if?: string;
   name?: string;
   run?: string;
   uses?: string;
@@ -103,6 +105,54 @@ function jobPermissionValues(workflowValue: Workflow): string[] {
   return Object.values(workflowValue.jobs ?? {}).flatMap((job) =>
     permissionValues(job.permissions),
   );
+}
+
+function runAnonymousPull(step: Step, result: "denied" | "success") {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "llama-cpp-anonymous-pull-"));
+  const fakeBin = path.join(temporaryRoot, "bin");
+  const invocationLog = path.join(temporaryRoot, "docker-invocation");
+  const configLog = path.join(temporaryRoot, "docker-config");
+  fs.mkdirSync(fakeBin);
+  fs.writeFileSync(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > "$INVOCATION_LOG"
+printf '%s\n' "$DOCKER_CONFIG" > "$CONFIG_LOG"
+[ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
+if [ "$RESULT" = "denied" ]; then
+  exit 37
+fi
+`,
+    { mode: 0o755 },
+  );
+
+  try {
+    const command = required(step.run, "anonymous pull script is missing");
+    const commandResult = spawnSync("bash", ["--noprofile", "--norc", "-c", command], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CONFIG_LOG: configLog,
+        DIGEST: `sha256:${"a".repeat(64)}`,
+        DOCKER_AUTH_CONFIG: "must-not-reach-docker",
+        IMAGE: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
+        INVOCATION_LOG: invocationLog,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        PLATFORM: "linux/arm64",
+        RESULT: result,
+        RUNNER_TEMP: temporaryRoot,
+      },
+    });
+    const anonymousConfig = fs.readFileSync(configLog, "utf8").trim();
+    return {
+      ...commandResult,
+      anonymousConfigWasRemoved: !fs.existsSync(anonymousConfig),
+      invocation: fs.readFileSync(invocationLog, "utf8").trim(),
+    };
+  } finally {
+    fs.rmSync(temporaryRoot, { force: true, recursive: true });
+  }
 }
 
 describe("llama.cpp image PR workflow", () => {
@@ -222,13 +272,13 @@ describe("llama.cpp image PR workflow", () => {
 
   it("gates digest-first native publication on an enabled main-only declarative contract (#8250)", () => {
     const gate = required(workflow.jobs?.["publication-gate"], "publication gate is missing");
-    const preflight = required(
-      workflow.jobs?.["publication-preflight"],
-      "publication preflight is missing",
-    );
     const publish = required(workflow.jobs?.["publish-platform"], "platform publisher is missing");
     const publishGuard = namedStep(publish, "Validate trusted image build args");
     const publishBuild = namedStep(publish, "Publish exact platform digest");
+    const exportDigest = namedStep(publish, "Export validated platform digest");
+    const logout = namedStep(publish, "Remove GHCR publication credentials");
+    const anonymousPull = namedStep(publish, "Verify anonymous exact platform pull");
+    const uploadDigest = namedStep(publish, "Upload platform digest");
     const assemble = required(
       workflow.jobs?.["assemble-candidate"],
       "candidate assembly job is missing",
@@ -274,12 +324,8 @@ describe("llama.cpp image PR workflow", () => {
       clientTimeoutMilliseconds: 251,
     };
     expect(runPublicationQualificationFilter(filter, driftedBounds).status).not.toBe(0);
-    expect(preflight.needs).toEqual(["config", "publication-gate"]);
-    expect(preflight.permissions).toEqual({ packages: "read" });
-    expect(
-      namedStep(preflight, "Verify public package visibility before registry writes").run,
-    ).toContain("must exist with public visibility before publication");
-    expect(publish.needs).toEqual(["config", "publication-gate", "publication-preflight"]);
+    expect(workflow.jobs?.["publication-preflight"]).toBeUndefined();
+    expect(publish.needs).toEqual(["config", "publication-gate"]);
     expect(publish.permissions).toEqual({
       contents: "read",
       packages: "write",
@@ -300,6 +346,20 @@ describe("llama.cpp image PR workflow", () => {
     expect(publish.steps?.indexOf(publishGuard)).toBeLessThan(
       publish.steps?.indexOf(publishBuild) ?? Number.POSITIVE_INFINITY,
     );
+    expect(logout.if).toBe("always()");
+    expect(logout.run).toBe("docker logout ghcr.io");
+    expect(publish.steps?.indexOf(publishBuild)).toBeLessThan(
+      publish.steps?.indexOf(exportDigest) ?? Number.POSITIVE_INFINITY,
+    );
+    expect(publish.steps?.indexOf(exportDigest)).toBeLessThan(
+      publish.steps?.indexOf(logout) ?? Number.POSITIVE_INFINITY,
+    );
+    expect(publish.steps?.indexOf(logout)).toBeLessThan(
+      publish.steps?.indexOf(anonymousPull) ?? Number.POSITIVE_INFINITY,
+    );
+    expect(publish.steps?.indexOf(anonymousPull)).toBeLessThan(
+      publish.steps?.indexOf(uploadDigest) ?? Number.POSITIVE_INFINITY,
+    );
     expect(assemble.needs).toEqual(["config", "publication-gate", "publish-platform"]);
     expect(assembleStep.run).toContain(
       'docker buildx imagetools create --tag "$IMAGE:$CANDIDATE_TAG" "${sources[@]}"',
@@ -308,6 +368,25 @@ describe("llama.cpp image PR workflow", () => {
     expect(assembleStep.run).toContain("candidate-index.json");
     expect(assembleStep.run).toContain("platform-digests.json");
     expect(assembleStep.run).not.toMatch(/latest|stable|release/iu);
+  });
+
+  it("requires an anonymous exact-digest pull after publication and before candidate assembly (#8250)", () => {
+    const publish = required(workflow.jobs?.["publish-platform"], "platform publisher is missing");
+    const anonymousPull = namedStep(publish, "Verify anonymous exact platform pull");
+
+    const accepted = runAnonymousPull(anonymousPull, "success");
+    expect(accepted.status, accepted.stderr).toBe(0);
+    expect(accepted.invocation).toBe(
+      `pull --platform linux/arm64 ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}`,
+    );
+    expect(accepted.anonymousConfigWasRemoved).toBe(true);
+
+    const rejected = runAnonymousPull(anonymousPull, "denied");
+    expect(rejected.status).toBe(1);
+    expect(rejected.stdout + rejected.stderr).toContain(
+      "The GHCR package ghcr.io/nvidia/nemoclaw/llama-cpp-server must be public before candidate assembly.",
+    );
+    expect(rejected.anonymousConfigWasRemoved).toBe(true);
   });
 
   it("scans, attests, verifies, and creates a receipt for the exact candidate without a consumer alias (#8250)", () => {
