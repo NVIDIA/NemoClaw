@@ -64,6 +64,7 @@ export type ReviewFinding = Readonly<{
 
 export type ReviewFindingInput = Omit<ReviewFinding, "id">;
 export type CandidateFindingInput = ReviewFindingInput & {
+  receiptConcerns?: readonly string[];
   basis: {
     kind: FindingBasisKind;
     observed: string;
@@ -115,7 +116,7 @@ export function validateReviewFindingSubmission(
 
   const findings = candidates.map((candidate, index) => {
     validateCandidateFinding(candidate, realRepositoryRoot, lineCounts);
-    const { basis: _basis, ...input } = candidate;
+    const { basis: _basis, receiptConcerns: _receiptConcerns, ...input } = candidate;
     const normalized = normalizeFinding(input);
     return freezeFinding({ ...normalized, id: findingId(index) });
   });
