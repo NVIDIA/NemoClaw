@@ -742,8 +742,7 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
 const { refreshDockerDriverGatewayReuseState } =
   gatewayReuse.createDockerDriverGatewayReuseApplication({
     gatewayName: () => GATEWAY_NAME,
-    getGatewayCompatContainerName: () =>
-      gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+    getGatewayCompatContainerName: () => gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
     resolveOpenShellGatewayBinary,
     getDockerDriverGatewayEnv,
@@ -756,6 +755,7 @@ const { refreshDockerDriverGatewayReuseState } =
     checkGatewayPortAvailable,
     getDockerDriverGatewayPortListenerPid,
     rememberDockerDriverGatewayPid,
+    runDockerNetworkInspect: docker.dockerRun,
   });
 
 const { getSandboxReuseState, getSandboxRecreateObservation, waitForSandboxRecreateDeleteAbsence } =
@@ -936,8 +936,8 @@ const {
 const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawReady } =
   sandboxLifecycle.createSandboxLifecycleHelpers({
     runCaptureOpenshell,
-    fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
-      fetchGatewayAuthTokenFromSandbox(sandboxName),
+    getGatewayName: () => GATEWAY_NAME,
+    fetchGatewayAuthTokenFromSandbox: (name: string) => fetchGatewayAuthTokenFromSandbox(name),
     agentProductName,
     prompt,
     isAffirmativeAnswer,
@@ -1582,7 +1582,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
+  readDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
   getHermesToolGatewayBroker,
@@ -3179,7 +3179,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 recoverySessionId,
               ),
             setupInference,
-            resolveHostLocalInferenceStartupSelection: () => null,
+            resolveHostLocalInferenceStartupSelection: setupNimFlow.createHermesPortableOllamaInferenceResolver({ runtimeContext: lockedRuntime.portableRuntimeContext, credentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV, getReservationSessionId: () => session?.sessionId, runGatewayOpenshell: runCoreGatewayOpenshell }),
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
@@ -3265,7 +3265,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             messagingChannelConfigsEqual,
             getSandboxReuseState,
             getSandboxRecreateObservation,
-            getDcodeSelectionDrift: createDcodeSelectionDriftReader(runCaptureOpenshell),
+            getDcodeSelectionDrift: sandboxCreateOrchestrationRuntime.readDcodeSelectionDrift,
             hasSandboxGpuDrift,
             getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
             getSandboxRegistryEntry: registry.getSandbox,

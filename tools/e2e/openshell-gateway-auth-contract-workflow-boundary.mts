@@ -12,6 +12,9 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "openshell-gateway-auth-contract";
+const OPENSHELL_RELEASE_VERSION = "0.0.106";
+const OPENSHELL_INSTALL_RUN =
+  "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const TRUSTED_PLAN_CONDITION = `\${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), '${JOB_NAME}') }}`;
 const GATEWAY_PROBE_IMAGE =
@@ -98,6 +101,7 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   const expectedEnv = {
     DOCKER_GRPC_PROBE_IMAGE: GATEWAY_PROBE_IMAGE,
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
+    NEMOCLAW_CANDIDATE_VERSION: OPENSHELL_RELEASE_VERSION,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RUN_LIVE_E2E: "1",
   };
@@ -105,8 +109,10 @@ export function validateOpenShellGatewayAuthContractWorkflow(
     if (env[name] !== value) errors.push(`${JOB_NAME} must set ${name}=${value}`);
   }
   const pinVersion = env.NEMOCLAW_OPENSHELL_PIN_VERSION;
-  if (typeof pinVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(pinVersion)) {
-    errors.push(`${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION to an exact version`);
+  if (pinVersion !== OPENSHELL_RELEASE_VERSION) {
+    errors.push(
+      `${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION=${OPENSHELL_RELEASE_VERSION}`,
+    );
   }
   for (const secret of [
     "DOCKERHUB_USERNAME",
@@ -136,17 +142,9 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
 
   const install = findStep(job, "Install OpenShell CLI");
-  for (const variable of [
-    "DOCKER_CONFIG",
-    "DOCKERHUB_USERNAME",
-    "DOCKERHUB_TOKEN",
-    "NVIDIA_API_KEY",
-    "NVIDIA_INFERENCE_API_KEY",
-    "GITHUB_TOKEN",
-  ]) {
-    requireRunContains(errors, install, `-u ${variable}`);
+  if (install.run !== OPENSHELL_INSTALL_RUN) {
+    errors.push(`${JOB_NAME} must run only the canonical credential-free OpenShell install`);
   }
-  requireRunContains(errors, install, "bash scripts/install-openshell.sh");
 
   const prePull = findStep(job, "Pre-pull pinned gateway auth probe image");
   requireRunContains(errors, prePull, 'docker pull "$DOCKER_GRPC_PROBE_IMAGE"');

@@ -71,16 +71,18 @@ export type ShieldsFlowHarnessOptions = {
 };
 
 export function managedMcpPolicy(server: string, address = "8.8.8.8") {
+  const providerName = `openclaw-mcp-${server}`;
   const content = buildMcpBridgePolicyYaml(
     server,
     `https://${server}.example.com/mcp`,
     "hermes-config",
     { addresses: [address] },
+    providerName,
   );
   const entries = Object.entries(YAML.parse(content).network_policies as Record<string, unknown>);
   expect(entries, `rendered MCP policies for ${server}`).toHaveLength(1);
   const [key, networkPolicy] = entries[0]!;
-  return { content, key, networkPolicy, server };
+  return { content, key, networkPolicy, providerName, server };
 }
 
 export function managedMcpSandbox(
@@ -96,7 +98,7 @@ export function managedMcpSandbox(
     })),
     mcp: {
       bridges: Object.fromEntries(
-        policies.map(({ server }) => [
+        policies.map(({ providerName, server }) => [
           server,
           {
             server,
@@ -104,6 +106,7 @@ export function managedMcpSandbox(
             adapter: "hermes-config",
             url: `https://${server}.example.com/mcp`,
             env: ["MCP_SECRET"],
+            providerName,
             policyName: `mcp-bridge-${server}`,
             addedAt: "2026-07-30T00:00:00.000Z",
           },

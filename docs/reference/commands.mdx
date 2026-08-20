@@ -142,8 +142,9 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 ```
 
 The profile selects a fixed catalog model and serving command from the managed-inference catalog.
-The hosted installer rejects `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, and a vLLM `NEMOCLAW_VLLM_PORT` override before onboarding.
-The dedicated vLLM onboarder rejects `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_VLLM_PORT`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before it installs vLLM.
+The hosted installer rejects `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` before onboarding.
+The dedicated vLLM onboarder rejects `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before it installs vLLM.
+Set `NEMOCLAW_VLLM_PORT` before installation to publish the fixed serving recipe on another host port.
 
 The hosted installer's equivalent environment-variable form requires both `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1` and `NEMOCLAW_LOCAL_MODEL_RUNTIME`.
 Use the installer flag unless an automation boundary cannot pass installer arguments.
@@ -325,7 +326,9 @@ If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable prof
 Run `$$nemoclaw profiles list` to inspect an incompatibility reason before onboarding.
 
 If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
-The onboarding review screen identifies the resolved profile, recipe, model, runtime image, support state, and download estimates before confirmation.
+The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation.
+When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root.
+Otherwise, onboarding stops before it records a route that the profile does not declare.
 After creation, human status shows the profile, recipe, and catalog digest; JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
 
 #### `--host-mount`
@@ -2022,6 +2025,15 @@ It uses a 3-second connection timeout, a 5-second total timeout, and an 8-token 
 If the request reaches the time limit, NemoClaw reports the provider as `not probed` and leaves model health unverified instead of reporting it as unhealthy.
 These checks are diagnostic only and do not override the authoritative `inference.local` result or determine the command exit status.
 
+The `Inference (upstream)` check authenticates with the host credential that NemoClaw resolves for the provider, such as `NVIDIA_INFERENCE_API_KEY`.
+The gateway stores the provider credential that the sandbox route uses.
+The CLI cannot read the stored value back, so the two credentials can hold different secrets.
+When the `inference.local` route has already served the inference request, an `unauthorized` result on `Inference (upstream)` describes the host credential.
+NemoClaw then reports that check as `not probed` and names both credential sources.
+An `Inference (upstream)` check that fails for another reason, such as `unreachable`, still reports its own state.
+Local backend and auth proxy checks, such as `Inference (auth proxy)`, always report their own state and their own repair step.
+`$$nemoclaw <name> doctor` sends no inference request, so it always reports the `Inference (upstream)` state that it measured.
+
 Local providers add host-side backend diagnostics.
 For Local Ollama, the command can also print an `Inference (auth proxy)` diagnostic when a proxy token is available.
 Use these diagnostics to identify a failing auxiliary hop after checking the main `Inference` line.
@@ -3056,10 +3068,11 @@ The full URL and path are persisted and displayed, so URLs cannot contain userin
 Server names must start with a letter and contain at most 64 letters, digits, hyphens, or underscores, and endpoint hostnames must use canonical lowercase DNS labels.
 NemoClaw rejects invalid names and endpoints before it writes lifecycle state or changes OpenShell resources.
 NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, explicit MCP methods, and a 131,072-byte request-body limit.
-OpenShell `0.0.101` evaluates that policy before replacing the attached provider placeholder in the allowed request header.
-Static provider placeholders are sandbox-scoped rather than endpoint-exclusive, so do not grant broader inspected-HTTP routes to the same adapter runtime and credential key.
+OpenShell `0.0.106` evaluates that policy before replacing the attached provider placeholder in the allowed request header.
+NemoClaw imports the endpointless `nemoclaw-mcp-v1` profile and binds the dedicated provider to that endpoint with `credential_binding.provider`.
+OpenShell withholds the credential before the binding is active and outside the bound host, port, and path.
 The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener.
-After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, generic type, valid resource version, and exactly one credential key matching the recorded key.
+After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one credential key matching the recorded key.
 If those readiness checks pass, it sends a differential pair of wire-level MCP `initialize` requests from inside the sandbox — one with the placeholder header and one with an unresolvable control bearer — to verify that OpenShell resolves the credential on egress; otherwise it reports an inconclusive `probe skipped` result and sends no request.
 Neither outcome fails the committed add, and `--no-probe` skips this check.
 For full setup details, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server).
@@ -3104,9 +3117,8 @@ Status includes OpenShell provider presence and credential-key shape, provider a
 For a trusted private endpoint, status also compares current DNS answers with recorded pins without changing the policy.
 Text output reports `private address pins: match`, `drift`, or `unresolved`.
 JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins.
-While a managed provider is attached, text and JSON status warn that its credential is sandbox-scoped until OpenShell supports endpoint-exclusive binding plus Host, scheme, and query enforcement.
 When a single server is named, status requests a differential wire-level credential-resolution probe.
-It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, generic type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail.
+It sends no probe traffic unless the exact generated policy matches the effective gateway policy, the expected provider attachment is confirmed, and the live provider has the recorded ID, `nemoclaw-mcp-v1` type, a valid resource version, and exactly one credential key matching the recorded key; a readiness failure reports `unknown` with a `probe skipped` detail.
 When ready, the same MCP `initialize` is sent from inside the sandbox once with the `openshell:resolve:env:KEY` placeholder header and once with a deliberately-unresolvable control bearer.
 Classification uses the two HTTP status codes plus curl exit codes for transport, timeout, and policy-denial outcomes; response bodies are never captured or printed.
 A `verified` verdict requires the placeholder request to be accepted (HTTP 2xx) while the control is rejected — the only outcome that proves a valid credential was on the wire.
@@ -3153,6 +3165,8 @@ For a public entry, restart resolves the hostname again and refreshes the policy
 If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision.
 Otherwise, restart reuses an existing provider whose current metadata match the registry.
 A missing provider requires the variable to be exported before retrying.
+An existing provider with the profile-less legacy `generic` type must be removed and added again with its credential exported.
+OpenShell 0.0.106 cannot bind that provider to an MCP endpoint, so restart and rebuild fail closed instead of activating it.
 When that provider is already absent but its name still blocks sandbox exec,
 restart first detaches only the dangling sandbox-spec reference, then runs the
 agent capability probe before changing a live provider or policy.
@@ -3185,13 +3199,15 @@ Keep them down until the command returns; a concurrent relock refuses the config
 
 </AgentOnly>
 
-NemoClaw unregisters the sandbox agent adapter, prechecks and removes the recorded OpenShell provider, removes the owned generated policy, and clears the sandbox registry entry.
+For an ordinary managed entry, NemoClaw unregisters the sandbox agent adapter, removes the exact owned generated policy, detaches and deletes the recorded OpenShell provider, and clears the sandbox registry entry.
+For a stored legacy entry whose credential name is no longer accepted, it first detaches the exact provider so adapter cleanup cannot start with that credential attached.
 Deep Agents teardown does not require managed MCP capability v2 from the old image.
 For a v1 image, NemoClaw removes the exact registry-owned entry from the legacy `.mcp.json` while preserving unrelated user state; a replacement image must pass the v2 capability check before post-rebuild providers or policy are restored.
 The command fails closed on observed drift.
-`--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the exact recorded ID, type, and credential key and policy deletion still requires exact owned content.
+`--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the recorded ID and credential key plus an accepted managed provider type, and policy deletion still requires exact owned content.
+An exact legacy `generic` provider is accepted only for cleanup.
 Residuals preserve registry state.
-OpenShell `0.0.101` mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.
+OpenShell `0.0.106` mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.
 
 When an interrupted destroy leaves a prepared-only transaction, deletion is not durably confirmed.
 If the sandbox is still live, run `$$nemoclaw <name> mcp remove <server> --force` with the affected server name.
@@ -4149,6 +4165,9 @@ Same-API-family changes hot-reload without replacing the gateway process.
 When the API family changes, NemoClaw commits the config and integrity hash, then uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards.
 The sandbox remains running, but agent requests are briefly interrupted.
 If the restart fails, the route and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch.
+After every changed synchronized route, NemoClaw also verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success.
+If pairing does not converge, the route and config remain committed.
+Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -4690,6 +4709,9 @@ The JSON diagnostic with `"event":"voice_gateway"` and `"state":"listening"` con
 
 The runtime must keep the raw session grant in process memory.
 NemoClaw keeps only the digest needed for constant-time grant validation.
+Sequential sessions for the same runtime conversation reuse the same internal OpenClaw context.
+A different runtime conversation, runtime identity, runtime profile, sandbox, or agent uses a separate context.
+NemoClaw derives the internal context key without exposing the raw runtime conversation ID.
 When the session closes or expires, the runtime must discard the raw grant, and NemoClaw removes its validation digest from active session state.
 The process owns the OpenClaw session binding, turn state, and response correlation.
 It clears that state when the session closes or expires and when the foreground process stops.
@@ -4742,7 +4764,9 @@ Passthrough commands do not consume flags intended for the downstream command as
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
+| `NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT` | 11436 | Host-side Bedrock Runtime adapter |
 | `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` | 11437 | Host-side OpenRouter runtime adapter |
+| `NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT` | 11438 | Host-side HTTPS Pin Runtime adapter |
 <AgentOnly variant="openclaw,hermes">
 | `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback outside WSL) | Dashboard or API forward bind address. WSL uses an all-interface forward for Windows-host reachability. Set to `0.0.0.0` to opt in to remote bind on other SSH-deployed hosts. |
 </AgentOnly>
@@ -4751,10 +4775,10 @@ Passthrough commands do not consume flags intended for the downstream command as
 </AgentOnly>
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
-`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `8081`, `11434`, `11435`, `11437`, and `11438`.
+`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, Bedrock Runtime adapter, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `8081`, `11434`, `11435`, `11436`, `11437`, and `11438`.
 Port `8081` is reserved for authenticated existing-server attachment and the managed llama.cpp runtime.
 It cannot be assigned to another configurable NemoClaw service port.
-When you select OpenRouter, `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` must also be distinct from the gateway, vLLM, Ollama, Ollama proxy, and HTTPS Pin Runtime adapter ports.
+Each runtime adapter port must be distinct from the gateway, vLLM, Ollama, Ollama proxy, dashboard allocation range, and other runtime adapter ports.
 When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another.
 Only port `8080` uses a NemoClaw-managed Linux systemd user service or macOS Homebrew service.
 NemoClaw-managed gateways on custom ports run as detached processes and do not change the default gateway service.
@@ -5028,7 +5052,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH` | `1`, `true`, `yes`, or `on` to enable | Bypasses recorded sandbox base-image resolution metadata during onboarding, recreation, and rebuild. NemoClaw reruns candidate resolution but can still use a compatible image from Docker's local image store. Versioned release candidates that exist locally but fail validation are refreshed from the registry once during normal resolution. This setting does not discard onboarding session state. |
 | `NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD` | unset or `auto` (default); `1`, `true`, `yes`, or `on` to enable; `0`, `false`, `no`, or `off` to disable | Controls whether base-image resolution may build a compatible image locally. The default allows builds during normal CLI runs and disables them when `NODE_ENV=test` or `VITEST=true`. When source inputs or a missing/incompatible release-version base require a fresh build, disabling local builds makes resolution fail instead of using an unproven image. |
 | `NEMOCLAW_DOCKER_GPU_PATCH` | unset, `auto`, `fallback`, `1`, or `0`; other legacy nonzero values remain accepted through `v0.0.x` and will be removed in `v0.1.0` | Selects Linux Docker-driver GPU routing. Unset, `auto`, or `0` uses native OpenShell GPU injection on ordinary native Linux. `fallback` explicitly opts into one native attempt followed by one bounded compatibility retry when trusted host evidence identifies a GPU-routing failure. `1` and legacy nonzero values select the compatibility patch from the outset. Docker Desktop WSL and Jetson/Tegra use the compatibility path by default; Docker Desktop WSL ignores `0`, while Jetson/Tegra accepts `0` only as a troubleshooting override that bypasses device-group propagation. Portable onboarding requires native OpenShell GPU injection for every agent and does not use this setting. |
-| `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.101's directly supported glibc 2.39+ path; see [Gateway Compatibility Container](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.106's directly supported glibc 2.39+ path; see [Gateway Compatibility Container](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by Linux Docker-driver startup. For the default port, the installer accepts the binary under an absolute `XDG_BIN_HOME` when set, otherwise `~/.local/bin/openshell-gateway`; it also accepts `/usr/local/bin/openshell-gateway` or `/usr/bin/openshell-gateway`. Another path fails service staging. The macOS Homebrew service uses the formula's binary. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used by Linux Docker-driver startup. The macOS Homebrew service uses the formula's driver layout. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |

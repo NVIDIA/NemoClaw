@@ -126,7 +126,7 @@ Do not reuse OpenShell Google Cloud compatibility names such as `GCP_PROJECT_ID`
 NemoClaw rejects them because OpenShell exposes those non-secret configuration names as child-process values.
 
 It also rejects `GCE_METADATA_HOST`, `GCE_METADATA_IP`, and `METADATA_SERVER_DETECTION`, which OpenShell rewrites for its metadata emulator.
-NemoClaw pins the child-visible compatibility list to OpenShell `v0.0.101` commit `8ddd98c3dff62619a3963f99ba1e055b67650e72`.
+NemoClaw pins the child-visible compatibility list to OpenShell `v0.0.106` commit `c4b500a7de64d0b66e3ee8098f58d14299092162`.
 Review this list with every OpenShell version change.
 
 OpenShell reserves credential names matching `v[0-9]+_[A-Za-z0-9_]+` for revisioned placeholders.
@@ -137,7 +137,11 @@ Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_
 Use a dedicated service name such as `MY_SERVICE_MCP_TOKEN`.
 
 NemoClaw requires exactly one `--env` bearer credential per server.
-Use a distinct environment variable for each managed server in the same sandbox because OpenShell static credential keys are sandbox-wide and cannot be attached twice.
+Use a distinct environment variable for each managed server in the same sandbox because credential keys must be unique across attached providers.
+NemoClaw binds each dedicated provider to its generated MCP endpoint, so OpenShell resolves the placeholder only for that endpoint's host, port, and path.
+
+If this server uses the profile-less `generic` provider from an earlier NemoClaw build, remove it and add it again with the credential exported.
+That provider cannot be bound to an endpoint, so restart and rebuild fail closed until you recreate the registration.
 
 ## Meet Endpoint Requirements
 
@@ -170,7 +174,7 @@ A named tunnel can stabilize the hostname without stabilizing its exact address 
 Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.
 
 Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal`.
-OpenShell `v0.0.101` has a trusted-gateway branch for a narrow driver-provided topology, but it does not expose an attested driver gateway address that NemoClaw can pin for this flow.
+OpenShell `v0.0.106` has a trusted-gateway branch for a narrow driver-provided topology, but it does not expose an attested driver gateway address that NemoClaw can pin for this flow.
 Use a routed HTTPS endpoint on a stable private address instead.
 
 ## Understand the Generated Method Profile

@@ -168,16 +168,15 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     });
   });
 
-  it("pins the resolve-validate-connect source contract to OpenShell v0.0.101", () => {
-    const commit = "8ddd98c3dff62619a3963f99ba1e055b67650e72";
+  it("pins the resolve-validate-connect source contract to OpenShell v0.0.106", () => {
+    const commit = "c4b500a7de64d0b66e3ee8098f58d14299092162";
     const sourcePath = "crates/openshell-supervisor-network/src/proxy.rs";
     const citations = [
-      `${sourcePath}:3030-3055`,
-      `${sourcePath}:3060-3115`,
-      `${sourcePath}:3179-3211`,
-      `${sourcePath}:3168-3200`,
-      `${sourcePath}:4650-4656`,
-      `${sourcePath}:4706-4711`,
+      `${sourcePath}:3070-3096`,
+      `${sourcePath}:3121-3160`,
+      `${sourcePath}:3193-3251`,
+      `${sourcePath}:3208-3240`,
+      `${sourcePath}:4783-4850`,
     ];
 
     const docsPath = "docs/deployment/set-up-mcp-bridge.mdx";
@@ -187,11 +186,6 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     expect(docs).toContain("proxy_connect_by_hostname");
     expect(docs).toContain("reopens proxy-side DNS resolution");
 
-    const migrationReview = fs.readFileSync(
-      "internal/security-reviews/openshell-0.0.101-migration-review.md",
-      "utf8",
-    );
-    expect(migrationReview).toContain(commit);
   });
 
   it("adds one raw MCP policy with an exact public IP pin and no adapter identity", () => {

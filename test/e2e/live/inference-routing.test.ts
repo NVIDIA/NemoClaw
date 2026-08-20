@@ -15,6 +15,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
 import {
@@ -675,6 +676,16 @@ async function runRuntimeIdentityE2EScenario(
     `Inference route 'compatible-endpoint / ${model}' is already active, reusing.`,
   );
   for (const secret of redactionValues) expect(applyText).not.toContain(secret);
+  const attachedProviders = await sandbox.openshell(
+    ["sandbox", "provider", "list", sandboxName],
+    {
+      artifactName: `${artifactPrefix}-attached-providers`,
+      env: openshellEnv,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(attachedProviders.exitCode, resultText(attachedProviders)).toBe(0);
+  expect(resultText(attachedProviders)).toContain(providerName);
   expect(oauth.tokenRequests()).toEqual([
     {
       method: "POST",
@@ -975,7 +986,10 @@ async function runRuntimeIdentityE2EScenario(
   expect(deleteProfile.exitCode, resultText(deleteProfile)).toBe(0);
 }
 
-test.for(RUNTIME_IDENTITY_E2E_SCENARIOS)(
+// OpenShell 0.0.106 does not project provider-refresh credentials into Docker sandboxes.
+test.skipIf(!OPENSHELL_V0106_QUALIFICATION.supportsRuntimeIdentityRefreshProjection).for(
+  RUNTIME_IDENTITY_E2E_SCENARIOS,
+)(
   "TC-INF-%s %sruntime identity refreshes and injects a delegated bearer through real OpenShell",
   RUNTIME_IDENTITY_E2E_OPTIONS,
   async (

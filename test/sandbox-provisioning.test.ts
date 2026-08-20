@@ -1046,7 +1046,7 @@ describe("Hermes sandbox provisioning", () => {
       "patch-hermes-langfuse-credentials.mts",
     );
     const managedPolicyReaderPath = path.join(localLib, "managed_policy.py");
-    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.101.json");
+    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.106.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const runtimeStateMutationControlPath = path.join(
       localLib,

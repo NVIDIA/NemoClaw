@@ -76,19 +76,22 @@ describe("dual-Station controller UID binding", () => {
     ["wrong file mode", controllerUidStat("directory"), { mode: 0o100664 }, "1001\n", [[19]]],
     ["root UID content", controllerUidStat("directory"), null, "0\n", [[19]]],
     ["multiple UID lines", controllerUidStat("directory"), { size: 10 }, "1001\n1002\n", [[19]]],
-  ])("rejects an unsafe controller binding: %s", (_case, directory, fileOverride, contents, expectedCloseCalls) => {
-    const close = vi.fn();
-    expect(() =>
-      readDualStationControllerUid({
-        lstat: () => directory,
-        open: () => 19,
-        fstat: () => controllerUidStat("file", fileOverride ?? {}),
-        read: () => contents,
-        close,
-      }),
-    ).toThrow(/Dual-Station controller/u);
-    expect(close.mock.calls).toEqual(expectedCloseCalls);
-  });
+  ])(
+    "rejects an unsafe controller binding: %s",
+    (_case, directory, fileOverride, contents, expectedCloseCalls) => {
+      const close = vi.fn();
+      expect(() =>
+        readDualStationControllerUid({
+          lstat: () => directory,
+          open: () => 19,
+          fstat: () => controllerUidStat("file", fileOverride ?? {}),
+          read: () => contents,
+          close,
+        }),
+      ).toThrow(/Dual-Station controller/u);
+      expect(close.mock.calls).toEqual(expectedCloseCalls);
+    },
+  );
 
   it("refuses a direct lock call from an account other than the prepared controller", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-refused-lock-"));
@@ -138,7 +141,12 @@ describe("dual-Station controller UID binding", () => {
           ).toBe(true);
           expect(fs.existsSync(path.join(passwdHome, ".nemoclaw"))).toBe(false);
         },
-        { pollIntervalMs: 5, timeoutMs: 250, corruptLockGraceMs: 5 },
+        {
+          stateDir: path.join(managedVllmStateDir(), "state"),
+          pollIntervalMs: 5,
+          timeoutMs: 250,
+          corruptLockGraceMs: 5,
+        },
       );
     } finally {
       vi.unstubAllEnvs();

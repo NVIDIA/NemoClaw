@@ -82,11 +82,12 @@ function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
   }
 }
 
-export function buildMcpBridgePolicyYaml(
+function renderMcpBridgePolicyYaml(
   server: string,
   url: string,
   adapter: AgentMcpAdapter,
   target: McpBridgeTargetValidation,
+  providerName?: string,
 ): string {
   const parsed = parseMcpUrlWithValidatedTarget(url, target);
   const key = buildMcpBridgePolicyKey(server);
@@ -109,6 +110,7 @@ export function buildMcpBridgePolicyYaml(
             protocol: "mcp",
             enforcement: "enforce",
             allowed_ips: allowedIps,
+            ...(providerName ? { credential_binding: { provider: providerName } } : {}),
             mcp: {
               max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
               strict_tool_names: true,
@@ -121,4 +123,27 @@ export function buildMcpBridgePolicyYaml(
       },
     },
   });
+}
+
+export function buildMcpBridgePolicyYaml(
+  server: string,
+  url: string,
+  adapter: AgentMcpAdapter,
+  target: McpBridgeTargetValidation,
+  providerName: string,
+): string {
+  if (providerName.trim() !== providerName || providerName.length === 0) {
+    throw new Error("Generated MCP credential binding requires an exact provider name.");
+  }
+  return renderMcpBridgePolicyYaml(server, url, adapter, target, providerName);
+}
+
+/** Render the temporary credential-free policy used before first provider attachment. */
+export function buildMcpBridgeCapabilityPolicyYaml(
+  server: string,
+  url: string,
+  adapter: AgentMcpAdapter,
+  target: McpBridgeTargetValidation,
+): string {
+  return renderMcpBridgePolicyYaml(server, url, adapter, target);
 }

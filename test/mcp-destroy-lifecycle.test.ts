@@ -31,10 +31,12 @@ const testState = vi.hoisted(() => {
     executeSandboxExecCommand: vi.fn(),
     failProviderDelete: null as string | null,
     failProviderDetach: null as string | null,
+    getLiveSandboxPolicyEntryDigest: vi.fn(),
     getPresetContentGatewayState: vi.fn(),
     home,
     originalEnv,
     policyApplyCalls: 0,
+    removedPolicyKeys: new Set<string>(),
     providers: new Map<string, { credential: string; id: string; resourceVersion?: number }>(),
     resolveHostAddresses: vi.fn(),
     attachedProviders: new Set<string>(),
@@ -68,6 +70,7 @@ vi.mock("../src/lib/gateway-runtime-action", () => ({
 
 vi.mock("../src/lib/policy", () => ({
   applyPresetContent: testState.applyPresetContent,
+  getLiveSandboxPolicyEntryDigest: testState.getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState: testState.getPresetContentGatewayState,
   removePreset: testState.removePreset,
 }));
@@ -118,7 +121,7 @@ function stubRecreateJournal(): RebuildRecreateJournal {
   };
 }
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 
 const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
   github: {
@@ -144,7 +147,6 @@ const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
     addedAt: "2026-06-27T00:00:00.000Z",
   },
 };
-
 function ownedPolicy(
   server: "github" | "slack",
   options: {
@@ -161,11 +163,10 @@ function ownedPolicy(
     name: entry.policyName,
     content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, adapter as AgentMcpAdapter, {
       addresses: [...resolvedAddresses],
-    }),
+    }, entry.providerName ?? ""),
     sourcePath: "generated:nemoclaw-mcp-bridge",
   };
 }
-
 function restoreEnv(name: string, value: string | undefined): void {
   switch (value) {
     case undefined:
@@ -175,7 +176,6 @@ function restoreEnv(name: string, value: string | undefined): void {
       process.env[name] = value;
   }
 }
-
 async function captureMessage(action: () => Promise<unknown>): Promise<string> {
   try {
     await action();
@@ -194,7 +194,6 @@ function registerAlphaGithubBridge(): void {
   });
   registry.addCustomPolicy("alpha", ownedPolicy("github"));
 }
-
 beforeEach(() => {
   fs.rmSync(testState.home, { recursive: true, force: true });
   process.env.HOME = testState.home;
@@ -219,9 +218,9 @@ beforeEach(() => {
   testState.adapterCalls.length = 0;
   testState.adapterRegistered = true;
   testState.policyApplyCalls = 0;
+  testState.removedPolicyKeys.clear();
   testState.failProviderDelete = null;
   testState.failProviderDetach = null;
-
   vi.resetAllMocks();
   testState.recoverNamedGatewayRuntime.mockResolvedValue({
     recovered: true,
@@ -229,17 +228,27 @@ beforeEach(() => {
     before: { state: "healthy_named" },
     after: { state: "healthy_named" },
   });
-  testState.applyPresetContent.mockImplementation(() => {
+  testState.applyPresetContent.mockImplementation((_sandboxName, policyName) => {
     testState.policyApplyCalls += 1;
+    testState.removedPolicyKeys.delete(policyName.replaceAll("-", "_"));
     return true;
   });
-  testState.getPresetContentGatewayState.mockReturnValue("match");
-  testState.removePreset.mockReturnValue(true);
+  testState.getPresetContentGatewayState.mockImplementation((_sandboxName, content) =>
+    testState.removedPolicyKeys.has(
+      /^preset:\n\s+name:\s+(\S+)$/m.exec(content)?.[1]?.replaceAll("-", "_") ?? "",
+    )
+      ? "absent"
+      : "match",
+  );
+  testState.getLiveSandboxPolicyEntryDigest.mockImplementation((_sandboxName, policyKey) =>
+    testState.removedPolicyKeys.has(policyKey) ? null : "present",
+  );
+  testState.removePreset.mockImplementation((_sandboxName, policyName) => {
+    testState.removedPolicyKeys.add(policyName.replaceAll("-", "_"));
+    return true;
+  });
   testState.runOpenshell.mockReturnValue({ status: 0, stdout: "", stderr: "" });
-  testState.resolveHostAddresses.mockImplementation(async (hostname: string) => [
-    { address: hostname },
-  ]);
-
+  testState.resolveHostAddresses.mockImplementation(async (host: string) => [{ address: host }]);
   testState.runOpenshellProviderCommand.mockImplementation((args: string[]) => {
     testState.calls.push(args.join(" "));
     switch (args.join(" ")) {
@@ -247,12 +256,14 @@ beforeEach(() => {
         return { status: 0, stdout: "ready", stderr: "" };
     }
     switch (true) {
+      case args[0] === "provider" && args[1] === "profile" && args[2] === "import":
+        return { status: 0, stdout: "Imported provider profile", stderr: "" };
       case args[0] === "provider" && args[1] === "get": {
         const provider = testState.providers.get(args[2]);
         return provider
           ? {
               status: 0,
-              stdout: `Id: ${provider.id}\nType: generic\nResource version: ${provider.resourceVersion ?? 1}\nCredential keys: ${provider.credential}\n`,
+              stdout: `Id: ${provider.id}\nType: nemoclaw-mcp-v1\nResource version: ${provider.resourceVersion ?? 1}\nCredential keys: ${provider.credential}\n`,
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "Provider not found" };
@@ -273,7 +284,7 @@ beforeEach(() => {
               stdout:
                 names.length > 0
                   ? `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n${names
-                      .map((name) => `${name} generic 1 0`)
+                      .map((name) => `${name} nemoclaw-mcp-v1 1 0`)
                       .join("\n")}\n`
                   : `No providers attached to sandbox ${args[3]}.\n`,
               stderr: "",
@@ -1229,7 +1240,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       testState.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
     ).toBe(true);
     expect(testState.calls.some((call) => /^provider (create|update) /.test(call))).toBe(false);
-    expect(testState.policyApplyCalls).toBe(1);
+    expect(testState.policyApplyCalls).toBe(2);
     expect(testState.adapterCalls).toContain("command -v mcporter");
     expect(
       testState.adapterCalls.some((call) => call.includes("openshell:resolve:env:GITHUB_TOKEN")),
@@ -1283,9 +1294,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(afterPrepare?.mcp?.bridges).toHaveProperty("github");
     expect(afterPrepare?.mcp?.destroyPreparedAt).toBeTruthy();
     expect(afterPrepare?.mcp?.destroyPendingAt).toBeUndefined();
-    expect(afterPrepare?.customPolicies?.map((policy) => policy.name)).toContain(
-      "mcp-bridge-github",
-    );
+    expect(afterPrepare?.customPolicies?.map((policy) => policy.name)).toEqual(["operator"]);
     expect(afterFinalize?.mcp).toBeUndefined();
     expect(afterFinalize?.customPolicies?.map((policy) => policy.name)).toEqual(["operator"]);
     expect([...testState.providers.keys()]).not.toContain("alpha-mcp-github");
@@ -1314,7 +1323,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.calls.some((call) => /^provider (create|update) /.test(call))).toBe(false);
     expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
     expect(testState.adapterRegistered).toBe(true);
-    expect(testState.policyApplyCalls).toBe(1);
+    expect(testState.policyApplyCalls).toBe(2);
   });
 
   it.each([
@@ -1411,7 +1420,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(afterFailure?.mcp?.destroyPreparedAt).toBeUndefined();
     expect(afterFailure?.mcp?.managedServerNames).toEqual(["github", "retired", "slack"]);
     expect(Object.keys(afterFailure?.mcp?.bridges ?? {})).toEqual(["github", "slack"]);
-    expect(afterFailure?.customPolicies).toHaveLength(2);
+    expect(afterFailure?.customPolicies).toBeUndefined();
     expect(retry.destroyAlreadyPending).toBe(true);
     expect(afterRetry?.mcp).toBeUndefined();
     expect(afterRetry?.customPolicies).toBeUndefined();

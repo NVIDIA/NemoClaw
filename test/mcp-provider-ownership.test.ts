@@ -40,7 +40,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: " + liveId + "\\nType: generic\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
+      stdout: "Id: " + liveId + "\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
       stderr: "",
     };
   }
@@ -48,7 +48,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return {
       status: 0,
       stdout: attached
-        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\\nalpha-mcp-fake generic 1 0\\n"
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\\n"
         : "No providers attached to sandbox alpha.\\n",
       stderr: "",
     };
@@ -61,7 +61,6 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 policies.getPresetContentGatewayState = () => policyState;
 policies.removePreset = () => {
-  if (swapAt === "delete") liveId = foreignId;
   policyState = "absent";
   return true;
 };
@@ -69,7 +68,10 @@ processRecovery.executeSandboxCommand = () => {
   if (swapAt === "detach") liveId = foreignId;
   return { status: 0, stdout: "", stderr: "" };
 };
-processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stderr: "" });
+processRecovery.executeSandboxExecCommand = () => {
+  if (swapAt === "delete") liveId = foreignId;
+  return { status: 0, stdout: "", stderr: "" };
+};
 const entry = {
   server: "fake",
   agent: "openclaw",
@@ -139,7 +141,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return providerExists
       ? {
           status: 0,
-          stdout: "Id: " + expectedId + "\nType: generic\nResource version: 4\nCredential keys: LD_PRELOAD\n",
+          stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\n",
           stderr: "",
         }
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
@@ -148,7 +150,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return {
       status: 0,
       stdout: attached
-        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake generic 1 0\n"
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\n"
         : "No providers attached to sandbox alpha.\n",
       stderr: "",
     };
@@ -285,14 +287,14 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: generic\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
       stderr: "",
     };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return {
       status: 0,
-      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake generic 1 0\n",
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\n",
       stderr: "",
     };
   }
@@ -442,7 +444,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: " + resourceVersion + "\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: EXPECTED_TOKEN\n",
       stderr: "",
     };
   }
@@ -526,7 +528,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 99999999-8888-4777-8666-555555555555\\nType: generic\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
+      stdout: "Id: 99999999-8888-4777-8666-555555555555\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
       stderr: "",
     };
   }

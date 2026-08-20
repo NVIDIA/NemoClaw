@@ -113,6 +113,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "nemoclaw-blueprint/private-networks.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/brave.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/entra-runtime-v1.yaml", mode: "100644" },
+  { path: "nemoclaw-blueprint/provider-profiles/nemoclaw-mcp-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/tavily-hermes-v1.yaml", mode: "100644" },
   { path: "nemoclaw-blueprint/provider-profiles/tavily.yaml", mode: "100644" },
@@ -144,7 +145,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/runtime-state-mutation-startup-gate.py", mode: "100755" },
   { path: "scripts/state-dir-guard.py", mode: "100755" },
   {
-    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
+    path: "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
     mode: "100644",
   },
   { path: "src/lib/hermes-managed-route.ts", mode: "100644" },

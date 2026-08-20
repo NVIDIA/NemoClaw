@@ -166,6 +166,8 @@ export interface ManagedClusterVllmPlan {
 export interface ManagedClusterVllmMaterializeOptions {
   /** Explicit catalog input keeps the materializer testable with additional YAML-compiled profiles. */
   readonly catalog?: CompiledManagedInferenceCatalog;
+  /** Deployment-owned API port. The recipe port remains the portable default. */
+  readonly apiPort?: number;
 }
 
 interface CatalogSelection {
@@ -402,7 +404,10 @@ function assertRecipeValues(recipe: ManagedInferenceServingRecipe): void {
   }
 }
 
-function servingArguments(recipe: ManagedInferenceServingRecipe): ParsedServingArguments {
+function servingArguments(
+  recipe: ManagedInferenceServingRecipe,
+  configuredApiPort?: number,
+): ParsedServingArguments {
   const seen = new Set<string>();
   const staticArguments: string[] = [];
   let apiPort: number | undefined;
@@ -415,7 +420,10 @@ function servingArguments(recipe: ManagedInferenceServingRecipe): ParsedServingA
     seen.add(argument.name);
     staticArguments.push(argument.name);
     if (argument.value !== undefined) {
-      const value = String(argument.value);
+      const value =
+        argument.name === "--port" && configuredApiPort !== undefined
+          ? String(configuredApiPort)
+          : String(argument.value);
       if (Buffer.byteLength(value, "utf8") > 16_384 || value.includes("\0")) {
         fail(`serve argument ${argument.name} has an invalid value`);
       }
@@ -435,7 +443,15 @@ function servingArguments(recipe: ManagedInferenceServingRecipe): ParsedServingA
     }
   }
   if (apiPort === undefined) fail("recipe must define one --port serve argument");
-  return { apiPort, arguments: staticArguments };
+  const resolvedApiPort = configuredApiPort ?? apiPort;
+  if (
+    !Number.isSafeInteger(resolvedApiPort) ||
+    resolvedApiPort < 1024 ||
+    resolvedApiPort > 65_535
+  ) {
+    fail("configured API port must contain a valid TCP port");
+  }
+  return { apiPort: resolvedApiPort, arguments: staticArguments };
 }
 
 function commandArguments(
@@ -623,7 +639,7 @@ export function materializeManagedClusterVllmPlan(
   const selected = assertCatalogSelection(snapshot, catalog);
   const catalogSelection = { ...snapshot, ...selected };
   assertRecipeValues(selected.recipe);
-  const serving = servingArguments(selected.recipe);
+  const serving = servingArguments(selected.recipe, options.apiPort);
   let preparation: ManagedClusterVllmPreparationPlan;
   try {
     preparation = materializeManagedClusterVllmPreparation({
@@ -646,6 +662,7 @@ export function materializeManagedClusterVllmPlan(
     preset: { id: selected.preset.metadata.id, digest: snapshot.presetDigest },
     recipe: { id: selected.recipe.metadata.id, digest: snapshot.recipeDigest },
     topology: topologyIdentity,
+    deployment: { apiPort: serving.apiPort },
   });
   const output = snapshot.topologyQualification.output;
   return immutableManagedInferenceCopy({

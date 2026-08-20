@@ -100,7 +100,7 @@ describe("MCP input runtime boundaries", () => {
       "--name",
       "alpha-mcp-github",
       "--type",
-      "generic",
+      "nemoclaw-mcp-v1",
       "--credential",
       "TOKEN",
     ]);

@@ -179,7 +179,7 @@ describe("Podman managed bootstrap held-workload inspection", () => {
     const fake = engineWith([]);
 
     expect(() => inspect(fake.engine, "default")).toThrow(
-      "sandbox namespace must match OpenShell v0.0.101",
+      "sandbox namespace must match OpenShell v0.0.106",
     );
     expect(fake.capture).not.toHaveBeenCalled();
   });

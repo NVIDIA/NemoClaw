@@ -19,13 +19,13 @@ let detachCalls = 0;
 providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return attached
-      ? { status: 0, stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake generic 1 0\n", stderr: "" }
+      ? { status: 0, stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake nemoclaw-mcp-v1 1 0\n", stderr: "" }
       : { status: 0, stdout: "No providers attached to sandbox alpha.\n", stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: " + liveId + "\nType: generic\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Id: " + liveId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
       stderr: "",
     };
   }

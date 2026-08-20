@@ -130,6 +130,26 @@ Use these details when your first-run path needs more control.
     Refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed) for recovery details.
   </Accordion>
 
+  <Accordion title="Use Portable Ollama">
+    On Linux, fresh Hermes Portable onboarding can run the selected Ollama model in a current-user rootless Podman container.
+    This path requires the Portable preflight to accept the current user's Podman and NVIDIA GPU authority.
+    Start fresh onboarding with an explicit Ollama model:
+
+    ```bash
+    NEMOCLAW_PROVIDER=ollama \
+      NEMOCLAW_MODEL=qwen3-vl:4b \
+      nemohermes onboard --experimental-profile portable --fresh
+    ```
+
+    This path does not inspect, start, or use a host Ollama process.
+    It does not use the default Docker runtime.
+    Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the exact model is loaded.
+    NemoClaw records the provider selection only after those checks pass.
+
+    This onboarding path does not establish complete `destroy` or `uninstall` cleanup for the Portable Ollama runner.
+    Refer to [Set Up Ollama](../inference/local-inference/set-up-ollama#use-portable-ollama-with-hermes) for the fail-closed uninstall boundary.
+  </Accordion>
+
   <Accordion title="Use the dashboard and API remotely">
     Hermes forwards its dashboard on port `18789` and its OpenAI-compatible API on port `8642`.
     A sandbox receives those ports when no other sandbox or host listener already holds them.

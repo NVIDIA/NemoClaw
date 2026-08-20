@@ -62,6 +62,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "keeps actionlint and live E2E on Ubuntu 26.04 and Podman 5.7 (#9006)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "runs the trusted Vitest guardrails against pull request data",
       "category": "security"
@@ -74,6 +79,11 @@
     {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
       "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
+      "category": "security"
+    },
+    {
+      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "test": "binds the checked-in provenance to the selected runtime",
       "category": "security"
     },
     {
@@ -149,6 +159,11 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
+      "category": "security"
+    },
+    {
+      "file": "test/release-lkg-brev-image.test.ts",
+      "test": "attests one request before the isolated dispatch job (#9661)",
       "category": "security"
     },
     {
