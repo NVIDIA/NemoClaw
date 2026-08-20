@@ -137,6 +137,18 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     ]);
     expect(new Set(contextToolNames).size).toBe(contextToolNames.length);
     expect(contextToolNames).not.toContain("pr_review_response_schema");
+    const contextByName = new Map(
+      investigate?.contextToolResults?.map((result) => [result.toolName, result.content]),
+    );
+    expect(contextByName.get("pr_review_scope_risk_context")).toContain("riskPlan");
+    expect(
+      [
+        "pr_review_security_trust_context",
+        "pr_review_tests_regressions_context",
+        "pr_review_ci_operations_context",
+        "pr_review_reconciliation_context",
+      ].map((toolName) => contextByName.get(toolName)?.includes("riskPlan")),
+    ).toEqual([false, false, false, false]);
     expect(investigate?.activeToolNames).toEqual([
       "read",
       "grep",

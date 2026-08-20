@@ -931,7 +931,7 @@ describe("PR review advisor submission tools", () => {
     await execute(submission, RECORD_REVIEW_RECEIPT_TOOL, draft);
     await execute(submission, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(submission, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
-      "acceptanceCoverage[1] references finding F-001, which does not fit this concern",
+      "acceptanceCoverage[1] references F-001 (security/semantic_ambiguity), which does not fit this concern",
     );
     expect(submission.findingSnapshot()).toEqual({ version: 1, findings: [] });
     expect(submission.result()).toBeNull();

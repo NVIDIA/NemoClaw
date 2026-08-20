@@ -322,7 +322,7 @@ export function createReviewSubmissionController({
     name: RECORD_FINDINGS_TOOL,
     label: "Record review findings draft",
     description:
-      "Replace the complete in-memory findings draft, advance its revision, and return that revision with the ordered stable draft IDs. This invalidates any earlier review receipt. Use the returned IDs in a subsequent review receipt. Canonical state changes only after the session runner accepts the successful terminal submission.",
+      "Replace the complete findings draft and return stable IDs. Omit simplification for ordinary findings; provide the simplification object only for basis.kind=unnecessary_complexity. Canonical state changes only after successful terminal submission.",
     parameters: Type.Object(
       { findings: Type.Array(findingSchema, { maxItems: REVIEW_FINDING_LIMIT }) },
       { additionalProperties: false },
@@ -348,7 +348,7 @@ export function createReviewSubmissionController({
     name: RECORD_REVIEW_RECEIPT_TOOL,
     label: "Record review receipt draft",
     description:
-      "After record_findings, replace the complete in-memory review receipt draft and bind it to the current findings revision without changing canonical state. Recording findings again makes this receipt stale until it is rerecorded.",
+      "After record_findings, replace the complete receipt. Required root fields are summary, terminologyReview, acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, positives, and reviewCompleteness. Use findingId=null for acceptance met/unknown, security pass, and source-of-truth satisfied/not_applicable entries. Use a returned finding ID only when that exact concern is covered by that finding. Investigation-only tools, including pr_review_trace_term, are unavailable during this turn; use only traces already captured in the investigation receipt.",
     parameters: reviewReceiptSchema,
     executionMode: "sequential",
     execute: async (_id, input) => {
@@ -369,7 +369,7 @@ export function createReviewSubmissionController({
     name: RECOMMEND_E2E_TOOL,
     label: "Record E2E recommendations draft",
     description:
-      "Replace the complete in-memory E2E recommendation draft without changing canonical state.",
+      "Replace the complete E2E draft. Required root fields are coverage and targets. targets must include relevantChangedFiles, changedCredentialFreeTests, required, optional, noTargetE2eReason, and confidence; use empty arrays when none apply.",
     parameters: e2eSchema,
     executionMode: "sequential",
     execute: async (_id, input) => {
@@ -568,16 +568,20 @@ function validateConcernEntries(
     const required = requiresFinding(entry);
     const findingId = entry.findingId;
     if (!required && findingId !== null)
-      throw new Error(`${section}[${index + 1}] must use findingId=null`);
+      throw new Error(
+        `${section}[${index + 1}] does not report a concern. Set findingId=null; do not reuse an unrelated finding to fill this entry.`,
+      );
     if (required && typeof findingId !== "string")
-      throw new Error(`${section}[${index + 1}] must reference a fitting finding ID`);
+      throw new Error(
+        `${section}[${index + 1}] reports a concern and requires a finding ID for this exact concern.`,
+      );
     if (typeof findingId !== "string") continue;
     const finding = findingsById.get(findingId);
     if (!finding)
       throw new Error(`${section}[${index + 1}] references unknown finding ${findingId}`);
     if (!fitsConcern(finding))
       throw new Error(
-        `${section}[${index + 1}] references finding ${findingId}, which does not fit this concern`,
+        `${section}[${index + 1}] references ${findingId} (${finding.category}/${finding.basis.kind}), which does not fit this concern. Remove the reference when this entry does not report a concern, or record and reference a finding for this exact concern.`,
       );
     if (!minimumSeverity) continue;
     const requiredSeverity = minimumSeverity(entry);
