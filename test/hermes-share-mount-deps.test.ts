@@ -101,13 +101,17 @@ function runHermesArchiveLayer(
   responses: readonly string[],
   expectedChecksum?: string,
   archiveReplacement?: string,
+  input: { version?: string; output?: string } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-archive-"));
   const sourceRoot = path.join(tmp, "source");
   const archiveRoot = path.join(sourceRoot, "hermes-agent-test");
   const sourceTarball = path.join(tmp, "source.tar.gz");
   const targetRoot = path.join(tmp, "target", "hermes");
-  const downloadedTarball = path.join(tmp, "download", "hermes.tar.gz");
+  const downloadedTarball = input.output ?? path.join(tmp, "download", "hermes.tar.gz");
+  const downloadedTarballPath = path.isAbsolute(downloadedTarball)
+    ? downloadedTarball
+    : path.join(tmp, downloadedTarball);
   const checksumFile = `${downloadedTarball}.sha256`;
   const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
   const whatsappProxyPatch = path.join(tmp, "hermes-whatsapp-proxy.patch");
@@ -120,7 +124,7 @@ function runHermesArchiveLayer(
   const scriptPath = path.join(tmp, "run-hermes-archive-layer.sh");
 
   fs.mkdirSync(path.join(archiveRoot, "tests"), { recursive: true });
-  fs.mkdirSync(path.dirname(downloadedTarball), { recursive: true });
+  fs.mkdirSync(path.dirname(downloadedTarballPath), { recursive: true });
   fs.mkdirSync(fakeBin);
   fs.writeFileSync(securityPatch, "test patch fixture\n");
   fs.writeFileSync(whatsappProxyPatch, "test patch fixture\n");
@@ -212,13 +216,14 @@ function runHermesArchiveLayer(
       '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
       "  fi",
       "}",
-      'export HERMES_VERSION="v2026.7.20"',
+      `export HERMES_VERSION=${JSON.stringify(input.version ?? "v2026.7.20")}`,
       `export HERMES_TARBALL_SHA256=${JSON.stringify(expectedChecksum ?? checksum)}`,
       command,
     ].join("\n"),
     { mode: 0o700 },
   );
   const result = spawnSync("bash", [scriptPath], {
+    cwd: tmp,
     encoding: "utf-8",
     env: {
       ARCHIVE_CALL_LOG: callLog,
@@ -232,7 +237,7 @@ function runHermesArchiveLayer(
   });
   const calls = fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf-8").trim().split("\n") : [];
   const urls = fs.existsSync(urlLog) ? fs.readFileSync(urlLog, "utf-8").trim().split("\n") : [];
-  return { calls, downloadedTarball, result, targetRoot, tmp, urls };
+  return { calls, downloadedTarball: downloadedTarballPath, result, targetRoot, tmp, urls };
 }
 
 function runHermesInstallLayer(
@@ -364,6 +369,40 @@ function runHermesInstallLayer(
 }
 
 describe("Hermes share mount package parity (#2947)", () => {
+  it.each([
+    {
+      input: { version: "2026.7.20" },
+      name: "a malformed Hermes version",
+      failure: "invalid-version",
+    },
+    {
+      input: { output: "hermes.tar.gz" },
+      name: "a relative archive output",
+      failure: "invalid-output",
+    },
+  ])("rejects $name before download (#9815)", ({ failure, input }) => {
+    const { calls, downloadedTarball, result, tmp, urls } = runHermesArchiveLayer(
+      ["http:200"],
+      undefined,
+      undefined,
+      input,
+    );
+    try {
+      expect(result.status).toBe(2);
+      expect(calls).toEqual([]);
+      expect(urls).toEqual([]);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        `Hermes archive download outcome=failed-no-retry attempt=0/3 failure=${failure}\n`,
+      );
+      expect(fs.existsSync(downloadedTarball)).toBe(false);
+      expect(fs.existsSync(`${downloadedTarball}.partial`)).toBe(false);
+      expect(fs.existsSync(`${downloadedTarball}.curl-error`)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("retries a throttled Hermes archive and removes upstream tests (#9815)", () => {
     const { calls, result, targetRoot, tmp, urls } = runHermesArchiveLayer([
       "http:429",
