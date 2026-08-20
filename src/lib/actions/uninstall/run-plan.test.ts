@@ -1455,4 +1455,33 @@ describe("uninstall run plan", () => {
     expect(killed).toContain(9999887);
     expect(logs).toContain("Stopped host openshell-gateway process 9999887");
   });
+
+  it("exits nonzero when full uninstall cannot remove the gateway registration", () => {
+    const warnings: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: false },
+      {
+        commandExists: () => true,
+        env: { HOME: "/tmp/nemoclaw-uninstall-test-gateway-remove" } as NodeJS.ProcessEnv,
+        error: (line: string) => warnings.push(line),
+        existsSync: () => false,
+        hasPortableRuntimeCleanup: () => false,
+        isTty: false,
+        kill: () => true,
+        log: () => {},
+        rmSync: vi.fn(),
+        run: (command: string, args: string[]) =>
+          command === "openshell" && args[0] === "gateway" && args[1] === "remove"
+            ? { status: 1, stdout: "", stderr: "connection refused" }
+            : okWithKnownGatewayList(command, args),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(warnings).toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(warnings).toContain(
+      "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
+    );
+  });
 });
