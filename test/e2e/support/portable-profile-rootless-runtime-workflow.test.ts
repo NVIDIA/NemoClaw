@@ -1,17 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { readYaml, type Workflow } from "../../helpers/e2e-workflow-contract";
 
 describe("portable profile rootless runtime workflow", () => {
-  // source-shape-contract: compatibility -- Actionlint and the workflow must share Ubuntu 26.04 while the workflow compiles the candidate catalogue, pins Podman 5.7, and corrects the pasta AppArmor policy before live E2E
-  it("keeps actionlint and live E2E on Ubuntu 26.04 and Podman 5.7 (#9006)", () => {
+  // source-shape-contract: compatibility -- The workflow and live fixture must keep the accepted OS, Podman, AppArmor, and HTTP local-registry authorities aligned before live E2E
+  it("keeps live E2E on the accepted rootless runtime and local registry authority (#9006)", () => {
     const actionlint = readYaml<{ "self-hosted-runner"?: { labels?: string[] } }>(
       ".github/actionlint.yaml",
     );
     const workflow = readYaml<Workflow>(".github/workflows/portable-profile-e2e.yaml");
+    const liveTest = fs.readFileSync(
+      "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "utf-8",
+    );
     const job = workflow.jobs["rootless-linux"];
     const steps = job?.steps ?? [];
     const provision = steps.find(
@@ -63,5 +69,17 @@ describe("portable profile rootless runtime workflow", () => {
     expect(policy).toContain('if ! grep -Eq "$signal_rule" "$pasta_profile"; then');
     expect(policy).toContain('test "$(grep -Ec "$signal_rule" "$pasta_profile")" -eq 1');
     expect(policy).toContain('apparmor_parser -r "$pasta_profile"');
+    expect(liveTest).toContain(
+      'path.join(os.userInfo().homedir, ".nemoclaw-portable-e2e-")',
+    );
+    expect(liveTest).not.toMatch(
+      /mkdtempSync\(\s*path\.join\(os\.tmpdir\(\),\s*["']nemoclaw-portable-e2e-/,
+    );
+    expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
+    expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
+    expect(liveTest).toContain('location = "localhost:5000"\\ninsecure = true');
+    expect(liveTest).toContain("DOCKER_NETWORK_IPAM_INSPECT_FORMAT");
+    expect(liveTest).toContain("parseDockerNetworkIpamEntries(");
+    expect(liveTest).not.toContain("{{range .Subnets}}");
   });
 });

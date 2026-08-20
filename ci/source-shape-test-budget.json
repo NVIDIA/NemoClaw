@@ -63,7 +63,7 @@
     },
     {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
-      "test": "keeps actionlint and live E2E on Ubuntu 26.04 and Podman 5.7 (#9006)",
+      "test": "keeps live E2E on the accepted rootless runtime and local registry authority (#9006)",
       "category": "compatibility"
     },
     {

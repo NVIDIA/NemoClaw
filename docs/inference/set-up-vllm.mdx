@@ -354,6 +354,32 @@ Physical qualification covered only the bounded verification above.
 Vision and DFlash speculative decoding are disabled and outside this profile's scope.
 </Warning>
 
+### Use Explicit Linux x86_64 Profiles
+
+Experimental Linux x86_64 profiles provide the Muse Glimmer and NVIDIA Nemotron 3.5 Lightning models on one NVIDIA GPU.
+They are explicit-only, so they do not change the generic Linux default or appear in the interactive model picker.
+
+Before you select either profile, confirm that the host runs Linux x86_64 with Docker, the NVIDIA Container Toolkit, healthy CDI support, NVIDIA driver `580.65.06` or later, and at least `96 GB` of GPU memory.
+Muse Glimmer also requires GPU compute capability `12.0` or later.
+NVIDIA Nemotron 3.5 Lightning requires GPU compute capability `9.0` or later.
+
+List the compatible profiles, then pass one stable profile ID to onboarding:
+
+```bash
+$$nemoclaw profiles list
+$$nemoclaw onboard --profile vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4
+```
+
+Use `vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4` for NVIDIA Nemotron 3.5 Lightning.
+NemoClaw stops before image or model downloads when the profile does not match the host.
+The selected recipe uses a pinned image, fixed serving arguments, bearer authentication, and the managed host-local lifecycle.
+Do not combine `--profile` with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON`.
+
+<Warning title="Experimental Linux x86_64 Profiles">
+These profiles have bounded hardware validation and remain Experimental.
+They do not establish general support for other Linux x86_64 GPUs, models, images, or serving arguments.
+</Warning>
+
 NemoClaw creates or reuses the Muse Glimmer bearer key in the owner-only `~/.nemoclaw/dual-station-vllm-api-key` host file before confirmation.
 The managed vLLM container reads the key while it runs, and the sandbox receives only the managed inference route.
 The key remains for a retry after cancellation, interruption, or a later preflight failure.

@@ -42,6 +42,8 @@ const crashAfter = ${JSON.stringify(crashAfter)};
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const mark = (name) => fs.writeFileSync(marker(name), "yes\n", { mode: 0o600 });
 const marked = (name) => fs.existsSync(marker(name));
+const providerVersion = () => Number.parseInt(marked("provider-version") ? fs.readFileSync(marker("provider-version"), "utf8") : "1", 10);
+const setProviderVersion = (version) => fs.writeFileSync(marker("provider-version"), String(version), { mode: 0o600 });
 const providerPresentAtStart = marked("provider");
 const providerId = "11111111-2222-4333-8444-555555555555";
 const foreignProviderId = "99999999-8888-4777-8666-555555555555";
@@ -84,17 +86,28 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     if (crashAfter === "race" && providerGetCount === 2) mark("provider");
     if (crashAfter === "late-race" && providerGetCount === 3) mark("provider");
     return marked("provider")
-      ? { status: 0, stdout: "Id: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: nemoclaw-mcp-v1\nResource version: " + (marked("updated") ? "2" : "1") + "\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
+      ? { status: 0, stdout: "Id: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: nemoclaw-mcp-v1\nResource version: " + providerVersion() + "\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
     if (!marked("policy")) {
       return { status: 1, stdout: "", stderr: "provider mutation preceded policy attestation" };
     }
-    if (args[1] === "create") observedProviderName = args[args.indexOf("--name") + 1];
-    if (args[1] === "update") observedProviderName = args[2];
+    if (args[1] === "create") observedProviderName = args[args.indexOf("--name") + 1], setProviderVersion(1);
+    if (args[1] === "update") {
+      const isCredentialUpdate =
+        args.length === 5 &&
+        args[2] === observedProviderName &&
+        args[3] === "--credential" &&
+        args[4] === "FAKE_MCP_SECRET";
+      const isCredentialFreeRefresh = args.length === 3 && args[2] === observedProviderName;
+      if (!isCredentialUpdate && !isCredentialFreeRefresh) {
+        throw new Error("Unexpected provider update: " + args.join(" "));
+      }
+      setProviderVersion(providerVersion() + 1);
+      if (isCredentialUpdate) mark("updated");
+    }
     mark("provider");
-    if (args[1] === "update") mark("updated");
     if (crashAfter === "registered-late-collision") registry.addExtraProvider("foreign-registered");
     if (crashAfter === "provider") process.exit(86);
     return { status: 0, stdout: args[1] === "create" ? "Created provider" : "Updated provider", stderr: "" };
@@ -168,7 +181,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   isPreupdateObservation && mark("observation");
   return {
     status: crashAfter === "preupdate-observation-forbidden" && isPreupdateObservation ? 1 : 0,
-    stdout: isObservation ? (marked("updated") ? "v2" : marked("provider") ? "v1" : "absent") : "",
+    stdout: isObservation ? (marked("updated") ? "v" + providerVersion() : marked("provider") ? "v1" : "absent") : "",
     stderr: "",
   };
 };
