@@ -132,10 +132,10 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepage
 
 </AgentOnly>
 
-The portable profile creates the `openshell-docker` network on `169.254.1.0/24` and assigns `169.254.2.2/32` to the host loopback interface.
+The portable profile creates the `openshell-docker` network on `10.87.0.0/24` and assigns `169.254.2.2/32` to the host loopback interface.
 The address `169.254.2.2` is outside the Portable sandbox subnet and is the host-gateway address for `host.openshell.internal`.
 It carries authenticated mTLS plus sandbox-JWT callbacks to OpenShell on port `8080`.
-The managed local registry uses the distinct address `169.254.1.3` on port `5000`.
+The managed local registry uses the distinct address `10.87.0.3` on port `5000`.
 Keeping the host-gateway address outside the sandbox subnet prevents a Portable workload from receiving that address.
 
 <Warning>
@@ -153,6 +153,26 @@ $$nemoclaw onboard --experimental-profile portable
 
 Do not run the loopback deletion command when onboarding reports another interface or prefix.
 Investigate and resolve the conflicting assignment before you rerun onboarding.
+
+If Portable onboarding reports that `openshell-docker` still uses `169.254.1.0/24`, use only the commands in that error. Before it shows a command, NemoClaw verifies the current-user Podman socket, the complete retired network record, and every running or stopped container connected to that network. Each command includes the verified socket URL and the complete 64-character resource ID.
+
+When no container is connected, onboarding prints one network command:
+
+```bash
+podman --url 'unix://<verified-current-user-socket>' network rm <64-character-network-id>
+```
+
+When the exact NemoClaw-managed registry is the only connected container, onboarding prints the registry commands before the network command. A stopped registry does not need the first command. Run each printed command in order, and continue only after it succeeds:
+
+```bash
+podman --url 'unix://<verified-current-user-socket>' container stop <64-character-registry-id>
+podman --url 'unix://<verified-current-user-socket>' container rm <64-character-registry-id>
+podman --url 'unix://<verified-current-user-socket>' network rm <64-character-network-id>
+```
+
+Do not change the socket or IDs, and do not add `--force` to any command. If inspection is inconclusive or any other container is connected, onboarding prints no removal command. Leave the network and containers unchanged. This recovery does not remove sandboxes, inference containers, or Hermes resources. Use the lifecycle that created each resource, then retry onboarding.
+
+Rerun Portable onboarding once the network is gone.
 </Warning>
 
 The portable profile handles the descriptor as follows:

@@ -53,6 +53,7 @@ export type SandboxGpuCreateAttemptState = {
 // container's stale Ready row. Require one confirmation poll before advancing
 // to live validation or the GPU proof.
 const REPLACEMENT_STABLE_READY_POLLS = 2;
+const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
 const OPENSHELL_SANDBOX_NOT_READY =
@@ -339,7 +340,10 @@ export function createSandboxGpuCreateAttemptRunner(
       streamSandboxCreate(createExecutable, createExecutableArgs, input.sandboxEnv, {
         ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
         readyCheck: () => {
-          const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+          const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+            ignoreError: true,
+            timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
+          });
           return isSandboxReady(list, input.sandboxName);
         },
         onPoll: () => {
@@ -397,6 +401,7 @@ export function createSandboxGpuCreateAttemptRunner(
             } else {
               const list = deps.runCaptureOpenshell(["sandbox", "list"], {
                 ignoreError: true,
+                timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
               if (!isSandboxReady(list, input.sandboxName)) {
                 throw new Error(

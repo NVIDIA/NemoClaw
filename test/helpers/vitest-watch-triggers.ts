@@ -41,6 +41,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)docs\/reference\/troubleshooting\.mdx$/,
+    testsToRun: runTests("test/policy-finality-docs.test.ts"),
+  },
+  {
     pattern:
       /(?:^|\/)(?:\.github\/workflows\/release-lkg-brev-image\.yaml|scripts\/release-lkg-brev-image\.sh)$/,
     testsToRun: runTests("test/release-lkg-brev-image.test.ts"),
