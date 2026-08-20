@@ -1960,6 +1960,29 @@ inspect_noncanonical_openshell_gateway_user_services() {
   return 0
 }
 
+render_diagnostic_path() {
+  local file_path="${1-}" rendered
+  if ! rendered="$(
+    printf '%s' "$file_path" \
+      | node --input-type=module --eval '
+          let input = "";
+          process.stdin.setEncoding("utf8");
+          for await (const chunk of process.stdin) input += chunk;
+          process.stdout.write(
+            JSON.stringify(input).replace(
+              /[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g,
+              (character) =>
+                "\\u" + character.charCodeAt(0).toString(16).padStart(4, "0"),
+            ),
+          );
+        ' 2>/dev/null
+  )"; then
+    return 1
+  fi
+  [[ -n "$rendered" ]] || return 1
+  printf '%s\n' "$rendered"
+}
+
 require_no_competing_openshell_gateway_user_service() {
   local gateway_port discovery_status activation_path rendered_activation_path activation_status=0
   [[ "$(uname -s)" == "Linux" ]] || return 0
@@ -1976,7 +1999,9 @@ require_no_competing_openshell_gateway_user_service() {
     if [[ "$activation_path" == "noncanonical" ]]; then
       error "The systemd user manager is unavailable, and a noncanonical enabled user service cannot be qualified for selected port ${gateway_port}. Restore the systemd user manager and inspect or disable enabled services before rerunning NemoClaw."
     fi
-    printf -v rendered_activation_path '%q' "$activation_path"
+    if ! rendered_activation_path="$(render_diagnostic_path "$activation_path")"; then
+      error "The systemd user manager is unavailable, and the installer could not safely render the enabled gateway service activation path. Restore the systemd user manager and inspect or disable enabled services before rerunning NemoClaw."
+    fi
     error "The systemd user manager is unavailable, but $rendered_activation_path can activate a gateway user service that can later claim port ${gateway_port}. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
   else
     activation_status=$?
@@ -2275,7 +2300,9 @@ install_nemoclaw_openshell_gateway_user_service() {
       if [[ "$activation_path" == "noncanonical" ]]; then
         error "The systemd user manager is unavailable, and a noncanonical enabled user service cannot be qualified for selected port 8080. Restore the systemd user manager and inspect or disable enabled services before rerunning NemoClaw."
       fi
-      printf -v rendered_activation_path '%q' "$activation_path"
+      if ! rendered_activation_path="$(render_diagnostic_path "$activation_path")"; then
+        error "The systemd user manager is unavailable, and the installer could not safely render the enabled gateway service activation path. Restore the systemd user manager and inspect or disable enabled services before rerunning NemoClaw."
+      fi
       error "The systemd user manager is unavailable, but $rendered_activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
     else
       activation_status=$?

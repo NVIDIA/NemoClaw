@@ -13,6 +13,8 @@ function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
   return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
 }
 
+function assertNoCompetingOpenShellGatewayUserService(): void {}
+
 describe("package-managed Docker-driver gateway env service", () => {
   it("stages the service and writes its env under one XDG config root (#6903)", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
@@ -24,6 +26,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          assertNoCompetingOpenShellGatewayUserService,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env,
           exitOnFailure: false,
@@ -75,6 +78,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          assertNoCompetingOpenShellGatewayUserService,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env: { ...homeEnv(tempHome), DOCKER_HOST: dockerHost },
           exitOnFailure: false,
@@ -111,6 +115,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          assertNoCompetingOpenShellGatewayUserService,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env: homeEnv(tempHome),
           exitOnFailure: false,
@@ -152,6 +157,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          assertNoCompetingOpenShellGatewayUserService,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env: homeEnv(tempHome),
           exitOnFailure: false,
@@ -179,6 +185,7 @@ describe("package-managed Docker-driver gateway env service", () => {
   it("rejects package-managed wildcard binds before writing the service env (#6903)", () => {
     expect(() =>
       startPackageManagedDockerDriverGatewayWithEnvOverride({
+        assertNoCompetingOpenShellGatewayUserService,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayEnv: {
@@ -195,9 +202,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     ).toThrow(/not supported for the OpenShell Docker-driver gateway/);
   });
 
-  it.each(
-    ["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"],
-  )(
+  it.each(["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"])(
     "rejects incomplete gateway JWT config before writing env or starting the service [%s] (#6903)",
     (key) => {
       const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
@@ -214,6 +219,7 @@ describe("package-managed Docker-driver gateway env service", () => {
 
         expect(() =>
           startPackageManagedDockerDriverGatewayWithEnvOverride({
+            assertNoCompetingOpenShellGatewayUserService,
             clearDockerDriverGatewayRuntimeFiles: vi.fn(),
             env,
             exitOnFailure: false,

@@ -299,11 +299,34 @@ it("escapes a canonical activation path in the offline qualification diagnostic 
 
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("config\\ninjected");
+  expect(result.stderr).toContain("\\u001b\\u202e");
   expect(result.stderr).toContain("openshell-gateway.service");
   expect(result.stderr).not.toContain(activationPath);
   expect(result.stderr).not.toContain("\ninjected");
   expect(result.stderr).not.toContain("\u001b");
   expect(result.stderr).not.toContain("\u202e");
+});
+
+it("stops when a canonical activation path cannot be rendered (#9705)", () => {
+  const home = makeTempRoot();
+  const activationPath = createCanonicalActivation(home, path.join(home, ".config"));
+  const lifecycleMarker = path.join(home, "lifecycle-effect");
+  const systemctl = writeUnavailableSystemctlStub(home);
+  writeExecutable(path.join(systemctl.bin, "node"), "#!/usr/bin/env bash\nexit 1\n");
+
+  const result = runInstallHelper(
+    home,
+    [
+      "require_no_competing_openshell_gateway_user_service 8080",
+      `printf 'changed\\n' > ${JSON.stringify(lifecycleMarker)}`,
+    ].join("\n"),
+    { PATH: `${systemctl.bin}:${TEST_SYSTEM_PATH}` },
+  );
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("could not safely render");
+  expect(result.stderr).not.toContain(activationPath);
+  expect(fs.existsSync(lifecycleMarker)).toBe(false);
 });
 
 it("escapes a canonical activation path in the standalone fallback diagnostic (#9705)", () => {
@@ -324,6 +347,7 @@ it("escapes a canonical activation path in the standalone fallback diagnostic (#
 
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("config\\ninjected");
+  expect(result.stderr).toContain("\\u001b\\u202e");
   expect(result.stderr).toContain("openshell-gateway.service");
   expect(result.stderr).not.toContain(activationPath);
   expect(result.stderr).not.toContain("\ninjected");
