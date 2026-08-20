@@ -147,18 +147,26 @@ It does not authorize merge with an unresolved required finding.
 Run this ordered remediation sequence:
 
 1. Start from a complete collection for the unchanged latest PR commit. Classify every finding and
-   determine which unresolved findings require a change. An explicitly deferred non-blocking
-   suggestion does not require a change in this review cycle.
-2. Before routing, editing, validating, or committing a required change, apply one condition:
-    - If the recorded count is less than two, proceed without new user approval.
-    - If the recorded count is two or more, require recorded approval for one named finding group and one additional push.
-3. Repair every unresolved finding that requires a change as one coherent root-cause change set.
+   determine which unresolved findings require a change. If the recorded count is one or more, a
+   finding requires another change only when it is an unresolved accepted earlier finding, a
+   regression from the previous remediation, or a new blocking finding in one of the categories
+   listed above. Record every other new non-blocking finding as deferred unless the user approves it
+   as added scope. An explicitly deferred non-blocking suggestion does not require a change in this
+   review cycle.
+2. Set the repair scope before routing, editing, validating, or committing a required change:
+    - If the recorded count is less than two, include every finding group that step 1 says requires
+      a change. Proceed without new user approval.
+    - If the recorded count is two or more, require recorded approval for one named finding group
+      and one additional push. Include only that approved finding group. Leave every other finding
+      group untouched.
+3. Repair only the finding groups in the repair scope as one coherent change set.
 4. Run targeted validation.
 5. Commit the candidate change set after validation passes.
 6. Run one final complete collection for the latest PR commit. Restart the collection if
    `headRefOid` changes.
 7. Classify every finding in that collection.
-8. If any unresolved finding requires a change, return to step 2 without pushing.
+8. If any unresolved finding requires a change, including an unapproved blocking finding group,
+   return to step 1 without pushing.
 9. After no unresolved finding requires a change, remove retained collection evidence by its exact
    artifact path or identifier and verify its absence.
 10. Push once.

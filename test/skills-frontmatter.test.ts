@@ -186,11 +186,29 @@ describe("repo skill markdown files", () => {
     expect(followUp).toContain("When a new finding requires");
     expect(followUp).toContain("return to step 1");
 
-    const approvalGate = followUp.indexOf("If the recorded count is two or more");
+    const orderedSequence = followUp.slice(followUp.indexOf("Run this ordered remediation sequence"));
+    expect(orderedSequence).toContain("If the recorded count is one or more");
+    expect(orderedSequence).toContain("Record every other new non-blocking finding as deferred");
+    expect(orderedSequence).toContain("Include only that approved finding group");
+    expect(orderedSequence).toMatch(/Leave every other finding\s+group untouched/u);
+    expect(orderedSequence).toContain("including an unapproved blocking finding group");
+
+    const approvalGate = orderedSequence.indexOf("If the recorded count is two or more");
     expect(approvalGate).toBeGreaterThanOrEqual(0);
-    expect(followUp.indexOf("Repair every unresolved finding")).toBeGreaterThan(approvalGate);
-    expect(followUp.indexOf("Run targeted validation")).toBeGreaterThan(approvalGate);
-    expect(followUp.indexOf("Commit the candidate change set")).toBeGreaterThan(approvalGate);
+    expect(orderedSequence.indexOf("Repair only the finding groups")).toBeGreaterThan(approvalGate);
+    expect(orderedSequence.indexOf("Run targeted validation")).toBeGreaterThan(approvalGate);
+    expect(orderedSequence.indexOf("Commit the candidate change set")).toBeGreaterThan(
+      approvalGate,
+    );
+    const blockingGate = orderedSequence.indexOf(
+      "including an unapproved blocking finding group",
+    );
+    const push = orderedSequence.indexOf("Push once");
+    expect(blockingGate).toBeGreaterThan(approvalGate);
+    expect(orderedSequence.slice(blockingGate, push)).toMatch(
+      /return to step 1 without pushing/u,
+    );
+    expect(push).toBeGreaterThan(blockingGate);
 
     const delegateBeforeRepair = createPr.indexOf("Before routing a repair");
     expect(delegateBeforeRepair).toBeGreaterThanOrEqual(0);
