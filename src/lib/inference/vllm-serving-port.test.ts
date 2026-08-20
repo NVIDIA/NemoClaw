@@ -21,8 +21,11 @@ const mocks = vi.hoisted(() => ({
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
   recoverHostLocalManagedVllmEndpoint: vi.fn(),
+  resolveHostLocalVllmSelection: vi.fn(),
   runCapture: vi.fn(),
-  tryInstallManagedClusterManagedVllm: vi.fn(async () => ({ kind: "not-selected" as const })),
+  tryInstallManagedClusterManagedVllm: vi.fn<
+    typeof import("./serving/vllm-managed-support").tryInstallManagedClusterManagedVllm
+  >(async () => ({ kind: "not-selected" as const })),
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
@@ -61,6 +64,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
     ...actual,
     ensureDualStationVllmApiKey: mocks.ensureDualStationVllmApiKey,
     recoverHostLocalManagedVllmEndpoint: mocks.recoverHostLocalManagedVllmEndpoint,
+    resolveHostLocalVllmSelection: mocks.resolveHostLocalVllmSelection,
     tryInstallManagedClusterManagedVllm: mocks.tryInstallManagedClusterManagedVllm,
   };
 });
@@ -71,6 +75,7 @@ import {
   type InstallVllmOptions,
   type VllmProfile,
 } from "./vllm";
+import { buildVllmServeCommand } from "./vllm-models";
 import {
   applyVllmInstallProbeDefaults,
   createVllmInstallSpies,
@@ -96,6 +101,7 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     applyVllmInstallProbeDefaults(mocks);
     mocks.getGpuIndicesByName.mockReturnValue([0]);
     mocks.recoverHostLocalManagedVllmEndpoint.mockReturnValue(null);
+    mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
     mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({ kind: "not-selected" });
     ({ errSpy, restore: restoreSpies } = createVllmInstallSpies());
     resetVllmInstallEnv();
@@ -135,6 +141,91 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(reported).toContain("PID 4242");
     expect(reported).not.toContain("exit 125");
   });
+
+  it("uses the fixed vLLM local model profile command without managed-cluster selection", async () => {
+    const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const model = {
+      ...baseProfile.defaultModel,
+      id: "nvidia/fixed-local-profile",
+      fixedServeCommand: true as const,
+      managedBearerAuth: true as const,
+    };
+    const profile = { ...baseProfile, defaultModel: model };
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
+    mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({
+      kind: "handled",
+      result: { ok: false },
+    });
+    const promptFn = vi.fn<(question: string) => Promise<string>>(async () => "y");
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: false,
+      promptFn,
+      resolveManagedBridgeHost: () => "172.18.0.1",
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(promptFn).toHaveBeenCalledOnce();
+    expect(promptFn).toHaveBeenCalledWith("  Continue? [y/N]: ");
+    expect(mocks.tryInstallManagedClusterManagedVllm).not.toHaveBeenCalled();
+    expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
+    const runArgs = mocks.dockerRunDetached.mock.calls[0]?.[0] as readonly string[];
+    const serveCommand = runArgs[runArgs.indexOf("-lc") + 1];
+    expect(serveCommand).toContain(model.id);
+    expect(serveCommand).not.toContain("--trust-remote-code");
+    expect(serveCommand).toBe(buildVllmServeCommand(model));
+  });
+
+  it.each([
+    {
+      label: "NEMOCLAW_VLLM_MODEL",
+      variable: "NEMOCLAW_VLLM_MODEL",
+      value: "qwen3.6-27b",
+    },
+    {
+      label: "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
+      variable: "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
+      value: JSON.stringify(["--max-num-seqs", "2"]),
+    },
+    {
+      label: "NEMOCLAW_MANAGED_CLUSTER_PEERS",
+      variable: "NEMOCLAW_MANAGED_CLUSTER_PEERS",
+      value: "spark-worker.local",
+    },
+    {
+      label: "a mismatched NEMOCLAW_SERVING_PRESET",
+      variable: "NEMOCLAW_SERVING_PRESET",
+      value: "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
+    },
+  ])(
+    "rejects $label before installing a fixed vLLM local model profile",
+    async ({ variable, value }) => {
+      process.env[variable] = value;
+      const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+      const model = {
+        ...baseProfile.defaultModel,
+        fixedServeCommand: true as const,
+        managedBearerAuth: true as const,
+      };
+      const profile = { ...baseProfile, defaultModel: model };
+      mockSuccessfulVllmInstall(mocks, profile.containerName);
+
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+      });
+
+      expect(result).toEqual({ ok: false });
+      expect(mocks.tryInstallManagedClusterManagedVllm).not.toHaveBeenCalled();
+      expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
+      expect(mocks.ensureDualStationVllmApiKey).not.toHaveBeenCalled();
+      expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+      expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining(variable));
+    },
+  );
 
   it("replaces a validated interrupted managed container that holds the serving port", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
