@@ -163,6 +163,27 @@ def response_payload(action, identity, status, stdout, stderr):
         "status": status, "stdout": stdout, "stderr": stderr},
         ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
 
+def publisher_phase_failure(action, stderr):
+    if action != "publish":
+        return stderr
+    try:
+        failure = json.loads(stderr.decode("utf-8", "strict"))
+        if (not isinstance(failure, dict) or failure.get("schemaVersion") != 1 or
+            failure.get("action") != "publish" or failure.get("status") != "failed" or
+            failure.get("code") != "publisher-guard-failed"):
+            return stderr
+        journal = json.loads(private_file(
+            "/var/lib/nemoclaw/runtime-state-mutation/hermes-publisher.json"
+        ).decode("utf-8", "strict"))
+        operation = journal.get("operation") if isinstance(journal, dict) else None
+        phase = operation.get("phase") if isinstance(operation, dict) else None
+        if phase not in ("intent", "begun", "state-applied", "top-applied"):
+            return stderr
+        failure["code"] = "publisher-guard-" + phase + "-failed"
+        return (json.dumps(failure, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
+    except (OSError, RuntimeError, UnicodeError, ValueError):
+        return stderr
+
 def run_helper(action, request):
     completed = None
     for attempt in range(2):
@@ -220,8 +241,9 @@ while True:
             if len(completed.stdout) > MAXIMUM or len(completed.stderr) > MAXIMUM:
                 fail("transport-response-too-large")
             status = completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
+            stderr = publisher_phase_failure(action, completed.stderr)
             response = response_payload(action, identity, status,
-                completed.stdout.decode("utf-8", "strict"), completed.stderr.decode("utf-8", "strict"))
+                completed.stdout.decode("utf-8", "strict"), stderr.decode("utf-8", "strict"))
         except subprocess.TimeoutExpired:
             response = response_payload(action, identity, 1, "", "helper-timeout")
         except (OSError, RuntimeError, UnicodeError, ValueError):

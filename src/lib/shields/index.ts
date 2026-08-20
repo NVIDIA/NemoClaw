@@ -5277,13 +5277,22 @@ function shieldsDownWithoutHostLock(
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }
-    unlockAgentConfig(
-      sandboxName,
-      target,
-      initialMode === "locked",
-      opts.allowLegacyHermesProtocol === true,
-      protocol,
-    );
+    if (
+      target.agentName === "hermes" &&
+      protocol === "provider-state-mutation-v2" &&
+      initialMode === "mutable_default" &&
+      !hasActiveRuntimeProviderStateMutation(sandboxName)
+    ) {
+      verifyHermesProviderMutablePosture(sandboxName, target);
+    } else {
+      unlockAgentConfig(
+        sandboxName,
+        target,
+        initialMode === "locked",
+        opts.allowLegacyHermesProtocol === true,
+        protocol,
+      );
+    }
     if (target.agentName === "hermes") {
       console.log("  Confirming Hermes inference route after policy transition...");
       const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });
