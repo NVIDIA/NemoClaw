@@ -443,6 +443,11 @@ export async function runRebuildPostRestorePhase(
         `    Mutable OpenClaw config hash was not refreshed \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
       );
     }
+    if (finalMutableConfigHashUnverified && !mutableConfigHashRefreshUnverified) {
+      console.log(
+        `    Final OpenClaw configuration hash verification failed after post-restore finalization \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
+      );
+    }
     if (messagingHostForwardUnverified) {
       console.log(
         `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${sandboxName} connect\` after resolving the port conflict`,

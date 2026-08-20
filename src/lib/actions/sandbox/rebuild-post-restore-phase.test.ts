@@ -176,9 +176,12 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw config integrity verification failed after rebuild.",
     );
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain(
-      "rebuilt successfully",
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain(
+      "Final OpenClaw configuration hash verification failed after post-restore finalization",
     );
+    expect(output).not.toContain("Mutable OpenClaw config hash was not refreshed");
+    expect(output).not.toContain("rebuilt successfully");
   });
 
   it("does not run OpenClaw session reconciliation for another agent (#7102)", async () => {
