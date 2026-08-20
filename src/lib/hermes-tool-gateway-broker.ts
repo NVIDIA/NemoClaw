@@ -538,7 +538,7 @@ function probeHermesToolGatewayBrokerStart(options = {}) {
  * disposable private runtime files and performs no durable provider,
  * credential, or broker-process mutation.
  */
-function preflightHermesToolGatewayCloneBinding(sandboxName) {
+function preflightHermesToolGatewayCloneBinding(sandboxName, deps = {}) {
   validateName(sandboxName, "sandbox name");
   const requiredRuntimeFiles = [
     HERMES_TOOL_GATEWAY_SCRIPT,
@@ -556,8 +556,8 @@ function preflightHermesToolGatewayCloneBinding(sandboxName) {
   }
 
   const pid = readPid();
-  const currentBrokerOwned = isHermesToolGatewayBrokerPortOwner(pid);
-  const currentBrokerHealthy = isHermesToolGatewayBrokerHealthy();
+  const { owned: currentBrokerOwned, healthy: currentBrokerHealthy } =
+    verifyHermesToolGatewayBroker(pid, deps);
   if (currentBrokerHealthy && !currentBrokerOwned) {
     throw new Error(
       "Hermes managed-tool broker health endpoint is not owned by NemoClaw; " +
@@ -696,6 +696,20 @@ function isHermesToolGatewayBrokerHealthy() {
   return result.status === 0;
 }
 
+function verifyHermesToolGatewayBroker(pid, deps = {}) {
+  const isPortOwner = deps.isPortOwner ?? isHermesToolGatewayBrokerPortOwner;
+  const isHealthy = deps.isHealthy ?? isHermesToolGatewayBrokerHealthy;
+  const ownedBeforeHealth = isPortOwner(pid);
+  const healthy = isHealthy();
+  // The unauthenticated health request can outlive the recorded broker. Require
+  // the same process to own the listener after each successful health probe.
+  const ownedAfterHealth = healthy && isPortOwner(pid);
+  return {
+    healthy,
+    owned: ownedBeforeHealth && ownedAfterHealth,
+  };
+}
+
 function killStaleHermesToolGatewayBroker() {
   const pid = readPid();
   if (isHermesToolGatewayBrokerPortOwner(pid)) {
@@ -760,7 +774,7 @@ function planHermesToolGatewayBrokerRefresh({
   return "start-or-restart";
 }
 
-function ensureHermesToolGatewayBroker(options = {}) {
+function ensureHermesToolGatewayBroker(options = {}, deps = {}) {
   const refreshToken =
     typeof options.refreshToken === "string" && options.refreshToken.trim()
       ? options.refreshToken.trim()
@@ -768,8 +782,8 @@ function ensureHermesToolGatewayBroker(options = {}) {
   const desiredHash = brokerRuntimeHash();
   const hashMatches = readBrokerHash() === desiredHash;
   const pid = readPid();
-  const currentBrokerOwned = isHermesToolGatewayBrokerPortOwner(pid);
-  const brokerHealthy = isHermesToolGatewayBrokerHealthy();
+  const { owned: currentBrokerOwned, healthy: brokerHealthy } =
+    verifyHermesToolGatewayBroker(pid, deps);
   const currentBrokerHealthy = currentBrokerOwned && brokerHealthy;
   // `/health` is unauthenticated on a fixed port, so reachability proves
   // liveness and never identity. Ownership comes only from a recorded pid that
@@ -792,9 +806,10 @@ function ensureHermesToolGatewayBroker(options = {}) {
     killStaleHermesToolGatewayBroker();
     const nextPid = spawnHermesToolGatewayBroker("");
     for (let attempt = 0; attempt < 20; attempt++) {
+      const nextBroker = verifyHermesToolGatewayBroker(nextPid, deps);
       if (
-        isHermesToolGatewayBrokerPortOwner(nextPid) &&
-        isHermesToolGatewayBrokerHealthy() &&
+        nextBroker.owned &&
+        nextBroker.healthy &&
         fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH)
       ) {
         return true;
@@ -829,9 +844,10 @@ function ensureHermesToolGatewayBroker(options = {}) {
     killStaleHermesToolGatewayBroker();
     const nextPid = spawnHermesToolGatewayBroker(refreshToken, options.sandboxName ?? null);
     for (let attempt = 0; attempt < 20; attempt++) {
+      const nextBroker = verifyHermesToolGatewayBroker(nextPid, deps);
       if (
-        isHermesToolGatewayBrokerPortOwner(nextPid) &&
-        isHermesToolGatewayBrokerHealthy() &&
+        nextBroker.owned &&
+        nextBroker.healthy &&
         registerHermesToolGatewayRuntimeCredential(refreshToken, options.sandboxName ?? null)
       ) {
         return true;

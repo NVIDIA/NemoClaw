@@ -96,25 +96,12 @@ async function startForeignHealthListener(
     'listener.listen(port, "127.0.0.1", () => process.stdout.write("ready\\n"));',
     'process.once("SIGTERM", () => listener.close(() => process.exit(0)));',
   ].join("\n");
-  const child = resources.ownChild(
-    spawn(process.execPath, ["--input-type=commonjs", "--eval", source, String(port)], {
-      stdio: ["ignore", "pipe", "pipe"],
-    }),
-  );
-  let output = "";
-  child.stdout?.on("data", (chunk) => {
-    output += chunk.toString();
-  });
-  child.stderr?.on("data", (chunk) => {
-    output += chunk.toString();
-  });
-  await waitForBrokerCondition(
+  return startInlineListener(
+    resources,
     "foreign health listener",
-    child,
-    () => output,
-    () => output.includes("ready"),
+    source,
+    [String(port)],
   );
-  return child;
 }
 
 async function startBrokerLikeListener(
@@ -144,19 +131,23 @@ async function startBrokerLikeListener(
     "  listener.close(() => control.close(() => process.exit(0)));",
     "});",
   ].join("\n");
+  return startInlineListener(resources, "broker-like listener", source, [
+    "tool-gateway-broker.ts",
+    String(port),
+    controlSocket,
+  ]);
+}
+
+async function startInlineListener(
+  resources: OwnedTestResources,
+  description: string,
+  source: string,
+  args: readonly string[],
+): Promise<ChildProcess> {
   const child = resources.ownChild(
-    spawn(
-      process.execPath,
-      [
-        "--input-type=commonjs",
-        "--eval",
-        source,
-        "tool-gateway-broker.ts",
-        String(port),
-        controlSocket,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    ),
+    spawn(process.execPath, ["--input-type=commonjs", "--eval", source, ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
   );
   let output = "";
   child.stdout?.on("data", (chunk) => {
@@ -166,7 +157,7 @@ async function startBrokerLikeListener(
     output += chunk.toString();
   });
   await waitForBrokerCondition(
-    "broker-like listener",
+    description,
     child,
     () => output,
     () => output.includes("ready"),
@@ -332,6 +323,79 @@ describe("Hermes managed-tool gateway broker", () => {
         hashMatches: false,
       }),
     ).toBe("start-or-restart");
+  });
+
+  it("refuses a listener whose ownership changes during health verification", async ({
+    resources,
+  }) => {
+    const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-broker-ownership-race-"));
+    vi.stubEnv("HOME", home);
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
+    const credsDir = path.dirname(broker.HERMES_TOOL_GATEWAY_STATE_DIR);
+    const pidPath = path.join(credsDir, "hermes-tool-gateway-broker.pid");
+    fs.mkdirSync(credsDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(pidPath, String(process.pid) + "\n", { mode: 0o600 });
+    broker.persistHermesToolGatewayProviderState("clone", "test-only-refresh");
+
+    let controlRequests = 0;
+    const control = resources.ownServer(
+      http.createServer((_request, response) => {
+        controlRequests += 1;
+        response.writeHead(200);
+        response.end("{}");
+      }),
+    );
+    await new Promise<void>((resolve, reject) => {
+      control.once("error", reject);
+      control.listen(broker.HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH, () => resolve());
+    });
+
+    function replaceListenerDuringHealth() {
+      let listenerOwner = "broker";
+      const observations: string[] = [];
+      return {
+        deps: {
+          isPortOwner: () => {
+            observations.push("owner:" + listenerOwner);
+            return listenerOwner === "broker";
+          },
+          isHealthy: () => {
+            observations.push("health");
+            listenerOwner = "foreign";
+            return true;
+          },
+        },
+        observations,
+      };
+    }
+
+    try {
+      const preflightRace = replaceListenerDuringHealth();
+      expect(() =>
+        broker.preflightHermesToolGatewayCloneBinding("clone", preflightRace.deps),
+      ).toThrow("health endpoint is not owned by NemoClaw");
+      expect(preflightRace.observations).toEqual(["owner:broker", "health", "owner:foreign"]);
+
+      const credentialRace = replaceListenerDuringHealth();
+      const refusal = vi.spyOn(console, "error").mockImplementation(() => {});
+      expect(
+        broker.ensureHermesToolGatewayBroker(
+          {
+            refreshToken: "test-only-refresh",
+            sandboxName: "clone",
+          },
+          credentialRace.deps,
+        ),
+      ).toBe(false);
+      expect(credentialRace.observations).toEqual(["owner:broker", "health", "owner:foreign"]);
+      expect(refusal.mock.calls.flat().join("\n")).toContain(
+        String(broker.HERMES_TOOL_GATEWAY_PORT),
+      );
+      expect(controlRequests).toBe(0);
+    } finally {
+      delete require.cache[require.resolve(BROKER_WRAPPER)];
+    }
   });
 
   it(
