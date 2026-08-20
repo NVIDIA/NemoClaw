@@ -20,6 +20,10 @@ function makeDeepAgentsCodeAgent(): AgentDefinition {
   return loadAgent("langchain-deepagents-code");
 }
 
+function makeNemoCuaAgent(): AgentDefinition {
+  return loadAgent("nemocua", { NEMOCLAW_CUA_ENABLED: "1" });
+}
+
 function createAgentSetupContext(
   runCaptureOpenshell: RunCaptureOpenshell = vi.fn((_args: string[]) => ""),
   captureOpenshell: NonNullable<OnboardContext["captureOpenshell"]> = vi.fn((args, opts) => ({
@@ -60,6 +64,41 @@ async function expectSetupExit(action: () => Promise<void>): Promise<void> {
     errorSpy.mockRestore();
   }
 }
+
+describe("NemoCUA terminal onboard acceptance", () => {
+  it("uses the repository manifest and ordinary terminal smoke path (#9649)", async () => {
+    const calls: string[][] = [];
+    const runCaptureOpenshell = vi
+      .fn((args: string[]) => {
+        calls.push(args);
+        return "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
+      })
+      .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
+    const context = createAgentSetupContext(runCaptureOpenshell);
+
+    await handleAgentSetup(
+      "nemocua-sandbox",
+      "model-x",
+      "provider-x",
+      makeNemoCuaAgent(),
+      false,
+      null,
+      context,
+    );
+
+    expect(context.recordStepComplete).toHaveBeenCalledWith("agent_setup", {
+      sandboxName: "nemocua-sandbox",
+      provider: "provider-x",
+      model: "model-x",
+    });
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+    expect(calls.filter((args) => args.join(" ").includes("NEMOCLAW_AGENT_SMOKE_BEGIN"))).toHaveLength(
+      3,
+    );
+    expect(calls.some((args) => args.includes("curl"))).toBe(false);
+    expect(JSON.stringify(context.recordStepComplete.mock.calls)).not.toContain("cuaRuntime");
+  });
+});
 
 describe("Deep Agents Code terminal onboard acceptance", () => {
   it("runs terminal smoke checks on fresh setup without gateway probes", async () => {
