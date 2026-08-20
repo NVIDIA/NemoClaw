@@ -38,10 +38,51 @@ function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) 
   });
 }
 
+const BEDROCK_RUNTIME_ADAPTER_CMDLINE =
+  "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/bedrock-runtime-adapter.js\n";
 const OPENROUTER_RUNTIME_ADAPTER_CMDLINE =
   "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/openrouter-runtime-adapter-entry.js\n";
 const HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE =
   "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/https-pin-runtime-adapter.js\n";
+
+const RUNTIME_ADAPTERS = [
+  {
+    cmdline: OPENROUTER_RUNTIME_ADAPTER_CMDLINE,
+    customPort: 12037,
+    defaultPort: 11437,
+    envPort: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+    foreignPid: 99998,
+    issueSuffix: " (#5826)",
+    label: "OpenRouter Runtime adapter",
+    orphanPid: 33334,
+    persistedPid: 44323,
+    pidFile: "openrouter-runtime-adapter.pid",
+  },
+  {
+    cmdline: BEDROCK_RUNTIME_ADAPTER_CMDLINE,
+    customPort: 12036,
+    defaultPort: 11436,
+    envPort: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+    foreignPid: 99996,
+    issueSuffix: " (#9552)",
+    label: "Bedrock Runtime adapter",
+    orphanPid: 33336,
+    persistedPid: 44325,
+    pidFile: "bedrock-runtime-adapter.pid",
+  },
+  {
+    cmdline: HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE,
+    customPort: 12038,
+    defaultPort: 11438,
+    envPort: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+    foreignPid: 99997,
+    issueSuffix: "",
+    label: "HTTPS Pin Runtime adapter",
+    orphanPid: 33338,
+    persistedPid: 44324,
+    pidFile: "https-pin-runtime-adapter.pid",
+  },
+] as const;
 
 type RunStub = (args: readonly string[]) => RunResult | null;
 
@@ -98,140 +139,67 @@ function lsofPortStub(ports: string[], portPids: Map<string, RunResult>) {
   };
 }
 
-describe("OpenRouter Runtime adapter uninstall cleanup", () => {
-  it("kills the adapter via the persisted PID file (#5826)", () => {
-    const logs: string[] = [];
-    const killed: number[] = [];
-    const exited = new Set<number>();
-    const tmpHome = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-uninstall-test-openrouter-pidfile-"),
-    );
-    const pidFile = path.join(tmpHome, ".nemoclaw", "openrouter-runtime-adapter.pid");
-    fs.mkdirSync(path.join(tmpHome, ".nemoclaw"), { recursive: true });
-    fs.writeFileSync(pidFile, "44323\n");
+describe("runtime adapter uninstall cleanup", () => {
+  it.each(RUNTIME_ADAPTERS)(
+    "stops $label from its persisted PID before state removal$issueSuffix",
+    ({ cmdline, label, persistedPid, pidFile: pidFilename }) => {
+      const logs: string[] = [];
+      const killed: number[] = [];
+      const exited = new Set<number>();
+      const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-adapter-pid-"));
+      const pidFile = path.join(tmpHome, ".nemoclaw", pidFilename);
+      fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+      fs.writeFileSync(pidFile, `${String(persistedPid)}\n`);
 
-    try {
-      const stub = psStub("44323", { exited });
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: true },
-        {
-          commandExists: () => true,
-          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
-          existsSync: (target) => target === pidFile,
-          isTty: false,
-          kill: (pid, _signal) => {
-            killed.push(pid);
-            exited.add(pid);
-            return true;
+      try {
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          {
+            commandExists: () => true,
+            env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+            existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+            isTty: false,
+            kill: (pid) => {
+              killed.push(pid);
+              exited.add(pid);
+              return true;
+            },
+            log: (line) => logs.push(line),
+            rmSync: fs.rmSync,
+            run: runStub({
+              ps: psStub(String(persistedPid), { cmdline, exited }),
+            }),
+            runDocker: () => ok(""),
           },
-          log: (line) => logs.push(line),
-          rmSync: vi.fn(),
-          run: runStub({ ps: stub }),
-          runDocker: () => ok(""),
-        },
-      );
+        );
 
-      expect(result.exitCode).toBe(0);
-      expect(killed).toContain(44323);
-      expect(logs).toContain("Stopped OpenRouter Runtime adapter 44323");
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
+        expect(result.exitCode).toBe(0);
+        expect(killed).toContain(persistedPid);
+        expect(logs).toContain(`Stopped ${label} ${String(persistedPid)}`);
+        expect(fs.existsSync(pidFile)).toBe(false);
+      } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    },
+  );
 
-  it("scans the custom adapter port for orphan adapters (#5826)", () => {
-    const logs: string[] = [];
-    const killed: number[] = [];
-    const exited = new Set<number>();
-    const lsofPorts: string[] = [];
-    const stub = psStub("33334", { exited });
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: () => true,
-        env: {
-          HOME: "/tmp/nemoclaw-uninstall-test-openrouter-custom-port",
-          LOGNAME: "testuser",
-          NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT: "12037",
-        } as NodeJS.ProcessEnv,
-        existsSync: () => false,
-        isTty: false,
-        kill: (pid, _signal) => {
-          killed.push(pid);
-          exited.add(pid);
-          return true;
-        },
-        log: (line) => logs.push(line),
-        rmSync: vi.fn(),
-        run: runStub({
-          lsof: lsofPortStub(lsofPorts, new Map([[":12037", ok("33334\n")]])),
-          ps: stub,
-        }),
-        runDocker: () => ok(""),
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(lsofPorts).toContain(":12037");
-    expect(lsofPorts).not.toContain(":11437");
-    expect(killed).toContain(33334);
-    expect(logs).toContain("Stopped OpenRouter Runtime adapter 33334");
-  });
-
-  it("never kills a process on the adapter port whose cmdline does not match (#5826)", () => {
-    const logs: string[] = [];
-    const killed: number[] = [];
-    const stub = psStub("99998", {
-      exited: new Set(),
-      cmdline: "/usr/sbin/nginx -g daemon off;\n",
-    });
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: () => true,
-        env: {
-          HOME: "/tmp/nemoclaw-uninstall-test-openrouter-foreign",
-          LOGNAME: "testuser",
-        } as NodeJS.ProcessEnv,
-        existsSync: () => false,
-        isTty: false,
-        kill: (pid) => {
-          killed.push(pid);
-          return true;
-        },
-        log: (line) => logs.push(line),
-        rmSync: vi.fn(),
-        run: runStub({
-          lsof: lsofPortStub([], new Map([[":11437", ok("99998\n")]])),
-          ps: stub,
-        }),
-        runDocker: () => ok(""),
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(killed).not.toContain(99998);
-    expect(logs).toContain("No OpenRouter Runtime adapter processes found");
-  });
-});
-
-describe("HTTPS Pin Runtime adapter uninstall cleanup", () => {
-  it("kills the credential-bearing adapter via its verified persisted PID", () => {
-    const logs: string[] = [];
-    const killed: number[] = [];
-    const exited = new Set<number>();
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-https-pin-"));
-    const pidFile = path.join(tmpHome, ".nemoclaw", "https-pin-runtime-adapter.pid");
-    fs.mkdirSync(path.dirname(pidFile), { recursive: true });
-    fs.writeFileSync(pidFile, "44324\n");
-
-    try {
+  it.each(RUNTIME_ADAPTERS)(
+    "stops an owned $label orphan on its configured port$issueSuffix",
+    ({ cmdline, customPort, defaultPort, envPort, label, orphanPid }) => {
+      const logs: string[] = [];
+      const killed: number[] = [];
+      const exited = new Set<number>();
+      const lsofPorts: string[] = [];
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
           commandExists: () => true,
-          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
-          existsSync: (target) => target === pidFile,
+          env: {
+            HOME: "/tmp/nemoclaw-uninstall-test-adapter-custom-port",
+            LOGNAME: "testuser",
+            [envPort]: String(customPort),
+          } as NodeJS.ProcessEnv,
+          existsSync: () => false,
           isTty: false,
           kill: (pid) => {
             killed.push(pid);
@@ -241,53 +209,116 @@ describe("HTTPS Pin Runtime adapter uninstall cleanup", () => {
           log: (line) => logs.push(line),
           rmSync: vi.fn(),
           run: runStub({
-            ps: psStub("44324", { exited, cmdline: HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE }),
+            lsof: lsofPortStub(
+              lsofPorts,
+              new Map([[`:${String(customPort)}`, ok(`${String(orphanPid)}\n`)]]),
+            ),
+            ps: psStub(String(orphanPid), { cmdline, exited }),
           }),
           runDocker: () => ok(""),
         },
       );
 
       expect(result.exitCode).toBe(0);
-      expect(killed).toContain(44324);
-      expect(logs).toContain("Stopped HTTPS Pin Runtime adapter 44324");
+      expect(lsofPorts).toContain(`:${String(customPort)}`);
+      expect(lsofPorts).not.toContain(`:${String(defaultPort)}`);
+      expect(killed).toContain(orphanPid);
+      expect(logs).toContain(`Stopped ${label} ${String(orphanPid)}`);
+    },
+  );
+
+  it.each(RUNTIME_ADAPTERS)(
+    "does not signal an unrelated process on the $label port$issueSuffix",
+    ({ defaultPort, foreignPid, label }) => {
+      const logs: string[] = [];
+      const killed: number[] = [];
+      const lsofPorts: string[] = [];
+      const stub = psStub(String(foreignPid), {
+        exited: new Set(),
+        cmdline: "/usr/sbin/nginx -g daemon off;\n",
+      });
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: {
+            HOME: "/tmp/nemoclaw-uninstall-test-adapter-foreign",
+            LOGNAME: "testuser",
+          } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          isTty: false,
+          kill: (pid) => {
+            killed.push(pid);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          rmSync: vi.fn(),
+          run: runStub({
+            lsof: lsofPortStub(
+              lsofPorts,
+              new Map([[`:${String(defaultPort)}`, ok(`${String(foreignPid)}\n`)]]),
+            ),
+            ps: stub,
+          }),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(lsofPorts).toContain(`:${String(defaultPort)}`);
+      expect(killed).not.toContain(foreignPid);
+      expect(logs).toContain(`No ${label} processes found`);
+    },
+  );
+
+  it("does not signal a Bedrock marker lookalike from persisted state or port discovery (#9552)", () => {
+    const foreignPid = 99995;
+    const killed: number[] = [];
+    const lsofPorts: string[] = [];
+    let commandLineProbeCount = 0;
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-bedrock-marker-"));
+    const pidFile = path.join(tmpHome, ".nemoclaw", "bedrock-runtime-adapter.pid");
+    fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+    fs.writeFileSync(pidFile, `${String(foreignPid)}\n`);
+    const stub = psStub(String(foreignPid), {
+      exited: new Set(),
+      cmdline: "/usr/bin/node /tmp/not-bedrock-runtime-adapter.js\n",
+    });
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          kill: (pid) => {
+            killed.push(pid);
+            return true;
+          },
+          log: vi.fn(),
+          rmSync: fs.rmSync,
+          run: runStub({
+            lsof: lsofPortStub(lsofPorts, new Map([[":11436", ok(`${String(foreignPid)}\n`)]])),
+            ps: (args) => {
+              commandLineProbeCount += Number(
+                args.join("\0") === ["-p", String(foreignPid), "-o", "args="].join("\0"),
+              );
+              return stub(args);
+            },
+          }),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(commandLineProbeCount).toBe(2);
+      expect(lsofPorts).toContain(":11436");
+      expect(killed).not.toContain(foreignPid);
+      expect(fs.existsSync(pidFile)).toBe(false);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
-  });
-
-  it("scans its configured port but never kills a foreign process", () => {
-    const killed: number[] = [];
-    const lsofPorts: string[] = [];
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: () => true,
-        env: {
-          HOME: "/tmp/nemoclaw-uninstall-test-https-pin-foreign",
-          LOGNAME: "testuser",
-          NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT: "12038",
-        } as NodeJS.ProcessEnv,
-        existsSync: () => false,
-        isTty: false,
-        kill: (pid) => {
-          killed.push(pid);
-          return true;
-        },
-        log: vi.fn(),
-        rmSync: vi.fn(),
-        run: runStub({
-          lsof: lsofPortStub(lsofPorts, new Map([[":12038", ok("99997\n")]])),
-          ps: psStub("99997", {
-            exited: new Set(),
-            cmdline: "/usr/sbin/nginx -g daemon off;\n",
-          }),
-        }),
-        runDocker: () => ok(""),
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(lsofPorts).toContain(":12038");
-    expect(killed).not.toContain(99997);
   });
 });

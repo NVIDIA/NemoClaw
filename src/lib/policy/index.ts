@@ -29,6 +29,7 @@ import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-e
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
 import { ROOT, run, runCapture } from "../runner";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../sandbox-name-contract";
+import { redact } from "../security/redact";
 import * as registry from "../state/registry";
 import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
 import {
@@ -49,6 +50,7 @@ import {
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./merge";
+import { classifyPolicySetResult, type PolicySetOutcome } from "./policy-set-outcome";
 import {
   findUnexpectedExistingPolicyKey,
   PERSONAL_OPEN_INTERNET_PRESET_NAME,
@@ -528,25 +530,133 @@ function assertOpenshellResolvable(options: { nonFatal?: boolean } = {}): boolea
 }
 
 /**
- * Apply a policy file while optionally keeping control in the caller on
- * failure. Lifecycle code that owns compensating actions must use nonFatal so
- * a failed OpenShell mutation cannot bypass its rollback through process.exit.
+ * `run` never sets an encoding, so `spawnSync` hands back stdio as a Buffer.
  */
-function setPolicyFile(
-  policyFile: string,
+function decodePolicySetStream(stream: string | Buffer | null | undefined): string {
+  if (stream === null || stream === undefined) return "";
+  return typeof stream === "string" ? stream : stream.toString("utf-8");
+}
+
+/** Delete the private temp policy file and its directory, ignoring absence. */
+function tempPolicyRetentionError(tmpDir: string, reason: string): Error {
+  return new Error(
+    `Could not remove the temporary policy directory '${tmpDir}' (${reason}). It still holds ` +
+      "the composed sandbox policy; remove it before retrying.",
+  );
+}
+
+function removeTempPolicyMaterial(tmpDir: string): void {
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch (error) {
+    throw tempPolicyRetentionError(tmpDir, error instanceof Error ? error.message : String(error));
+  }
+  if (fs.existsSync(tmpDir)) throw tempPolicyRetentionError(tmpDir, "the path still exists");
+}
+
+interface PolicySetSubmission {
+  readonly outcome: PolicySetOutcome;
+  /**
+   * The status the submission exited with, so a caller that ends the process
+   * still reports the code the runner would have reported.
+   */
+  readonly status: number | null;
+}
+
+/**
+ * Submit a composed policy document through a private temp file and classify
+ * what OpenShell did with it.
+ *
+ * `policy set` runs with `ignoreError` because the runner otherwise calls
+ * `process.exit` on a nonzero status, and `process.exit` does not unwind
+ * `finally`: that is exactly how a failed submission left the composed
+ * sandbox policy readable in `$TMPDIR` (#9206). Owning the temp material here
+ * means it is gone before any caller decides to end the process.
+ */
+function submitComposedPolicy(
   sandboxName: string,
+  policyDocument: string,
+  gatewayName?: string,
+): PolicySetSubmission {
+  // `mkdtempSync` creates nothing when it throws, so only the write and the
+  // submission need the cleanup boundary. Writing inside it keeps a failed or
+  // partial write from leaving the composed policy readable in $TMPDIR.
+  //
+  // A cleanup failure deliberately supersedes whatever the body produced: a
+  // policy document still readable on disk is the condition that must never be
+  // reported as a clean result.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+  try {
+    const tmpFile = path.join(tmpDir, "policy.yaml");
+    fs.writeFileSync(tmpFile, policyDocument, { encoding: "utf-8", mode: 0o600 });
+    const result = run(buildPolicySetCommand(tmpFile, sandboxName), {
+      ignoreError: true,
+      ...(gatewayName ? { env: { OPENSHELL_GATEWAY: gatewayName } } : {}),
+    });
+    return {
+      outcome: classifyPolicySetResult({
+        status: result.status,
+        error: result.error,
+        stderr: decodePolicySetStream(result.stderr),
+      }),
+      status: result.status,
+    };
+  } finally {
+    removeTempPolicyMaterial(tmpDir);
+  }
+}
+
+/**
+ * Describe a failed `policy set` for the operator. An OpenShell diagnostic can
+ * quote the policy that was submitted, so every message is redacted before it
+ * reaches the console.
+ *
+ * A `rejected` verdict is final: OpenShell understood the document and refused
+ * it, so resubmitting only replays a policy it already declined. An `ambiguous`
+ * result proves nothing about gateway state, so the operator must read the
+ * policy back before deciding anything.
+ */
+function policySetFailure(
+  sandboxName: string,
+  outcome: Exclude<PolicySetOutcome, { kind: "applied" }>,
+): Error {
+  if (outcome.kind === "rejected") {
+    return new Error(
+      `OpenShell rejected the policy for sandbox '${sandboxName}' (exit ${outcome.status}): ` +
+        `${redact(outcome.message)}. The policy was not applied and re-applying it will be ` +
+        `rejected again; change the preset selection instead.`,
+    );
+  }
+  return new Error(
+    `Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
+      `The gateway may or may not have applied it; read the current policy back before retrying.`,
+  );
+}
+
+/**
+ * Apply a composed policy document while optionally keeping control in the
+ * caller on failure. Lifecycle code that owns compensating actions must use
+ * nonFatal so a failed OpenShell mutation cannot bypass its rollback through
+ * process.exit.
+ *
+ * The submission owns the temp policy file, so the composed policy is already
+ * deleted by the time this ends the process for a fatal caller (#9206).
+ */
+function setPolicyDocument(
+  sandboxName: string,
+  policyDocument: string,
   options: { nonFatal?: boolean; gatewayName?: string } = {},
 ): boolean {
-  const result = run(buildPolicySetCommand(policyFile, sandboxName), {
-    ignoreError: options.nonFatal === true,
-    ...(options.gatewayName ? { env: { OPENSHELL_GATEWAY: options.gatewayName } } : {}),
-  });
-  if (!options.nonFatal) return true;
-  if (!result.error && result.status === 0) return true;
+  const { outcome, status } = submitComposedPolicy(
+    sandboxName,
+    policyDocument,
+    options.gatewayName,
+  );
+  if (outcome.kind === "applied") return true;
 
-  const detail = result.error?.message ?? `exit ${result.status ?? "unknown"}`;
-  console.error(`  Failed to update policy for sandbox '${sandboxName}' (${detail}).`);
-  return false;
+  console.error(`  ${policySetFailure(sandboxName, outcome).message}`);
+  if (options.nonFatal) return false;
+  process.exit(status || 1);
 }
 
 /**
@@ -1292,29 +1402,12 @@ function removePreset(
     console.log(`  Narrowing sandbox egress — removing: ${endpoints.join(", ")}`);
   }
 
-  // Run before creating temp resources so a missing-binary exit doesn't
-  // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
+  // Run before submitting so a missing-binary exit doesn't orphan files in
+  // $TMPDIR (the cleanup doesn't run on process.exit).
   if (!assertOpenshellResolvable(options)) return false;
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
-  const tmpFile = path.join(tmpDir, "policy.yaml");
-  fs.writeFileSync(tmpFile, updated, { encoding: "utf-8", mode: 0o600 });
-
-  try {
-    if (!setPolicyFile(tmpFile, sandboxName, options)) return false;
-    console.log(`  Removed preset: ${presetName}`);
-  } finally {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* ignored */
-    }
-    try {
-      fs.rmdirSync(tmpDir);
-    } catch {
-      /* ignored */
-    }
-  }
+  if (!setPolicyDocument(sandboxName, updated, options)) return false;
+  console.log(`  Removed preset: ${presetName}`);
 
   const sandbox = options.skipRegistryUpdate ? undefined : registry.getSandbox(sandboxName);
   if (sandbox) {
@@ -1336,23 +1429,7 @@ function pushPolicyYaml(
   options: { nonFatal?: boolean; gatewayName?: string } = {},
 ): boolean {
   if (!assertOpenshellResolvable(options)) return false;
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
-  const tmpFile = path.join(tmpDir, "policy.yaml");
-  fs.writeFileSync(tmpFile, updatedPolicy, { encoding: "utf-8", mode: 0o600 });
-  try {
-    return setPolicyFile(tmpFile, sandboxName, options);
-  } finally {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* ignored */
-    }
-    try {
-      fs.rmdirSync(tmpDir);
-    } catch {
-      /* ignored */
-    }
-  }
+  return setPolicyDocument(sandboxName, updatedPolicy, options);
 }
 
 /** Round-trippable live policy body from `--base`, or null when unreadable. */
@@ -2079,8 +2156,8 @@ function applyPresetContent(
       console.error(`  Preset '${presetName}' has invalid or missing network_policies.`);
       return false;
     }
-    const reservedKey = [OPENCLAW_NPM_PRESET_KEY, PERSONAL_OPEN_INTERNET_POLICY_KEY].find(
-      (key) => Object.prototype.hasOwnProperty.call(np, key),
+    const reservedKey = [OPENCLAW_NPM_PRESET_KEY, PERSONAL_OPEN_INTERNET_POLICY_KEY].find((key) =>
+      Object.prototype.hasOwnProperty.call(np, key),
     );
     if (reservedKey) {
       console.error(`  Custom presets cannot own reserved network policy key '${reservedKey}'.`);
@@ -2240,31 +2317,13 @@ function applyPresetContent(
   );
   const policyChanged = requiresOwnedKeyRefresh || !policyDocumentsMatch(currentPolicy, merged);
 
-  // Run before creating temp resources so a missing-binary exit doesn't
-  // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
+  // Run before submitting so a missing-binary exit doesn't orphan files in
+  // $TMPDIR (the cleanup doesn't run on process.exit).
   if (policyChanged && !assertOpenshellResolvable(options)) return false;
 
   if (policyChanged) {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
-    const tmpFile = path.join(tmpDir, "policy.yaml");
-    fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
-
-    try {
-      if (!setPolicyFile(tmpFile, sandboxName, options)) return false;
-
-      console.log(`  Applied preset: ${presetName}`);
-    } finally {
-      try {
-        fs.unlinkSync(tmpFile);
-      } catch {
-        /* ignored */
-      }
-      try {
-        fs.rmdirSync(tmpDir);
-      } catch {
-        /* ignored */
-      }
-    }
+    if (!setPolicyDocument(sandboxName, merged, options)) return false;
+    console.log(`  Applied preset: ${presetName}`);
   }
 
   // Some multi-resource lifecycle callers reserve ownership in the registry
@@ -2451,27 +2510,13 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   if (policyChanged) assertOpenshellResolvable();
 
   if (policyChanged) {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
-    const tmpFile = path.join(tmpDir, "policy.yaml");
-    fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
+    // The shared fatal path preserves OpenShell's status after it removes the
+    // temporary policy. Onboarding defers that exit until its recovery state
+    // and outer cleanup have finished.
+    setPolicyDocument(sandboxName, merged);
 
-    try {
-      run(buildPolicySetCommand(tmpFile, sandboxName));
-
-      for (const preset of presetContents.filter((entry) => entry.state !== "match")) {
-        console.log(`  Applied preset: ${preset.name}`);
-      }
-    } finally {
-      try {
-        fs.unlinkSync(tmpFile);
-      } catch {
-        /* ignored */
-      }
-      try {
-        fs.rmdirSync(tmpDir);
-      } catch {
-        /* ignored */
-      }
+    for (const preset of presetContents.filter((entry) => entry.state !== "match")) {
+      console.log(`  Applied preset: ${preset.name}`);
     }
   }
 

@@ -1163,6 +1163,7 @@ function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult
 }
 
 type WaitForSandboxReadyOptions = {
+  allowInitialErrorAfterStart?: boolean;
   allowDockerRuntimeInspection?: boolean;
   captureSandboxList?: (
     args: string[],
@@ -1173,15 +1174,26 @@ type WaitForSandboxReadyOptions = {
   successLogs?: readonly string[];
 };
 
+// OpenShell can transiently publish `Error` immediately after `sandbox start`
+// before the same sandbox advances through `Provisioning` to `Ready`. Its list
+// output exposes no structured transition reason, so only the start caller opts
+// into ten three-second grace polls; every other terminal phase still fails
+// immediately, and a persistent Error fails after the bound. Remove this
+// compatibility exception once OpenShell exposes a structured restart signal or
+// guarantees that post-start recovery never emits the terminal Error phase.
+const START_INITIAL_ERROR_GRACE_POLLS = 10;
+
 // Readiness budget for the repair paths that wait for a restarted sandbox
 // before they touch in-sandbox processes or host forwards. A cold agent boot on
 // a constrained host can exceed the interactive budget, and `start` and
 // `connect --probe-only` prove the same readiness for the same sandbox.
 export const SANDBOX_REPAIR_READY_TIMEOUT_SEC = 300;
 
+/** Wait for a sandbox to become ready, exiting with recovery guidance on terminal failure. */
 export function waitForSandboxReadyOrExit(
   sandboxName: string,
   {
+    allowInitialErrorAfterStart = false,
     allowDockerRuntimeInspection = true,
     captureSandboxList = captureOpenshell,
     defaultTimeoutSec = 120,
@@ -1230,7 +1242,9 @@ export function waitForSandboxReadyOrExit(
   if (!listCommandFailed && status && /^unknown$/i.test(status)) {
     failIfGatewayBlocksConnectReadiness(sandboxName);
   }
-  if (status && TERMINAL_SANDBOX_PHASES.has(status)) {
+  let remainingInitialErrorGracePolls =
+    allowInitialErrorAfterStart && status === "Error" ? START_INITIAL_ERROR_GRACE_POLLS - 1 : 0;
+  if (status && TERMINAL_SANDBOX_PHASES.has(status) && remainingInitialErrorGracePolls === 0) {
     console.error("");
     console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
     console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
@@ -1265,7 +1279,13 @@ export function waitForSandboxReadyOrExit(
       failIfGatewayBlocksConnectReadiness(sandboxName);
     }
     if (cur !== "unknown") everSeen = true;
-    if (TERMINAL_SANDBOX_PHASES.has(cur)) {
+    const waitingThroughInitialError = cur === "Error" && remainingInitialErrorGracePolls > 0;
+    if (waitingThroughInitialError) {
+      remainingInitialErrorGracePolls -= 1;
+    } else {
+      remainingInitialErrorGracePolls = 0;
+    }
+    if (TERMINAL_SANDBOX_PHASES.has(cur) && !waitingThroughInitialError) {
       console.error("");
       console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
       console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
