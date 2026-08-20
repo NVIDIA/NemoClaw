@@ -137,7 +137,7 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(reported).not.toContain("exit 125");
   });
 
-  it("uses the fixed vLLM local model profile command after interactive confirmation", async () => {
+  it("uses the fixed vLLM local model profile command without managed-cluster selection", async () => {
     const baseProfile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const model = {
       ...baseProfile.defaultModel,
@@ -147,6 +147,10 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     };
     const profile = { ...baseProfile, defaultModel: model };
     mockSuccessfulVllmInstall(mocks, profile.containerName);
+    mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({
+      kind: "handled",
+      result: { ok: false },
+    });
     const promptFn = vi.fn<(question: string) => Promise<string>>(async () => "y");
 
     const result = await installVllm(profile, {
@@ -159,6 +163,7 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     expect(result).toEqual({ ok: true });
     expect(promptFn).toHaveBeenCalledOnce();
     expect(promptFn).toHaveBeenCalledWith("  Continue? [y/N]: ");
+    expect(mocks.tryInstallManagedClusterManagedVllm).not.toHaveBeenCalled();
     expect(mocks.resolveHostLocalVllmSelection).not.toHaveBeenCalled();
     const runArgs = mocks.dockerRunDetached.mock.calls[0]?.[0] as readonly string[];
     const serveCommand = runArgs[runArgs.indexOf("-lc") + 1];
@@ -172,6 +177,11 @@ describe("managed vLLM serving-port guard (#8685)", () => {
     {
       variable: "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
       value: JSON.stringify(["--max-num-seqs", "2"]),
+    },
+    { variable: "NEMOCLAW_MANAGED_CLUSTER_PEERS", value: "spark-worker.local" },
+    {
+      variable: "NEMOCLAW_SERVING_PRESET",
+      value: "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
     },
   ])(
     "rejects $variable before installing a fixed vLLM local model profile",

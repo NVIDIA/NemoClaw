@@ -43,6 +43,8 @@ import {
   ensureDualStationVllmApiKey,
   loadDualStationVllmApiKey,
   type MaterializedHostLocalVllmSelection,
+  NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV,
+  NEMOCLAW_SERVING_PRESET_ENV,
   persistHostLocalVllmRuntimeReceipt,
   recoverHostLocalManagedVllmEndpoint,
   recoverInstalledManagedClusterVllmEndpoint,
@@ -1657,35 +1659,49 @@ async function runVllmInstall(
 ): Promise<{ ok: boolean }> {
   const explicitModel = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim();
   const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
-  if (profile.defaultModel.fixedServeCommand) {
+  const fixedServeCommand = profile.defaultModel.fixedServeCommand === true;
+  if (fixedServeCommand) {
     if (explicitModel || String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim()) {
       console.error(
         `  vLLM install failed: this local model profile does not accept NEMOCLAW_VLLM_MODEL or ${VLLM_EXTRA_ARGS_ENV}.`,
       );
       return { ok: false };
     }
-  }
-  const managedCluster = hostLocalSelection
-    ? { kind: "not-selected" as const }
-    : await tryInstallManagedClusterManagedVllm(
-        {
-          platform: profile.platform,
-          nonInteractive: opts.nonInteractive,
-          promptFn: opts.promptFn,
-          beforeInstall: opts.beforeInstall,
-        },
-        {
-          prerequisites: dockerPrereqsOk,
-          pullImage,
-          downloadModel,
-          printDownloadAuthentication: printHfDownloadAuthentication,
-        },
+    const configuredManagedClusterPeers = String(
+      process.env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "",
+    ).trim();
+    const configuredServingPreset = String(process.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
+    if (
+      configuredManagedClusterPeers ||
+      (configuredServingPreset && configuredServingPreset !== profile.servingCatalog?.presetId)
+    ) {
+      console.error(
+        `  vLLM install failed: this local model profile does not accept ${NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV} or a different ${NEMOCLAW_SERVING_PRESET_ENV}.`,
       );
-  if (managedCluster.kind === "handled") return managedCluster.result;
+      return { ok: false };
+    }
+  }
+  if (!hostLocalSelection && !fixedServeCommand) {
+    const managedCluster = await tryInstallManagedClusterManagedVllm(
+      {
+        platform: profile.platform,
+        nonInteractive: opts.nonInteractive,
+        promptFn: opts.promptFn,
+        beforeInstall: opts.beforeInstall,
+      },
+      {
+        prerequisites: dockerPrereqsOk,
+        pullImage,
+        downloadModel,
+        printDownloadAuthentication: printHfDownloadAuthentication,
+      },
+    );
+    if (managedCluster.kind === "handled") return managedCluster.result;
+  }
 
   if (
     !hostLocalSelection &&
-    !profile.defaultModel.fixedServeCommand &&
+    !fixedServeCommand &&
     !(profile.platform === "station" && configuredPeer)
   ) {
     const selected = resolveHostLocalVllmSelection(profile, process.env, {
@@ -1768,7 +1784,7 @@ async function runVllmInstall(
     resolved = { model: hostLocalSelection.model, source: "default" };
   } else {
     resolved = await resolveVllmInstallModel(profile, {
-      nonInteractive: opts.nonInteractive || profile.defaultModel.fixedServeCommand === true,
+      nonInteractive: opts.nonInteractive || fixedServeCommand,
       promptFn: opts.promptFn,
     });
   }
