@@ -44,11 +44,16 @@ const mocks = vi.hoisted(() => {
     runStartCommand: vi.fn().mockResolvedValue(undefined),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
+    resolveDefaultSandboxName: vi.fn((listSandboxes: () => unknown) => {
+      listSandboxes();
+      return "resolved-sandbox";
+    }),
     assertHermesPortableCommandUnavailable: vi.fn(),
     withMcpLifecycleLock: vi.fn(async (_sandboxName: string, operation: () => unknown) =>
       operation(),
     ),
     showRootHelp: vi.fn(),
+    showStatus: vi.fn(),
     showVersion: vi.fn(),
     spawnSync: vi.fn(),
     startAll: vi.fn(),
@@ -81,8 +86,13 @@ vi.mock("../lib/adapters/openshell/client", () => ({
 }));
 vi.mock("../lib/state/registry", () => ({ listSandboxes: mocks.listSandboxes }));
 vi.mock("../lib/adapters/openshell/resolve", () => ({ resolveOpenshell: mocks.resolveOpenshell }));
-vi.mock("../lib/tunnel/services", () => ({ startAll: mocks.startAll, stopAll: mocks.stopAll }));
+vi.mock("../lib/tunnel/services", () => ({
+  showStatus: mocks.showStatus,
+  startAll: mocks.startAll,
+  stopAll: mocks.stopAll,
+}));
 vi.mock("../lib/tunnel/service-command", () => ({
+  resolveDefaultSandboxName: mocks.resolveDefaultSandboxName,
   runStartCommand: mocks.runStartCommand,
   runStopCommand: mocks.runStopCommand,
 }));
@@ -114,6 +124,7 @@ import GatewayTokenCliCommand, {
 import DeprecatedStartCommand from "./start";
 import DeprecatedStopCommand from "./stop";
 import TunnelStartCommand from "./tunnel/start";
+import TunnelStatusCommand from "./tunnel/status";
 import TunnelStopCommand from "./tunnel/stop";
 import UninstallCliCommand from "./uninstall";
 
@@ -324,6 +335,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await TunnelStartCommand.run([], rootDir);
     expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await TunnelStopCommand.run([], rootDir);
+    await TunnelStatusCommand.run([], rootDir);
     await DeprecatedStartCommand.run([], rootDir);
     expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     await DeprecatedStopCommand.run([], rootDir);
@@ -332,6 +344,9 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
     );
+    expect(mocks.resolveDefaultSandboxName).toHaveBeenCalledTimes(1);
+    expect(mocks.listSandboxes).toHaveBeenCalledTimes(1);
+    expect(mocks.showStatus).toHaveBeenCalledWith({ sandboxName: "resolved-sandbox" });
     expect(mocks.runStopCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), stopAll: mocks.stopAll }),
     );

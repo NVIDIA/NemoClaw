@@ -37,8 +37,10 @@ concurrency:
 
 jobs:
   rootless-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
+    env:
+      PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,14 +72,17 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes fuse-overlayfs passt podman slirp4netns uidmap
-          package_podman="/usr/bin/podman"
-          test -x "$package_podman"
-          runtime_bin="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-rootless-runtime.XXXXXX")"
-          ln -s "$package_podman" "$runtime_bin/podman"
-          export PATH="$runtime_bin:$PATH"
-          printf '%s\n' "$runtime_bin" >> "$GITHUB_PATH"
-          test "$(readlink -f "$(command -v podman)")" = "$package_podman"
+          sudo apt-get install --yes \
+            apparmor \
+            fuse-overlayfs \
+            passt \
+            slirp4netns \
+            uidmap \
+            "podman=$PODMAN_APT_VERSION"
+          package_version="$(dpkg-query --show --showformat='${Version}' podman)"
+          version="$(podman --version)"
+          test "$package_version" = "$PODMAN_APT_VERSION"
+          test "$version" = "podman version 5.7.0"
           runtime_dir="/run/user/$(id -u)"
           sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$runtime_dir"
           if ! grep -q "^${USER}:" /etc/subuid; then
@@ -89,6 +94,22 @@ jobs:
           podman --version
           pasta --version
           docker --version
+
+      - name: Apply Ubuntu pasta signal policy correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta_profile="/etc/apparmor.d/usr.bin.pasta"
+          signal_rule='^[[:space:]]*signal[[:space:]]+\(receive\)[[:space:]]+peer=podman,[[:space:]]*$'
+          test -f "$pasta_profile"
+          test "$(grep -Fc 'include <abstractions/pasta>' "$pasta_profile")" -eq 1
+          if ! grep -Eq "$signal_rule" "$pasta_profile"; then
+            sudo sed -i \
+              '/^[[:space:]]*include <abstractions\/pasta>[[:space:]]*$/a\  signal (receive) peer=podman,' \
+              "$pasta_profile"
+          fi
+          test "$(grep -Ec "$signal_rule" "$pasta_profile")" -eq 1
+          sudo apparmor_parser -r "$pasta_profile"
 
       - name: Exercise portable profile in the rootless environment
         env:

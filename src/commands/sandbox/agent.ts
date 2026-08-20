@@ -7,6 +7,7 @@ import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 export default class SandboxAgentCommand extends NemoClawCommand {
   static id = "sandbox:agent";
+  static customHelp = true;
   static strict = false;
   static summary = "Run one agent turn non-interactively in a sandbox";
   static description =

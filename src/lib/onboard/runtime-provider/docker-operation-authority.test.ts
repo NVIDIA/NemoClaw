@@ -412,6 +412,16 @@ describe("Docker operation authority", () => {
     );
   });
 
+  it("fails closed when the fixed PATH has no Docker executable", () => {
+    expect(() =>
+      createDockerOperationAuthority("sandbox-lifecycle", {
+        HOME: "/tmp/nemoclaw-home",
+        DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+        PATH: fakeExecutableRoot(),
+      }),
+    ).toThrow("Docker operation could not resolve one absolute Docker executable");
+  });
+
   it("rejects plaintext remote TCP before issuing a daemon command", () => {
     const capture = contextCapture("unix:///var/run/docker.sock");
 
