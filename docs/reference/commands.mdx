@@ -325,7 +325,9 @@ If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable prof
 Run `$$nemoclaw profiles list` to inspect an incompatibility reason before onboarding.
 
 If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
-The onboarding review screen identifies the resolved profile, recipe, model, runtime image, support state, and download estimates before confirmation.
+The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation.
+When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root.
+Otherwise, onboarding stops before it records a route that the profile does not declare.
 After creation, human status shows the profile, recipe, and catalog digest; JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
 
 #### `--host-mount`
@@ -4149,6 +4151,9 @@ Same-API-family changes hot-reload without replacing the gateway process.
 When the API family changes, NemoClaw commits the config and integrity hash, then uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards.
 The sandbox remains running, but agent requests are briefly interrupted.
 If the restart fails, the route and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch.
+After every changed synchronized route, NemoClaw also verifies that the local CLI device has the managed gateway's required pairing scopes before it reports success.
+If pairing does not converge, the route and config remain committed.
+Run `$$nemoclaw <name> doctor --fix`, then retry the agent turn.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -4690,6 +4695,9 @@ The JSON diagnostic with `"event":"voice_gateway"` and `"state":"listening"` con
 
 The runtime must keep the raw session grant in process memory.
 NemoClaw keeps only the digest needed for constant-time grant validation.
+Sequential sessions for the same runtime conversation reuse the same internal OpenClaw context.
+A different runtime conversation, runtime identity, runtime profile, sandbox, or agent uses a separate context.
+NemoClaw derives the internal context key without exposing the raw runtime conversation ID.
 When the session closes or expires, the runtime must discard the raw grant, and NemoClaw removes its validation digest from active session state.
 The process owns the OpenClaw session binding, turn state, and response correlation.
 It clears that state when the session closes or expires and when the foreground process stops.
