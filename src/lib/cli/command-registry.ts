@@ -126,7 +126,7 @@ type PublicFlagMetadata = {
   hidden?: boolean;
 };
 
-/** Sorted public long flags keyed by each visible canonical usage string. */
+/** Sorted public long flags and their help source keyed by canonical usage. */
 export function canonicalCommandFlagLines(): string[] {
   const metadata = getRegisteredOclifCommandsMetadata();
   return visibleCommands()
@@ -138,7 +138,8 @@ export function canonicalCommandFlagLines(): string[] {
           return flag.allowNo ? [`--${name}`, `--no-${name}`] : [`--${name}`];
         })
         .sort();
-      return `${command.usage}\t${flags.join(" ")}`;
+      const helpSource = metadata[command.commandId]?.customHelp === true ? "rendered" : "metadata";
+      return `${command.usage}\t${helpSource}\t${flags.join(" ")}`;
     })
     .sort();
 }

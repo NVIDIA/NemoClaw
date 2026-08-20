@@ -319,10 +319,10 @@ JSON
     # `nemoclaw onboard`) that is iterated separately. Re-invoking them
     # with `--help` would just trigger flag-value parsing errors.
     case "$cmd_line" in *" --"*) continue ;; esac
-    local _flag_line _flag_rc=0
-    _flag_line="$(LC_ALL=C awk -F '\t' -v target="$cmd_line" '
+    local _command_metadata _flag_rc=0
+    _command_metadata="$(LC_ALL=C awk -F '\t' -v target="$cmd_line" '
       $1 == target {
-        print substr($0, index($0, "\t") + 1)
+        print $2 "\t" $3
         found = 1
         exit
       }
@@ -334,7 +334,9 @@ JSON
       return 1
     fi
 
-    local _flags
+    local _help_source _flag_line _flags
+    _help_source="${_command_metadata%%$'\t'*}"
+    _flag_line="${_command_metadata#*$'\t'}"
     _flags="$(printf '%s\n' "$_flag_line" | tr ' ' '\n' | grep -v '^$' | LC_ALL=C sort -u || true)"
 
     local _section
@@ -361,16 +363,19 @@ JSON
         | grep -vxE -- '--help|--version' \
         | LC_ALL=C sort -u || true
     )"
-    [[ -z "$_flags" && -z "$_doc_flags" ]] && continue
 
     local _needs_rendered_help=0
-    while IFS= read -r flag; do
-      [[ -z "$flag" ]] && continue
-      if ! grep -qxF -- "$flag" <<<"$_flags"; then
-        _needs_rendered_help=1
-        break
-      fi
-    done <<<"$_doc_flags"
+    if [[ "$_help_source" == "rendered" ]]; then
+      _needs_rendered_help=1
+    else
+      while IFS= read -r flag; do
+        [[ -z "$flag" ]] && continue
+        if ! grep -qxF -- "$flag" <<<"$_flags"; then
+          _needs_rendered_help=1
+          break
+        fi
+      done <<<"$_doc_flags"
+    fi
 
     if [[ "$_needs_rendered_help" -eq 1 ]]; then
       local invoke
@@ -389,6 +394,8 @@ JSON
       # Preserve the existing custom-help contract: a help screen with no
       # parseable usage or flag section does not participate in flag parity.
       [[ -z "$_flags" ]] && continue
+    elif [[ -z "$_flags" && -z "$_doc_flags" ]]; then
+      continue
     fi
 
     while IFS= read -r flag; do
