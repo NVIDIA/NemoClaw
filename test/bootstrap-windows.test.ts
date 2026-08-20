@@ -112,19 +112,17 @@ $script:events | ConvertTo-Json -Compress
     "resolves the per-user Docker Desktop path when no machine-wide install exists (#9087)",
     `
 $ErrorActionPreference = 'Stop'
-$env:ProgramFiles = 'C:\\Program Files'
 $env:LOCALAPPDATA = 'C:\\Users\\tester\\AppData\\Local'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
-$machineExe = 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe'
+$script:DockerDesktopMachineRoot = 'C:\\Program Files\\Docker\\Docker'
 $userExe = 'C:\\Users\\tester\\AppData\\Local\\Programs\\DockerDesktop\\Docker Desktop.exe'
 
 function Test-Path { param([string]$LiteralPath) return $LiteralPath -eq $userExe }
 
 [pscustomobject]@{
-    matchesUserInstall = ((Resolve-DockerDesktopPath -Component 'Desktop') -eq $userExe)
-    machineCheckedFirst = ((Get-DockerDesktopCandidatePath -Component 'Desktop')[0] -eq $machineExe)
-    candidateCount = @(Get-DockerDesktopCandidatePath -Component 'Desktop').Count
+    resolvedPath = Resolve-DockerDesktopPath -Component 'Desktop'
+    candidatePaths = @(Get-DockerDesktopCandidatePath -Component 'Desktop')
 } | ConvertTo-Json -Compress
 `,
     (result) => {
@@ -132,9 +130,12 @@ function Test-Path { param([string]$LiteralPath) return $LiteralPath -eq $userEx
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
       expect(parsed).toEqual({
-        matchesUserInstall: true,
-        machineCheckedFirst: true,
-        candidateCount: 2,
+        resolvedPath:
+          "C:\\Users\\tester\\AppData\\Local\\Programs\\DockerDesktop\\Docker Desktop.exe",
+        candidatePaths: [
+          "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe",
+          "C:\\Users\\tester\\AppData\\Local\\Programs\\DockerDesktop\\Docker Desktop.exe",
+        ],
       });
     },
   );
@@ -143,23 +144,24 @@ function Test-Path { param([string]$LiteralPath) return $LiteralPath -eq $userEx
     "returns the machine-wide Docker Desktop path when both locations contain an install (#9087)",
     `
 $ErrorActionPreference = 'Stop'
-$env:ProgramFiles = 'C:\\Program Files'
 $env:LOCALAPPDATA = 'C:\\Users\\tester\\AppData\\Local'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
-$machineCli = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'
+$script:DockerDesktopMachineRoot = 'C:\\Program Files\\Docker\\Docker'
 
 function Test-Path { param([string]$LiteralPath) return $true }
 
 [pscustomobject]@{
-    matchesMachineInstall = ((Resolve-DockerDesktopPath -Component 'Cli') -eq $machineCli)
+    resolvedPath = Resolve-DockerDesktopPath -Component 'Cli'
 } | ConvertTo-Json -Compress
 `,
     (result) => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-      expect(parsed).toEqual({ matchesMachineInstall: true });
+      expect(parsed).toEqual({
+        resolvedPath: "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe",
+      });
     },
   );
 
@@ -170,8 +172,16 @@ $ErrorActionPreference = 'Stop'
 $env:ProgramFiles = 'C:\\Users\\tester\\attacker-controlled'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
+$trustedProgramFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+$trustedMachineRoot = if ($trustedProgramFiles) {
+    "$trustedProgramFiles\\Docker\\Docker"
+} else {
+    'C:\\Program Files\\Docker\\Docker'
+}
+
 [pscustomobject]@{
     machineRoot = $script:DockerDesktopMachineRoot
+    trustedMachineRoot = $trustedMachineRoot
     usesCallerPath = $script:DockerDesktopMachineRoot.StartsWith($env:ProgramFiles, [System.StringComparison]::OrdinalIgnoreCase)
 } | ConvertTo-Json -Compress
 `,
@@ -180,7 +190,7 @@ $env:ProgramFiles = 'C:\\Users\\tester\\attacker-controlled'
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
       expect(parsed.usesCallerPath).toBe(false);
-      expect(parsed.machineRoot).toBe("C:\\Program Files\\Docker\\Docker");
+      expect(parsed.machineRoot).toBe(parsed.trustedMachineRoot);
     },
   );
 

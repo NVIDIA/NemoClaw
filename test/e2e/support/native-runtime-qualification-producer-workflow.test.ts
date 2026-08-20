@@ -157,7 +157,7 @@ describe("native runtime qualification producer workflow", () => {
       "fetch-depth": 1,
       "persist-credentials": false,
     });
-    expect(setupGo.uses).toBe("actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00");
+    expect(setupGo.uses).toBe("actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e");
     expect(setupGo.with).toEqual({ "go-version": "1.25.9", cache: false });
     expect(setupRust.uses).toBe(
       "actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659",
