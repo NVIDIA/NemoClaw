@@ -637,11 +637,11 @@ const { createSandbox } = require(${onboardPath});
       const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
         /\bprovider (create|update)\b/.test(entry.command),
       );
-      assert.equal(
-        providerMutationCommands.length,
-        0,
-        "tokenless rebuild should not mutate providers",
+      assert.deepEqual(
+        providerMutationCommands.map((entry: CommandEntry) => /\bprovider update \S+$/.exec(entry.command)?.[0]),
+        ["provider update my-assistant-discord-bridge", "provider update my-assistant-slack-bridge", "provider update my-assistant-slack-app"],
       );
+      assert.ok(providerMutationCommands.every((entry: CommandEntry) => !entry.command.includes("--credential")), "tokenless rebuild must not rotate provider credentials");
 
       const createCommand = payload.commands.find((entry: CommandEntry) =>
         entry.command.includes("sandbox create"),
