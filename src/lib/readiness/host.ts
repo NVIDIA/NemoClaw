@@ -59,6 +59,11 @@ export interface HostObservations {
   hasNvidiaGpu: boolean;
   nvidiaGpuCount?: number;
   nvidiaDriverVersion?: string;
+  nvidiaGpuMemoryTotalBytes?: number;
+  nvidiaGpuMemoryAvailableBytes?: number;
+  nvidiaGpuMemoryPerDeviceBytes?: number;
+  nvidiaGpuUnifiedMemory?: boolean;
+  nvidiaGpuComputeConstrained?: boolean;
   hostGpuPlatform?: NvidiaPlatform;
   nvidiaContainerToolkitInstalled: boolean;
   dockerCdiSpecDirs: readonly string[];
@@ -80,7 +85,19 @@ export interface CollectHostObservationsOptions {
   architecture?: string;
   detectGpu?: () =>
     | (Pick<GpuDetection, "count" | "wslDockerDesktopGpuProofPassed"> &
-        Partial<Pick<GpuDetection, "platform" | "type">>)
+        Partial<
+          Pick<
+            GpuDetection,
+            | "platform"
+            | "type"
+            | "gpus"
+            | "totalMemoryMB"
+            | "availableMemoryMB"
+            | "perGpuMB"
+            | "unifiedMemory"
+            | "computeConstrained"
+          >
+        >)
     | null;
   detectNvidiaDriverVersion?: () => string | undefined;
   detectHostGpuPlatform?: () => NvidiaPlatform;
@@ -108,6 +125,7 @@ function adaptHostAssessment(
   hostGpuPlatform?: NvidiaPlatform,
   nvidiaGpuCount?: number,
   nvidiaDriverVersion?: string,
+  gpu?: ReturnType<NonNullable<CollectHostObservationsOptions["detectGpu"]>>,
   platformIdentity?: PlatformIdentity,
   wslDockerDesktopGpuProofPassed?: boolean,
 ): HostObservations {
@@ -135,6 +153,18 @@ function adaptHostAssessment(
     hasNvidiaGpu,
     nvidiaGpuCount,
     nvidiaDriverVersion,
+    nvidiaGpuMemoryTotalBytes:
+      gpu?.totalMemoryMB === undefined ? undefined : gpu.totalMemoryMB * 1024 * 1024,
+    nvidiaGpuMemoryAvailableBytes:
+      gpu?.availableMemoryMB === undefined ? undefined : gpu.availableMemoryMB * 1024 * 1024,
+    nvidiaGpuMemoryPerDeviceBytes:
+      gpu?.gpus?.length
+        ? Math.min(...gpu.gpus.map(({ memoryMB }) => memoryMB)) * 1024 * 1024
+        : gpu?.perGpuMB === undefined
+          ? undefined
+          : gpu.perGpuMB * 1024 * 1024,
+    nvidiaGpuUnifiedMemory: gpu?.unifiedMemory,
+    nvidiaGpuComputeConstrained: gpu?.computeConstrained,
     hostGpuPlatform,
     nvidiaContainerToolkitInstalled: host.nvidiaContainerToolkitInstalled,
     dockerCdiSpecDirs: [...host.dockerCdiSpecDirs],
@@ -216,6 +246,7 @@ function observeHost(
             ? options.detectNvidiaDriverVersion()
             : detectNvidiaDriverVersion({ runCaptureImpl })
           : undefined,
+        gpu,
         (
           options.collectPlatformIdentity ??
           (() => collectPlatformIdentity(options.platformIdentityOptions))
@@ -280,6 +311,11 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.gpu.nvidia",
     "host.gpu.count",
     "host.gpu.driver_version",
+    "host.gpu.memory_total_bytes",
+    "host.gpu.memory_available_bytes",
+    "host.gpu.memory_per_device_bytes",
+    "host.gpu.unified_memory",
+    "host.gpu.compute_constrained",
     "host.gpu.container_toolkit",
     "host.gpu.nvidia_runtime",
     "host.gpu.cdi",
@@ -415,6 +451,26 @@ export function projectHostReadiness(
       observation(
         "host.gpu.driver_version",
         host.hasNvidiaGpu ? host.nvidiaDriverVersion : undefined,
+      ),
+      observation(
+        "host.gpu.memory_total_bytes",
+        host.hasNvidiaGpu ? host.nvidiaGpuMemoryTotalBytes : undefined,
+      ),
+      observation(
+        "host.gpu.memory_available_bytes",
+        host.hasNvidiaGpu ? host.nvidiaGpuMemoryAvailableBytes : undefined,
+      ),
+      observation(
+        "host.gpu.memory_per_device_bytes",
+        host.hasNvidiaGpu ? host.nvidiaGpuMemoryPerDeviceBytes : undefined,
+      ),
+      observation(
+        "host.gpu.unified_memory",
+        host.hasNvidiaGpu ? host.nvidiaGpuUnifiedMemory : undefined,
+      ),
+      observation(
+        "host.gpu.compute_constrained",
+        host.hasNvidiaGpu ? host.nvidiaGpuComputeConstrained : undefined,
       ),
       observation(
         "host.gpu.container_toolkit",
