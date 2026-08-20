@@ -29,8 +29,9 @@ function runningVllmHostState() {
   });
 }
 
-function acceptVllmSelection() {
+function acceptVllmSelection(observedModels?: unknown[]) {
   return vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+    observedModels?.push(state.model);
     state.provider = "vllm";
     state.model = "muse-glimmer";
     state.endpointUrl = "http://127.0.0.1:8000/v1";
@@ -43,6 +44,7 @@ function acceptVllmSelection() {
 async function selectAgainstRunningVllm(
   handleVllmSelection: ReturnType<typeof acceptVllmSelection>,
   resolveRequestedServingProfileModel: SetupNimFlowDeps["resolveRequestedServingProfileModel"],
+  selectVllmModelFromEnv: SetupNimFlowDeps["selectVllmModelFromEnv"] = () => null,
 ) {
   const setupNim = createSetupNim(
     makeDeps({
@@ -51,6 +53,7 @@ async function selectAgainstRunningVllm(
       detectInferenceProviderHostState: () => runningVllmHostState(),
       handleVllmSelection,
       resolveRequestedServingProfileModel,
+      selectVllmModelFromEnv,
     }),
   );
   const sparkGpu = { platform: "spark" } as unknown as Parameters<typeof setupNim>[0];
@@ -83,6 +86,22 @@ describe("serving profile onboarding against a running vLLM", () => {
     expect(handleVllmSelection).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ servingProfileModel: null }),
+    );
+  });
+
+  it("passes an explicit managed model to the running-server selection", async () => {
+    const observedModels: unknown[] = [];
+    const handleVllmSelection = acceptVllmSelection(observedModels);
+
+    await selectAgainstRunningVllm(handleVllmSelection, () => null, () => ({
+      id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+      servedModelId: "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4",
+    }));
+
+    expect(observedModels).toEqual(["nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4"]);
+    expect(handleVllmSelection).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ managedInstall: false }),
     );
   });
 

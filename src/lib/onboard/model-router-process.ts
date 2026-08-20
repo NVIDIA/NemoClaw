@@ -41,8 +41,8 @@ const ROUTER_HEALTH_BODY_MAX_BYTES = 64 * 1024;
 
 /**
  * Fetch /health and keep the response body for diagnosis (#8962). Unlike
- * `isRouterHealthy`, this waits for the body, so callers pass a longer
- * timeout; `startModelRouter` uses 30 seconds. LiteLLM's /health probes
+ * `isRouterHealthy`, this waits for the body, so a caller that must read it
+ * budgets for it; the final startup snapshot uses 30 seconds. LiteLLM's /health probes
  * every upstream endpoint per request and can answer well after the
  * 3-second liveness budget. The timeout is a wall-clock deadline, not a
  * socket idle timeout, so a responder that trickles bytes cannot hold the

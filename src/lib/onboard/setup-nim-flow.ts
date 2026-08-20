@@ -217,6 +217,9 @@ export interface SetupNimFlowDeps {
   resolveRequestedServingProfileModel?(
     env?: NodeJS.ProcessEnv,
   ): RequestedServingProfileModel | null;
+  selectVllmModelFromEnv?(
+    env?: NodeJS.ProcessEnv,
+  ): { id: string; servedModelId?: string } | null;
   handleRoutedSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   coerceAgentInferenceApi(
     agent: AgentDefinition | null,
@@ -543,6 +546,32 @@ function requestedVllmServingProfileModel(
 ): RequestedServingProfileModel | null {
   const requested = (resolve ?? resolveRequestedServingProfileModel)();
   return requested?.backend === "vllm" ? requested : null;
+}
+
+/** Model ID that an explicit managed-vLLM model selection exposes through `/v1/models`. */
+function requestedManagedVllmModel(
+  resolve: SetupNimFlowDeps["selectVllmModelFromEnv"],
+): string | null {
+  if (!resolve) throw new Error("Managed vLLM model selection could not be resolved.");
+  const requested = resolve();
+  return requested?.servedModelId ?? requested?.id ?? null;
+}
+
+function resolveInitialVllmSelectionModel(input: {
+  preparedState: SetupNimSelectionState | null;
+  requestedProvider: string | null;
+  requestedModel: string | null;
+  recoveredModel: string | null;
+  selectVllmModelFromEnv: SetupNimFlowDeps["selectVllmModelFromEnv"];
+}): SetupNimSelectionState["model"] {
+  return (
+    input.preparedState?.model ??
+    input.requestedModel ??
+    (input.preparedState === null && input.requestedProvider === "install-vllm"
+      ? requestedManagedVllmModel(input.selectVllmModelFromEnv)
+      : null) ??
+    input.recoveredModel
+  );
 }
 
 async function resolveFreshHermesPortableOllamaSelection(input: {
@@ -1105,7 +1134,13 @@ export function createSetupNim(
         }
         if (selected.key === "vllm") {
           const state = preparedVllmState ?? createSelectionState();
-          state.model = preparedVllmState?.model ?? requestedModel ?? recoveredModel;
+          state.model = resolveInitialVllmSelectionModel({
+            preparedState: preparedVllmState,
+            requestedProvider,
+            requestedModel,
+            recoveredModel,
+            selectVllmModelFromEnv: deps.selectVllmModelFromEnv,
+          });
           // A requested profile reaches this branch two ways: its own install
           // finished, or `install-vllm` collapsed onto a server that was already
           // listening. The second path runs no install, so nothing seeds a
