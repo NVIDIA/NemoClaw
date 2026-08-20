@@ -370,6 +370,22 @@ describe("native Podman CPU proof workflow", () => {
     expect(selectedPath).toBe(authorityPath);
   });
 
+  it("compiles the managed inference catalog before the live delegation proof", () => {
+    const steps = delegationJob().steps ?? [];
+    const catalogIndex = steps.findIndex(
+      ({ name }) => name === "Compile managed inference catalog",
+    );
+    const prepareIndex = steps.findIndex(
+      ({ name }) => name === "Prepare system and app slice CPU settings without service delegation",
+    );
+
+    expect(namedDelegationStep("Compile managed inference catalog").run).toBe(
+      "npm run catalog:compile",
+    );
+    expect(catalogIndex).toBeGreaterThan(-1);
+    expect(catalogIndex).toBeLessThan(prepareIndex);
+  });
+
   it("executes the five typed proof modes with exact argv and durable cleanup receipts (#9188)", () => {
     withProofFixture((fixture) => {
       const modes: readonly PortableCpuDelegationProofMode[] = [
