@@ -538,12 +538,16 @@ describe("MCP add crash consistency", () => {
       const first = spawnScript(home, script);
       const second = spawnScript(home, script);
       const results = await Promise.all([collectProcess(first), collectProcess(second)]);
+      const combinedOutput = results
+        .map((result) => `${result.stdout}\n${result.stderr}`)
+        .join("\n---\n");
 
       expect(
         results.map((result) => result.status).sort(),
-        results.map((result) => `${result.stdout}\n${result.stderr}`).join("\n---\n"),
+        combinedOutput,
       ).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
+      expect(combinedOutput).not.toContain("host-only-secret");
       expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "refresh-after-observed-absence.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
