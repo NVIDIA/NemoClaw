@@ -19,7 +19,7 @@ describe("PR Review Advisor writing guide", () => {
 
     try {
       process.chdir(prWorktree);
-      const { readTrustedWritingGuide } = await import("../tools/pr-review-advisor/analyze.mts");
+      const { readTrustedWritingGuide } = await import("../tools/pr-review-advisor/trusted-guidance.mts");
       const writingGuide = readTrustedWritingGuide();
 
       expect(writingGuide).toContain("# NemoClaw Writing Guide");
@@ -31,7 +31,7 @@ describe("PR Review Advisor writing guide", () => {
   });
 
   it("stops when the trusted guide is unavailable", async () => {
-    const { readTrustedWritingGuide } = await import("../tools/pr-review-advisor/analyze.mts");
+    const { readTrustedWritingGuide } = await import("../tools/pr-review-advisor/trusted-guidance.mts");
     vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
       throw new Error("missing guide fixture");
     });
@@ -40,9 +40,8 @@ describe("PR Review Advisor writing guide", () => {
   });
 
   it("writes failure artifacts when the trusted security rubric is unavailable", async () => {
-    const { artifactPaths, preparePromptArtifacts } = await import(
-      "../tools/pr-review-advisor/analyze.mts"
-    );
+    const { preparePromptArtifacts } = await import("../tools/pr-review-advisor/analyze.mts");
+    const { artifactPaths } = await import("../tools/pr-review-advisor/artifacts.mts");
     const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-rubric-failure-"));
     const headSha = "b".repeat(40);
     const realReadFileSync = fs.readFileSync.bind(fs);
@@ -75,8 +74,7 @@ describe("PR Review Advisor writing guide", () => {
         workflowSignals: [],
         localizedPatchSignals: [],
         driftEvidence: [],
-        previousAdvisorReview: null,
-        github: null,
+                github: null,
       },
     };
 
@@ -86,7 +84,6 @@ describe("PR Review Advisor writing guide", () => {
           artifacts: artifactPaths(outDir),
           metadata,
           diff: "",
-          schema: {},
         }),
       ).toThrow("Security rubric unavailable");
       readSpy.mockRestore();
@@ -113,8 +110,10 @@ describe("PR Review Advisor writing guide", () => {
   });
 
   it("writes failure artifacts when trusted prompt inputs are unavailable", async () => {
-    const { artifactPaths, preparePromptArtifacts, readTrustedSecurityRubric } = await import(
-      "../tools/pr-review-advisor/analyze.mts"
+    const { preparePromptArtifacts } = await import("../tools/pr-review-advisor/analyze.mts");
+    const { artifactPaths } = await import("../tools/pr-review-advisor/artifacts.mts");
+    const { readTrustedSecurityRubric } = await import(
+      "../tools/pr-review-advisor/trusted-guidance.mts"
     );
     const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-prompt-failure-"));
     const headSha = "a".repeat(40);
@@ -147,8 +146,7 @@ describe("PR Review Advisor writing guide", () => {
         workflowSignals: [],
         localizedPatchSignals: [],
         driftEvidence: [],
-        previousAdvisorReview: null,
-        github: null,
+                github: null,
       },
     };
 
@@ -158,7 +156,6 @@ describe("PR Review Advisor writing guide", () => {
           artifacts: artifactPaths(outDir),
           metadata,
           diff: "",
-          schema: {},
         }),
       ).toThrow("Writing guide unavailable");
       readSpy.mockRestore();

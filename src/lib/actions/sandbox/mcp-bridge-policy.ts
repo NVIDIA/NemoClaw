@@ -21,6 +21,7 @@ import {
   McpBridgeError,
 } from "./mcp-bridge-contracts";
 import {
+  buildMcpBridgeCapabilityPolicyYaml,
   buildMcpBridgePolicyKey,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
@@ -240,6 +241,7 @@ function requireCanonicalManagedPolicy(
         bridge.url,
         resolveCanonicalManagedMcpAdapter(sandbox, bridge),
         target,
+        bridge.providerName ?? "",
       ),
       `Canonical managed MCP policy '${policyName}'`,
     );
@@ -602,6 +604,7 @@ export function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
   target: McpBridgeTargetValidation,
+  options: { bindCredential?: boolean } = {},
 ): void {
   const resolvedAddresses = assertMcpBridgePolicyTarget(entry, target);
   if (resolvedAddresses.length === 0) {
@@ -610,7 +613,16 @@ export function applyGeneratedPolicy(
     );
   }
   const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
-  const content = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, target);
+  const content =
+    options.bindCredential === false
+      ? buildMcpBridgeCapabilityPolicyYaml(entry.server, entry.url, adapter, target)
+      : buildMcpBridgePolicyYaml(
+          entry.server,
+          entry.url,
+          adapter,
+          target,
+          entry.providerName ?? "",
+        );
   const policyKey = buildMcpBridgePolicyKey(entry.server);
   const sameNamePolicy = registry
     .getCustomPolicies(sandboxName)
@@ -833,7 +845,13 @@ export function assertGeneratedPolicyExactReadOnly(
   }
   let expectedContent: string;
   try {
-    expectedContent = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, target);
+    expectedContent = buildMcpBridgePolicyYaml(
+      entry.server,
+      entry.url,
+      adapter,
+      target,
+      entry.providerName ?? "",
+    );
   } catch {
     // Registry entries are untrusted local state. Keep malformed URLs and any
     // credential-shaped material out of the recovery diagnostic.

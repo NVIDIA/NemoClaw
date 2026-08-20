@@ -26,27 +26,49 @@ const TRANSACTION = path.join(
 );
 const START = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 
-function runHermesRootMcpStartup(commitStatus: 0 | 1) {
+function runHermesRootMcpStartup(opts: { commitStatus: 0 | 1; dashboardSeedStatus?: 0 | 23 }) {
   const source = fs.readFileSync(START, "utf-8");
   const startupBlock = source.match(
-    /^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nfinalize_tirith_marker_retry\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
+    /^prepare_hermes_dashboard_home sandbox:sandbox \|\| exit 1$\n[\s\S]*?^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nfinalize_tirith_marker_retry\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
   )?.[0];
   expect(startupBlock).toBeDefined();
   const startupScript = startupBlock as string;
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-root-start-"));
   const scriptPath = path.join(tempDir, "run.sh");
+  const fakePython = path.join(tempDir, "fake-python.sh");
+  const hermesHome = path.join(tempDir, ".hermes");
+  const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+  fs.writeFileSync(
+    fakePython,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'printf "dashboard-profile\\n"',
+      'if [ "${NEMOCLAW_TEST_STEPPED_DOWN:-0}" != 1 ]; then exit 99; fi',
+      `exit ${opts.dashboardSeedStatus ?? 0}`,
+    ].join("\n"),
+    { mode: 0o700 },
+  );
   fs.writeFileSync(
     scriptPath,
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       'trace() { printf "%s\\n" "$*"; }',
+      'id() { [ "${1:-}" = "-u" ] && printf "0\\n" || command id "$@"; }',
+      extractShellFunction(source, "prepare_hermes_dashboard_home"),
+      `HERMES_DIR=${bashPrintfQ(hermesHome)}`,
+      `HERMES_DASHBOARD_HOME=${bashPrintfQ(dashboardHome)}`,
+      `_HERMES_PYTHON=${bashPrintfQ(fakePython)}`,
+      `_HERMES_DASHBOARD_CONFIG_SEEDER=${bashPrintfQ(path.join(tempDir, "seed-dashboard-config.py"))}`,
+      `_HERMES_MANAGED_POLICY=${bashPrintfQ(path.join(tempDir, "managed-policy.json"))}`,
+      "STEP_DOWN_PREFIX_SANDBOX=(env NEMOCLAW_TEST_STEPPED_DOWN=1)",
       'launch_hermes_gateway() { GATEWAY_PID=4242; trace "launch:$GATEWAY_PID"; }',
       "start_gateway_log_stream() { trace log-stream; }",
       'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
       "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }\nfinalize_tirith_marker_retry() { trace tirith-finalize; }",
-      `commit_hermes_mcp_applied_if_pending() { trace commit-applied; return ${commitStatus}; }`,
+      `commit_hermes_mcp_applied_if_pending() { trace commit-applied; return ${opts.commitStatus}; }`,
       "stop_hermes_gateway_fail_closed() { trace stop-fail-closed; }",
       "restore_hermes_config_permissions_after_dashboard_start() { trace restore-permissions; }",
       startupScript,
@@ -54,12 +76,14 @@ function runHermesRootMcpStartup(commitStatus: 0 | 1) {
     ].join("\n"),
     { mode: 0o700 },
   );
+  const env = { ...process.env };
+  delete env.NEMOCLAW_TEST_STEPPED_DOWN;
 
   try {
     return spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 5000,
-      env: process.env,
+      env,
     });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -590,10 +614,11 @@ print(json.dumps({"state": state, "config_reads": config_reads}))
     expect(JSON.parse(result.stdout)).toEqual({ state: "current", config_reads: 1 });
   });
 
-  it("commits pending state after root gateway health before continuing startup", () => {
-    const success = runHermesRootMcpStartup(0);
+  it("prepares the dashboard profile before root gateway health and applied-state commit", () => {
+    const success = runHermesRootMcpStartup({ commitStatus: 0 });
     expect(success.status, success.stderr).toBe(0);
     expect(success.stdout.trim().split("\n")).toEqual([
+      "dashboard-profile",
       "launch:4242",
       "log-stream",
       "health:4242",
@@ -605,10 +630,22 @@ print(json.dumps({"state": state, "config_reads": config_reads}))
     ]);
   });
 
+  it("fails root startup closed when dashboard profile preparation fails", () => {
+    const failure = runHermesRootMcpStartup({ commitStatus: 0, dashboardSeedStatus: 23 });
+    expect(failure.status).toBe(1);
+    expect(failure.stdout).toContain("dashboard-profile");
+    expect(failure.stderr).toContain(
+      "[dashboard] ERROR: config seed exited 23; refusing dashboard startup",
+    );
+    expect(failure.stdout).not.toContain("launch:");
+    expect(failure.stdout).not.toContain("startup-complete");
+  });
+
   it("fails root startup closed when the applied-state commit fails after gateway health", () => {
-    const failure = runHermesRootMcpStartup(1);
+    const failure = runHermesRootMcpStartup({ commitStatus: 1 });
     expect(failure.status).toBe(1);
     expect(failure.stdout.trim().split("\n")).toEqual([
+      "dashboard-profile",
       "launch:4242",
       "log-stream",
       "health:4242",

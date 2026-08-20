@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: vllm.deepseek-v4-flash.station-arm64-single.v1
+  displayName: DeepSeek V4 Flash with vLLM on DGX Station
+
+spec:
+  backend: vllm
+
+  modelRef: vllm.deepseek-v4-flash.v1
+  runtime:
+    image: nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2
+    imageDownloadSizeBytes: 9603085145
+    imageUnpackedSizeBytes: 27658526720
+    minimumComputeCapability: 100
+    minimumGpuMemoryBytes: 352381000000
+    pullTimeoutSeconds: 43200
+    architecture: arm64
+    networkMode: bridge
+    ipcMode: host
+    sharedMemoryBytes: 68719476736
+    gpuRequest: all
+    devices: []
+    ulimits:
+      memlock: -1
+      stackBytes: 67108864
+    modelCache:
+      source: huggingface-cache
+      target: /root/.cache/huggingface
+    temporaryFilesystems: []
+    environment: {}
+
+  execution:
+    materializerRef: vllm.host-local/v1
+    lifecycleRef: vllm.host-local.lifecycle/v1
+    orchestrationRef: vllm.host-local.standard/v1
+
+  serve:
+    authentication: bearer
+    directInstall:
+      authentication: none
+      fixedArguments: false
+      catalogReceipt: false
+    executable: /usr/local/bin/vllm
+    arguments:
+      - name: --max-model-len
+        value: 1048576
+      - name: --kv-cache-dtype
+        value: fp8
+      - name: --block-size
+        value: 256
+      - name: --enable-prefix-caching
+      - name: --gpu-memory-utilization
+        value: 0.92
+      - name: --compilation-config
+        value: '{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'
+      - name: --attention_config.use_fp4_indexer_cache
+        value: "True"
+      - name: --tokenizer-mode
+        value: deepseek_v4
+      - name: --tool-call-parser
+        value: deepseek_v4
+      - name: --enable-auto-tool-choice
+      - name: --reasoning-parser
+        value: deepseek_v4
+      - name: --no-disable-hybrid-kv-cache-manager
+      - name: --disable-uvicorn-access-log
+      - name: --max-cudagraph-capture-size
+        value: 128
+      - name: --speculative-config
+        value: '{"method":"mtp","num_speculative_tokens":3}'
+      - name: --max-num-batched-tokens
+        value: 8192
+      - name: --max-num-seqs
+        value: 16
+      - name: --prefix-cache-retention-interval
+        value: auto
+
+  readiness:
+    timeoutSeconds: 1800
+    expectedModel: deepseek-ai/DeepSeek-V4-Flash

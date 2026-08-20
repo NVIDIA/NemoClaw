@@ -5,6 +5,8 @@ import {
   type ContainerEngine,
   type ContainerEngineCommandCapture,
 } from "../../adapters/container-engine";
+import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
+import { getFutureShellPathHint } from "../remediation";
 import {
   createDockerLlamaCppManagedLifecycle,
   type DockerLlamaCppManagedLifecycle,
@@ -58,8 +60,13 @@ export function createDockerLlamaCppOperationAuthority(
   capture?: ContainerEngineCommandCapture,
   spawnCommand?: HostLocalInferenceCommandSpawner,
 ): DockerLlamaCppOperationAuthority {
+  const operationEnv = { ...env };
+  prependInstalledUserLocalOpenshellPath({
+    env: operationEnv,
+    getFutureShellPathHint,
+  });
   const authority = withManagedLlamaCppError(() =>
-    createDockerOperationAuthority("host-local-inference", env, capture),
+    createDockerOperationAuthority("host-local-inference", operationEnv, capture),
   );
   const assertAuthority = () => withManagedLlamaCppError(authority.assertAuthority);
   return Object.freeze({

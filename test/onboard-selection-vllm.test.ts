@@ -583,7 +583,7 @@ const { setupNim } = require(${onboardPath});
     assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
   });
 
-  it("logs a note when NEMOCLAW_PROVIDER=install-vllm is overridden by a running vLLM server (#3765)", () => {
+  it("rejects a running vLLM model that differs from NEMOCLAW_VLLM_MODEL", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-running-"));
     const scriptPath = path.join(tmpDir, "install-vllm-running-check.js");
@@ -607,8 +607,14 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  // vLLM probe succeeds → vllmRunning becomes true.
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return '{"data":[]}';
+  if (cmd.includes("127.0.0.1:8000/v1/models")) {
+    return JSON.stringify({
+      data: [{
+        id: "muse-glimmer",
+        root: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+      }],
+    });
+  }
   if (cmd.includes("docker images")) return "";
   return "";
 };
@@ -616,13 +622,11 @@ runner.runCapture = (command) => {
 const { setupNim } = require(${onboardPath});
 
 (async () => {
-  try {
-    await setupNim({ type: "nvidia" }, null);
-  } catch (e) {
-    // Downstream paths (model probe, gateway, etc.) are not mocked here; we
-    // only care about the menu-build log emitted before any failure.
-  }
-})();
+  await setupNim({ type: "nvidia" }, null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 `;
     fs.writeFileSync(scriptPath, script);
 
@@ -634,14 +638,15 @@ const { setupNim } = require(${onboardPath});
         HOME: tmpDir,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_VLLM_MODEL: "nemotron-3.5-lightning-30b",
         NEMOCLAW_EXPERIMENTAL: "1",
       },
     });
 
-    assert.match(
-      result.stdout,
-      /NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:8000 — selecting the running instance\./,
-    );
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Detected vLLM model 'muse-glimmer' does not match/);
+    assert.match(result.stderr, /nvidia-nemotron-3\.5-lightning-30b-a3b-nvfp4/);
+    assert.doesNotMatch(result.stdout, /Detected model:/);
   });
 
   it("adopts an existing Ultra served alias during Station express (#7023)", () => {
@@ -721,7 +726,6 @@ const { setupNim } = require(${onboardPath});
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_PROVIDER: "install-vllm",
         NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
-        NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
       },
     });
 

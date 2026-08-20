@@ -838,7 +838,7 @@ function startupArgv(receipt: PortableDemoLifecycleReceipt): string[] {
   const port = String(receipt.dashboardPort);
   // A raw Podman restart can preserve a merged CA bundle from the previous
   // OpenShell supervisor generation. Seed recovery from the current root-owned
-  // v0.0.101 OpenShell CA paths. The startup-applied marker skips the stale
+  // v0.0.106 OpenShell CA paths. The startup-applied marker skips the stale
   // bundle merge, and the cleared merged marker prevents connect shells from
   // inheriting stale CA paths. #8058 removes this direct startup contract.
   return [

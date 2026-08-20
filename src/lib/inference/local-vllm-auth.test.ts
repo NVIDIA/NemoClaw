@@ -86,7 +86,7 @@ function productionManagedBaseUrlResolver(
     BASE_URL,
     "b".repeat(64),
     "GPU-12345678",
-    "2",
+    actualLifecycle.DUAL_STATION_VLLM_LAUNCH_SCHEMA,
     "c".repeat(64),
     apiKeyFingerprint,
     "d".repeat(32),
@@ -270,7 +270,7 @@ describe("managed vLLM authentication", () => {
   it("separates the host-local validation URL from the sandbox route (#8379)", () => {
     lifecycle.baseUrl.mockReturnValue(null);
     const recoverHostLocalManagedVllmEndpointImpl = vi.fn(() => ({
-      baseUrl: "http://127.0.0.1:8000",
+      baseUrl: "http://127.0.0.1:19000",
       apiKey: API_KEY,
     }));
 
@@ -280,10 +280,29 @@ describe("managed vLLM authentication", () => {
         recoverHostLocalManagedVllmEndpointImpl,
       }),
     ).toEqual({
-      baseUrl: "http://host.openshell.internal:8000/v1",
-      validationBaseUrl: "http://127.0.0.1:8000/v1",
+      baseUrl: "http://host.openshell.internal:19000/v1",
+      validationBaseUrl: "http://127.0.0.1:19000/v1",
       apiKey: API_KEY,
     });
+  });
+
+  it.each([
+    "https://127.0.0.1:19000",
+    "http://example.invalid:19000",
+    "http://127.0.0.1:80",
+    "http://user:password@127.0.0.1:19000",
+    "http://127.0.0.1:19000/unexpected",
+    "http://127.0.0.1:19000?unexpected=true",
+    "http://127.0.0.1:19000#unexpected",
+    "http://127.0.0.1:65536",
+  ])("rejects an unsafe recovered host-local endpoint %s", (baseUrl) => {
+    lifecycle.baseUrl.mockReturnValue(null);
+
+    expect(() =>
+      getManagedVllmProviderBinding({
+        recoverHostLocalManagedVllmEndpointImpl: () => ({ baseUrl, apiKey: API_KEY }),
+      }),
+    ).toThrow("Managed host-local vLLM returned an invalid loopback endpoint");
   });
 
   it("pins host-local reachability to the exact OpenShell bridge (#8379)", () => {

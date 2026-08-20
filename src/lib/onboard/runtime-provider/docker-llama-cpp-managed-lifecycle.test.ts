@@ -405,6 +405,7 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(privateBridge.start).toHaveBeenCalledWith(
       expect.objectContaining({
         transactionId: TRANSACTION_ID,
+        apiKeyPath: runtimeBindings.apiKeyHostPath,
         targetHost: "172.30.0.2",
         bindAddresses: ["127.0.0.1", "172.29.0.1"],
       }),

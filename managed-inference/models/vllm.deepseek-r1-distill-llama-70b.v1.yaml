@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+metadata:
+  id: vllm.deepseek-r1-distill-llama-70b.v1
+  displayName: DeepSeek-R1 Distill Llama 70B
+spec:
+  id: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+  revision: b1c0b44b4369b597ad119a196caf79a9c40e141e
+  environmentValue: deepseek-r1-distill-70b
+  displayName: DeepSeek-R1 Distill Llama 70B
+  menuOrder: 20
+  servedName: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+  downloadSizeBytes: 141000000000
+  gated: true
+  installFastSafetensors: true
+  preparation:
+    ref: none/v1
+  probePolicyRef: nvidia.endpoint-validation.standard/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: false
+    reasoning: true
+    multimodal: false

@@ -65,18 +65,19 @@ function detectWithDeps(
 }
 
 describe("detectInferenceProviderHostState", () => {
-  it("suppresses local endpoint probes when route preflight disallows them (#6315)", () => {
+  it("suppresses local and Windows-host Ollama probes when provider discovery disables them (#6315, #9604)", () => {
     const runCapture = vi.fn<DetectInferenceProviderHostStateDeps["runCapture"]>(() => "{}");
     const findReachableOllamaHost = vi.fn(() => "127.0.0.1");
+    const detectWindowsHostOllama = vi.fn(() => ({
+      installed: true,
+      installedPath: "C:\\Ollama\\ollama.exe",
+      loopbackOnly: false,
+    }));
     const deps = buildDeps({
       runCapture,
       findReachableOllamaHost,
       isWsl: vi.fn(() => true),
-      detectWindowsHostOllama: vi.fn(() => ({
-        installed: true,
-        installedPath: "C:\\Ollama\\ollama.exe",
-        loopbackOnly: false,
-      })),
+      detectWindowsHostOllama,
     });
 
     const state = detectInferenceProviderHostState({
@@ -91,6 +92,7 @@ describe("detectInferenceProviderHostState", () => {
     });
 
     expect(findReachableOllamaHost).not.toHaveBeenCalled();
+    expect(detectWindowsHostOllama).not.toHaveBeenCalled();
     expect(state.ollamaRunning).toBe(false);
     expect(state.vllmRunning).toBe(false);
     expect(state.windowsOllamaReachable).toBe(false);

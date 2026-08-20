@@ -771,6 +771,7 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.probeSandboxRoute.mock.invocationCallOrder[0]).toBeLessThan(
       deps.calls.updateSandbox.mock.invocationCallOrder[0],
     );
+    expect(deps.calls.sleep).toHaveBeenCalledWith(6_000);
   });
 
   it("waits for a changed API family to replace the previous sandbox route (#9467)", async () => {
@@ -821,7 +822,7 @@ describe("runInferenceSet compatible providers", () => {
     );
 
     expect(probeSandboxRoute).toHaveBeenCalledTimes(2);
-    expect(deps.calls.sleep).toHaveBeenCalledWith(2_000);
+    expect(deps.calls.sleep.mock.calls).toEqual([[6_000], [2_000]]);
     expect(deps.calls.log).toHaveBeenCalledWith(
       "  Waiting 2s for OpenShell route convergence after HTTP 400 (probe 1/3)...",
     );
@@ -853,7 +854,7 @@ describe("runInferenceSet compatible providers", () => {
     });
 
     expect(probeSandboxRoute).toHaveBeenCalledTimes(3);
-    expect(deps.calls.sleep.mock.calls).toEqual([[2_000], [4_000]]);
+    expect(deps.calls.sleep.mock.calls).toEqual([[6_000], [2_000], [4_000]]);
     expect(deps.calls.log.mock.calls).toEqual(
       expect.arrayContaining([
         ["  Waiting 2s for OpenShell route convergence after HTTP 400 (probe 1/3)..."],
@@ -878,7 +879,7 @@ describe("runInferenceSet compatible providers", () => {
     });
 
     expect(probeSandboxRoute).toHaveBeenCalledOnce();
-    expect(deps.calls.sleep).not.toHaveBeenCalled();
+    expect(deps.calls.sleep.mock.calls).toEqual([[6_000]]);
     expect(deps.calls.log).not.toHaveBeenCalledWith(expect.stringContaining("route convergence"));
   });
 
@@ -894,7 +895,7 @@ describe("runInferenceSet compatible providers", () => {
     });
 
     expect(probeSandboxRoute).toHaveBeenCalledOnce();
-    expect(deps.calls.sleep).not.toHaveBeenCalled();
+    expect(deps.calls.sleep.mock.calls).toEqual([[6_000]]);
   });
 
   it.each([

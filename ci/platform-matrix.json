@@ -163,7 +163,7 @@
       "name": "Local vLLM (already running)",
       "status": "caveated",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Unavailable on N1x. On other hosts, it appears in the onboarding menu when NemoClaw detects a server already on `localhost:8000`. No flag is required. The model is whatever the existing server serves."
+      "notes": "Unavailable on N1x. On other hosts, it appears in the onboarding menu when NemoClaw detects a server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}`. No flag is required. The model is whatever the existing server serves."
     },
     {
       "name": "Local vLLM (managed install/start)",

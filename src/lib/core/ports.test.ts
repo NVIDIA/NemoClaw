@@ -59,6 +59,11 @@ describe("parsePort", () => {
     process.env[ENV_KEY] = value;
     expect(() => parsePort(ENV_KEY, 8080)).toThrow(expectedMessage);
   });
+
+  it("can validate an explicit environment without mutating process.env", () => {
+    expect(parsePort(ENV_KEY, 8080, { [ENV_KEY]: "19000" })).toBe(19_000);
+    expect(process.env[ENV_KEY]).toBeUndefined();
+  });
 });
 
 describe("parseGatewayPort", () => {

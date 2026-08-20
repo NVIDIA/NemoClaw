@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import catalogSchema from "../managed-inference/schemas/catalog.schema.json" with { type: "json" };
+import modelSchema from "../managed-inference/schemas/model.schema.json" with { type: "json" };
 import presetSchema from "../managed-inference/schemas/preset.schema.json" with { type: "json" };
 import recipeSchema from "../managed-inference/schemas/recipe.schema.json" with { type: "json" };
 import { getManagedInferenceServingCatalogRegistries } from "../src/lib/inference/serving/adapter-registry.js";
@@ -31,9 +32,19 @@ const LIGHTNING_PROFILE_ID = "vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-
 const LIGHTNING_RECIPE_ID = "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1";
 const MUSE_PROFILE_ID = "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4";
 const MUSE_RECIPE_ID = "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1";
+const LINUX_VLLM_PROFILES = [
+  {
+    presetId: "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4",
+    recipeId: "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
+  },
+  {
+    presetId: "vllm.linux-amd64-nvidia.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
+    recipeId: "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
+  },
+] as const;
 
 function catalogSources(): ServingCatalogSource[] {
-  return (["presets", "recipes"] as const).flatMap((kind) => {
+  return (["models", "presets", "recipes"] as const).flatMap((kind) => {
     const directory = path.join(REPOSITORY_ROOT, "managed-inference", kind);
     return readdirSync(directory)
       .filter((name) => name.endsWith(".yaml"))
@@ -50,6 +61,7 @@ function compile(sources: readonly ServingCatalogSource[]) {
     sourceRevision: "a".repeat(40),
     schemas: {
       catalog: catalogSchema,
+      model: modelSchema,
       preset: presetSchema,
       recipe: recipeSchema,
     },
@@ -58,6 +70,43 @@ function compile(sources: readonly ServingCatalogSource[]) {
 }
 
 describe("managed inference YAML profile contract", () => {
+  it.each([
+    ["vllm.qwen3-6-27b-fp8.linux-amd64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-27b-fp8.linux-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-27b-fp8.optimized-arm64-single.v1", 48_000_000_000, 0.7, 30_900_000_000],
+    ["vllm.qwen3-6-35b-a3b-nvfp4.spark-single.v1", 64_000_000_000, 0.4, 23_500_000_000],
+    [
+      "vllm.muse-glimmer-30b-nvfp4-w4a4.linux-amd64-single.v1",
+      96_000_000_000,
+      0.75,
+      25_447_097_878,
+    ],
+    [
+      "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.linux-amd64-single.v1",
+      96_000_000_000,
+      0.75,
+      21_561_882_284,
+    ],
+  ])(
+    "reserves model-weight headroom within the %s GPU utilization budget",
+    (recipeId, minimumGpuMemoryBytes, utilization, downloadSizeBytes) => {
+      const recipe = compile(catalogSources()).recipes.find(
+        ({ metadata }) => metadata.id === recipeId,
+      );
+
+      expect(recipe?.spec).toMatchObject({
+        model: { downloadSizeBytes },
+        runtime: { minimumGpuMemoryBytes },
+        serve: {
+          arguments: expect.arrayContaining([
+            { name: "--gpu-memory-utilization", value: utilization },
+          ]),
+        },
+      });
+      expect(minimumGpuMemoryBytes * utilization).toBeGreaterThan(downloadSizeBytes * 1.05);
+    },
+  );
+
   it("compiles the shipped managed-cluster profile through the canonical catalog (#8129)", () => {
     const catalog = compile(catalogSources());
     const preset = catalog.presets.find(({ metadata }) => metadata.id === PROFILE_ID);
@@ -141,6 +190,7 @@ describe("managed inference YAML profile contract", () => {
       serve: {
         authentication: "bearer",
         contextSize: 262144,
+        limits: { maxRequestBodyBytes: 32768 },
         batchSize: 2048,
         microBatchSize: 512,
         flashAttention: "enabled",
@@ -197,6 +247,7 @@ describe("managed inference YAML profile contract", () => {
         chatTemplate: "model-embedded-jinja",
         chatTemplateArguments: { reasoningStrength: "low" },
         contextSize: 131072,
+        limits: { maxRequestBodyBytes: 16384 },
         slots: 1,
         speculativeDecoding: "disabled",
       },
@@ -266,7 +317,7 @@ describe("managed inference YAML profile contract", () => {
       runtime: {
         architecture: "arm64",
         image:
-          "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+          "vllm/vllm-openai@sha256:b0e84e5f2b00a7268e4fdda332790ebd4bfb166b64757e166914753afaeee965",
       },
       execution: {
         materializerRef: "vllm.host-local/v1",
@@ -280,6 +331,37 @@ describe("managed inference YAML profile contract", () => {
       },
     });
   });
+
+  it.each(LINUX_VLLM_PROFILES)(
+    "compiles $presetId as an explicit Linux amd64 catalog profile (#9673)",
+    ({ presetId, recipeId }) => {
+      const catalog = compile(catalogSources());
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      const recipe = catalog.recipes.find(({ metadata }) => metadata.id === recipeId);
+
+      expect(preset?.metadata.supportState).toBe("experimental");
+      expect(preset?.spec).toMatchObject({
+        selection: "explicit-only",
+        plan: { backend: "vllm", platform: "linux", recipeRef: recipeId },
+      });
+      expect(preset?.spec.requirements?.all).toContainEqual({
+        readiness: {
+          scope: "everyNode",
+          kind: "observation",
+          id: "host.os.architecture",
+          comparison: { operator: "equals", value: "x64" },
+        },
+      });
+      expect(recipe?.spec).toMatchObject({
+        backend: "vllm",
+        runtime: { architecture: "amd64" },
+        execution: {
+          materializerRef: "vllm.host-local/v1",
+          lifecycleRef: "vllm.host-local.lifecycle/v1",
+        },
+      });
+    },
+  );
 
   it("documents the Experimental Lightning support boundary (#8385)", () => {
     const setupGuide = readFileSync(

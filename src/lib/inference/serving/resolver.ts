@@ -69,11 +69,18 @@ function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function explicitIntentWithoutPreset(intent: ManagedInferenceSelectionIntent): boolean {
+function unmanagedExplicitIntent(intent: ManagedInferenceSelectionIntent): boolean {
+  return intent.vllmExtraArguments?.some(hasText) ?? false;
+}
+
+function recipeMatchesModelIntent(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+  model: string,
+): boolean {
   return (
-    hasText(intent.provider) ||
-    hasText(intent.vllmModel) ||
-    (intent.vllmExtraArguments?.length ?? 0) > 0
+    model === recipe.spec.model.id ||
+    model === recipe.spec.model.servedName ||
+    ("environmentValue" in recipe.spec.model && model === recipe.spec.model.environmentValue)
   );
 }
 
@@ -347,6 +354,36 @@ function evaluateRequirements<TOutput>(
   return { outcome: "matched", topologyQualifications: matchedTopologies };
 }
 
+function runtimeMemoryRequirementError(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+  reports: readonly ManagedInferenceReadinessSource[],
+): string | undefined {
+  const minimum =
+    recipe.spec.runtime && "minimumGpuMemoryBytes" in recipe.spec.runtime
+      ? recipe.spec.runtime.minimumGpuMemoryBytes
+      : undefined;
+  if (minimum === undefined) return undefined;
+  for (const { nodeId, report } of reports) {
+    const observationValue = (id: string): unknown => {
+      const matches = report.observations.filter((observation) => observation.id === id);
+      return matches.length === 1 && matches[0]!.state === "present"
+        ? matches[0]!.value
+        : undefined;
+    };
+    const unified = observationValue("host.gpu.unified_memory") === true;
+    const available = observationValue(
+      unified ? "host.gpu.memory_total_bytes" : "host.gpu.memory_per_device_bytes",
+    );
+    if (typeof available !== "number") {
+      return `${nodeId}: GPU memory capacity could not be determined.`;
+    }
+    if (available < minimum) {
+      return `${nodeId}: GPU memory capacity ${String(available)} is below the recipe minimum ${String(minimum)} bytes.`;
+    }
+  }
+  return undefined;
+}
+
 function intentCompatibilityError(
   intent: ManagedInferenceSelectionIntent,
   preset: ManagedInferenceServingPreset,
@@ -357,12 +394,11 @@ function intentCompatibilityError(
   }
   if (
     hasText(intent.vllmModel) &&
-    intent.vllmModel !== recipe.spec.model.id &&
-    intent.vllmModel !== recipe.spec.model.servedName
+    !recipeMatchesModelIntent(recipe, intent.vllmModel)
   ) {
     return `model ${intent.vllmModel} conflicts with preset ${preset.metadata.id}`;
   }
-  if ((intent.vllmExtraArguments?.length ?? 0) > 0) {
+  if (unmanagedExplicitIntent(intent)) {
     return `extra vLLM arguments conflict with preset ${preset.metadata.id}`;
   }
   return undefined;
@@ -425,6 +461,8 @@ function matchingCandidate<TOutput>(
     input.topologyQualifications,
   );
   if (requirements.outcome !== "matched") return requirements;
+  const memoryError = runtimeMemoryRequirementError(recipe, input.readinessReports);
+  if (memoryError) return { outcome: "unmet", message: memoryError };
   const materializer = getManagedInferenceMaterializerDescriptor(
     recipe.spec.execution.materializerRef,
   );
@@ -498,7 +536,8 @@ export function resolveManagedInferenceServing<TOutput>(
 ): ManagedInferenceResolution<TOutput> {
   const intent = input.intent ?? {};
   const explicitPresetId = hasText(intent.preset) ? intent.preset : undefined;
-  if (!explicitPresetId && explicitIntentWithoutPreset(intent)) {
+  const explicitModel = hasText(intent.vllmModel) ? intent.vllmModel : undefined;
+  if (!explicitPresetId && unmanagedExplicitIntent(intent)) {
     return {
       outcome: "no-match",
       code: "explicit-intent",
@@ -556,6 +595,56 @@ export function resolveManagedInferenceServing<TOutput>(
             : "requirements-not-met",
       message: evaluated.message,
     };
+  }
+
+  if (explicitModel) {
+    const modelPresets = catalog.presets.filter((preset) => {
+      if (preset.spec.selection === "disabled") return false;
+      return recipeMatchesModelIntent(recipeForPreset(catalog, preset), explicitModel);
+    });
+    if (modelPresets.length === 0) {
+      return {
+        outcome: "rejected",
+        code: "requirements-not-met",
+        message: `No managed vLLM profile defines model ${explicitModel}.`,
+      };
+    }
+
+    const matching: MatchingCandidate<TOutput>[] = [];
+    let firstFailure: Exclude<
+      ReturnType<typeof matchingCandidate<TOutput>>,
+      { readonly outcome: "matched" }
+    > | undefined;
+    for (const compiledPreset of modelPresets) {
+      const evaluated = matchingCandidate(catalog, compiledPreset, input);
+      if (evaluated.outcome === "matched") matching.push(evaluated.candidate);
+      else firstFailure ??= evaluated;
+    }
+    if (matching.length === 0) {
+      return {
+        outcome: "rejected",
+        code: firstFailure?.outcome === "invalid-topology" ? "invalid-topology" : "requirements-not-met",
+        message:
+          firstFailure?.message ?? `No compatible managed vLLM profile defines model ${explicitModel}.`,
+      };
+    }
+    matching.sort(
+      (left, right) =>
+        right.priority - left.priority ||
+        compareStrings(left.preset.metadata.id, right.preset.metadata.id),
+    );
+    const highestPriority = matching[0]!.priority;
+    const tied = matching.filter(({ priority }) => priority === highestPriority);
+    if (tied.length !== 1) {
+      return {
+        outcome: "rejected",
+        code: "ambiguous-selection",
+        message: `Managed vLLM model ${explicitModel} is ambiguous at priority ${String(
+          highestPriority,
+        )}: ${tied.map(({ preset }) => preset.metadata.id).join(", ")}.`,
+      };
+    }
+    return selectedResolution(catalog, tied[0]!, "explicit");
   }
 
   const matching: MatchingCandidate<TOutput>[] = [];

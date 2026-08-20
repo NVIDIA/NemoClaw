@@ -12,8 +12,12 @@ import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
  * Read an environment variable as a port number, falling back to a default.
  * Validates that the value is a valid non-privileged port (1024-65535).
  */
-export function parsePort(envVar: string, fallback: number): number {
-  const raw = process.env[envVar];
+export function parsePort(
+  envVar: string,
+  fallback: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env[envVar];
   if (raw === undefined || raw === "") return fallback;
   const trimmed = String(raw).trim();
   if (!/^\d+$/.test(trimmed)) {
@@ -61,8 +65,10 @@ export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", SANDBOX_DASHB
 export const DASHBOARD_PORT_RANGE_START = SANDBOX_DASHBOARD_PORT;
 /** End of the auto-allocation range for dashboard ports (inclusive). */
 export const DASHBOARD_PORT_RANGE_END = 18799;
+export const VLLM_PORT_ENV = "NEMOCLAW_VLLM_PORT";
+export const DEFAULT_VLLM_PORT = 8000;
 /** vLLM / NIM inference port (default 8000, override via NEMOCLAW_VLLM_PORT). */
-export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
+export const VLLM_PORT = parsePort(VLLM_PORT_ENV, DEFAULT_VLLM_PORT);
 /** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */
 export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 /** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
