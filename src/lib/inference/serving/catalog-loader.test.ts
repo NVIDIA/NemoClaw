@@ -32,6 +32,7 @@ const EMPTY_CATALOG: CompiledServingCatalog = {
 const EXPECTED_MANAGED_RECIPE_IDS = [
   "llama-cpp.muse-glimmer-30b.spark-single.v1",
   "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+  "llama-cpp.qwen3-8-27b.spark-single.v1",
   "vllm.deepseek-v4-flash-0731.spark-dual.v1",
   "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
   "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1",
@@ -40,6 +41,7 @@ const EXPECTED_MANAGED_RECIPE_IDS = [
 const EXPECTED_MANAGED_PRESET_IDS = [
   "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b",
   "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
+  "llama-cpp.dgx-spark-gb10.single.qwen3-8-27b",
   "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b",
   "local-model-profile.vllm.spark.v1",
   "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
@@ -49,6 +51,7 @@ const EXPECTED_MANAGED_PRESET_IDS = [
 const EXPECTED_MANAGED_SOURCE_IDS = [
   "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b",
   "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
+  "llama-cpp.dgx-spark-gb10.single.qwen3-8-27b",
   "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b",
   "local-model-profile.vllm.spark.v1",
   "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
@@ -56,6 +59,7 @@ const EXPECTED_MANAGED_SOURCE_IDS = [
   "vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4",
   "llama-cpp.muse-glimmer-30b.spark-single.v1",
   "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+  "llama-cpp.qwen3-8-27b.spark-single.v1",
   "vllm.deepseek-v4-flash-0731.spark-dual.v1",
   "vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1",
   "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1",

@@ -5,7 +5,7 @@ title: "Set Up llama.cpp"
 sidebar-title: "Set Up llama.cpp"
 description: "Attach an existing llama.cpp server or select an experimental managed llama.cpp profile."
 description-agent: "Sets up llama.cpp for NemoClaw. Use for an authenticated existing server or an experimental declarative managed profile."
-keywords: ["nemoclaw llama.cpp", "llama.cpp dgx spark", "managed llama.cpp", "muse glimmer gguf", "nemotron gguf"]
+keywords: ["nemoclaw llama.cpp", "llama.cpp dgx spark", "managed llama.cpp", "muse glimmer gguf", "nemotron gguf", "qwen3.8 gguf"]
 content:
   type: "how_to"
 ---
@@ -80,6 +80,7 @@ That path supports operator-selected endpoints and ports without claiming llama.
 Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on one DGX Spark.
 The recommended recipe serves Meta Muse Glimmer 30B through the OpenAI Chat Completions API.
 The NVIDIA Nemotron 3 Nano 30B-A3B recipe remains available as a lower-priority profile.
+The Qwen3.8 27B recipe is also available as a lower-priority profile.
 
 <Note>
 This path is an experimental implementation.
@@ -88,6 +89,7 @@ The protected qualification runner requires Docker Engine `28.3.3` or newer and 
 That requirement supersedes older Docker 27 qualification evidence.
 Ordinary managed onboarding does not publish a Docker port: it retains its no-publication container contract and uses the host-owned private bridge, so this runner-specific version floor does not apply to onboarding.
 The Muse Glimmer profile remains Experimental after bounded physical DGX Spark qualification of text, separated reasoning, and one structured tool call.
+The Qwen3.8 27B profile has not completed physical DGX Spark qualification.
 </Note>
 
 Before you start, confirm these prerequisites:
@@ -174,6 +176,19 @@ serve:
 
 The typed contract accepts `low`, `medium`, `high`, or `xhigh`, but the selected recipe fixes the value and does not expose an onboarding override.
 
+The Qwen3.8 27B recipe also uses the Jinja chat template embedded in its GGUF file, and declares `xhigh`:
+
+```yaml
+serve:
+  chatTemplate: model-embedded-jinja
+  chatTemplateArguments:
+    reasoningStrength: xhigh
+```
+
+That checkpoint's embedded template reads `reasoning_effort` rather than the `reasoning_strength` argument the runtime supplies, so it ignores the supplied value and resolves to its own `xhigh` default.
+The declared value therefore records what the server serves; it does not change it.
+The template accepts only `xhigh`, `medium`, and `low`, and raises an error for any other effort value.
+
 Onboarding performs these actions:
 
 - Resolves the selected recipe and profile against a fresh host readiness report.
@@ -190,6 +205,9 @@ The API key enters the container through an owner-only read-only file, not a pro
 
 The Muse Glimmer profile enables text responses, reasoning, and structured tool calls.
 It does not load a multimodal projector or a DFlash draft model because multimodal projection and speculative decoding remain disabled.
+
+The Qwen3.8 27B profile enables text responses, reasoning, and structured tool calls.
+Its source repository publishes multimodal projector and draft-model files, and the recipe pins neither, because multimodal projection and speculative decoding remain disabled.
 
 Podman and Kubernetes do not provide the required host-local-inference capability for this path.
 Selecting either runtime fails before model acquisition or runtime mutation and never falls back to Docker.

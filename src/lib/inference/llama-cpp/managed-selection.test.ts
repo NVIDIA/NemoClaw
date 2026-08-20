@@ -17,6 +17,7 @@ const GENERIC_PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-3
 const SPARK_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b";
 const MUSE_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
 const MUSE_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
+const QWEN_RECIPE_ID = "llama-cpp.qwen3-8-27b.spark-single.v1";
 
 function readinessReport(
   preset: ManagedInferenceServingPreset,
@@ -196,6 +197,7 @@ describe("managed llama.cpp selection", () => {
       [550, synthetic.recipeId],
       [500, MUSE_RECIPE_ID],
       [450, RECIPE_ID],
+      [430, QWEN_RECIPE_ID],
     ]);
   });
 
