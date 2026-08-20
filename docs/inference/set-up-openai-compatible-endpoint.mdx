@@ -33,7 +33,15 @@ NemoClaw places a token-protected proxy in front of the endpoint.
 At startup, NemoClaw normally inspects the backend listeners.
 NemoClaw rejects an observed non-loopback listener because it would bypass the proxy token check.
 If listener inspection is unavailable, the proxy starts without verifying the backend bind.
-NemoClaw does not surface this degraded inspection result during onboarding, so verify that the backend listens only on loopback before continuing.
+Onboarding does not display this degraded result.
+Before you continue, inspect the backend port:
+
+```bash
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+```
+
+Continue only when every listener address is in `127.0.0.0/8`, is `::1`, or is an IPv4-mapped address in `::ffff:127.0.0.0/8`.
+Stop the server and correct its bind configuration if the output contains `*`, `0.0.0.0`, `::`, or another address.
 Endpoints configured with `COMPATIBLE_API_KEY` use a different authenticated path and do not use this loopback-only proxy requirement.
 </Warning>
 
