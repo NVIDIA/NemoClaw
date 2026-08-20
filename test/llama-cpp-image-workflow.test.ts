@@ -45,6 +45,14 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const workflow = YAML.parse(
   fs.readFileSync(path.join(repoRoot, ".github", "workflows", "llama-cpp-image.yaml"), "utf8"),
 ) as Workflow;
+const imageManifest = YAML.parse(
+  fs.readFileSync(
+    path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml"),
+    "utf8",
+  ),
+) as {
+  spec?: { publication?: { qualification?: { probes?: string[] } } };
+};
 const attestationWorkflow = YAML.parse(
   fs.readFileSync(
     path.join(repoRoot, ".github", "workflows", "llama-cpp-image-attest.yaml"),
@@ -212,14 +220,23 @@ describe("llama.cpp image PR workflow", () => {
     expect(gate.if).toContain("github.event_name == 'workflow_dispatch'");
     expect(gate.if).toContain("inputs.publish == true");
     expect(gate.permissions).toEqual({});
-    expect(namedStep(gate, "Enforce declarative publication boundary").run).toContain(
+    const gateStep = namedStep(gate, "Enforce declarative publication boundary");
+    expect(gateStep.run).toContain(
       'PUBLICATION_ENABLED" != "true"',
     );
-    expect(namedStep(gate, "Enforce declarative publication boundary").run).toContain(
+    expect(gateStep.run).toContain(
       'GITHUB_REPOSITORY" != "NVIDIA/NemoClaw"',
     );
-    expect(namedStep(gate, "Enforce declarative publication boundary").run).toContain(
+    expect(gateStep.run).toContain(
       'GITHUB_REF" != "$ALLOWED_REF"',
+    );
+    expect(gateStep.run).toContain(
+      `and .probes == ${JSON.stringify(
+        required(
+          imageManifest.spec?.publication?.qualification?.probes,
+          "publication qualification probes are missing",
+        ),
+      )}`,
     );
     expect(preflight.needs).toEqual(["config", "publication-gate"]);
     expect(preflight.permissions).toEqual({ packages: "read" });

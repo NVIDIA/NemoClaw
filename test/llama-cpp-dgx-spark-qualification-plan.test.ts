@@ -35,6 +35,7 @@ function candidateRoot(options: { activation?: string; enabled?: boolean } = {})
   const imageDocument = YAML.parse(sourceImage) as {
     spec: {
       publication: {
+        enabled: boolean;
         qualification: {
           environment: string | null;
           execution: "disabled" | "enabled";
@@ -44,6 +45,7 @@ function candidateRoot(options: { activation?: string; enabled?: boolean } = {})
       };
     };
   };
+  imageDocument.spec.publication.enabled = options.enabled ?? false;
   const qualification = imageDocument.spec.publication.qualification;
   qualification.execution = options.enabled ? "enabled" : "disabled";
   qualification.runner = options.enabled ? "linux-arm64-gpu-dgx-spark-gb10-protected-1" : null;

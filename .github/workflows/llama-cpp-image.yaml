@@ -298,7 +298,7 @@ jobs:
             and (.environment | type) == "string" and (.environment | length) > 0
             and (.model.hostPath | type) == "string" and (.model.hostPath | startswith("/"))
             and .gpu == {vendor:"nvidia", fullOffload:true, cpuFallback:"reject"}
-            and .probes == ["health", "completion"]
+            and .probes == ["health","models","properties","metrics","disabled-surfaces","synchronous-chat","streaming-chat","usage","structured-output","tool-call","tool-result-continuation","context-window","authentication","malformed-request","request-body-limit","cancellation","client-timeout","log-redaction"]
           ' <<< "$QUALIFICATION" >/dev/null; then
             echo "ERROR: protected DGX Spark qualification infrastructure is incomplete." >&2
             exit 1

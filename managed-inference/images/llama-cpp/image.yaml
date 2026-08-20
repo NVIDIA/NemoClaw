@@ -13,7 +13,7 @@ spec:
   repository: ghcr.io/nvidia/nemoclaw/llama-cpp-server
 
   publication:
-    enabled: false
+    enabled: true
     trigger: workflow_dispatch
     allowedRef: refs/heads/main
     repository: ghcr.io/nvidia/nemoclaw/llama-cpp-server
