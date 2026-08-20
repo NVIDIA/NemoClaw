@@ -16,20 +16,15 @@ type RunAnalysisInput = {
   model: string;
   title: string;
   runAnalysis: string;
-  envFile?: string;
 };
 
 type RunAnalysisOptions = {
   runGit?: (args: string[], cwd: string) => string;
   runNode?: (script: string, args: string[], env: NodeJS.ProcessEnv, cwd: string) => number;
-  readText?: (file: string) => string;
   fileExists?: (file: string) => boolean;
   mkdir?: (dir: string) => void;
   writeFile?: (file: string, text: string) => void;
-  appendEnv?: (key: string, value: string) => void;
 };
-
-const LEGACY_PRIMARY_MODEL = "openai/openai/gpt-5.5";
 
 class RunAnalysisError extends Error {
   constructor(message: string) {
@@ -58,7 +53,6 @@ function defaultInput(env = process.env): RunAnalysisInput {
     model: required(env.PR_REVIEW_ADVISOR_MODEL, "PR_REVIEW_ADVISOR_MODEL"),
     title: env.PR_REVIEW_ADVISOR_COMMENT_TITLE || "PR Review Advisor",
     runAnalysis: env.PR_REVIEW_ADVISOR_RUN_ANALYSIS || "1",
-    envFile: env.GITHUB_ENV,
   };
 }
 
@@ -139,16 +133,7 @@ export function runPrReviewAdvisorAnalysis(
 ): void {
   const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
   const schemaPath = path.join(input.advisorDir, "tools", "pr-review-advisor", "schema.json");
-  const sessionPath = path.join(input.advisorDir, "tools", "advisors", "session.mts");
-  const providerConstantsPath = path.join(
-    input.advisorDir,
-    "tools",
-    "advisors",
-    "provider-constants.mts",
-  );
-  const commentPath = path.join(input.advisorDir, "tools", "pr-review-advisor", "comment.mts");
   const fileExists = options.fileExists ?? fs.existsSync;
-  const readText = options.readText ?? ((file: string): string => fs.readFileSync(file, "utf8"));
   const mkdir =
     options.mkdir ??
     ((dir: string): void => {
@@ -186,18 +171,6 @@ export function runPrReviewAdvisorAnalysis(
       });
       return result.status ?? 1;
     });
-  const appendEnv =
-    options.appendEnv ??
-    ((key: string, value: string): void => {
-      if (!input.envFile) return;
-      const fd = fs.openSync(input.envFile, fs.constants.O_WRONLY | fs.constants.O_APPEND);
-      try {
-        fs.writeFileSync(fd, `${key}=${value}\n`);
-      } finally {
-        fs.closeSync(fd);
-      }
-    });
-
   if (!fileExists(analyzePath)) {
     console.log("Skipping PR review advisor: trusted base checkout does not contain analyze.mts");
     writeBootstrapResult(
@@ -225,49 +198,9 @@ export function runPrReviewAdvisorAnalysis(
   ];
   const inheritedEnv = {
     ...process.env,
+    PR_REVIEW_ADVISOR_MODEL: input.model,
     PR_REVIEW_ADVISOR_RUN_ANALYSIS: input.runAnalysis,
   };
-  const trustedTextIncludes = (file: string, text: string): boolean => {
-    try {
-      return readText(file).includes(text);
-    } catch {
-      return false;
-    }
-  };
-
-  if (
-    input.model !== LEGACY_PRIMARY_MODEL &&
-    (!(
-      trustedTextIncludes(sessionPath, input.model) ||
-      trustedTextIncludes(providerConstantsPath, input.model)
-    ) ||
-      !trustedTextIncludes(analyzePath, "PR_REVIEW_ADVISOR_MODEL") ||
-      !trustedTextIncludes(commentPath, "PR_REVIEW_ADVISOR_COMMENT_MARKER"))
-  ) {
-    appendEnv("PR_REVIEW_ADVISOR_SUPPORTED", "0");
-    console.log(
-      `Skipping PR review advisor: trusted base checkout does not yet support ${input.model}`,
-    );
-    const reason = `Trusted base checkout does not yet support advisor model ${input.model}; this parallel advisor will run after the implementation lands on the base branch.`;
-    const code = runNode(
-      analyzePath,
-      analysisArgs,
-      {
-        ...inheritedEnv,
-        PR_REVIEW_ADVISOR_RUN_ANALYSIS: "0",
-        PR_REVIEW_ADVISOR_UNAVAILABLE_REASON: reason,
-      },
-      input.advisorWorkdir,
-    );
-    if (code !== 0) {
-      throw new RunAnalysisError(
-        `PR review advisor unavailable-result generation exited with status ${code}`,
-      );
-    }
-    return;
-  }
-
-  appendEnv("PR_REVIEW_ADVISOR_SUPPORTED", "1");
   const code = runNode(analyzePath, analysisArgs, inheritedEnv, input.advisorWorkdir);
   if (code !== 0) {
     const reason = `analyze.mts exited with status ${code}`;

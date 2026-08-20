@@ -11,7 +11,7 @@ if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
   exit 0
 fi
 
-unset BASH_ENV ENV OPENAI_PROXY
+unset BASH_ENV ENV OPENAI_PROXY DEEPAGENTS_CODE_APPROVAL_MODE DEEPAGENTS_CODE_STARTUP_MODE
 while IFS= read -r _nemoclaw_auto_approval_env; do
   unset "$_nemoclaw_auto_approval_env"
 done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)
@@ -637,7 +637,7 @@ try:
 except Exception:
     sys.exit(1)
 # Schema pin: detection assumes a truthy top-level "credentials" key,
-# matching the auth.json shape in deepagents-code==0.1.34. Nested or
+# matching the auth.json shape reviewed for deepagents-code==0.1.55. Nested or
 # renamed shapes ({"auth":{...}}, {"state":{"credentials":...}}, top-level
 # list) are not detected. When bumping the upstream pin, re-review this
 # assumption against the new auth.json schema.

@@ -55,22 +55,6 @@ export interface McpBridgeJsonSummary {
   bridges: McpBridgeStatus[];
 }
 
-// Source-of-truth review for the provider warning:
-// invalidState: OpenShell can resolve one sandbox-scoped provider placeholder
-// from another inspected route attributed to the same adapter runtime.
-// sourceBoundary: OpenShell owns provider attachment and HTTP rewrite binding;
-// NemoClaw owns the generated least-privilege route and operator diagnostics.
-// whyNotSourceFix: v0.0.99 injects provider placeholders at sandbox scope. Its
-// network policy enforces the generated route's host, port, path, methods, and
-// allowed IPs, but placeholder resolution has no endpoint-exclusive attachment
-// or credential-specific scheme and query binding that NemoClaw can request.
-// regressionTest: mcp-bridge-status-boundaries.test.ts pins this warning and the
-// generated policy tests pin unique keys, explicit methods, and allowed IPs.
-// removalCondition: remove only when OpenShell exposes and NemoClaw requires
-// endpoint-exclusive credential binding with credential-specific host, scheme,
-// and query enforcement.
-const SANDBOX_SCOPED_PROVIDER_WARNING =
-  "OpenShell currently attaches this credential provider at sandbox scope, not exclusively to this MCP endpoint. Keep other inspected routes for the same adapter binary at least as restrictive until OpenShell supports endpoint-exclusive credential binding plus Host, scheme, and query enforcement.";
 const UNSUPPORTED_STORED_URL_WARNING =
   "This persisted MCP URL no longer satisfies the authenticated endpoint boundary. Restart and rebuild fail closed for it; remove this server (use --force if cleanup is partial), then add a normal public HTTPS DNS endpoint.";
 const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
@@ -261,7 +245,6 @@ export async function statusMcpBridge(
     );
     const attached = providerAttached(sandboxName, entry?.providerName);
     const warnings: string[] = [];
-    if (attached === true) warnings.push(SANDBOX_SCOPED_PROVIDER_WARNING);
     let credentialWarning: string | undefined;
     if (entry) {
       const urlWarning = storedUrlWarning(entry);

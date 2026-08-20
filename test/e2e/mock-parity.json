@@ -115,6 +115,7 @@
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
         "test/blueprint-runtime-identity-lifecycle.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts",
         "test/onboard-inference-gateway-scope.test.ts"
       ]
     },
@@ -252,7 +253,8 @@
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
     {

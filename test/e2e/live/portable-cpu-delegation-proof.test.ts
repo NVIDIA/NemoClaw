@@ -154,6 +154,30 @@ function proveAdmission(
       commandResult(0, `1 true ${PORTABLE_REGISTRY_IP}`),
     ],
   ]);
+  const ipResults: ReadonlyMap<string, readonly [string, SpawnResult]> = new Map([
+    [
+      JSON.stringify(["-j", "-4", "address", "show"]),
+      [
+        "retired portable host gateway address inspection",
+        commandResult(
+          0,
+          JSON.stringify([
+            {
+              ifname: "lo",
+              addr_info: [{ family: "inet", local: "127.0.0.1", prefixlen: 8 }],
+            },
+          ]),
+        ),
+      ],
+    ],
+    [
+      JSON.stringify(["-o", "-4", "address", "show"]),
+      [
+        "portable host gateway address inspection",
+        commandResult(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`),
+      ],
+    ],
+  ]);
   try {
     const prepared = preparePortableExperimentalHost(
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
@@ -190,9 +214,10 @@ function proveAdmission(
           return result;
         },
         ip: (args) => {
-          assert.deepEqual(args, ["-o", "-4", "address", "show"]);
-          effects.push("portable host gateway address inspection");
-          return commandResult(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`);
+          const result = ipResults.get(JSON.stringify(args));
+          assert.ok(result, `Unexpected host address proof command: ${args.join(" ")}`);
+          effects.push(result[0]);
+          return result[1];
         },
         sudo: () => assert.fail("Existing portable host gateway address must not require sudo."),
       },

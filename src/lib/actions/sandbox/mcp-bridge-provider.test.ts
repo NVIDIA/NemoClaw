@@ -16,9 +16,13 @@ import { commandOutput } from "./mcp-bridge-output";
 import {
   assertNoAttachedProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
+  providerMatchesCredential,
+  providerMatchesManagedCredential,
 } from "./mcp-bridge-provider-inspection";
 import {
+  assertMcpProviderRecoverable,
   observeMcpCredentialRevision,
+  refreshMcpProviderEnvironment,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
@@ -37,7 +41,7 @@ Provider:
 
   Id: 11111111-2222-4333-8444-555555555555
   Name: alpha-mcp-github
-  Type: generic
+  Type: nemoclaw-mcp-v1
   Resource version: 7
   Credential keys: GITHUB_TOKEN
   Config keys: <none>
@@ -45,13 +49,13 @@ Provider:
     ).toEqual({
       id: "11111111-2222-4333-8444-555555555555",
       resourceVersion: 7,
-      type: "generic",
+      type: "nemoclaw-mcp-v1",
       credentialKeys: ["GITHUB_TOKEN"],
     });
-    expect(parseMcpProviderMetadata("Type: generic\nCredential keys: <none>\n")).toEqual({
+    expect(parseMcpProviderMetadata("Type: nemoclaw-mcp-v1\nCredential keys: <none>\n")).toEqual({
       id: null,
       resourceVersion: null,
-      type: "generic",
+      type: "nemoclaw-mcp-v1",
       credentialKeys: [],
     });
   });
@@ -62,7 +66,7 @@ Provider:
       stdout: [
         "\u001b[2mProvider:\u001b[0m",
         "\u001b[2m  Id:\u001b[0m 11111111-2222-4333-8444-555555555555",
-        "\u001b[2m  Type:\u001b[0m generic",
+        "\u001b[2m  Type:\u001b[0m nemoclaw-mcp-v1",
         "\u001b[2m  Resource version:\u001b[0m 7",
         "\u001b[2m  Credential keys:\u001b[0m GITHUB_TOKEN",
       ].join("\n"),
@@ -72,11 +76,112 @@ Provider:
     expect(parseMcpProviderMetadata(output)).toEqual({
       id: "11111111-2222-4333-8444-555555555555",
       resourceVersion: 7,
-      type: "generic",
+      type: "nemoclaw-mcp-v1",
       credentialKeys: ["GITHUB_TOKEN"],
     });
     expect(output).not.toContain("\u001b");
     expect(output).not.toMatch(/\[[0-9;]*m/);
+  });
+
+  it("accepts an exact legacy generic provider only for cleanup", () => {
+    const inspection = {
+      exists: true,
+      id: "11111111-2222-4333-8444-555555555555",
+      resourceVersion: 7,
+      type: "generic",
+      credentialKeys: ["GITHUB_TOKEN"],
+    };
+
+    expect(
+      providerMatchesCredential(
+        inspection,
+        "GITHUB_TOKEN",
+        "11111111-2222-4333-8444-555555555555",
+      ),
+    ).toBe(false);
+    expect(
+      providerMatchesManagedCredential(
+        inspection,
+        "GITHUB_TOKEN",
+        "11111111-2222-4333-8444-555555555555",
+        { allowLegacyGeneric: true },
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a legacy generic provider before active MCP reconciliation", () => {
+    vi.spyOn(providerCommand, "runOpenshellProviderCommand").mockReturnValue({
+      pid: 1234,
+      status: 0,
+      signal: null,
+      output: [
+        null,
+        "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 7\nCredential keys: GITHUB_TOKEN\n",
+        "",
+      ],
+      stdout:
+        "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 7\nCredential keys: GITHUB_TOKEN\n",
+      stderr: "",
+    });
+    const entry: McpBridgeEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://api.githubcopilot.com/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-08-19T00:00:00.000Z",
+    };
+
+    expect(() => assertMcpProviderRecoverable(entry)).toThrow(
+      /legacy generic profile.*cannot bind to an MCP endpoint/,
+    );
+  });
+
+  it("republishes an exact provider only after policy binding without reading its credential", () => {
+    const id = "11111111-2222-4333-8444-555555555555";
+    const providerResult = (resourceVersion: number) => ({
+      pid: 1234,
+      status: 0,
+      signal: null,
+      output: [
+        null,
+        `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+        "",
+      ],
+      stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: ${resourceVersion}\nCredential keys: GITHUB_TOKEN\n`,
+      stderr: "",
+    });
+    const run = vi
+      .spyOn(providerCommand, "runOpenshellProviderCommand")
+      .mockReturnValueOnce(providerResult(7))
+      .mockReturnValueOnce({
+        pid: 1234,
+        status: 0,
+        signal: null,
+        output: [null, "", ""],
+        stdout: "",
+        stderr: "",
+      })
+      .mockReturnValueOnce(providerResult(8));
+
+    expect(
+      refreshMcpProviderEnvironment({
+        server: "github",
+        agent: "openclaw",
+        adapter: "mcporter",
+        url: "https://api.githubcopilot.com/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github",
+        providerId: id,
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-08-19T00:00:00.000Z",
+      }),
+    ).toMatchObject({ resourceVersion: 8 });
+    expect(run.mock.calls[1]?.[0]).toEqual(["provider", "update", "alpha-mcp-github"]);
+    expect(run.mock.calls[1]?.[0]).not.toContain("--credential");
   });
 
   it("distinguishes a real detach from OpenShell's idempotent success", () => {
@@ -148,7 +253,7 @@ alpha-mcp-slack   generic  1                 0
           exists: true,
           id: "99999999-8888-4777-8666-555555555555",
           resourceVersion: 1,
-          type: "generic",
+          type: "nemoclaw-mcp-v1",
           credentialKeys: ["TEST_DIR1_TOKEN"],
         }),
       }),

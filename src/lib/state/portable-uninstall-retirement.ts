@@ -239,9 +239,18 @@ function sameStat(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
     (key) => left[key as keyof fs.BigIntStats] === right[key as keyof fs.BigIntStats],
   );
 }
+/**
+ * Read one portable authority directory.
+ *
+ * `permitAnyMode` is for the uninstall leftover check alone, which reads a
+ * directory an abandoned run left behind rather than one NemoClaw created, so
+ * the owner-private requirement cannot apply to it. The owner, symlink, link
+ * count, identity and entry-count checks still bound what it can read.
+ */
 export function readPortableAuthorityDirectory(
   directory: string,
   required: boolean,
+  permitAnyMode = false,
 ): PortableAuthorityDirectorySnapshot {
   let descriptor: number | null = null;
   try {
@@ -258,7 +267,7 @@ export function readPortableAuthorityDirectory(
       named.isSymbolicLink() ||
       !sameStat(before, named) ||
       before.uid !== BigInt(uid) ||
-      (before.mode & 0o777n) !== 0o700n ||
+      (!permitAnyMode && (before.mode & 0o777n) !== 0o700n) ||
       before.nlink < 1n
     )
       throw new Error(`Unsafe portable authority directory: ${directory}`);

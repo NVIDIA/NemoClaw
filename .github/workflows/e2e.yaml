@@ -566,53 +566,15 @@ jobs:
             fi
           fi
 
-      - name: Assemble reused fbc2d2a managed-image catalog for exact candidate
+      - name: Resolve exact PR managed-image catalog
         if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          contracts="${RUNNER_TEMP}/reused-managed-contracts"
-          install -d -m 0700 "$contracts"
-          node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
-          import path from "node:path";
-          import { githubRequest } from "./tools/e2e/base-image-publication.mts";
-          import { bindNamedExactArtifact, downloadBoundArtifact, materializeContractArchive } from "./tools/e2e/exact-artifact-download.mts";
-          const expected = { headSha: "fbc2d2a87b5ead5b513b8a1049dba148df405c95", runAttempt: 1, runId: 32297291144 };
-          const artifacts = [
-            ["openclaw", 9384235673, "sha256:9e261567e4e4b1fe05523c50b6eed231939b3321eebe1d222dee86563679642c"],
-            ["hermes", 9383690605, "sha256:4ab82144d7df9e52450361a8a70e99dc8b90610a3dc0f454fdc8ee0c3dd7c401"],
-            ["langchain-deepagents-code", 9383680051, "sha256:a0cc9db046e866970a2b1d2d35e50f9a9a41a6a1ef6978ab9923ee0f42854621"],
-          ];
-          for (const [agent, id, digest] of artifacts) {
-            const name = `managed-pr-contract-${expected.runId}-${expected.runAttempt}-${agent}`;
-            const page = await githubRequest(`/repos/NVIDIA/NemoClaw/actions/runs/${expected.runId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`, process.env.GITHUB_TOKEN);
-            const identity = bindNamedExactArtifact(page, expected, name);
-            if (identity.id !== id || identity.digest !== digest) throw new Error(`reused ${agent} artifact identity changed`);
-            materializeContractArchive(await downloadBoundArtifact(identity, process.env.GITHUB_TOKEN), path.join(process.env.RUNNER_TEMP, "reused-managed-contracts", agent));
-          }
-          NODE
-          for agent in openclaw hermes langchain-deepagents-code; do
-            contract="$contracts/$agent/contract.json"
-            jq --arg revision 'fbc2d2a87b5ead5b513b8a1049dba148df405c95' --arg release 'v0.0.110-140-gfbc2d2a87' '
-              if .source.revision != $revision or .source.release != $release then error("unexpected reused contract source identity")
-              else . end
-            ' "$contract" >"$contract.next"
-            mv "$contract.next" "$contract"
-          done
-          node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts assemble \
-            fbc2d2a87b5ead5b513b8a1049dba148df405c95 \
-            "${RUNNER_TEMP}/pr-managed-image-catalog.json" \
-            "$contracts/openclaw/contract.json" \
-            "$contracts/hermes/contract.json" \
-            "$contracts/langchain-deepagents-code/contract.json"
-          catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
-          jq --arg revision "$CHECKOUT_SHA" '
-            with_entries(.value.source.revision = $revision)
-          ' "$catalog" >"$catalog.next"
-          mv "$catalog.next" "$catalog"
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"
 
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1056,7 +1018,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned Go for the Podman build
-        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.25.9
           cache: false
@@ -2527,8 +2489,7 @@ jobs:
           EVIDENCE_DIRECTORY: ${{ runner.temp }}/native-runtime-aggregate
           QUALIFICATION_PLAN: ${{ needs.native-runtime-qualification-producer-plan.outputs.matrix }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          tools/e2e/native-runtime-qualification-producer-aggregate.mts
+          node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-producer-aggregate.mts
 
       - name: Upload aggregate evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -3146,7 +3107,8 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101"
+      NEMOCLAW_CANDIDATE_VERSION: "0.0.106"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3244,7 +3206,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -3504,12 +3466,12 @@ jobs:
             jq -n '{
               schemaVersion: 1,
               sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.101",
-              sourceSha: "8ddd98c3dff62619a3963f99ba1e055b67650e72",
+              releaseTag: "v0.0.106",
+              sourceSha: "c4b500a7de64d0b66e3ee8098f58d14299092162",
               artifacts: {
-                cli: {binarySha256: "1ad48efd5e1de8f3f017a81b3a7177872f350343a1a8d8074c7e844bca4801e9"},
-                gateway: {binarySha256: "a6a5d754605a2144b148637b85a09291d2eeb77e08a4ee34b83685c6920448f5"},
-                standaloneSandbox: {binarySha256: "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920"}
+                cli: {binarySha256: "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59"},
+                gateway: {binarySha256: "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c"},
+                standaloneSandbox: {binarySha256: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8"}
               }
             }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi
@@ -3540,8 +3502,7 @@ jobs:
         name: Scan MCP artifacts for fixture credentials
         if: always()
         run: >-
-          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
@@ -3576,7 +3537,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3629,12 +3590,12 @@ jobs:
           jq -n '{
             schemaVersion: 1,
             sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.101",
-            sourceSha: "8ddd98c3dff62619a3963f99ba1e055b67650e72",
+            releaseTag: "v0.0.106",
+            sourceSha: "c4b500a7de64d0b66e3ee8098f58d14299092162",
             artifacts: {
-              cli: {binarySha256: "1ad48efd5e1de8f3f017a81b3a7177872f350343a1a8d8074c7e844bca4801e9"},
-              gateway: {binarySha256: "a6a5d754605a2144b148637b85a09291d2eeb77e08a4ee34b83685c6920448f5"},
-              standaloneSandbox: {binarySha256: "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920"}
+              cli: {binarySha256: "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59"},
+              gateway: {binarySha256: "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c"},
+              standaloneSandbox: {binarySha256: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8"}
             }
           }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 
@@ -3662,8 +3623,7 @@ jobs:
         name: Scan credential-window artifacts for fixture credentials
         if: always()
         run: >-
-          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/openshell-credential-generation-window
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts e2e-artifacts/live/openshell-credential-generation-window
 
       - name: Upload credential-window artifacts
         if: ${{ always() && steps.credential_window_artifact_secret_scan.outcome == 'success' }}
@@ -3708,9 +3668,7 @@ jobs:
       - id: resolve_openshell_dev_artifact
         name: Resolve immutable OpenShell dev artifact
         run: >-
-          node --experimental-strip-types --no-warnings
-          "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" resolve
-          "${{ runner.temp }}/openshell-dev-artifact"
+          node --experimental-strip-types --no-warnings "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" resolve "${{ runner.temp }}/openshell-dev-artifact"
 
       - name: Upload OpenShell dev artifact resolution
         if: ${{ always() }}
@@ -3794,17 +3752,12 @@ jobs:
           OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: ${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}
           OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
         run: >-
-          node --experimental-strip-types --no-warnings
-          "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" verify
-          "$OPENSHELL_DEV_ARTIFACT_DIR"
-          "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"
-          "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
+          node --experimental-strip-types --no-warnings "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" verify "$OPENSHELL_DEV_ARTIFACT_DIR" "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT" "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
 
       - name: Revoke Docker auth before OpenShell development tooling
         shell: bash
         run: >-
-          bash
-          "${{ github.workspace }}/.trusted-openshell-dev-artifact/.github/scripts/docker-auth-cleanup.sh"
+          bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/.github/scripts/docker-auth-cleanup.sh"
 
       - name: Install immutable OpenShell dev artifact
         env:
@@ -3912,8 +3865,7 @@ jobs:
         name: Scan MCP artifacts for fixture credentials
         if: always()
         run: >-
-          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
@@ -3926,7 +3878,6 @@ jobs:
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
-
 
   # Manual PR qualification also requires the exact candidate activation contract.
   managed-image-multiarch-startup:
@@ -4262,8 +4213,7 @@ jobs:
       - name: Validate protected managed-image evidence
         shell: bash
         run: >-
-          npx tsx tools/e2e/live-vitest-invocation.mts run
-          --test-path test/e2e/live/managed-image-multiarch-startup.test.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-multiarch-startup.test.ts
 
       - name: Publish exact amd64 protected runtime build cache
         if: ${{ matrix.platform == 'linux/amd64' }}
@@ -4527,17 +4477,12 @@ jobs:
         if: always()
         shell: bash
         run: >-
-          npx --no-install tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.mts
-          --cleanup-only
-          --registry-name "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_REGISTRY"
-          --run-attempt "$GITHUB_RUN_ATTEMPT"
-          --run-id "$GITHUB_RUN_ID"
+          npx --no-install tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.mts --cleanup-only --registry-name "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_REGISTRY" --run-attempt "$GITHUB_RUN_ATTEMPT" --run-id "$GITHUB_RUN_ID"
 
       - name: Validate protected llama.cpp evidence
         shell: bash
         run: >-
-          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run
-          --test-path test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts
+          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts
 
       - name: Upload protected llama.cpp evidence
         if: always()
@@ -4869,7 +4814,6 @@ jobs:
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
-
 
   hermes-e2e:
     needs: generate-matrix
@@ -5243,7 +5187,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-
   jetson-nvmap-gpu:
     needs: generate-matrix
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
@@ -5463,8 +5406,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-
-
   messaging-providers:
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'messaging-providers') }}
@@ -5679,15 +5620,14 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-
   report-to-pr:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # This entire workflow is dispatch-only. Keeping selective jobs in `needs`
     # makes the report wait for and record any requested job without adding
     # skipped checks to the normal pull_request workflow.
-    needs: &e2e-result-jobs
-      [
+    needs:
+      &e2e-result-jobs [
         base-image-publication,
         generate-matrix,
         retired-selector-compatibility,

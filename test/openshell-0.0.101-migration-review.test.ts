@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { buildDockerDriverGatewayConfigToml } from "../src/lib/onboard/docker-driver-gateway-config.js";
+import { PORTABLE_HOST_GATEWAY_IP } from "../src/lib/onboard/experimental/portable-profile.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const review = fs.readFileSync(
@@ -209,7 +210,7 @@ describe("OpenShell 0.0.101 migration review", () => {
       const podmanToml = buildDockerDriverGatewayConfigToml({
         ...untrustedNewSurfaceInputs,
         OPENSHELL_DRIVERS: "podman",
-        OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
+        OPENSHELL_GRPC_ENDPOINT: `https://${PORTABLE_HOST_GATEWAY_IP}:8080`,
         OPENSHELL_DOCKER_NETWORK_NAME: "openshell-podman",
         OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
         OPENSHELL_PODMAN_SOCKET: "/run/user/1001/podman/podman.sock",

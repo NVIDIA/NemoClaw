@@ -21,6 +21,7 @@ function loadSchemas(rootDir: string): ServingCatalogSchemas {
   const schemaRoot = join(rootDir, "managed-inference", "schemas");
   return {
     catalog: readJson(join(schemaRoot, "catalog.schema.json")),
+    model: readJson(join(schemaRoot, "model.schema.json")),
     preset: readJson(join(schemaRoot, "preset.schema.json")),
     recipe: readJson(join(schemaRoot, "recipe.schema.json")),
   };
@@ -38,6 +39,7 @@ function discoverYamlFiles(directory: string): string[] {
 function loadSources(rootDir: string): ServingCatalogSource[] {
   const managedInferenceRoot = join(rootDir, "managed-inference");
   const files = [
+    ...discoverYamlFiles(join(managedInferenceRoot, "models")),
     ...discoverYamlFiles(join(managedInferenceRoot, "recipes")),
     ...discoverYamlFiles(join(managedInferenceRoot, "presets")),
   ];

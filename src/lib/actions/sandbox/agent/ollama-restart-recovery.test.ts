@@ -191,8 +191,55 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         { provider: "ollama-local", model: "missing:latest" },
         {
           probeRuntimeModelStatus: () => unloadedStatus,
+          probeModelInventory: () => null,
           runCaptureExImpl: () => ({
             stdout: JSON.stringify({ error: "model not found" }),
+            exitCode: 0,
+            timedOut: false,
+          }),
+        },
+      ),
+    ).toEqual({ kind: "warmed", ok: false, timedOut: false, reason: "ollama-error" });
+  });
+
+  it("reports an endpoint that no longer holds the model instead of a warm failure (#9455)", () => {
+    const probeModelInventory = vi.fn(() => ["llama3.2:1b"]);
+
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        {
+          provider: "ollama-local",
+          model: "gemma4:26b",
+          endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
+        },
+        {
+          probeRuntimeModelStatus: () => unloadedStatus,
+          probeModelInventory,
+          runCaptureExImpl: () => ({
+            stdout: JSON.stringify({ error: "model not found" }),
+            exitCode: 0,
+            timedOut: false,
+          }),
+        },
+      ),
+    ).toEqual({
+      kind: "skipped",
+      reason: "model-absent",
+      endpoint: `http://host.docker.internal:${OLLAMA_PORT}`,
+      inventoryLabel: "llama3.2:1b",
+    });
+    expect(probeModelInventory).toHaveBeenCalledWith("host.docker.internal", undefined);
+  });
+
+  it("keeps the warm failure when the daemon does hold the model (#9455)", () => {
+    expect(
+      maybeWarmOllamaAfterDaemonRestart(
+        { provider: "ollama-local", model: "qwen3.6:35b" },
+        {
+          probeRuntimeModelStatus: () => unloadedStatus,
+          probeModelInventory: () => ["qwen3.6:35b"],
+          runCaptureExImpl: () => ({
+            stdout: JSON.stringify({ error: "runner stopped unexpectedly" }),
             exitCode: 0,
             timedOut: false,
           }),

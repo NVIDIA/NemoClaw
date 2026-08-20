@@ -928,6 +928,22 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
+  it("does not let checkpoint replay override an explicit fresh recreation (#8847)", async () => {
+    const session = sessionWithCheckpoint(crashedCheckpoint());
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      fresh: true,
+      recreateSandbox: () => true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.skipped).not.toHaveBeenCalledWith("sandbox", "my-assistant");
+    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ recreate: true });
+  });
+
   it.each([
     ["build", defaultCreateFingerprint("v0.0.108")],
     ["policy", defaultCreateFingerprint("my-assistant", "previous-policy")],

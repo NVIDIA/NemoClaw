@@ -18,37 +18,12 @@ spec:
       schemaVersion: 1
       outputSchema: nemoclaw.nvidia.com/managed-cluster-topology/v1
 
-  model:
-    id: deepseek-ai/DeepSeek-V4-Flash-0731
-    revision: 9e165c30e2704aec5d9d593cce3eebd58bbef1cb
-    servedName: deepseek-v4-flash-0731
-    downloadSizeBytes: 166898661074
-    gated: false
-    installFastSafetensors: false
-    preparation:
-      ref: snapshot-copy-and-exact-text-replacement/v1
-      snapshotCopy:
-        sourcePath: encoding/encoding_dsv4.py
-        digest: sha256:abc0d26120250dda0ae077dc64aa28836026e61e970854aaeb792445e6a0dde6
-        targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py
-      exactTextReplacement:
-        targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4.py
-        expectedText: |-
-          elif reasoning_effort in ("max", "xhigh"):
-                          reasoning_effort = "max"
-                      else:
-                          reasoning_effort = "high"
-        replacementText: |-
-          elif reasoning_effort in ("max", "xhigh"):
-                          reasoning_effort = "max"
-                      elif reasoning_effort == "high":
-                          reasoning_effort = "high"
-                      else:
-                          reasoning_effort = "low"
-
+  modelRef: vllm.deepseek-v4-flash-0731.v1
   runtime:
     image: ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8
     imageDownloadSizeBytes: 9787537825
+    minimumComputeCapability: 121
+    minimumGpuMemoryBytes: 83449330537
     architecture: arm64
     networkMode: host
     ipcMode: host

@@ -95,6 +95,7 @@ function completedSession(bytes: Buffer, expected?: Profile) {
     raw.sessionId.length === 0 ||
     typeof raw.sandboxName !== "string" ||
     raw.sandboxName.length === 0 ||
+    (raw.agent !== null && typeof raw.agent !== "string") ||
     raw.status !== "complete" ||
     raw.resumable !== false ||
     !rawMachine ||
@@ -117,7 +118,6 @@ function completedSession(bytes: Buffer, expected?: Profile) {
     session.machine.state !== "complete" ||
     session.machine.revision !== (rawMachine as Record<string, unknown>).revision ||
     session.sandboxName !== raw.sandboxName ||
-    session.agent === null ||
     !checkpoint ||
     checkpoint.machineState !== "complete" ||
     checkpoint.sessionId !== session.sessionId ||
@@ -126,7 +126,7 @@ function completedSession(bytes: Buffer, expected?: Profile) {
     (expected !== undefined && checkpoint.profile.value !== expected) ||
     checkpoint.sandboxIdentity.kind !== "selected" ||
     checkpoint.sandboxIdentity.value.name !== session.sandboxName ||
-    checkpoint.sandboxIdentity.value.agent !== session.agent ||
+    checkpoint.sandboxIdentity.value.agent !== (session.agent ?? "openclaw") ||
     checkpoint.gatewayAuthority.kind !== "selected" ||
     !rawMetadata ||
     typeof rawMetadata !== "object" ||
@@ -284,6 +284,7 @@ function rejectUnknownRetirementArtifacts(
   homeDir: string,
   recovery: PortableRetirementRecovery | null,
   required = true,
+  permitAnyMode = false,
 ): void {
   const directories = new Map<string, Set<string>>([
     [path.join(homeDir, ".nemoclaw"), new Set(PORTABLE_RETIREMENT_STATE_ENTRIES)],
@@ -297,6 +298,7 @@ function rejectUnknownRetirementArtifacts(
       readPortableAuthorityDirectory(
         directory,
         required && directory === path.join(homeDir, ".nemoclaw"),
+        permitAnyMode,
       ).entries.some((name) => PORTABLE_ARTIFACT_NAME.test(name) && !allowed.has(name))
     )
       throw new Error("Onboarding state contains an unknown portable uninstall artifact");
@@ -440,50 +442,75 @@ async function recover(
   rejectUnknownRetirementArtifacts(boundary.homeDir, completed);
 }
 
+/**
+ * Report whether uninstall must run portable runtime cleanup.
+ *
+ * A retirement record or lifecycle receipt establishes portable ownership. A
+ * completed onboarding session also has to remain consistent with that durable
+ * evidence. With none present, the portable transaction throws before it
+ * acquires its fences, so uninstall reports no portable cleanup for each of
+ * these states:
+ *
+ * - An onboarding session that never reached a runtime.
+ * - A missing onboarding session.
+ * - A missing state directory.
+ * - A portable configuration directory abandoned by an earlier run.
+ *
+ * Ordinary uninstall then removes the state directory and the portable
+ * configuration directory when they exist. That answer still refuses an unknown
+ * portable uninstall artifact. It still requires mode 0700 on the state
+ * directory and on the receipt directory, because only the leftover check reads
+ * a directory whose mode NemoClaw never set. Every read refuses a directory
+ * whose entries it cannot list, through a symlink, an owner other than the
+ * current user, or an entry count above the cap.
+ */
 export function hasPortableUninstallAuthority(
   boundary: PortableOnboardRetirementBoundary,
   deps: PortableAuthorityAdmissionDeps,
 ): boolean {
-  readPortableAuthorityDirectory(boundary.stateDir, true);
+  readPortableAuthorityDirectory(boundary.stateDir, false);
   const receiptDirectory = readPortableAuthorityDirectory(
     path.join(boundary.stateDir, "portable-demo-lifecycle"),
     false,
   );
+  const recovery = inspectPortableRetirementRecovery(boundary.homeDir);
+  if (!recovery && !receiptDirectory.entries.length) {
+    rejectUnknownRetirementArtifacts(boundary.homeDir, null, false, true);
+    const sessionBytes = readPortableAuthoritySnapshot(boundary.sessionFile);
+    if (sessionBytes) {
+      const raw = strictJson(sessionBytes, "Onboarding session");
+      if (raw.status === "complete" && raw.resumable === false) {
+        const session = completedSession(sessionBytes);
+        const profile = session.checkpoint!.profile.value;
+        provePortableOnboardAuthority(admission(boundary, profile, deps));
+      }
+    }
+    return false;
+  }
   const configDirectory = readPortableAuthorityDirectory(
     path.join(boundary.homeDir, ".config/nemoclaw/portable"),
     false,
   );
-  const recovery = inspectPortableRetirementRecovery(boundary.homeDir);
   rejectUnknownRetirementArtifacts(boundary.homeDir, recovery);
   if (recovery) return true;
-  if (receiptDirectory.entries.length) {
-    const receipts = (deps.listReceipts ?? listPortableDemoSandboxLifecycleReceipts)(
-      boundary.stateDir,
-    );
-    const receiptDirectoryAfter = readPortableAuthorityDirectory(
-      path.join(boundary.stateDir, "portable-demo-lifecycle"),
-      true,
-    );
-    if (
-      !samePortableAuthorityDirectory(receiptDirectory, receiptDirectoryAfter) ||
-      receipts.length !== receiptDirectory.entries.length ||
-      !isDeepStrictEqual(configDirectory.entries, ["containers.conf"]) ||
-      !readPortableAuthoritySnapshot(
-        path.join(boundary.homeDir, ".config/nemoclaw/portable/containers.conf"),
-        64 * 1_024,
-      )
+  const receipts = (deps.listReceipts ?? listPortableDemoSandboxLifecycleReceipts)(
+    boundary.stateDir,
+  );
+  const receiptDirectoryAfter = readPortableAuthorityDirectory(
+    path.join(boundary.stateDir, "portable-demo-lifecycle"),
+    true,
+  );
+  if (
+    !samePortableAuthorityDirectory(receiptDirectory, receiptDirectoryAfter) ||
+    receipts.length !== receiptDirectory.entries.length ||
+    !isDeepStrictEqual(configDirectory.entries, ["containers.conf"]) ||
+    !readPortableAuthoritySnapshot(
+      path.join(boundary.homeDir, ".config/nemoclaw/portable/containers.conf"),
+      64 * 1_024,
     )
-      throw new Error("Portable uninstall authority is incomplete");
-    return true;
-  }
-  if (configDirectory.entries.length)
-    throw new Error("Portable uninstall configuration has no lifecycle authority");
-  const sessionBytes = readPortableAuthoritySnapshot(boundary.sessionFile);
-  if (!sessionBytes) throw new Error("Completed onboarding session is missing");
-  const session = completedSession(sessionBytes);
-  const profile = session.checkpoint!.profile.value;
-  provePortableOnboardAuthority(admission(boundary, profile, deps));
-  return profile === "portable";
+  )
+    throw new Error("Portable uninstall authority is incomplete");
+  return true;
 }
 
 export async function withPortableOnboardRetirementBoundary<T>(

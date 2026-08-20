@@ -8,7 +8,11 @@ import path from "node:path";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { isDgxStationGb300Product } from "./dgx-station-identity";
 import { buildVllmSshTransportEnv } from "./vllm-docker-env";
-import { NEMOTRON_ULTRA_DUAL_STATION_IMAGE, VLLM_MODELS } from "./vllm-models";
+import {
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  vllmModelForOrchestration,
+  vllmStationPairForOrchestration,
+} from "./vllm-models";
 import {
   type DualStationSshBinding,
   dualStationPinnedSshArgs,
@@ -40,19 +44,34 @@ const CANONICAL_SSH_HOST_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 const CANONICAL_SSH_USERNAME_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]*$/;
 
-const ultraModel = VLLM_MODELS.find((model) => model.envValue === "nemotron-3-ultra-550b-a55b");
+const ultraModel = vllmModelForOrchestration(
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  "station",
+  "arm64",
+);
 if (!ultraModel?.revision) {
-  throw new Error("Nemotron Ultra must have an immutable Hugging Face revision");
+  throw new Error("The Station-pair model must have an immutable Hugging Face revision");
+}
+const stationPair = vllmStationPairForOrchestration(
+  ultraModel,
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  "station",
+  "arm64",
+);
+if (!stationPair) {
+  throw new Error("The Station-pair orchestration must have a typed runtime configuration");
 }
 
 export const DUAL_STATION_VLLM_RUNTIME = Object.freeze({
-  image: NEMOTRON_ULTRA_DUAL_STATION_IMAGE.arm64.ref,
+  image: stationPair.image,
+  imageDownloadSizeBytes: stationPair.imageDownloadSizeBytes,
   modelId: ultraModel.id,
   modelRevision: ultraModel.revision,
-  servedModelId: "nemotron-ultra",
-  tensorParallelSize: 1 as const,
-  pipelineParallelSize: 2 as const,
-  nodeCount: 2 as const,
+  servedModelId: stationPair.servedName,
+  tensorParallelSize: stationPair.tensorParallelSize,
+  pipelineParallelSize: stationPair.pipelineParallelSize,
+  nodeCount: stationPair.nodeCount,
+  loadTimeoutSeconds: stationPair.loadTimeoutSeconds,
 });
 
 export interface StationGpuProbe {

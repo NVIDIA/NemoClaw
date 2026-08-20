@@ -72,43 +72,29 @@ export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLo
   );
 }
 
-function readProcessState(pid: number): string | null {
-  if (process.platform === "linux") {
-    try {
-      const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-      const closeParen = statText.lastIndexOf(")");
-      if (closeParen >= 0) {
-        return (
-          statText
-            .slice(closeParen + 2)
-            .trim()
-            .split(/\s+/, 1)[0] ?? null
-        );
-      }
-    } catch {
-      return null;
-    }
+function readLinuxProcessState(pid: number): string | null {
+  if (process.platform !== "linux") return null;
+  try {
+    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const closeParen = statText.lastIndexOf(")");
+    if (closeParen < 0) return null;
+    return (
+      statText
+        .slice(closeParen + 2)
+        .trim()
+        .split(/\s+/)[0] ?? null
+    );
+  } catch {
     return null;
   }
-
-  const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], {
-    encoding: "utf8",
-    env: buildSubprocessEnv(),
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 1_000,
-  });
-  return result.status === 0 ? result.stdout.trim() || null : null;
 }
 
-export function isMcpLifecycleLockProcessAlive(
-  pid: number,
-  readState: (processId: number) => string | null = readProcessState,
-  signalProcess: (processId: number) => unknown = (processId) => process.kill(processId, 0),
-): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  if (readState(pid)?.startsWith("Z")) return false;
+function processIsAlive(pid: number): boolean {
+  // kill(pid, 0) succeeds for an unreaped zombie even though it can no longer
+  // own or release a lifecycle lock.
+  if (readLinuxProcessState(pid) === "Z") return false;
   try {
-    signalProcess(pid);
+    process.kill(pid, 0);
     return true;
   } catch (error) {
     return isErrnoException(error) && error.code === "EPERM";
@@ -209,7 +195,7 @@ const LOCAL_PID_NAMESPACE_IDENTITY = readMcpLockPidNamespaceIdentity();
 const LOCAL_IDENTITY_PROBES: McpLifecycleLockIdentityProbes = {
   localHostIdentity: LOCAL_HOST_IDENTITY,
   localPidNamespaceIdentity: LOCAL_PID_NAMESPACE_IDENTITY,
-  processIsAlive: isMcpLifecycleLockProcessAlive,
+  processIsAlive,
   readProcessIdentity: readMcpLockProcessIdentity,
 };
 

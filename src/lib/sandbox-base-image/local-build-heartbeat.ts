@@ -4,9 +4,13 @@
 import { spawn } from "node:child_process";
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+
+type HeartbeatActivity = "build" | "pull";
+
 const HEARTBEAT_CHILD_SCRIPT = [
   "const intervalMs = Number(process.argv[1]);",
   "const parentPid = Number(process.argv[2]);",
+  "const activity = process.argv[3];",
   "const startedAt = Date.now();",
   "const stop = () => process.exit(0);",
   'process.on("SIGINT", stop);',
@@ -14,22 +18,23 @@ const HEARTBEAT_CHILD_SCRIPT = [
   "setInterval(() => {",
   "  try { process.kill(parentPid, 0); } catch { stop(); return; }",
   "  const elapsedSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));",
-  "  process.stdout.write(`  ⏳ Still working on sandbox base image build… (${elapsedSeconds}s elapsed)\\n`);",
+  "  process.stdout.write(`  ⏳ Still working on sandbox base image ${activity}… (${elapsedSeconds}s elapsed)\\n`);",
   "}, intervalMs);",
 ].join("\n");
 
 type SpawnHeartbeat = typeof spawn;
 
 export interface LocalBuildHeartbeatOptions {
+  activity?: HeartbeatActivity;
   intervalMs?: number;
   nodeExecutable?: string;
   parentPid?: number;
   spawnImpl?: SpawnHeartbeat;
 }
 
-/** Keep quiet synchronous Docker builds observable without exposing their captured logs. */
+/** Keep quiet synchronous Docker work observable without exposing its captured logs. */
 export function withLocalBuildHeartbeat<T>(
-  build: () => T,
+  operation: () => T,
   options: LocalBuildHeartbeatOptions = {},
 ): T {
   const intervalMs =
@@ -40,7 +45,13 @@ export function withLocalBuildHeartbeat<T>(
   try {
     child = (options.spawnImpl ?? spawn)(
       options.nodeExecutable ?? process.execPath,
-      ["-e", HEARTBEAT_CHILD_SCRIPT, String(intervalMs), String(options.parentPid ?? process.pid)],
+      [
+        "-e",
+        HEARTBEAT_CHILD_SCRIPT,
+        String(intervalMs),
+        String(options.parentPid ?? process.pid),
+        options.activity ?? "build",
+      ],
       { env: {}, stdio: ["ignore", "inherit", "inherit"] },
     );
     child.on("error", () => undefined);
@@ -50,12 +61,12 @@ export function withLocalBuildHeartbeat<T>(
   }
 
   try {
-    return build();
+    return operation();
   } finally {
     try {
       child?.kill("SIGTERM");
     } catch {
-      // Progress reporting must never replace the Docker build result.
+      // Progress reporting must never replace the Docker operation result.
     }
   }
 }

@@ -83,6 +83,7 @@ const register = (name, entry) => {
         entry.url,
         "hermes-config",
         { addresses: ["8.8.8.8"] },
+        entry.providerName,
       ),
       sourcePath: "generated:nemoclaw-mcp-bridge",
     });

@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+metadata:
+  id: vllm.qwen3-6-27b-fp8.v1
+  displayName: Qwen3.6 27B FP8
+spec:
+  id: Qwen/Qwen3.6-27B-FP8
+  revision: e89b16ebf1988b3d6befa7de50abc2d76f26eb09
+  environmentValue: qwen3.6-27b
+  displayName: Qwen3.6 27B FP8
+  menuOrder: 10
+  servedName: Qwen/Qwen3.6-27B-FP8
+  downloadSizeBytes: 30900000000
+  gated: false
+  installFastSafetensors: true
+  preparation:
+    ref: none/v1
+  probePolicyRef: nvidia.endpoint-validation.standard/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: false
+    reasoning: true
+    multimodal: false

@@ -12,8 +12,12 @@ import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
  * Read an environment variable as a port number, falling back to a default.
  * Validates that the value is a valid non-privileged port (1024-65535).
  */
-export function parsePort(envVar: string, fallback: number): number {
-  const raw = process.env[envVar];
+export function parsePort(
+  envVar: string,
+  fallback: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env[envVar];
   if (raw === undefined || raw === "") return fallback;
   const trimmed = String(raw).trim();
   if (!/^\d+$/.test(trimmed)) {
@@ -61,8 +65,10 @@ export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", SANDBOX_DASHB
 export const DASHBOARD_PORT_RANGE_START = SANDBOX_DASHBOARD_PORT;
 /** End of the auto-allocation range for dashboard ports (inclusive). */
 export const DASHBOARD_PORT_RANGE_END = 18799;
+export const VLLM_PORT_ENV = "NEMOCLAW_VLLM_PORT";
+export const DEFAULT_VLLM_PORT = 8000;
 /** vLLM / NIM inference port (default 8000, override via NEMOCLAW_VLLM_PORT). */
-export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
+export const VLLM_PORT = parsePort(VLLM_PORT_ENV, DEFAULT_VLLM_PORT);
 /** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */
 export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 /** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
@@ -233,21 +239,6 @@ export function parseGatewayPort(
   return port;
 }
 
-export function validateOpenRouterRuntimeAdapterPort(
-  envVar: string,
-  port: number,
-  options: RuntimeAdapterPortValidationOptions,
-): void {
-  validateServicePort(envVar, port, options, "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT");
-}
-
-export function validateHttpsPinRuntimeAdapterPort(
-  envVar: string,
-  port: number,
-  options: RuntimeAdapterPortValidationOptions,
-): void {
-  validateServicePort(envVar, port, options, "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT");
-}
 /** OpenShell gateway port (default 8080, override via NEMOCLAW_GATEWAY_PORT). */
 export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, {
   dashboardPort: DASHBOARD_PORT,
@@ -260,6 +251,35 @@ export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GA
   openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
   httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
 });
+
+/** The live host-port configuration every runtime adapter is validated against. */
+const CURRENT_RUNTIME_PORT_CONFIGURATION: RuntimeAdapterPortValidationOptions = {
+  gatewayPort: GATEWAY_PORT,
+  dashboardPort: DASHBOARD_PORT,
+  dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
+  dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,
+  vllmPort: VLLM_PORT,
+  ollamaPort: OLLAMA_PORT,
+  ollamaProxyPort: OLLAMA_PROXY_PORT,
+  bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+  openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
+  httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+};
+
+/**
+ * Reject a runtime adapter port that overlaps the dashboard allocation range, a
+ * reserved service default, or another configured service port. `ownerEnvVar`
+ * names the adapter being validated: it is both the variable reported in the
+ * error and the catalog entry excluded from the self-conflict check. Tests
+ * inject `options`; production callers use the live configuration above.
+ */
+export function validateRuntimeAdapterPort(
+  ownerEnvVar: string,
+  port: number,
+  options: RuntimeAdapterPortValidationOptions = CURRENT_RUNTIME_PORT_CONFIGURATION,
+): void {
+  validateServicePort(ownerEnvVar, port, options, ownerEnvVar);
+}
 
 /** Reject every configurable service collision with fixed llama.cpp attachment port 8081. */
 export function validateLlamaCppPortReservation(
@@ -275,15 +295,4 @@ export function validateLlamaCppPortReservation(
   }
 }
 
-validateLlamaCppPortReservation({
-  gatewayPort: GATEWAY_PORT,
-  dashboardPort: DASHBOARD_PORT,
-  dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
-  dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,
-  vllmPort: VLLM_PORT,
-  ollamaPort: OLLAMA_PORT,
-  ollamaProxyPort: OLLAMA_PROXY_PORT,
-  bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
-  openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
-  httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
-});
+validateLlamaCppPortReservation(CURRENT_RUNTIME_PORT_CONFIGURATION);

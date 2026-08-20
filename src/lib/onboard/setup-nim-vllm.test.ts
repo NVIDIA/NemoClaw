@@ -834,3 +834,106 @@ describe("DGX Spark existing vLLM headroom warning", () => {
     ).toBeNull();
   });
 });
+
+
+describe("setupNim vLLM requested serving profile", () => {
+  const profile = {
+    presetId: "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4",
+    backend: "vllm",
+    servedName: "muse-glimmer",
+    modelId: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+  };
+
+  it("refuses a running server that reports a different model (#9563)", async () => {
+    const validateOpenAiLikeSelection = vi.fn(async () => ({
+      ok: true as const,
+      api: "openai-completions",
+    }));
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () => JSON.stringify({ data: [{ id: "nvidia/Qwen3.6-35B-A3B-NVFP4" }] }),
+        validateOpenAiLikeSelection,
+      }),
+    );
+
+    await expect(handler(state(null), { servingProfileModel: profile })).rejects.toThrow("exit 1");
+    expect(console.error).toHaveBeenCalledWith(
+      "  Serving profile 'vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4' serves " +
+        "'Inferact/Muse-Glimmer-30B-NVFP4-W4A4' as 'muse-glimmer', but vLLM on localhost:8000 " +
+        "reports 'nvidia/Qwen3.6-35B-A3B-NVFP4'.",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "  Stop the existing vLLM server on localhost:8000, then rerun the original " +
+        "install/onboard command.",
+    );
+    expect(validateOpenAiLikeSelection).not.toHaveBeenCalled();
+  });
+
+  it("clears the exported preset in the keep-the-detected-model path (#9563)", async () => {
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () => JSON.stringify({ data: [{ id: "nvidia/Qwen3.6-35B-A3B-NVFP4" }] }),
+      }),
+    );
+
+    await expect(handler(state(null), { servingProfileModel: profile })).rejects.toThrow("exit 1");
+    expect(console.error).toHaveBeenCalledWith(
+      "    unset NEMOCLAW_SERVING_PRESET NEMOCLAW_PROVIDER",
+    );
+  });
+
+  it("names the managed endpoint rather than loopback for a managed binding (#9563)", async () => {
+    const handler = createSetupNimVllmHandler(
+      deps({
+        getManagedVllmProviderBinding: () => ({
+          baseUrl: "http://10.40.0.1:8000/v1",
+          apiKey: "a".repeat(64),
+        }),
+        queryVllmModels: () => JSON.stringify({ data: [{ id: "nvidia/Qwen3.6-35B-A3B-NVFP4" }] }),
+      }),
+    );
+
+    await expect(handler(state(null), { servingProfileModel: profile })).rejects.toThrow("exit 1");
+    expect(console.error).toHaveBeenCalledWith(
+      "  Serving profile 'vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4' serves " +
+        "'Inferact/Muse-Glimmer-30B-NVFP4-W4A4' as 'muse-glimmer', but the managed vLLM endpoint " +
+        "reports 'nvidia/Qwen3.6-35B-A3B-NVFP4'.",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "  Stop the managed vLLM deployment, then rerun the original install/onboard command.",
+    );
+  });
+
+  it("accepts the served alias the profile pins", async () => {
+    const selection = state(null);
+    const handler = createSetupNimVllmHandler(
+      deps({ runCapture: () => JSON.stringify({ data: [{ id: "muse-glimmer" }] }) }),
+    );
+
+    await expect(handler(selection, { servingProfileModel: profile })).resolves.toBe("selected");
+    expect(selection.model).toBe("muse-glimmer");
+  });
+
+  it("accepts an alias whose reported root is the model the profile declares", async () => {
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () =>
+          JSON.stringify({
+            data: [{ id: "local-alias", root: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4" }],
+          }),
+      }),
+    );
+
+    await expect(handler(state(null), { servingProfileModel: profile })).resolves.toBe("selected");
+  });
+
+  it("accepts a different served model when the run requested no profile", async () => {
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () => JSON.stringify({ data: [{ id: "nvidia/Qwen3.6-35B-A3B-NVFP4" }] }),
+      }),
+    );
+
+    await expect(handler(state(null), { servingProfileModel: null })).resolves.toBe("selected");
+  });
+});

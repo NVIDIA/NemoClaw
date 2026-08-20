@@ -16,7 +16,7 @@ type Workflow = {
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
 const CANDIDATE_SHA = "a".repeat(40);
 
-function selectGenericGpuLane(changedFiles: readonly string[]) {
+function selectGenericGpuLane(changedFiles: readonly string[], copiedSha = CANDIDATE_SHA) {
   const workflow = YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
   const script = workflow.jobs["select-llama-cpp-generic-gpu"]?.steps?.find(
     (step) => step.name === "Select llama.cpp generic GPU E2E from PR files",
@@ -32,7 +32,11 @@ function selectGenericGpuLane(changedFiles: readonly string[]) {
     ghPath,
     `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s' "$PR_FILES_JSON"
+if [[ "\${!#}" == "repos/NVIDIA/NemoClaw/pulls/8748" ]]; then
+  printf '%s' "$PR_JSON"
+else
+  printf '%s' "$PR_FILES_JSON"
+fi
 `,
   );
   chmodSync(ghPath, 0o755);
@@ -47,12 +51,13 @@ printf '%s' "$PR_FILES_JSON"
         env: {
           ...process.env,
           GH_TOKEN: "test-token",
+          GITHUB_REF_NAME: "pull-request/8748",
           GITHUB_OUTPUT: outputPath,
           GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-          GITHUB_SHA: CANDIDATE_SHA,
+          GITHUB_SHA: copiedSha,
           PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
           PR_FILES_JSON: JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
-          PR_INFO: JSON.stringify({ number: 8748, head: { sha: CANDIDATE_SHA } }),
+          PR_JSON: JSON.stringify({ number: 8748, head: { sha: CANDIDATE_SHA } }),
         },
       },
     );
@@ -77,5 +82,11 @@ describe("generic NVIDIA GPU PR selection", () => {
 
   it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", () => {
     expect(selectGenericGpuLane(["docs/get-started/quickstart.mdx"])).toBe("selected=false");
+  });
+
+  it("rejects a copied branch whose commit does not match the current PR head", () => {
+    expect(() => selectGenericGpuLane(["scripts/install.sh"], "b".repeat(40))).toThrow(
+      "Copied PR branch SHA does not match the current PR head",
+    );
   });
 });

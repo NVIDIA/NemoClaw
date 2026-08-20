@@ -343,7 +343,7 @@ function resolvePulledCandidate(
         : "nemoclaw.sandbox_base_image.remote_pull",
       { source },
     );
-    const pullResult = dockerPull(imageRef, { ignoreError: true, suppressOutput: true });
+    const pullResult = pullSandboxBaseImage(imageRef);
     if (pullResult.status !== 0) return null;
   }
 
@@ -363,12 +363,19 @@ function resolvePulledCandidate(
     imageRefCanRefresh(imageRef)
   ) {
     addTraceEvent("nemoclaw.sandbox_base_image.remote_refresh", { source });
-    const pullResult = dockerPull(imageRef, { ignoreError: true, suppressOutput: true });
+    const pullResult = pullSandboxBaseImage(imageRef);
     if (pullResult.status !== 0) return null;
     return validatePulledCandidate(imageName, imageRef, source, options, candidateOptions, true);
   }
 
   return null;
+}
+
+function pullSandboxBaseImage(imageRef: string) {
+  return withLocalBuildHeartbeat(
+    () => dockerPull(imageRef, { ignoreError: true, suppressOutput: true }),
+    { activity: "pull" },
+  );
 }
 
 function resolveLocalCandidate(

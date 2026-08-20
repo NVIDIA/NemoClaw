@@ -30,6 +30,12 @@ const ANSI_CSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/gu;
 const UNSAFE_CONTROL_PATTERN = /[\x00-\x08\x0A-\x1F\x7F-\x9F]/u;
 const MISSING_RESOURCE_PATTERN = /\b(?:not found|does not exist|unknown provider)\b/i;
 const MAX_PROVIDER_OUTPUT_BYTES = 16 * 1024;
+const RUNTIME_IDENTITY_REFRESH_STATUSES = new Set([
+  "configured",
+  "error",
+  "refreshed",
+  "rotation_requested",
+]);
 const MAX_SETTINGS_OUTPUT_BYTES = 16 * 1024;
 const MAX_PROFILE_BYTES = 64 * 1024;
 const MAX_PROFILE_ENDPOINTS = 32;
@@ -730,7 +736,8 @@ function assertMatchingProvider(
   result: RuntimeIdentityCommandResult,
   expected: RuntimeIdentityPlan,
   deps: RuntimeIdentityCommandDeps,
-): void {
+  allowConfiguredRefresh = false,
+): "configured" | "minted" {
   if (result.exitCode !== 0) {
     throw new Error(
       `Failed to inspect runtime identity provider '${expected.provider_name}': ${deps.formatError(commandOutput(result))}`,
@@ -741,12 +748,65 @@ function assertMatchingProvider(
     !metadata ||
     metadata.name !== expected.provider_name ||
     metadata.type !== expected.provider_type ||
-    metadata.credentialKeys.length !== 1 ||
-    metadata.credentialKeys[0] !== expected.credential_key ||
     metadata.configKeys.length !== 0
   ) {
     throw new Error(
       `Runtime identity provider '${expected.provider_name}' exists with an incompatible non-secret binding`,
+    );
+  }
+  if (
+    metadata.credentialKeys.length === 1 &&
+    metadata.credentialKeys[0] === expected.credential_key
+  ) {
+    return "minted";
+  }
+  if (allowConfiguredRefresh && metadata.credentialKeys.length === 0) return "configured";
+  throw new Error(
+    `Runtime identity provider '${expected.provider_name}' exists with an incompatible non-secret binding`,
+  );
+}
+
+function hasConfiguredRuntimeIdentityRefresh(
+  output: string,
+  expected: RuntimeIdentityPlan,
+): boolean {
+  if (Buffer.byteLength(output, "utf8") > MAX_PROVIDER_OUTPUT_BYTES) return false;
+  for (const rawLine of output.split(/\r?\n/u)) {
+    const line = rawLine.replace(ANSI_OSC_PATTERN, "").replace(ANSI_CSI_PATTERN, "");
+    if (UNSAFE_CONTROL_PATTERN.test(line)) return false;
+    const fields = line.trim().split(/\s{2,}/u);
+    if (
+      fields[0] === expected.provider_name &&
+      fields[1] === expected.credential_key &&
+      RUNTIME_IDENTITY_REFRESH_STATUSES.has(fields[3] ?? "")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function requireConfiguredRuntimeIdentityRefresh(
+  expected: RuntimeIdentityPlan,
+  deps: RuntimeIdentityCommandDeps,
+): Promise<void> {
+  const result = await deps.run([
+    "openshell",
+    "provider",
+    "refresh",
+    "status",
+    expected.provider_name,
+    "--credential-key",
+    expected.credential_key,
+  ]);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to inspect runtime identity refresh binding for '${expected.provider_name}': ${deps.formatError(commandOutput(result))}`,
+    );
+  }
+  if (!hasConfiguredRuntimeIdentityRefresh(result.stdout, expected)) {
+    throw new Error(
+      `Runtime identity provider '${expected.provider_name}' exists with an incompatible non-secret refresh binding`,
     );
   }
 }
@@ -754,10 +814,14 @@ function assertMatchingProvider(
 async function inspectProvider(
   expected: RuntimeIdentityPlan,
   deps: RuntimeIdentityCommandDeps,
+  allowConfiguredRefresh = false,
 ): Promise<"absent" | "matching"> {
   const result = await deps.run(["openshell", "provider", "get", expected.provider_name]);
   if (isMissingResource(result)) return "absent";
-  assertMatchingProvider(result, expected, deps);
+  const credentialState = assertMatchingProvider(result, expected, deps, allowConfiguredRefresh);
+  if (credentialState === "configured") {
+    await requireConfiguredRuntimeIdentityRefresh(expected, deps);
+  }
   return "matching";
 }
 
@@ -765,7 +829,7 @@ async function deleteCreatedProvider(
   receipt: RuntimeIdentityReceipt,
   deps: RuntimeIdentityCommandDeps,
 ): Promise<void> {
-  const providerState = await inspectProvider(receipt, deps);
+  const providerState = await inspectProvider(receipt, deps, true);
   if (providerState === "absent") return;
   const result = await deps.run(["openshell", "provider", "delete", receipt.provider_name]);
   if (result.exitCode !== 0 && !isMissingResource(result)) {
@@ -952,21 +1016,6 @@ export async function prepareRuntimeIdentity(
         `Failed to configure runtime identity credential refresh: ${deps.formatError(commandOutput(refreshResult), [clientId, refreshToken, clientSecret ?? ""])}`,
       );
     }
-
-    const rotate = await deps.run([
-      "openshell",
-      "provider",
-      "refresh",
-      "rotate",
-      config.provider_name,
-      "--credential-key",
-      config.credential_key,
-    ]);
-    if (rotate.exitCode !== 0) {
-      throw new Error(
-        `Failed to mint runtime identity credential: ${deps.formatError(commandOutput(rotate))}`,
-      );
-    }
   } catch (error) {
     if (providerAcquired) {
       return compensatePreparationFailure(receipt, error, deps);
@@ -977,13 +1026,33 @@ export async function prepareRuntimeIdentity(
   return receipt;
 }
 
+export async function mintRuntimeIdentityCredential(
+  receipt: RuntimeIdentityReceipt,
+  deps: RuntimeIdentityCommandDeps,
+): Promise<void> {
+  const rotate = await deps.run([
+    "openshell",
+    "provider",
+    "refresh",
+    "rotate",
+    receipt.provider_name,
+    "--credential-key",
+    receipt.credential_key,
+  ]);
+  if (rotate.exitCode !== 0) {
+    throw new Error(
+      `Failed to mint runtime identity credential: ${deps.formatError(commandOutput(rotate))}`,
+    );
+  }
+}
+
 export async function attachRuntimeIdentity(
   receipt: RuntimeIdentityReceipt,
   sandboxName: string,
   deps: RuntimeIdentityCommandDeps,
 ): Promise<boolean> {
   await requireProviderDerivedPolicy(deps);
-  const state = await inspectProvider(receipt, deps);
+  const state = await inspectProvider(receipt, deps, true);
   if (state === "absent") {
     throw new Error(
       `Runtime identity provider '${receipt.provider_name}' disappeared before attach`,
@@ -1009,7 +1078,7 @@ async function detachRuntimeIdentity(
   sandboxName: string,
   deps: RuntimeIdentityCommandDeps,
 ): Promise<void> {
-  const providerState = await inspectProvider(receipt, deps);
+  const providerState = await inspectProvider(receipt, deps, true);
   if (providerState === "absent") return;
   const detach = await deps.run([
     "openshell",

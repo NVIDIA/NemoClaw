@@ -386,14 +386,14 @@ describe("launchSandbox", () => {
     expect(mocks.execSandbox).not.toHaveBeenCalled();
   });
 
-  it("holds CUA mutation authority through the exact interactive child execution (#7755)", async () => {
+  it("launches NemoCUA through the ordinary terminal-agent path (#9649)", async () => {
     const nemocua = {
       ...loadAgent("hermes"),
       name: "nemocua",
       runtime: {
         kind: "terminal" as const,
-        interactive_command: "nemocua interactive",
-        headless_command: "nemocua headless",
+        interactive_command: "/bin/bash",
+        headless_command: "python3 /app/run_with_harness.py",
       },
     };
     const cuaEntry = sandboxEntry("nemocua");
@@ -403,52 +403,11 @@ describe("launchSandbox", () => {
       agent: nemocua,
       sb: cuaEntry,
     });
-    const events: string[] = [];
-    const childStarted = deferred();
-    const releaseChild = deferred();
-    const withSandboxMutationLock = createSerialTestLock(events, "sandbox");
-    const withGatewayRouteMutationLock = createSerialTestLock(events, "gateway");
-    const requireCuaReadiness = vi.fn(() => events.push("readiness"));
-    mocks.execSandbox.mockImplementationOnce(async () => {
-      events.push("child");
-      childStarted.resolve();
-      await releaseChild.promise;
-    });
-
-    const launch = launchSandbox("alpha", {
+    await launchSandbox("alpha", {
       getSandbox: () => cuaEntry,
-      requireCuaReadiness,
-      resolveSandboxGatewayName: () => "gateway-alpha",
-      withGatewayRouteMutationLock,
-      withSandboxMutationLock,
     });
-    await childStarted.promise;
-    const mutation = withSandboxMutationLock("alpha", () =>
-      withGatewayRouteMutationLock("gateway-alpha", () => events.push("mutation")),
-    );
-    await Promise.resolve();
 
-    expect(requireCuaReadiness).toHaveBeenCalledWith(expect.objectContaining({ agent: "nemocua" }));
-    expect(launchedCommand()).toEqual(["nemocua", "interactive"]);
-    expect(events).toEqual(["sandbox:acquired", "gateway:acquired", "readiness", "child"]);
-
-    releaseChild.resolve();
-    await launch;
-    await mutation;
-
-    expect(events).toEqual([
-      "sandbox:acquired",
-      "gateway:acquired",
-      "readiness",
-      "child",
-      "gateway:released",
-      "sandbox:released",
-      "sandbox:acquired",
-      "gateway:acquired",
-      "mutation",
-      "gateway:released",
-      "sandbox:released",
-    ]);
+    expect(launchedCommand()).toEqual(["bash", "-lc", "/bin/bash"]);
   });
 
   it("rejects an untrusted registry agent before starting an in-sandbox command (#6006)", async () => {

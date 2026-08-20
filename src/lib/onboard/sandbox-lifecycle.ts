@@ -22,6 +22,7 @@ export function removeSandboxUnlessSessionReservation(
 
 export interface SandboxLifecycleDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
+  getGatewayName(): string;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   agentProductName(): string;
   prompt(question: string): Promise<string>;
@@ -46,7 +47,10 @@ export interface SandboxLifecycleHelpers {
 
 export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): SandboxLifecycleHelpers {
   function sandboxExistsInGateway(sandboxName: string): boolean {
-    const output = deps.runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
+    const output = deps.runCaptureOpenshell(
+      ["sandbox", "get", "--gateway", deps.getGatewayName(), sandboxName],
+      { ignoreError: true },
+    );
     return Boolean(output);
   }
 

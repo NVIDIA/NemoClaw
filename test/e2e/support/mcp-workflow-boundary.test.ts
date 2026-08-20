@@ -111,6 +111,55 @@ describe("MCP workflow artifact boundary", () => {
 
   it.each([
     {
+      expected:
+        "mcp-bridge stable installer command block must match the reviewed release installation and provenance sequence",
+      job: "mcp-bridge",
+      mutation: "\n: # unreviewed no-op\n",
+      name: "no-op in the stable MCP installer",
+    },
+    {
+      expected:
+        "mcp-bridge stable installer command block must match the reviewed release installation and provenance sequence",
+      job: "mcp-bridge",
+      mutation: "\nbash unreviewed-installer.sh\n",
+      name: "second installer in the stable MCP installer",
+    },
+    {
+      expected:
+        "openshell-credential-generation-window installer command block must match the reviewed release installation and provenance sequence",
+      job: "openshell-credential-generation-window",
+      mutation: "\n: # unreviewed no-op\n",
+      name: "no-op in the credential-window installer",
+    },
+    {
+      expected:
+        "openshell-credential-generation-window installer command block must match the reviewed release installation and provenance sequence",
+      job: "openshell-credential-generation-window",
+      mutation: "\nbash unreviewed-installer.sh\n",
+      name: "second installer in the credential-window installer",
+    },
+  ])("rejects a $name", ({ expected, job, mutation }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      const install = workflow.jobs[job].steps.find(
+        (step) => step.name === "Install OpenShell CLI",
+      );
+      requireFixture(install?.run, `${job} installer fixture is missing`);
+      install.run += mutation;
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(expected);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    {
       expected: "openshell-credential-generation-window must run its exact isolated live proof",
       mutate: (run: string) =>
         run.replace("test/e2e/live/openshell-credential-generation-window.test.ts", ""),

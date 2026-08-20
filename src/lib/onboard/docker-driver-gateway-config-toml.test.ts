@@ -503,7 +503,7 @@ describe("docker-driver-gateway config TOML", () => {
           desiredEnv: { OPENSHELL_DISABLE_GATEWAY_AUTH: "false" },
           endpoint: "https://127.0.0.1:8080",
           gatewayBin: "/usr/local/bin/openshell-gateway",
-          openshellVersion: "0.0.101",
+          openshellVersion: "0.0.106",
         }),
       );
       const env = baseGatewayEnv(stateDir);
