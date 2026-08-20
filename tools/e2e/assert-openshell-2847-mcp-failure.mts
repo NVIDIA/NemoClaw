@@ -12,17 +12,24 @@ const RESULT_BASENAMES = [
 ] as const;
 const POLICY_STATUS =
   /^\u2713 Policy version \d+ (?:submitted \(hash: [0-9a-f]+\)|loaded \(active version: \d+\))$/u;
+const PRESET_DIAGNOSTIC = "Preset not found: mcp-bridge-concurrent";
 const REVISION_FAILURE =
   /^OpenShell did not synchronize the expected credential revision for placeholder 'FAKE_MCP_SECRET' into sandbox '(e2e-pr-exact-mcp-([12]))' after provider attachment or update\.$/u;
 
 type JsonObject = Record<string, unknown>;
 
 function readJsonObject(file: string): JsonObject {
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error(`OpenShell #2847 evidence is not a regular file: ${file}`);
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  let text: string;
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error(`OpenShell #2847 evidence is not a regular file: ${file}`);
+    }
+    text = fs.readFileSync(descriptor, "utf8");
+  } finally {
+    fs.closeSync(descriptor);
   }
-  const value: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+  const value: unknown = JSON.parse(text);
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`OpenShell #2847 evidence is not a JSON object: ${file}`);
   }
@@ -46,13 +53,11 @@ function commandSandbox(file: string, expectedPass: string): string {
   if (!failure || failure[2] !== expectedPass) {
     throw new Error(`OpenShell #2847 result has a different terminal diagnostic: ${file}`);
   }
+  const preTerminalLines = lines.slice(0, -1);
   if (
     lines.length < 7 ||
-    lines
-      .slice(0, -1)
-      .some(
-        (line) => line !== "Preset not found: mcp-bridge-concurrent" && !POLICY_STATUS.test(line),
-      )
+    preTerminalLines.filter((line) => line === PRESET_DIAGNOSTIC).length !== 1 ||
+    preTerminalLines.some((line) => line !== PRESET_DIAGNOSTIC && !POLICY_STATUS.test(line))
   ) {
     throw new Error(`OpenShell #2847 result contains an unexpected diagnostic: ${file}`);
   }

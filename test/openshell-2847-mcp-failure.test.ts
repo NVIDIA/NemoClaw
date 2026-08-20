@@ -87,6 +87,19 @@ describe("OpenShell credential-revision failure evidence", () => {
     );
   });
 
+  it("rejects evidence without the expected preset diagnostic", () => {
+    const root = makeEvidence();
+    const resultFile = path.join(root, "mcp-bridge", "shell", resultNames[0]);
+    const result = JSON.parse(fs.readFileSync(resultFile, "utf8")) as Record<string, unknown>;
+    result.stderr = String(result.stderr).replace(
+      "Preset not found: mcp-bridge-concurrent",
+      "\u2713 Policy version 8 loaded (active version: 8)",
+    );
+    writeJson(resultFile, result);
+
+    expect(() => assertOpenShell2847FailureEvidence(root)).toThrow(/unexpected diagnostic/u);
+  });
+
   it("rejects incomplete sandbox cleanup", () => {
     const root = makeEvidence();
     writeJson(path.join(root, "mcp-bridge", "cleanup.json"), {
