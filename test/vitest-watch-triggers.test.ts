@@ -41,8 +41,6 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
-  ".github/workflows/release-lkg-brev-image.yaml",
-  "scripts/release-lkg-brev-image.sh",
   "managed-inference/models/example.yaml",
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
   "Dockerfile",
@@ -89,13 +87,6 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  it.each([".github/workflows/release-lkg-brev-image.yaml", "scripts/release-lkg-brev-image.sh"])(
-    "maps each LKG image caller input to its contract test [%s] (#9661)",
-    (inputPath) => {
-      expect(triggeredBy(inputPath)).toEqual(["test/release-lkg-brev-image.test.ts"]);
-    },
-  );
-
   it.each([
     ".github/actions/docker-auth-setup/action.yaml",
     ".github/actions/docker-auth-cleanup/action.yaml",
