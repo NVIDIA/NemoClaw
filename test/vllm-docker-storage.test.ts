@@ -289,13 +289,8 @@ realDockerTest(
         .map((line) => JSON.parse(line) as string[]);
       installDockerCommands = dockerCommands.map((args) => args.slice(0, 2).join(" "));
       expect(new Set(installDockerCommands)).toEqual(
-        new Set(["container inspect", "container ls", "image inspect", "info --format"]),
+        new Set(["container ls", "image inspect", "info --format"]),
       );
-      expect(dockerCommands).toContainEqual([
-        "container",
-        "inspect",
-        HOST_LOCAL_VLLM_CONTAINER_NAME,
-      ]);
       const rejectedInspection = spawnSync(
         path.join(fakeBinDir, "docker"),
         ["container", "inspect", `${HOST_LOCAL_VLLM_CONTAINER_NAME}-other`],

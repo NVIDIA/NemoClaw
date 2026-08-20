@@ -30,6 +30,7 @@ describe("authorized alternate chat model selection", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("COMPATIBLE_API_KEY is required");
     expect(result.stderr).not.toContain("SyntaxError");
+    expect(result.stderr).not.toContain("helpers did not load through tsx");
   });
 
   it.each([endpoint, "http://127.0.0.1:8000/v1"])(

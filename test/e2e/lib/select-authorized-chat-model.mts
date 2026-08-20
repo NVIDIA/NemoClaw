@@ -15,9 +15,25 @@ const PREFERRED_MODELS = [
   "nvidia/nemotron-3-super-120b-a12b",
 ];
 const MAX_CANDIDATES = 6;
-const { probeOpenAiLikeEndpointOptimized } = onboardProbes;
-const { fetchOpenAiLikeModels } = providerModels;
-const { isLoopbackHostname } = urlUtils;
+
+function moduleExports<T extends object>(namespace: T): T {
+  const defaultExport = (namespace as { default?: unknown }).default;
+  return defaultExport !== null && typeof defaultExport === "object"
+    ? (defaultExport as T)
+    : namespace;
+}
+
+const { probeOpenAiLikeEndpointOptimized } = moduleExports(onboardProbes);
+const { fetchOpenAiLikeModels } = moduleExports(providerModels);
+const { isLoopbackHostname } = moduleExports(urlUtils);
+
+if (
+  typeof probeOpenAiLikeEndpointOptimized !== "function" ||
+  typeof fetchOpenAiLikeModels !== "function" ||
+  typeof isLoopbackHostname !== "function"
+) {
+  throw new TypeError("authorized model selection helpers did not load through tsx");
+}
 
 type FetchModels = (endpoint: string, apiKey: string) => ModelCatalogFetchResult;
 type ProbeModel = (
