@@ -176,9 +176,11 @@ describe("onboard Ollama upgrade version floor", () => {
         handleInstallOllamaSelection(null, "qwen3:8b", null, makeSelectionState(), menu),
         /Unexpected process\.exit\(1\)/,
       );
-      const installer = commands.find((command) => command.includes("ollama.com/install.sh"));
+      const installer = commands.find((command) => command.includes("OLLAMA_VERSION="));
       assert.ok(installer);
       assert.ok(installer.includes(`OLLAMA_VERSION=${MIN_OLLAMA_VERSION}`));
+      assert.ok(!installer.includes("curl"));
+      assert.ok(!installer.includes("|"));
       const surfaced = errors.join("\n");
       assert.ok(surfaced.includes(`did not deliver ${MIN_OLLAMA_VERSION} on this host`));
       assert.ok(!surfaced.includes("systemctl restart ollama"));

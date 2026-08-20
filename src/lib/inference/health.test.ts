@@ -444,6 +444,20 @@ describe("inference health", () => {
       expect(result?.failureLabel).toBe("unauthorized");
     });
 
+    it("names the host credential environment variable when the provider rejects the request (#9595)", () => {
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "meta/llama-3.3-70b-instruct",
+        getCredentialImpl: () => "nvapi-stale",
+        runCurlProbeImpl: () => httpUnauthorized(),
+      });
+
+      expect(result?.failureLabel).toBe("unauthorized");
+      expect(result?.detail).toContain("rejected the");
+      expect(result?.detail).toContain("host credential in NVIDIA_INFERENCE_API_KEY");
+      expect(result?.detail).toContain("not the provider credential stored in the gateway");
+      expect(result?.detail).not.toContain("Check your network connection");
+    });
+
     it("reports unhealthy on a non-auth HTTP failure", () => {
       const result = probeRemoteProviderHealth("openai-api", {
         model: "gpt-4o-mini",

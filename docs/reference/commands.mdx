@@ -2025,6 +2025,15 @@ It uses a 3-second connection timeout, a 5-second total timeout, and an 8-token 
 If the request reaches the time limit, NemoClaw reports the provider as `not probed` and leaves model health unverified instead of reporting it as unhealthy.
 These checks are diagnostic only and do not override the authoritative `inference.local` result or determine the command exit status.
 
+The `Inference (upstream)` check authenticates with the host credential that NemoClaw resolves for the provider, such as `NVIDIA_INFERENCE_API_KEY`.
+The gateway stores the provider credential that the sandbox route uses.
+The CLI cannot read the stored value back, so the two credentials can hold different secrets.
+When the `inference.local` route has already served the inference request, an `unauthorized` result on `Inference (upstream)` describes the host credential.
+NemoClaw then reports that check as `not probed` and names both credential sources.
+An `Inference (upstream)` check that fails for another reason, such as `unreachable`, still reports its own state.
+Local backend and auth proxy checks, such as `Inference (auth proxy)`, always report their own state and their own repair step.
+`$$nemoclaw <name> doctor` sends no inference request, so it always reports the `Inference (upstream)` state that it measured.
+
 Local providers add host-side backend diagnostics.
 For Local Ollama, the command can also print an `Inference (auth proxy)` diagnostic when a proxy token is available.
 Use these diagnostics to identify a failing auxiliary hop after checking the main `Inference` line.
