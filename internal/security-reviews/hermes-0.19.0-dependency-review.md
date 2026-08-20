@@ -11,6 +11,8 @@ Issue `#8087` review date: August 2, 2026.
 
 Python security refresh date: August 3, 2026.
 
+ACP packaging review date: August 20, 2026.
+
 ## Decision
 
 Pin the NemoClaw Hermes runtime to the published, non-draft, non-prerelease `v2026.7.20` release, whose package version is `0.19.0`.
@@ -25,11 +27,15 @@ The gateway-runtime-metadata, session-preview, Langfuse-placeholder, managed-lig
 The selected Python graph is hardened before installation with a reviewed, exact-source patch that updates the published dependency metadata and frozen lock together.
 The patched base image selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`.
 The base image build runs `uv pip check` and separately checks those installed versions.
-The Hermes sandbox image build checks `aiohttp==3.14.3` and `cryptography==50.0.0` after messaging package installation.
-The check runs when `NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION` is `0` or `1`.
-The Hermes sandbox image build fails if either installed dependency has another version.
+The Hermes sandbox image build checks `aiohttp==3.14.3` and `cryptography==50.0.0` after messaging package installation, and separately requires `agent-client-protocol==0.9.0` plus the ACP SDK and adapter imports inherited from the base.
+The checks run when `NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION` is `0` or `1`.
+The Hermes sandbox image build fails if any selected dependency or import is unavailable.
 The base image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
 The base image overlays checksum-pinned Node.js `24.18.1` archives for both supported architectures and installs exact uv `0.11.33`; build-time assertions reject version drift before Hermes is installed.
+
+The ACP decision in this change is limited to installing Hermes' existing `acp` extra and proving the pinned SDK and adapter imports are available.
+`hermes acp --check` is an import-readiness check; it does not validate protocol sessions, editor compatibility, workspace or current-working-directory mapping, file and terminal permissions, or transport and authorization behavior.
+Those integration behaviors require separate product acceptance and end-to-end evidence before NemoClaw can describe them as supported.
 
 The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the patched multi-platform Open Container Initiative (OCI) index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`.
 GitHub Actions workflow `.github/workflows/base-image.yaml` run `31717470863`, attempt 1, built and published that replacement image from source commit `d243ea62509bae7832a23fe8636e947303c19c60`.
@@ -174,8 +180,15 @@ The wrapper recognizes the reviewed `--safe-mode` CLI flag without adding a new 
 
 ## Dependency closure, licenses, and advisories
 
-The selected `anthropic messaging web pty mcp` Python graph contains 94 third-party packages after the reviewed security constraints are applied.
-A frozen uv `0.11.33` export of those five extras confirms 94 unique third-party package names; the optional DingTalk compatibility changes remain outside that selected graph.
+The selected `anthropic messaging web pty mcp acp` Python graph contains 95 third-party packages after the reviewed security constraints are applied.
+A frozen uv `0.11.33` export of those six extras confirms 95 unique third-party package names; comparing it with the previous five-extra graph shows that ACP adds only `agent-client-protocol==0.9.0` and changes no existing selected package version.
+Hermes 0.19.0 already pins that exact package in its source metadata and frozen lock.
+The lock binds the source distribution at `f744c48ab9af0f0b4452e5ab5498d61bcab97c26dbe7d6feec5fd36de49be30b` and the architecture-neutral wheel at `06911500b51d8cb69112544e2be01fc5e7db39ef88fecbc3848c5c6f194798ee`.
+Its only required dependency is `pydantic>=2.7`, which is already present in the selected graph, and its Python `>=3.10,<3.15` requirement includes NemoClaw's Python 3.13 runtime.
+The upstream `0.9.0` tag resolves to GitHub-verified commit `093a562a59bdec3c8bb62ff826cf86e67c427a7c`, and the tagged source carries the Apache-2.0 license.
+The package metadata does not declare a license expression or license file, and PyPI serves no PEP 740 provenance for the selected wheel; these remain artifact-provenance limitations despite the lock-bound hash and verified source tag.
+An August 20, 2026 point-in-time OSV query and the PyPI release record report no advisory for `agent-client-protocol==0.9.0`; this is not a claim that the complete image is vulnerability-free.
+The optional DingTalk compatibility changes remain outside that selected graph.
 In the unpatched upstream release transition from `v2026.7.1`, the selected graph changes only `slack-bolt` from `1.27.0` to `1.29.0` and `slack-sdk` from `3.40.1` to `3.43.0`; the downstream security selections are recorded below.
 Both changed packages remain MIT licensed.
 
@@ -185,7 +198,8 @@ The Dockerfile binds seven exact PyPI wheels by SHA-256: five architecture-neutr
 The four Microsoft Teams wheels and MSAL declare MIT; Dependency Injector ships the BSD 3-Clause license.
 For the union-enabled build, the selected wheel stage is mounted read-only and installed with BuildKit networking disabled plus `UV_OFFLINE=true` and `UV_FIND_LINKS` restricted to that mount.
 The union-disabled selector instead resolves an empty scratch stage, so an ordinary custom-plan build does not fetch or depend on the managed-image wheel graph.
-Exact amd64 and arm64 base-image probes installed the overlay offline and `uv pip check` reported all 95 resulting packages compatible on both architectures.
+The recorded 95-package amd64 and arm64 capability-union evidence predates ACP and does not validate this candidate.
+Trusted amd64 and arm64 publication probes from an exact source commit must record the updated installed-package count and compatibility before the immutable base selector and registry evidence are updated.
 An August 7, 2026 point-in-time OSV query reports no advisory for any of the six overlay package versions; this statement is scoped to that overlay and is not a claim that the complete image is vulnerability-free.
 
 The base image also replaces `python-multipart==0.0.27` with `0.0.32`.
@@ -198,7 +212,7 @@ The source patch changes the published constraints and `uv.lock` as one transact
 The August 3 refresh moves `aiohttp` from `3.14.1` to `3.14.3` and `cryptography` from `48.0.1` to `50.0.0`, clearing `GHSA-cq5v-8q36-5273` and `GHSA-g6cj-pr64-35w5`.
 Tornado `6.5.7` is the lowest version that clears all three recorded Tornado advisories: `6.5.6` clears `GHSA-3x9g-8vmp-wqvf` and `GHSA-mgf9-4vpg-hj56`, while `6.5.7` clears `GHSA-pw6j-qg29-8w7f`.
 The complete exact-source patch retains the previously reviewed MCP, Pillow, Starlette, and Tornado selections because it must apply the full downstream security delta to the unmodified Hermes release metadata.
-Hermes does not install the `azure` or `dingtalk` extras in its managed `anthropic messaging web pty mcp` runtime, but its published lock resolves every optional extra.
+Hermes does not install the `azure` or `dingtalk` extras in its managed `anthropic messaging web pty mcp acp` runtime, but its published lock resolves every optional extra.
 `msal==1.36.0` and the `alibabacloud-dingtalk==2.2.42` dependency chain capped cryptography below 49, so a lock-consistent security refresh also selects `msal==1.37.0` and `alibabacloud-dingtalk==2.2.54`.
 The latter permits `alibabacloud-tea-openapi==0.3.16`, removes the obsolete `cryptography<49` constraint, adds `alibabacloud-tea-xml==0.0.3`, and no longer resolves `darabonba-core` or `websocket-client` through that optional chain.
 The two selected Alibaba Cloud Tea packages are source-distribution-only and their PyPI JSON metadata omits dependency declarations; uv `0.11.33` derives the dependency metadata from the source distributions and freezes their source hashes in `uv.lock`.
@@ -366,8 +380,10 @@ Each reviewed commit in the following table is an ancestor of `bd668121e918e7b1d
 | `HERMES-20` | High | Retarget, guard, test, and runtime-proof | Base SHA `fa96c91f` adds a Hermes 0.18 gateway-runtime-metadata patch whose central helper shape does not match Hermes 0.19. The retargeted exact-source guard preserves `_get_process_hermes_home()` while moving the managed default gateway's central PID, lock, and status helpers below `runtime`, hash-binds the patcher, and adds unit and Hermes sandbox image probes. The managed-gateway restart E2E remains the PR SHA runtime gate. |
 | `HERMES-21` | Medium | Document inherited bounded residual | The base workaround does not retarget direct upstream `--replace` cleanup, planned-stop/takeover markers, named-profile and multiplexer readers, service/boot/web/Windows consumers, or upstream backup and Docker paths. With Shields up, those direct paths can fail or observe stale state, but the same limitation exists on base SHA `fa96c91f`; the 0.19 selector retarget adds no regression to NemoClaw's supported host-managed default-gateway lifecycle. A complete relocation needs separate exact-source patches and runtime proof for every explicit consumer. |
 | `HERMES-22` | High | Patch, pin, test, and runtime-proof | Issue `#8087` showed that the Hermes WhatsApp WebSocket ignored the injected `HTTPS_PROXY`, attempted direct DNS resolution, and failed before OpenShell produced an Open Cybersecurity Schema Framework (OCSF) record. NemoClaw exact-source patches both Baileys proxy fields, locks the added proxy dependency graph, and fails the base image build when the patch drifts, a bridge-level `makeWASocket` mock does not receive the same proxy agent as `agent` and `fetchAgent`, or the pinned Baileys WebSocket transport does not send a `CONNECT web.whatsapp.com:443` request to a controlled HTTPS proxy. The mock also proves that both options remain unset without `HTTPS_PROXY`. Live Hermes WhatsApp evidence was captured manually on a final image built from this branch: dashboard QR pairing wrote credentials to `/sandbox/.hermes/platforms/whatsapp/session`, the bridge reported `{"status":"connected"}`, an inbound message from an allowlisted sender received an agent reply, and the OpenShell proxy audit admitted every WhatsApp flow under `policy:whatsapp`. Pull request `#8229` records that run and its reproduction steps. No target in this repository pairs a live WhatsApp account, so the trusted manual pull request E2E run remains the merge gate for that evidence. |
+| `HERMES-23` | High | Package, guard, and bound scope | The managed base selects upstream's frozen `agent-client-protocol==0.9.0` extra, checks its exact installed version, and runs the adapter's terminating import check. The final Dockerfile repeats the exact version and SDK/adapter import gate so a stale or custom base cannot silently omit ACP. Base resolution imports the pinned SDK and adapter only as the sandbox user with networking disabled, all capabilities dropped, no-new-privileges, and a read-only filesystem; isolated Python and explicit exits prevent image environment settings from disabling the checks. This proves package and adapter availability only. ACP protocol sessions, editor compatibility, workspace mapping, file and terminal permissions, and transport and authorization behavior remain outside this change and require a separate accepted design and end-to-end test. |
 
-Unresolved upgrade-created high-impact concerns: `0`.
+Unresolved upgrade-created high-impact concerns: `0` within this review's package-availability scope.
+ACP integration behavior remains outside this scope and is not represented as validated behavior.
 One Medium upgrade-created instance of the pre-existing named-profile raw-capture limitation and one inherited Medium direct-runtime-consumer limitation remain explicitly accepted for this upgrade scope.
 
 The remaining gates are repository CI, automated review, documentation review, security review, and protected Hermes E2E.

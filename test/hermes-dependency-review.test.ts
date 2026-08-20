@@ -256,6 +256,7 @@ describe("Hermes 0.19.0 dependency review", () => {
       expect(addedPatchLines).not.toContain(supersededSelection);
     }
     for (const installedVersion of [
+      "'agent-client-protocol': '0.9.0'",
       "'aiohttp': '3.14.3'",
       "'cryptography': '50.0.0'",
       "'mcp': '1.28.1'",
@@ -283,7 +284,12 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`aiohttp==3.14.3`");
     expect(review).toContain("`cryptography==50.0.0`");
     expect(review).toContain("`alibabacloud-dingtalk==2.2.54`");
-    expect(review).toContain("confirms 94 unique third-party package names");
+    expect(review).toContain("confirms 95 unique third-party package names");
+    expect(review).toContain("`agent-client-protocol==0.9.0`");
+    expect(review).toContain("PyPI serves no PEP 740 provenance");
+    expect(review).toContain("does not validate protocol sessions");
+    expect(review).toContain("require separate product acceptance and end-to-end evidence");
+    expect(review).toContain("95-package amd64 and arm64 capability-union evidence predates ACP");
     expect(review).toContain("Tornado `6.5.7` is the lowest version");
     expect(review).toContain("source-distribution-only");
     expect(review).toContain("`mcp==1.28.1`");
