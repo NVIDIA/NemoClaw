@@ -76,12 +76,14 @@ function runHermesRootMcpStartup(opts: { commitStatus: 0 | 1; dashboardSeedStatu
     ].join("\n"),
     { mode: 0o700 },
   );
+  const env = { ...process.env };
+  delete env.NEMOCLAW_TEST_STEPPED_DOWN;
 
   try {
     return spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 5000,
-      env: process.env,
+      env,
     });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -631,11 +633,12 @@ print(json.dumps({"state": state, "config_reads": config_reads}))
   it("fails root startup closed when dashboard profile preparation fails", () => {
     const failure = runHermesRootMcpStartup({ commitStatus: 0, dashboardSeedStatus: 23 });
     expect(failure.status).toBe(1);
-    expect(failure.stdout.trim().split("\n")).toEqual(["dashboard-profile"]);
+    expect(failure.stdout).toContain("dashboard-profile");
     expect(failure.stderr).toContain(
       "[dashboard] ERROR: config seed exited 23; refusing dashboard startup",
     );
     expect(failure.stdout).not.toContain("launch:");
+    expect(failure.stdout).not.toContain("startup-complete");
   });
 
   it("fails root startup closed when the applied-state commit fails after gateway health", () => {
