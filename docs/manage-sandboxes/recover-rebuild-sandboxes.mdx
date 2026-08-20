@@ -279,6 +279,7 @@ If verification fails, NemoClaw restores Shields, exits nonzero, and does not re
 Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state.
 When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`.
 At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
+The command exits nonzero, so automation can detect the failed rebuild without parsing terminal output.
 
 Use the recovery guidance that matches the reported check:
 

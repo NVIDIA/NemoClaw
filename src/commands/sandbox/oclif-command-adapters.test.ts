@@ -169,21 +169,29 @@ describe("sandbox oclif command adapters", () => {
       expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
       expect(mocks.recoverSandboxWithHermesCronRestore).toHaveBeenCalledWith("alpha");
       expect(mocks.destroySandbox).toHaveBeenCalledWith("alpha", { force: false, yes: true });
-      expect(mocks.rebuildSandbox).toHaveBeenCalledWith("alpha", {
-        dcodeAutoApprovalMode: "thread-opt-in",
-        force: true,
-        toolDisclosure: "direct",
-        verbose: true,
-        yes: false,
-      });
-      expect(mocks.rebuildSandbox).toHaveBeenCalledWith("dcode", {
-        dcodeAutoApprovalMode: undefined,
-        force: false,
-        observabilityEnabled: false,
-        toolDisclosure: undefined,
-        verbose: false,
-        yes: true,
-      });
+      expect(mocks.rebuildSandbox).toHaveBeenCalledWith(
+        "alpha",
+        {
+          dcodeAutoApprovalMode: "thread-opt-in",
+          force: true,
+          toolDisclosure: "direct",
+          verbose: true,
+          yes: false,
+        },
+        { throwOnError: true },
+      );
+      expect(mocks.rebuildSandbox).toHaveBeenCalledWith(
+        "dcode",
+        {
+          dcodeAutoApprovalMode: undefined,
+          force: false,
+          observabilityEnabled: false,
+          toolDisclosure: undefined,
+          verbose: false,
+          yes: true,
+        },
+        { throwOnError: true },
+      );
       expect(mocks.restartSandboxGateway).toHaveBeenCalledWith("alpha", { quiet: true });
     } finally {
       if (originalCleanupGatewayEnv === undefined) {
@@ -192,6 +200,18 @@ describe("sandbox oclif command adapters", () => {
         process.env.NEMOCLAW_CLEANUP_GATEWAY = originalCleanupGatewayEnv;
       }
     }
+  });
+
+  it("routes rebuild preflight failures through the oclif error boundary (#9718)", async () => {
+    mocks.rebuildSandbox.mockImplementationOnce(async (_sandbox, _options, executionOptions) => {
+      expect(executionOptions).toEqual({ throwOnError: true });
+      throw new Error("Recorded recreate target is invalid");
+    });
+
+    await expect(RebuildCliCommand.run(["alpha", "--yes"], rootDir)).rejects.toThrow(
+      "Recorded recreate target is invalid",
+    );
+    expect(isMcpLifecycleLockHeld("alpha")).toBe(false);
   });
 
   it("does not hold the command lifecycle lock during an interactive connect (#9737)", async () => {

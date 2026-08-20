@@ -50,14 +50,18 @@ export default class RebuildCliCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(RebuildCliCommand);
-    await rebuildSandbox(args.sandboxName, {
-      dcodeAutoApprovalMode:
-        (flags["dcode-auto-approval"] as DcodeAutoApprovalMode | undefined) ?? undefined,
-      force: flags.force === true,
-      ...(flags.observability === undefined ? {} : { observabilityEnabled: flags.observability }),
-      toolDisclosure: (flags["tool-disclosure"] as ToolDisclosure | undefined) ?? undefined,
-      verbose: flags.verbose === true,
-      yes: flags.yes === true,
-    });
+    await rebuildSandbox(
+      args.sandboxName,
+      {
+        dcodeAutoApprovalMode:
+          (flags["dcode-auto-approval"] as DcodeAutoApprovalMode | undefined) ?? undefined,
+        force: flags.force === true,
+        ...(flags.observability === undefined ? {} : { observabilityEnabled: flags.observability }),
+        toolDisclosure: (flags["tool-disclosure"] as ToolDisclosure | undefined) ?? undefined,
+        verbose: flags.verbose === true,
+        yes: flags.yes === true,
+      },
+      { throwOnError: true },
+    );
   }
 }
