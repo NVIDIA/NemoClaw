@@ -640,6 +640,43 @@ describe("PR review advisor submission tools", () => {
     expect(submission.findingSnapshot()).toMatchObject({ version: 1, findings: [{ id: "F-001" }] });
   });
 
+  it("enforces the simplification contract while recording findings", async () => {
+    const ordinary = controller();
+    await expect(
+      execute(ordinary, RECORD_FINDINGS_TOOL, {
+        findings: [
+          {
+            ...finding(),
+            simplification: {
+              tag: "delete",
+              cut: "Remove code.",
+              replacement: "Use current code.",
+              estimatedNetLines: -1,
+              safetyBoundary: "Keep validation.",
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow("must omit simplification unless basis.kind=unnecessary_complexity");
+
+    const complexity = controller();
+    await expect(
+      execute(complexity, RECORD_FINDINGS_TOOL, {
+        findings: [
+          {
+            ...finding(),
+            category: "architecture",
+            basis: {
+              kind: "unnecessary_complexity",
+              observed: "The change adds a parallel dispatcher.",
+              expected: "The existing dispatcher owns the behavior.",
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow("requires simplification for basis.kind=unnecessary_complexity");
+  });
+
   it("accepts a finding pair admitted by one canonical policy", async () => {
     const submission = controller();
     await execute(submission, RECORD_FINDINGS_TOOL, {
@@ -651,6 +688,13 @@ describe("PR review advisor submission tools", () => {
             kind: "unnecessary_complexity",
             observed: "The change adds a parallel dispatcher.",
             expected: "The existing dispatcher owns the behavior.",
+          },
+          simplification: {
+            tag: "delete",
+            cut: "Remove the parallel dispatcher.",
+            replacement: "Use the existing dispatcher.",
+            estimatedNetLines: -10,
+            safetyBoundary: "Keep current dispatcher validation.",
           },
         },
       ],
@@ -718,6 +762,30 @@ describe("PR review advisor submission tools", () => {
     await execute(badReference, RECOMMEND_E2E_TOOL, e2e());
     await expect(execute(badReference, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
       "sourceOfTruthReview[1] references unknown finding F-999",
+    );
+  });
+
+  it("explains exact receipt reference repairs", async () => {
+    const nonConcern = controller();
+    const nonConcernReceipt = receipt();
+    nonConcernReceipt.acceptanceCoverage[0].findingId = "F-001";
+    await execute(nonConcern, RECORD_FINDINGS_TOOL, { findings: [finding()] });
+    await execute(nonConcern, RECORD_REVIEW_RECEIPT_TOOL, nonConcernReceipt);
+    await execute(nonConcern, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(nonConcern, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "acceptanceCoverage[1] does not report a concern. Set findingId=null; do not reuse an unrelated finding to fill this entry.",
+    );
+
+    const concern = controller();
+    const concernReceipt = receipt();
+    concernReceipt.acceptanceCoverage = [
+      { clause: "Clause", status: "missing", evidence: "evidence", findingId: null },
+    ];
+    await execute(concern, RECORD_FINDINGS_TOOL, { findings: [] });
+    await execute(concern, RECORD_REVIEW_RECEIPT_TOOL, concernReceipt);
+    await execute(concern, RECOMMEND_E2E_TOOL, e2e());
+    await expect(execute(concern, SUBMIT_REVIEW_TOOL, {})).rejects.toThrow(
+      "acceptanceCoverage[1] reports a concern and requires a finding ID for this exact concern.",
     );
   });
 

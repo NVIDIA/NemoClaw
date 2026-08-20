@@ -331,6 +331,19 @@ export function createReviewSubmissionController({
     execute: async (_id, input) => {
       ensureOpen(pending ?? submitted);
       const draft = input as RecordFindingsInput;
+      for (const [index, finding] of draft.findings.entries()) {
+        const requiresSimplification = finding.basis.kind === "unnecessary_complexity";
+        if (requiresSimplification && finding.simplification === undefined) {
+          throw new Error(
+            `findings[${index + 1}] requires simplification for basis.kind=unnecessary_complexity`,
+          );
+        }
+        if (!requiresSimplification && finding.simplification !== undefined) {
+          throw new Error(
+            `findings[${index + 1}] must omit simplification unless basis.kind=unnecessary_complexity`,
+          );
+        }
+      }
       findingsDraft = draft.findings.map((finding) => structuredClone(finding));
       findingsRevision += 1;
       return toolResult({

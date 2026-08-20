@@ -140,15 +140,30 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     const contextByName = new Map(
       investigate?.contextToolResults?.map((result) => [result.toolName, result.content]),
     );
-    expect(contextByName.get("pr_review_scope_risk_context")).toContain("riskPlan");
-    expect(
-      [
-        "pr_review_security_trust_context",
-        "pr_review_tests_regressions_context",
-        "pr_review_ci_operations_context",
-        "pr_review_reconciliation_context",
-      ].map((toolName) => contextByName.get(toolName)?.includes("riskPlan")),
-    ).toEqual([false, false, false, false]);
+    expect(JSON.parse(contextByName.get("pr_review_scope_risk_context") ?? "{}")).toEqual({
+      diffStat: reviewMetadata.deterministic.diffStat,
+      commits: reviewMetadata.deterministic.commits,
+      riskyAreas: reviewMetadata.deterministic.riskyAreas,
+      workflowSignals: reviewMetadata.deterministic.workflowSignals,
+      driftEvidence: reviewMetadata.deterministic.driftEvidence,
+      openPrOverlaps: [],
+      riskPlan: expect.any(Object),
+    });
+    expect(JSON.parse(contextByName.get("pr_review_security_trust_context") ?? "{}")).toEqual({
+      riskyAreas: reviewMetadata.deterministic.riskyAreas,
+    });
+    expect(JSON.parse(contextByName.get("pr_review_tests_regressions_context") ?? "{}")).toEqual({
+      testDepth: reviewMetadata.deterministic.testDepth,
+      staticTestInventory: reviewMetadata.deterministic.staticTestInventory,
+    });
+    expect(JSON.parse(contextByName.get("pr_review_ci_operations_context") ?? "{}")).toEqual({
+      workflowSignals: reviewMetadata.deterministic.workflowSignals,
+      e2eInventory: expect.any(Object),
+      selectorGuidanceOnly: true,
+    });
+    expect(JSON.parse(contextByName.get("pr_review_reconciliation_context") ?? "{}")).toEqual({
+      linkedIssues: [],
+    });
     expect(investigate?.activeToolNames).toEqual([
       "read",
       "grep",
@@ -262,9 +277,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       challenge?.prompt.lastIndexOf("submit_review") ?? -1,
     );
     expect(challenge?.terminalSubmitToolName).toBe("submit_review");
-    expect(challenge?.terminalSubmitRepairPrompt).toContain("one repair only");
-    expect(challenge?.terminalSubmitRepairPrompt).toContain("invalid");
-    expect(challenge?.terminalSubmitRepairPrompt).toContain("nonmutating");
+    expect(challenge?.terminalSubmitRepairPrompt).toBe(
+      "The nonmutating submit_review validation was rejected. You have one repair only: follow the validation error's exact correction, replace only the invalid draft sections, and submit once more. Set findingId=null when the entry does not report a concern; never reuse an unrelated finding. If you replace findings, record the receipt again afterward because it is bound to the latest findings revision.",
+    );
     expect(challenge?.terminalSubmitRepairToolNames).toEqual([
       "record_findings",
       "record_review_receipt",
