@@ -30,6 +30,12 @@ export { assertHermesPortableCommandUnavailable };
 export const withSandboxCommandLifecycleLock = withMcpLifecycleLock;
 export { HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE };
 
+const COMMANDS_WITH_INTERNAL_LIFECYCLE_FENCES = new Set([
+  "sandbox:shields:down",
+  "sandbox:shields:status",
+  "sandbox:shields:up",
+]);
+
 /**
  * Shared oclif base for NemoClaw commands.
  *
@@ -99,6 +105,9 @@ export abstract class NemoClawCommand extends Command {
         assertNoHermesPortableHostAuthority(defaultPortableDemoStateDir(process.env), commandId);
         return super._run<T>();
       });
+    }
+    if (typeof commandId === "string" && COMMANDS_WITH_INTERNAL_LIFECYCLE_FENCES.has(commandId)) {
+      return await super._run<T>();
     }
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();

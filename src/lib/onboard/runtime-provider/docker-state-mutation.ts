@@ -202,6 +202,13 @@ while True:
         except subprocess.TimeoutExpired:
             response = response_payload(action, identity, 1, "", "helper-timeout")
         except (OSError, RuntimeError, UnicodeError, ValueError):
+            # docker cp publishes directly to the destination name. The broker
+            # can observe a just-created ready file before the copy has made its
+            # contents and metadata stable. Do not turn that publication window
+            # into a terminal response with an invalid action; retry the same
+            # transaction-bound request on the next broker pass.
+            if action == "invalid":
+                continue
             response = response_payload(action, identity, 1, "", "transport-failed")
         atomic(response_path, response)
     for name in names:

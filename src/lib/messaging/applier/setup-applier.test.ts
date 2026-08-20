@@ -665,13 +665,13 @@ describe("MessagingSetupApplier", () => {
   });
 
   it("excludes disabled channels at the applier boundary", async () => {
-    const plan = await withEnv(
-      {
-        TELEGRAM_BOT_TOKEN: "123456:telegram-token",
-        SLACK_BOT_TOKEN: "xoxb-slack-token",
-        SLACK_APP_TOKEN: "xapp-slack-token",
-      },
-      () =>
+    const environment = {
+      TELEGRAM_BOT_TOKEN: "123456:telegram-token",
+      SLACK_BOT_TOKEN: "xoxb-slack-token",
+      SLACK_APP_TOKEN: "xapp-slack-token",
+    };
+    const [plan, enabledPlan] = await withEnv(environment, () =>
+      Promise.all([
         planner().buildPlan({
           sandboxName: "demo",
           agent: "openclaw",
@@ -680,6 +680,14 @@ describe("MessagingSetupApplier", () => {
           configuredChannels: ["telegram", "slack"],
           disabledChannels: ["telegram"],
         }),
+        planner().buildPlan({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "rebuild",
+          isInteractive: false,
+          configuredChannels: ["telegram", "slack"],
+        }),
+      ]),
     );
     expect(plan.disabledChannels).toEqual(["telegram"]);
     expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual([
@@ -733,21 +741,31 @@ describe("MessagingSetupApplier", () => {
     expect(policyResult.appliedPolicyKeys).toEqual(["slack"]);
 
     const files: Record<string, string> = {
-      "/sandbox/.openclaw/openclaw.json": "{}",
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: { telegram: { enabled: true, stale: true } },
+      }),
     };
-    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
-      runOpenshell: (args, options) => {
-        const target = String(args.at(-1));
-        if (args.includes("cat") && options?.input === undefined) {
-          return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
-        }
-        if (options?.input !== undefined) {
-          files[target] = options.input;
-          return { status: 0 };
-        }
-        return { status: 1 };
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(
+      {
+        ...plan,
+        // Stop/rebuild plans retain the prior render entries so the applier can
+        // remove stale configuration restored by OpenClaw doctor.
+        agentRender: enabledPlan.agentRender,
       },
-    });
+      {
+        runOpenshell: (args, options) => {
+          const target = String(args.at(-1));
+          if (args.includes("cat") && options?.input === undefined) {
+            return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+          }
+          if (options?.input !== undefined) {
+            files[target] = options.input;
+            return { status: 0 };
+          }
+          return { status: 1 };
+        },
+      },
+    );
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
     expect(openclawConfig.channels.telegram).toBeUndefined();
     expect(openclawConfig.channels.slack.accounts.default).toMatchObject({
