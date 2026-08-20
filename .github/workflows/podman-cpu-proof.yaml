@@ -77,8 +77,8 @@ jobs:
       - name: Install locked test dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build shared sandbox-name contract
-        run: npm run build:policy-boundary
+      - name: Build CLI for the CPU delegation proof
+        run: npm run build:cli
 
       - name: Prepare system and app slice CPU settings without service delegation
         shell: bash
