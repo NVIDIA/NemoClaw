@@ -23,7 +23,9 @@ const mocks = vi.hoisted(() => ({
   recoverHostLocalManagedVllmEndpoint: vi.fn(),
   resolveHostLocalVllmSelection: vi.fn(),
   runCapture: vi.fn(),
-  tryInstallManagedClusterManagedVllm: vi.fn(async () => ({ kind: "not-selected" as const })),
+  tryInstallManagedClusterManagedVllm: vi.fn<
+    typeof import("./serving/vllm-managed-support").tryInstallManagedClusterManagedVllm
+  >(async () => ({ kind: "not-selected" as const })),
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
