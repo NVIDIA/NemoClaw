@@ -6,7 +6,12 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import { detectNvidiaPlatform, type NvidiaPlatform } from "../inference/nim";
-import { selectVllmModelFromEnv, type VllmModelDef } from "../inference/vllm-models";
+import {
+  selectVllmModelFromEnv,
+  STATION_PAIR_OPTIONAL_ORCHESTRATION,
+  type VllmModelDef,
+  vllmStationPairForOrchestration,
+} from "../inference/vllm-models";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { getNemoclawStateRoot, resolveHome, STATE_DIR_NAME } from "../state/state-root";
 import { isSafeModelId } from "../validation";
@@ -99,8 +104,6 @@ const BOUND_RECEIPT_INTENT_KEYS =
 const SPARK_INTENT_KEYS = "kind,sandboxName,version";
 const SPARK_INTENT_KEYS_WITH_MODEL = "kind,model,sandboxName,version";
 const SPARK_EXPRESS_PROVIDER = "install-vllm";
-const STATION_ULTRA_ENV_VALUE = "nemotron-3-ultra-550b-a55b";
-const STATION_ULTRA_DUAL_SERVED_MODEL = "nemotron-ultra";
 const STATION_EXPRESS_INSTALLER_RESUME_FILE = "station-express-resume";
 const STATION_EXPRESS_RETIREMENT_CLAIM_PREFIX = `${STATION_EXPRESS_INSTALLER_RESUME_FILE}.retiring-`;
 const STATION_EXPRESS_RETIREMENT_CLAIM_RECEIPT = "receipt";
@@ -157,15 +160,26 @@ function qualifiedDualStationServedModel(
   env: NodeJS.ProcessEnv,
   model: VllmModelDef,
 ): string | null {
+  let stationPair;
+  try {
+    stationPair = vllmStationPairForOrchestration(
+      model,
+      STATION_PAIR_OPTIONAL_ORCHESTRATION,
+      "station",
+      "arm64",
+    );
+  } catch {
+    return null;
+  }
   if (
-    model.envValue !== STATION_ULTRA_ENV_VALUE ||
+    !stationPair ||
     String(env.NEMOCLAW_DGX_STATION_PEER ?? "").trim().length === 0 ||
     String(env.NEMOCLAW_DGX_STATION_SSH_BINDING ?? "").trim().length === 0
   ) {
     return null;
   }
   const selected = String(env.NEMOCLAW_MODEL ?? "").trim();
-  return selected === STATION_ULTRA_DUAL_SERVED_MODEL ? selected : null;
+  return selected === stationPair.servedName ? selected : null;
 }
 
 function identifiesCheckpoint(model: VllmModelDef, value: string): boolean {

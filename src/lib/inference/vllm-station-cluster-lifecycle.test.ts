@@ -26,6 +26,7 @@ import {
   DUAL_STATION_VLLM_GPU_SMOKE_LABEL,
   DUAL_STATION_VLLM_HEAD_CONTAINER_NAME,
   DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL,
+  DUAL_STATION_VLLM_LAUNCH_SCHEMA,
   DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL,
   DUAL_STATION_VLLM_MANAGED_LABEL,
   DUAL_STATION_VLLM_ROLE_LABEL,
@@ -160,7 +161,7 @@ function fakeContainer(
       [DUAL_STATION_VLLM_CLUSTER_LABEL]: dualStationVllmClusterId(fixturePlan()),
       [DUAL_STATION_VLLM_GPU_LABEL]:
         role === "head" ? fixturePlan().local.gpu.uuid : fixturePlan().peer.gpu.uuid,
-      [DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL]: "2",
+      [DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL]: DUAL_STATION_VLLM_LAUNCH_SCHEMA,
       [DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL]: dualStationVllmLaunchContract(fixturePlan(), role),
       [DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL]: API_KEY_FINGERPRINT,
       [DUAL_STATION_VLLM_TRANSACTION_LABEL]: TRANSACTION_ID,
@@ -304,7 +305,7 @@ describe("dual-Station managed vLLM run argv", () => {
     expect(args).toContain(plan.runtime.image);
     expect(dockerValues(args, "--label")).toEqual(
       expect.arrayContaining([
-        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=2`,
+        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=3`,
         `${DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL}=${dualStationVllmLaunchContract(plan, role)}`,
         `${DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL}=${API_KEY_FINGERPRINT}`,
         `${DUAL_STATION_VLLM_TRANSACTION_LABEL}=${TRANSACTION_ID}`,
@@ -638,6 +639,40 @@ describe("dual-Station managed vLLM lifecycle", () => {
       { kind: "rm", target: "peer", value: WORKER_SMOKE_ID },
       { kind: "rm", target: "local", value: HEAD_SMOKE_ID },
     ]);
+  });
+
+  it("adopts and replaces an owned launch-schema-2 pair", async () => {
+    const fake = harness();
+    const head = fakeContainer("head");
+    const worker = fakeContainer("worker");
+    head.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] = "2";
+    worker.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] = "2";
+    fake.seed("local", head);
+    fake.seed("peer", worker);
+
+    expect(preflightDualStationManagedVllm(fixturePlan(), fake.deps)).toEqual({ ok: true });
+    expect(await startDualStationManagedVllm(fixturePlan(), START_CONFIG, fake.deps)).toMatchObject(
+      {
+        ok: true,
+        reusedExisting: false,
+      },
+    );
+    expect(fake.operations.filter((operation) => operation.kind === "rm")).toEqual(
+      expect.arrayContaining([
+        { kind: "rm", target: "local", value: HEAD_ID },
+        { kind: "rm", target: "peer", value: WORKER_ID },
+      ]),
+    );
+    expect(
+      fake.containers.get(`local:${DUAL_STATION_VLLM_HEAD_CONTAINER_NAME}`)?.[0]?.labels[
+        DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL
+      ],
+    ).toBe("3");
+    expect(
+      fake.containers.get(`peer:${DUAL_STATION_VLLM_WORKER_CONTAINER_NAME}`)?.[0]?.labels[
+        DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL
+      ],
+    ).toBe("3");
   });
 
   it.each([
@@ -1079,6 +1114,15 @@ describe("managed dual-Station base URL recovery", () => {
     ).toBe(true);
     expect(fake.captureOptions.at(-1)).toMatchObject({ timeout: 10_000 });
     expect(fake.captureOptions.at(-1)?.env?.VLLM_API_KEY).toBeUndefined();
+  });
+
+  it("recovers the endpoint from an owned launch-schema-2 head", () => {
+    const fake = harness();
+    const head = fakeContainer("head");
+    head.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] = "2";
+    fake.seed("local", head);
+
+    expect(getDualStationManagedVllmBaseUrl(fake.deps)).toBe("http://192.168.240.1:8000");
   });
 
   it("reports a structurally managed running head before API-key fingerprint validation", () => {

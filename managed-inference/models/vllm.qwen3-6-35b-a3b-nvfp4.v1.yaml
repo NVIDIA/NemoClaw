@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+metadata:
+  id: vllm.qwen3-6-35b-a3b-nvfp4.v1
+  displayName: Qwen3.6 35B-A3B NVFP4
+spec:
+  id: nvidia/Qwen3.6-35B-A3B-NVFP4
+  revision: 491c2f1ea524c639598bf8fa787a93fed5a6fbce
+  environmentValue: qwen3.6-35b-a3b-nvfp4
+  displayName: Qwen3.6 35B-A3B NVFP4
+  menuOrder: 60
+  servedName: nvidia/Qwen3.6-35B-A3B-NVFP4
+  downloadSizeBytes: 23500000000
+  gated: false
+  installFastSafetensors: true
+  preparation:
+    ref: none/v1
+  probePolicyRef: nvidia.endpoint-validation.standard/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: false
+    reasoning: true
+    multimodal: false

@@ -8,6 +8,9 @@ metadata:
   id: vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4
   displayName: NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 on one DGX Spark
   supportState: experimental
+  validation:
+    level: schema
+    evidence: managed-inference-catalog-compiler-v1
 
 spec:
   selection: explicit-only
@@ -103,4 +106,6 @@ spec:
 
   plan:
     backend: vllm
+    platform: spark
+    interactive: false
     recipeRef: vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1
