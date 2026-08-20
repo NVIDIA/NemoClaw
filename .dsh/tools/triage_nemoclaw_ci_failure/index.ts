@@ -1,5 +1,5 @@
 /**
- * Classify a NemoClaw GitHub Actions failure with caller-selected head/tail log clipping, explicit truncation metadata, and optional bounded artifact inspection. Reject compressed artifacts above 25,000,000 bytes. Requires GNU find for bounded extracted-file inventories.
+ * Classify a NemoClaw GitHub Actions failure with bounded logs and optional artifact inspection. Requires Bash, GNU find, Info-ZIP zipinfo and unzip, awk, base64, head, mktemp, stat, and wc on Linux.
  */
 export default async function triage_nemoclaw_ci_failure(input: {
   workdir: string;
@@ -81,6 +81,24 @@ export default async function triage_nemoclaw_ci_failure(input: {
   const run = async (command, description, timeoutMs = 30000) => {
     const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
     if (result.kind !== "foreground") throw new Error("Unexpected background result");
+    const detail = (result.stderr.text + "\n" + result.stdout.text).toLowerCase();
+    if (
+      result.exitCode !== 0 &&
+      [
+        "authentication",
+        "authorization",
+        "forbidden",
+        "not authorized",
+        "http 401",
+        "http 403",
+        "resource not accessible",
+        "sso",
+      ].some((value) => detail.includes(value))
+    )
+      throw new Error(
+        "GitHub access failed; correct authentication or authorization before retrying.\n" +
+          redact(result.stderr.text).slice(-1500),
+      );
     return result;
   };
   const jobResult = await tools.run_github_cli({
@@ -221,14 +239,41 @@ export default async function triage_nemoclaw_ci_failure(input: {
     const dir = temp.stdout.text.trim();
     if (!dir) throw new Error("Could not create temporary artifact directory");
     try {
+      const artifactId = found.id;
+      if (typeof artifactId !== "number" || !Number.isSafeInteger(artifactId) || artifactId <= 0)
+        throw new Error(`Artifact ${artifactName} has an invalid artifact ID`);
+      const archive = dir + "/artifact.zip";
+      const extracted = dir + "/extracted";
       const download = await run(
-        `gh run download ${q(job.runId)} --repo ${q(repo)} --name ${q(artifactName)} --dir ${q(dir)}`,
-        "Download selected workflow artifact",
+        `umask 077; set -o pipefail; gh api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | head -c 25000001 > ${q(archive)}`,
+        "Download selected artifact ZIP",
         60000,
       );
       if (download.exitCode !== 0) throw new Error("Could not download selected artifact");
+      const checked = await run(
+        `archive=${q(archive)}; directory=${q(extracted)}; expected=${q(sizeBytes)}; measured=$(stat -c %s -- "$archive") || { printf 'malformed\n'; exit 0; }; if [ "$measured" -gt 25000000 ] || [ "$measured" -ne "$expected" ]; then printf 'compressed-size\n'; exit 0; fi; summary=$(LC_ALL=C zipinfo -t "$archive" 2>/dev/null) || { printf 'malformed\n'; exit 0; }; if [[ "$summary" == *$'\n'* ]] || [[ ! "$summary" =~ ^([0-9]+)[[:space:]]files?,[[:space:]]([0-9]+)[[:space:]]bytes[[:space:]]uncompressed, ]]; then printf 'malformed\n'; exit 0; fi; entries=\${BASH_REMATCH[1]}; expanded=\${BASH_REMATCH[2]}; if [ "$entries" -gt 100 ]; then printf 'entries\n'; exit 0; fi; if [ "$expanded" -gt 100000000 ]; then printf 'expanded\n'; exit 0; fi; listing=$(umask 077; mktemp "${dir}/zip-listing.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing"' EXIT; LC_ALL=C zipinfo -l "$archive" > "$listing" 2>/dev/null || { printf 'malformed\n'; exit 0; }; listing_bytes=$(wc -c < "$listing") || { printf 'malformed\n'; exit 0; }; if [ "$listing_bytes" -gt 7000000 ]; then printf 'listing\n'; exit 0; fi; state=$(awk -v expected="$entries" 'BEGIN { count=0; state="ok" } NR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { count++; mode=substr($0,1,1); size=$4; line=$0; for (i=1;i<=9;i++) sub(/^[^[:space:]]+[[:space:]]+/, "", line); name=line; if (mode != "-" && mode != "d") state="type"; if (size !~ /^[0-9]+$/) state="parser"; if (name == "" || name ~ /^\// || name ~ /\\/ || name ~ /[[:cntrl:]]/ || name ~ /\\^[A-Z@[]/) state="path"; parts=split(name, component, "/"); last=parts; if (mode == "d" && component[parts] == "") last--; else if (component[parts] == "") state="path"; for (i=1;i<=last;i++) if (component[i] == "" || component[i] == "." || component[i] == "..") state="path"; output=name; sub(/\/$/, "", output); if (output == "" || seen[output]++) state="duplicate"; next } /^[0-9]+ files?, [0-9]+ bytes uncompressed, / { summaries++; next } { state="parser" } END { if (count != expected || summaries != 1) state="parser"; print state }' "$listing"); if [ "$state" != ok ]; then printf '%s\n' "$state"; exit 0; fi; unzip -tqq "$archive" >/dev/null 2>&1 || { printf 'malformed\n'; exit 0; }; mkdir -- "$directory" || { printf 'extract\n'; exit 0; }; unzip -qq "$archive" -d "$directory" >/dev/null 2>&1 || { rm -rf -- "$directory"; printf 'extract\n'; exit 0; }; inventory=$(umask 077; mktemp "${dir}/inventory.XXXXXXXXXX") || { rm -rf -- "$directory"; printf 'unsafe\n'; exit 0; }; find "$directory" -mindepth 1 -printf '%y %s\0' 2>/dev/null | head -z -n 101 > "$inventory"; pipeline_status=\${PIPESTATUS[0]}; inventory_state=$(awk -v pipeline_status="$pipeline_status" 'BEGIN { RS="\0"; records=0; bytes=0; state="ok" } NF { records++; if (records == 101) { state="entries"; next } if ($1 == "d") next; if ($1 != "f" || $2 !~ /^[0-9]+$/) { state="unsafe"; next } bytes += $2; if (bytes > 100000000 && state == "ok") state="bytes" } END { if (records == 101) print "entries"; else if (pipeline_status != 0) print "unsafe"; else print state }' "$inventory"); rm -f -- "$inventory"; if [ "$inventory_state" != ok ]; then rm -rf -- "$directory"; printf '%s\n' "$inventory_state"; exit 0; fi; printf 'ok\n'`,
+        "Inspect and extract selected artifact ZIP",
+      );
+      const archiveState = checked.stdout.text.trim().split(/\s+/, 1)[0];
+      if (checked.exitCode !== 0 || archiveState !== "ok") {
+        const details = {
+          "compressed-size": "Artifact compressed size is invalid or differs from its metadata",
+          entries: "Artifact contains more than 100 entries",
+          expanded: "Artifact declares more than 100,000,000 expanded bytes",
+          type: "Artifact contains a symlink or another unsupported entry type",
+          path: "Artifact contains an unsafe or ambiguous path",
+          duplicate: "Artifact contains duplicate output paths",
+          listing: "Artifact entry listing exceeds the inspection limit",
+          parser: "Artifact entry listing is ambiguous",
+          malformed: "Artifact ZIP is malformed",
+          extract: "Could not extract checked artifact",
+          unsafe: "Extracted artifact contains an unsupported entry",
+          bytes: "Extracted artifact contains more than 100,000,000 bytes",
+        };
+        throw new Error(details[archiveState] ?? "Could not inspect artifact ZIP");
+      }
       const measured = await run(
-        `inventory=$(umask 077; mktemp "\${TMPDIR:-/tmp}/nemoclaw-ci-inventory.XXXXXXXXXX") || { printf 'unsafe\n'; exit 0; }; trap 'rm -f -- "$inventory"' EXIT; set -o pipefail; find ${q(dir)} -mindepth 1 -printf '%y %s\0' 2>/dev/null | head -z -n 101 > "$inventory"; pipeline_status=$?; awk -v pipeline_status="$pipeline_status" 'BEGIN { RS="\0"; records=0; bytes=0; state="ok" } NF { records++; if (records == 101) { state="files"; next } if ($1 == "d") next; if ($1 != "f" || $2 !~ /^[0-9]+$/) { state="unsafe"; next } bytes += $2; if (bytes > 100000000 && state == "ok") state="bytes" } END { if (records == 101) print "files"; else if (pipeline_status != 0) print "unsafe"; else print state }' "$inventory"`,
+        `inventory=$(umask 077; mktemp "\${TMPDIR:-/tmp}/nemoclaw-ci-inventory.XXXXXXXXXX") || { printf 'unsafe\n'; exit 0; }; trap 'rm -f -- "$inventory"' EXIT; set -o pipefail; find ${q(extracted)} -mindepth 1 -printf '%y %s\0' 2>/dev/null | head -z -n 101 > "$inventory"; pipeline_status=$?; awk -v pipeline_status="$pipeline_status" 'BEGIN { RS="\0"; records=0; bytes=0; state="ok" } NF { records++; if (records == 101) { state="files"; next } if ($1 == "d") next; if ($1 != "f" || $2 !~ /^[0-9]+$/) { state="unsafe"; next } bytes += $2; if (bytes > 100000000 && state == "ok") state="bytes" } END { if (records == 101) print "files"; else if (pipeline_status != 0) print "unsafe"; else print state }' "$inventory"`,
         "Measure extracted artifact inventory",
       );
       const inventoryState = measured.stdout.text.trim().split(/\s+/, 1)[0];
@@ -240,7 +285,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
         throw new Error("Artifact contains a symlink or another unsupported entry");
       }
       const listed = await run(
-        `find ${q(dir)} -type f -name '*.result.json' -printf '%P\0' | LC_ALL=C sort -z | head -z -n 101 | base64 -w0`,
+        `find ${q(extracted)} -type f -name '*.result.json' -printf '%P\0' | LC_ALL=C sort -z | head -z -n 101 | base64 -w0`,
         "List bounded test result artifacts",
       );
       if (listed.exitCode !== 0) throw new Error("Could not list selected artifact results");
@@ -251,7 +296,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
       const fileResults = await Promise.all(
         resultPaths.slice(0, 100).map(async (relativePath) => {
           try {
-            const resultPath = `${dir}/${relativePath}`;
+            const resultPath = `${extracted}/${relativePath}`;
             const measured = await run(
               `wc -c < ${q(resultPath)}`,
               "Measure bounded test result artifact",

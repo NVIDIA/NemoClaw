@@ -10,8 +10,8 @@ export default async function run_github_cli(input: {
 }): Promise<{ ok: boolean; code: Integer; stdout: string; stderr: string }> {
   if (input.args.length < 1 || input.args.length > 128)
     throw new Error("args must contain 1 through 128 entries");
-  if (input.args.some((arg) => arg.length > 131072 || arg.includes("\0") || /[\r\n]/u.test(arg)))
-    throw new Error("GitHub CLI arguments must be bounded single-line text without NUL bytes");
+  if (input.args.some((arg) => arg.length > 131072 || arg.includes("\0")))
+    throw new Error("GitHub CLI arguments must be bounded text without NUL bytes");
   if (input.args.reduce((total, arg) => total + arg.length, 0) > 262144)
     throw new Error("GitHub CLI arguments exceed the total size bound");
   if (input.args.some((arg) => /^(?:-H|--header)$/u.test(arg) || /authorization\s*:/iu.test(arg)))
@@ -21,6 +21,7 @@ export default async function run_github_cli(input: {
   const allowed = {
     api: null,
     auth: new Set(["status"]),
+    issue: new Set(["list", "view"]),
     pr: new Set(["checks", "list", "view", "merge", "ready", "review"]),
     repo: new Set(["view"]),
     run: new Set(["list", "view"]),

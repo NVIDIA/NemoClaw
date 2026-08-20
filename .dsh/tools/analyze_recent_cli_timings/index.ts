@@ -1,5 +1,5 @@
 /**
- * Aggregate bounded per-test and per-file durations from recent retained NemoClaw CLI Vitest artifacts. Reject compressed artifacts above 25,000,000 bytes. Requires GNU find for bounded extracted-file inventories.
+ * Aggregate bounded per-test and per-file durations from recent retained NemoClaw CLI Vitest artifacts. Reject compressed artifacts above 25,000,000 bytes. Requires Bash, GNU find, Info-ZIP zipinfo and unzip, awk, base64, head, mktemp, stat, and wc on Linux.
  */
 export default async function analyze_recent_cli_timings(input: {
   workdir: string;
@@ -124,8 +124,13 @@ export default async function analyze_recent_cli_timings(input: {
       });
       continue;
     }
+    const artifactId = Number(artifact.id);
+    if (!Number.isSafeInteger(artifactId) || artifactId <= 0) {
+      failures.push({ runId, detail: "Artifact has an invalid artifact ID" });
+      continue;
+    }
     artifacts.push({
-      artifactId: Number(artifact.id),
+      artifactId,
       runId,
       createdAt: String(artifact.createdAt),
       headSha: String(artifact.headSha),
@@ -146,22 +151,43 @@ export default async function analyze_recent_cli_timings(input: {
   try {
     for (const artifact of artifacts) {
       const directory = root + "/" + artifact.runId;
+      const archive = root + "/" + artifact.runId + ".zip";
       const downloaded = await run(
-        "mkdir -p " +
-          quote(directory) +
-          " && gh run download " +
-          quote(artifact.runId) +
-          " --repo " +
-          quote(repo) +
-          " --name " +
-          quote(artifactName) +
-          " --dir " +
-          quote(directory),
+        "umask 077; set -o pipefail; gh api " +
+          quote(`repos/${repo}/actions/artifacts/${artifact.artifactId}/zip`) +
+          " | head -c 25000001 > " +
+          quote(archive),
       );
       if (downloaded.exitCode !== 0) {
         failures.push({
           runId: artifact.runId,
           detail: await project(downloaded.stderr.text || downloaded.stdout.text, 1000),
+        });
+        continue;
+      }
+      const checked = await run(
+        `archive=${quote(archive)}; directory=${quote(directory)}; expected=${quote(artifact.size)}; measured=$(stat -c %s -- "$archive") || { printf 'malformed\n'; exit 0; }; if [ "$measured" -gt 25000000 ] || [ "$measured" -ne "$expected" ]; then printf 'compressed-size\n'; exit 0; fi; summary=$(LC_ALL=C zipinfo -t "$archive" 2>/dev/null) || { printf 'malformed\n'; exit 0; }; if [[ "$summary" == *$'\n'* ]] || [[ ! "$summary" =~ ^([0-9]+)[[:space:]]files?,[[:space:]]([0-9]+)[[:space:]]bytes[[:space:]]uncompressed, ]]; then printf 'malformed\n'; exit 0; fi; entries=\${BASH_REMATCH[1]}; expanded=\${BASH_REMATCH[2]}; if [ "$entries" -gt 100 ]; then printf 'entries\n'; exit 0; fi; if [ "$expanded" -gt 100000000 ]; then printf 'expanded\n'; exit 0; fi; listing=$(umask 077; mktemp "${root}/zip-listing.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing"' EXIT; LC_ALL=C zipinfo -l "$archive" > "$listing" 2>/dev/null || { printf 'malformed\n'; exit 0; }; listing_bytes=$(wc -c < "$listing") || { printf 'malformed\n'; exit 0; }; if [ "$listing_bytes" -gt 7000000 ]; then printf 'listing\n'; exit 0; fi; state=$(awk -v expected="$entries" 'BEGIN { count=0; state="ok" } NR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { count++; mode=substr($0,1,1); size=$4; line=$0; for (i=1;i<=9;i++) sub(/^[^[:space:]]+[[:space:]]+/, "", line); name=line; if (mode != "-" && mode != "d") state="type"; if (size !~ /^[0-9]+$/) state="parser"; if (name == "" || name ~ /^\// || name ~ /\\/ || name ~ /[[:cntrl:]]/ || name ~ /\\^[A-Z@[]/) state="path"; parts=split(name, component, "/"); last=parts; if (mode == "d" && component[parts] == "") last--; else if (component[parts] == "") state="path"; for (i=1;i<=last;i++) if (component[i] == "" || component[i] == "." || component[i] == "..") state="path"; output=name; sub(/\/$/, "", output); if (output == "" || seen[output]++) state="duplicate"; next } /^[0-9]+ files?, [0-9]+ bytes uncompressed, / { summaries++; next } { state="parser" } END { if (count != expected || summaries != 1) state="parser"; print state }' "$listing"); if [ "$state" != ok ]; then printf '%s\n' "$state"; exit 0; fi; unzip -tqq "$archive" >/dev/null 2>&1 || { printf 'malformed\n'; exit 0; }; mkdir -- "$directory" || { printf 'extract\n'; exit 0; }; unzip -qq "$archive" -d "$directory" >/dev/null 2>&1 || { rm -rf -- "$directory"; printf 'extract\n'; exit 0; }; inventory=$(umask 077; mktemp "${root}/inventory.XXXXXXXXXX") || { rm -rf -- "$directory"; printf 'unsafe\n'; exit 0; }; find "$directory" -mindepth 1 -printf '%y %s\0' 2>/dev/null | head -z -n 101 > "$inventory"; pipeline_status=\${PIPESTATUS[0]}; inventory_state=$(awk -v pipeline_status="$pipeline_status" 'BEGIN { RS="\0"; records=0; bytes=0; state="ok" } NF { records++; if (records == 101) { state="entries"; next } if ($1 == "d") next; if ($1 != "f" || $2 !~ /^[0-9]+$/) { state="unsafe"; next } bytes += $2; if (bytes > 100000000 && state == "ok") state="bytes" } END { if (records == 101) print "entries"; else if (pipeline_status != 0) print "unsafe"; else print state }' "$inventory"); rm -f -- "$inventory"; if [ "$inventory_state" != ok ]; then rm -rf -- "$directory"; printf '%s\n' "$inventory_state"; exit 0; fi; printf 'ok\n'`,
+        30000,
+      );
+      const archiveState = checked.stdout.text.trim().split(/\s+/, 1)[0];
+      if (checked.exitCode !== 0 || archiveState !== "ok") {
+        const details = {
+          "compressed-size": "Artifact compressed size is invalid or differs from its metadata",
+          entries: "Artifact contains more than 100 entries",
+          expanded: "Artifact declares more than 100,000,000 expanded bytes",
+          type: "Artifact contains a symlink or another unsupported entry type",
+          path: "Artifact contains an unsafe or ambiguous path",
+          duplicate: "Artifact contains duplicate output paths",
+          listing: "Artifact entry listing exceeds the inspection limit",
+          parser: "Artifact entry listing is ambiguous",
+          malformed: "Artifact ZIP is malformed",
+          extract: "Could not extract checked artifact",
+          unsafe: "Extracted artifact contains an unsupported entry",
+          bytes: "Extracted artifact contains more than 100,000,000 bytes",
+        };
+        failures.push({
+          runId: artifact.runId,
+          detail: details[archiveState] ?? "Could not inspect artifact ZIP",
         });
         continue;
       }
