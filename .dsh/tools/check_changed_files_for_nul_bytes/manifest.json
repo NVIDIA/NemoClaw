@@ -84,5 +84,5 @@
     "required": ["ok", "checked", "files", "findings", "changed"],
     "additionalProperties": false
   },
-  "revision": 1
+  "revision": 2
 }

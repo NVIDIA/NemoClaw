@@ -13,35 +13,91 @@ const tailLines = Math.max(20, Math.min(500, input.tailLines ?? 180));
 const contextLines = Math.max(0, Math.min(80, input.contextLines ?? 40));
 const pattern = input.pattern ?? "";
 if (pattern.length > 1000) throw new Error("pattern is too long");
+let matcher;
 try {
-  new RegExp(pattern, "iu");
+  matcher = new RegExp(pattern, "iu");
 } catch (error) {
   throw new Error(`Invalid pattern: ${String(error)}`);
 }
-const script =
-  "import json, re, subprocess, sys\nrepo, job_id, pattern, context_raw, tail_raw = sys.argv[1:]\nproc = subprocess.run(['gh','api',f'repos/{repo}/actions/jobs/{job_id}/logs'],capture_output=True)\nif proc.returncode != 0:\n print(json.dumps({'code':proc.returncode,'stdout':'','stderr':proc.stderr.decode('utf-8','replace')[-12000:],'matchedLines':0,'truncated':False})); raise SystemExit(0)\nlines=proc.stdout.decode('utf-8','replace').splitlines(); context=int(context_raw); tail=int(tail_raw); matched=0\nif pattern:\n matcher=re.compile(pattern,re.IGNORECASE); indexes=set()\n for index,line in enumerate(lines):\n  if matcher.search(line): matched += 1; indexes.update(range(max(0,index-context),min(len(lines),index+context+1)))\n selected=[lines[index] for index in sorted(indexes)]\nelse: selected=lines\ncandidates=selected[-tail:]; bounded=[]; size=0\nfor line in reversed(candidates):\n line=line[:4000]\n if size+len(line)+1>40000: break\n bounded.append(line); size += len(line)+1\nbounded.reverse()\nprint(json.dumps({'code':0,'stdout':'\\n'.join(bounded),'stderr':proc.stderr.decode('utf-8','replace')[-4000:],'matchedLines':matched,'truncated':len(selected)>len(bounded)}))";
-const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
-const command =
-  "python3 -c " +
-  q(script) +
-  " " +
-  [repo, jobId, pattern, String(contextLines), String(tailLines)].map(q).join(" ");
-const result = await tools.bash({
-  command,
-  workdir: input.workdir,
-  description: "Inspect bounded GitHub job log",
-  timeoutMs: 60000,
-});
-if (result.kind !== "foreground" || result.exitCode !== 0)
-  throw new Error("Could not inspect job log");
-const parsed = JSON.parse(result.stdout.text);
+const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+const redact = (value) =>
+  String(value)
+    .replace(/(authorization:?)\s*\S+/gi, "$1 [REDACTED]")
+    .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=)\S+/g, "$1[REDACTED]")
+    .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
+    .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
+const run = async (command, description, timeoutMs = 30000) => {
+  const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
+  if (result.kind !== "foreground") throw new Error("Unexpected background result");
+  return result;
+};
+const temporary = await run(
+  'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-job-log.XXXXXX"',
+  "Create temporary job log directory",
+);
+if (temporary.exitCode !== 0) throw new Error("Could not create temporary job log directory");
+const directory = temporary.stdout.text.trim();
+if (!directory) throw new Error("Could not create temporary job log directory");
+let code = -1;
+let stderr = "";
+let lines = [];
+let sourceTruncated = false;
+try {
+  const rawPath = directory + "/job.log";
+  const boundedPath = directory + "/job.tail.log";
+  const downloaded = await run(
+    `gh api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} > ${q(rawPath)}`,
+    "Download GitHub Actions job log",
+    60000,
+  );
+  code = downloaded.exitCode ?? -1;
+  stderr = redact(downloaded.stderr.text).slice(-12000);
+  if (code === 0) {
+    const bounded = await run(
+      `bytes=$(wc -c < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d' > ${q(boundedPath)}; else cp -- ${q(rawPath)} ${q(boundedPath)}; fi; printf '%s' "$bytes"`,
+      "Bound downloaded GitHub job log",
+    );
+    if (bounded.exitCode !== 0) throw new Error("Could not bound downloaded job log");
+    const byteCount = Number(bounded.stdout.text.trim());
+    sourceTruncated = Number.isFinite(byteCount) && byteCount > 4000000;
+    const content = await tools.read({ file_path: boundedPath, limit: 100000 });
+    lines = content.lines.map((line) => line.text);
+    sourceTruncated ||= content.totalLines > content.lines.length;
+  }
+} finally {
+  await run(`rm -rf -- ${q(directory)}`, "Remove temporary job log directory");
+}
+let matchedLines = 0;
+let selected = lines;
+if (pattern) {
+  const indexes = new Set();
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!matcher.test(lines[index])) continue;
+    matchedLines += 1;
+    const start = Math.max(0, index - contextLines);
+    const end = Math.min(lines.length, index + contextLines + 1);
+    for (let selectedIndex = start; selectedIndex < end; selectedIndex += 1)
+      indexes.add(selectedIndex);
+  }
+  selected = [...indexes].sort((a, b) => a - b).map((index) => lines[index]);
+}
+const candidates = selected.slice(-tailLines);
+const output = [];
+let size = 0;
+for (let index = candidates.length - 1; index >= 0; index -= 1) {
+  const line = candidates[index].slice(0, 4000);
+  if (size + line.length + 1 > 40000) break;
+  output.push(line);
+  size += line.length + 1;
+}
+output.reverse();
 return {
   jobId,
   repo,
   pattern: input.pattern ?? null,
-  code: parsed.code,
-  truncated: parsed.truncated,
-  matchedLines: parsed.matchedLines,
-  stdout: parsed.stdout,
-  stderr: parsed.stderr,
+  code,
+  truncated: sourceTruncated || selected.length > output.length,
+  matchedLines,
+  stdout: redact(output.join("\n")),
+  stderr,
 };

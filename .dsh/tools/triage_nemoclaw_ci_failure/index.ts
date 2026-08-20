@@ -18,6 +18,12 @@ if (
 )
   throw new Error("artifactName must be a trimmed GitHub Actions artifact name");
 const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+const redact = (value) =>
+  String(value)
+    .replace(/(authorization:?)\s*\S+/gi, "$1 [REDACTED]")
+    .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=)\S+/g, "$1[REDACTED]")
+    .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
+    .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
 const run = async (command, description, timeoutMs = 30000) => {
   const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
   if (result.kind !== "foreground") throw new Error("Unexpected background result");
@@ -28,7 +34,7 @@ const jobResult = await run(
   "Read GitHub Actions job metadata",
 );
 if (jobResult.exitCode !== 0)
-  throw new Error(`Could not read job metadata: ${jobResult.stderr.text.slice(-1500)}`);
+  throw new Error(`Could not read job metadata: ${redact(jobResult.stderr.text).slice(-1500)}`);
 const rawJob = JSON.parse(jobResult.stdout.text);
 const job = {
   id: Number(rawJob.id ?? jobId),
@@ -38,24 +44,67 @@ const job = {
   conclusion: rawJob.conclusion == null ? null : String(rawJob.conclusion).slice(0, 100),
   url: String(rawJob.html_url ?? "").slice(0, 2000),
 };
-const logScript =
-  "import json,re,subprocess,sys\nrepo,job,tail=sys.argv[1:]\np=subprocess.run(['gh','api',f'repos/{repo}/actions/jobs/{job}/logs'],capture_output=True)\ntext=p.stdout.decode('utf-8','replace').splitlines()\npat=re.compile(r'FAIL|Failed Tests|AssertionError|Test timed out|Process completed|SIGKILL|timed out|Source-shape|Source architecture|grew by|adds JavaScript|NEMOCLAW_|npm audit report|docs-review|Documentation writer|Fern validation|check-docs|hadolint|shellcheck|Nemotron',re.I)\nidx=set(); matches=0\nfor i,line in enumerate(text):\n if pat.search(line): matches+=1; idx.update(range(max(0,i-20),min(len(text),i+21)))\nselected=[text[i][:4000] for i in sorted(idx)][-int(tail):]\nout='\\n'.join(selected); out=out[-40000:]\nprint(json.dumps({'code':p.returncode,'stdout':out,'stderr':p.stderr.decode('utf-8','replace')[-4000:],'matchedLines':matches,'truncated':len(idx)>len(selected)}))";
-const logResult = await run(
-  `python3 -c ${q(logScript)} ${q(repo)} ${q(jobId)} ${q(tailLines)}`,
-  "Inspect bounded GitHub job log",
-  60000,
+const logTemp = await run(
+  'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-log.XXXXXX"',
+  "Create temporary CI log directory",
 );
-if (logResult.exitCode !== 0) throw new Error("Could not inspect job log");
-const parsedLog = JSON.parse(logResult.stdout.text);
+if (logTemp.exitCode !== 0) throw new Error("Could not create temporary CI log directory");
+const logDir = logTemp.stdout.text.trim();
+if (!logDir) throw new Error("Could not create temporary CI log directory");
+let logCode = -1;
+let logStderr = "";
+let sourceTruncated = false;
+let logLines = [];
+try {
+  const rawPath = logDir + "/job.log";
+  const boundedPath = logDir + "/job.tail.log";
+  const downloaded = await run(
+    `gh api ${q(`repos/${repo}/actions/jobs/${jobId}/logs`)} > ${q(rawPath)}`,
+    "Download GitHub Actions job log",
+    60000,
+  );
+  logCode = downloaded.exitCode ?? -1;
+  logStderr = redact(downloaded.stderr.text).slice(-4000);
+  if (logCode === 0) {
+    const bounded = await run(
+      `bytes=$(wc -c < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d' > ${q(boundedPath)}; else cp -- ${q(rawPath)} ${q(boundedPath)}; fi; printf '%s' "$bytes"`,
+      "Bound GitHub Actions job log",
+    );
+    if (bounded.exitCode !== 0) throw new Error("Could not bound GitHub Actions job log");
+    const byteCount = Number(bounded.stdout.text.trim());
+    sourceTruncated = Number.isFinite(byteCount) && byteCount > 4000000;
+    const content = await tools.read({ file_path: boundedPath, limit: 100000 });
+    logLines = content.lines.map((line) => line.text);
+    sourceTruncated ||= content.totalLines > content.lines.length;
+  }
+} finally {
+  await run(`rm -rf -- ${q(logDir)}`, "Remove temporary CI log directory");
+}
+const logPattern =
+  /FAIL|Failed Tests|AssertionError|Test timed out|Process completed|SIGKILL|timed out|Source-shape|Source architecture|grew by|adds JavaScript|NEMOCLAW_|npm audit report|docs-review|Documentation writer|Fern validation|check-docs|hadolint|shellcheck|Nemotron/i;
+const selectedIndexes = new Set();
+let matchedLines = 0;
+for (let index = 0; index < logLines.length; index += 1) {
+  if (!logPattern.test(logLines[index])) continue;
+  matchedLines += 1;
+  const first = Math.max(0, index - 20);
+  const last = Math.min(logLines.length - 1, index + 20);
+  for (let contextIndex = first; contextIndex <= last; contextIndex += 1)
+    selectedIndexes.add(contextIndex);
+}
+const selectedLines = [...selectedIndexes]
+  .sort((left, right) => left - right)
+  .map((index) => logLines[index].slice(0, 4000));
+const boundedLines = selectedLines.slice(-tailLines);
 const log = {
   jobId,
   repo,
   pattern: "NemoClaw CI failure signatures",
-  code: Number(parsedLog.code ?? -1),
-  truncated: Boolean(parsedLog.truncated),
-  matchedLines: Number(parsedLog.matchedLines ?? 0),
-  stdout: String(parsedLog.stdout ?? "").slice(-40000),
-  stderr: String(parsedLog.stderr ?? "").slice(-4000),
+  code: logCode,
+  truncated: sourceTruncated || selectedLines.length > boundedLines.length,
+  matchedLines,
+  stdout: redact(boundedLines.join("\n").slice(-40000)),
+  stderr: logStderr,
 };
 let artifact = null;
 if (artifactName) {
@@ -76,6 +125,7 @@ if (artifactName) {
   );
   if (temp.exitCode !== 0) throw new Error("Could not create temporary artifact directory");
   const dir = temp.stdout.text.trim();
+  if (!dir) throw new Error("Could not create temporary artifact directory");
   try {
     const download = await run(
       `gh run download ${q(job.runId)} --repo ${q(repo)} --name ${q(artifactName)} --dir ${q(dir)}`,
@@ -83,21 +133,55 @@ if (artifactName) {
       60000,
     );
     if (download.exitCode !== 0) throw new Error("Could not download selected artifact");
-    const parser =
-      "import json,pathlib,sys\nr=pathlib.Path(sys.argv[1]); fs=sorted(r.rglob('*.result.json'))[:101]; rows=[]\nfor p in fs[:100]:\n try: d=json.loads(p.read_text(errors='replace'))\n except Exception: continue\n ec=d.get('exitCode'); sig=d.get('signal'); err=d.get('error'); to=bool(d.get('timedOut'))\n if ec not in (None,0) or sig or err or to or (ec is None and d.get('command')): rows.append({'path':str(p.relative_to(r))[:1000],'exitCode':ec if isinstance(ec,int) else None,'signal':str(sig)[:100] if sig else None,'timedOut':to,'error':str(err)[:1000] if err else None,'command':str(d.get('command'))[:2000] if d.get('command') is not None else None})\nprint(json.dumps({'filesRead':min(len(fs),100),'filesTruncated':len(fs)>100,'failures':rows[:20],'failuresTruncated':len(rows)>20}))";
-    const parsed = await run(
-      `python3 -c ${q(parser)} ${q(dir)}`,
-      "Parse bounded test result artifacts",
+    const listed = await run(
+      `find ${q(dir)} -type f -name '*.result.json' -printf '%P\0' | LC_ALL=C sort -z | head -z -n 101 | base64 -w0`,
+      "List bounded test result artifacts",
     );
-    if (parsed.exitCode !== 0) throw new Error("Could not parse selected artifact");
+    if (listed.exitCode !== 0) throw new Error("Could not list selected artifact results");
+    const resultPaths = Buffer.from(listed.stdout.text.trim(), "base64")
+      .toString("utf8")
+      .split("\0")
+      .filter(Boolean);
+    const fileResults = await Promise.all(
+      resultPaths.slice(0, 100).map(async (relativePath) => {
+        try {
+          const file = await tools.read({ file_path: `${dir}/${relativePath}`, limit: 2000 });
+          if (file.totalLines > 2000) return null;
+          const value = JSON.parse(file.lines.map((line) => line.text).join("\n"));
+          if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+          const exitCode = Number.isInteger(value.exitCode) ? value.exitCode : null;
+          const signal = value.signal ? String(value.signal).slice(0, 100) : null;
+          const timedOut = Boolean(value.timedOut);
+          const error = value.error ? redact(String(value.error)).slice(0, 1000) : null;
+          const command =
+            value.command == null ? null : redact(String(value.command)).slice(0, 2000);
+          if (exitCode === 0 && !signal && !error && !timedOut) return null;
+          if (exitCode === null && !signal && !error && !timedOut && !value.command) return null;
+          return {
+            path: relativePath.slice(0, 1000),
+            exitCode,
+            signal,
+            timedOut,
+            error,
+            command,
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const failures = fileResults.filter(Boolean);
     artifact = {
       name: artifactName,
       sizeBytes,
       inventoryTruncated: Number(inventory.total_count ?? 0) > 100,
-      ...JSON.parse(parsed.stdout.text),
+      filesRead: Math.min(resultPaths.length, 100),
+      filesTruncated: resultPaths.length > 100,
+      failures: failures.slice(0, 20),
+      failuresTruncated: failures.length > 20,
     };
   } finally {
-    await run(`rm -rf ${q(dir)}`, "Remove temporary artifact directory");
+    await run(`rm -rf -- ${q(dir)}`, "Remove temporary artifact directory");
   }
 }
 if (log.code !== 0)

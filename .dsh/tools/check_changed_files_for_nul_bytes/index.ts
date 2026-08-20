@@ -7,26 +7,40 @@
 
 const changed = await tools.list_nemoclaw_changed_files({
   workdir: input.workdir,
-  baseRef: input.baseRef,
+  ...(input.baseRef === undefined ? {} : { baseRef: input.baseRef }),
 });
 if (changed.files.length === 0) return { ok: true, checked: 0, files: [], findings: [], changed };
-const quote = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
-const script =
-  "from pathlib import Path\nimport json,sys\nchecked=[];findings=[]\nfor raw in sys.argv[1:]:\n p=Path(raw)\n if not p.is_file(): continue\n checked.append(raw); count=p.read_bytes().count(b'\\x00')\n if count: findings.append({'file':raw,'count':count})\nprint(json.dumps({'checked':checked,'findings':findings}))";
-const command = "python3 -c " + quote(script) + " " + changed.files.map(quote).join(" ");
-const result = await tools.bash({
-  command,
-  workdir: input.workdir,
-  description: "Check changed files for NUL bytes",
-  timeoutMs: 30000,
-});
-if (result.kind !== "foreground" || result.exitCode !== 0)
-  throw new Error("Could not scan changed files");
-const parsed = JSON.parse(result.stdout.text);
+const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+const files = [];
+const findings = [];
+const deadline = Date.now() + 30000;
+for (const file of changed.files) {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) throw new Error("Could not scan changed files");
+  const result = await tools.bash({
+    command:
+      "if [ ! -f " +
+      quote(file) +
+      " ]; then exit 3; fi; LC_ALL=C od -An -v -t u1 -- " +
+      quote(file) +
+      " | awk '{ for (i = 1; i <= NF; i++) if ($i == 0) count++ } END { print count + 0 }'",
+    workdir: input.workdir,
+    description: "Count NUL bytes in changed file",
+    timeoutMs: remainingMs,
+  });
+  if (result.kind !== "foreground") throw new Error("Could not scan changed files");
+  if (result.exitCode === 3) continue;
+  if (result.exitCode !== 0) throw new Error("Could not scan changed files");
+  const countText = result.stdout.text.trim();
+  if (!/^\d+$/.test(countText)) throw new Error("Could not scan changed files");
+  const count = Number(countText);
+  files.push(file);
+  if (count > 0) findings.push({ file, count });
+}
 return {
-  ok: parsed.findings.length === 0,
-  checked: parsed.checked.length,
-  files: parsed.checked,
-  findings: parsed.findings,
+  ok: findings.length === 0,
+  checked: files.length,
+  files,
+  findings,
   changed,
 };

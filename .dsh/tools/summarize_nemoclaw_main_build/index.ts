@@ -13,58 +13,160 @@ if (!/^[A-Za-z0-9_.\/-]+\.ya?ml$/.test(workflow))
 if (input.sha && !/^[0-9a-f]{40}$/.test(input.sha))
   throw new Error("sha must be a full commit SHA");
 const limit = Math.min(Math.max(input.maxRuns ?? 25, 1), 100);
-const payload = JSON.stringify({
+const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+const redact = (value) =>
+  String(value)
+    .replace(/(authorization:?)\s*\S+/gi, "$1 [REDACTED]")
+    .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)=)\S+/g, "$1[REDACTED]")
+    .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
+    .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
+const transient = [
+  "tls handshake timeout",
+  "connection reset",
+  "temporary",
+  "temporarily",
+  "http 502",
+  "http 503",
+  "http 504",
+  "unexpected eof",
+  "i/o timeout",
+];
+const gh = async (args) => {
+  let last;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    last = await tools.bash({
+      command: "gh " + args.map(quote).join(" "),
+      workdir: input.workdir,
+      description: "Read bounded main workflow status",
+      timeoutMs: 30000,
+    });
+    if (last.kind !== "foreground") throw new Error("Unexpected background result");
+    if (last.exitCode === 0) return last.stdout.text;
+    const detail = (last.stderr.text + "\n" + last.stdout.text).toLowerCase();
+    if (!transient.some((value) => detail.includes(value)) || attempt === 2) break;
+    const pause = await tools.bash({
+      command: "sleep " + quote((attempt + 1) * 0.75),
+      workdir: input.workdir,
+      description: "Pause before bounded GitHub retry",
+      timeoutMs: 3000,
+    });
+    if (pause.kind !== "foreground" || pause.exitCode !== 0) break;
+  }
+  throw new Error(
+    "GitHub read failed: gh " +
+      args.slice(0, 3).join(" ") +
+      "\n" +
+      redact(last?.stderr.text ?? "").slice(-1500),
+  );
+};
+const parse = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("GitHub returned invalid bounded JSON");
+  }
+};
+const current = (await gh(["api", `repos/${repo}/commits/main`, "--jq", ".sha"])).trim();
+const target = input.sha ?? current;
+const fields = "databaseId,headSha,status,conclusion,displayTitle,createdAt,updatedAt,url";
+const listed = parse(
+  await gh([
+    "run",
+    "list",
+    "--repo",
+    repo,
+    "--workflow",
+    workflow,
+    "--branch",
+    "main",
+    "--limit",
+    String(limit),
+    "--json",
+    fields,
+  ]),
+);
+const find = async (sha) => {
+  const existing = listed.find((run) => run.headSha === sha);
+  if (existing) return existing;
+  const exact = parse(
+    await gh([
+      "run",
+      "list",
+      "--repo",
+      repo,
+      "--workflow",
+      workflow,
+      "--commit",
+      sha,
+      "--limit",
+      "10",
+      "--json",
+      fields,
+    ]),
+  );
+  return exact[0] ?? null;
+};
+const summarize = async (run) => {
+  if (!run) return null;
+  const jobs = [];
+  for (let page = 1; page <= 2; page += 1) {
+    const data = parse(
+      await gh([
+        "api",
+        `repos/${repo}/actions/runs/${run.databaseId}/jobs?filter=latest&per_page=100&page=${page}`,
+        "--jq",
+        "{count:(.jobs|length),jobs:[.jobs[]|{id,name,status,conclusion,started_at,completed_at,html_url}]}",
+      ]),
+    );
+    jobs.push(...data.jobs);
+    if (data.count < 100) break;
+  }
+  const nonPassing = jobs
+    .filter((job) => job.status !== "completed" || !["success", "skipped"].includes(job.conclusion))
+    .slice(0, 30);
+  const counts = new Map();
+  for (const job of jobs) {
+    const key = job.status !== "completed" ? job.status : job.conclusion || "none";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return {
+    id: run.databaseId,
+    sha: run.headSha,
+    title: run.displayTitle,
+    status: run.status,
+    conclusion: run.conclusion || null,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    url: run.url,
+    jobs: {
+      total: jobs.length,
+      counts: [...counts.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, count]) => ({ name, count })),
+      nonPassing,
+      truncated: nonPassing.length >= 30 || jobs.length >= 200,
+    },
+  };
+};
+const targetRun = await summarize(await find(target));
+const currentRun =
+  input.includeCurrentMain === false || current === target
+    ? null
+    : await summarize(await find(current));
+let result = "main-build-not-found";
+if (targetRun && targetRun.status !== "completed") result = "main-build-in-progress";
+else if (targetRun?.conclusion === "success") result = "main-build-passed";
+else if (targetRun?.conclusion === "cancelled" && target !== current)
+  result = "main-build-superseded";
+else if (targetRun) result = "main-build-did-not-pass";
+return {
+  checkedAt: new Date().toISOString(),
   repo,
   workflow,
-  sha: input.sha ?? null,
-  includeCurrentMain: input.includeCurrentMain !== false,
-  limit,
-});
-const script = String.raw`import json, subprocess, sys, time, datetime
-p=json.loads(sys.argv[1]); transient=('tls handshake timeout','connection reset','temporary','temporarily','http 502','http 503','http 504','unexpected eof','i/o timeout')
-def gh(args):
- last=None
- for attempt in range(3):
-  last=subprocess.run(['gh']+args,capture_output=True,text=True,timeout=30)
-  if last.returncode==0:return last.stdout
-  detail=(last.stderr+'\n'+last.stdout).lower()
-  if not any(x in detail for x in transient) or attempt==2:break
-  time.sleep((attempt+1)*.75)
- raise RuntimeError('GitHub read failed: gh '+' '.join(args[:3])+'\n'+(last.stderr or '')[-1500:])
-current=gh(['api',f"repos/{p['repo']}/commits/main",'--jq','.sha']).strip(); target=p['sha'] or current
-fields='databaseId,headSha,status,conclusion,displayTitle,createdAt,updatedAt,url'
-listed=json.loads(gh(['run','list','--repo',p['repo'],'--workflow',p['workflow'],'--branch','main','--limit',str(p['limit']),'--json',fields]))
-def find(sha):
- for run in listed:
-  if run.get('headSha')==sha:return run
- exact=json.loads(gh(['run','list','--repo',p['repo'],'--workflow',p['workflow'],'--commit',sha,'--limit','10','--json',fields]))
- return exact[0] if exact else None
-def summarize(run):
- if not run:return None
- jobs=[]
- for page in (1,2):
-  data=json.loads(gh(['api',f"repos/{p['repo']}/actions/runs/{run['databaseId']}/jobs?filter=latest&per_page=100&page={page}",'--jq','{count:(.jobs|length),jobs:[.jobs[]|{id,name,status,conclusion,started_at,completed_at,html_url}]}']))
-  jobs.extend(data['jobs'])
-  if data['count']<100:break
- bad=[j for j in jobs if j.get('status')!='completed' or j.get('conclusion') not in ('success','skipped')][:30]
- counts={}
- for j in jobs:
-  key=j.get('status') if j.get('status')!='completed' else (j.get('conclusion') or 'none'); counts[key]=counts.get(key,0)+1
- return {'id':run['databaseId'],'sha':run['headSha'],'title':run['displayTitle'],'status':run['status'],'conclusion':run.get('conclusion') or None,'createdAt':run['createdAt'],'updatedAt':run['updatedAt'],'url':run['url'],'jobs':{'total':len(jobs),'counts':[{'name':k,'count':v} for k,v in sorted(counts.items())],'nonPassing':bad,'truncated':len(bad)>=30 or len(jobs)>=200}}
-target_run=summarize(find(target)); current_run=None if not p['includeCurrentMain'] or current==target else summarize(find(current))
-result='main-build-not-found'
-if target_run and target_run['status']!='completed':result='main-build-in-progress'
-elif target_run and target_run['conclusion']=='success':result='main-build-passed'
-elif target_run and target_run['conclusion']=='cancelled' and target!=current:result='main-build-superseded'
-elif target_run:result='main-build-did-not-pass'
-print(json.dumps({'checkedAt':datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z'),'repo':p['repo'],'workflow':p['workflow'],'targetSha':target,'currentMain':current,'targetIsCurrent':target==current,'result':result,'targetRun':target_run,'currentRun':current_run}))`;
-const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-const result = await tools.bash({
-  command: "python3 -c " + quote(script) + " " + quote(payload),
-  workdir: input.workdir,
-  description: "Summarize NemoClaw main build status",
-  timeoutMs: 120000,
-});
-if (result.kind !== "foreground") throw new Error("Unexpected background result");
-if (result.exitCode !== 0) throw new Error((result.stderr.text || result.stdout.text).slice(-2000));
-return JSON.parse(result.stdout.text);
+  targetSha: target,
+  currentMain: current,
+  targetIsCurrent: target === current,
+  result,
+  targetRun,
+  currentRun,
+};
