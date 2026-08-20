@@ -124,7 +124,7 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
-  it("rejects a live workflow that ignores its typed job ceiling", () => {
+  it("rejects a live workflow that ignores its typed job timeout", () => {
     const workflow = readWorkflow() as {
       jobs: { live: { "timeout-minutes"?: unknown } };
     };
