@@ -11,9 +11,27 @@ const ONBOARD_JOB_HEADROOM_MS = 20 * MINUTE_MS;
 export const ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS = 40 * MINUTE_MS;
 export const ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS = 15 * MINUTE_MS;
 
-export const INFERENCE_ROUTING_TEST_TIMEOUT_MS =
+export const ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS =
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + ONBOARD_TEST_HEADROOM_MS;
-export const INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES = 75;
+export const ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES = 75;
+
+export type LiveTargetTimeoutContract = Readonly<{
+  commandTimeoutMs?: number;
+  testTimeoutMs?: number;
+  targetTimeoutMinutes: number;
+}>;
+
+export function liveTargetTimeoutContract(
+  lifecycle: string | undefined,
+): LiveTargetTimeoutContract {
+  return lifecycle === "post-reboot-recovery"
+    ? {
+        commandTimeoutMs: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+        testTimeoutMs: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+        targetTimeoutMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+      }
+    : { targetTimeoutMinutes: 45 };
+}
 
 // The onboard-resume scenario gives two create/recreate commands the
 // final-handoff deadline. Four later commands use the no-recreate deadline and
