@@ -117,7 +117,7 @@ describe("live E2E target matrix", () => {
   it("assigns the longer job ceiling only to post-reboot recovery (#9622)", () => {
     expect(
       Object.fromEntries(
-        buildLiveTargetMatrix().map((row) => [row.id, Reflect.get(row, "timeout_minutes")]),
+        buildLiveTargetMatrix().map((row) => [row.id, row.timeout_minutes]),
       ),
     ).toEqual({
       "ubuntu-policy-custom-missing-presets-negative": 45,

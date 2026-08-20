@@ -7,12 +7,13 @@ import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../../src/lib/onb
 import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import {
-  INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
-  INFERENCE_ROUTING_TEST_TIMEOUT_MS,
+  liveTargetTimeoutContract,
   ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
   ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
   ONBOARD_RESUME_TEST_TIMEOUT_MS,
+  ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+  ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
 } from "../../../tools/e2e/onboard-timeout-contract.mts";
 import {
   catalogueTarget,
@@ -35,8 +36,8 @@ describe("onboard final-handoff timeout contract", () => {
     );
   });
 
-  it("keeps the inference-routing test alive through its final-handoff command", () => {
-    expect(INFERENCE_ROUTING_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
+  it("keeps a single-final-handoff test alive through its command", () => {
+    expect(ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(
       ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS + testHeadroomMs,
     );
   });
@@ -52,15 +53,15 @@ describe("onboard final-handoff timeout contract", () => {
   it("pins the reviewed command, test, and target timeout values", () => {
     expect({
       finalHandoffCommandMinutes: ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS / MINUTE_MS,
-      inferenceRoutingTestMinutes: INFERENCE_ROUTING_TEST_TIMEOUT_MS / MINUTE_MS,
-      inferenceRoutingTargetMinutes: INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+      singleFinalHandoffTestMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS / MINUTE_MS,
+      singleFinalHandoffTargetMinutes: ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
       noRecreateCommandMinutes: ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS / MINUTE_MS,
       onboardResumeTestMinutes: ONBOARD_RESUME_TEST_TIMEOUT_MS / MINUTE_MS,
       onboardResumeTargetMinutes: ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
     }).toEqual({
       finalHandoffCommandMinutes: 40,
-      inferenceRoutingTestMinutes: 50,
-      inferenceRoutingTargetMinutes: 75,
+      singleFinalHandoffTestMinutes: 50,
+      singleFinalHandoffTargetMinutes: 75,
       noRecreateCommandMinutes: 15,
       onboardResumeTestMinutes: 150,
       onboardResumeTargetMinutes: 170,
@@ -70,8 +71,8 @@ describe("onboard final-handoff timeout contract", () => {
   it.each([
     [
       "inference-routing",
-      INFERENCE_ROUTING_TEST_TIMEOUT_MS,
-      INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
+      ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
+      ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
     ],
     ["onboard-resume", ONBOARD_RESUME_TEST_TIMEOUT_MS, ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES],
   ] as const)(
@@ -95,9 +96,32 @@ describe("onboard final-handoff timeout contract", () => {
   it("selects only post-reboot recovery from the typed registry when the contract changes", () => {
     const plan = buildE2eWorkflowPlan({}, { changedFiles: [timeoutContractPath] });
 
-    expect(plan.matrix.map((row) => row.id)).toEqual([
-      "ubuntu-repo-docker-post-reboot-recovery",
+    expect(plan.matrix).toEqual([
+      expect.objectContaining({
+        id: "ubuntu-repo-docker-post-reboot-recovery",
+        timeout_minutes: 75,
+      }),
     ]);
+  });
+
+  it("applies the single-final-handoff contract only to post-reboot recovery", () => {
+    expect(liveTargetTimeoutContract("post-reboot-recovery")).toEqual({
+      commandTimeoutMs: 40 * MINUTE_MS,
+      testTimeoutMs: 50 * MINUTE_MS,
+      targetTimeoutMinutes: 75,
+    });
+    expect(liveTargetTimeoutContract("dcode-rebuild-invalid-credential")).toEqual({
+      targetTimeoutMinutes: 45,
+    });
+    expect(liveTargetTimeoutContract(undefined)).toEqual({ targetTimeoutMinutes: 45 });
+  });
+
+  it("keeps the post-reboot registry job alive through test cleanup", () => {
+    const contract = liveTargetTimeoutContract("post-reboot-recovery");
+
+    expect(contract.targetTimeoutMinutes * MINUTE_MS).toBeGreaterThanOrEqual(
+      ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS + jobHeadroomMs,
+    );
   });
 
   it("rejects a live workflow that ignores its typed job ceiling", () => {
@@ -112,12 +136,12 @@ describe("onboard final-handoff timeout contract", () => {
   });
 
   it.each([
-    INFERENCE_ROUTING_TARGET_TIMEOUT_MINUTES,
-    INFERENCE_ROUTING_TEST_TIMEOUT_MS,
     ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
     ONBOARD_NO_RECREATE_COMMAND_TIMEOUT_MS,
     ONBOARD_RESUME_TARGET_TIMEOUT_MINUTES,
     ONBOARD_RESUME_TEST_TIMEOUT_MS,
+    ONBOARD_SINGLE_FINAL_HANDOFF_TARGET_TIMEOUT_MINUTES,
+    ONBOARD_SINGLE_FINAL_HANDOFF_TEST_TIMEOUT_MS,
   ])("uses positive whole numbers for timeout contract values [case %#]", (value) => {
     expect(Number.isSafeInteger(value)).toBe(true);
     expect(value).toBeGreaterThan(0);
