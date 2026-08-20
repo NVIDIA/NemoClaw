@@ -2,14 +2,87 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { useOpenAiValidationTestServers } from "../inference/openai-validation-session.test-helpers";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
 
+const listen = useOpenAiValidationTestServers();
+
 describe("inference selection validation", () => {
+  it.each([
+    {
+      route: "native optimized transport",
+      handleRequest: (request: http.IncomingMessage, response: http.ServerResponse) => {
+        request.resume();
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      },
+      expectedLegacyCalls: 0,
+    },
+    {
+      route: "legacy fallback after a native failure",
+      handleRequest: (request: http.IncomingMessage) => request.socket.destroy(),
+      expectedLegacyCalls: 1,
+    },
+  ])("uses the default optimized probe through the public helper: $route", async (testCase) => {
+    const server = http.createServer(testCase.handleRequest);
+    const port = await listen(server);
+    const spawnSyncImpl = vi.fn((_command: string, args: readonly string[]) => {
+      const outputPath = args[args.indexOf("-o") + 1];
+      fs.writeFileSync(outputPath, '{"choices":[{"message":{"content":"OK"}}]}');
+      return {
+        pid: 1,
+        output: [],
+        stdout: "200",
+        stderr: "",
+        status: 0,
+        signal: null,
+      };
+    });
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+    const probeOptions = {
+      apiKey: "test-key",
+      skipResponsesProbe: true,
+      spawnSyncImpl,
+      validationTiming: {
+        connectTimeoutSeconds: 1,
+        maxTimeSeconds: 1,
+        source: "standard",
+      },
+      validationSessionOptions: {
+        env: {},
+        lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        allowPrivateAddressesForTesting: true,
+      },
+    };
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "Compatible endpoint",
+          `http://provider.example.com:${port}/v1`,
+          "model-a",
+          null,
+          undefined,
+          undefined,
+          probeOptions,
+        ),
+      ).resolves.toEqual({ ok: true, api: "openai-completions" });
+      expect(spawnSyncImpl).toHaveBeenCalledTimes(testCase.expectedLegacyCalls);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("uses an explicit managed key without forwarding it as a probe option", async () => {
     const apiKey = "f".repeat(64);
     const getCredential = vi.fn(() => "ambient-key");
@@ -832,8 +905,9 @@ exit 0
       isNonInteractive: () => false,
       agentProductName: () => "OpenClaw",
       getCredential: () => "test-key",
-      // Use the real probeOpenAiLikeEndpoint (no injection) so the full
-      // preflight → pinnedAddresses → curl --resolve chain is exercised.
+      // Use the public helper's production optimized default. A preflight pin
+      // must take the bounded #6661 legacy path until native sessions enforce
+      // the exact address set; --resolve proves that fallback cannot rebind.
       promptValidationRecovery: vi.fn(async () => "selection" as const),
       resolveEndpointHost,
     });

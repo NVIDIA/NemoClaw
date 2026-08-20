@@ -368,6 +368,7 @@ describe("authenticated MCP live fixtures", () => {
         tools: [
           {
             name: "fake_echo",
+            annotations: { readOnlyHint: true },
             inputSchema: { required: ["challenge"] },
           },
         ],
@@ -799,6 +800,28 @@ describe("authenticated MCP live fixtures", () => {
         name: "fake_fake_echo",
         arguments: JSON.stringify({ challenge: "progressive-fixture" }),
       },
+    });
+    const rejectedToolResult = await post(
+      [
+        searchResult,
+        {
+          role: "tool",
+          tool_call_id: "call_progressive_mcp_proof",
+          content: "This MCP action requires approval in a headless runtime",
+        },
+      ],
+      ["search_tools", "ls", "fake_fake_echo"],
+    );
+    expect(rejectedToolResult).toMatchObject({
+      choices: [
+        {
+          message: {
+            content: expect.stringContaining(
+              "progressive target fake_fake_echo did not return the expected authenticated result",
+            ),
+          },
+        },
+      ],
     });
     const finalBody = await post(
       [
