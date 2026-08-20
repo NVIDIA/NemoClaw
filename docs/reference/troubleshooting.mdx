@@ -2175,7 +2175,6 @@ Onboarding ends with:
 
 ```text
   Sandbox 'my-assistant' was created but did not become ready within 180s.
-  Retry: $$nemoclaw onboard
 ```
 
 This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`.
@@ -2195,9 +2194,17 @@ Portable OpenClaw onboarding preserves the sandbox as described below.
 
 The 180-second default fits typical workstations but can be exceeded when:
 
-- The host is building or uploading the sandbox image for the first time (cold caches, slow link).
-- The selected model is large (70B+ parameters or 4-bit/8-bit quantisations that take time to memory-map).
-- Onboarding runs on a remote VM where image upload to the gateway streams over the network (for example DGX Station first-run installer).
+- The in-sandbox runtime needs more time to boot or load its selected model.
+- OpenShell needs more time to publish the sandbox's `Ready` state.
+
+<AgentOnly variant="openclaw,hermes">
+
+For OpenClaw and Hermes, post-`Ready` sandbox identity or command checks can also exceed the budget.
+
+</AgentOnly>
+
+Image build and gateway upload finish before the readiness budget starts.
+Their duration does not consume `NEMOCLAW_SANDBOX_READY_TIMEOUT`.
 
 Raise the budget before re-running onboard:
 
@@ -2207,9 +2214,13 @@ $$nemoclaw onboard
 ```
 
 The variable accepts seconds and applies to the readiness wait only.
-When the ordinary create deadline expires, NemoClaw tries to delete the partially created sandbox.
-After successful cleanup, the output ends with `Retry: $$nemoclaw onboard`.
-If cleanup fails, NemoClaw instead reports that the failed sandbox could not be removed and prints `Manual cleanup: openshell sandbox delete "<name>"`.
+An ordinary post-create readiness failure prints a `created_but_not_ready` lifecycle receipt.
+The receipt records `readiness_gate`, `readiness_reason`, `create_stream_status`, `timeout_seconds`, and `terminal_resolution`.
+NemoClaw then tries to delete the partially created sandbox.
+After successful deletion or confirmed absence, the output ends with `Retry: $$nemoclaw onboard`.
+If deletion fails, the receipt marks the sandbox as retained.
+NemoClaw then prints `openshell sandbox delete "<name>"` as manual cleanup and omits the retry command.
+For Docker GPU compatibility cleanup, the receipt records `deferred_to_docker_gpu_patch` and omits the generic retry command.
 
 <AgentOnly variant="openclaw">
 

@@ -81,7 +81,7 @@ export type SandboxReadinessFailureReportDeps = {
   ): void;
   printCreateFailureDiagnostics(sandboxName: string, options: { backupPath: string | null }): void;
   printDockerGpuReadinessFailure(): void;
-  deleteSandbox(sandboxName: string): { status: number | null };
+  deleteSandbox(sandboxName: string): { status: number | null; alreadyGone?: boolean };
   cliName(): string;
   error(message: string): void;
   exitProcess(code: number): never;
@@ -170,7 +170,8 @@ export function reportSandboxReadinessFailure(
     // Clean up non-GPU failures after preserving local diagnostics so the
     // next onboard retry with the same name does not fail on "sandbox already exists".
     const delResult = deps.deleteSandbox(options.sandboxName);
-    if (delResult.status === 0) {
+    const cleanupResolved = delResult.status === 0 || delResult.alreadyGone === true;
+    if (cleanupResolved) {
       for (const line of formatCreatedSandboxReadinessReceipt({
         sandboxName: options.sandboxName,
         readiness: options.readiness,
@@ -180,9 +181,16 @@ export function reportSandboxReadinessFailure(
       })) {
         deps.error(line);
       }
-      deps.error(
-        `  Deleted sandbox '${options.sandboxName}' after the readiness gate failed; retry will recreate it.`,
-      );
+      if (delResult.alreadyGone) {
+        deps.error(
+          `  Sandbox '${options.sandboxName}' was already absent after the readiness gate failed; retry can recreate it.`,
+        );
+      } else {
+        deps.error(
+          `  Deleted sandbox '${options.sandboxName}' after the readiness gate failed; retry will recreate it.`,
+        );
+      }
+      deps.error(`  Retry: ${deps.cliName()} onboard`);
     } else {
       for (const line of formatCreatedSandboxReadinessReceipt({
         sandboxName: options.sandboxName,
@@ -197,7 +205,6 @@ export function reportSandboxReadinessFailure(
       deps.error(`    openshell sandbox delete "${options.sandboxName}"`);
     }
   }
-  deps.error(`  Retry: ${deps.cliName()} onboard`);
   const exitCode = options.createStatus === 0 ? 1 : options.createStatus;
   return deps.exitProcess(exitCode);
 }

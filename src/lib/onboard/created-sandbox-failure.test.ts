@@ -243,6 +243,31 @@ describe("reportSandboxReadinessFailure", () => {
       "  Could not remove the failed sandbox. Manual cleanup:",
     );
     expect(deps.error).toHaveBeenCalledWith('    openshell sandbox delete "alpha"');
+    expect(deps.error).not.toHaveBeenCalledWith("  Retry: nemoclaw onboard");
+  });
+
+  it("treats an already-absent sandbox as resolved cleanup and permits retry", () => {
+    const deps = readinessDeps({
+      deleteSandbox: vi.fn(() => ({ status: 1, alreadyGone: true })),
+    });
+    expect(() => reportSandboxReadinessFailure(readinessOptions(), deps)).toThrow(ExitSignal);
+    expectReceiptBlock(deps, [
+      "  Sandbox lifecycle receipt:",
+      "    state: created_but_not_ready",
+      "    sandbox: alpha",
+      "    readiness_gate: sandbox_list:not_ready_timeout",
+      "    readiness_reason: timeout",
+      "    create_stream_status: 0",
+      "    timeout_seconds: 300",
+      "    terminal_resolution: timed_out_deleted",
+    ]);
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Sandbox 'alpha' was already absent after the readiness gate failed; retry can recreate it.",
+    );
+    expect(deps.error).toHaveBeenCalledWith("  Retry: nemoclaw onboard");
+    expect(deps.error).not.toHaveBeenCalledWith(
+      "  Could not remove the failed sandbox. Manual cleanup:",
+    );
   });
 
   it("defers cleanup to the Docker-GPU patch and never deletes the sandbox", () => {
@@ -263,6 +288,7 @@ describe("reportSandboxReadinessFailure", () => {
       "    terminal_resolution: deferred_to_docker_gpu_patch",
     ]);
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
+    expect(deps.error).not.toHaveBeenCalledWith("  Retry: nemoclaw onboard");
   });
 
   it("names the terminal readiness phase in the lifecycle receipt", () => {
@@ -317,34 +343,34 @@ describe("reportSandboxReadinessFailure", () => {
     ]);
   });
 
-  it.each([
-    null,
-    "",
-  ])("falls back to a stable terminal readiness gate for missing phase %s", (failurePhase) => {
-    const deps = readinessDeps();
-    expect(() =>
-      reportSandboxReadinessFailure(
-        readinessOptions({
-          readiness: {
-            ready: false,
-            reason: "terminal_failure_phase",
-            failurePhase,
-          },
-        }),
-        deps,
-      ),
-    ).toThrow(ExitSignal);
-    expectReceiptBlock(deps, [
-      "  Sandbox lifecycle receipt:",
-      "    state: created_but_not_ready",
-      "    sandbox: alpha",
-      "    readiness_gate: sandbox_list:terminal_failure",
-      "    readiness_reason: terminal_failure_phase",
-      "    create_stream_status: 0",
-      "    timeout_seconds: 300",
-      "    terminal_resolution: terminal_failure_deleted",
-    ]);
-  });
+  it.each([null, ""])(
+    "falls back to a stable terminal readiness gate for missing phase %s",
+    (failurePhase) => {
+      const deps = readinessDeps();
+      expect(() =>
+        reportSandboxReadinessFailure(
+          readinessOptions({
+            readiness: {
+              ready: false,
+              reason: "terminal_failure_phase",
+              failurePhase,
+            },
+          }),
+          deps,
+        ),
+      ).toThrow(ExitSignal);
+      expectReceiptBlock(deps, [
+        "  Sandbox lifecycle receipt:",
+        "    state: created_but_not_ready",
+        "    sandbox: alpha",
+        "    readiness_gate: sandbox_list:terminal_failure",
+        "    readiness_reason: terminal_failure_phase",
+        "    create_stream_status: 0",
+        "    timeout_seconds: 300",
+        "    terminal_resolution: terminal_failure_deleted",
+      ]);
+    },
+  );
 
   it("preserves a non-zero create-stream status when readiness later fails", () => {
     const deps = readinessDeps();

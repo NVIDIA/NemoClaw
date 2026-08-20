@@ -1369,8 +1369,8 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     await expectFlowExit(createInput(), deps);
 
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(output).toContain("could not be removed automatically");
-    expect(output).toContain('Manual cleanup: openshell sandbox delete "alpha"');
+    expect(output).toContain("Could not remove the failed sandbox. Manual cleanup:");
+    expect(output).toContain('openshell sandbox delete "alpha"');
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
 
@@ -1385,7 +1385,7 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
 
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain("Retry: nemoclaw onboard");
-    expect(output).not.toContain("could not be removed automatically");
+    expect(output).not.toContain("Could not remove the failed sandbox");
   });
 
   it("fully redacts command diagnostics when cleanup cannot be proven safe", async () => {
