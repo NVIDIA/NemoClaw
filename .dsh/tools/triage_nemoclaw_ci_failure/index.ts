@@ -67,12 +67,16 @@ try {
   logStderr = redact(downloaded.stderr.text).slice(-4000);
   if (logCode === 0) {
     const bounded = await run(
-      `bytes=$(wc -c < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d'; else cat -- ${q(rawPath)}; fi | tail -n 20000 > ${q(boundedPath)}; printf '%s' "$bytes"`,
+      `bytes=$(wc -c < ${q(rawPath)}); lines=$(wc -l < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d'; else cat -- ${q(rawPath)}; fi | tail -n 20000 > ${q(boundedPath)}; printf '%s %s' "$bytes" "$lines"`,
       "Bound GitHub Actions job log",
     );
     if (bounded.exitCode !== 0) throw new Error("Could not bound GitHub Actions job log");
-    const byteCount = Number(bounded.stdout.text.trim());
-    sourceTruncated = Number.isFinite(byteCount) && byteCount > 4000000;
+    const [byteText, lineText] = bounded.stdout.text.trim().split(/\s+/, 2);
+    const byteCount = Number(byteText);
+    const lineCount = Number(lineText);
+    sourceTruncated =
+      (Number.isFinite(byteCount) && byteCount > 4000000) ||
+      (Number.isFinite(lineCount) && lineCount > 20000);
     const content = await tools.read({ file_path: boundedPath, limit: 20000 });
     logLines = content.lines.map((line) => line.text);
     sourceTruncated ||= content.totalLines > content.lines.length;

@@ -88,8 +88,10 @@ for (let offset = 0; offset < selected.length; offset += 12) {
           await gh([
             "api",
             "/repos/" + repo + "/actions/runs/" + run.id + "/jobs?per_page=100",
+            "--paginate",
+            "--slurp",
             "--jq",
-            '{jobs:[.jobs[]|select(.name=="base-image-publication" or .name=="generate-matrix")|{name,status,conclusion,startedAt:.started_at,completedAt:.completed_at,steps:[.steps[]|{name,startedAt:.started_at,completedAt:.completed_at}]}]}',
+            '{jobs:[.[].jobs[]|select(.name=="base-image-publication" or .name=="generate-matrix")|{name,status,conclusion,startedAt:.started_at,completedAt:.completed_at,steps:[.steps[]|{name,startedAt:.started_at,completedAt:.completed_at}]}]}',
           ]),
           "workflow job",
         );
