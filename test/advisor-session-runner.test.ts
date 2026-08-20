@@ -395,14 +395,22 @@ describe("advisor session runner", () => {
     expect(sdk.state.prompts).toHaveLength(2);
   });
 
-  it.each([
-    ["two failed initial attempts", ["fail-twice", "success"]],
-    ["a failed then successful initial attempt", ["fail-then-success"]],
-  ] as const)("rejects %s without terminal-submit repair", async (_case, responses) => {
+  it("rejects two failed initial attempts without terminal-submit repair", async () => {
+    const responses = ["fail-twice", "success"] as const;
     sdk.state.terminalResponses = [...responses];
     const result = await run([submitTurn("prepare-and-submit")]);
 
     expect(result.fatalError).toContain("exactly 1 turn_action submit attempt");
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(1);
+  });
+
+  it("accepts one failed submit followed by one same-turn success (#9630)", async () => {
+    sdk.state.terminalResponses = ["fail-then-success"];
+    const result = await run([submitTurn("prepare-and-submit")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
     expect(result.raw).not.toContain("terminal_submit_repair_start");
     expect(sdk.state.prompts).toHaveLength(1);
   });

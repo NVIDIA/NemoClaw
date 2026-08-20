@@ -770,9 +770,13 @@ function assertManagedLaunch(
     expect(result.payload.runnerCommands.every((command) => !command.includes("/health"))).toBe(
       true,
     );
-    expect(
-      result.payload.runnerCommands.every((command) => !command.includes("sandbox exec --name")),
-    ).toBe(true);
+    const sandboxExecCommands = result.payload.runnerCommands.filter((command) =>
+      command.includes("sandbox exec --name"),
+    );
+    expect(sandboxExecCommands).toHaveLength(1);
+    expect(sandboxExecCommands[0]).toContain(
+      `sandbox exec --name ${bootstrapRequest?.sandboxName} --gateway nemoclaw -- /usr/local/bin/dcode identity`,
+    );
   } else {
     expect(
       result.payload.runnerCommands.some((command) =>

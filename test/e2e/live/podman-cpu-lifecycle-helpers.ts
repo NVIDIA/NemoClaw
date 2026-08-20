@@ -18,6 +18,7 @@ import {
 } from "../../../src/lib/onboard/runtime-provider/podman-lifecycle";
 import { redactFull } from "../../../src/lib/security/redact";
 import { expect } from "../fixtures/e2e-test.ts";
+import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import {
@@ -33,7 +34,7 @@ import {
 
 export const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR ?? "";
 export const GATEWAY_NAME = "podman-proof";
-export const OPENSHELL_VERSION = "0.0.101";
+export const OPENSHELL_VERSION = OPENSHELL_V0106_QUALIFICATION.version;
 export const SOCKET_PATH = process.env.E2E_PODMAN_SOCKET ?? "";
 
 const FULL_CONTAINER_ID = /^[0-9a-f]{64}$/u;
@@ -137,7 +138,7 @@ export async function startPinnedGateway(
   artifactDir = ARTIFACT_DIR,
 ): Promise<ChildProcess> {
   const child = spawnObservedChild(gatewayBin, [], {
-    activityLabel: "command: pinned OpenShell 0.0.101 Podman gateway",
+    activityLabel: "command: pinned OpenShell 0.0.106 Podman gateway",
     progress,
     spawn: {
       env: { ...process.env, ...gatewayEnv },

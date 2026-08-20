@@ -2,6 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "./max-tokens-field";
+import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
+
+export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY =
+  "nvidia.endpoint-validation.standard/v1";
+export const EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY =
+  "nvidia.endpoint-validation.extended/v1";
+
+export function vllmProbePolicyForModel(model: string): string {
+  const normalized = model.trim().toLowerCase();
+  const matches = loadManagedInferenceCatalog().models.filter(({ spec }) =>
+    [spec.id, spec.environmentValue, spec.servedName].some(
+      (candidate) => candidate.toLowerCase() === normalized,
+    ),
+  );
+  if (matches.length > 1) {
+    throw new Error(`Managed vLLM catalog has ambiguous probe policies for model ${model}.`);
+  }
+  return matches[0]?.spec.probePolicyRef ?? STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY;
+}
 
 export const STRICT_TOOL_PROBE_INITIAL_TOKENS = 256;
 // Reasoning-heavy models can spend the whole output budget on their reasoning

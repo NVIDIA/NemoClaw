@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingModel
+metadata:
+  id: vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.v1
+  displayName: NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4
+spec:
+  id: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+  revision: 0dcd680e5585c791728c83342b311d0a0026dbeb
+  environmentValue: nemotron-3.5-lightning-30b
+  displayName: NVIDIA Nemotron 3.5 Lightning 30B-A3B NVFP4 [Experimental]
+  menuOrder: 80
+  servedName: nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4
+  downloadSizeBytes: 21561882284
+  gated: false
+  installFastSafetensors: false
+  preparation:
+    ref: none/v1
+  probePolicyRef: nvidia.endpoint-validation.standard/v1
+  capabilities:
+    chatCompletions: true
+    streaming: true
+    toolCalls: true
+    structuredOutputs: false
+    reasoning: true
+    multimodal: false

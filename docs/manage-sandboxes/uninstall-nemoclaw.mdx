@@ -155,6 +155,9 @@ The legacy `default` namespace is not isolated across gateways, so it cannot sat
 Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
 A full uninstall for the portable experimental profile detects ownership only from durable lifecycle state.
+When no Portable lifecycle receipt or retirement record exists, uninstall runs ordinary cleanup and removes any abandoned Portable configuration directory.
+This path covers an incomplete or absent onboarding session and an absent state directory.
+Uninstall still stops before cleanup for an unknown Portable uninstall artifact or a completed Portable onboarding session whose lifecycle receipt is missing.
 It records the initial lifecycle receipts and sandbox registry state for comparison.
 NemoClaw first acquires the process-bound portable host lock at `~/.nemoclaw-portable-host.lock`.
 This host-wide fence coordinates portable onboarding, rebuild, and uninstall.

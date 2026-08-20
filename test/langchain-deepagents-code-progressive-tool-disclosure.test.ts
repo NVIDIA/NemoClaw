@@ -26,7 +26,7 @@ const DISCLOSURE_MARKER = "NemoClaw-managed progressive tool disclosure.";
 const OBSERVABILITY_MARKER = "NemoClaw-managed backend-neutral observability.";
 
 const PACKAGE_SOURCES: Record<string, string> = {
-  "__init__.py": `"""Deep Agents Code 0.1.34 test package."""`,
+  "__init__.py": `"""Deep Agents Code 0.1.55 test package."""`,
   "__main__.py": `from deepagents_code.main import cli_main
 
 if __name__ == "__main__":
@@ -81,6 +81,10 @@ def cli_main():
 
     async def _restart_server_for_agent_swap(self, agent_name):
         del agent_name
+
+    async def _set_approval_mode(self, target):
+        del target
+        return True
 
     async def _switch_model(self, model_spec, **kwargs):
 `,
@@ -178,9 +182,13 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     kwargs.pop("rubric_model", None)
     kwargs.pop("async_subagents", None)
     graph_config = kwargs.pop("graph_config", None)
+    subagents = kwargs.pop(
+        "subagents",
+        [{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
+    )
     graph = create_deep_agent(
         middleware=[],
-        subagents=[{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
+        subagents=subagents,
         **kwargs,
     )
     if graph_config is not None:
@@ -253,6 +261,7 @@ def should_run_onboarding(state_dir=None): return True
   "tui/widgets/approval.py": `from __future__ import annotations
 
 class ApprovalMenu:
+    def _build_options(self): return []
     def _handle_selection(self, option, *, reject_message=None): pass
 `,
   "tui/widgets/status.py": `from __future__ import annotations
@@ -288,7 +297,11 @@ def _normalize_path(raw_path, project_context, label):
 
 def list_subagents(*args, **kwargs): return []
 `,
-  "hooks.py": `from __future__ import annotations
+  "hooks/__init__.py": `from deepagents_code.hooks.legacy import _load_hooks, _run_single_hook
+
+__all__ = ["_load_hooks", "_run_single_hook"]
+`,
+  "hooks/legacy.py": `from __future__ import annotations
 
 from typing import Any
 
@@ -333,7 +346,7 @@ function writeFixtureFile(root: string, relativePath: string, content: string): 
   return target;
 }
 
-function makePatchFixture(version = "0.1.34"): PatchFixture {
+function makePatchFixture(version = "0.1.55"): PatchFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-disclosure-"));
   const packageDir = path.join(root, "deepagents_code");
   const sourcePaths = Object.entries(PACKAGE_SOURCES).map(([relativePath, source]) =>
@@ -454,6 +467,15 @@ def counts(result):
     )
     return len(instances), len({id(item) for item in instances})
 
+def disclosure_instances(result):
+    graph, backend = result
+    assert backend == "fixture-backend"
+    middleware_type = middleware.ProgressiveToolDisclosureMiddleware
+    return [
+        [item for item in stack if isinstance(item, middleware_type)][0]
+        for stack in [graph.main, *graph.subagents]
+    ]
+
 def observability_counts(result):
     graph, backend = result
     assert backend == "fixture-backend"
@@ -484,6 +506,43 @@ os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
 no_mcp = counts(agent.create_cli_agent(None, "assistant"))
 empty_mcp = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(())]))
 active = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
+parent_only = harness.BaseTool("parent_only", "Parent graph tool")
+subagent_only = harness.BaseTool("subagent_only", "Subagent graph tool")
+subagent_result = agent.create_cli_agent(
+    None,
+    "assistant",
+    tools=[parent_only],
+    mcp_server_info=[Info(("mcp_echo",))],
+    subagents=[
+        {"name": "inherits", "middleware": []},
+        {"name": "overrides", "middleware": [], "tools": [subagent_only]},
+        {"name": "empty", "middleware": [], "tools": []},
+    ],
+)
+(
+    main_disclosure,
+    inherited_disclosure,
+    overridden_disclosure,
+    empty_disclosure,
+) = disclosure_instances(subagent_result)
+subagent_search = overridden_disclosure.tools[0].func(
+    query="subagent",
+    runtime=harness.ToolRuntime({}, tools=[overridden_disclosure.tools[0]]),
+)
+subagent_visible = overridden_disclosure._prepare_request(
+    harness.ModelRequest(
+        [subagent_only, overridden_disclosure.tools[0]],
+        {"discovered_tools": subagent_search.update["discovered_tools"]},
+    )
+)
+subagent_catalogs = {
+    "main": [tool.name for tool in main_disclosure._registered_tools],
+    "inherited": [tool.name for tool in inherited_disclosure._registered_tools],
+    "overridden": [tool.name for tool in overridden_disclosure._registered_tools],
+    "empty": [tool.name for tool in empty_disclosure._registered_tools],
+    "search_result": subagent_search.update["discovered_tools"],
+    "visible": [tool.name for tool in subagent_visible.tools],
+}
 os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
 direct = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
 
@@ -573,6 +632,7 @@ print(json.dumps({
     "no_mcp": no_mcp,
     "empty_mcp": empty_mcp,
     "active": active,
+    "subagent_catalogs": subagent_catalogs,
     "progressive_collisions": progressive_collisions,
     "direct_collisions": direct_collisions,
     "reached_original": reached_original,
@@ -615,6 +675,7 @@ describe("Deep Agents progressive tool disclosure", () => {
     ]);
     expect(result.max_query_length).toBe(256);
     expect(result.provider_native_preserved).toBe(true);
+    expect(result.projected_catalog_discovered).toEqual(["query_database"]);
   });
 
   it("bounds broad catalog output, persisted discovery, and visible schemas deterministically", () => {
@@ -670,7 +731,7 @@ describe("Deep Agents progressive tool disclosure", () => {
   });
 });
 
-describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
+describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
   it("patches the complete package and isolated main/subagent wiring idempotently", () => {
     const fixture = makePatchFixture();
     const first = runPatcher(fixture);
@@ -687,12 +748,18 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
     expect(second.status, second.stderr).toBe(0);
     expect(snapshot(managedPaths)).toEqual(firstBytes);
 
-    expect(fixture.sourcePaths.filter(
+    expect(
+      fixture.sourcePaths
+        .filter(
           (sourcePath) =>
             !sourcePath.endsWith("/__init__.py") && !sourcePath.endsWith("/onboarding.py"),
-        ).every((file) =>
-          (firstBytes[file].match(new RegExp(HARDENING_MARKER.replaceAll(".", "\\."), "g"))
-            ?.length ?? 0) === 1)).toBe(true);
+        )
+        .every(
+          (file) =>
+            (firstBytes[file].match(new RegExp(HARDENING_MARKER.replaceAll(".", "\\."), "g"))
+              ?.length ?? 0) === 1,
+        ),
+    ).toBe(true);
     expect(
       firstBytes[fixture.agentPath].match(/NemoClaw-managed progressive tool disclosure\./g),
     ).toHaveLength(1);
@@ -700,9 +767,6 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
     expect(firstBytes[path.join(fixture.packageDir, "onboarding.py")]).not.toContain(
       HARDENING_MARKER,
     );
-    expect(
-      firstBytes[fixture.agentPath].match(/ProgressiveToolDisclosureMiddleware\(\)/g),
-    ).toHaveLength(2);
     expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));
     expect(firstBytes[fixture.observabilityModulePath]).toBe(
       fs.readFileSync(observabilityPath, "utf8"),
@@ -744,6 +808,14 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
     });
     expect(wiring.observability_prebound_list).toEqual(wiring.observability_active);
     expect(wiring.observability_prebound_manager).toEqual(wiring.observability_active);
+    expect(wiring.subagent_catalogs).toEqual({
+      main: ["parent_only"],
+      inherited: ["parent_only"],
+      overridden: ["subagent_only"],
+      empty: [],
+      search_result: ["subagent_only"],
+      visible: ["subagent_only", "search_tools"],
+    });
     expect(wiring.progressive_collisions).toEqual({
       regular_regular: expect.stringContaining("multiple registered implementations"),
       regular_mcp: expect.stringContaining("MCP metadata owners"),
@@ -763,7 +835,7 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
     const result = runPatcher(fixture);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Expected deepagents-code==0.1.34");
+    expect(result.stderr).toContain("Expected deepagents-code==0.1.55");
     expect(snapshot(fixture.sourcePaths)).toEqual(before);
     expect(fs.existsSync(fixture.modulePath)).toBe(false);
   });

@@ -3,13 +3,7 @@
 
 import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { stripAnsi } from "../adapters/openshell/client";
-import { captureOpenshell, captureResolvedOpenshell } from "../adapters/openshell/runtime";
-import { type GatewayInference, parseGatewayInference } from "./config";
-
-export type { GatewayInference };
-// Keep live gateway-output consumers on this observation boundary instead of
-// coupling each caller to the broad inference configuration module.
-export { captureOpenshell, captureResolvedOpenshell, parseGatewayInference, stripAnsi };
+import { parseGatewayInference, type GatewayInference } from "./config";
 
 type CaptureLiveInference = (
   args: string[],

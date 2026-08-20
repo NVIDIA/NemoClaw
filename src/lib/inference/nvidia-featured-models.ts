@@ -18,6 +18,7 @@ export const NVIDIA_FEATURED_MODELS_URL =
 const RETIRED_NVIDIA_FEATURED_MODEL_IDS = new Set([
   "z-ai/glm-5.1", // Retired from NVIDIA Endpoints in #6069.
   "moonshotai/kimi-k2.6", // Catalogs still list it after its backing route was removed.
+  "deepseek-ai/deepseek-v4-pro", // Retired from NVIDIA Endpoints on 2026-08-07; its route returns HTTP 410.
 ]);
 const MAX_NVIDIA_FEATURED_CATALOG_BYTES = 1024 * 1024;
 const MAX_NVIDIA_FEATURED_MODELS = 100;

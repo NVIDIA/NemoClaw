@@ -5,17 +5,10 @@ export const SNAPSHOT_PROBE_PID_PREFIX = "@@NEMOCLAW_E2E_PROBE_PID@@ ";
 export const SNAPSHOT_FILE_PREFIX = "@@NEMOCLAW_E2E_FILE@@ ";
 // Keep this per-line tag compact so null-heavy snapshots stay within the bounded capture guard.
 export const SNAPSHOT_DATA_PREFIX = "D ";
-const PID_PATTERN = /^[1-9][0-9]*$/u;
 
 export interface ForbiddenLeakPattern {
   name: string;
   value: string;
-  allowInSnapshotProbeEnvironment?: boolean;
-}
-
-export interface ForbiddenLeakScan {
-  leaks: string[];
-  snapshotProbeEnvironmentExemptions: Array<{ name: string; location: string }>;
 }
 
 export function frameSnapshotFile(location: string, contents: string): string {
@@ -28,45 +21,20 @@ export function frameSnapshotFile(location: string, contents: string): string {
   ].join("\n");
 }
 
-function isSnapshotProbeEnvironment(location: string, probePid: string | undefined): boolean {
-  return probePid !== undefined && location === `/proc/${probePid}/environ`;
-}
-
 /**
- * Find forbidden values while distinguishing the one-shot snapshot process
- * from the sandbox workloads it observes. `src/lib/onboard/bedrock-runtime.ts`
- * registers the adapter credential as an attached generic OpenShell provider.
- * OpenShell, outside this repository, projects that provider's placeholder
- * name into an ad-hoc `sandbox exec` child, so the observer sees the name in
- * its own environment. Only patterns explicitly marked for that exact
- * PID/environment location are exempt; raw token values and every match in
- * other files or processes still fail the scan.
- *
- * The live test requires this exemption to be observed. Remove the flag, that
- * assertion, and this exception when OpenShell stops projecting attached
- * provider placeholders into inspection children or offers provider-free
- * sandbox inspection.
+ * Find forbidden values in framed snapshot files. OpenShell 0.0.106 no longer
+ * projects attached provider placeholders into ad-hoc sandbox exec children,
+ * so every matching file or process is a leak.
  */
-export function scanForbiddenLeaks(
+export function findForbiddenLeaks(
   text: string,
   label: string,
   patterns: readonly ForbiddenLeakPattern[],
-): ForbiddenLeakScan {
+): string[] {
   const locations: string[] = [];
-  const exemptions: Array<{ name: string; location: string }> = [];
   let current: string | undefined;
-  let probePid: string | undefined;
-  let firstNonEmptyLineSeen = false;
 
   for (const line of text.split("\n")) {
-    if (!firstNonEmptyLineSeen && line.length > 0) {
-      firstNonEmptyLineSeen = true;
-      if (line.startsWith(SNAPSHOT_PROBE_PID_PREFIX)) {
-        const candidate = line.slice(SNAPSHOT_PROBE_PID_PREFIX.length);
-        if (PID_PATTERN.test(candidate)) probePid = candidate;
-        continue;
-      }
-    }
     if (line.startsWith(SNAPSHOT_FILE_PREFIX)) {
       current = line.slice(SNAPSHOT_FILE_PREFIX.length);
       continue;
@@ -76,31 +44,8 @@ export function scanForbiddenLeaks(
     const location = current ?? label;
     for (const pattern of patterns) {
       if (!pattern.value || !data.includes(pattern.value)) continue;
-      if (
-        pattern.allowInSnapshotProbeEnvironment &&
-        isSnapshotProbeEnvironment(location, probePid)
-      ) {
-        exemptions.push({ name: pattern.name, location });
-        continue;
-      }
       locations.push(`${pattern.name}: ${location}`);
     }
   }
-  return {
-    leaks: [...new Set(locations)].sort(),
-    snapshotProbeEnvironmentExemptions: exemptions.filter(
-      (entry, index, entries) =>
-        entries.findIndex(
-          (candidate) => candidate.name === entry.name && candidate.location === entry.location,
-        ) === index,
-    ),
-  };
-}
-
-export function findForbiddenLeaks(
-  text: string,
-  label: string,
-  patterns: readonly ForbiddenLeakPattern[],
-): string[] {
-  return scanForbiddenLeaks(text, label, patterns).leaks;
+  return [...new Set(locations)].sort();
 }

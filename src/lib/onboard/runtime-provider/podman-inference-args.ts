@@ -7,7 +7,7 @@ import path from "node:path";
 import type { HostLocalOllamaAccelerationAuthority } from "./host-local-inference";
 import { qualifyPodmanGpuAttachments } from "./podman-gpu";
 import {
-  normalizePodmanInferenceAuthorityReceipt,
+  normalizeQualifiedPodmanInferenceAuthorityReceipt,
   type PodmanInferenceAuthorityReceipt,
 } from "./podman-preflight";
 
@@ -360,7 +360,7 @@ export function translatePodmanLocalInferenceArgs(
   if (source[0] !== "run") {
     throw new Error("Podman local inference translates only an explicit container run command.");
   }
-  const qualified = normalizePodmanInferenceAuthorityReceipt(authority);
+  const qualified = normalizeQualifiedPodmanInferenceAuthorityReceipt(authority);
   const acceleration = options.acceleration ?? "nvidia-gpu";
   const allowedPublishAddresses = new Set(["127.0.0.1"]);
   for (const address of options.allowedPublishAddresses ?? []) {

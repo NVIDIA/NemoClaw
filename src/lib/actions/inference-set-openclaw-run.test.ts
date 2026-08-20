@@ -7,7 +7,7 @@ import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps, OPENCLAW_TARGET } from "./inference-set.test-support";
 
 describe("runInferenceSet OpenClaw routing", () => {
-  it("updates OpenShell, OpenClaw config, registry, and the matching onboard session", async () => {
+  it("completes a same-API switch and pairing when audit persistence fails (#9527)", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
       models: {
@@ -20,6 +20,9 @@ describe("runInferenceSet OpenClaw routing", () => {
       },
     };
     const deps = createDeps({ config, session: baseSession() });
+    deps.calls.appendAuditEntry.mockImplementationOnce(() => {
+      throw new Error("audit storage unavailable");
+    });
 
     const result = await runInferenceSet(
       {
@@ -78,7 +81,16 @@ describe("runInferenceSet OpenClaw routing", () => {
       expect.objectContaining({
         action: "inference_set",
         sandbox: "alpha",
-        reason: "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b",
+        reason:
+          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence pending)",
+      }),
+    );
+    expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "inference_set",
+        sandbox: "alpha",
+        reason:
+          "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b (pairing convergence completed)",
       }),
     );
     expect(result).toMatchObject({
@@ -91,6 +103,15 @@ describe("runInferenceSet OpenClaw routing", () => {
       inSandboxConfigSynced: true,
     });
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
+    expect(deps.calls.settleOpenClawPairing).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      openclawVersion: "",
+      stateDirectory: "/sandbox/.openclaw",
+    });
+    expect(deps.calls.log).toHaveBeenCalledWith(
+      "  Warning: could not record the post-commit inference audit entry for 'alpha'.",
+    );
   });
 
   it("preserves same-provider Bedrock Runtime adapter routing for OpenClaw switches", async () => {

@@ -49,10 +49,11 @@ export type AdvisorPromptTurn = {
   atomicTerminalRepairPrompt?: string;
   /**
    * Terminal submit tool that may follow context, reads, prose, and other active draft tools.
-   * The initial turn permits exactly one submit attempt, and nothing may follow a success.
+   * The turn permits one success, or one failed attempt followed by one success when repair is enabled.
+   * Nothing may follow a success.
    */
   terminalSubmitToolName?: string;
-  /** Opt into one repair continuation after a settled failed terminal submit. */
+  /** Opt into one repair in the same SDK turn or one continuation after a settled failure. */
   terminalSubmitRepairPrompt?: string;
   /** Tools available during the terminal-submit repair continuation. */
   terminalSubmitRepairToolNames?: string[];
@@ -180,6 +181,37 @@ function terminalToolEventCounts(events: AdvisorTurnFlowEvent[], toolName: strin
   };
 }
 
+function terminalSubmitAttemptSequence(events: AdvisorTurnFlowEvent[], toolName: string) {
+  const outcomes: Array<"failed" | "successful"> = [];
+  let active = false;
+  let malformed = false;
+  for (const event of events) {
+    if (event.type === "tool_start" && event.toolName === toolName) {
+      if (active) malformed = true;
+      active = true;
+      continue;
+    }
+    if (event.type === "tool_end" && event.toolName === toolName) {
+      if (!active) malformed = true;
+      active = false;
+      outcomes.push(event.isError ? "failed" : "successful");
+      continue;
+    }
+    if (active) malformed = true;
+  }
+  return { outcomes, malformed, unsettled: active };
+}
+
+function hasActivityAfterSuccessfulTerminalSubmit(
+  events: AdvisorTurnFlowEvent[],
+  toolName: string,
+): boolean {
+  const successIndex = events.findIndex(
+    (event) => event.type === "tool_end" && event.toolName === toolName && !event.isError,
+  );
+  return successIndex >= 0 && events.slice(successIndex + 1).length > 0;
+}
+
 function unexpectedAtomicToolEvent(events: AdvisorTurnFlowEvent[], toolName: string) {
   return events.find((event) =>
     event.type === "text" ? Boolean(event.text.trim()) : event.toolName !== toolName,
@@ -202,6 +234,10 @@ function terminalSubmitToolErrors(
         `(observed ${counts.starts} starts and ${counts.completions} completions)`,
     );
   }
+  const sequence = terminalSubmitAttemptSequence(events, toolName);
+  if (sequence.malformed) {
+    errors.push(`${turnName} emitted a malformed ${toolName} submit attempt sequence`);
+  }
   if (
     counts.starts !== expectedAttempts ||
     counts.completions !== expectedAttempts ||
@@ -214,10 +250,13 @@ function terminalSubmitToolErrors(
         `(observed ${counts.starts} starts, ${counts.successfulCompletions} successful, and ${counts.failedCompletions} failed completions)`,
     );
   }
-  const successIndex = events.findIndex(
-    (event) => event.type === "tool_end" && event.toolName === toolName && !event.isError,
-  );
-  if (successIndex >= 0 && events.slice(successIndex + 1).length > 0) {
+  const expectedOutcomes = repaired ? ["failed", "successful"] : ["successful"];
+  if (sequence.outcomes.join(",") !== expectedOutcomes.join(",")) {
+    errors.push(
+      `${turnName} must complete ${toolName} attempts in this order: ${expectedOutcomes.join(", ")}`,
+    );
+  }
+  if (hasActivityAfterSuccessfulTerminalSubmit(events, toolName)) {
     errors.push(`${turnName} emitted activity after successful ${toolName}`);
   }
   return errors;
@@ -334,6 +373,24 @@ export function repairableTerminalSubmitToolName(
   if (counts.starts !== 1 || counts.completions !== 1) return undefined;
   if (counts.successfulCompletions !== 0 || counts.failedCompletions !== 1) return undefined;
   return toolName;
+}
+
+export function hasCompletedTerminalSubmitRepair(
+  turn: AdvisorPromptTurn,
+  events: AdvisorTurnFlowEvent[],
+  tools: AdvisorTurnTools,
+  turnError: string | undefined,
+): boolean {
+  if (!turn.terminalSubmitRepairPrompt?.trim() || turnError) return false;
+  const toolName = tools.terminalSubmitToolName;
+  if (!toolName) return false;
+  const sequence = terminalSubmitAttemptSequence(events, toolName);
+  return (
+    !sequence.malformed &&
+    !sequence.unsettled &&
+    sequence.outcomes.join(",") === "failed,successful" &&
+    !hasActivityAfterSuccessfulTerminalSubmit(events, toolName)
+  );
 }
 
 export function terminalSubmitRepairPrompt(turn: AdvisorPromptTurn, toolName: string): string {

@@ -8,6 +8,9 @@ metadata:
   id: llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b
   displayName: NVIDIA Nemotron 3 Nano 30B-A3B on one Linux x86_64 NVIDIA GPU
   supportState: experimental
+  validation:
+    level: schema
+    evidence: managed-inference-catalog-compiler-v1
 
 spec:
   selection: automatic

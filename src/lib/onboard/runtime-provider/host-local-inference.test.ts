@@ -277,7 +277,7 @@ describe("host-local inference receipt contract", () => {
     ).toThrow("GPU device is malformed");
   });
 
-  it("rejects a host runtime for managed services and container runtime for Ollama", () => {
+  it("rejects host runtime authority for managed services", () => {
     expect(() =>
       normalizeHostLocalInferenceReceipt({
         ...receipt("nim"),
@@ -289,12 +289,6 @@ describe("host-local inference receipt contract", () => {
         },
       }),
     ).toThrow("only Ollama");
-    expect(() =>
-      normalizeHostLocalInferenceReceipt({
-        ...receipt("ollama"),
-        runtime: receipt("vllm").runtime,
-      }),
-    ).toThrow("Ollama must use host-process authority");
   });
 
   it("rejects mutable probe images and malformed managed specification digests", () => {

@@ -13,9 +13,14 @@ import type { HostLocalInferenceRouteAuthorityStore } from "./host-local-inferen
 import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
 import {
   createPodmanHostLocalInferenceOperation,
+  type PodmanExternalInferenceNetworkAuthority,
   type PodmanInferenceFailureEvidence,
   type PodmanInferenceRedactor,
 } from "./podman-host-local-inference";
+import type {
+  PodmanInferenceAuthorityReceipt,
+  PodmanInferenceQualificationOptions,
+} from "./podman-preflight";
 import { startPodmanSandbox, stopPodmanSandbox } from "./podman-lifecycle";
 import {
   inspectPodmanHost,
@@ -37,6 +42,9 @@ export interface PodmanHostLocalInferenceOptions {
   readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
   readonly onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void;
   readonly redactSensitive: PodmanInferenceRedactor;
+  readonly externalNetwork?: PodmanExternalInferenceNetworkAuthority;
+  readonly authority?: PodmanInferenceAuthorityReceipt;
+  readonly authorityQualification?: PodmanInferenceQualificationOptions;
 }
 
 export interface PodmanRuntimeProviderOptions {
@@ -184,6 +192,13 @@ export function createPodmanRuntimeProviderBundle(
                 routeAuthorityStore: inferenceOptions.routeAuthorityStore,
                 onFailureEvidence: inferenceOptions.onFailureEvidence,
                 redactSensitive: inferenceOptions.redactSensitive,
+                ...(inferenceOptions.externalNetwork
+                  ? { externalNetwork: inferenceOptions.externalNetwork }
+                  : {}),
+                ...(inferenceOptions.authority ? { authority: inferenceOptions.authority } : {}),
+                ...(inferenceOptions.authorityQualification
+                  ? { authorityQualification: inferenceOptions.authorityQualification }
+                  : {}),
               }),
           }
         : unsupported(

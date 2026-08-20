@@ -8,6 +8,9 @@ metadata:
   id: llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b
   displayName: Meta Muse Glimmer 30B on one DGX Spark
   supportState: experimental
+  validation:
+    level: schema
+    evidence: managed-inference-catalog-compiler-v1
 
 spec:
   selection: automatic

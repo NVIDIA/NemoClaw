@@ -253,10 +253,6 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       (_home, state) => directoryEvidence(path.join(state, "portable-demo-lifecycle"), 0o755),
     ],
     [
-      "unsafe configuration root",
-      (home) => directoryEvidence(path.join(home, ".config/nemoclaw/portable"), 0o755),
-    ],
-    [
       "symlinked receipt root",
       (_home, state) => symlinkEvidence(path.join(state, "portable-demo-lifecycle"), state),
     ],

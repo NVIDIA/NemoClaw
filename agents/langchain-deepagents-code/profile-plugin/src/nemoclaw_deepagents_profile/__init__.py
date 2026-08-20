@@ -13,10 +13,10 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from typing import Any
 
-EXPECTED_DCODE_VERSION = "0.1.34"
-EXPECTED_DEEPAGENTS_VERSION = "0.7.0a6"
+EXPECTED_DCODE_VERSION = "0.1.55"
+EXPECTED_DEEPAGENTS_VERSION = "0.7.5"
 EXPECTED_NATIVE_PROFILE_SHA256 = (
-    "c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7"
+    "3b95b118e90c4ae19890c611cc7e1e85261217f971496e9bb7508142133c7d9a"
 )
 EXPECTED_BOOTSTRAP_SHA256 = (
     "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf"
@@ -108,7 +108,7 @@ def _require_source(path: Path, label: str, expected_sha256: str) -> None:
         raise _fail(f"{label} is not a trusted regular file: {path}")
     source = path.read_bytes()
     if _sha256(source) != expected_sha256:
-        raise _fail(f"{label} does not match the reviewed Deep Agents 0.7.0a6 wheel")
+        raise _fail(f"{label} does not match the reviewed Deep Agents 0.7.5 wheel")
     compile(source, str(path), "exec")
 
 

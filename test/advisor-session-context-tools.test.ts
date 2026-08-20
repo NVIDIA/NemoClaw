@@ -12,6 +12,7 @@ import {
   resolveAdvisorTurnTools,
 } from "../tools/advisors/session.mts";
 import {
+  hasCompletedTerminalSubmitRepair,
   repairableTerminalSubmitToolName,
   terminalSubmitRepairErrors,
 } from "../tools/advisors/turn-protocol.mts";
@@ -34,6 +35,24 @@ const atomicMutationTools = {
   requireAssistantText: false,
   atomicTerminalToolName: ledgerToolName,
 };
+
+function terminalSubmitRepairContract(repairToolNames = ["repair_draft"]) {
+  const turn: AdvisorPromptTurn = {
+    name: "prepare",
+    prompt: "prepare",
+    terminalSubmitToolName: ledgerToolName,
+    terminalSubmitRepairPrompt: "repair",
+  };
+  return {
+    turn,
+    tools: {
+      ...atomicMutationTools,
+      atomicTerminalToolName: undefined,
+      terminalSubmitToolName: ledgerToolName,
+      terminalSubmitRepairToolNames: repairToolNames,
+    },
+  };
+}
 const analysisEvent: AdvisorTurnFlowEvent = { type: "text", text: "analysis" };
 const ledgerStart: AdvisorTurnFlowEvent = { type: "tool_start", toolName: ledgerToolName };
 const ledgerSuccess: AdvisorTurnFlowEvent = {
@@ -235,18 +254,7 @@ describe("advisor session context tool flow", () => {
   ] as const)(
     "does not repair terminal submit after %s",
     (_case, events, turnError, successful) => {
-      const turn: AdvisorPromptTurn = {
-        name: "prepare",
-        prompt: "prepare",
-        terminalSubmitToolName: ledgerToolName,
-        terminalSubmitRepairPrompt: "repair",
-      };
-      const tools = {
-        ...atomicMutationTools,
-        atomicTerminalToolName: undefined,
-        terminalSubmitToolName: ledgerToolName,
-        terminalSubmitRepairToolNames: [],
-      };
+      const { turn, tools } = terminalSubmitRepairContract([]);
       expect(
         repairableTerminalSubmitToolName(turn, [...events], tools, successful, turnError),
       ).toBe(undefined);
@@ -254,18 +262,7 @@ describe("advisor session context tool flow", () => {
   );
 
   it("repairs terminal submit after exactly one settled failed submit", () => {
-    const turn: AdvisorPromptTurn = {
-      name: "prepare",
-      prompt: "prepare",
-      terminalSubmitToolName: ledgerToolName,
-      terminalSubmitRepairPrompt: "repair",
-    };
-    const tools = {
-      ...atomicMutationTools,
-      atomicTerminalToolName: undefined,
-      terminalSubmitToolName: ledgerToolName,
-      terminalSubmitRepairToolNames: ["repair_draft"],
-    };
+    const { turn, tools } = terminalSubmitRepairContract();
     expect(
       repairableTerminalSubmitToolName(
         turn,
@@ -284,6 +281,58 @@ describe("advisor session context tool flow", () => {
         undefined,
       ),
     ).toBeUndefined();
+  });
+
+  it("accepts one settled same-turn terminal submit repair (#9630)", () => {
+    const { turn, tools } = terminalSubmitRepairContract();
+    const events = [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess];
+
+    expect(hasCompletedTerminalSubmitRepair(turn, events, tools, undefined)).toBe(true);
+    expect(advisorTurnFlowErrors("prepare", events, tools, true)).toEqual([]);
+  });
+
+  it("requires configured repair and no provider error for same-turn repair (#9630)", () => {
+    const { turn, tools } = terminalSubmitRepairContract();
+    const events = [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess];
+    const withoutConfiguredRepair = hasCompletedTerminalSubmitRepair(
+      { ...turn, terminalSubmitRepairPrompt: undefined },
+      events,
+      tools,
+      undefined,
+    );
+    const withProviderFailure = hasCompletedTerminalSubmitRepair(
+      turn,
+      events,
+      tools,
+      "provider failed",
+    );
+
+    expect(withoutConfiguredRepair).toBe(false);
+    expect(advisorTurnFlowErrors("prepare", events, tools, withoutConfiguredRepair)).not.toEqual(
+      [],
+    );
+    expect(withProviderFailure).toBe(false);
+    expect(advisorTurnFlowErrors("prepare", events, tools, withProviderFailure)).not.toEqual([]);
+  });
+
+  it.each([
+    ["all attempts fail", [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure]],
+    ["the second attempt is unsettled", [ledgerStart, ledgerFailure, ledgerStart]],
+    ["attempt events overlap", [ledgerStart, ledgerStart, ledgerFailure, ledgerSuccess]],
+    [
+      "a third attempt succeeds",
+      [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
+    ],
+    [
+      "activity follows success",
+      [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess, analysisEvent],
+    ],
+  ])("does not accept same-turn terminal submit repair when %s (#9630)", (_case, events) => {
+    const { turn, tools } = terminalSubmitRepairContract();
+
+    const repaired = hasCompletedTerminalSubmitRepair(turn, events, tools, undefined);
+    expect(repaired).toBe(false);
+    expect(advisorTurnFlowErrors("prepare", events, tools, repaired)).not.toEqual([]);
   });
 
   it("rejects prose, unconfigured tools, and multiple submits during terminal-submit repair", () => {
@@ -329,10 +378,6 @@ describe("advisor session context tool flow", () => {
 
   it.each([
     ["duplicate success", [ledgerStart, ledgerSuccess, ledgerStart, ledgerSuccess]],
-    [
-      "failed then successful initial attempts",
-      [ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],
-    ],
     [
       "failed twice then successful initial attempts",
       [ledgerStart, ledgerFailure, ledgerStart, ledgerFailure, ledgerStart, ledgerSuccess],

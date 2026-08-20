@@ -169,6 +169,46 @@ jobs:
             printf 'NemoClaw source commit: %s\n' "$STAGING_QA_SOURCE_SHA"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # NemoPatch exact Deep Agents candidate-base boundary.
+      # Preserve the recorded staging tree and replace only the dependency inputs
+      # that the candidate base image owns.
+      - name: Overlay exact PR dependency inputs on staging QA base
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_root="$GITHUB_WORKSPACE/candidate"
+          staging_root="$GITHUB_WORKSPACE/staging-qa-base-source"
+          for relative in \
+            agents/langchain-deepagents-code/Dockerfile.base \
+            agents/langchain-deepagents-code/requirements.lock
+          do
+            source_file="$candidate_root/$relative"
+            destination_file="$staging_root/$relative"
+            if [ ! -f "$source_file" ] || [ -L "$source_file" ] || [ ! -f "$destination_file" ] || [ -L "$destination_file" ]; then
+              echo "ERROR: staging QA dependency input is missing, unsafe, or changed shape: $relative" >&2
+              exit 1
+            fi
+            install -m 0644 "$source_file" "$destination_file"
+          done
+          for support_relative in \
+            scripts/lib/bundled-npm-package.mts \
+            scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
+          do
+            support_source="$candidate_root/$support_relative"
+            support_parent="$staging_root/$(dirname "$support_relative")"
+            support_destination="$staging_root/$support_relative"
+            if [ ! -f "$support_source" ] || [ -L "$support_source" ] || [ ! -d "$support_parent" ] || [ -L "$support_parent" ] || [ -L "$support_destination" ]; then
+              echo "ERROR: staging QA Dockerfile support file is missing, unsafe, or changed shape: $support_relative" >&2
+              exit 1
+            fi
+            if [ -e "$support_destination" ] && [ ! -f "$support_destination" ]; then
+              echo "ERROR: staging QA Dockerfile support destination changed shape: $support_relative" >&2
+              exit 1
+            fi
+            install -m 0644 "$support_source" "$support_destination"
+          done
+          printf '\nCandidate dependency inputs: %s\n' "$CANDIDATE_SHA" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Reproduce staging discovery permission drift
         shell: bash
         working-directory: candidate
@@ -405,6 +445,11 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22.19.0
+
+      - name: Validate exact Deep Agents PR base build args
+        if: matrix.agent == 'langchain-deepagents-code'
+        shell: bash
+        run: scripts/check-production-build-args.sh -f agents/langchain-deepagents-code/Dockerfile.base
 
       - name: Resolve exact linux/amd64 PR base
         id: base

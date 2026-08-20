@@ -768,7 +768,16 @@ class SandboxStateFlow<
       this.options,
       credentialValidatedDecision,
     );
-    return this.applyCheckpointCrashRecovery(managedDcodeDecision, state, sandboxReuseState);
+    return this.resolveCheckpointCrashRecovery(managedDcodeDecision, state, sandboxReuseState);
+  }
+
+  private resolveCheckpointCrashRecovery(
+    decision: SandboxResumeDecision,
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxReuseState: string,
+  ): SandboxResumeDecision {
+    if (this.options.recreateSandbox(false)) return decision;
+    return this.applyCheckpointCrashRecovery(decision, state, sandboxReuseState);
   }
 
   // A "create" decision from decideSandboxResume means only that the sandbox
