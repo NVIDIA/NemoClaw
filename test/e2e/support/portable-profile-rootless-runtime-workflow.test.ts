@@ -72,6 +72,9 @@ describe("portable profile rootless runtime workflow", () => {
     expect(liveTest).toContain(
       'path.join(os.userInfo().homedir, ".nemoclaw-portable-e2e-")',
     );
+    expect(liveTest).not.toMatch(
+      /mkdtempSync\(\s*path\.join\(os\.tmpdir\(\),\s*["']nemoclaw-portable-e2e-/,
+    );
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
     expect(liveTest).toContain("assert.equal(prepared?.authority.configHome, configHome);");
     expect(liveTest).toContain('location = "localhost:5000"\\ninsecure = true');
