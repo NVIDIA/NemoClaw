@@ -21,8 +21,6 @@ describe("connectSandbox lifecycle lock", () => {
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
     Object.defineProperty(process.stdout, "isTTY", {
       configurable: true,
       value: originalStdoutIsTty,
