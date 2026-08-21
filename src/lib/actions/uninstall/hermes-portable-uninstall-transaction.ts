@@ -76,6 +76,7 @@ export interface HermesPortableUninstallJournal {
 
 export interface HermesPortableUninstallTransactionDeps {
   readonly prepare: () => HermesPortableUninstallAuthority;
+  readonly prepareReplacement?: () => HermesPortableUninstallAuthority | null;
   readonly revalidateResources: (
     authority: HermesPortableUninstallAuthority,
     phase: HermesPortableUninstallPhase,
@@ -103,6 +104,10 @@ function sha256(value: string): string {
 
 function canonical(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function exactText(value: unknown, label: string): string {
@@ -262,7 +267,7 @@ function normalizeAuthority(value: unknown): HermesPortableUninstallAuthority {
   const names = targets.map(({ sandboxName }) => sandboxName);
   if (
     new Set(names).size !== names.length ||
-    names.some((name, index) => index > 0 && names[index - 1]!.localeCompare(name) >= 0)
+    names.some((name, index) => index > 0 && compareCodeUnits(names[index - 1]!, name) >= 0)
   ) {
     throw new Error("Hermes Portable uninstall targets are not unique and sorted");
   }
@@ -392,27 +397,43 @@ function replaceJournal(
   current: HermesPortableUninstallJournal,
   phase: HermesPortableUninstallPhase,
 ): HermesPortableUninstallJournal {
-  const next = Object.freeze({ ...current, phase });
+  return replaceExactJournal(stateDir, current, Object.freeze({ ...current, phase }));
+}
+
+function replaceExactJournal(
+  stateDir: string,
+  current: HermesPortableUninstallJournal,
+  next: HermesPortableUninstallJournal,
+): HermesPortableUninstallJournal {
   const target = journalPath(stateDir);
-  const temporary = `${target}.${String(process.pid)}.${phase}.${randomUUID()}.next`;
-  const descriptor = fs.openSync(
-    temporary,
-    fs.constants.O_WRONLY |
-      fs.constants.O_CREAT |
-      fs.constants.O_EXCL |
-      (fs.constants.O_NOFOLLOW ?? 0),
-    0o600,
-  );
+  const temporary = `${target}.${String(process.pid)}.${next.phase}.${randomUUID()}.next`;
   try {
-    fs.writeFileSync(descriptor, canonical(next), "utf8");
-    fs.fsyncSync(descriptor);
-  } finally {
-    fs.closeSync(descriptor);
+    const descriptor = fs.openSync(
+      temporary,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    try {
+      fs.writeFileSync(descriptor, canonical(next), "utf8");
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    if (canonical(readJournalFile(stateDir)) !== canonical(current)) {
+      throw new Error("Hermes Portable uninstall journal changed before phase publication");
+    }
+    fs.renameSync(temporary, target);
+  } catch (error) {
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {
+      // Preserve the publication failure when cleanup also fails.
+    }
+    throw error;
   }
-  if (canonical(readJournalFile(stateDir)) !== canonical(current)) {
-    throw new Error("Hermes Portable uninstall journal changed before phase publication");
-  }
-  fs.renameSync(temporary, target);
   fsyncDirectory(stateDir);
   const verified = readJournalFile(stateDir);
   if (canonical(verified) !== canonical(next)) {
@@ -452,6 +473,26 @@ export function runHermesPortableUninstallTransaction(
   for (;;) {
     const phase = journal.phase;
     if (phase === "completed") {
+      const replacement = deps.prepareReplacement?.() ?? null;
+      if (replacement) {
+        const authority = normalizeAuthority(replacement);
+        const authoritySha256 = sha256(JSON.stringify(authority));
+        if (authoritySha256 === journal.authoritySha256) {
+          throw new Error("Hermes Portable completed journal matches live replacement authority");
+        }
+        journal = replaceExactJournal(
+          stateDir,
+          journal,
+          Object.freeze({
+            schemaVersion: 1 as const,
+            kind: "hermes-portable-uninstall" as const,
+            phase: "prepared" as const,
+            authority,
+            authoritySha256,
+          }),
+        );
+        continue;
+      }
       deps.verifyCompleted(journal.authority);
       return {
         phase: "completed",

@@ -13,7 +13,10 @@ import type {
   HostLocalInferenceStartupSelectionInput,
   HostLocalInferenceStartupSelectionResolver,
 } from "../runtime-provider/host-local-inference-routing";
-import { createFilePersistedEngineAuthorityStore } from "../runtime-provider/persisted-engine-authority";
+import {
+  createFilePersistedEngineAuthorityStore,
+  openFilePersistedEngineAuthorityStore,
+} from "../runtime-provider/persisted-engine-authority";
 import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
 import {
   qualifyPodmanInferenceAuthority,
@@ -164,7 +167,7 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
     hostLocalInference: {
       authority,
       authorityQualification: qualification,
-      authorityStore: createFilePersistedEngineAuthorityStore(inferenceStateDir),
+      authorityStore: openFilePersistedEngineAuthorityStore(inferenceStateDir),
       routeAuthorityStore: createUnusedRouteAuthorityStore(),
       externalNetwork: network,
       onFailureEvidence: (evidence) => {

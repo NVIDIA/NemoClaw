@@ -214,6 +214,7 @@ After successful schema `5` Portable Ollama cleanup with `--destroy-user-data`, 
 Another same-user process can change the journal, so this protection assumes cooperative NemoClaw writers under that UID.
 The journal is credential-free.
 A completed journal remains as exact no-op evidence for a repeated uninstall.
+If a later completed onboarding publishes a new schema `5` lifecycle, the next uninstall replaces the completed journal with that lifecycle's exact authority before mutation.
 </AgentOnly>
 
 A repeat invocation remains on portable cleanup and performs no Docker probe or mutation, implicit OpenShell cleanup, or model cleanup.
@@ -229,7 +230,7 @@ While the host fence, sorted sandbox lifecycle locks, and process-bound registry
 It writes the credential-free transaction journal before the first mutation, then records sandbox, provider, inference, registry, receipt, and completion phases.
 Before each phase, it revalidates the exact authority recorded in the journal.
 If a resource disappeared after an earlier recorded action but before its phase update, the retry proves that exact absence and continues without repeating the mutation.
-An unexpected absence, same-name replacement, non-ready sandbox, changed container label set, provider revision or profile change, socket or network change, or registry authority drift stops cleanup before an unproven mutation.
+An unexpected absence, same-name replacement, sandbox phase other than `Ready` or `Stopped`, changed container label set, provider revision or profile change, socket or network change, or registry authority drift stops cleanup before an unproven mutation.
 When another recorded sandbox shares the provider or inference runtime, uninstall preserves that shared resource.
 The transaction removes exact receipt-owned resources before it retires the matching registry row and lifecycle receipt.
 When both the provider and inference runtime are exclusive, it then retires their private inference state.

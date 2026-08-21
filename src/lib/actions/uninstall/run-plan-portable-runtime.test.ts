@@ -20,6 +20,7 @@ import {
   type UninstallRunOptions,
 } from "./run-plan";
 import {
+  HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
   hasPortableRuntimeCleanup,
   runPortableRuntimeCleanupTransaction,
   type PortableRuntimeCleanupInput,
@@ -375,6 +376,11 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     );
     fs.mkdirSync(path.dirname(sharedInferenceEvidence), { recursive: true });
     fs.writeFileSync(sharedInferenceEvidence, "shared-authority\n", { mode: 0o600 });
+    const lifecycleLockEvidence = path.join(scope.stateDir, "state", "lifecycle.lock");
+    fs.mkdirSync(path.dirname(lifecycleLockEvidence), { recursive: true });
+    fs.writeFileSync(lifecycleLockEvidence, "held\n", { mode: 0o600 });
+    const journalEvidence = path.join(scope.stateDir, HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE);
+    fs.writeFileSync(journalEvidence, '{"phase":"prepared"}\n', { mode: 0o600 });
     let hostFenceHeld = false;
     const cleanupFenceStates: boolean[] = [];
     scope.runPortableCleanup.mockImplementation(() => {
@@ -410,6 +416,8 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     expect(scope.runPortableCleanup).toHaveBeenCalledOnce();
     expect(cleanupFenceStates).toEqual([true]);
     expect(fs.existsSync(sharedInferenceEvidence)).toBe(true);
+    expect(fs.existsSync(lifecycleLockEvidence)).toBe(true);
+    expect(fs.existsSync(journalEvidence)).toBe(true);
   });
 
   it("uses exact receipt names without Docker or an all-sandbox mutation (#9189)", () => {

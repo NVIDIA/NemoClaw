@@ -12,7 +12,10 @@ import type {
   PodmanExecutableStat,
   PodmanSocketAuthority,
 } from "../../src/lib/adapters/podman";
-import { fingerprintOpenShellSandboxLiveIdentity } from "../../src/lib/adapters/openshell/sandbox-identity";
+import {
+  fingerprintOpenShellSandboxLiveIdentity,
+  parseOpenShellSandboxId,
+} from "../../src/lib/adapters/openshell/sandbox-identity";
 import { loadAgent } from "../../src/lib/agent/defs";
 import { writeConfigFile } from "../../src/lib/state/config-io";
 import { createSandboxHostLocalInferenceProvenance } from "../../src/lib/state/registry/host-local-inference";
@@ -43,7 +46,10 @@ import {
   PORTABLE_PROBE_IMAGE,
 } from "../../src/lib/onboard/experimental/hermes-portable-ollama-authority";
 import type { HermesPortableUninstallDeps } from "../../src/lib/actions/uninstall/hermes-portable-uninstall";
-import type { HermesPortableUninstallPhase } from "../../src/lib/actions/uninstall/hermes-portable-uninstall-transaction";
+import {
+  HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
+  type HermesPortableUninstallPhase,
+} from "../../src/lib/actions/uninstall/hermes-portable-uninstall-transaction";
 import type { PortableRuntimeCleanupInput } from "../../src/lib/actions/uninstall/portable-runtime-cleanup";
 import { createPodmanHostLocalInferenceTestHarness } from "./podman-host-local-inference-test-harness";
 import {
@@ -72,6 +78,23 @@ const SANDBOX_LABELS = {
   "openshell.ai/sandbox-namespace": "",
   "openshell.ai/sandbox-workspace": "default",
 };
+
+function sandboxListJson(liveSandbox: string): string {
+  const sandboxId = parseOpenShellSandboxId(liveSandbox);
+  const phase = liveSandbox.match(/^Phase:\s*(\S+)\s*$/mu)?.[1];
+  if (!sandboxId || !phase) throw new Error("Hermes Portable test sandbox list is malformed");
+  return JSON.stringify([
+    {
+      id: sandboxId,
+      name: SANDBOX_NAME,
+      labels: {},
+      resource_version: 1,
+      created_at: "2026-01-01T00:00:00Z",
+      phase,
+      current_policy_version: 1,
+    },
+  ]);
+}
 
 function directoryChain(directory: string): string[] {
   const parent = path.dirname(directory);
@@ -478,7 +501,17 @@ export async function createHermesPortableUninstallFixture(
     }
     const command = args.slice(0, 2).join(":");
     if (command === "policy:get") return { status: 0, stdout: POLICY, stderr: "" };
-    if (command === "sandbox:list") return { status: 0, stdout: liveSandbox, stderr: "" };
+    if (command === "sandbox:list") {
+      return {
+        status: 0,
+        stdout: args.includes("json")
+          ? sandboxPresent
+            ? sandboxListJson(liveSandbox)
+            : "[]"
+          : liveSandbox,
+        stderr: "",
+      };
+    }
     if (command === "sandbox:get") {
       return sandboxPresent
         ? { status: 0, stdout: liveSandbox, stderr: "" }
@@ -528,7 +561,7 @@ export async function createHermesPortableUninstallFixture(
     },
     gatewayProvider,
     harness,
-    journalPath: path.join(stateDir, "hermes-portable-uninstall-transaction.json"),
+    journalPath: path.join(stateDir, HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE),
     lifecycleReceiptRoot: path.join(stateDir, "hermes-portable-lifecycle"),
     registryFile,
     stateDir,
@@ -541,6 +574,8 @@ export async function createHermesPortableUninstallFixture(
     sandboxPresent: () => sandboxPresent,
     replaceSandbox: () => {
       sandboxPresent = true;
+      sandboxContainerPresent = true;
+      sandboxContainerId = "f".repeat(64);
       liveSandbox = `Name: ${SANDBOX_NAME}\nID: replacement-id\nPhase: Ready\n`;
     },
     setNetworkDrift: () => {

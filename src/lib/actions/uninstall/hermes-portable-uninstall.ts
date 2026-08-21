@@ -122,11 +122,15 @@ function digest(value: unknown): string {
   return createHash("sha256").update(stableJson(value), "utf8").digest("hex");
 }
 
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
     return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareCodeUnits(left, right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
       .join(",")}}`;
   }
@@ -287,7 +291,7 @@ function schema5SandboxNames(input: HermesPortableUninstallInput): string[] {
     .filter(
       (sandboxName) => readHermesPortableLifecycleReceipt(sandboxName, input.stateDir) !== null,
     )
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCodeUnits);
   const stems = targets.map(sandboxStem).sort();
   if (!isDeepStrictEqual(stems, directory.entries)) {
     throw new Error("Hermes Portable uninstall lifecycle receipts and registry ownership disagree");
@@ -302,9 +306,13 @@ export function inspectHermesPortableUninstallSandboxNames(
   const state = readPortableAuthorityDirectory(input.stateDir, false);
   if (state.identity === null) return null;
   const journal = inspectHermesPortableUninstallJournal(input.stateDir);
-  const names = journal
-    ? journal.authority.targets.map(({ sandboxName }) => sandboxName)
-    : schema5SandboxNames(input);
+  const currentNames = journal?.phase === "completed" ? schema5SandboxNames(input) : [];
+  const names =
+    currentNames.length > 0
+      ? currentNames
+      : journal
+        ? journal.authority.targets.map(({ sandboxName }) => sandboxName)
+        : schema5SandboxNames(input);
   if (names.length === 0) return null;
   const legacyReceipts = readPortableAuthorityDirectory(
     path.join(input.stateDir, "portable-demo-lifecycle"),
@@ -411,7 +419,7 @@ function inspectProviderSharingAuthority(
         (peer.gatewayName === row.gatewayName && peer.provider === row.provider),
     )
     .map((peer) => ({ name: peer.name, registryRowSha256: digest(peer) }))
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .sort((left, right) => compareCodeUnits(left.name, right.name));
   if (owners.filter(({ name }) => name === row.name).length !== 1) {
     throw new Error("Hermes Portable provider custody lacks one exact target registry row");
   }
@@ -646,7 +654,7 @@ function retireExactDirectory(directory: string, expectedSha256: string): void {
   if (current !== expectedSha256) {
     throw new Error(`Hermes Portable uninstall evidence changed before retirement: ${directory}`);
   }
-  fs.rmSync(directory, { recursive: true });
+  fs.rmSync(directory, { recursive: true, force: true });
   if (directoryAuthoritySha256(directory) !== null) {
     throw new Error(`Hermes Portable uninstall evidence remained after retirement: ${directory}`);
   }
@@ -709,6 +717,11 @@ export function runHermesPortableUninstall(
   let cache: LoadedAuthority | null = null;
   return runHermesPortableUninstallTransaction(input.stateDir, {
     prepare: () => {
+      cache = loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
+      return cache.authority;
+    },
+    prepareReplacement: () => {
+      if (schema5SandboxNames(input).length === 0) return null;
       cache = loadAuthority(input, deps, null, NO_RESOURCE_ABSENCE);
       return cache.authority;
     },

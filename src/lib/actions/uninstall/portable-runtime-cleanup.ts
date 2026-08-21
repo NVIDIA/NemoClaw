@@ -61,6 +61,10 @@ const PORTABLE_SELECTOR_NAMES = [
 ] as const;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 interface PortableRegistryRemoval {
   readonly present: boolean;
   removeAndVerify(): void;
@@ -211,7 +215,7 @@ function requireCompleteReceiptRegistryOwnership(
 
 function currentReceipts(stateDir: string): PortableDemoLifecycleReceiptRecord[] {
   return listPortableDemoSandboxLifecycleReceipts(stateDir).sort((left, right) =>
-    left.sandboxName.localeCompare(right.sandboxName),
+    compareCodeUnits(left.sandboxName, right.sandboxName),
   );
 }
 
@@ -296,7 +300,7 @@ export function runPortableRuntimeCleanupTransaction(
     deps.inspectHermesPortableSandboxNames ?? inspectHermesPortableUninstallSandboxNames
   )(hermesInput);
   if (hermesSandboxNames) {
-    const names = [...hermesSandboxNames].sort((left, right) => left.localeCompare(right));
+    const names = [...hermesSandboxNames].sort(compareCodeUnits);
     return withPortableFences(input, names, deps, () => {
       const result = (deps.runHermesPortableUninstall ?? runHermesPortableUninstall)(
         hermesInput,

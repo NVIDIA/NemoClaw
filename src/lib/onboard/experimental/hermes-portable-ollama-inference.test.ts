@@ -254,7 +254,14 @@ function gatewayJournalPath(fixture: ReturnType<typeof createRuntimeFixture>): s
 function gatewayJournal(fixture: ReturnType<typeof createRuntimeFixture>) {
   return JSON.parse(fs.readFileSync(gatewayJournalPath(fixture), "utf8")) as {
     phase: string;
-    intent: { providerCredentialEnv: string };
+    intent: {
+      providerCredentialEnv: string;
+      transactionId: string;
+      targetSha256: string;
+      sandboxName: string;
+      model: string;
+      credentialEnv: string;
+    };
     providerAuthority: { id: string; resourceVersion: number } | null;
   };
 }
@@ -271,15 +278,7 @@ async function publishPortableInference(fixture: ReturnType<typeof createRuntime
   createExactGatewayProvider(mutation);
   await mutation.commit();
   route.prepared.commit();
-  return JSON.parse(fs.readFileSync(gatewayJournalPath(fixture), "utf8")) as {
-    intent: {
-      transactionId: string;
-      targetSha256: string;
-      sandboxName: string;
-      model: string;
-      credentialEnv: string;
-    };
-  };
+  return gatewayJournal(fixture);
 }
 
 afterEach(() => {

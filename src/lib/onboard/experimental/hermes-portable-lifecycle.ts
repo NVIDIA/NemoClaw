@@ -9,6 +9,7 @@ import {
   fingerprintOpenShellSandboxLiveIdentity,
   parseOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
+import { classifyOpenShellSandboxPresence } from "../../adapters/openshell/sandbox-presence";
 import { assertPodmanSocketAuthority } from "../../adapters/podman";
 import {
   assertHermesPortableOpenShellExecutableAuthority,
@@ -237,6 +238,7 @@ function contextMatches(
 function observeOpenShellIdentity(
   receipt: HermesPortableConfiguredReceipt,
   capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>,
+  acceptedPhases: readonly string[] = ["Ready"],
 ): { readonly sandboxId: string; readonly liveIdentityFingerprint: string } {
   const gateway = capture(["sandbox", "list", "-g", receipt.gatewayName], COMMAND_TIMEOUT_MS);
   if (gateway.status !== 0 || gateway.error) fail("cannot prove the selected gateway reachable");
@@ -248,8 +250,10 @@ function observeOpenShellIdentity(
   const output = commandOutput(current.stdout, "sandbox identity output");
   const sandboxId = parseOpenShellSandboxId(output);
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(output);
+  const phases = [...output.matchAll(/^Phase:\s*(\S+)\s*$/gmu)].map((match) => match[1]!);
   if (
-    !/^Phase:\s*Ready\s*$/mu.test(output) ||
+    phases.length !== 1 ||
+    !acceptedPhases.includes(phases[0]!) ||
     !sandboxId ||
     !liveIdentityFingerprint ||
     sandboxId !== receipt.container.sandboxId
@@ -298,6 +302,7 @@ function qualify(
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps,
   expected?: HermesPortableReceiptSnapshot,
+  acceptedPhases: readonly string[] = ["Ready"],
 ): QualifiedHermesPortableLifecycle {
   const commandEnv = deps.env ?? process.env;
   assertNoOpenShellGatewayEndpointOverride(commandEnv);
@@ -349,7 +354,7 @@ function qualify(
   ) {
     fail("live policy authority disagrees with the active receipt");
   }
-  const liveIdentity = observeOpenShellIdentity(receipt, capture);
+  const liveIdentity = observeOpenShellIdentity(receipt, capture, acceptedPhases);
   requireRegistry(receipt, liveIdentity.liveIdentityFingerprint, deps);
   const containerDeps =
     typeof deps.container === "function"
@@ -496,36 +501,21 @@ export interface PreparedHermesPortableSandboxRemoval {
   readonly verifyAbsent: () => void;
 }
 
-function explicitSandboxAbsence(
-  result: HermesPortableLifecycleCommandResult,
+function classifySandboxAbsence(
+  capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>,
+  receipt: HermesPortableConfiguredReceipt,
   sandboxName: string,
-): boolean {
-  if (result.status === 0 || result.error) return false;
-  const clean = `${commandOutput(result.stdout, "sandbox absence output")}\n${commandOutput(
-    result.stderr,
-    "sandbox absence diagnostic",
-  )}`
-    .replace(/\x1b\[[0-9;]*m|\r/gu, "")
-    .trim();
-  const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const named = `(?:['\"]${escaped}['\"]|${escaped})`;
-  return (
-    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/iu.test(
-      clean,
-    ) ||
-    new RegExp(
-      `^(?:error:\\s*)?sandbox\\s+${named}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
-      "iu",
-    ).test(clean) ||
-    new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${named}[.!]?$`, "iu").test(clean)
+): "present" | "absent" | "unknown" {
+  const result = capture(
+    ["sandbox", "list", "-g", receipt.gatewayName, "-o", "json"],
+    COMMAND_TIMEOUT_MS,
   );
-}
-
-function missingPodmanContainer(result: HermesPortablePodmanResult): boolean {
-  if (result.status === 0 || result.error) return false;
-  return /\b(?:no such (?:object|container)|no container with (?:name|id)|container .* not found)\b/iu.test(
-    `${result.stdout}\n${result.stderr}`,
-  );
+  if (result.error) return "unknown";
+  return classifyOpenShellSandboxPresence(sandboxName, {
+    status: result.status,
+    stdout: commandOutput(result.stdout, "sandbox list output"),
+    stderr: commandOutput(result.stderr, "sandbox list diagnostic"),
+  });
 }
 
 function requireNoContainerLookupResult(result: HermesPortablePodmanResult, label: string): void {
@@ -548,15 +538,14 @@ function assertHermesPortableContainerAbsent(
     receipt.socketAuthority,
     deps.socketAuthority,
   );
-  const exact = deps.podman(
-    ["container", "inspect", receipt.container.containerId],
-    COMMAND_TIMEOUT_MS,
-  );
-  if (!missingPodmanContainer(exact)) {
-    if (exact.status !== 0 || exact.error) fail("cannot prove exact container absence");
-    fail("exact container remained after sandbox removal");
-  }
   const common = ["ps", "--all", "--no-trunc"] as const;
+  requireNoContainerLookupResult(
+    deps.podman(
+      [...common, "--filter", `id=${receipt.container.containerId}`, "--format", "{{.ID}}"],
+      COMMAND_TIMEOUT_MS,
+    ),
+    "exact container",
+  );
   requireNoContainerLookupResult(
     deps.podman(
       [
@@ -635,7 +624,9 @@ export function prepareHermesPortableSandboxRemoval(
   const receipt = expectedSnapshot.receipt;
   if (!contextMatches(receipt, context)) fail("registry context disagrees with the active receipt");
 
-  const inspect = (): {
+  const inspect = (
+    admitAbsence = options.allowAbsent === true,
+  ): {
     readonly present: boolean;
     readonly qualified?: QualifiedHermesPortableLifecycle;
     readonly capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
@@ -675,19 +666,22 @@ export function prepareHermesPortableSandboxRemoval(
       typeof deps.container === "function"
         ? deps.container(receipt)
         : (deps.container ?? createContainerDeps(receipt, commandEnv, deps.podmanAuthorityDeps));
-    if (explicitSandboxAbsence(current, sandboxName)) {
-      if (!options.allowAbsent) fail("sandbox disappeared before uninstall journal publication");
+    if (current.status !== 0 || current.error) {
+      const presence = current.error
+        ? "unknown"
+        : classifySandboxAbsence(capture, receipt, sandboxName);
+      if (presence !== "absent") fail("cannot prove the current OpenShell sandbox");
+      if (!admitAbsence) fail("sandbox disappeared before uninstall journal publication");
       assertHermesPortableContainerAbsent(receipt, containerDeps);
       return { present: false, capture, containerDeps };
     }
-    if (current.status !== 0 || current.error) fail("cannot prove the current OpenShell sandbox");
-    const qualified = qualify(sandboxName, context, deps, expectedSnapshot);
+    const qualified = qualify(sandboxName, context, deps, expectedSnapshot, ["Ready", "Stopped"]);
     return { present: true, qualified, capture, containerDeps: qualified.containerDeps };
   };
 
   const initial = inspect();
   const verifyAbsent = (): void => {
-    const current = inspect();
+    const current = inspect(true);
     if (current.present) fail("OpenShell sandbox remained after deletion");
   };
   return Object.freeze({
@@ -701,7 +695,7 @@ export function prepareHermesPortableSandboxRemoval(
         ["sandbox", "delete", "-g", receipt.gatewayName, receipt.sandboxName],
         40_000,
       );
-      const after = inspect();
+      const after = inspect(true);
       if (after.present) {
         if (removed.status !== 0 || removed.error) fail("exact sandbox deletion failed");
         fail("exact sandbox remained after deletion");

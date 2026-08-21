@@ -18,6 +18,15 @@ import {
 
 const temporaryDirectories: string[] = [];
 const SHA = "a".repeat(64);
+const ACTION_PHASES = [
+  "prepared",
+  "sandboxes-retired",
+  "providers-retired",
+  "inference-retired",
+  "resources-absent",
+  "registry-retired",
+  "receipts-retired",
+] as const;
 
 function authority(): HermesPortableUninstallAuthority {
   return {
@@ -75,7 +84,9 @@ function transactionDeps(
   interrupt?: HermesPortableUninstallPhase,
 ): {
   readonly deps: HermesPortableUninstallTransactionDeps;
+  readonly calls: HermesPortableUninstallPhase[];
   readonly mutations: string[];
+  readonly replaceInstallation: () => void;
   readonly setReplacement: (value: boolean) => void;
 } {
   const current = {
@@ -87,23 +98,30 @@ function transactionDeps(
     privateState: true,
     replacement: false,
   };
+  let preparedAuthority = authority();
+  let replacementInstallation = false;
   const mutations: string[] = [];
+  const calls: HermesPortableUninstallPhase[] = [];
   let injected = false;
   const deps: HermesPortableUninstallTransactionDeps = {
-    prepare: authority,
+    prepare: () => preparedAuthority,
+    prepareReplacement: () => {
+      const replacement = replacementInstallation ? preparedAuthority : null;
+      replacementInstallation = false;
+      return replacement;
+    },
     revalidateResources: () => {
-      current.replacement
-        ? (() => {
-            throw new Error("same-name replacement");
-          })()
-        : undefined;
-      current.registry && current.receipt && current.privateState
-        ? undefined
-        : (() => {
-            throw new Error("durable authority retired before resources");
-          })();
+      switch (current.replacement) {
+        case true:
+          throw new Error("same-name replacement");
+      }
+      switch (current.registry && current.receipt && current.privateState) {
+        case false:
+          throw new Error("durable authority retired before resources");
+      }
     },
     reconcileSandboxes: () => {
+      calls.push("prepared");
       expect(inspectHermesPortableUninstallJournal(state)?.phase).toBe("prepared");
       const removed = Number(current.sandbox);
       current.sandbox && mutations.push("sandbox");
@@ -111,27 +129,33 @@ function transactionDeps(
       return removed;
     },
     reconcileProviders: () => {
+      calls.push("sandboxes-retired");
       current.provider && mutations.push("provider");
       current.provider = false;
     },
     reconcileInference: () => {
+      calls.push("providers-retired");
       current.inference && mutations.push("inference");
       current.inference = false;
     },
     verifyResourcesAbsent: () => {
+      calls.push("inference-retired");
       expect(current).toMatchObject({ sandbox: false, provider: false, inference: false });
       mutations.push("verify-resources");
     },
     retireRegistry: () => {
+      calls.push("resources-absent");
       current.registry && mutations.push("registry");
       current.registry = false;
     },
     retireLifecycleReceipts: () => {
+      calls.push("registry-retired");
       expect(current.registry).toBe(false);
       current.receipt && mutations.push("receipt");
       current.receipt = false;
     },
     retirePrivateInferenceState: () => {
+      calls.push("receipts-retired");
       expect(current.registry).toBe(false);
       expect(current.receipt).toBe(false);
       current.privateState && mutations.push("private-state");
@@ -147,16 +171,38 @@ function transactionDeps(
     afterPhaseAction: (phase) => {
       const shouldInterrupt = !injected && phase === interrupt;
       injected ||= shouldInterrupt;
-      shouldInterrupt
-        ? (() => {
-            throw new Error(`interrupted after ${phase}`);
-          })()
-        : undefined;
+      switch (shouldInterrupt) {
+        case true:
+          throw new Error(`interrupted after ${phase}`);
+      }
     },
   };
   return {
     deps,
+    calls,
     mutations,
+    replaceInstallation: () => {
+      Object.assign(current, {
+        sandbox: true,
+        provider: true,
+        inference: true,
+        registry: true,
+        receipt: true,
+        privateState: true,
+        replacement: false,
+      });
+      preparedAuthority = {
+        ...authority(),
+        targets: [
+          {
+            ...authority().targets[0]!,
+            lifecycleGeneration: "generation-2",
+            registryRowSha256: "0".repeat(64),
+          },
+        ],
+      };
+      replacementInstallation = true;
+    },
     setReplacement: (value) => {
       current.replacement = value;
     },
@@ -164,7 +210,6 @@ function transactionDeps(
 }
 
 afterEach(() => {
-  vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -192,6 +237,11 @@ describe("Hermes Portable uninstall transaction", () => {
     expect(resumed.phase).toBe("completed");
     expect(inspectHermesPortableUninstallJournal(state)?.phase).toBe("completed");
     expect(fs.statSync(hermesPortableUninstallJournalPath(state)).mode & 0o777).toBe(0o600);
+    expect(fixture.calls).toEqual(
+      ACTION_PHASES.flatMap((candidate) =>
+        candidate === phase ? [candidate, candidate] : [candidate],
+      ),
+    );
 
     const mutations = [...fixture.mutations];
     expect(runHermesPortableUninstallTransaction(state, fixture.deps)).toEqual({
@@ -200,6 +250,42 @@ describe("Hermes Portable uninstall transaction", () => {
       targetCount: 1,
     });
     expect(fixture.mutations).toEqual(mutations);
+  });
+
+  it("cleans the phase temporary file when journal replacement fails (#9608)", () => {
+    const state = stateDir();
+    const fixture = transactionDeps(state, "prepared");
+    expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).toThrow(
+      "interrupted after prepared",
+    );
+    const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("rename failed");
+    });
+    try {
+      expect(() => runHermesPortableUninstallTransaction(state, fixture.deps)).toThrow(
+        "rename failed",
+      );
+      expect(fs.readdirSync(state).filter((entry) => entry.endsWith(".next"))).toEqual([]);
+    } finally {
+      rename.mockRestore();
+    }
+  });
+
+  it("replaces a completed journal when a later install publishes new authority (#9608)", () => {
+    const state = stateDir();
+    const fixture = transactionDeps(state);
+
+    expect(runHermesPortableUninstallTransaction(state, fixture.deps).phase).toBe("completed");
+    fixture.replaceInstallation();
+    expect(runHermesPortableUninstallTransaction(state, fixture.deps)).toEqual({
+      phase: "completed",
+      sandboxContainersRemoved: 1,
+      targetCount: 1,
+    });
+    expect(
+      inspectHermesPortableUninstallJournal(state)?.authority.targets[0]?.lifecycleGeneration,
+    ).toBe("generation-2");
+    expect(fixture.mutations.filter((mutation) => mutation === "sandbox")).toHaveLength(2);
   });
 
   it("fails closed on a same-name replacement after sandbox deletion (#9608)", () => {

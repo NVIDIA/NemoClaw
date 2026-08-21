@@ -56,10 +56,17 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function createPrivateStateFile(directory: string, fileName: string, label: string) {
-  ensureConfigDir(directory);
+function openPrivateStateFile(directory: string, fileName: string, label: string) {
   rejectSymlinksOnPath(directory);
-  const directoryMetadata = fs.lstatSync(directory, { bigint: true });
+  let directoryMetadata: fs.BigIntStats;
+  try {
+    directoryMetadata = fs.lstatSync(directory, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Hermes Portable inference ${label} directory is missing.`);
+    }
+    throw error;
+  }
   const uid = BigInt(process.getuid?.() ?? directoryMetadata.uid);
   if (
     !directoryMetadata.isDirectory() ||
@@ -228,6 +235,11 @@ function createPrivateStateFile(directory: string, fileName: string, label: stri
   return Object.freeze({ publishExclusive, readExact, replaceExact });
 }
 
+function createPrivateStateFile(directory: string, fileName: string, label: string) {
+  ensureConfigDir(directory);
+  return openPrivateStateFile(directory, fileName, label);
+}
+
 type GatewayProviderAuthority = Readonly<{
   id: string;
   resourceVersion: number;
@@ -265,8 +277,9 @@ type GatewayProviderJournal = Readonly<{
 function createGatewayProviderJournalStore(
   directory: string,
   intent: GatewayProviderJournalIntent,
+  mode: "create" | "open-existing" = "create",
 ) {
-  const stateFile = createPrivateStateFile(
+  const stateFile = (mode === "create" ? createPrivateStateFile : openPrivateStateFile)(
     directory,
     GATEWAY_PROVIDER_JOURNAL_FILE,
     "gateway provider journal",
@@ -896,6 +909,7 @@ export function prepareHermesPortableOllamaProviderRetirement(options: {
       providerCredentialEnv,
       baseUrl: "http://host.openshell.internal:11434/v1",
     }),
+    "open-existing",
   );
   const journal = store.load();
   if (journal?.phase !== "committed" || !journal.providerAuthority) {
