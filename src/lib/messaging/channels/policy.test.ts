@@ -11,6 +11,7 @@ import {
   createMessagingChannelPolicyResolver,
   listMessagingChannelPolicyPresets,
   loadMessagingChannelPolicyPreset,
+  materializeMessagingPolicySandboxName,
   resolveMessagingChannelPolicyPresetPath,
 } from "./policy";
 
@@ -113,6 +114,18 @@ describe("messaging channel policy presets", () => {
 
     expect(policy.loadMessagingChannelPolicyPreset("discord")).toBeNull();
   });
+
+  it.each([undefined, null, "bad:provider"])(
+    "does not materialize a sandbox provider binding from %s",
+    (sandboxName) => {
+      expect(
+        materializeMessagingPolicySandboxName(
+          'credential_binding:\n  provider: "{sandboxName}-discord-bridge"\n',
+          sandboxName,
+        ),
+      ).toBeNull();
+    },
+  );
 
   it("ships a policy file for every manifest-supported agent and preset", () => {
     const missing = listBuiltInMessagingChannelManifests().flatMap((manifest) =>

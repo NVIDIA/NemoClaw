@@ -58,6 +58,15 @@ export interface MessagingChannelPolicyResolverDeps {
   readonly listPresetMetadata: PolicyPresetMetadataReader;
 }
 
+export function materializeMessagingPolicySandboxName(
+  content: string,
+  sandboxName: string | null | undefined,
+): string | null {
+  if (!content.includes("{sandboxName}")) return content;
+  if (sandboxName === undefined || sandboxName === null || !isValidName(sandboxName)) return null;
+  return content.replaceAll("{sandboxName}", sandboxName);
+}
+
 function normalizeAgent(
   agent: MessagingAgentId | string | null | undefined,
 ): MessagingAgentId | null {
@@ -137,9 +146,7 @@ export function createMessagingChannelPolicyResolver(
     const content = deps.readFileSync(file, "utf-8");
     const header = readPresetHeader(content);
     if (header?.name !== presetName) return null;
-    if (!content.includes("{sandboxName}")) return content;
-    if (options.sandboxName === undefined || !isValidName(options.sandboxName)) return null;
-    return content.replaceAll("{sandboxName}", options.sandboxName);
+    return materializeMessagingPolicySandboxName(content, options.sandboxName);
   }
 
   function listMessagingChannelPolicyPresets(
