@@ -226,6 +226,61 @@ describe("writeDockerGatewayDebEnvOverride", () => {
     expect(hasService).not.toHaveBeenCalled();
   });
 
+  it("rechecks competing services before the managed-service start mutation (#9705)", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-recheck-"));
+    const gatewayEnv = buildDockerDriverGatewayEnv({
+      platform: "darwin",
+      stateDir: path.join(tempHome, "state"),
+      getDockerSupervisorImage: () => "supervisor:test",
+      resolveSandboxBin: () => null,
+    });
+    const conflict = new Error("a competing OpenShell gateway service appeared");
+    const assertNoCompetingService = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw conflict;
+      });
+    const lifecycleMutations: string[] = [];
+
+    try {
+      await expect(
+        startPackageManagedDockerDriverGatewayWithEnvOverride({
+          assertNoCompetingOpenShellGatewayUserService: assertNoCompetingService,
+          clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+          env: homeEnv(tempHome),
+          exitOnFailure: false,
+          gatewayEnv,
+          gatewayName: "nemoclaw",
+          hasOpenShellGatewayUserService: () => true,
+          isDockerDriverGatewayReady: async () => true,
+          registerDockerDriverGatewayEndpoint: () => true,
+          runCaptureOpenshell: (args) =>
+            args[0] === "status"
+              ? "Gateway: nemoclaw\nConnected"
+              : "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/",
+          skipSandboxBridgeReachability: true,
+          startOpenShellGatewayUserService: (opts) => {
+            opts?.validatePortOwnerForServiceStart?.();
+            lifecycleMutations.push("start");
+            return { attempted: true, started: true };
+          },
+          stopOpenShellGatewayUserService: () => ({
+            attempted: false,
+            standaloneFallbackAllowed: false,
+            stopped: false,
+          }),
+          verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
+        }),
+      ).resolves.toBe(false);
+
+      expect(assertNoCompetingService.mock.calls).toEqual([[8080], [8080]]);
+      expect(lifecycleMutations).toEqual([]);
+    } finally {
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an env file swapped to a symlink after opening without writing its target", () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const envDir = path.join(tempHome, ".config", "openshell");

@@ -42,6 +42,18 @@ function showOutput(overrides: Partial<Record<string, string>> = {}): string {
   ].join("\n");
 }
 
+function canonicalShowOutput(overrides: Partial<Record<string, string>> = {}): string {
+  return [
+    `FragmentPath=${overrides.FragmentPath ?? "/usr/lib/systemd/user/openshell-gateway.service"}`,
+    showOutput({
+      ...overrides,
+      ExecStart:
+        overrides.ExecStart ??
+        "{ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
+    }),
+  ].join("\n");
+}
+
 function classify(
   overrides: Partial<Record<string, string>> = {},
   gatewayPort = 8080,
@@ -267,14 +279,116 @@ function activationScanOptions(
   };
 }
 
-it("excludes canonical services before a default-port metadata query (#9705)", () => {
-  const unrelated = "unrelated.service";
-  const activation = activationScanOptions([`${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`]);
+it("preserves manager paths without passing secrets to systemd discovery children (#9705)", () => {
+  const secret = "sentinel-secret-not-for-service-discovery";
+  const childEnvironments: NodeJS.ProcessEnv[] = [];
+  const delegate = competingServiceSpawn({});
+  const spawnSyncImpl = vi.fn<SpawnSyncLike>((command, args, options) => {
+    childEnvironments.push({ ...(options?.env ?? {}) });
+    return delegate(command, args, options);
+  });
+  const requiredEnvironment = {
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    HOME: "/home/nvidia",
+    PATH: "/usr/local/bin:/usr/bin:/bin",
+    XDG_CONFIG_HOME: "/home/nvidia/.config",
+    XDG_RUNTIME_DIR: "/run/user/1000",
+  };
+
+  expect(() =>
+    assertNoCompetingOpenShellGatewayUserService(8080, {
+      ...activationScanOptions().options,
+      commandExists: () => true,
+      env: {
+        ...requiredEnvironment,
+        LC_CLIENT_SECRET: secret,
+        NVIDIA_INFERENCE_API_KEY: secret,
+        OPENSHELL_GATEWAY_AUTH_TOKEN: secret,
+        XDG_API_TOKEN: secret,
+      },
+      platform: "linux",
+      spawnSyncImpl,
+    }),
+  ).not.toThrow();
+  expect(childEnvironments).toEqual([
+    expect.objectContaining(requiredEnvironment),
+    expect.objectContaining(requiredEnvironment),
+  ]);
+  expect(
+    childEnvironments.flatMap((childEnvironment) => Object.values(childEnvironment)),
+  ).not.toContain(secret);
+});
+
+it.each([
+  [
+    "package-qualified upstream service",
+    `${OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    true,
+    "/usr/lib/systemd/user/openshell-gateway.service",
+    "/usr/bin/openshell-gateway",
+  ],
+  [
+    "descriptor-bound NemoClaw service",
+    `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    false,
+    "/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service",
+    "/home/nvidia/.local/bin/openshell-gateway",
+  ],
+])(
+  "qualifies a default-port %s before lifecycle selection (#9705)",
+  (_case, serviceName, active, fragmentPath, executablePath) => {
+    const activation = activationScanOptions(active ? [] : [serviceName]);
+    const spawnSyncImpl = competingServiceSpawn({
+      active: active ? [serviceName] : [],
+      metadata: {
+        [serviceName]: canonicalShowOutput({
+          ActiveState: active ? "active" : "inactive",
+          ExecStart: `{ path=${executablePath} ; argv[]=${executablePath} ; }`,
+          FragmentPath: fragmentPath,
+          UnitFileState: active ? "disabled" : "static",
+        }),
+      },
+    });
+
+    expect(() =>
+      assertNoCompetingOpenShellGatewayUserService(8080, {
+        ...activation.options,
+        commandExists: () => true,
+        existsSync: (candidate) =>
+          candidate === fragmentPath ||
+          candidate === "/usr/lib/systemd/user/openshell-gateway.service",
+        getUpstreamGatewayVersion: () => "0.0.85",
+        getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
+        getuid: () => 1000,
+        lstatSync: (() => ({
+          isFile: () => true,
+          isSymbolicLink: () => false,
+          uid: 1000,
+        })) as never,
+        platform: "linux",
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        spawnSyncImpl,
+      }),
+    ).not.toThrow();
+    const showCall = spawnSyncImpl.mock.calls.find(([, args]) => args.includes("show"));
+    expect(showCall?.[1]).toContain(serviceName);
+    expect(showCall?.[1]).toContain("--property=FragmentPath");
+    expect(showCall?.[1]).not.toContain("--property=Environment");
+  },
+);
+
+it("blocks a canonical NemoClaw descriptor owned by another user (#9705)", () => {
+  const serviceName = `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`;
+  const fragmentPath = "/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service";
+  const activation = activationScanOptions([serviceName]);
   const spawnSyncImpl = competingServiceSpawn({
-    active: [`${OPENSHELL_GATEWAY_USER_SERVICE}.service`, unrelated],
     metadata: {
-      [unrelated]: showOutput({
-        ExecStart: "{ path=/usr/bin/sleep ; argv[]=/usr/bin/sleep infinity ; }",
+      [serviceName]: canonicalShowOutput({
+        ActiveState: "inactive",
+        ExecStart:
+          "{ path=/home/nvidia/.local/bin/openshell-gateway ; argv[]=/home/nvidia/.local/bin/openshell-gateway ; }",
+        FragmentPath: fragmentPath,
+        UnitFileState: "static",
       }),
     },
   });
@@ -283,19 +397,112 @@ it("excludes canonical services before a default-port metadata query (#9705)", (
     assertNoCompetingOpenShellGatewayUserService(8080, {
       ...activation.options,
       commandExists: () => true,
+      existsSync: (candidate) => candidate === fragmentPath,
+      getuid: () => 1000,
+      lstatSync: (() => ({ isFile: () => true, isSymbolicLink: () => false, uid: 2000 })) as never,
       platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
       spawnSyncImpl,
     }),
-  ).not.toThrow();
-  const showCalls = spawnSyncImpl.mock.calls.filter(([, args]) => args.includes("show"));
-  expect(showCalls).toHaveLength(1);
-  expect(showCalls[0]?.[1]).toContain(unrelated);
-  expect(showCalls[0]?.[1]).not.toContain("--property=Environment");
-  expect(spawnSyncImpl.mock.calls.map(([, , options]) => options?.timeout)).toEqual([
-    10_000, 10_000, 10_000,
-  ]);
-  expect(spawnSyncImpl.mock.calls.some(([, args]) => args.includes("list-unit-files"))).toBe(false);
+  ).toThrow("ambiguous port configuration");
 });
+
+it.each([
+  [
+    "foreign fragment",
+    `${OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    true,
+    canonicalShowOutput({ FragmentPath: "/tmp/foreign/openshell-gateway.service" }),
+  ],
+  [
+    "foreign executable",
+    `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    false,
+    canonicalShowOutput({
+      ExecStart:
+        "{ path=/tmp/foreign/openshell-gateway ; argv[]=/tmp/foreign/openshell-gateway ; }",
+      FragmentPath: "/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service",
+    }),
+  ],
+  [
+    "environment wrapper",
+    `${OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    true,
+    canonicalShowOutput({
+      ExecStart: "{ path=/usr/bin/env ; argv[]=/usr/bin/env /usr/bin/openshell-gateway ; }",
+    }),
+  ],
+  [
+    "shell wrapper",
+    `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    false,
+    canonicalShowOutput({
+      ExecStart: "{ path=/bin/sh ; argv[]=/bin/sh -c /home/nvidia/.local/bin/openshell-gateway ; }",
+      FragmentPath: "/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service",
+    }),
+  ],
+  [
+    "unexpected arguments",
+    `${OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    true,
+    canonicalShowOutput({
+      ExecStart:
+        "{ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway --verbose ; }",
+    }),
+  ],
+  [
+    "multiple commands",
+    `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    false,
+    canonicalShowOutput({
+      ExecStart:
+        "{ path=/home/nvidia/.local/bin/openshell-gateway ; argv[]=/home/nvidia/.local/bin/openshell-gateway ; }; { path=/usr/bin/true ; argv[]=/usr/bin/true ; }",
+      FragmentPath: "/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service",
+    }),
+  ],
+  [
+    "selected-port argument",
+    `${OPENSHELL_GATEWAY_USER_SERVICE}.service`,
+    true,
+    canonicalShowOutput({
+      ExecStart:
+        "{ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway --port 8080 ; }",
+    }),
+  ],
+])(
+  "blocks a default-port canonical service with a %s (#9705)",
+  (_case, serviceName, active, metadata) => {
+    const activation = activationScanOptions(active ? [] : [serviceName]);
+    const spawnSyncImpl = competingServiceSpawn({
+      active: active ? [serviceName] : [],
+      metadata: { [serviceName]: metadata },
+    });
+
+    expect(() =>
+      assertNoCompetingOpenShellGatewayUserService(8080, {
+        ...activation.options,
+        commandExists: () => true,
+        existsSync: (candidate) =>
+          candidate === "/usr/lib/systemd/user/openshell-gateway.service" ||
+          candidate === "/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service",
+        getUpstreamGatewayVersion: () => "0.0.85",
+        getUpstreamGatewayVersionBounds: () => ({ max: "0.0.85", min: "0.0.85" }),
+        getuid: () => 1000,
+        lstatSync: (() => ({
+          isFile: () => true,
+          isSymbolicLink: () => false,
+          uid: 1000,
+        })) as never,
+        platform: "linux",
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        spawnSyncImpl,
+      }),
+    ).toThrow(OpenShellGatewayServiceTrustError);
+    const showCall = spawnSyncImpl.mock.calls.find(([, args]) => args.includes("show"));
+    expect(showCall?.[1]).toContain("--property=FragmentPath");
+    expect(showCall?.[1]).not.toContain("--property=Environment");
+  },
+);
 
 it.each([
   ["active upstream", `${OPENSHELL_GATEWAY_USER_SERVICE}.service`, true],
@@ -1087,8 +1294,9 @@ it("blocks service fallback without exposing a unit search override (#8926)", ()
     commandExists: (command) => command === "systemctl",
     env: { HOME: home, SYSTEMD_UNIT_PATH: `/opt/${secret}` },
     existsSync: (candidate) => candidate === servicePath,
+    getuid: () => 1000,
     home,
-    lstatSync: (() => ({ isSymbolicLink: () => false })) as never,
+    lstatSync: (() => ({ isFile: () => true, isSymbolicLink: () => false, uid: 1000 })) as never,
     platform: "linux",
     readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
     spawnSyncImpl: vi.fn(() => spawnResult(1, "Failed to connect to bus: No medium found")),
@@ -1112,8 +1320,9 @@ it("escapes a canonical activation path in the stopped-service fallback diagnost
     commandExists: (command) => command === "systemctl",
     env: { HOME: home },
     existsSync: (candidate) => candidate === servicePath,
+    getuid: () => 1000,
     home,
-    lstatSync: (() => ({ isSymbolicLink: () => false })) as never,
+    lstatSync: (() => ({ isFile: () => true, isSymbolicLink: () => false, uid: 1000 })) as never,
     platform: "linux",
     readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
     readdirSync: ((candidate: string) =>

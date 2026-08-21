@@ -412,11 +412,12 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   const env = optionsWithEnv.env ?? process.env;
   const gatewayPort = Number(gatewayEnv.OPENSHELL_SERVER_PORT ?? GATEWAY_PORT);
   const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
-  assertDockerDriverGatewayBindAddressSafe(gatewayEnv);
-  (
+  const assertNoCompeting =
     assertNoCompetingService ??
-    ((port) => assertNoCompetingOpenShellGatewayUserService(port, { env, home: effectiveHome }))
-  )(gatewayPort);
+    ((port: number) =>
+      assertNoCompetingOpenShellGatewayUserService(port, { env, home: effectiveHome }));
+  assertDockerDriverGatewayBindAddressSafe(gatewayEnv);
+  assertNoCompeting(gatewayPort);
   if (gatewayPort !== DEFAULT_GATEWAY_PORT) return Promise.resolve(false);
   assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
   return startPackageManagedDockerDriverGateway({
@@ -443,5 +444,9 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
     stopOpenShellGatewayUserService:
       options.stopOpenShellGatewayUserService ??
       (() => stopOpenShellGatewayUserService({ env, home: effectiveHome })),
+    validatePortOwnerForOpenShellGatewayUserServiceStart: () => {
+      assertNoCompeting(gatewayPort);
+      options.validatePortOwnerForOpenShellGatewayUserServiceStart?.();
+    },
   });
 }

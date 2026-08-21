@@ -1539,39 +1539,51 @@ NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE="# ${NEMOCLAW_GATEWAY_SERVICE_MARKER}"
 NEMOCLAW_GATEWAY_SERVICE_NAME="nemoclaw-openshell-gateway"
 UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
 UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
+OPENSHELL_GATEWAY_SERVICE_IDENTITY_BIN=""
+OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR=""
 NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
 NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 SYSTEMD_USER_SERVICE_ACTIVATION_PATHS=()
 SYSTEMD_USER_SERVICE_ACTIVATION_ERROR=""
 SYSTEMD_USER_MANAGER_UNIT_ROOTS=()
 
+run_gateway_service_command() {
+  local name
+  local -a command_env=()
+  for name in \
+    DBUS_SESSION_BUS_ADDRESS \
+    HOME \
+    HOSTNAME \
+    LANG \
+    LC_CTYPE \
+    LOGNAME \
+    PATH \
+    SHELL \
+    TEMP \
+    TERM \
+    TMP \
+    TMPDIR \
+    USER \
+    XDG_BIN_HOME \
+    XDG_CACHE_HOME \
+    XDG_CONFIG_DIRS \
+    XDG_CONFIG_HOME \
+    XDG_DATA_DIRS \
+    XDG_DATA_HOME \
+    XDG_RUNTIME_DIR; do
+    if declare -p "$name" >/dev/null 2>&1; then
+      command_env+=("$name=${!name}")
+    fi
+  done
+  command_env+=("LC_ALL=C")
+  env -i "${command_env[@]}" "$@"
+}
+
 upstream_openshell_gateway_user_service_installed() {
   [[ "$(uname -s)" == "Linux" ]] || return 1
   [[ -f /usr/local/lib/systemd/user/openshell-gateway.service ]] \
     || [[ -f /usr/lib/systemd/user/openshell-gateway.service ]] \
     || [[ -f /lib/systemd/user/openshell-gateway.service ]]
-}
-
-resolve_openshell_gateway_bin_for_user_service() {
-  local service_name="${1:-}" exec_start gateway_bin
-  local -a gateway_bins=()
-  case "$service_name" in
-    openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service") ;;
-    *) return 1 ;;
-  esac
-  exec_start="$(systemctl --user show "$service_name" --property=ExecStart --value 2>/dev/null)" \
-    || return 1
-  while IFS= read -r gateway_bin; do
-    gateway_bins+=("$gateway_bin")
-  done < <(
-    printf '%s\n' "$exec_start" \
-      | grep -oE 'path=[^ ;}]+' \
-      | sed 's/^path=//'
-  )
-  [[ "${#gateway_bins[@]}" -eq 1 ]] || return 1
-  gateway_bin="${gateway_bins[0]}"
-  [[ "$gateway_bin" == /*/openshell-gateway && -x "$gateway_bin" ]] || return 1
-  printf '%s\n' "$gateway_bin"
 }
 
 systemd_user_manager_unavailable_diagnostic() {
@@ -1599,7 +1611,7 @@ trusted_upstream_openshell_gateway_unit_for_service() {
     /usr/local/lib/systemd/user/openshell-gateway.service | \
       /usr/lib/systemd/user/openshell-gateway.service | \
       /lib/systemd/user/openshell-gateway.service)
-      return 0
+      [[ -f "${1}" ]]
       ;;
     *)
       return 1
@@ -1619,20 +1631,24 @@ trusted_upstream_openshell_gateway_bin_for_service() {
 }
 
 inspect_upstream_openshell_gateway_user_service() {
-  local service_output service_status line fragment_path="" exec_start="" gateway_bin
+  local service_output service_status line fragment_path="" exec_start=""
   local fragment_count=0 exec_start_count=0
-  local -a gateway_bins=()
   UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
   UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 
-  if service_output="$(LC_ALL=C systemctl --user show openshell-gateway.service \
+  if service_output="$(run_gateway_service_command systemctl --user show openshell-gateway.service \
     --property=FragmentPath --property=ExecStart 2>&1)"; then
     :
   else
     service_status=$?
-    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="systemctl --user show openshell-gateway.service failed: ${service_output:-exit ${service_status}}"
     if systemd_user_manager_unavailable_diagnostic "$service_output"; then
       return 2
+    fi
+    if [[ "$service_output" == "Failed to connect to bus: Permission denied" ||
+      "$service_output" == "Failed to connect to bus: No medium found"$'\n'"Failed to connect to bus: Permission denied" ]]; then
+      UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="Failed to connect to bus: Permission denied"
+    else
+      UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service metadata query failed with status ${service_status}."
     fi
     return 1
   fi
@@ -1660,33 +1676,13 @@ inspect_upstream_openshell_gateway_user_service() {
     UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service did not return one FragmentPath and one ExecStart value."
     return 1
   fi
-  if ! trusted_upstream_openshell_gateway_unit_for_service "$fragment_path"; then
-    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway unit path is not trusted: ${fragment_path:-<empty>}"
+  if ! validate_openshell_gateway_user_service_identity \
+    openshell-gateway.service "$fragment_path" "$exec_start"; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service ${OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR:-has invalid identity}."
     return 1
   fi
 
-  while IFS= read -r gateway_bin; do
-    gateway_bins+=("$gateway_bin")
-  done < <(
-    printf '%s\n' "$exec_start" \
-      | grep -oE 'path=[^ ;}]+' \
-      | sed 's/^path=//'
-  )
-  if [[ "${#gateway_bins[@]}" -ne 1 ]]; then
-    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service did not return one executable path."
-    return 1
-  fi
-  gateway_bin="${gateway_bins[0]}"
-  if ! trusted_upstream_openshell_gateway_bin_for_service "$gateway_bin"; then
-    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway executable path is not trusted: $gateway_bin"
-    return 1
-  fi
-  if [[ ! -x "$gateway_bin" ]]; then
-    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway executable is unavailable: $gateway_bin"
-    return 1
-  fi
-
-  UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN="$gateway_bin"
+  UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN="$OPENSHELL_GATEWAY_SERVICE_IDENTITY_BIN"
 }
 
 resolve_upstream_openshell_gateway_bin_for_service() {
@@ -1774,9 +1770,208 @@ trusted_openshell_gateway_bin_for_service() {
   esac
 }
 
+validate_openshell_gateway_user_service_identity() {
+  local service_name="${1:-}" fragment_path="${2:-}" exec_start="${3:-}"
+  local gateway_bin exec_argv expected_service_path user_gateway_bin
+  local -a gateway_bins=() exec_argv_records=()
+  OPENSHELL_GATEWAY_SERVICE_IDENTITY_BIN=""
+  OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR=""
+
+  while IFS= read -r gateway_bin; do
+    gateway_bins+=("$gateway_bin")
+  done < <(
+    printf '%s\n' "$exec_start" \
+      | grep -oE '(^|[ ;{])path=[^ ;}]+' \
+      | sed -E 's/^[ ;{]*path=//'
+  )
+  if [[ "${#gateway_bins[@]}" -ne 1 ]]; then
+    OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="did not return one executable path"
+    return 1
+  fi
+  gateway_bin="${gateway_bins[0]}"
+
+  while IFS= read -r exec_argv; do
+    exec_argv="${exec_argv#"${exec_argv%%[![:space:]]*}"}"
+    exec_argv="${exec_argv%"${exec_argv##*[![:space:]]}"}"
+    exec_argv_records+=("$exec_argv")
+  done < <(
+    printf '%s\n' "$exec_start" \
+      | grep -oE '(^|[ ;{])argv\[\]=[^;}]+' \
+      | sed -E 's/^[ ;{]*argv\[\]=//'
+  )
+  if [[ "${#exec_argv_records[@]}" -ne 1 ]]; then
+    OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="did not return one argument record"
+    return 1
+  fi
+  if [[ "${exec_argv_records[0]}" != "$gateway_bin" ]]; then
+    OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="returned unexpected executable arguments"
+    return 1
+  fi
+  if [[ ! -x "$gateway_bin" ]]; then
+    OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an unavailable executable"
+    return 1
+  fi
+
+  case "$service_name" in
+    openshell-gateway.service)
+      if ! trusted_upstream_openshell_gateway_unit_for_service "$fragment_path"; then
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="is not package-qualified"
+        return 1
+      fi
+      if ! trusted_upstream_openshell_gateway_bin_for_service "$gateway_bin"; then
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an untrusted executable"
+        return 1
+      fi
+      ;;
+    "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service")
+      expected_service_path="$(openshell_user_config_home)/systemd/user/${service_name}"
+      if [[ "$fragment_path" != "$expected_service_path" ||
+        ! -f "$expected_service_path" ||
+        -L "$expected_service_path" ||
+        ! -O "$expected_service_path" ]] \
+        || ! is_nemoclaw_openshell_gateway_user_service "$expected_service_path"; then
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="is not descriptor-bound"
+        return 1
+      fi
+      if ! trusted_openshell_gateway_bin_for_service "$gateway_bin"; then
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an untrusted executable"
+        return 1
+      fi
+      user_gateway_bin="$(openshell_gateway_user_bin_for_service)"
+      if [[ "$gateway_bin" == "$user_gateway_bin" && ! -O "$gateway_bin" ]]; then
+        OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="uses an unowned user executable"
+        return 1
+      fi
+      ;;
+    *)
+      OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR="has an unexpected service name"
+      return 1
+      ;;
+  esac
+
+  OPENSHELL_GATEWAY_SERVICE_IDENTITY_BIN="$gateway_bin"
+}
+
+systemd_user_service_active_state_valid() {
+  case "${1:-}" in
+    active | activating | deactivating | failed | inactive | maintenance | refreshing | reloading)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+systemd_user_service_unit_file_state_valid() {
+  case "${1:-}" in
+    alias | bad | disabled | enabled | enabled-runtime | generated | indirect | linked | \
+      linked-runtime | masked | masked-runtime | not-found | static | transient)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+qualify_canonical_openshell_gateway_user_service() {
+  local service_name="${1:-}" selected_port="${2:-}" enabled_by_activation_path="${3:-false}"
+  local service_output service_status line fragment_path="" exec_start=""
+  local active_state="" unit_file_state="" classifier_metadata
+  local fragment_count=0 exec_start_count=0 active_state_count=0 unit_file_state_count=0
+  NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
+  NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
+
+  case "$service_name" in
+    openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service") ;;
+    *)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The canonical service name is invalid."
+      return 3
+      ;;
+  esac
+  case "$enabled_by_activation_path" in
+    true | false) ;;
+    *)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The activation state for ${service_name} is invalid."
+      return 3
+      ;;
+  esac
+
+  if service_output="$(run_gateway_service_command systemctl --user show "$service_name" \
+    --property=FragmentPath --property=ExecStart \
+    --property=ActiveState --property=UnitFileState 2>&1)"; then
+    :
+  else
+    service_status=$?
+    if systemd_user_manager_unavailable_diagnostic "$service_output"; then
+      return 2
+    fi
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The metadata query for ${service_name} failed with status ${service_status}."
+    return 3
+  fi
+
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      FragmentPath=*)
+        fragment_path="${line#FragmentPath=}"
+        fragment_count=$((fragment_count + 1))
+        ;;
+      ExecStart=*)
+        exec_start="${line#ExecStart=}"
+        exec_start_count=$((exec_start_count + 1))
+        ;;
+      ActiveState=*)
+        active_state="${line#ActiveState=}"
+        active_state_count=$((active_state_count + 1))
+        ;;
+      UnitFileState=*)
+        unit_file_state="${line#UnitFileState=}"
+        unit_file_state_count=$((unit_file_state_count + 1))
+        ;;
+      "") ;;
+      *)
+        NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. ${service_name} returned malformed metadata."
+        return 3
+        ;;
+    esac
+  done <<<"$service_output"
+
+  if [[ "$fragment_count" -ne 1 ||
+    "$exec_start_count" -ne 1 ||
+    "$active_state_count" -ne 1 ||
+    "$unit_file_state_count" -ne 1 ]] \
+    || ! systemd_user_service_active_state_valid "$active_state" \
+    || ! systemd_user_service_unit_file_state_valid "$unit_file_state"; then
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. ${service_name} returned malformed metadata."
+    return 3
+  fi
+
+  if validate_openshell_gateway_user_service_identity \
+    "$service_name" "$fragment_path" "$exec_start"; then
+    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT="canonical-trusted"
+    return 0
+  fi
+
+  classifier_metadata="$(printf 'ExecStart=%s\nActiveState=%s\nUnitFileState=%s\n' \
+    "$exec_start" "$active_state" "$unit_file_state")"
+  if ! classify_noncanonical_openshell_gateway_user_service \
+    "$service_name" "$selected_port" "$enabled_by_activation_path" "$classifier_metadata"; then
+    return 3
+  fi
+  case "$NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT" in
+    unrelated | different-port) return 0 ;;
+    *)
+      set_competing_openshell_gateway_user_service_error "$service_name" "$selected_port"
+      return 3
+      ;;
+  esac
+}
+
 classify_noncanonical_openshell_gateway_user_service() {
   local service_name="${1:-}" selected_port="${2:-}" enabled_by_activation_path="${3:-false}"
-  local service_output service_status
+  local service_output="${4-}" service_status
   local classifier_module classifier_output classifier_status user_gateway_bin
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT=""
   NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR=""
@@ -1789,13 +1984,15 @@ classify_noncanonical_openshell_gateway_user_service() {
       ;;
   esac
 
-  if service_output="$(LC_ALL=C systemctl --user show "$service_name" \
-    --property=ExecStart --property=ActiveState --property=UnitFileState 2>&1)"; then
-    :
-  else
-    service_status=$?
-    NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The metadata query for ${service_name} failed with status ${service_status}."
-    return 3
+  if [[ "$#" -lt 4 ]]; then
+    if service_output="$(run_gateway_service_command systemctl --user show "$service_name" \
+      --property=ExecStart --property=ActiveState --property=UnitFileState 2>&1)"; then
+      :
+    else
+      service_status=$?
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The metadata query for ${service_name} failed with status ${service_status}."
+      return 3
+    fi
   fi
 
   classifier_module="${NEMOCLAW_SOURCE_ROOT}/src/lib/onboard/gateway/openshell-service-coexistence.ts"
@@ -1806,7 +2003,7 @@ classify_noncanonical_openshell_gateway_user_service() {
   user_gateway_bin="$(openshell_gateway_user_bin_for_service)"
   if classifier_output="$(
     printf '%s' "$service_output" \
-      | node --no-warnings --experimental-strip-types --input-type=module --eval '
+      | run_gateway_service_command node --no-warnings --experimental-strip-types --input-type=module --eval '
           import fs from "node:fs";
           import { pathToFileURL } from "node:url";
 
@@ -1847,13 +2044,37 @@ classify_noncanonical_openshell_gateway_user_service() {
   esac
 }
 
+set_competing_openshell_gateway_user_service_error() {
+  local service_name="${1:-}" selected_port="${2:-}"
+  case "$NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT" in
+    block-selected-port)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled user service ${service_name} uses OpenShell gateway on selected port ${selected_port}. NemoClaw did not change this service. Inspect or disable it, then rerun the installer."
+      ;;
+    block-ambiguous-port)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled OpenShell gateway user service ${service_name} has ambiguous port configuration and could claim selected port ${selected_port}. NemoClaw did not change this service. Inspect or disable it, then rerun the installer."
+      ;;
+    block-ambiguous-executable)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled OpenShell gateway user service ${service_name} has ambiguous executable metadata. NemoClaw did not change this service."
+      ;;
+    block-untrusted-executable)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled OpenShell gateway user service ${service_name} uses an untrusted executable. NemoClaw did not change this service."
+      ;;
+    block-malformed-metadata)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. ${service_name} returned malformed metadata."
+      ;;
+    *)
+      NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The selected OpenShell gateway port is invalid."
+      ;;
+  esac
+}
+
 inspect_noncanonical_openshell_gateway_user_services() {
   local selected_port="${1:-}" active_output query_status line service_name activation_path
   local activation_service_name inspected_name already_inspected enabled_by_activation_path
   local -a service_names=() activation_service_names=() inspected_names=() row_columns=()
   command_exists systemctl || return 2
 
-  if active_output="$(LC_ALL=C systemctl --user list-units --type=service \
+  if active_output="$(run_gateway_service_command systemctl --user list-units --type=service \
     --state=active,activating,reloading,deactivating \
     --no-legend --plain --no-pager 2>&1)"; then
     :
@@ -1901,11 +2122,6 @@ inspect_noncanonical_openshell_gateway_user_services() {
 
   if [[ "${#service_names[@]}" -gt 0 ]]; then
     for service_name in "${service_names[@]}"; do
-      if [[ "$selected_port" == "8080" ]]; then
-        case "$service_name" in
-          openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service") continue ;;
-        esac
-      fi
       already_inspected=0
       if [[ "${#inspected_names[@]}" -gt 0 ]]; then
         for inspected_name in "${inspected_names[@]}"; do
@@ -1928,27 +2144,25 @@ inspect_noncanonical_openshell_gateway_user_services() {
         done
       fi
 
+      if [[ "$selected_port" == "8080" ]]; then
+        case "$service_name" in
+          openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service")
+            if qualify_canonical_openshell_gateway_user_service \
+              "$service_name" "$selected_port" "$enabled_by_activation_path"; then
+              continue
+            else
+              return $?
+            fi
+            ;;
+        esac
+      fi
+
       if classify_noncanonical_openshell_gateway_user_service \
         "$service_name" "$selected_port" "$enabled_by_activation_path"; then
         case "$NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_VERDICT" in
           unrelated | different-port) continue ;;
-          block-selected-port)
-            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled user service ${service_name} uses OpenShell gateway on selected port ${selected_port}. NemoClaw did not change this service. Inspect or disable it, then rerun the installer."
-            ;;
-          block-ambiguous-port)
-            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled OpenShell gateway user service ${service_name} has ambiguous port configuration and could claim selected port ${selected_port}. NemoClaw did not change this service. Inspect or disable it, then rerun the installer."
-            ;;
-          block-ambiguous-executable)
-            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled OpenShell gateway user service ${service_name} has ambiguous executable metadata. NemoClaw did not change this service."
-            ;;
-          block-untrusted-executable)
-            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="The active or enabled OpenShell gateway user service ${service_name} uses an untrusted executable. NemoClaw did not change this service."
-            ;;
-          block-malformed-metadata)
-            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. ${service_name} returned malformed metadata."
-            ;;
           *)
-            NONCANONICAL_OPENSHELL_GATEWAY_SERVICE_ERROR="Could not inspect active or enabled user services. The selected OpenShell gateway port is invalid."
+            set_competing_openshell_gateway_user_service_error "$service_name" "$selected_port"
             ;;
         esac
         return 3
@@ -1964,7 +2178,7 @@ render_diagnostic_path() {
   local file_path="${1-}" rendered
   if ! rendered="$(
     printf '%s' "$file_path" \
-      | node --input-type=module --eval '
+      | run_gateway_service_command node --input-type=module --eval '
           let input = "";
           process.stdin.setEncoding("utf8");
           for await (const chunk of process.stdin) input += chunk;
@@ -2041,7 +2255,7 @@ collect_systemd_user_manager_unit_roots() {
   if ! command_exists busctl || ! command_exists node; then
     return 2
   fi
-  if query_output="$(LC_ALL=C busctl --user --json=short get-property \
+  if query_output="$(run_gateway_service_command busctl --user --json=short get-property \
     org.freedesktop.systemd1 /org/freedesktop/systemd1 \
     org.freedesktop.systemd1.Manager UnitPath 2>&1)"; then
     :
@@ -2057,7 +2271,7 @@ collect_systemd_user_manager_unit_roots() {
     SYSTEMD_USER_MANAGER_UNIT_ROOTS+=("$unit_root")
   done < <(
     printf '%s' "$query_output" \
-      | node --input-type=module --eval '
+      | run_gateway_service_command node --input-type=module --eval '
           import fs from "node:fs";
           import path from "node:path";
 
@@ -3717,7 +3931,7 @@ stop_legacy_openshell_gateway_process() {
 stop_nemoclaw_openshell_gateway_user_service() {
   [ "$(uname -s)" = "Linux" ] || return 1
 
-  local gateway_port service_name service_path fragment_path gateway_bin
+  local gateway_port service_name service_path fragment_path exec_start
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   [ "$gateway_port" -eq 8080 ] || return 1
   command_exists systemctl || return 1
@@ -3730,20 +3944,30 @@ stop_nemoclaw_openshell_gateway_user_service() {
   fi
   is_nemoclaw_openshell_gateway_user_service "$service_path" \
     || error "Refusing to retire the OpenShell gateway from a non-NemoClaw user service: ${service_path}"
-  systemctl --user is-active --quiet "$service_name" 2>/dev/null || return 1
-
-  fragment_path="$(systemctl --user show "$service_name" --property=FragmentPath --value 2>/dev/null)" \
+  run_gateway_service_command systemctl --user is-active --quiet "$service_name" 2>/dev/null \
     || return 1
-  [ "$fragment_path" = "$service_path" ] \
-    || error "Refusing to retire the OpenShell gateway because the active user service does not match ${service_path}."
-  gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")" \
-    || return 1
-  trusted_openshell_gateway_bin_for_service "$gateway_bin" \
-    || error "Refusing to retire an OpenShell gateway user service with an untrusted binary: ${gateway_bin}"
 
-  systemctl --user stop "$service_name" \
+  fragment_path="$(run_gateway_service_command systemctl --user show \
+    "$service_name" --property=FragmentPath --value 2>/dev/null)" \
+    || return 1
+  exec_start="$(run_gateway_service_command systemctl --user show \
+    "$service_name" --property=ExecStart --value 2>/dev/null)" \
+    || return 1
+  if ! validate_openshell_gateway_user_service_identity \
+    "$service_name" "$fragment_path" "$exec_start"; then
+    case "$OPENSHELL_GATEWAY_SERVICE_IDENTITY_ERROR" in
+      "is not descriptor-bound")
+        error "Refusing to retire the OpenShell gateway because the active user service does not match the trusted lifecycle target descriptor."
+        ;;
+      *)
+        error "Refusing to retire an OpenShell gateway user service with an untrusted binary or arguments because it is not a trusted lifecycle target."
+        ;;
+    esac
+  fi
+
+  run_gateway_service_command systemctl --user stop "$service_name" \
     || error "Could not stop the trusted NemoClaw OpenShell gateway user service. Run 'systemctl --user status ${service_name}' for details."
-  systemctl --user is-active --quiet "$service_name" 2>/dev/null \
+  run_gateway_service_command systemctl --user is-active --quiet "$service_name" 2>/dev/null \
     && error "The trusted NemoClaw OpenShell gateway user service remained active after the stop command."
   return 0
 }

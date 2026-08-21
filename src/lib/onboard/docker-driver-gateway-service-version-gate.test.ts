@@ -17,6 +17,10 @@ import {
 const PACKAGE_UNIT = "/usr/lib/systemd/user/openshell-gateway.service";
 const PACKAGE_BINARY = "/usr/bin/openshell-gateway";
 const BOUNDS = { min: "0.0.85", max: "0.0.85" };
+const UNIT_OWNER = {
+  getuid: () => 1000,
+  lstatSync: () => ({ isFile: () => true, isSymbolicLink: () => false, uid: 1000 }) as never,
+};
 
 function trustedShowOutput(execPath = PACKAGE_BINARY): string {
   return [
@@ -113,7 +117,7 @@ describe("package-managed gateway version gate (#8094)", () => {
           home,
           env: {},
           existsSync: (p: string) => packageOnly(p) || p === nemoclawUnit,
-          lstatSync: (() => ({ isSymbolicLink: () => false })) as never,
+          ...UNIT_OWNER,
           readFileSync: () => NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
         }),
       ),
@@ -132,7 +136,7 @@ describe("package-managed gateway version gate (#8094)", () => {
           env: {},
           existsSync: (p: string) => packageOnly(p) || p === nemoclawUnit,
           getUpstreamGatewayVersion,
-          lstatSync: (() => ({ isSymbolicLink: () => false })) as never,
+          ...UNIT_OWNER,
           readFileSync: () => NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
           spawnSyncImpl: () => ({
             status: 0,
@@ -140,7 +144,7 @@ describe("package-managed gateway version gate (#8094)", () => {
           }),
         }),
       ),
-    ).toThrow("trusted OpenShell gateway");
+    ).toThrow("Could not verify the effective OpenShell gateway user service");
     expect(getUpstreamGatewayVersion).not.toHaveBeenCalled();
   });
 
@@ -237,7 +241,7 @@ describe("package-managed gateway version gate (#8094)", () => {
 
     expect(result).toMatchObject({
       attempted: true,
-      reason: expect.stringContaining("0.0.91"),
+      reason: "package-managed gateway changed before startup",
       serviceName: "openshell-gateway",
       standaloneFallbackBlocked: true,
       started: false,

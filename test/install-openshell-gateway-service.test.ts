@@ -161,6 +161,10 @@ function writeUpstreamSystemctlStub(
             .map((line) => `printf '%s\\n' ${JSON.stringify(line)} >&2`),
           `exit ${status}`,
         ];
+  const discoveryResponse =
+    status === 0
+      ? [...response, "printf 'ActiveState=inactive\\n'", "printf 'UnitFileState=static\\n'"]
+      : response;
   writeExecutable(
     path.join(bin, "systemctl"),
     [
@@ -168,6 +172,12 @@ function writeUpstreamSystemctlStub(
       `printf '%s\\n' "$*" >> ${JSON.stringify(log)}`,
       'case "$*" in',
       '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
+      "    ;;",
+      '  "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart --property=ActiveState --property=UnitFileState")',
+      ...discoveryResponse.map((line) => `    ${line}`),
+      "    ;;",
+      '  "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --property=ExecStart --property=ActiveState --property=UnitFileState")',
+      ...discoveryResponse.map((line) => `    ${line}`),
       "    ;;",
       '  "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart")',
       ...response.map((line) => `    ${line}`),

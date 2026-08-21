@@ -93,16 +93,35 @@ function writeUnavailableSystemctlStub(home: string) {
 
 function writeReachableCanonicalSystemctlStub(
   home: string,
-  options: { active: boolean; port: number | null; serviceName: string },
+  options: {
+    active: boolean;
+    environmentLeakMarker?: string;
+    execStart?: string;
+    fragmentPath?: string;
+    metadataDiagnostic?: string;
+    metadataStatus?: number;
+    port: number | null;
+    serviceName: string;
+  },
 ) {
   const bin = path.join(home, "reachable-systemctl-bin");
   const log = path.join(home, "reachable-systemctl.log");
   const managerRoot = path.join(home, "manager-unit-root");
   const gatewayBin = "/usr/local/bin/openshell-gateway";
   const execStart =
-    options.port === null
+    options.execStart ??
+    (options.port === null
       ? `{ path=${gatewayBin} ; argv[]=${gatewayBin} ; }`
-      : `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port=${options.port} ; }`;
+      : `{ path=${gatewayBin} ; argv[]=${gatewayBin} --port=${options.port} ; }`);
+  const fragmentPath = options.fragmentPath ?? path.join(home, `foreign-${options.serviceName}`);
+  const metadataStatus = options.metadataStatus ?? 0;
+  const leakCheck = options.environmentLeakMarker
+    ? [
+        'if [[ -n "${NEMOCLAW_TEST_SENTINEL_SECRET:-}" ]]; then',
+        `  printf '%s\\n' "$NEMOCLAW_TEST_SENTINEL_SECRET" > ${JSON.stringify(options.environmentLeakMarker)}`,
+        "fi",
+      ]
+    : [];
   fs.mkdirSync(managerRoot, { recursive: true });
   options.active ||
     (() => {
@@ -115,6 +134,7 @@ function writeReachableCanonicalSystemctlStub(
     path.join(bin, "systemctl"),
     [
       "#!/usr/bin/env bash",
+      ...leakCheck,
       `printf '%s\\n' "$*" >> ${JSON.stringify(log)}`,
       'case "$*" in',
       '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
@@ -125,9 +145,95 @@ function writeReachableCanonicalSystemctlStub(
         : []),
       "    ;;",
       `  "--user show ${options.serviceName} --property=ExecStart --property=ActiveState --property=UnitFileState")`,
-      `    printf '%s\\n' ${JSON.stringify(`ExecStart=${execStart}`)}`,
-      `    printf '%s\\n' ${JSON.stringify(`ActiveState=${options.active ? "active" : "inactive"}`)}`,
-      `    printf '%s\\n' ${JSON.stringify(`UnitFileState=${options.active ? "disabled" : "static"}`)}`,
+      ...(metadataStatus === 0
+        ? [
+            `    printf '%s\\n' ${JSON.stringify(`ExecStart=${execStart}`)}`,
+            `    printf '%s\\n' ${JSON.stringify(`ActiveState=${options.active ? "active" : "inactive"}`)}`,
+            `    printf '%s\\n' ${JSON.stringify(`UnitFileState=${options.active ? "disabled" : "static"}`)}`,
+          ]
+        : [
+            `    printf '%s\\n' ${JSON.stringify(options.metadataDiagnostic ?? "metadata failed")} >&2`,
+            `    exit ${metadataStatus}`,
+          ]),
+      "    ;;",
+      `  "--user show ${options.serviceName} --property=FragmentPath --property=ExecStart --property=ActiveState --property=UnitFileState")`,
+      ...(metadataStatus === 0
+        ? [
+            `    printf '%s\\n' ${JSON.stringify(`FragmentPath=${fragmentPath}`)}`,
+            `    printf '%s\\n' ${JSON.stringify(`ExecStart=${execStart}`)}`,
+            `    printf '%s\\n' ${JSON.stringify(`ActiveState=${options.active ? "active" : "inactive"}`)}`,
+            `    printf '%s\\n' ${JSON.stringify(`UnitFileState=${options.active ? "disabled" : "static"}`)}`,
+          ]
+        : [
+            `    printf '%s\\n' ${JSON.stringify(options.metadataDiagnostic ?? "metadata failed")} >&2`,
+            `    exit ${metadataStatus}`,
+          ]),
+      "    ;;",
+      "  *) exit 97 ;;",
+      "esac",
+      "",
+    ].join("\n"),
+  );
+  writeExecutable(
+    path.join(bin, "busctl"),
+    [
+      "#!/usr/bin/env bash",
+      ...leakCheck,
+      `printf '%s\\n' ${JSON.stringify(JSON.stringify({ type: "as", data: [managerRoot] }))}`,
+      "",
+    ].join("\n"),
+  );
+  options.environmentLeakMarker
+    ? writeExecutable(
+        path.join(bin, "node"),
+        [
+          "#!/usr/bin/env bash",
+          ...leakCheck,
+          `exec ${JSON.stringify(process.execPath)} "$@"`,
+          "",
+        ].join("\n"),
+      )
+    : undefined;
+  return { bin, log };
+}
+
+function writeChangedCanonicalIdentitySystemctlStub(
+  home: string,
+  servicePath: string,
+  gatewayBin: string,
+  sentinel: string,
+) {
+  const bin = path.join(home, "changed-identity-systemctl-bin");
+  const log = path.join(home, "changed-identity-systemctl.log");
+  const stopMarker = path.join(home, "changed-identity-stop");
+  const managerRoot = path.join(home, "changed-identity-manager-root");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(managerRoot, { recursive: true });
+  writeExecutable(
+    path.join(bin, "systemctl"),
+    [
+      "#!/usr/bin/env bash",
+      `printf '%s\\n' "$*" >> ${JSON.stringify(log)}`,
+      'case "$*" in',
+      '  "--user list-units --type=service --state=active,activating,reloading,deactivating --no-legend --plain --no-pager")',
+      "    printf '%s\\n' 'nemoclaw-openshell-gateway.service loaded active running test service'",
+      "    ;;",
+      '  "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --property=ExecStart --property=ActiveState --property=UnitFileState")',
+      `    printf '%s\\n' ${JSON.stringify(`FragmentPath=${servicePath}`)}`,
+      `    printf '%s\\n' ${JSON.stringify(`ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ; ignore_errors=no ; }`)}`,
+      "    printf '%s\\n' 'ActiveState=active'",
+      "    printf '%s\\n' 'UnitFileState=disabled'",
+      "    ;;",
+      '  "--user is-active --quiet nemoclaw-openshell-gateway.service")',
+      "    ;;",
+      '  "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value")',
+      `    printf '%s\\n' ${JSON.stringify(path.join(home, "foreign-" + sentinel + ".service"))}`,
+      "    ;;",
+      '  "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value")',
+      `    printf '%s\\n' ${JSON.stringify(`{ path=${gatewayBin} ; argv[]=${gatewayBin} ; ignore_errors=no ; }`)}`,
+      "    ;;",
+      '  "--user stop nemoclaw-openshell-gateway.service")',
+      `    printf 'stopped\\n' > ${JSON.stringify(stopMarker)}`,
       "    ;;",
       "  *) exit 97 ;;",
       "esac",
@@ -142,7 +248,7 @@ function writeReachableCanonicalSystemctlStub(
       "",
     ].join("\n"),
   );
-  return { bin, log };
+  return { bin, log, stopMarker };
 }
 
 it.each([
@@ -237,11 +343,214 @@ it.each([
   },
 );
 
-it("leaves default-port canonical services for lifecycle selection (#9705)", () => {
+it.each([
+  ["active upstream", "openshell-gateway.service", true],
+  ["activation-linked NemoClaw", "nemoclaw-openshell-gateway.service", false],
+] as const)(
+  "blocks a canonical %s service whose effective definition is foreign at the default port (#9705)",
+  (_case, serviceName, active) => {
+    const home = makeTempRoot();
+    const lifecycleMarker = path.join(home, "gateway-lifecycle-effect");
+    const systemctl = writeReachableCanonicalSystemctlStub(home, {
+      active,
+      port: 8080,
+      serviceName,
+    });
+
+    const result = runInstallHelper(
+      home,
+      [
+        "require_no_competing_openshell_gateway_user_service 8080",
+        `printf 'changed\\n' > ${JSON.stringify(lifecycleMarker)}`,
+      ].join("\n"),
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+    const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stderr).toContain("selected port 8080");
+    expect(result.stderr).not.toContain("foreign-");
+    expect(calls).toContain(`show ${serviceName} --property=FragmentPath`);
+    expect(calls).not.toContain("property=Environment");
+    expect(fs.existsSync(lifecycleMarker)).toBe(false);
+  },
+);
+
+it.each([
+  ["active upstream", "openshell-gateway.service", true],
+  ["activation-linked NemoClaw", "nemoclaw-openshell-gateway.service", false],
+] as const)(
+  "allows an independent canonical %s service on a proved different port (#9705)",
+  (_case, serviceName, active) => {
+    const home = makeTempRoot();
+    const systemctl = writeReachableCanonicalSystemctlStub(home, {
+      active,
+      port: 9090,
+      serviceName,
+    });
+
+    const result = runInstallHelper(
+      home,
+      "require_no_competing_openshell_gateway_user_service 8080",
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  },
+);
+
+it.each([
+  [
+    "a foreign binary",
+    (home: string) => {
+      const foreignBin = path.join(home, "foreign", "openshell-gateway");
+      fs.mkdirSync(path.dirname(foreignBin), { recursive: true });
+      writeExecutable(foreignBin, "#!/usr/bin/env bash\nexit 0\n");
+      return `{ path=${foreignBin} ; argv[]=${foreignBin} ; }`;
+    },
+  ],
+  [
+    "an executable wrapper",
+    () => "{ path=/usr/bin/env ; argv[]=/usr/bin/env /usr/local/bin/openshell-gateway ; }",
+  ],
+  [
+    "additional arguments",
+    () =>
+      "{ path=/usr/local/bin/openshell-gateway ; argv[]=/usr/local/bin/openshell-gateway --port 8080 ; }",
+  ],
+  [
+    "duplicate argument records",
+    () =>
+      "{ path=/usr/local/bin/openshell-gateway ; argv[]=/usr/local/bin/openshell-gateway ; argv[]=/usr/local/bin/openshell-gateway ; }",
+  ],
+] as const)(
+  "blocks a descriptor-bound canonical service with %s (#9705)",
+  (_case, makeExecStart) => {
+    const home = makeTempRoot();
+    const servicePath = path.join(
+      home,
+      ".config",
+      "systemd",
+      "user",
+      "nemoclaw-openshell-gateway.service",
+    );
+    fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+    fs.writeFileSync(servicePath, "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n");
+    const systemctl = writeReachableCanonicalSystemctlStub(home, {
+      active: true,
+      execStart: makeExecStart(home),
+      fragmentPath: servicePath,
+      port: null,
+      serviceName: "nemoclaw-openshell-gateway.service",
+    });
+
+    const result = runInstallHelper(
+      home,
+      "require_no_competing_openshell_gateway_user_service 8080",
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(result.stderr).toContain("NemoClaw did not change this service");
+    expect(result.stderr).not.toContain("argv[]");
+  },
+);
+
+it("allows a descriptor-bound NemoClaw service at the default port (#9705)", () => {
   const home = makeTempRoot();
+  const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+  const servicePath = path.join(
+    home,
+    ".config",
+    "systemd",
+    "user",
+    "nemoclaw-openshell-gateway.service",
+  );
+  fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+  fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+  writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+  fs.writeFileSync(servicePath, "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n");
   const systemctl = writeReachableCanonicalSystemctlStub(home, {
     active: true,
-    port: 8080,
+    execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} ; ignore_errors=no ; }`,
+    fragmentPath: servicePath,
+    port: null,
+    serviceName: "nemoclaw-openshell-gateway.service",
+  });
+
+  const result = runInstallHelper(
+    home,
+    "require_no_competing_openshell_gateway_user_service 8080",
+    { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+  );
+
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+});
+
+it("allows a package-qualified upstream service at the default port (#9705)", () => {
+  const home = makeTempRoot();
+  const gatewayBin = path.join(home, "usr", "bin", "openshell-gateway");
+  const servicePath = path.join(home, "usr", "lib", "systemd", "user", "openshell-gateway.service");
+  fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+  fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+  writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+  fs.writeFileSync(servicePath, "[Service]\n");
+  const systemctl = writeReachableCanonicalSystemctlStub(home, {
+    active: true,
+    execStart: `{ path=${gatewayBin} ; argv[]=${gatewayBin} ; ignore_errors=no ; }`,
+    fragmentPath: servicePath,
+    port: null,
+    serviceName: "openshell-gateway.service",
+  });
+
+  const result = runInstallHelper(
+    home,
+    [
+      `trusted_upstream_openshell_gateway_unit_for_service() { [[ "$1" == ${JSON.stringify(servicePath)} ]]; }`,
+      `trusted_upstream_openshell_gateway_bin_for_service() { [[ "$1" == ${JSON.stringify(gatewayBin)} ]]; }`,
+      "require_no_competing_openshell_gateway_user_service 8080",
+    ].join("\n"),
+    { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+  );
+
+  expect(result.status, result.stdout + result.stderr).toBe(0);
+});
+
+it.each([
+  ["active", true],
+  ["activation-linked", false],
+] as const)(
+  "redacts child output when %s canonical metadata cannot be read (#9705)",
+  (_case, active) => {
+    const home = makeTempRoot();
+    const sentinel = "tenant-secret-gateway-token";
+    const systemctl = writeReachableCanonicalSystemctlStub(home, {
+      active,
+      metadataDiagnostic: sentinel,
+      metadataStatus: 98,
+      port: null,
+      serviceName: "openshell-gateway.service",
+    });
+
+    const result = runInstallHelper(
+      home,
+      "require_no_competing_openshell_gateway_user_service 8080",
+      { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("metadata query for openshell-gateway.service failed");
+    expect(result.stderr).not.toContain(sentinel);
+  },
+);
+
+it("removes unrelated installer values from service-inspection children (#9705)", () => {
+  const home = makeTempRoot();
+  const leakMarker = path.join(home, "service-child-environment-leak");
+  const systemctl = writeReachableCanonicalSystemctlStub(home, {
+    active: true,
+    environmentLeakMarker: leakMarker,
+    port: 9090,
     serviceName: "openshell-gateway.service",
   });
 
@@ -249,13 +558,55 @@ it("leaves default-port canonical services for lifecycle selection (#9705)", () 
     home,
     "require_no_competing_openshell_gateway_user_service 8080",
     {
+      NEMOCLAW_TEST_SENTINEL_SECRET: "tenant-secret-child-environment",
       PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
     },
   );
-  const calls = fs.readFileSync(systemctl.log, "utf-8");
 
   expect(result.status, result.stdout + result.stderr).toBe(0);
-  expect(calls).not.toContain("show openshell-gateway.service");
+  expect(fs.existsSync(leakMarker)).toBe(false);
+});
+
+it("re-reads canonical identity immediately before a lifecycle mutation (#9705)", () => {
+  const home = makeTempRoot();
+  const sentinel = "tenant-secret-changed-fragment";
+  const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+  const servicePath = path.join(
+    home,
+    ".config",
+    "systemd",
+    "user",
+    "nemoclaw-openshell-gateway.service",
+  );
+  fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+  fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+  writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+  fs.writeFileSync(servicePath, "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n");
+  const systemctl = writeChangedCanonicalIdentitySystemctlStub(
+    home,
+    servicePath,
+    gatewayBin,
+    sentinel,
+  );
+
+  const result = runInstallHelper(
+    home,
+    [
+      "require_no_competing_openshell_gateway_user_service 8080",
+      "stop_nemoclaw_openshell_gateway_user_service",
+    ].join("\n"),
+    { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+  );
+  const calls = fs.readFileSync(systemctl.log, "utf-8");
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("trusted lifecycle target");
+  expect(result.stderr).not.toContain(sentinel);
+  expect(calls).toContain(
+    "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
+  );
+  expect(calls).not.toContain("--user stop nemoclaw-openshell-gateway.service");
+  expect(fs.existsSync(systemctl.stopMarker)).toBe(false);
 });
 
 it("blocks offline canonical activation before legacy retirement (#9705)", () => {
