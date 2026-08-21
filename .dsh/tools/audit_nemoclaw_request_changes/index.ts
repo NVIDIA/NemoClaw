@@ -222,7 +222,7 @@ export default async function audit_nemoclaw_request_changes(input: {
             includeRoot: false,
             includeBranch: false,
           });
-          if (after.head !== before.head || after.statusBase64 !== before.statusBase64)
+          if (after.head !== before.head || after.statusFingerprint !== before.statusFingerprint)
             throw new Error("The read-only blocker audit changed HEAD or the worktree");
           const marker = "NEMOCLAW_AUDIT_RESULT=";
           const markerIndex = agentOutput.lastIndexOf(marker);

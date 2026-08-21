@@ -13,7 +13,6 @@ export default async function remove_isolated_pr_worktrees(input: {
   dryRun: boolean;
   apply: boolean;
   mutated: boolean;
-  root: string;
   failure: "fail-fast" | "settled";
   count: Integer;
   results: { path: string; head: string; action: "planned" | "removed" }[];
@@ -79,6 +78,7 @@ export default async function remove_isolated_pr_worktrees(input: {
   const results = [],
     errors = [];
   for (const path of paths) {
+    const pathIdentifier = parts(path).slice(namespaceParts.length).join("/");
     try {
       const item = registered.get(path);
       if (!item) throw new Error("Path is not a registered Git worktree");
@@ -91,7 +91,7 @@ export default async function remove_isolated_pr_worktrees(input: {
         includeStatus: true,
       });
       if (!checkout.clean) throw new Error("Worktree has uncommitted changes");
-      if (dryRun) results.push({ path, head: checkout.head, action: "planned" });
+      if (dryRun) results.push({ path: pathIdentifier, head: checkout.head, action: "planned" });
       else {
         const remove = await tools.bash({
           command: "git worktree remove " + quote(path),
@@ -99,17 +99,27 @@ export default async function remove_isolated_pr_worktrees(input: {
           description: "Remove clean isolated worktree",
           timeoutMs: 30000,
         });
-        if (remove.kind !== "foreground" || remove.exitCode !== 0)
-          throw new Error(
-            remove.kind === "foreground"
-              ? remove.stderr.text || "Worktree removal failed"
-              : "Worktree removal did not finish",
-          );
-        results.push({ path, head: checkout.head, action: "removed" });
+        if (remove.kind !== "foreground") throw new Error("Worktree removal did not finish");
+        if (remove.exitCode !== 0) {
+          const safe = (remove.stderr.text || remove.stdout.text)
+            .replaceAll(path, "[worktree]")
+            .replaceAll(namespace, "[isolation-namespace]")
+            .replaceAll(root, "[isolation-root]")
+            .replaceAll(input.workdir, "[checkout]");
+          const diagnostic = await tools.project_diagnostic_text({
+            lines: [safe],
+            sourceTruncated: remove.stderr.truncated || remove.stdout.truncated,
+            maxLines: 20,
+            maxCharacters: 4000,
+            maxLineCharacters: 1000,
+          });
+          throw new Error(diagnostic.text || "Worktree removal failed");
+        }
+        results.push({ path: pathIdentifier, head: checkout.head, action: "removed" });
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      errors.push({ path, message });
+      const message = error instanceof Error ? error.message : "Worktree cleanup failed";
+      errors.push({ path: pathIdentifier, message });
       if (failure === "fail-fast") throw error;
     }
   }
@@ -117,7 +127,6 @@ export default async function remove_isolated_pr_worktrees(input: {
     dryRun,
     apply: !dryRun,
     mutated: !dryRun && results.length > 0,
-    root,
     failure,
     count: results.length,
     results,

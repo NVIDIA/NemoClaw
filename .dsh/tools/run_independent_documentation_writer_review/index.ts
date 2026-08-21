@@ -110,8 +110,7 @@ export default async function run_independent_documentation_writer_review(input:
     "Verify documentation review refs",
   );
   const [baseSha, agentsBlobSha] = specializedIdentity.replace(/\n$/, "").split("\n");
-  const rootPath = identity.root,
-    headSha = identity.head;
+  const headSha = identity.head;
   if (headSha !== input.expectedHeadSha)
     throw new Error("HEAD changed: expected " + input.expectedHeadSha + ", found " + headSha);
   const requireClean = input.requireClean ?? true;
@@ -207,7 +206,7 @@ export default async function run_independent_documentation_writer_review(input:
   });
   if (after.head !== headSha)
     throw new Error("HEAD changed during review from " + headSha + " to " + after.head);
-  if (requireClean && after.statusBase64 !== identity.statusBase64)
+  if (requireClean && after.statusFingerprint !== identity.statusFingerprint)
     throw new Error("The read-only documentation review changed the worktree");
   const normalizedOutput = review.output
     .map((value) =>
@@ -271,7 +270,7 @@ export default async function run_independent_documentation_writer_review(input:
     ],
     resultJson: JSON.stringify({
       dryRun: false,
-      cwd: rootPath,
+      checkoutRootPresent: identity.rootPresent,
       reviewIdentity,
       reviewedHeadSha: headSha,
       baseSha,

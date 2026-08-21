@@ -10,8 +10,17 @@ export default async function inspect_failed_pr_checks(input: {
   repo: string;
   kind: string;
   truncated: boolean;
-  items: Open<{}>[];
-  summary: Open<{}>;
+  items: {
+    name: string;
+    state: string;
+    bucket: string;
+    link: string;
+  }[];
+  summary: {
+    number: Integer;
+    totalChecks: Integer;
+    failedChecks: Integer;
+  };
   truncationNotice: string | null;
   returnedItems: Integer;
   omittedItems: Integer;

@@ -11,12 +11,28 @@ export default async function sync_stacked_pr_branch(input: {
   apply?: true;
 }): Promise<{
   applied: boolean;
-  mode: "dry-run" | "read-only" | "apply" | "blocked";
+  mode: "dry-run" | "apply";
+  ok: boolean;
+  step: "preview" | "fetch" | "checkout" | "reset" | "merge" | "complete";
+  cleanBefore: boolean;
+  cleanAfter: boolean | null;
   plan: string[];
   notes: string[];
-  resultJson: string;
+  operations: {
+    name: "fetch" | "checkout" | "reset" | "merge";
+    exitCode: Integer;
+    diagnostic: string;
+    truncated: boolean;
+  }[];
 }> {
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+  const project = async (text, maxCharacters) =>
+    tools.project_diagnostic_text({
+      lines: [text],
+      clipMode: "tail",
+      maxCharacters,
+      maxLineCharacters: 4000000,
+    });
   const remote = input.remote ?? "origin";
   if (
     typeof remote !== "string" ||
@@ -38,21 +54,25 @@ export default async function sync_stacked_pr_branch(input: {
       description: "Validate stacked branch name",
       timeoutMs: 30000,
     });
-    if (checked.kind !== "foreground" || checked.exitCode !== 0)
-      throw new Error(
-        "Invalid " +
-          label +
-          " branch " +
-          branch +
-          (checked.kind === "foreground" ? ": " + checked.stderr.text : ""),
+    if (checked.kind !== "foreground") throw new Error("Git branch validation did not finish");
+    if (checked.exitCode !== 0) {
+      const diagnostic = await project(
+        [checked.stdout.text, checked.stderr.text].filter(Boolean).join("\n"),
+        2000,
       );
+      throw new Error(
+        "Invalid " + label + " branch" + (diagnostic.text ? ": " + diagnostic.text : ""),
+      );
+    }
   }
   const statusBefore = await tools.read_git_checkout({
     workdir: input.workdir,
     includeRoot: false,
     includeBranch: false,
+    includeStatus: true,
   });
-  if ((input.resetToRemote === true || input.requireClean !== false) && !statusBefore.clean)
+  const cleanBefore = statusBefore.clean === true;
+  if ((input.resetToRemote === true || input.requireClean !== false) && !cleanBefore)
     throw new Error(
       "Working tree has uncommitted changes; commit or stash them before synchronizing the branch.",
     );
@@ -68,133 +88,99 @@ export default async function sync_stacked_pr_branch(input: {
     return {
       applied: false,
       mode: "dry-run",
+      ok: true,
+      step: "preview",
+      cleanBefore,
+      cleanAfter: null,
       plan,
       notes: ["No fetch, checkout, reset, or merge was performed."],
-      resultJson: JSON.stringify({
-        ok: true,
-        dryRun: true,
-        statusBeforeBase64: statusBefore.statusBase64,
-      }),
+      operations: [],
     };
-  const project = async (text, maxCharacters) =>
-    (
-      await tools.project_diagnostic_text({
-        lines: [text],
-        clipMode: "tail",
-        maxCharacters,
-        maxLineCharacters: 4000000,
-      })
-    ).text;
-  const run = async (command, description, timeoutMs) => {
+  const run = async (name, command, description, timeoutMs) => {
     const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
     if (result.kind !== "foreground") throw new Error(description + " did not finish");
-    return result;
+    const diagnostic = await project(
+      [result.stdout.text, result.stderr.text].filter(Boolean).join("\n"),
+      name === "merge" ? 8000 : 4000,
+    );
+    return {
+      name,
+      exitCode: result.exitCode ?? -1,
+      diagnostic: diagnostic.text,
+      truncated: result.stdout.truncated || result.stderr.truncated || diagnostic.truncated,
+    };
+  };
+  const operations = [];
+  const finish = async (operation, failureNote) => {
+    operations.push(operation);
+    if (operation.exitCode === 0) return null;
+    const checkout = await tools.read_git_checkout({
+      workdir: input.workdir,
+      includeRoot: false,
+      includeBranch: false,
+      includeStatus: true,
+    });
+    return {
+      applied: true,
+      mode: "apply",
+      ok: false,
+      step: operation.name,
+      cleanBefore,
+      cleanAfter: checkout.clean === true,
+      plan,
+      notes: [failureNote],
+      operations,
+    };
   };
   const fetch = await run(
+    "fetch",
     "git fetch " + quote(remote) + " " + quote(input.headBranch) + " " + quote(input.baseBranch),
     "Fetch stacked branches",
     60000,
   );
-  if (fetch.exitCode !== 0)
-    return {
-      applied: true,
-      mode: "apply",
-      plan,
-      notes: ["Stopped at fetch failure."],
-      resultJson: JSON.stringify({
-        ok: false,
-        step: "fetch",
-        fetch: {
-          code: fetch.exitCode,
-          stdout: await project(fetch.stdout.text, 2000),
-          stderr: await project(fetch.stderr.text, 4000),
-          truncated: fetch.stdout.truncated || fetch.stderr.truncated,
-        },
-      }),
-    };
+  const fetchFailure = await finish(fetch, "Stopped at fetch failure.");
+  if (fetchFailure) return fetchFailure;
   const checkout = await run(
+    "checkout",
     "git checkout " + quote(input.headBranch),
     "Check out stacked branch",
     30000,
   );
-  if (checkout.exitCode !== 0)
-    return {
-      applied: true,
-      mode: "apply",
-      plan,
-      notes: ["Stopped at checkout failure."],
-      resultJson: JSON.stringify({
-        ok: false,
-        step: "checkout",
-        checkout: {
-          code: checkout.exitCode,
-          stdout: await project(checkout.stdout.text, 2000),
-          stderr: await project(checkout.stderr.text, 4000),
-          truncated: checkout.stdout.truncated || checkout.stderr.truncated,
-        },
-      }),
-    };
-  let reset = null;
+  const checkoutFailure = await finish(checkout, "Stopped at checkout failure.");
+  if (checkoutFailure) return checkoutFailure;
   if (input.resetToRemote === true) {
-    reset = await run(
+    const reset = await run(
+      "reset",
       "git reset --hard " + quote(remote + "/" + input.headBranch),
       "Reset stacked branch to remote",
       30000,
     );
-    if (reset.exitCode !== 0)
-      return {
-        applied: true,
-        mode: "apply",
-        plan,
-        notes: ["Stopped at reset failure."],
-        resultJson: JSON.stringify({
-          ok: false,
-          step: "reset",
-          reset: {
-            code: reset.exitCode,
-            stdout: await project(reset.stdout.text, 2000),
-            stderr: await project(reset.stderr.text, 4000),
-            truncated: reset.stdout.truncated || reset.stderr.truncated,
-          },
-        }),
-      };
+    const resetFailure = await finish(reset, "Stopped at reset failure.");
+    if (resetFailure) return resetFailure;
   }
   const merge = await run(
+    "merge",
     "git merge --no-edit -- " + quote(remote + "/" + input.baseBranch),
     "Merge stacked branch base",
     120000,
   );
-  const finalStatus = await run("git status --short --branch", "Read stacked branch status", 30000);
-  const log = await run("git log -5 --oneline --decorate", "Read stacked branch history", 30000);
-  const detail = {
-    ok: merge.exitCode === 0,
-    fetch: { code: fetch.exitCode, stderr: await project(fetch.stderr.text, 2000) },
-    checkout: {
-      code: checkout.exitCode,
-      stdout: await project(checkout.stdout.text, 2000),
-      stderr: await project(checkout.stderr.text, 2000),
-    },
-    reset: reset
-      ? {
-          code: reset.exitCode,
-          stdout: await project(reset.stdout.text, 2000),
-          stderr: await project(reset.stderr.text, 2000),
-        }
-      : null,
-    merge: {
-      code: merge.exitCode,
-      stdout: await project(merge.stdout.text, 8000),
-      stderr: await project(merge.stderr.text, 4000),
-      truncated: merge.stdout.truncated || merge.stderr.truncated,
-    },
-    status: await project(finalStatus.stdout.text, 4000),
-    log: await project(log.stdout.text, 4000),
-  };
+  const mergeFailure = await finish(merge, "Merge failed; conflicts remain for manual resolution.");
+  if (mergeFailure) return mergeFailure;
+  const finalStatus = await tools.read_git_checkout({
+    workdir: input.workdir,
+    includeRoot: false,
+    includeBranch: false,
+    includeStatus: true,
+  });
   return {
     applied: true,
     mode: "apply",
+    ok: true,
+    step: "complete",
+    cleanBefore,
+    cleanAfter: finalStatus.clean === true,
     plan,
-    notes: merge.exitCode === 0 ? [] : ["Merge failed; conflicts remain for manual resolution."],
-    resultJson: JSON.stringify(detail),
+    notes: [],
+    operations,
   };
 }

@@ -21,7 +21,7 @@ export default async function summarize_pr_readiness(input: {
   pendingChecks: string[];
   latestReviews: { user: string; state: string }[];
   unresolvedComments: {
-    user: string;
+    user: string | null;
     path: string;
     line: Integer | null;
     body: string;
@@ -33,8 +33,8 @@ export default async function summarize_pr_readiness(input: {
     additions: Integer;
     deletions: Integer;
     body: string;
-    files: Open<{}>[];
-    commits: Open<{}>[];
+    files: { path: string; additions: Integer; deletions: Integer }[];
+    commits: { oid: string; messageHeadline: string; authoredDate: string }[];
   } | null;
 }> {
   const repo = input.repo ?? "NVIDIA/NemoClaw";
@@ -50,12 +50,17 @@ export default async function summarize_pr_readiness(input: {
     workdir: input.workdir,
     bodyLimit: 4000,
   });
-  if (
-    s.truncation.reviews ||
-    s.truncation.inlineComments ||
-    (input.includeComments && s.truncation.discussionComments)
-  )
+  if (s.truncation.reviews || (input.includeComments && s.truncation.discussionComments))
     throw new Error("Pull request readiness requires a complete bounded feedback snapshot");
+  const threadSnapshot = await tools.read_nemoclaw_review_threads({
+    workdir: input.workdir,
+    number: input.number,
+    repository: repo,
+    expectedHeadSha: s.pull.headRefOid,
+    pageLimit: 20,
+  });
+  if (!threadSnapshot.complete)
+    throw new Error("Pull request readiness requires complete bounded review threads");
   const fail = new Set(["FAILURE", "FAIL", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"]),
     pending = new Set(["PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"]);
   const latest = new Map();
@@ -75,18 +80,56 @@ export default async function summarize_pr_readiness(input: {
       ],
     });
     const x = JSON.parse(r.stdout);
+    const files = x.files ?? [],
+      commits = x.commits ?? [];
+    if (
+      !Number.isSafeInteger(x.changedFiles) ||
+      !Number.isSafeInteger(x.additions) ||
+      !Number.isSafeInteger(x.deletions) ||
+      !Array.isArray(files) ||
+      !Array.isArray(commits)
+    )
+      throw new Error("Pull request review context did not match the expected contract");
     context = {
-      changedFiles: x.changedFiles ?? 0,
-      additions: x.additions ?? 0,
-      deletions: x.deletions ?? 0,
+      changedFiles: x.changedFiles,
+      additions: x.additions,
+      deletions: x.deletions,
       body: String(x.body ?? "").slice(0, 12000),
-      files: (x.files ?? []).slice(0, 100),
-      commits: (x.commits ?? []).slice(-20),
+      files: files.slice(0, 100).map((file) => {
+        if (
+          typeof file?.path !== "string" ||
+          !Number.isSafeInteger(file.additions) ||
+          !Number.isSafeInteger(file.deletions)
+        )
+          throw new Error("Pull request file did not match the expected contract");
+        return { path: file.path, additions: file.additions, deletions: file.deletions };
+      }),
+      commits: commits.slice(-20).map((commit) => {
+        if (
+          typeof commit?.oid !== "string" ||
+          typeof commit.messageHeadline !== "string" ||
+          typeof commit.authoredDate !== "string"
+        )
+          throw new Error("Pull request commit did not match the expected contract");
+        return {
+          oid: commit.oid,
+          messageHeadline: commit.messageHeadline,
+          authoredDate: commit.authoredDate,
+        };
+      }),
     };
   }
-  const inline = s.inlineComments
-    .slice(0, 100)
-    .map((c) => ({ user: c.user, path: c.path, line: c.line, body: c.body, url: c.url }));
+  const unresolved = threadSnapshot.threads
+    .filter((thread) => !thread.isResolved)
+    .flatMap((thread) => thread.comments)
+    .slice(0, 2000)
+    .map((comment) => ({
+      user: comment.author,
+      path: comment.path,
+      line: comment.line,
+      body: comment.body,
+      url: comment.url,
+    }));
   const discussion = input.includeComments
     ? s.discussionComments.slice(-8).map((c) => ({ user: c.user, body: c.body, url: c.url }))
     : [];
@@ -109,7 +152,7 @@ export default async function summarize_pr_readiness(input: {
       .slice(0, 100)
       .map((c) => c.name),
     latestReviews: [...latest.values()].slice(0, 50),
-    unresolvedComments: inline,
+    unresolvedComments: unresolved,
     recentComments: discussion,
     context,
   };

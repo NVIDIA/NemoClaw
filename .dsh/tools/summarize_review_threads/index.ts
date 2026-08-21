@@ -10,8 +10,19 @@ export default async function summarize_review_threads(input: {
   repo: string;
   kind: string;
   truncated: boolean;
-  items: Open<{}>[];
-  summary: Open<{}>;
+  items: {
+    id: Integer;
+    user: string;
+    path: string;
+    line: Integer | null;
+    body: string;
+    url: string;
+  }[];
+  summary: {
+    number: Integer;
+    total: Integer;
+    note: string;
+  };
 }> {
   const repo = input.repo ?? "NVIDIA/NemoClaw",
     limit = input.limit ?? 100;

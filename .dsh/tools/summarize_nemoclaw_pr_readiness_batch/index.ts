@@ -10,8 +10,33 @@ export default async function summarize_nemoclaw_pr_readiness_batch(input: {
   repo: string;
   kind: string;
   truncated: boolean;
-  items: Open<{}>[];
-  summary: Open<{}>;
+  items: {
+    number: Integer;
+    pull: {
+      url: string;
+      state: string;
+      headRefOid: string;
+      baseRefOid: string;
+      mergeStateStatus: string;
+      reviewDecision: string;
+    };
+    failed: {
+      name: string;
+      state: string;
+      bucket: string;
+      link: string;
+    }[];
+    pending: {
+      name: string;
+      state: string;
+      bucket: string;
+      link: string;
+    }[];
+  }[];
+  summary: {
+    requested: Integer;
+    summarized: Integer;
+  };
 }> {
   const repo = input.repo ?? "NVIDIA/NemoClaw",
     limit = input.limit ?? 25;

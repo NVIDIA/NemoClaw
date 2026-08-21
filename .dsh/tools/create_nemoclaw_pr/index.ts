@@ -210,7 +210,7 @@ export default async function create_nemoclaw_pr(input: {
       return {
         ok: true,
         apply: true,
-        mutated: true,
+        mutated: false,
         repo,
         remote,
         baseBranch,

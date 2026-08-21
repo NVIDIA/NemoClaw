@@ -21,7 +21,6 @@ export default async function prepare_isolated_pr_worktree(input: {
   mutated: boolean;
   repo: string;
   remote: string;
-  root: string;
   isolationKey: string;
   number: Integer;
   url: string;
@@ -95,8 +94,7 @@ export default async function prepare_isolated_pr_worktree(input: {
   if (targetPath === input.workdir)
     throw new Error("Isolated worktree path must differ from the primary checkout");
   const parts = (value) => value.split("/").filter(Boolean);
-  const rootParts = parts(root),
-    namespaceParts = parts(namespace),
+  const namespaceParts = parts(namespace),
     targetParts = parts(targetPath);
   if (
     targetParts.includes("..") ||
@@ -105,6 +103,7 @@ export default async function prepare_isolated_pr_worktree(input: {
     targetParts.length <= namespaceParts.length
   )
     throw new Error("path must be a strict descendant of the caller isolation namespace");
+  const relativePath = targetParts.slice(namespaceParts.length).join("/");
   const primary = await tools.read_git_checkout({
     workdir: input.workdir,
     includeRoot: false,
@@ -151,11 +150,10 @@ export default async function prepare_isolated_pr_worktree(input: {
   const result = {
     repo,
     remote,
-    root,
     isolationKey,
     number: item.number,
     url: item.url,
-    path: targetPath,
+    path: relativePath,
     commit: item.headRefOid,
     baseCommit: item.baseRefOid,
     baseBranch: item.baseRefName,
@@ -179,8 +177,22 @@ export default async function prepare_isolated_pr_worktree(input: {
   const run = async (command, description, timeoutMs = 30000, workdir = input.workdir) => {
     const r = await tools.bash({ command, workdir, description, timeoutMs });
     if (r.kind !== "foreground") throw new Error(description + " did not finish");
-    if (r.exitCode !== 0)
-      throw new Error(r.stderr.text || r.stdout.text || description + " failed");
+    if (r.exitCode !== 0) {
+      const raw = r.stderr.text || r.stdout.text;
+      const safe = raw
+        .replaceAll(targetPath, "[worktree]")
+        .replaceAll(namespace, "[isolation-namespace]")
+        .replaceAll(root, "[isolation-root]")
+        .replaceAll(input.workdir, "[checkout]");
+      const diagnostic = await tools.project_diagnostic_text({
+        lines: [safe],
+        sourceTruncated: r.stderr.truncated || r.stdout.truncated,
+        maxLines: 20,
+        maxCharacters: 4000,
+        maxLineCharacters: 1000,
+      });
+      throw new Error(diagnostic.text || description + " failed");
+    }
     return r.stdout.text;
   };
   await run(
@@ -226,7 +238,7 @@ export default async function prepare_isolated_pr_worktree(input: {
     });
     if (!checkout.clean)
       throw new Error(
-        "Worktree " + targetPath + " has uncommitted changes and will not be reused or replaced",
+        "Worktree " + relativePath + " has uncommitted changes and will not be reused or replaced",
       );
     if (!registeredEntry.detached)
       throw new Error("Existing worktree is branch-attached and will not be reused or replaced");
@@ -235,7 +247,7 @@ export default async function prepare_isolated_pr_worktree(input: {
       if (!reuseExisting)
         throw new Error(
           "Worktree " +
-            targetPath +
+            relativePath +
             " already exists. Pass reuseExisting:true to reuse this clean exact-commit worktree.",
         );
       action = "reused";
@@ -243,7 +255,7 @@ export default async function prepare_isolated_pr_worktree(input: {
       if (!replaceExisting)
         throw new Error(
           "Worktree " +
-            targetPath +
+            relativePath +
             " is at " +
             resolved +
             "; expected " +
@@ -265,10 +277,10 @@ export default async function prepare_isolated_pr_worktree(input: {
       timeoutMs: 10000,
     });
     if (exists.kind !== "foreground")
-      throw new Error("Could not inspect worktree path " + targetPath);
+      throw new Error("Could not inspect worktree path " + relativePath);
     if (exists.exitCode === 0)
-      throw new Error("Path " + targetPath + " exists but is not a registered Git worktree");
-    if (exists.exitCode !== 1) throw new Error("Could not inspect worktree path " + targetPath);
+      throw new Error("Path " + relativePath + " exists but is not a registered Git worktree");
+    if (exists.exitCode !== 1) throw new Error("Could not inspect worktree path " + relativePath);
   }
   if (action !== "reused")
     await run(

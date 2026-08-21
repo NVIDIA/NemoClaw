@@ -63,6 +63,10 @@ export default async function inspect_gh_job_log(input: {
   if (!directory) throw new Error("Could not create temporary job log directory");
   let code = -1;
   let stderr = "";
+  let stderrSourceTruncated = false;
+  let stderrLineClipped = false;
+  let stderrLineCharacterClipped = false;
+  let stderrTextClipped = false;
   let lines = [];
   let sourceTruncated = false;
   try {
@@ -74,7 +78,20 @@ export default async function inspect_gh_job_log(input: {
       60000,
     );
     code = downloaded.exitCode ?? -1;
-    stderr = redact(downloaded.stderr.text).slice(-12000);
+    const projectedStderr = await tools.project_diagnostic_text({
+      lines: [downloaded.stderr.text],
+      clipMode: "tail",
+      lineClipMode: "head",
+      maxLines: 120,
+      maxCharacters: 12000,
+      maxLineCharacters: 4000,
+      sourceTruncated: downloaded.stderr.truncated,
+    });
+    stderr = projectedStderr.text;
+    stderrSourceTruncated = projectedStderr.sourceTruncated;
+    stderrLineClipped = projectedStderr.lineClipped;
+    stderrLineCharacterClipped = projectedStderr.lineCharacterClipped;
+    stderrTextClipped = projectedStderr.textClipped;
     if (code === 0) {
       const bounded = await run(
         `bytes=$(wc -c < ${q(rawPath)}); lines=$(wc -l < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d'; else cat -- ${q(rawPath)}; fi | tail -n 20000 > ${q(boundedPath)}; printf '%s %s' "$bytes" "$lines"`,
@@ -120,12 +137,21 @@ export default async function inspect_gh_job_log(input: {
   const lineClipped = projected.lineClipped;
   const characterClipped = projected.lineCharacterClipped;
   const byteClipped = projected.textClipped;
-  const truncated = projected.truncated;
+  const truncated =
+    projected.truncated ||
+    stderrSourceTruncated ||
+    stderrLineClipped ||
+    stderrLineCharacterClipped ||
+    stderrTextClipped;
   const truncationReasons = [
     ...(sourceTruncated ? ["source-log-bounded-before-filtering"] : []),
     ...(lineClipped ? ["selected-lines-exceeded-maxLines"] : []),
     ...(characterClipped ? ["selected-line-exceeded-4000-characters"] : []),
     ...(byteClipped ? ["selected-text-exceeded-40000-characters"] : []),
+    ...(stderrSourceTruncated ? ["github-stderr-source-truncated"] : []),
+    ...(stderrLineClipped ? ["github-stderr-exceeded-120-lines"] : []),
+    ...(stderrLineCharacterClipped ? ["github-stderr-line-exceeded-4000-characters"] : []),
+    ...(stderrTextClipped ? ["github-stderr-exceeded-12000-characters"] : []),
   ];
   return {
     jobId,

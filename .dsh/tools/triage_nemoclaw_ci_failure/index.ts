@@ -72,12 +72,26 @@ export default async function triage_nemoclaw_ci_failure(input: {
   )
     throw new Error("artifactName must be a trimmed GitHub Actions artifact name");
   const q = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
-  const redact = (value) =>
-    String(value)
-      .replace(/(authorization\s*:)[^\r\n]*/gi, "$1 [REDACTED]")
-      .replace(/([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)\s*=)\s*[^\s]+/g, "$1[REDACTED]")
-      .replace(/(https?:\/\/)[^/@\s]+@/g, "$1[REDACTED]@")
-      .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[HOME]");
+  const project = async (value, maxCharacters, maxLineCharacters = maxCharacters) =>
+    tools.project_diagnostic_text({
+      lines: [String(value)],
+      clipMode: "tail",
+      lineClipMode: "tail",
+      maxLines: 40,
+      maxCharacters,
+      maxLineCharacters,
+    });
+  const diagnosticError = async (message) => {
+    const projected = await project(message, 2000, 1000);
+    return new Error(projected.text || "Diagnostic unavailable");
+  };
+  const github = async (args, timeoutMs = 30000) => {
+    try {
+      return await tools.run_github_cli({ workdir: input.workdir, args, timeoutMs });
+    } catch (error) {
+      throw await diagnosticError(error instanceof Error ? error.message : String(error));
+    }
+  };
   const run = async (command, description, timeoutMs = 30000) => {
     const result = await tools.bash({ command, workdir: input.workdir, description, timeoutMs });
     if (result.kind !== "foreground") throw new Error("Unexpected background result");
@@ -94,18 +108,16 @@ export default async function triage_nemoclaw_ci_failure(input: {
         "resource not accessible",
         "sso",
       ].some((value) => detail.includes(value))
-    )
+    ) {
+      const projected = await project(result.stderr.text, 1500, 1000);
       throw new Error(
-        "GitHub access failed; correct authentication or authorization before retrying.\n" +
-          redact(result.stderr.text).slice(-1500),
+        "GitHub access failed; correct authentication or authorization before retrying." +
+          (projected.text ? "\n" + projected.text : ""),
       );
+    }
     return result;
   };
-  const jobResult = await tools.run_github_cli({
-    workdir: input.workdir,
-    args: ["api", `repos/${repo}/actions/jobs/${jobId}`],
-    timeoutMs: 30000,
-  });
+  const jobResult = await github(["api", `repos/${repo}/actions/jobs/${jobId}`]);
   const rawJob = JSON.parse(jobResult.stdout);
   const job = {
     id: Number(rawJob.id ?? jobId),
@@ -135,7 +147,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
       60000,
     );
     logCode = downloaded.exitCode ?? -1;
-    logStderr = redact(downloaded.stderr.text).slice(-4000);
+    logStderr = (await project(downloaded.stderr.text, 4000, 1000)).text;
     if (logCode === 0) {
       const bounded = await run(
         `bytes=$(wc -c < ${q(rawPath)}); lines=$(wc -l < ${q(rawPath)}); if [ "$bytes" -gt 4000000 ]; then tail -c 4000000 ${q(rawPath)} | sed '1d'; else cat -- ${q(rawPath)}; fi | tail -n 20000 > ${q(boundedPath)}; printf '%s %s' "$bytes" "$lines"`,
@@ -169,13 +181,13 @@ export default async function triage_nemoclaw_ci_failure(input: {
   }
   const selectedLines = [...selectedIndexes]
     .sort((left, right) => left - right)
-    .map((index) => logLines[index].slice(0, 4000));
+    .map((index) => logLines[index]);
   const projected = await tools.project_diagnostic_text({
     lines: selectedLines,
     clipMode,
     maxLines,
     maxCharacters: 4000000,
-    maxLineCharacters: 4000000,
+    maxLineCharacters: 4000,
     sourceTruncated,
   });
   const candidateText = projected.text;
@@ -186,8 +198,9 @@ export default async function triage_nemoclaw_ci_failure(input: {
   }
   const boundedLines = boundedText ? boundedText.split("\n") : [];
   const lineClipped = projected.lineClipped;
+  const perLineClipped = projected.lineCharacterClipped;
   const byteClipped = boundedText.length < candidateText.length;
-  const truncated = projected.sourceTruncated || lineClipped || byteClipped;
+  const truncated = projected.sourceTruncated || lineClipped || perLineClipped || byteClipped;
   const log = {
     jobId,
     repo,
@@ -200,6 +213,7 @@ export default async function triage_nemoclaw_ci_failure(input: {
     truncationReasons: [
       ...(sourceTruncated ? ["source-log-bounded-before-filtering"] : []),
       ...(lineClipped ? ["selected-lines-exceeded-maxLines"] : []),
+      ...(perLineClipped ? ["selected-line-exceeded-4000-characters"] : []),
       ...(byteClipped ? ["selected-text-exceeded-40000-characters"] : []),
     ],
     clipMode,
@@ -208,175 +222,218 @@ export default async function triage_nemoclaw_ci_failure(input: {
     returnedLines: boundedLines.length,
     omittedLines: Math.max(0, selectedLines.length - boundedLines.length),
     matchedLines,
-    stdout: redact(boundedText),
+    stdout: boundedText,
     stderr: logStderr,
   };
   let artifact = null;
   if (artifactName) {
-    const inventoryResult = await tools.run_github_cli({
-      workdir: input.workdir,
-      args: ["api", `repos/${repo}/actions/runs/${job.runId}/artifacts?per_page=100`],
-      timeoutMs: 30000,
-    });
-    const inventory = JSON.parse(inventoryResult.stdout);
-    const found = (inventory.artifacts ?? []).find((entry) => entry.name === artifactName);
-    if (!found) throw new Error(`Artifact ${artifactName} was not found for run ${job.runId}`);
-    const sizeBytes = found.size_in_bytes;
-    if (
-      typeof sizeBytes !== "number" ||
-      !Number.isSafeInteger(sizeBytes) ||
-      sizeBytes < 0 ||
-      sizeBytes > 25000000
-    )
-      throw new Error(
-        `Artifact ${artifactName} has an invalid size or is too large for bounded inspection`,
-      );
-    const temp = await run(
-      'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-triage.XXXXXX"',
-      "Create temporary artifact directory",
-    );
-    if (temp.exitCode !== 0) throw new Error("Could not create temporary artifact directory");
-    const dir = temp.stdout.text.trim();
-    if (!dir) throw new Error("Could not create temporary artifact directory");
     try {
-      const artifactId = found.id;
-      if (typeof artifactId !== "number" || !Number.isSafeInteger(artifactId) || artifactId <= 0)
-        throw new Error(`Artifact ${artifactName} has an invalid artifact ID`);
-      const archive = dir + "/artifact.zip";
-      const download = await run(
-        `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; gh api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; dd bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
-        "Download selected artifact ZIP",
-        60000,
-      );
-      const [downloadStatus, readerStatus, downloadState, downloadBytesText] = download.stdout.text
-        .trim()
-        .split(/\s+/, 4);
-      const downloadBytes = Number(downloadBytesText);
-      if (downloadState === "limit")
-        throw new Error("Selected artifact compressed stream exceeds the 25,000,000-byte limit");
-      if (
-        download.exitCode !== 0 ||
-        downloadStatus !== "0" ||
-        readerStatus !== "0" ||
-        downloadState !== "ok" ||
-        !Number.isSafeInteger(downloadBytes) ||
-        downloadBytes !== sizeBytes
-      )
-        throw new Error("Could not download selected artifact");
-      const checked = await run(
-        `archive=${q(archive)}; expected=${q(sizeBytes)}; measured=$(stat -c %s -- "$archive") || { printf 'malformed\n'; exit 0; }; if [ "$measured" -gt 25000000 ] || [ "$measured" -ne "$expected" ]; then printf 'compressed-size\n'; exit 0; fi; summary=$(LC_ALL=C zipinfo -t "$archive" 2>/dev/null) || { printf 'malformed\n'; exit 0; }; if [[ "$summary" == *$'\n'* ]] || [[ ! "$summary" =~ ^([0-9]+)[[:space:]]files?,[[:space:]]([0-9]+)[[:space:]]bytes[[:space:]]uncompressed, ]]; then printf 'malformed\n'; exit 0; fi; entries=\${BASH_REMATCH[1]}; expanded=\${BASH_REMATCH[2]}; if [ "$entries" -gt 100 ]; then printf 'entries\n'; exit 0; fi; if [ "$expanded" -gt 100000000 ]; then printf 'expanded\n'; exit 0; fi; listing=$(umask 077; mktemp "${dir}/zip-listing.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; names=$(umask 077; mktemp "${dir}/zip-names.XXXXXXXXXX") || { rm -f -- "$listing"; printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names"' EXIT; LC_ALL=C zipinfo -l "$archive" > "$listing" 2>/dev/null || { printf 'malformed\n'; exit 0; }; LC_ALL=C zipinfo -1 "$archive" > "$names" 2>/dev/null || { printf 'malformed\n'; exit 0; }; listing_bytes=$(wc -c < "$listing") || { printf 'malformed\n'; exit 0; }; if [ "$listing_bytes" -gt 7000000 ]; then printf 'listing\n'; exit 0; fi; state=$(awk -v expected="$entries" 'NR==FNR { exact[FNR]=$0; next } BEGIN { count=0; state="ok" } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { count++; mode=substr($0,1,1); size=$4; line=$0; for (i=1;i<=9;i++) sub(/^[^[:space:]]+[[:space:]]+/, "", line); name=exact[count]; if (line != name || name ~ /^[[:space:]]/ || name ~ /[[:space:]]$/) state="path"; if (mode != "-" && mode != "d") state="type"; if (size !~ /^[0-9]+$/) state="parser"; if (name == "" || name ~ /^[-\/]/ || name ~ /\\/ || name ~ /[[:cntrl:]]/ || name ~ /\\^[A-Z@[]/ || name ~ /[*?[[]/) state="path"; parts=split(name, component, "/"); last=parts; if (mode == "d" && component[parts] == "") last--; else if (component[parts] == "") state="path"; for (i=1;i<=last;i++) if (component[i] == "" || component[i] == "." || component[i] == "..") state="path"; output=name; sub(/\/$/, "", output); if (output == "" || seen[output]++) state="duplicate"; next } /^[0-9]+ files?, [0-9]+ bytes uncompressed, / { summaries++; next } { state="parser" } END { if (count != expected || summaries != 1) state="parser"; print state }' "$names" "$listing"); if [ "$state" != ok ]; then printf '%s\n' "$state"; exit 0; fi; unzip -tqq "$archive" >/dev/null 2>&1 || { printf 'malformed\n'; exit 0; }; selected=$(umask 077; mktemp "${dir}/selected.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; unsorted=$(umask 077; mktemp "${dir}/unsorted.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names" "$selected" "$unsorted"' EXIT; count=$(awk -v selected="$unsorted" 'NR==FNR { exact[FNR]=$0; next } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { entry++; name=exact[entry]; if (substr($0, 1, 1) == "-" && name ~ /[.]result[.]json$/) { printf "%s\t%s%c", name, $4, 0 > selected; count++ } } END { print count+0 }' "$names" "$listing") || { printf 'parser\n'; exit 0; }; LC_ALL=C sort -z "$unsorted" > "$selected" || { printf 'parser\n'; exit 0; }; encoded=$(base64 -w0 < "$selected") || { printf 'parser\n'; exit 0; }; printf 'ok %s %s\n' "$count" "$encoded"`,
-        "Inspect selected artifact ZIP",
-      );
-      const parts = checked.stdout.text.trim().split(/\s+/, 3);
-      const archiveState = parts[0];
-      if (checked.exitCode !== 0 || archiveState !== "ok") {
-        const details = {
-          "compressed-size": "Artifact compressed size is invalid or differs from its metadata",
-          entries: "Artifact contains more than 100 entries",
-          expanded: "Artifact declares more than 100,000,000 expanded bytes",
-          type: "Artifact contains a symlink or another unsupported entry type",
-          path: "Artifact contains an unsafe, ambiguous, or option-like path",
-          duplicate: "Artifact contains duplicate output paths",
-          listing: "Artifact entry listing exceeds the inspection limit",
-          parser: "Artifact entry listing is ambiguous",
-          malformed: "Artifact ZIP is malformed",
-        };
-        throw new Error(details[archiveState] ?? "Could not inspect artifact ZIP");
-      }
-      const selectedCount = Number(parts[1]);
-      const resultEntries = Buffer.from(parts[2] ?? "", "base64")
-        .toString("utf8")
-        .split("\0")
-        .filter(Boolean);
-      if (
-        !Number.isSafeInteger(selectedCount) ||
-        selectedCount < 0 ||
-        selectedCount > 100 ||
-        resultEntries.length !== selectedCount
-      )
-        throw new Error("Artifact result entry listing is ambiguous");
-      const fileResults = [];
-      let measuredOutput = 0;
-      let cumulativeLimitExceeded = false;
-      for (let index = 0; index < resultEntries.length; index += 1) {
-        const separator = resultEntries[index].lastIndexOf("\t");
-        const relativePath = resultEntries[index].slice(0, separator);
-        const declaredBytes = Number(resultEntries[index].slice(separator + 1));
-        if (separator < 1 || !Number.isSafeInteger(declaredBytes) || declaredBytes < 0)
-          throw new Error("Artifact result entry listing is ambiguous");
-        if (declaredBytes > 1000000) continue;
-        const resultPath = dir + "/result-" + index;
-        try {
-          const streamed = await run(
-            `archive=${q(archive)}; entry=${q(relativePath)}; output=${q(resultPath)}; metadata=${q(resultPath + ".stream")}; umask 077; set +e; set -o pipefail; unzip -p "$archive" "$entry" | { : > "$output" || exit 1; dd bs=65536 count=15 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=16960 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
-            "Stream bounded test result artifact",
-          );
-          const [unzipStatus, readerStatus, streamState, byteText] = streamed.stdout.text
-            .trim()
-            .split(/\s+/, 4);
-          if (streamState === "limit")
-            throw new Error(
-              `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
-            );
-          const resultBytes = Number(byteText);
-          if (
-            streamed.exitCode !== 0 ||
-            readerStatus !== "0" ||
-            unzipStatus !== "0" ||
-            streamState !== "ok" ||
-            !Number.isSafeInteger(resultBytes) ||
-            resultBytes < 0
+      const artifacts = [];
+      let artifactTotal = null;
+      for (let page = 1; page <= 20; page += 1) {
+        const inventoryResult = await github([
+          "api",
+          "--include",
+          `repos/${repo}/actions/runs/${job.runId}/artifacts?per_page=100&page=${page}`,
+        ]);
+        const boundary = inventoryResult.stdout.search(/\r?\n\r?\n/u);
+        if (boundary < 0) throw new Error("Artifact inventory response omitted headers");
+        const separatorLength = inventoryResult.stdout.slice(boundary).startsWith("\r\n\r\n")
+          ? 4
+          : 2;
+        const headers = inventoryResult.stdout.slice(0, boundary);
+        const inventory = JSON.parse(inventoryResult.stdout.slice(boundary + separatorLength));
+        if (
+          !inventory ||
+          typeof inventory !== "object" ||
+          Array.isArray(inventory) ||
+          !Number.isSafeInteger(inventory.total_count) ||
+          inventory.total_count < 0 ||
+          !Array.isArray(inventory.artifacts) ||
+          inventory.artifacts.some(
+            (entry) => entry === null || typeof entry !== "object" || Array.isArray(entry),
           )
-            throw new Error(`Could not stream artifact result entry ${relativePath}`);
-          if (resultBytes > 1000000)
-            throw new Error(
-              `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
-            );
-          if (resultBytes !== declaredBytes)
-            throw new Error(`Artifact result entry ${relativePath} differs from its declared size`);
-          measuredOutput += resultBytes;
-          if (measuredOutput > 100000000) {
-            cumulativeLimitExceeded = true;
-            break;
-          }
-          const file = await tools.read({ file_path: resultPath, limit: 2000 });
-          if (file.totalLines > 2000) continue;
-          const value = JSON.parse(file.lines.map((line) => line.text).join("\n"));
-          if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-          const exitCode = Number.isInteger(value.exitCode) ? value.exitCode : null;
-          const signal = value.signal ? String(value.signal).slice(0, 100) : null;
-          const timedOut = Boolean(value.timedOut);
-          const error = value.error ? redact(String(value.error)).slice(0, 1000) : null;
-          const command =
-            value.command == null ? null : redact(String(value.command)).slice(0, 2000);
-          if (exitCode === 0 && !signal && !error && !timedOut) continue;
-          if (exitCode === null && !signal && !error && !timedOut && !value.command) continue;
-          fileResults.push({
-            path: relativePath.slice(0, 1000),
-            exitCode,
-            signal,
-            timedOut,
-            error,
-            command,
-          });
-        } catch {
-          continue;
-        }
+        )
+          throw new Error("Artifact inventory page is malformed");
+        if (artifactTotal === null) artifactTotal = inventory.total_count;
+        else if (artifactTotal !== inventory.total_count)
+          throw new Error("Artifact inventory changed during pagination");
+        if (artifacts.length + inventory.artifacts.length > 2000)
+          throw new Error("Artifact inventory exceeds the 2000-item inspection limit");
+        artifacts.push(...inventory.artifacts);
+        const hasNext = /^link:.*rel="next"/imu.test(headers);
+        if (!hasNext) break;
+        if (page === 20)
+          throw new Error("Artifact inventory pagination exceeds the 20-page inspection limit");
       }
-      if (cumulativeLimitExceeded)
-        throw new Error("Artifact streamed output exceeds the 100,000,000-byte limit");
-      const failures = fileResults;
-      artifact = {
-        name: artifactName,
-        sizeBytes,
-        inventoryTruncated: Number(inventory.total_count ?? 0) > 100,
-        filesRead: Math.min(resultEntries.length, 100),
-        filesTruncated: resultEntries.length > 100,
-        failures: failures.slice(0, 20),
-        failuresTruncated: failures.length > 20,
-      };
-    } finally {
-      await run(`rm -rf -- ${q(dir)}`, "Remove temporary artifact directory");
+      if (artifactTotal === null || artifacts.length !== artifactTotal)
+        throw new Error("Artifact inventory pagination was incomplete");
+      const found = artifacts.find((entry) => entry.name === artifactName);
+      if (!found) throw new Error(`Artifact ${artifactName} was not found for run ${job.runId}`);
+      const sizeBytes = found.size_in_bytes;
+      if (
+        typeof sizeBytes !== "number" ||
+        !Number.isSafeInteger(sizeBytes) ||
+        sizeBytes < 0 ||
+        sizeBytes > 25000000
+      )
+        throw new Error(
+          `Artifact ${artifactName} has an invalid size or is too large for bounded inspection`,
+        );
+      const temp = await run(
+        'umask 077; mktemp -d "${TMPDIR:-/tmp}/nemoclaw-ci-triage.XXXXXX"',
+        "Create temporary artifact directory",
+      );
+      if (temp.exitCode !== 0) throw new Error("Could not create temporary artifact directory");
+      const dir = temp.stdout.text.trim();
+      if (!dir) throw new Error("Could not create temporary artifact directory");
+      try {
+        const artifactId = found.id;
+        if (typeof artifactId !== "number" || !Number.isSafeInteger(artifactId) || artifactId <= 0)
+          throw new Error(`Artifact ${artifactName} has an invalid artifact ID`);
+        const archive = dir + "/artifact.zip";
+        const download = await run(
+          `output=${q(archive)}; metadata=${q(archive + ".stream")}; umask 077; set +e; set -o pipefail; gh api ${q(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | { : > "$output" || exit 1; dd bs=65536 count=381 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=30784 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
+          "Download selected artifact ZIP",
+          60000,
+        );
+        const [downloadStatus, readerStatus, downloadState, downloadBytesText] =
+          download.stdout.text.trim().split(/\s+/, 4);
+        const downloadBytes = Number(downloadBytesText);
+        if (downloadState === "limit")
+          throw new Error("Selected artifact compressed stream exceeds the 25,000,000-byte limit");
+        if (
+          download.exitCode !== 0 ||
+          downloadStatus !== "0" ||
+          readerStatus !== "0" ||
+          downloadState !== "ok" ||
+          !Number.isSafeInteger(downloadBytes) ||
+          downloadBytes !== sizeBytes
+        )
+          throw new Error("Could not download selected artifact");
+        const checked = await run(
+          `archive=${q(archive)}; expected=${q(sizeBytes)}; measured=$(stat -c %s -- "$archive") || { printf 'malformed\n'; exit 0; }; if [ "$measured" -gt 25000000 ] || [ "$measured" -ne "$expected" ]; then printf 'compressed-size\n'; exit 0; fi; summary=$(LC_ALL=C zipinfo -t "$archive" 2>/dev/null) || { printf 'malformed\n'; exit 0; }; if [[ "$summary" == *$'\n'* ]] || [[ ! "$summary" =~ ^([0-9]+)[[:space:]]files?,[[:space:]]([0-9]+)[[:space:]]bytes[[:space:]]uncompressed, ]]; then printf 'malformed\n'; exit 0; fi; entries=\${BASH_REMATCH[1]}; expanded=\${BASH_REMATCH[2]}; if [ "$entries" -gt 100 ]; then printf 'entries\n'; exit 0; fi; if [ "$expanded" -gt 100000000 ]; then printf 'expanded\n'; exit 0; fi; listing=$(umask 077; mktemp "${dir}/zip-listing.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; names=$(umask 077; mktemp "${dir}/zip-names.XXXXXXXXXX") || { rm -f -- "$listing"; printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names"' EXIT; LC_ALL=C zipinfo -l "$archive" > "$listing" 2>/dev/null || { printf 'malformed\n'; exit 0; }; LC_ALL=C zipinfo -1 "$archive" > "$names" 2>/dev/null || { printf 'malformed\n'; exit 0; }; listing_bytes=$(wc -c < "$listing") || { printf 'malformed\n'; exit 0; }; if [ "$listing_bytes" -gt 7000000 ]; then printf 'listing\n'; exit 0; fi; state=$(awk -v expected="$entries" 'NR==FNR { exact[FNR]=$0; next } BEGIN { count=0; state="ok" } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { count++; mode=substr($0,1,1); size=$4; line=$0; for (i=1;i<=9;i++) sub(/^[^[:space:]]+[[:space:]]+/, "", line); name=exact[count]; if (line != name || name ~ /^[[:space:]]/ || name ~ /[[:space:]]$/) state="path"; if (mode != "-" && mode != "d") state="type"; if (size !~ /^[0-9]+$/) state="parser"; if (name == "" || name ~ /^[-\/]/ || name ~ /\\/ || name ~ /[[:cntrl:]]/ || name ~ /\\^[A-Z@[]/ || name ~ /[*?[[]/) state="path"; parts=split(name, component, "/"); last=parts; if (mode == "d" && component[parts] == "") last--; else if (component[parts] == "") state="path"; for (i=1;i<=last;i++) if (component[i] == "" || component[i] == "." || component[i] == "..") state="path"; output=name; sub(/\/$/, "", output); if (output == "" || seen[output]++) state="duplicate"; next } /^[0-9]+ files?, [0-9]+ bytes uncompressed, / { summaries++; next } { state="parser" } END { if (count != expected || summaries != 1) state="parser"; print state }' "$names" "$listing"); if [ "$state" != ok ]; then printf '%s\n' "$state"; exit 0; fi; unzip -tqq "$archive" >/dev/null 2>&1 || { printf 'malformed\n'; exit 0; }; selected=$(umask 077; mktemp "${dir}/selected.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; unsorted=$(umask 077; mktemp "${dir}/unsorted.XXXXXXXXXX") || { printf 'malformed\n'; exit 0; }; trap 'rm -f -- "$listing" "$names" "$selected" "$unsorted"' EXIT; count=$(awk -v selected="$unsorted" 'NR==FNR { exact[FNR]=$0; next } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { entry++; name=exact[entry]; if (substr($0, 1, 1) == "-" && name ~ /[.]result[.]json$/) { printf "%s\t%s%c", name, $4, 0 > selected; count++ } } END { print count+0 }' "$names" "$listing") || { printf 'parser\n'; exit 0; }; LC_ALL=C sort -z "$unsorted" > "$selected" || { printf 'parser\n'; exit 0; }; encoded=$(base64 -w0 < "$selected") || { printf 'parser\n'; exit 0; }; printf 'ok %s %s\n' "$count" "$encoded"`,
+          "Inspect selected artifact ZIP",
+        );
+        const parts = checked.stdout.text.trim().split(/\s+/, 3);
+        const archiveState = parts[0];
+        if (checked.exitCode !== 0 || archiveState !== "ok") {
+          const details = {
+            "compressed-size": "Artifact compressed size is invalid or differs from its metadata",
+            entries: "Artifact contains more than 100 entries",
+            expanded: "Artifact declares more than 100,000,000 expanded bytes",
+            type: "Artifact contains a symlink or another unsupported entry type",
+            path: "Artifact contains an unsafe, ambiguous, or option-like path",
+            duplicate: "Artifact contains duplicate output paths",
+            listing: "Artifact entry listing exceeds the inspection limit",
+            parser: "Artifact entry listing is ambiguous",
+            malformed: "Artifact ZIP is malformed",
+          };
+          throw new Error(details[archiveState] ?? "Could not inspect artifact ZIP");
+        }
+        const selectedCount = Number(parts[1]);
+        const resultEntries = Buffer.from(parts[2] ?? "", "base64")
+          .toString("utf8")
+          .split("\0")
+          .filter(Boolean);
+        if (
+          !Number.isSafeInteger(selectedCount) ||
+          selectedCount < 0 ||
+          selectedCount > 100 ||
+          resultEntries.length !== selectedCount
+        )
+          throw new Error("Artifact result entry listing is ambiguous");
+        const fileResults = [];
+        let measuredOutput = 0;
+        let cumulativeLimitExceeded = false;
+        for (let index = 0; index < resultEntries.length; index += 1) {
+          const separator = resultEntries[index].lastIndexOf("\t");
+          const relativePath = resultEntries[index].slice(0, separator);
+          const declaredBytes = Number(resultEntries[index].slice(separator + 1));
+          if (separator < 1 || !Number.isSafeInteger(declaredBytes) || declaredBytes < 0)
+            throw new Error("Artifact result entry listing is ambiguous");
+          if (declaredBytes > 1000000) continue;
+          const resultPath = dir + "/result-" + index;
+          try {
+            const streamed = await run(
+              `archive=${q(archive)}; entry=${q(relativePath)}; output=${q(resultPath)}; metadata=${q(resultPath + ".stream")}; umask 077; set +e; set -o pipefail; unzip -p "$archive" "$entry" | { : > "$output" || exit 1; dd bs=65536 count=15 iflag=fullblock status=none >> "$output"; full_status=$?; dd bs=1 count=16960 iflag=fullblock status=none >> "$output"; remainder_status=$?; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); bytes=$(stat -c %s -- "$output") || exit 1; state=ok; if [ -n "$extra" ]; then state=limit; elif [ "$full_status" -ne 0 ] || [ "$remainder_status" -ne 0 ]; then state=reader; fi; printf '%s %s\n' "$state" "$bytes" > "$metadata"; }; statuses=("\${PIPESTATUS[@]}"); read -r state bytes < "$metadata" || state=reader; rm -f -- "$metadata"; printf '%s %s %s %s\n' "\${statuses[0]}" "\${statuses[1]}" "$state" "$bytes"`,
+              "Stream bounded test result artifact",
+            );
+            const [unzipStatus, readerStatus, streamState, byteText] = streamed.stdout.text
+              .trim()
+              .split(/\s+/, 4);
+            if (streamState === "limit")
+              throw new Error(
+                `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
+              );
+            const resultBytes = Number(byteText);
+            if (
+              streamed.exitCode !== 0 ||
+              readerStatus !== "0" ||
+              unzipStatus !== "0" ||
+              streamState !== "ok" ||
+              !Number.isSafeInteger(resultBytes) ||
+              resultBytes < 0
+            )
+              throw new Error(`Could not stream artifact result entry ${relativePath}`);
+            if (resultBytes > 1000000)
+              throw new Error(
+                `Artifact result entry ${relativePath} exceeds the 1,000,000-byte limit`,
+              );
+            if (resultBytes !== declaredBytes)
+              throw new Error(
+                `Artifact result entry ${relativePath} differs from its declared size`,
+              );
+            measuredOutput += resultBytes;
+            if (measuredOutput > 100000000) {
+              cumulativeLimitExceeded = true;
+              break;
+            }
+            const file = await tools.read({ file_path: resultPath, limit: 2000 });
+            if (file.totalLines > 2000) continue;
+            const value = JSON.parse(file.lines.map((line) => line.text).join("\n"));
+            if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+            const exitCode = Number.isInteger(value.exitCode) ? value.exitCode : null;
+            const signal = value.signal ? String(value.signal).slice(0, 100) : null;
+            const timedOut = Boolean(value.timedOut);
+            const error = value.error
+              ? (await project(String(value.error), 1000, 1000)).text || null
+              : null;
+            const command =
+              value.command == null
+                ? null
+                : (await project(String(value.command), 2000, 1000)).text || null;
+            if (exitCode === 0 && !signal && !error && !timedOut) continue;
+            if (exitCode === null && !signal && !error && !timedOut && !value.command) continue;
+            fileResults.push({
+              path: relativePath.slice(0, 1000),
+              exitCode,
+              signal,
+              timedOut,
+              error,
+              command,
+            });
+          } catch {
+            continue;
+          }
+        }
+        if (cumulativeLimitExceeded)
+          throw new Error("Artifact streamed output exceeds the 100,000,000-byte limit");
+        const failures = fileResults;
+        artifact = {
+          name: artifactName,
+          sizeBytes,
+          inventoryTruncated: false,
+          filesRead: Math.min(resultEntries.length, 100),
+          filesTruncated: resultEntries.length > 100,
+          failures: failures.slice(0, 20),
+          failuresTruncated: failures.length > 20,
+        };
+      } finally {
+        await run(`rm -rf -- ${q(dir)}`, "Remove temporary artifact directory");
+      }
+    } catch (error) {
+      throw await diagnosticError(error instanceof Error ? error.message : String(error));
     }
   }
   if (log.code !== 0)

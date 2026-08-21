@@ -7,6 +7,7 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
   remote?: string;
   baseBranch?: string;
   refreshBase?: boolean;
+  apply?: boolean;
   body?: {
     summary: string;
     changes: string[];
@@ -35,7 +36,6 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     branch: string;
     headSha: string;
     clean: boolean | null;
-    statusEntries: string[];
     commits: {
       sha: string;
       subject: string;
@@ -79,6 +79,7 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     ...(input.remote ? { remote: input.remote } : {}),
     ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
     refreshBase: input.refreshBase ?? false,
+    ...(input.refreshBase ? { apply: input.apply === true } : {}),
   });
   const validation = await tools.infer_validation_for_changed_files({
     workdir: input.workdir,

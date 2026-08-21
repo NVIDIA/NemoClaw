@@ -101,11 +101,10 @@ export default async function prepare_pr_for_human_review(input: {
   };
   const validation = await tools.run_nemoclaw_focused_repair_validation(validationInput);
   if (!validation.ok) {
-    const status = await tools.bash({
-      command: "git status --short --branch",
+    const failedState = await tools.read_git_checkout({
       workdir: input.workdir,
-      description: "Read failed handoff status",
-      timeoutMs: 30000,
+      includeRoot: false,
+      includeBranch: false,
     });
     return {
       applied: true,
@@ -116,17 +115,7 @@ export default async function prepare_pr_for_human_review(input: {
         ok: false,
         step: "validation",
         validation,
-        status:
-          status.kind === "foreground"
-            ? (
-                await tools.project_diagnostic_text({
-                  lines: [status.stdout.text],
-                  clipMode: "tail",
-                  maxCharacters: 4000,
-                  maxLineCharacters: 4000000,
-                })
-              ).text
-            : "",
+        clean: failedState.clean,
       }),
     };
   }
@@ -135,7 +124,7 @@ export default async function prepare_pr_for_human_review(input: {
     includeRoot: false,
     includeBranch: false,
   });
-  if (after.statusBase64 !== before.statusBase64)
+  if (after.statusFingerprint !== before.statusFingerprint)
     throw new Error(
       "Validation changed tracked or untracked files; review and commit them before handoff.",
     );
@@ -172,13 +161,15 @@ export default async function prepare_pr_for_human_review(input: {
         lines: [pushed.stdout.text],
         clipMode: "tail",
         maxCharacters: 2000,
-        maxLineCharacters: 4000000,
+        maxLineCharacters: 500,
+        sourceTruncated: pushed.stdout.truncated,
       }),
       tools.project_diagnostic_text({
         lines: [pushed.stderr.text],
         clipMode: "tail",
         maxCharacters: 4000,
-        maxLineCharacters: 4000000,
+        maxLineCharacters: 500,
+        sourceTruncated: pushed.stderr.truncated,
       }),
     ]);
     push = {
@@ -195,8 +186,9 @@ export default async function prepare_pr_for_human_review(input: {
       const pushError = await tools.project_diagnostic_text({
         lines: [pushed.stderr.text],
         clipMode: "tail",
-        maxCharacters: 4000000,
-        maxLineCharacters: 4000000,
+        maxCharacters: 4000,
+        maxLineCharacters: 500,
+        sourceTruncated: pushed.stderr.truncated,
       });
       throw new Error(
         "Git push failed; stop and resolve GitHub access before continuing.\n" + pushError.text,
@@ -260,13 +252,13 @@ export default async function prepare_pr_for_human_review(input: {
           lines: [marked.stdout],
           clipMode: "tail",
           maxCharacters: 2000,
-          maxLineCharacters: 4000000,
+          maxLineCharacters: 500,
         }),
         tools.project_diagnostic_text({
           lines: [marked.stderr],
           clipMode: "tail",
           maxCharacters: 4000,
-          maxLineCharacters: 4000000,
+          maxLineCharacters: 500,
         }),
       ]);
       ready = { code: marked.code, stdout: readyStdout.text, stderr: readyStderr.text };

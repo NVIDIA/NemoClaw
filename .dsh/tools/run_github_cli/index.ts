@@ -100,10 +100,16 @@ export default async function run_github_cli(input: {
         .replace(/(authorization\s*[:=]\s*)(?:bearer|token|basic)\s+[^\s]+/giu, "$1[REDACTED]")
         .replace(/\b([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY))=([^\s]+)/gu, "$1=[REDACTED]")
         .replace(/\/(?:home|Users)\/[^/\s]+/gu, "/home/[USER]");
-    const detail = redact(result.stderr.text || result.stdout.text || "no diagnostic output").slice(
-      0,
-      2000,
-    );
+    const projected = await tools.project_diagnostic_text({
+      lines: [redact(result.stderr.text || result.stdout.text || "no diagnostic output")],
+      clipMode: "head",
+      lineClipMode: "head",
+      maxLines: 20,
+      maxCharacters: 2000,
+      maxLineCharacters: 500,
+      sourceTruncated: false,
+    });
+    const detail = projected.text;
     const access =
       /(?:authentication|authorization|permission|forbidden|unauthorized|not logged|HTTP 40[13]|resource not accessible)/iu.test(
         detail,
@@ -114,13 +120,43 @@ export default async function run_github_cli(input: {
         : "GitHub CLI operation failed: ") + detail,
     );
   }
-  const stderr = result.stderr.text
+  const redactedStderr = result.stderr.text
     .replace(/(https?:\/\/)[^/@\s]+@/giu, "$1[REDACTED]@")
     .replace(/(authorization\s*[:=]\s*)(?:bearer|token|basic)\s+[^\s]+/giu, "$1[REDACTED]")
     .replace(/\b([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY))=([^\s]+)/gu, "$1=[REDACTED]")
     .replace(/\/(?:home|Users)\/[^/\s]+/gu, "/home/[USER]");
-  const stdout = result.stdout.text
+  const redactedStdout = result.stdout.text
     .replace(/(https?:\/\/)[^/@\s]+@/giu, "$1[REDACTED]@")
     .replace(/\b(?:gh[opusr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/gu, "[REDACTED]");
+  const project = async (value) => {
+    const projected = await tools.project_diagnostic_text({
+      lines: [value],
+      clipMode: "head",
+      lineClipMode: "head",
+      maxLines: 20000,
+      maxCharacters: 4000000,
+      maxLineCharacters: 4000000,
+      sourceTruncated: false,
+    });
+    if (projected.truncated)
+      throw new Error("GitHub CLI output exceeded bounded diagnostic projection");
+    return projected.text;
+  };
+  const [stdout, stderr] = await Promise.all([project(redactedStdout), project(redactedStderr)]);
+  const wasJson = (() => {
+    try {
+      JSON.parse(redactedStdout);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  if (wasJson) {
+    try {
+      JSON.parse(stdout);
+    } catch {
+      throw new Error("GitHub CLI diagnostic projection did not preserve complete JSON output");
+    }
+  }
   return { ok: acceptedStatus, code, stdout, stderr };
 }

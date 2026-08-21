@@ -77,10 +77,19 @@ export default async function refresh_locked_npm_cache_seed(input: {
   if (probe.exitCode !== 0)
     throw new Error("lockfile and destination must be regular non-symlink paths inside workdir");
   const [cwd, lockfile, destination] = probe.stdout.text.trim().split(/\r?\n/);
-  const generator = cwd + "/scripts/checks/materialize-locked-npm-cache-seed.mts";
+  const generatorId = "scripts/checks/materialize-locked-npm-cache-seed.mts";
+  const generator = cwd + "/" + generatorId;
   const target = { os: input.os, cpu: input.cpu, libc: input.libc };
   if (dryRun)
-    return { dryRun: true, lockfile, destination, target, chunkBytes, generator, replaced: false };
+    return {
+      dryRun: true,
+      lockfile: input.lockfile,
+      destination: input.destination,
+      target,
+      chunkBytes,
+      generator: generatorId,
+      replaced: false,
+    };
   const tempResult = await requireSuccess(
     "parent=$(dirname " +
       q(destination) +

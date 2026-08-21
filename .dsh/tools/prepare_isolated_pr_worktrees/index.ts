@@ -21,11 +21,30 @@ export default async function prepare_isolated_pr_worktrees(input: {
   mutated: boolean;
   repo: string;
   remote: string;
-  root: string;
   isolationKey: string;
   failure: "fail-fast" | "settled";
   count: Integer;
-  results: Open<{}>[];
+  results: {
+    dryRun: boolean;
+    apply: boolean;
+    mutated: boolean;
+    repo: string;
+    remote: string;
+    isolationKey: string;
+    number: Integer;
+    url: string;
+    path: string;
+    commit: string;
+    baseCommit: string;
+    baseBranch: string;
+    sourceRepository: string;
+    sourceBranch: string;
+    maintainerCanModify: boolean;
+    isDraft: boolean;
+    state: string;
+    action: "planned" | "created" | "reused" | "replaced";
+    warning?: string;
+  }[];
   errors: { number: Integer; message: string }[];
 }> {
   if (typeof input.workdir !== "string" || !input.workdir.trim())
@@ -86,9 +105,8 @@ export default async function prepare_isolated_pr_worktrees(input: {
       });
       results.push(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      errors.push({ number, message });
-      if (failure === "fail-fast") throw error;
+      errors.push({ number, message: "Worktree preparation failed" });
+      if (failure === "fail-fast") throw new Error("Worktree preparation failed for PR #" + number);
     }
   }
   return {
@@ -97,7 +115,6 @@ export default async function prepare_isolated_pr_worktrees(input: {
     mutated: results.some((item) => item.mutated),
     repo,
     remote,
-    root,
     isolationKey,
     failure,
     count: results.length,

@@ -7,6 +7,7 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
   remote?: string;
   baseBranch?: string;
   refreshBase?: boolean;
+  apply?: boolean;
 }): Promise<{
   repository: string;
   remote: string;
@@ -42,9 +43,15 @@ export default async function inspect_nemoclaw_pr_candidate(input: {
   if (
     typeof input.workdir !== "string" ||
     !input.workdir.trim() ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ||
+    remote.startsWith("-") ||
+    !/^[A-Za-z0-9_.-]+$/.test(remote) ||
+    baseBranch.startsWith("-") ||
+    !/^[A-Za-z0-9_./-]+$/.test(baseBranch)
   )
     throw new Error("Invalid candidate input");
+  if (input.refreshBase !== false && input.apply !== true)
+    throw new Error("Refreshing the base reference requires apply: true");
   const run = async (command, description, allow = false) => {
     const r = await tools.bash({ command, workdir: input.workdir, description, timeoutMs: 60000 });
     if (r.kind !== "foreground") throw new Error(description + " did not finish");

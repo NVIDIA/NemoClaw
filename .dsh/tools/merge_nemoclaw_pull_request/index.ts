@@ -85,42 +85,23 @@ export default async function merge_nemoclaw_pull_request(input: {
       throw new Error(detail || "Could not read pull request");
     }
   };
-  const readThreads = async () => {
-    const [owner, name] = repo.split("/");
-    const query =
-      "query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}";
-    let cursor = null,
-      pages = 0,
-      unresolved = 0,
-      total = 0;
-    do {
-      const args = [
-        "api",
-        "graphql",
-        "-f",
-        "owner=" + owner,
-        "-f",
-        "name=" + name,
-        "-F",
-        "number=" + input.number,
-        "-f",
-        "query=" + query,
-      ];
-      if (cursor) args.push("-f", "cursor=" + cursor);
-      const result = await github({ workdir: input.workdir, args });
-      const connection = JSON.parse(result.stdout).data?.repository?.pullRequest?.reviewThreads;
-      if (!connection || !Array.isArray(connection.nodes))
-        throw new Error("GitHub returned no review thread connection for PR #" + input.number);
-      pages += 1;
-      total += connection.nodes.length;
-      unresolved += connection.nodes.filter((thread) => !thread.isResolved).length;
-      cursor = connection.pageInfo?.hasNextPage ? connection.pageInfo.endCursor : null;
-      if (pages >= 100 && cursor) throw new Error("Pull request review threads exceeded 100 pages");
-    } while (cursor);
-    return { pages, total, unresolved, complete: true };
-  };
   const pr = await readPr();
   const observedHeadSha = pr.headRefOid;
+  const readThreads = async () => {
+    const result = await tools.read_nemoclaw_review_threads({
+      workdir: input.workdir,
+      number: input.number,
+      repository: repo,
+      expectedHeadSha: observedHeadSha,
+      pageLimit: 20,
+    });
+    return {
+      pages: result.pagesRead,
+      total: result.total,
+      unresolved: result.unresolved,
+      complete: result.complete,
+    };
+  };
   const observedBaseRef = pr.baseRefName;
   const [baseResult, rulesResult, checksResult, threads] = await Promise.all([
     github({ workdir: input.workdir, args: ["api", "repos/" + repo] }),
@@ -194,6 +175,7 @@ export default async function merge_nemoclaw_pull_request(input: {
       blockers.push("required check is not passing: " + check.name);
   }
   if (pr.reviewDecision !== "APPROVED") blockers.push("GitHub review decision is not APPROVED");
+  if (!threads.complete) blockers.push("review thread pagination is incomplete");
   if (threads.unresolved > 0) blockers.push("unresolved review threads remain");
   const checks = {
     state: pr.state,

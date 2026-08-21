@@ -10,8 +10,34 @@ export default async function collect_nemoclaw_pr_review_cycle(input: {
   repo: string;
   kind: string;
   truncated: boolean;
-  items: Open<{}>[];
-  summary: Open<{}>;
+  items: {
+    type: "review" | "inline-comment" | "discussion-comment";
+    id: Integer;
+    user: string;
+    state?: string;
+    commitId?: string;
+    path?: string;
+    line?: Integer | null;
+    body: string;
+    url?: string;
+  }[];
+  summary: {
+    number: Integer;
+    pull: {
+      url: string;
+      state: string;
+      headRefOid: string;
+      baseRefOid: string;
+      mergeStateStatus: string;
+      reviewDecision: string;
+    };
+    checks: {
+      name: string;
+      state: string;
+      bucket: string;
+      link: string;
+    }[];
+  };
 }> {
   const repo = input.repo ?? "NVIDIA/NemoClaw",
     limit = input.limit ?? 100;

@@ -11,8 +11,21 @@ export default async function summarize_nemoclaw_required_checks(input: {
   repo: string;
   kind: string;
   truncated: boolean;
-  items: Open<{}>[];
-  summary: Open<{}>;
+  items: {
+    name: string;
+    matches: {
+      name: string;
+      state: string;
+      bucket: string;
+      link: string;
+    }[];
+  }[];
+  summary: {
+    number: Integer;
+    base: string;
+    configured: Integer;
+    protectionReadable: boolean;
+  };
 }> {
   const repo = input.repo ?? "NVIDIA/NemoClaw",
     limit = input.limit ?? 100,
@@ -24,13 +37,29 @@ export default async function summarize_nemoclaw_required_checks(input: {
     !Number.isSafeInteger(limit) ||
     limit < 1 ||
     limit > 100 ||
-    !/^[\w./-]+$/.test(base)
+    typeof base !== "string" ||
+    base.length === 0 ||
+    base.startsWith("-") ||
+    base.startsWith("/") ||
+    base.endsWith("/") ||
+    base.endsWith(".") ||
+    base === "@" ||
+    base.includes("//") ||
+    base.includes("..") ||
+    base.includes("@{") ||
+    /(^|\/)\./.test(base) ||
+    /\.lock(\/|$)/i.test(base) ||
+    /[\x00-\x20\x7f~^:?*[\]\\]/.test(base)
   )
     throw new Error("Invalid input");
+  const encodedBase = encodeURIComponent(base);
   const [a, b] = await Promise.all([
     tools.run_github_cli({
       workdir: input.workdir,
-      args: ["api", "repos/" + repo + "/branches/" + base + "/protection/required_status_checks"],
+      args: [
+        "api",
+        "repos/" + repo + "/branches/" + encodedBase + "/protection/required_status_checks",
+      ],
       acceptedExitCodes: [0, 1],
     }),
     tools.run_github_cli({

@@ -10,8 +10,21 @@ export default async function inspect_pr_review_bot_findings(input: {
   repo: string;
   kind: string;
   truncated: boolean;
-  items: Open<{}>[];
-  summary: Open<{}>;
+  items: {
+    source: "inline" | "advisor";
+    id: Integer;
+    user: string;
+    path?: string;
+    line?: Integer | null;
+    body: string;
+    url: string;
+  }[];
+  summary: {
+    number: Integer;
+    headSha: string;
+    total: Integer;
+    note: string;
+  };
 }> {
   const repo = input.repo ?? "NVIDIA/NemoClaw",
     limit = input.limit ?? 100;

@@ -9,8 +9,21 @@ export default async function summarize_nemoclaw_unreviewed_pull_requests(input:
   repo: string;
   kind: string;
   truncated: boolean;
-  items: Open<{}>[];
-  summary: Open<{}>;
+  items: {
+    number: Integer;
+    title: string;
+    url: string;
+    author: {
+      id: string;
+      is_bot: boolean;
+      login: string;
+      name: string;
+    } | null;
+    isDraft: boolean;
+    reviewDecision: string;
+    updatedAt: string;
+  }[];
+  summary: { count: Integer };
 }> {
   const repo = input.repo ?? "NVIDIA/NemoClaw",
     limit = input.limit ?? 50;
