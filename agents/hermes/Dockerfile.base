@@ -75,7 +75,7 @@ ARG HERMES_VERSION=v2026.7.20
 ARG HERMES_SEMVER=0.19.0
 ARG HERMES_TARBALL_SHA256=285f3fc134ff466a90065e1517801a68993733b807158ee8f32aa01613786990
 ARG HERMES_NPM_INTEGRITY=sha512-+oVKG3lXbk2kEP+J6BXZjtmSBSaFfczIdOWQ9CUSTdTqq2uyHbk4p+kPyZ6MeGs56JU5qXzMNbqGKRVOQRGC1A==
-ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp"
+ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp acp"
 ARG NODE_VERSION=24.18.1
 ARG UV_VERSION=0.11.33
 
@@ -402,10 +402,12 @@ RUN printf '%s\n' \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile
 
 # Install Hermes Agent from the selected GitHub release.
-# The image prebakes only the extras mapped to NemoClaw-supported onboarding
-# integrations: anthropic (native Anthropic Messages routing), messaging
+# The image prebakes only the extras selected for the managed Hermes image:
+# anthropic (native Anthropic Messages routing), messaging
 # (Telegram, Discord, Slack, WeChat, WhatsApp), web (API health/UI runtime),
-# pty (optional browser TUI bridge), and mcp (managed MCP bridge consumer).
+# pty (optional browser TUI bridge), mcp (managed MCP bridge consumer), and
+# acp (packaged stdio Agent Client Protocol entrypoint). ACP sessions,
+# workspace mapping, and editor compatibility remain outside this dependency gate.
 # These extras are resolved from the selected Hermes release's uv.lock via
 # `uv sync --frozen`, so dependency changes remain tied to
 # HERMES_VERSION/HERMES_TARBALL_SHA256 review.
@@ -494,7 +496,7 @@ RUN set -eu; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && uv pip check --python /opt/hermes/.venv/bin/python \
     && /opt/hermes/.venv/bin/python -I -c \
-        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'mcp': '1.28.1', 'pillow': '12.3.0', 'starlette': '1.3.1', 'tornado': '6.5.7'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+        "from importlib.metadata import version; expected = {'agent-client-protocol': '0.9.0', 'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'mcp': '1.28.1', 'pillow': '12.3.0', 'starlette': '1.3.1', 'tornado': '6.5.7'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
     && npm ci --prefer-offline --no-audit --no-fund \
     && for ui_dir in ui-tui web; do \
         if [ -f "${ui_dir}/package-lock.json" ]; then \
@@ -595,6 +597,7 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 RUN /usr/local/bin/hermes --version \
+    && /usr/local/bin/hermes acp --check \
     && test -x /opt/hermes/node_modules/.bin/agent-browser \
     && /opt/hermes/node_modules/.bin/agent-browser --version \
     && /opt/hermes/.venv/bin/python -c \

@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { sleepMs } from "../../core/wait";
 import type { UninstallPaths } from "../../domain/uninstall/paths";
+import { BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER } from "../../inference/bedrock-runtime";
 
 interface RunResult {
   status: number | null;
@@ -25,17 +26,36 @@ interface RuntimeAdapterCleanupRuntime {
   warn: (message: string) => void;
 }
 
-const OPENROUTER_RUNTIME_ADAPTER_CMDLINE_MARK = "openrouter-runtime-adapter";
-const DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT = 11437;
-const HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE_MARK = "https-pin-runtime-adapter";
-const DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT = 11438;
-
 type RuntimeAdapterDescriptor = {
-  cmdlineMark: string;
+  cmdlineMatcher: string | RegExp;
   defaultPort: number;
   envPort: string;
   label: string;
   pidFile: string;
+};
+
+const BEDROCK_RUNTIME_ADAPTER: RuntimeAdapterDescriptor = {
+  cmdlineMatcher: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
+  defaultPort: 11436,
+  envPort: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+  label: "Bedrock Runtime adapter",
+  pidFile: "bedrock-runtime-adapter.pid",
+};
+
+const OPENROUTER_RUNTIME_ADAPTER: RuntimeAdapterDescriptor = {
+  cmdlineMatcher: "openrouter-runtime-adapter",
+  defaultPort: 11437,
+  envPort: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+  label: "OpenRouter Runtime adapter",
+  pidFile: "openrouter-runtime-adapter.pid",
+};
+
+const HTTPS_PIN_RUNTIME_ADAPTER: RuntimeAdapterDescriptor = {
+  cmdlineMatcher: "https-pin-runtime-adapter",
+  defaultPort: 11438,
+  envPort: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+  label: "HTTPS Pin Runtime adapter",
+  pidFile: "https-pin-runtime-adapter.pid",
 };
 
 function splitNonEmptyLines(output: string): string[] {
@@ -65,7 +85,10 @@ function isRuntimeAdapterPid(
 ): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
-  return result.status === 0 && result.stdout.includes(descriptor.cmdlineMark);
+  if (result.status !== 0) return false;
+  return typeof descriptor.cmdlineMatcher === "string"
+    ? result.stdout.includes(descriptor.cmdlineMatcher)
+    : descriptor.cmdlineMatcher.test(result.stdout);
 }
 
 function pidExists(pid: number, runtime: RuntimeAdapterCleanupRuntime): boolean {
@@ -157,23 +180,20 @@ function stopRuntimeAdapter(
   if (stopped.size === 0) runtime.log(`No ${descriptor.label} processes found`);
 }
 
+export function stopBedrockRuntimeAdapter(
+  paths: Pick<UninstallPaths, "nemoclawStateDir">,
+  runtime: RuntimeAdapterCleanupRuntime,
+  options: { scanOrphans?: boolean } = {},
+): void {
+  stopRuntimeAdapter(paths, runtime, BEDROCK_RUNTIME_ADAPTER, options);
+}
+
 export function stopOpenRouterRuntimeAdapter(
   paths: Pick<UninstallPaths, "nemoclawStateDir">,
   runtime: RuntimeAdapterCleanupRuntime,
   options: { scanOrphans?: boolean } = {},
 ): void {
-  stopRuntimeAdapter(
-    paths,
-    runtime,
-    {
-      cmdlineMark: OPENROUTER_RUNTIME_ADAPTER_CMDLINE_MARK,
-      defaultPort: DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT,
-      envPort: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
-      label: "OpenRouter Runtime adapter",
-      pidFile: "openrouter-runtime-adapter.pid",
-    },
-    options,
-  );
+  stopRuntimeAdapter(paths, runtime, OPENROUTER_RUNTIME_ADAPTER, options);
 }
 
 export function stopHttpsPinRuntimeAdapter(
@@ -181,16 +201,5 @@ export function stopHttpsPinRuntimeAdapter(
   runtime: RuntimeAdapterCleanupRuntime,
   options: { scanOrphans?: boolean } = {},
 ): void {
-  stopRuntimeAdapter(
-    paths,
-    runtime,
-    {
-      cmdlineMark: HTTPS_PIN_RUNTIME_ADAPTER_CMDLINE_MARK,
-      defaultPort: DEFAULT_HTTPS_PIN_RUNTIME_ADAPTER_PORT,
-      envPort: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
-      label: "HTTPS Pin Runtime adapter",
-      pidFile: "https-pin-runtime-adapter.pid",
-    },
-    options,
-  );
+  stopRuntimeAdapter(paths, runtime, HTTPS_PIN_RUNTIME_ADAPTER, options);
 }
