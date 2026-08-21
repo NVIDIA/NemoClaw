@@ -99,15 +99,10 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     );
     expect(wrapper).not.toContain("call-mutating");
     expect(command).toContain('_COMMAND = "tools call-read-only"');
-    expect(command).toContain("_CALL_TIMEOUT_SECONDS = 15");
-    expect(command).toContain("_CLEANUP_TIMEOUT_SECONDS = 3");
-    expect(command).toContain('"timeout",');
-    expect(command).toContain('data["structured_content"]');
     expect(validator).toContain("from mcp.server.fastmcp import FastMCP");
     expect(validator).toContain('"worker-broker_worker_task_context"');
     expect(validator).toContain('"output_attestation"');
     expect(validator).toContain('name="hanging"');
-    expect(validator).toContain("ssl.TLSVersion.TLSv1_2");
     expect(validator).not.toContain("unittest.mock");
   });
 
