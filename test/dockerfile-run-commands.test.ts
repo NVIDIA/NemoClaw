@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { requireSingleReviewedDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
+import {
+  dockerfileRunCommandPositions,
+  requireSingleReviewedDockerfileRunCommand,
+} from "./helpers/dockerfile-run-commands";
 
 const command = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
 const corporateCaPath = "/usr/local/share/nemoclaw/corporate-ca.pem";
@@ -11,6 +14,25 @@ const invocation = [command, ...requiredArguments].join(" ");
 const splicedCommand = command.replace("strip-types", "strip-\\\ntypes");
 
 describe("Dockerfile RUN command discovery", () => {
+  it("finds only unquoted npm command words in RUN instructions", () => {
+    const source = [
+      "# npm install",
+      'LABEL example="npm install"',
+      'RUN echo "npm install"',
+      "RUN echo npm install # npm ci",
+      "RUN true && \\",
+      "    # install from the reviewed lock",
+      "    npm --prefix /runtime ci",
+      "RUN if true; then npm --prefix=/runtime install; fi",
+      "",
+    ].join("\n");
+
+    expect(dockerfileRunCommandPositions(source, "npm")).toEqual([
+      source.indexOf("npm --prefix /runtime"),
+      source.indexOf("npm --prefix=/runtime"),
+    ]);
+  });
+
   it("ignores command text in comments, strings, and non-RUN instructions", () => {
     const source = [
       `# ${command}`,

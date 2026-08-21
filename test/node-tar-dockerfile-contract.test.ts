@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH } from "../scripts/patch-bundled-npm-tar.mts";
 import {
+  dockerfileRunCommandPositions,
   requireReviewedDockerfileRunCommands,
   requireSingleReviewedDockerfileRunCommand,
 } from "./helpers/dockerfile-run-commands";
@@ -105,15 +106,13 @@ function npmSubcommand(source: string, start: number): ShellToken | undefined {
 }
 
 function npmConsumerPositions(source: string): number[] {
-  const executableSource = source
-    .replace(/^\s*#.*$/gmu, (comment) => " ".repeat(comment.length))
-    .replace(/\\\s*\n/gu, (continuation) => " ".repeat(continuation.length));
-  return [...executableSource.matchAll(/\bnpm\b/gu)]
-    .filter((match) => {
-      const subcommand = npmSubcommand(executableSource, match.index + match[0].length);
+  const executableSource = source.replace(/\\\s*\n/gu, (continuation) =>
+    " ".repeat(continuation.length),
+  );
+  return dockerfileRunCommandPositions(source, "npm").filter((index) => {
+      const subcommand = npmSubcommand(executableSource, index + "npm".length);
       return subcommand?.value === "ci" || subcommand?.value === "install";
-    })
-    .map((match) => match.index);
+    });
 }
 
 function nodeBaseReferences(source: string): string[] {

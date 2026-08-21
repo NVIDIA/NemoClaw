@@ -47,14 +47,15 @@ export function dockerfileInstructions(source: string): DockerfileInstruction[] 
     }
 
     let end = endOfFirstLine;
-    let currentLine = firstLine;
-    while (continuesInstruction(currentLine)) {
+    let continues = continuesInstruction(firstLine);
+    while (continues) {
       if (end >= source.length) {
         throw new Error(`Dockerfile ends inside the ${instructionMatch[1]} instruction`);
       }
       const nextEnd = lineEnd(source, end);
-      currentLine = source.slice(end, nextEnd);
+      const currentLine = source.slice(end, nextEnd);
       end = nextEnd;
+      continues = /^[ \t]*#/u.test(currentLine) || continuesInstruction(currentLine);
     }
 
     const bodyStart = offset + instructionMatch[0].length;
@@ -132,6 +133,34 @@ function unquotedTextIndexes(source: string, text: string): number[] {
   }
 
   return indexes;
+}
+
+function followsShellCommandSeparator(source: string, index: number): boolean {
+  let cursor = index - 1;
+  while (cursor >= 0 && /[ \t\r]/u.test(source[cursor]!)) cursor -= 1;
+  if (cursor < 0 || source[cursor] === "\n" || ";&|".includes(source[cursor]!)) return true;
+
+  const wordEnd = cursor + 1;
+  while (cursor >= 0 && !/[ \t\r\n;&|]/u.test(source[cursor]!)) cursor -= 1;
+  return ["do", "else", "then"].includes(source.slice(cursor + 1, wordEnd));
+}
+
+export function dockerfileRunCommandPositions(source: string, command: string): number[] {
+  const positions: number[] = [];
+  for (const instruction of dockerfileInstructions(source)) {
+    if (instruction.keyword !== "RUN") continue;
+    const collapsed = collapseDockerfileContinuations(instruction.body);
+    for (const index of unquotedTextIndexes(collapsed.text, command)) {
+      const afterCommand = collapsed.text[index + command.length];
+      if (
+        followsShellCommandSeparator(collapsed.text, index) &&
+        (afterCommand === undefined || /[ \t\r\n;&|]/u.test(afterCommand))
+      ) {
+        positions.push(instruction.bodyStart + collapsed.originalIndexes[index]!);
+      }
+    }
+  }
+  return positions;
 }
 
 function normalizedInstructionBody(source: string): string {
