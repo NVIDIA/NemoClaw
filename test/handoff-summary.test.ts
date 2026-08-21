@@ -100,6 +100,8 @@ describe("release handoff summary", () => {
     const markdown = renderHandoffMarkdown(summary);
     expect(markdown).toContain(`- Candidate: \`${candidate}\``);
     expect(markdown).toContain("- Risky files detected: 5");
+    expect(markdown).toContain("## Documentation coverage");
+    expect(markdown).toContain("- Maintainer decision: TODO_RELEASE_BRIEF");
     expectMarkdownList(markdown, summary.riskyAreas);
     expectMarkdownList(markdown, summary.suggestedTestFocus);
   });

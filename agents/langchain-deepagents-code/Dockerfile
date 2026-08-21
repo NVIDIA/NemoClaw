@@ -193,8 +193,10 @@ COPY agents/langchain-deepagents-code/profile-plugin/src/nemoclaw_deepagents_pro
 COPY agents/langchain-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py
 COPY agents/langchain-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py
 COPY agents/langchain-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py
+COPY agents/langchain-deepagents-code/nemoclaw_read_only_mcp.py /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py
 COPY agents/langchain-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py
 COPY agents/langchain-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-observability.py
+COPY agents/langchain-deepagents-code/validate-read-only-mcp-call.py /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py
 COPY agents/langchain-deepagents-code/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-wrapper.sh
 COPY agents/langchain-deepagents-code/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-launcher.sh
 COPY agents/langchain-deepagents-code/dcode-login-profile.sh /usr/local/lib/nemoclaw/dcode-login-profile.sh
@@ -222,7 +224,7 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
-    && chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/dcode-login-profile.sh \
+    && chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/dcode-login-profile.sh /usr/local/lib/nemoclaw/nemoclaw_read_only_mcp.py \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-session-supervisor.py \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-session-supervisor.py)" = "0:0:755" \
     && install -o root -g root -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
@@ -298,6 +300,8 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_REASONING_EFFORT" > /usr/local/share/nemoclaw/dcode-reasoning-effort \
     && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
     && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-upstream-provider /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
+    && /opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py \
+    && rm -f /opt/nemoclaw-deepagents-code/validate-read-only-mcp-call.py \
     && unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
     && empty_prompt_log="$(mktemp)" \
     && if timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \

@@ -1,11 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+export function buildMcpProviderRewriteAuthorization(
+  credentialKey: string,
+  runtimeValue: string | undefined,
+): string | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(credentialKey) || runtimeValue === undefined) {
+    return null;
+  }
+  const escapedCredentialKey = credentialKey.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const placeholderPattern = new RegExp(
+    `^openshell:resolve:env:(?:v[0-9]{1,20}_)?${escapedCredentialKey}$`,
+    "u",
+  );
+  return placeholderPattern.test(runtimeValue) ? `Bearer ${runtimeValue}` : null;
+}
+
 export const MCP_PROVIDER_REWRITE_PROBE_SOURCE = `const https = require("node:https");
+const buildMcpProviderRewriteAuthorization = ${buildMcpProviderRewriteAuthorization.toString()};
 const url = new URL(process.argv[2]);
 const method = process.argv[3];
 const expectation = process.argv[4];
 const credentialKey = process.argv[5] || "FAKE_MCP_SECRET";
+const authorization = buildMcpProviderRewriteAuthorization(credentialKey, process.env[credentialKey]);
+if (authorization === null) {
+  console.error("OpenShell did not project the expected revisioned MCP credential placeholder");
+  process.exit(2);
+}
 const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method });
 const req = https.request({
   hostname: url.hostname,
@@ -15,7 +36,7 @@ const req = https.request({
   headers: {
     "content-type": "application/json",
     "content-length": Buffer.byteLength(body),
-    "authorization": "Bearer openshell:resolve:env:" + credentialKey
+    "authorization": authorization
   }
 }, (res) => {
   let data = "";
