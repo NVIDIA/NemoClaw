@@ -472,8 +472,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       const trustedPublicationCheckout =
         jobName === "base-image-publication" &&
         step.name === "Check out trusted E2E workflow" &&
-        step.if === PUBLICATION_REQUIRED_OR_REUSE_CONDITION &&
-        step.with?.ref === "${{ inputs.checkout_sha || github.sha }}";
+        step.if === PUBLICATION_REQUIRED_CONDITION &&
+        step.with?.ref === "${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}";
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&

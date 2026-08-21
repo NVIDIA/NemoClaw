@@ -103,9 +103,9 @@ describe("credential provider registration", () => {
       const runOpenshell = vi.fn((args: string[]) =>
         args.includes("profile") && args.includes("export")
           ? {
-            status: 0,
-            stdout: JSON.stringify({ ...DISCORD_STATIC_PROFILE, endpoints }),
-            stderr: "",
+              status: 0,
+              stdout: JSON.stringify({ ...DISCORD_STATIC_PROFILE, endpoints }),
+              stderr: "",
             }
           : providerMetadata(
               "alpha-discord-bridge",
@@ -154,11 +154,7 @@ describe("credential provider registration", () => {
       ],
       [
         "provider get -g test-gateway alpha-discord-bridge",
-        providerMetadata(
-          "alpha-discord-bridge",
-          "discord-hermes-static-v1",
-          "DISCORD_BOT_TOKEN",
-        ),
+        providerMetadata("alpha-discord-bridge", "discord-hermes-static-v1", "DISCORD_BOT_TOKEN"),
       ],
     ]);
     const ambientProfileMismatch = {
@@ -194,18 +190,14 @@ describe("credential provider registration", () => {
     const runOpenshell = vi.fn((args: string[]) =>
       args.includes("profile") && args.includes("export")
         ? {
-          status: 0,
-          stdout: JSON.stringify({
-            ...DISCORD_STATIC_PROFILE,
-            binaries: ["/usr/bin/curl"],
-          }),
-          stderr: "",
+            status: 0,
+            stdout: JSON.stringify({
+              ...DISCORD_STATIC_PROFILE,
+              binaries: ["/usr/bin/curl"],
+            }),
+            stderr: "",
           }
-        : providerMetadata(
-            "alpha-discord-bridge",
-            "discord-hermes-static-v1",
-            "DISCORD_BOT_TOKEN",
-          ),
+        : providerMetadata("alpha-discord-bridge", "discord-hermes-static-v1", "DISCORD_BOT_TOKEN"),
     );
     const deps = registrationDeps(runOpenshell, session);
     deps.root = process.cwd();
@@ -251,36 +243,35 @@ describe("credential provider registration", () => {
       ambientValue: "legacy-key",
       expectedMigrated: false,
     },
-  ])("records migration according to the value sent when $condition", ({
-    env,
-    ambientValue,
-    expectedMigrated,
-  }) => {
-    const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
-    const deps = registrationDeps(runOpenshell, session);
-    deps.getCredential = vi.fn(() => ambientValue);
-    deps.stagedLegacyValues = new Map([["COMPATIBLE_API_KEY", "legacy-key"]]);
-    deps.migratedLegacyKeys.add("COMPATIBLE_API_KEY");
-    const registration = createCredentialProviderRegistration(deps);
+  ])(
+    "records migration according to the value sent when $condition",
+    ({ env, ambientValue, expectedMigrated }) => {
+      const session = { stagedCredentialProviders: [] } as unknown as Session;
+      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+      const deps = registrationDeps(runOpenshell, session);
+      deps.getCredential = vi.fn(() => ambientValue);
+      deps.stagedLegacyValues = new Map([["COMPATIBLE_API_KEY", "legacy-key"]]);
+      deps.migratedLegacyKeys.add("COMPATIBLE_API_KEY");
+      const registration = createCredentialProviderRegistration(deps);
 
-    const result = registration.upsertProvider(
-      "compatible-endpoint",
-      "openai",
-      "COMPATIBLE_API_KEY",
-      "https://inference.example.com/v1",
-      env,
-      "alternate-gateway",
-    );
+      const result = registration.upsertProvider(
+        "compatible-endpoint",
+        "openai",
+        "COMPATIBLE_API_KEY",
+        "https://inference.example.com/v1",
+        env,
+        "alternate-gateway",
+      );
 
-    expect(result).toEqual({ ok: true });
-    expect(deps.migratedLegacyKeys.has("COMPATIBLE_API_KEY")).toBe(expectedMigrated);
-    expect(deps.persistMigratedLegacyKeys).toHaveBeenCalledOnce();
-    expect(runOpenshell).toHaveBeenCalledWith(
-      expect.arrayContaining(["-g", "alternate-gateway"]),
-      expect.any(Object),
-    );
-  });
+      expect(result).toEqual({ ok: true });
+      expect(deps.migratedLegacyKeys.has("COMPATIBLE_API_KEY")).toBe(expectedMigrated);
+      expect(deps.persistMigratedLegacyKeys).toHaveBeenCalledOnce();
+      expect(runOpenshell).toHaveBeenCalledWith(
+        expect.arrayContaining(["-g", "alternate-gateway"]),
+        expect.any(Object),
+      );
+    },
+  );
 
   it("does not record migration when provider registration fails", () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
@@ -441,20 +432,22 @@ describe("credential provider registration", () => {
     const success = { status: 0, stdout: "", stderr: "" };
     let providerCreated = false;
     const runOpenshell = vi.fn((args: string[]) => {
-      if (args[0] === "provider" && args.includes("profile") && args.includes("export")) {
-        return missing;
-      }
-      if (args[0] === "provider" && args[1] === "get") {
-        return providerCreated
+      const profileExport =
+        args[0] === "provider" && args.includes("profile") && args.includes("export");
+      const providerGet = args[0] === "provider" && args[1] === "get";
+      const result = profileExport
+        ? missing
+        : providerGet && providerCreated
           ? providerMetadata(
               "alpha-discord-bridge",
               "discord-hermes-static-v1",
               "DISCORD_BOT_TOKEN",
             )
-          : missing;
-      }
-      if (args[0] === "provider" && args[1] === "create") providerCreated = true;
-      return success;
+          : providerGet
+            ? missing
+            : success;
+      providerCreated ||= args[0] === "provider" && args[1] === "create";
+      return result;
     });
     const registration = createCredentialProviderRegistration(
       registrationDeps(runOpenshell, session),
@@ -666,53 +659,55 @@ describe("credential provider registration", () => {
       appProvider: providerMetadata("alpha-slack-app", "generic", "OTHER_SLACK_APP_TOKEN"),
       error: "An existing credential provider does not match the required binding.",
     },
-  ])("rejects partial Slack credentials before mutation when $condition (#7718)", async ({
-    appProvider,
-    error,
-  }) => {
-    const session = {
-      stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
-    } as unknown as Session;
-    const missing = { status: 1, stdout: "", stderr: "not found" };
-    const success = { status: 0, stdout: "", stderr: "" };
-    const responses = new Map([
-      ["provider get -g test-gateway alpha-slack-bridge", missing],
-      ["provider get -g test-gateway alpha-slack-app", appProvider],
-    ]);
-    const runOpenshell = vi.fn((args: string[]) => responses.get(args.join(" ")) ?? success);
-    const deps = registrationDeps(runOpenshell, session);
-    const registration = createCredentialProviderRegistration(deps);
-    const tokenDefs: MessagingTokenDef[] = [
-      {
-        name: "alpha-slack-bridge",
-        envKey: "SLACK_BOT_TOKEN",
-        token: "xoxb-current-token",
-      },
-      {
-        name: "alpha-slack-app",
-        envKey: "SLACK_APP_TOKEN",
-        token: null,
-      },
-    ];
-
-    await expect(
-      registration.stageSandboxCredentialProviders(
+  ])(
+    "rejects partial Slack credentials before mutation when $condition (#7718)",
+    async ({ appProvider, error }) => {
+      const session = {
+        stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
+      } as unknown as Session;
+      const missing = { status: 1, stdout: "", stderr: "not found" };
+      const success = { status: 0, stdout: "", stderr: "" };
+      const responses = new Map([
+        ["provider get -g test-gateway alpha-slack-bridge", missing],
+        ["provider get -g test-gateway alpha-slack-app", appProvider],
+      ]);
+      const runOpenshell = vi.fn((args: string[]) => responses.get(args.join(" ")) ?? success);
+      const deps = registrationDeps(runOpenshell, session);
+      const registration = createCredentialProviderRegistration(deps);
+      const tokenDefs: MessagingTokenDef[] = [
         {
-          ...sandboxInput(requiredBindings(tokenDefs)),
-          enabledChannels: ["slack"],
+          name: "alpha-slack-bridge",
+          envKey: "SLACK_BOT_TOKEN",
+          token: "xoxb-current-token",
         },
-        async () => ({ messagingTokenDefs: tokenDefs }),
-      ),
-    ).rejects.toThrow(error);
+        {
+          name: "alpha-slack-app",
+          envKey: "SLACK_APP_TOKEN",
+          token: null,
+        },
+      ];
 
-    expect(session.stagedCredentialProviders).toEqual(["alpha-slack-bridge", "alpha-slack-app"]);
-    expect(deps.updateSession).not.toHaveBeenCalled();
-    expect(
-      runOpenshell.mock.calls
-        .map(([args]) => args)
-        .filter((args) => args[0] === "provider" && (args[1] === "create" || args[1] === "update")),
-    ).toEqual([]);
-  });
+      await expect(
+        registration.stageSandboxCredentialProviders(
+          {
+            ...sandboxInput(requiredBindings(tokenDefs)),
+            enabledChannels: ["slack"],
+          },
+          async () => ({ messagingTokenDefs: tokenDefs }),
+        ),
+      ).rejects.toThrow(error);
+
+      expect(session.stagedCredentialProviders).toEqual(["alpha-slack-bridge", "alpha-slack-app"]);
+      expect(deps.updateSession).not.toHaveBeenCalled();
+      expect(
+        runOpenshell.mock.calls
+          .map(([args]) => args)
+          .filter(
+            (args) => args[0] === "provider" && (args[1] === "create" || args[1] === "update"),
+          ),
+      ).toEqual([]);
+    },
+  );
 
   it.each([
     {
@@ -739,31 +734,32 @@ describe("credential provider registration", () => {
         credentialEnv: "OTHER_DISCORD_TOKEN",
       },
     },
-  ])("rejects a credential plan with a different $mismatch before gateway mutation (#7701)", async ({
-    required,
-  }) => {
-    const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const runOpenshell = vi.fn();
-    const deps = registrationDeps(runOpenshell, session);
-    const registration = createCredentialProviderRegistration(deps);
-    const tokenDefs: MessagingTokenDef[] = [
-      {
-        name: "alpha-discord-bridge",
-        envKey: "DISCORD_BOT_TOKEN",
-        token: DISCORD_SECRET,
-      },
-    ];
+  ])(
+    "rejects a credential plan with a different $mismatch before gateway mutation (#7701)",
+    async ({ required }) => {
+      const session = { stagedCredentialProviders: [] } as unknown as Session;
+      const runOpenshell = vi.fn();
+      const deps = registrationDeps(runOpenshell, session);
+      const registration = createCredentialProviderRegistration(deps);
+      const tokenDefs: MessagingTokenDef[] = [
+        {
+          name: "alpha-discord-bridge",
+          envKey: "DISCORD_BOT_TOKEN",
+          token: DISCORD_SECRET,
+        },
+      ];
 
-    await expect(
-      registration.stageSandboxCredentialProviders(sandboxInput([required]), async () => ({
-        messagingTokenDefs: tokenDefs,
-      })),
-    ).rejects.toThrow("Credential provider plan does not match the required bindings.");
+      await expect(
+        registration.stageSandboxCredentialProviders(sandboxInput([required]), async () => ({
+          messagingTokenDefs: tokenDefs,
+        })),
+      ).rejects.toThrow("Credential provider plan does not match the required bindings.");
 
-    expect(runOpenshell).not.toHaveBeenCalled();
-    expect(deps.updateSession).not.toHaveBeenCalled();
-    expect(session.stagedCredentialProviders).toEqual([]);
-  });
+      expect(runOpenshell).not.toHaveBeenCalled();
+      expect(deps.updateSession).not.toHaveBeenCalled();
+      expect(session.stagedCredentialProviders).toEqual([]);
+    },
+  );
 
   it("rejects duplicate planned provider names before gateway mutation (#7701)", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
