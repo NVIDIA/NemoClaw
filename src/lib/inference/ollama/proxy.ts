@@ -394,7 +394,7 @@ function printProxyPortConflict(owners: { pids: number[]; descriptions: string[]
   console.error("    • Choose a free proxy port and export it so every NemoClaw command");
   console.error("      uses the same value (add it to your shell profile to persist):");
   console.error("        export NEMOCLAW_OLLAMA_PROXY_PORT=<port>");
-  console.error("  Containers will not be able to reach Ollama without the proxy.");
+  console.error("  Containers will not be able to reach the inference endpoint without the proxy.");
 }
 
 // ── Public API ───────────────────────────────────────────────────
@@ -455,7 +455,7 @@ function attemptStartOllamaAuthProxyWithTokenUnlocked(
     //   2. Port conflict (EADDRINUSE race lost after pre-check)
     //   3. Generic "exited during startup" without a structured reason
     const status = readProxyExitStatus(PROXY_STATUS_PATH);
-    if (printProxyStartupReason(status, OLLAMA_PORT)) {
+    if (printProxyStartupReason(status, OLLAMA_PORT, backendUrl)) {
       // Already rendered above.
     } else {
       const owners = inspectForeignProxyPortOwners("any");
@@ -463,7 +463,7 @@ function attemptStartOllamaAuthProxyWithTokenUnlocked(
         printProxyPortConflict(owners);
       } else {
         console.error(`  Error: Ollama auth proxy exited during startup on :${OLLAMA_PROXY_PORT}.`);
-        console.error("  Containers will not be able to reach Ollama without the proxy.");
+        console.error("  Containers will not be able to reach the inference endpoint without the proxy.");
         console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
       }
     }
@@ -473,7 +473,7 @@ function attemptStartOllamaAuthProxyWithTokenUnlocked(
   console.error(
     `  Error: Ollama auth proxy did not become ready on :${OLLAMA_PROXY_PORT} within ${PROXY_START_ATTEMPTS}s.`,
   );
-  console.error("  Containers will not be able to reach Ollama without the proxy.");
+  console.error("  Containers will not be able to reach the inference endpoint without the proxy.");
   console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
   return false;
 }
