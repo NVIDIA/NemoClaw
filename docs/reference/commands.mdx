@@ -143,7 +143,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 
 The profile selects a fixed catalog model and serving command from the managed-inference catalog.
 The hosted installer rejects `NEMOCLAW_PROVIDER` and `NEMOCLAW_MODEL` before onboarding.
-The dedicated vLLM onboarder rejects `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` before it installs vLLM.
+The dedicated vLLM onboarder accepts `NEMOCLAW_VLLM_MODEL` only when the catalog resolves it to the matching fixed recipe.
+It rejects a model that does not resolve to that recipe and all `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` values before it installs vLLM.
 Set `NEMOCLAW_VLLM_PORT` before installation to publish the fixed serving recipe on another host port.
 
 The hosted installer's equivalent environment-variable form requires both `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1` and `NEMOCLAW_LOCAL_MODEL_RUNTIME`.
