@@ -112,7 +112,16 @@ printf '%s  %s\n' ${JSON.stringify((options.checksumDigest ?? NATIVE_DIGEST).sli
 }
 
 describe("reviewed Hermes platform resolver action", () => {
+  // source-shape-contract: security -- GitHub must expose the verified digest from the composite resolver step to protected workflow consumers
   it("publishes the verified native manifest digest", () => {
+    const value = action();
+    expect(value.runs?.using).toBe("composite");
+    expect(value.inputs).toMatchObject({
+      "dockerfile-path": { required: true },
+      platform: { required: true },
+    });
+    expect(value.outputs?.digest?.value).toBe("${{ steps.resolve.outputs.digest }}");
+
     const { dockerCalls, output, result } = runAction();
     expect(result.status, result.stderr).toBe(0);
     expect(output).toBe(`digest=${NATIVE_DIGEST}\n`);

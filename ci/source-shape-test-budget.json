@@ -182,6 +182,11 @@
       "category": "security"
     },
     {
+      "file": "test/reviewed-hermes-platform-action.test.ts",
+      "test": "publishes the verified native manifest digest",
+      "category": "security"
+    },
+    {
       "file": "test/repro-4538-raw-doctor-perms.test.ts",
       "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
       "category": "security"
