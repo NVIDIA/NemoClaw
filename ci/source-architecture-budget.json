@@ -25,7 +25,7 @@
       "src/lib/messaging/channels/index.ts": 25,
       "src/lib/onboard/gateway-binding.ts": 52,
       "src/lib/runner.ts": 87,
-      "src/lib/security/redact.ts": 52,
+      "src/lib/security/redact.ts": 53,
       "src/lib/state/onboard-session.ts": 37,
       "src/lib/state/registry.ts": 101,
       "src/lib/state/state-root.ts": 21,
@@ -51,6 +51,7 @@
       "src/lib/inference/vllm.ts": 21,
       "src/lib/onboard.ts": 201,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
+      "src/lib/policy/index.ts": 22,
       "src/lib/sandbox/config.ts": 22,
       "src/lib/shields/index.ts": 23
     }

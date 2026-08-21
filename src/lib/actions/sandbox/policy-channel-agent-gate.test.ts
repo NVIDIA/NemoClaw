@@ -156,8 +156,10 @@ describe("channel lifecycle agent gate", () => {
     ["start", ["googlechat"], () => startSandboxChannel("da-test", { channel: "googlechat" })],
     ["stop", [], () => stopSandboxChannel("da-test", { channel: "googlechat" })],
   ])("rejects a stale channel during %s before reading channel state or mutating the sandbox", async (_verb, disabledChannels, run) => {
-    getSandboxMock.mockReturnValue({ name: "da-test", agent: "hermes" });
-    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("hermes"));
+    // googlechat now supports openclaw + hermes, so exercise the unsupported-pair
+    // lifecycle gate with a non-messaging custom agent (supported by no channel).
+    getSandboxMock.mockReturnValue({ name: "da-test", agent: "custom-agent" });
+    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("custom-agent"));
     const configuredChannelsMock = vi
       .spyOn(registry, "getConfiguredMessagingChannelsFromEntry")
       .mockReturnValue(["googlechat"]);
@@ -176,9 +178,9 @@ describe("channel lifecycle agent gate", () => {
     const errorText = (errSpy.mock.calls as unknown[][])
       .map((call) => call.map(String).join(" "))
       .join("\n");
-    expect(errorText).toMatch(/Channel 'googlechat' does not support agent 'hermes'/);
-    expect(errorText).toMatch(/Channel-supported agents: openclaw/);
-    expect(errorText).toMatch(/Channels supported by agent 'hermes':/);
+    expect(errorText).toMatch(/Channel 'googlechat' does not support agent 'custom-agent'/);
+    expect(errorText).toMatch(/Channel-supported agents: openclaw, hermes/);
+    expect(errorText).toMatch(/Channels supported by agent 'custom-agent': \(none\)/);
 
     expect(configuredChannelsMock).not.toHaveBeenCalled();
     expect(disabledChannelsMock).not.toHaveBeenCalled();

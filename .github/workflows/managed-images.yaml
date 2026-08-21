@@ -1950,7 +1950,10 @@ jobs:
               raise SystemExit("managed Hermes microsoft-teams-apps version is wrong")
           if metadata.version("aiohttp") != "3.14.3":
               raise SystemExit("managed Hermes aiohttp version is wrong")
+          if metadata.version("agent-client-protocol") != "0.9.0":
+              raise SystemExit("managed Hermes agent-client-protocol version is wrong")
           VALIDATE_HERMES_UNION
+              /usr/local/bin/hermes acp --check
               ;;
             langchain-deepagents-code) ;;
             *) echo "ERROR: unsupported managed agent $AGENT" >&2; exit 1 ;;

@@ -497,6 +497,52 @@ process.stdout.write(JSON.stringify({ message, resourceVersion, calls }));
     expect(JSON.stringify(payload.calls)).not.toContain("host-only-secret");
   });
 
+  it("does not recreate a missing provider during credential republish", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-republish-missing-"));
+    const script = String.raw`
+process.env.HOME = ${JSON.stringify(home)};
+process.env.EXPECTED_TOKEN = "host-only-secret";
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const calls = [];
+providerCommands.runOpenshellProviderCommand = (args) => {
+  calls.push(args.join(" "));
+  if (args[0] === "provider" && args[1] === "get") {
+    return { status: 1, stdout: "", stderr: "NotFound: provider" };
+  }
+  throw new Error("unexpected call: " + args.join(" "));
+};
+const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
+let message = "";
+try {
+  providerActions.upsertMcpProvider(
+    "alpha-mcp-fake",
+    [{ name: "EXPECTED_TOKEN" }],
+    {
+      allowExisting: true,
+      expectedProviderId: "11111111-2222-4333-8444-555555555555",
+      requireExisting: true,
+    },
+  );
+} catch (error) {
+  message = error.message;
+}
+process.stdout.write(JSON.stringify({ message, calls }));
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    });
+    fs.rmSync(home, { recursive: true, force: true });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as { message: string; calls: string[] };
+    expect(payload.message).toContain("disappeared before credential republish");
+    expect(payload.message).toContain("Refusing to create a replacement");
+    expect(payload.calls).toEqual(["provider get alpha-mcp-fake"]);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
+  });
+
   it("never detaches or deletes a non-matching provider in force mode", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-owner-"));
     const script = `

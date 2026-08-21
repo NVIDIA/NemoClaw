@@ -354,7 +354,7 @@
     {
       "name": "Google Chat",
       "status": "experimental",
-      "notes": "Available only for OpenClaw through the channel manifest contract. The onboarding picker labels Google Chat experimental, and NemoClaw enables it only after you explicitly select or add it. Requires a Google service-account credential and a public HTTPS endpoint that reaches only the `/googlechat` webhook path. OpenShell keeps the service-account private key outside the sandbox and supplies short-lived credentials at approved egress boundaries."
+      "notes": "Available for OpenClaw and Hermes through the channel manifest contract. The onboarding picker labels Google Chat experimental, and NemoClaw enables it only after you explicitly select or add it. Both agents require a Google service-account credential. OpenClaw receives events through a public HTTPS endpoint restricted to the `/googlechat` webhook path. Hermes instead pulls events from a configured Google Cloud Pub/Sub subscription over REST and exposes no webhook. OpenShell keeps the service-account private key outside the sandbox and supplies short-lived credentials at approved Google Chat and Pub/Sub egress boundaries."
     }
   ],
 
