@@ -891,7 +891,7 @@ export function assertGeneratedPolicyExactReadOnly(
 export function removeGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
-  options: { bestEffort?: boolean } = {},
+  options: { bestEffort?: boolean; preserveRegistryOwnership?: boolean } = {},
 ): void {
   const policyName = entry.policyName;
   const registeredPolicy = registry
@@ -910,7 +910,7 @@ export function removeGeneratedPolicy(
       ? policies.getPresetContentGatewayState(sandboxName, content)
       : getUnownedGeneratedPolicyState(sandboxName, entry));
   if (gatewayState === "absent") {
-    if (ownsRegistration) {
+    if (ownsRegistration && !options.preserveRegistryOwnership) {
       registry.removeCustomPolicyByName(sandboxName, policyName);
     }
     return;
@@ -937,7 +937,9 @@ export function removeGeneratedPolicy(
   }
   const activeState = policies.getPresetContentGatewayState(sandboxName, content);
   if (activeState === "absent") {
-    registry.removeCustomPolicyByName(sandboxName, policyName);
+    if (!options.preserveRegistryOwnership) {
+      registry.removeCustomPolicyByName(sandboxName, policyName);
+    }
     return;
   }
   // Keep (or defensively restore) the last reconciled ownership record when
