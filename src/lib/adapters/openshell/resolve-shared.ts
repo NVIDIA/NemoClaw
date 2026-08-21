@@ -11,7 +11,7 @@ import {
 } from "../podman/executable-authority";
 import { resolveOpenshell } from "./resolve";
 
-export const HERMES_PORTABLE_OPENSHELL_VERSION = "0.0.101" as const;
+export const HERMES_PORTABLE_OPENSHELL_VERSION = "0.0.106" as const;
 const VERSION_TIMEOUT_MS = 5_000;
 const VERSION_MAX_BUFFER_BYTES = 16 * 1024;
 const SEMVER_PATTERN = /(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+)(?![0-9.])/u;

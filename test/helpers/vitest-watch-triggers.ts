@@ -46,6 +46,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
+      /(?:^|\/)(?:\.github\/workflows\/release-daily-brev-image\.yaml|scripts\/release-daily-brev-image\.sh)$/,
+    testsToRun: runTests("test/release-daily-brev-image.test.ts"),
+  },
+  {
+    pattern:
       /(?:^|\/)(?:\.github\/workflows\/release-lkg-brev-image\.yaml|scripts\/release-lkg-brev-image\.sh)$/,
     testsToRun: runTests("test/release-lkg-brev-image.test.ts"),
   },
