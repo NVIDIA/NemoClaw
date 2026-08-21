@@ -31,7 +31,7 @@ export function applyCredentialsAtOpenShell(
   const missing: MessagingMissingCredentialEntry[] = [];
   const activeBindings = filterEnabledPlanEntries(plan, plan.credentialBindings);
 
-  if (activeBindings.some((binding) => readCredentialEnv(env, binding.providerEnvKey))) {
+  if (activeBindings.length > 0) {
     ensureMessagingCredentialProviderProfile({
       root: REPOSITORY_ROOT,
       runOpenshell: (args, runOptions) => runOpenshell(args, runOptions),

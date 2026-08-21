@@ -502,6 +502,44 @@ describe("MessagingSetupApplier", () => {
     expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
   });
 
+  it("rejects credential-free reuse backed by an incompatible global profile (#9875)", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const calls: string[] = [];
+
+    expect(() =>
+      MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+        env: {},
+        runOpenshell: (args) => {
+          calls.push(args.join(" "));
+          switch (`${args[1]} ${args[2]}`) {
+            case "profile import":
+              return { status: 1, stderr: "profile already exists" };
+            case "profile export":
+              return {
+                status: 0,
+                stdout: JSON.stringify({
+                  id: "nemoclaw-mcp-v1",
+                  credentials: [],
+                  endpoints: ["https://foreign.invalid"],
+                  binaries: [],
+                  inference_capable: false,
+                }),
+              };
+            default:
+              return {
+                status: 0,
+                stdout:
+                  "Name: demo-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+              };
+          }
+        },
+      }),
+    ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
+    expect(calls.some((command) => /provider (create|update)/u.test(command))).toBe(false);
+  });
+
   it("redacts OpenShell provider failure output", async () => {
     const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "tokensecretvalue" }, ["telegram"]);
     const runOpenshell: MessagingOpenShellRunner = (args) => {
