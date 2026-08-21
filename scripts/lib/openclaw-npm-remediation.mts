@@ -102,6 +102,10 @@ const CURRENT_IP_ADDRESS_VERSION = "10.3.1";
 const CURRENT_IP_ADDRESS_INTEGRITY =
   "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==";
 const CURRENT_IP_ADDRESS_TARBALL = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
+const CURRENT_TAR_VERSION = "7.5.21";
+const CURRENT_TAR_INTEGRITY =
+  "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
+const CURRENT_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
 const JAEGER_PROPAGATOR_VERSION = "2.9.0";
 const JAEGER_PROPAGATOR_INTEGRITY =
   "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==";
@@ -166,7 +170,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   // publishes every corrected dependency identity in its manifest and shrinkwrap.
   "openclaw@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-ugtX/U1jNS+ZlZqEXa+Y9nN+wlhPxeZJrx6tJZFLcGspWPFhsC5qOjTkzBbOda9lEZF6TWKt6wU9m9p2tidqdQ==",
+      "sha512-OfBP5yJPR5gdGnQ1LPtvSvrn3WoRT7+vi3KMsNGyXgwM8wpzJ174dfnJTLRtn6zSX9Vrp84uDn6YffkaLyNOVg==",
     kind: "current-core",
     version: "2026.7.1",
   },
@@ -413,6 +417,31 @@ function requireCurrentIpAddressReplacement(packageJson: JsonObject): void {
   }
 }
 
+function requireCurrentTarReplacement(packageJson: JsonObject): void {
+  requirePackageIdentity(
+    packageJson,
+    "tar",
+    CURRENT_TAR_VERSION,
+    "OpenClaw tar remediation package",
+  );
+  requireDependencyShape(
+    packageJson,
+    {
+      "@isaacs/fs-minipass": "^4.0.0",
+      chownr: "^3.0.0",
+      minipass: "^7.1.2",
+      minizlib: "^3.1.0",
+      yallist: "^5.0.0",
+    },
+    `tar@${CURRENT_TAR_VERSION}`,
+  );
+  if (packageJson.engines?.node !== ">=18" || packageJson.license !== "BlueOak-1.0.0") {
+    throw new Error(
+      `tar@${CURRENT_TAR_VERSION} package contract changed; review the remediation before updating it`,
+    );
+  }
+}
+
 export function patchOpenClawPluginPackageGraph(
   packageDirectory: string,
   packageSpec: string,
@@ -567,6 +596,8 @@ export function patchCurrentOpenClawCorePackageGraph(packageDirectory: string): 
   if (
     packageJson.dependencies?.minimatch !== "10.2.5" ||
     packageJson.dependencies?.["@modelcontextprotocol/sdk"] !== "1.29.0" ||
+    packageJson.dependencies?.["@openclaw/fs-safe"] !== "0.4.1" ||
+    packageJson.dependencies?.tar !== "7.5.19" ||
     packageJson.dependencies?.undici !== "8.5.0" ||
     packageJson.dependencies?.["brace-expansion"] !== undefined ||
     packageJson.dependencies?.["fast-uri"] !== undefined ||
@@ -589,6 +620,8 @@ export function patchCurrentOpenClawCorePackageGraph(packageDirectory: string): 
   const undici = packages["node_modules/undici"] as JsonObject | undefined;
   const ipAddress = packages["node_modules/ip-address"] as JsonObject | undefined;
   const expressRateLimit = packages["node_modules/express-rate-limit"] as JsonObject | undefined;
+  const fsSafe = packages["node_modules/@openclaw/fs-safe"] as JsonObject | undefined;
+  const tar = packages["node_modules/tar"] as JsonObject | undefined;
   if (
     braceExpansion?.version !== "5.0.7" ||
     braceExpansion.resolved !==
@@ -631,8 +664,42 @@ export function patchCurrentOpenClawCorePackageGraph(packageDirectory: string): 
   ) {
     throw new Error("openclaw@2026.7.1 ip-address layout changed after review");
   }
+  if (
+    root.dependencies?.tar !== "7.5.19" ||
+    tar?.version !== "7.5.19" ||
+    tar.resolved !== "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz" ||
+    tar.integrity !==
+      "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==" ||
+    tar.dependencies?.["@isaacs/fs-minipass"] !== "^4.0.0" ||
+    tar.dependencies?.chownr !== "^3.0.0" ||
+    tar.dependencies?.minipass !== "^7.1.2" ||
+    tar.dependencies?.minizlib !== "^3.1.0" ||
+    tar.dependencies?.yallist !== "^5.0.0" ||
+    Object.keys(tar.dependencies).length !== 5 ||
+    tar.engines?.node !== ">=18" ||
+    tar.license !== "BlueOak-1.0.0"
+  ) {
+    throw new Error("openclaw@2026.7.1 tar layout changed after review");
+  }
+  if (
+    fsSafe?.version !== "0.4.1" ||
+    fsSafe.resolved !==
+      "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.4.1.tgz" ||
+    fsSafe.integrity !==
+      "sha512-hQi+BxO10KdRFlYUot1syC+hTaUnGeQNdqX5kwkKJig8CFq1tKsYJLPm+zkiiGsSKOprPAquQl/txejEhpKPgg==" ||
+    fsSafe.license !== "MIT" ||
+    fsSafe.engines?.node !== ">=22" ||
+    fsSafe.optionalDependencies?.jszip !== "^3.10.1" ||
+    fsSafe.optionalDependencies?.tar !== "7.5.19" ||
+    Object.keys(fsSafe.optionalDependencies).length !== 2 ||
+    packages["node_modules/@openclaw/fs-safe/node_modules/tar"] !== undefined
+  ) {
+    throw new Error("openclaw@2026.7.1 @openclaw/fs-safe tar layout changed after review");
+  }
 
+  packageJson.dependencies.tar = CURRENT_TAR_VERSION;
   packageJson.dependencies.undici = CURRENT_UNDICI_VERSION;
+  root.dependencies.tar = CURRENT_TAR_VERSION;
   root.dependencies.undici = CURRENT_UNDICI_VERSION;
   braceExpansion.version = CURRENT_BRACE_EXPANSION_VERSION;
   braceExpansion.resolved = CURRENT_BRACE_EXPANSION_TARBALL;
@@ -646,6 +713,10 @@ export function patchCurrentOpenClawCorePackageGraph(packageDirectory: string): 
   ipAddress.version = CURRENT_IP_ADDRESS_VERSION;
   ipAddress.resolved = CURRENT_IP_ADDRESS_TARBALL;
   ipAddress.integrity = CURRENT_IP_ADDRESS_INTEGRITY;
+  fsSafe.optionalDependencies.tar = CURRENT_TAR_VERSION;
+  tar.version = CURRENT_TAR_VERSION;
+  tar.resolved = CURRENT_TAR_TARBALL;
+  tar.integrity = CURRENT_TAR_INTEGRITY;
   writeJson(packageJsonPath, packageJson);
   writeJson(shrinkwrapPath, shrinkwrap);
 }
@@ -1036,6 +1107,13 @@ export function buildRemediatedOpenClawPluginArchive(
       remediationRoot,
       env,
     );
+    const tarArchive = packReplacement(
+      `tar@${CURRENT_TAR_VERSION}`,
+      CURRENT_TAR_INTEGRITY,
+      CURRENT_TAR_TARBALL,
+      remediationRoot,
+      env,
+    );
     const braceExpansionPackage = extractArchive(
       braceExpansionArchive.archivePath,
       join(remediationRoot, "brace-expansion"),
@@ -1057,6 +1135,12 @@ export function buildRemediatedOpenClawPluginArchive(
     const ipAddressPackage = extractArchive(
       ipAddressArchive.archivePath,
       join(remediationRoot, "ip-address"),
+      remediationRoot,
+      env,
+    );
+    const tarPackage = extractArchive(
+      tarArchive.archivePath,
+      join(remediationRoot, "tar"),
       remediationRoot,
       env,
     );
@@ -1090,6 +1174,7 @@ export function buildRemediatedOpenClawPluginArchive(
     }
     requireCurrentUndiciReplacement(undiciPackageJson, "OpenClaw undici remediation package");
     requireCurrentIpAddressReplacement(readJson(join(ipAddressPackage, "package.json")));
+    requireCurrentTarReplacement(readJson(join(tarPackage, "package.json")));
     patchCurrentOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "undici") {
     const undiciArchive = packReplacement(
