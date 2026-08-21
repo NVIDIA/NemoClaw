@@ -7,6 +7,10 @@ import path from "node:path";
 
 import { HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN } from "../../../src/lib/inference/https-pin-runtime.ts";
 import { REGISTRY_FILE, type SandboxEntry } from "../../../src/lib/state/registry.ts";
+import {
+  INFERENCE_ROUTING_TEST_TIMEOUT_MS,
+  ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
+} from "../../../tools/e2e/onboard-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
@@ -308,7 +312,7 @@ type RuntimeIdentityE2EContext = Pick<
 };
 
 const RUNTIME_IDENTITY_E2E_OPTIONS = {
-  timeout: 25 * 60_000,
+  timeout: INFERENCE_ROUTING_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "confirm live runtime identity prerequisites",
@@ -395,7 +399,7 @@ async function runRuntimeIdentityE2EScenario(
     [inferenceKey],
     `${artifactPrefix}-onboard-real-openshell-sandbox`,
     progress,
-    18 * 60_000,
+    ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
   expectOnboardSuccess(onboard, `${scenario.testId} real OpenShell prerequisite onboard`);
   cleanup.add(`strict runtime identity sandbox cleanup for ${sandboxName}`, () =>
@@ -1004,7 +1008,7 @@ test.skipIf(!OPENSHELL_V0106_QUALIFICATION.supportsRuntimeIdentityRefreshProject
 );
 
 test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through inference.local (#5744)", {
-  timeout: 20 * 60_000,
+  timeout: INFERENCE_ROUTING_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "confirm compatible-endpoint prerequisites",
@@ -1070,7 +1074,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
     [apiKey],
     "tc-inf-09-onboard-compatible-endpoint",
     progress,
-    15 * 60_000,
+    ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
   expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
   cleanup.add(`strict inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
@@ -1145,7 +1149,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
 });
 
 test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)", {
-  timeout: 20 * 60_000,
+  timeout: INFERENCE_ROUTING_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "confirm live inference prerequisites",
@@ -1253,7 +1257,7 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
     [apiKey],
     "tc-inf-11-onboard-https-pin-placeholder",
     progress,
-    15 * 60_000,
+    ONBOARD_FINAL_HANDOFF_COMMAND_TIMEOUT_MS,
   );
   expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint placeholder onboard");
   cleanup.add(`strict inference-routing https-pin cleanup for ${sandboxName}`, () =>

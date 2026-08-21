@@ -41,11 +41,16 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
+  ".github/workflows/release-daily-brev-image.yaml",
+  "scripts/release-daily-brev-image.sh",
   ".github/workflows/release-lkg-brev-image.yaml",
   "scripts/release-lkg-brev-image.sh",
   "managed-inference/models/example.yaml",
   "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
+  "internal/security-reviews/hermes-0.19.0-dependency-review.md",
+  ".github/actions/resolve-hermes-base-image/action.yaml",
   "Dockerfile",
+  "agents/hermes/Dockerfile.base",
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
   "agents/hermes/policy-additions.yaml",
@@ -89,8 +94,15 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it.each([
+    ".github/workflows/release-daily-brev-image.yaml",
+    "scripts/release-daily-brev-image.sh",
+  ])("maps each daily image caller input to its contract test [%s] (#9799)", (inputPath) => {
+    expect(triggeredBy(inputPath)).toEqual(["test/release-daily-brev-image.test.ts"]);
+  });
+
   it.each([".github/workflows/release-lkg-brev-image.yaml", "scripts/release-lkg-brev-image.sh"])(
-    "maps each LKG image caller input to its contract test [%s] (#9661)",
+    "maps each LKG image caller input to its contract test [%s] (#9798)",
     (inputPath) => {
       expect(triggeredBy(inputPath)).toEqual(["test/release-lkg-brev-image.test.ts"]);
     },
@@ -112,12 +124,24 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/inference/serving/resolver.test.ts",
       "test/managed-inference-catalog-compiler.test.ts",
     ]);
+    expect(
+      triggeredBy("internal/security-reviews/hermes-0.19.0-dependency-review.md"),
+    ).toEqual(["test/hermes-dependency-review.test.ts"]);
+    expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
+      "test/base-image-resolver-helper.test.ts",
+    ]);
     expect(triggeredBy("Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
       "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
     ]);
+    expect(triggeredBy("agents/hermes/Dockerfile.base")).toEqual([
+      "test/hermes-dependency-review.test.ts",
+      "test/hermes-share-mount-deps.test.ts",
+      "test/sandbox-provisioning.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
+      "test/hermes-mcp-runtime-capability.test.ts",
     ]);
     expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
@@ -202,6 +226,9 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/portable-profile-e2e.yaml")).toEqual([
       "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
       "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ]);
+    expect(triggeredBy("test/e2e/live/portable-profile-rootless-linux.test.ts")).toEqual([
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
     ]);
     expect(triggeredBy("test/e2e/fixtures/portable-profile-systemctl-shim.sh")).toEqual([
       "test/e2e/support/portable-profile-systemctl-shim.test.ts",

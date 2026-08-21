@@ -1915,6 +1915,7 @@ function withExpiredAutoRestoreDeadlineFence<T>(
   command: string,
   operation: (allowInlineRecovery: boolean) => T,
   fallbackTakeoverToken?: string,
+  assertCommandAvailable?: () => void,
 ): T {
   const expiredMarker = inspectExpiredAutoRestoreMarker(sandboxName);
   const takeover = inspectExpiredAutoRestoreTakeover(sandboxName, expiredMarker);
@@ -1954,6 +1955,7 @@ function withExpiredAutoRestoreDeadlineFence<T>(
     return runWithHostLock(() => operation(false));
   };
   if (isMcpLifecycleLockHeld(sandboxName, STATE_DIR)) {
+    assertCommandAvailable?.();
     if (!expiredMarker || !takeover) {
       retireUnexpectedFreshTimerGeneration();
       return runWithHostLock(() => operation(true));
@@ -1976,6 +1978,7 @@ function withExpiredAutoRestoreDeadlineFence<T>(
     return withMcpLifecycleLockSync(
       sandboxName,
       () => {
+        assertCommandAvailable?.();
         retireUnexpectedFreshTimerGeneration();
         return runWithHostLock(() => operation(true));
       },
@@ -1991,6 +1994,7 @@ function withExpiredAutoRestoreDeadlineFence<T>(
     sandboxName,
     marker.processToken,
     () => {
+      assertCommandAvailable?.();
       let notifiedError: string | null = null;
       for (let attempt = 0; attempt < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS; attempt += 1) {
         try {
@@ -4505,6 +4509,7 @@ interface ShieldsDownOpts {
   policy?: string;
   throwOnError?: boolean;
   allowLegacyHermesProtocol?: boolean;
+  assertCommandAvailable?: () => void;
   // Internal rebuild lease: once the deadline expires, the detached recovery
   // owner defers while this exact process is alive and retries transient
   // restore failures after owner death. Interactive shields-down never sets it.
@@ -5424,6 +5429,7 @@ function shieldsDown(
       "shields down",
       () => shieldsDownWithoutHostLock(sandboxName, effectiveOpts),
       processToken,
+      opts.assertCommandAvailable,
     );
   } catch (error) {
     return completeDeferredShieldsExit(error, opts.throwOnError === true);
@@ -5441,6 +5447,7 @@ type ShieldsUpOpts = {
   throwOnError?: boolean;
   allowLegacyHermesProtocol?: boolean;
   policySnapshotRecovery?: ShieldsPolicySnapshotRecovery;
+  assertCommandAvailable?: () => void;
 };
 
 function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {}): void {
@@ -5748,8 +5755,12 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
 function shieldsUp(sandboxName: string, opts: ShieldsUpOpts = {}): void {
   validateName(sandboxName, "sandbox name");
   try {
-    return withExpiredAutoRestoreDeadlineFence(sandboxName, "shields up", () =>
-      shieldsUpWithoutHostLock(sandboxName, opts),
+    return withExpiredAutoRestoreDeadlineFence(
+      sandboxName,
+      "shields up",
+      () => shieldsUpWithoutHostLock(sandboxName, opts),
+      undefined,
+      opts.assertCommandAvailable,
     );
   } catch (error) {
     return completeDeferredShieldsExit(error, opts.throwOnError === true);
@@ -5764,6 +5775,7 @@ type ShieldsStatusDeps = {
   verifyLockState?: typeof verifyShieldsLockState;
   resolveConfig?: typeof resolveAgentConfig;
   verifyStateLockPlan?: (sandboxName: string, target: AgentConfigTarget) => string[];
+  assertCommandAvailable?: () => void;
 };
 
 function verifyHermesProviderMutableStatus(
@@ -6003,6 +6015,8 @@ function shieldsStatus(
       sandboxName,
       "shields status",
       (allowInlineRecovery) => shieldsStatusWithoutHostLock(sandboxName, allowInlineRecovery, deps),
+      undefined,
+      deps.assertCommandAvailable,
     );
   } catch (error) {
     return completeDeferredShieldsExit(error);

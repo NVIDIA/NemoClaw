@@ -53,6 +53,7 @@ const findingSchema = Type.Object(
     verificationHint: text,
     missingRegressionTest: text,
     evidence: Type.Array(text, { minItems: 1 }),
+    receiptConcerns: Type.Optional(Type.Array(text, { minItems: 1, uniqueItems: true })),
     basis: Type.Object(
       {
         kind: Type.Union(REVIEW_FINDING_BASIS_KINDS.map((value) => Type.Literal(value))),
@@ -316,13 +317,14 @@ export function createReviewSubmissionController({
   const reviewReceiptSchema = createReviewReceiptSchema(securityCategoryNames);
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const validateReceipt = ajv.compile(reviewReceiptSchema);
+  const validateE2e = ajv.compile(e2eSchema);
   const validate = ajv.compile(schema);
 
   const recordFindings = defineTool({
     name: RECORD_FINDINGS_TOOL,
     label: "Record review findings draft",
     description:
-      "Replace the complete in-memory findings draft, advance its revision, and return that revision with the ordered stable draft IDs. This invalidates any earlier review receipt. Use the returned IDs in a subsequent review receipt. Canonical state changes only after the session runner accepts the successful terminal submission.",
+      "Replace the complete findings draft and return stable IDs. Omit simplification for ordinary findings; provide it only for basis.kind=unnecessary_complexity. When a receipt concern will link this finding, list each exact association in receiptConcerns as acceptance:<clause>, security:<category>, or source-of-truth:<surface>. Canonical state changes only after successful terminal submission.",
     parameters: Type.Object(
       { findings: Type.Array(findingSchema, { maxItems: REVIEW_FINDING_LIMIT }) },
       { additionalProperties: false },
@@ -331,6 +333,19 @@ export function createReviewSubmissionController({
     execute: async (_id, input) => {
       ensureOpen(pending ?? submitted);
       const draft = input as RecordFindingsInput;
+      for (const [index, finding] of draft.findings.entries()) {
+        const requiresSimplification = finding.basis.kind === "unnecessary_complexity";
+        if (requiresSimplification && finding.simplification === undefined) {
+          throw new Error(
+            `findings[${index + 1}] requires simplification for basis.kind=unnecessary_complexity`,
+          );
+        }
+        if (!requiresSimplification && finding.simplification !== undefined) {
+          throw new Error(
+            `findings[${index + 1}] must omit simplification unless basis.kind=unnecessary_complexity`,
+          );
+        }
+      }
       findingsDraft = draft.findings.map((finding) => structuredClone(finding));
       findingsRevision += 1;
       return toolResult({
@@ -348,7 +363,7 @@ export function createReviewSubmissionController({
     name: RECORD_REVIEW_RECEIPT_TOOL,
     label: "Record review receipt draft",
     description:
-      "After record_findings, replace the complete in-memory review receipt draft and bind it to the current findings revision without changing canonical state. Recording findings again makes this receipt stale until it is rerecorded.",
+      "After record_findings, replace the complete receipt. Required root fields are summary, terminologyReview, acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, positives, and reviewCompleteness. Use findingId=null for acceptance met/unknown, security pass, and source-of-truth satisfied/not_applicable entries. Use a returned finding ID only when that exact concern is covered by that finding. Investigation-only tools, including pr_review_trace_term, are unavailable during this turn; use only traces already captured in the investigation receipt.",
     parameters: reviewReceiptSchema,
     executionMode: "sequential",
     execute: async (_id, input) => {
@@ -369,7 +384,7 @@ export function createReviewSubmissionController({
     name: RECOMMEND_E2E_TOOL,
     label: "Record E2E recommendations draft",
     description:
-      "Replace the complete in-memory E2E recommendation draft without changing canonical state.",
+      "Replace the complete E2E draft. Required root fields are coverage and targets. targets must include relevantChangedFiles, changedCredentialFreeTests, required, optional, noTargetE2eReason, and confidence; use empty arrays when none apply.",
     parameters: e2eSchema,
     executionMode: "sequential",
     execute: async (_id, input) => {
@@ -398,23 +413,55 @@ export function createReviewSubmissionController({
       ].filter(Boolean);
       if (missing.length > 0) throw new Error(`submit_review requires: ${missing.join(", ")}`);
 
-      validateReceiptFindingReferences(receiptDraft!, findingsDraft!);
-      const candidateFindingSnapshot = validateReviewFindingSubmission(
-        findingsDraft!,
-        repositoryRoot,
+      const validationIssues = await receiptFindingReferenceIssues(receiptDraft!, findingsDraft!);
+      const candidateFindingSnapshot = await captureValidationIssue(validationIssues, () =>
+        validateReviewFindingSubmission(findingsDraft!, repositoryRoot),
       );
-      const openFindings = candidateFindingSnapshot.findings;
-      validateSecurityCategories(receiptDraft!.securityCategories, securityCategoryNames);
-      const summary = canonicalSummary(
-        receiptDraft!.summary,
-        openFindings,
-        metadata.deterministic.hasOpenPrReplacement,
+      const openFindings = candidateFindingSnapshot?.findings;
+      const summary = openFindings
+        ? await captureValidationIssue(validationIssues, () =>
+            canonicalSummary(
+              receiptDraft!.summary,
+              openFindings,
+              metadata.deterministic.hasOpenPrReplacement,
+            ),
+          )
+        : undefined;
+      await captureValidationIssue(validationIssues, () =>
+        validateSecurityCategories(receiptDraft!.securityCategories, securityCategoryNames),
       );
-      const normalizedE2e = await normalizeE2e(structuredClone(e2eDraft!), metadata);
+      const normalizedE2e = await captureValidationIssue(validationIssues, async () => {
+        const normalized = await normalizeE2e(structuredClone(e2eDraft!), metadata);
+        if (!validateE2e(normalized)) {
+          throw new Error(
+            `submit_review normalized E2E failed schema validation: ${ajv.errorsText(validateE2e.errors)}`,
+          );
+        }
+        return normalized;
+      });
       const candidateTerminology = createTerminologyLedger(metadata.headSha);
       const traces =
         typeof terminologyTraces === "function" ? terminologyTraces() : terminologyTraces;
-      candidateTerminology.commit(receiptDraft!.terminologyReview, traces);
+      await captureValidationIssue(validationIssues, () =>
+        candidateTerminology.commit(receiptDraft!.terminologyReview, traces),
+      );
+      if (openFindings) {
+        const qualityIssues = reviewQualityIssues({
+          findings: openFindings,
+          securityCategories: receiptDraft!.securityCategories,
+        });
+        if (qualityIssues.length > 0) {
+          validationIssues.push(
+            `submit_review result failed review quality validation: ${qualityIssues.join("; ")}`,
+          );
+        }
+      }
+      if (validationIssues.length > 0) {
+        throw new Error(`submit_review failed validation: ${validationIssues.join("; ")}`);
+      }
+      if (!candidateFindingSnapshot || !openFindings || !summary || !normalizedE2e) {
+        throw new Error("submit_review validation did not assemble every candidate section");
+      }
       const publicReceipt = publicReceiptDraft(receiptDraft!, metadata.deterministic.testDepth);
       const result = {
         version: 1,
@@ -428,15 +475,6 @@ export function createReviewSubmissionController({
         terminologyReview: candidateTerminology.snapshot().review,
         e2e: normalizedE2e,
       };
-      const qualityIssues = reviewQualityIssues({
-        findings: openFindings,
-        securityCategories: receiptDraft!.securityCategories,
-      });
-      if (qualityIssues.length > 0) {
-        throw new Error(
-          `submit_review result failed review quality validation: ${qualityIssues.join("; ")}`,
-        );
-      }
       if (!validate(result)) {
         const reason = (validate.errors ?? [])
           .map((error) => `${error.instancePath || "/"} ${error.message}`)
@@ -525,34 +563,45 @@ function findingPair(finding: CandidateFindingInput): string {
   return `${finding.category}:${finding.basis.kind}`;
 }
 
-function validateReceiptFindingReferences(
+async function receiptFindingReferenceIssues(
   receipt: DraftReceipt,
   findings: readonly CandidateFindingInput[],
-): void {
+): Promise<string[]> {
   const findingsById = new Map(findings.map((finding, index) => [findingId(index), finding]));
-  validateConcernEntries(
-    "acceptanceCoverage",
-    receipt.acceptanceCoverage,
-    findingsById,
-    (entry) => entry.status === "partial" || entry.status === "missing",
-    (finding) => ACCEPTANCE_FINDING_PAIRS.has(findingPair(finding)),
-    (entry) => (entry.status === "missing" ? "blocker" : "warning"),
+  const issues: string[] = [];
+  await captureValidationIssue(issues, () =>
+    validateConcernEntries(
+      "acceptanceCoverage",
+      receipt.acceptanceCoverage,
+      findingsById,
+      (entry) => entry.status === "partial" || entry.status === "missing",
+      (finding) => ACCEPTANCE_FINDING_PAIRS.has(findingPair(finding)),
+      (entry) => `acceptance:${String(entry.clause)}`,
+      (entry) => (entry.status === "missing" ? "blocker" : "warning"),
+    ),
   );
-  validateConcernEntries(
-    "securityCategories",
-    receipt.securityCategories,
-    findingsById,
-    (entry) => entry.verdict === "warning" || entry.verdict === "fail",
-    (finding) => SECURITY_FINDING_PAIRS.has(findingPair(finding)),
-    (entry) => (entry.verdict === "fail" ? "blocker" : "warning"),
+  await captureValidationIssue(issues, () =>
+    validateConcernEntries(
+      "securityCategories",
+      receipt.securityCategories,
+      findingsById,
+      (entry) => entry.verdict === "warning" || entry.verdict === "fail",
+      (finding) => SECURITY_FINDING_PAIRS.has(findingPair(finding)),
+      (entry) => `security:${String(entry.category)}`,
+      (entry) => (entry.verdict === "fail" ? "blocker" : "warning"),
+    ),
   );
-  validateConcernEntries(
-    "sourceOfTruthReview",
-    receipt.sourceOfTruthReview,
-    findingsById,
-    (entry) => entry.status === "needs_followup" || entry.status === "missing",
-    (finding) => SOURCE_OF_TRUTH_FINDING_CATEGORIES.has(finding.category),
+  await captureValidationIssue(issues, () =>
+    validateConcernEntries(
+      "sourceOfTruthReview",
+      receipt.sourceOfTruthReview,
+      findingsById,
+      (entry) => entry.status === "needs_followup" || entry.status === "missing",
+      (finding) => SOURCE_OF_TRUTH_FINDING_CATEGORIES.has(finding.category),
+      (entry) => `source-of-truth:${String(entry.surface)}`,
+    ),
   );
+  return issues;
 }
 
 function validateConcernEntries(
@@ -561,24 +610,40 @@ function validateConcernEntries(
   findingsById: ReadonlyMap<string, CandidateFindingInput>,
   requiresFinding: (entry: Record<string, unknown>) => boolean,
   fitsConcern: (finding: CandidateFindingInput) => boolean,
+  concernKey: (entry: Record<string, unknown>) => string,
   minimumSeverity?: (entry: Record<string, unknown>) => (typeof REVIEW_FINDING_SEVERITIES)[number],
 ): void {
-  for (const [index, rawEntry] of entries.entries()) {
-    const entry = rawEntry as Record<string, unknown>;
+  const typedEntries = entries as readonly Record<string, unknown>[];
+  const concernKeys = typedEntries.map(concernKey);
+  const duplicateConcern = concernKeys.find((key, index) => concernKeys.indexOf(key) !== index);
+  if (duplicateConcern) {
+    throw new Error(`${section} contains duplicate receipt concern ${duplicateConcern}`);
+  }
+  for (const [index, entry] of typedEntries.entries()) {
+    const expectedConcern = concernKeys[index]!;
     const required = requiresFinding(entry);
     const findingId = entry.findingId;
     if (!required && findingId !== null)
-      throw new Error(`${section}[${index + 1}] must use findingId=null`);
+      throw new Error(
+        `${section}[${index + 1}] does not report a concern. Set findingId=null; do not reuse an unrelated finding to fill this entry.`,
+      );
     if (required && typeof findingId !== "string")
-      throw new Error(`${section}[${index + 1}] must reference a fitting finding ID`);
+      throw new Error(
+        `${section}[${index + 1}] reports a concern and requires a finding ID for this exact concern.`,
+      );
     if (typeof findingId !== "string") continue;
     const finding = findingsById.get(findingId);
     if (!finding)
       throw new Error(`${section}[${index + 1}] references unknown finding ${findingId}`);
     if (!fitsConcern(finding))
       throw new Error(
-        `${section}[${index + 1}] references finding ${findingId}, which does not fit this concern`,
+        `${section}[${index + 1}] references ${findingId} (${finding.category}/${finding.basis.kind}), which does not fit this concern. Remove the reference when this entry does not report a concern, or record and reference a finding for this exact concern.`,
       );
+    if (!finding.receiptConcerns?.includes(expectedConcern)) {
+      throw new Error(
+        `${section}[${index + 1}] references ${findingId}, but that finding does not name receipt concern ${expectedConcern}. Add the exact association to the finding receiptConcerns.`,
+      );
+    }
     if (!minimumSeverity) continue;
     const requiredSeverity = minimumSeverity(entry);
     const actualRank = REVIEW_FINDING_SEVERITIES.indexOf(finding.severity);
@@ -588,6 +653,18 @@ function validateConcernEntries(
         `${section}[${index + 1}] references ${findingId} with severity ${finding.severity}; ${String(entry.status ?? entry.verdict)} requires ${requiredSeverity}${requiredSeverity === "warning" ? " or blocker" : ""}`,
       );
     }
+  }
+}
+
+async function captureValidationIssue<T>(
+  issues: string[],
+  validate: () => T | Promise<T>,
+): Promise<T | undefined> {
+  try {
+    return await validate();
+  } catch (error: unknown) {
+    issues.push(error instanceof Error ? error.message : String(error));
+    return undefined;
   }
 }
 

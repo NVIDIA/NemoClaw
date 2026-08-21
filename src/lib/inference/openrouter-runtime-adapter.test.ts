@@ -2,17 +2,47 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// The adapter startup path must not spawn a child, wait on a real port, or signal a real process,
+// and its pid, state and lock files are redirected into a temporary state directory.
+vi.mock("../runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../runner")>()),
+  run: vi.fn(),
+  runCapture: vi.fn(() => "node /opt/nemoclaw/scripts/openrouter-runtime-adapter-entry.js"),
+}));
+vi.mock("./local-adapter-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./local-adapter-lifecycle")>()),
+  spawnDetachedNodeAdapter: vi.fn(() => ({ pid: 5150 })),
+  waitForLocalAdapterHealth: vi.fn(async () => false),
+}));
+vi.mock("./openrouter-runtime-adapter-common", async (importOriginal) => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openrouter-adapter-"));
+  return {
+    ...(await importOriginal<typeof import("./openrouter-runtime-adapter-common")>()),
+    STATE_DIR: stateDir,
+    PID_PATH: path.join(stateDir, "openrouter-runtime-adapter.pid"),
+    STATE_PATH: path.join(stateDir, "openrouter-runtime-adapter.json"),
+    LOCK_PATH: path.join(stateDir, "openrouter-runtime-adapter.lock"),
+  };
+});
+
+import { run } from "../runner";
+import { writeLocalAdapterJsonFile } from "./local-adapter-lifecycle";
 import { OPENROUTER_DEFAULT_HEADERS } from "./openrouter";
 import {
   adapterAuthorizationHash,
   createOpenRouterRuntimeAdapterServer,
+  ensureOpenRouterRuntimeAdapter,
 } from "./openrouter-runtime-adapter";
 import { OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES } from "./openrouter-runtime-adapter-forward";
+import { PID_PATH, STATE_DIR, STATE_PATH } from "./openrouter-runtime-adapter-common";
 
 const servers: http.Server[] = [];
 const OPENROUTER_TEST_TOKEN = "sk-or-test";
@@ -28,6 +58,8 @@ afterEach(async () => {
     ),
   );
   servers.length = 0;
+  fs.rmSync(STATE_DIR, { recursive: true, force: true });
+  vi.mocked(run).mockClear();
 });
 
 function listen(server: http.Server): Promise<string> {
@@ -426,5 +458,17 @@ describe("OpenRouter Runtime adapter", () => {
     ).rejects.toThrow();
 
     await expect(fetch(`${adapterBaseUrl}/health`)).resolves.toMatchObject({ status: 200 });
+  });
+
+  it("signals the spawned child and clears the pid and state files when startup never becomes healthy", async () => {
+    writeLocalAdapterJsonFile(STATE_PATH, { upstreamBaseUrl: "https://stale.example" });
+
+    await expect(
+      ensureOpenRouterRuntimeAdapter({ authorizationToken: OPENROUTER_TEST_TOKEN }),
+    ).rejects.toThrow("did not become healthy");
+
+    expect(vi.mocked(run).mock.calls.map(([args]) => args)).toEqual([["kill", "5150"]]);
+    expect(fs.existsSync(PID_PATH)).toBe(false);
+    expect(fs.existsSync(STATE_PATH)).toBe(false);
   });
 });

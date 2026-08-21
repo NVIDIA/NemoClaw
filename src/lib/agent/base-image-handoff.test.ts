@@ -64,7 +64,7 @@ function fixture(options: { canonicalSource?: boolean } = {}) {
     pinnedRemoteRef,
     preferPinnedRemoteRef: true,
     validateImage: () => true,
-    validationDescription: "the required MCP Streamable HTTP runtime",
+    validationDescription: "the required MCP Streamable HTTP and ACP runtimes",
   };
   const imageId = `sha256:${"a".repeat(64)}`;
   const canonicalRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;

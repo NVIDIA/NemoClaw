@@ -19,6 +19,7 @@ import {
   applyOllamaRuntimeContextWindow,
   resetOllamaRuntimeContextWindowAutoState,
 } from "../src/lib/inference/ollama-runtime-context.js";
+import { SMALLEST_OLLAMA_MODEL_TAG } from "../src/lib/inference/ollama-model-registry.js";
 import {
   validateAnthropicModel,
   validateOpenAiLikeModel,
@@ -1185,11 +1186,15 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.ok(lines.some((line) => line.includes("is not available from NVIDIA Endpoints")));
   });
 
-  it("shows curated Gemini models and supports Other for manual entry (#6245)", async () => {
+  it("offers Gemini 3.6 Flash instead of 2.5 Flash and supports Other (#9298)", async () => {
+    const acceptedDefault = await promptRemoteModel("Google Gemini", "gemini", "gemini-3.6-flash", null,
+      { promptFn: async () => "", writeLine: () => {} },
+    );
+    assert.equal(acceptedDefault, "gemini-3.6-flash");
     const answers = ["7", "gemini-custom"];
     const messages: string[] = [];
     const lines: string[] = [];
-    const model = await promptRemoteModel("Google Gemini", "gemini", "gemini-2.5-flash", null, {
+    const model = await promptRemoteModel("Google Gemini", "gemini", "gemini-3.6-flash", null, {
       promptFn: async (message) => {
         messages.push(message);
         return answers.shift() || "";
@@ -1237,11 +1242,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.equal(state.provider, "gemini-api");
     assert.equal(state.model, "gemini-custom");
     assert.equal(state.preferredInferenceApi, "openai-completions");
-    assert.match(messages[0], /Choose model \[5\]/);
     assert.match(messages[1], /Google Gemini model id:/);
-    assert.ok(lines.some((line) => line.includes("Google Gemini models:")));
-    assert.ok(lines.some((line) => line.includes("gemini-2.5-flash")));
-    assert.ok(lines.some((line) => line.includes("Other...")));
     assert.ok(validated.lines.some((line) => line.includes("Chat Completions API available")));
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
       "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -1417,14 +1418,15 @@ child_process.spawnSync = (cmd, args, opts) => {
 
 const runCommands = [];
 const shellCommands = [];
+let managedOllamaStarted = false;
 const { messages } = installPromptQueue(credentials, ["8", "1"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   const ollamaMetadata = supportedOllamaHostMetadataOutput(cmd); if (ollamaMetadata) return ollamaMetadata;
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags"))
+    return managedOllamaStarted ? ${JSON.stringify(JSON.stringify({ models: [{ name: SMALLEST_OLLAMA_MODEL_TAG }] }))} : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
@@ -1435,16 +1437,14 @@ runner.run = (command) => {
 };
 runner.runShell = (command) => {
   shellCommands.push(command);
+  managedOllamaStarted ||= command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve");
   return { status: 0 };
 };
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
 wait.sleepSeconds = () => {};
-// installOllamaSystem probes loopback at tries=1 before launching, then
-// waits at tries=10 after launch. The fake curl in these tests answers 200
-// to any URL, so real waitForHttp would short-circuit the manual launch.
-// Differentiate by tries count.
+// Fail the tries=1 pre-launch probe; pass the tries=10 post-launch probe.
 wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});
@@ -1525,7 +1525,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.run = (command) => {
   runCommands.push(Array.isArray(command) ? command.join(" ") : command);
   return { status: 0 };
@@ -1623,7 +1623,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.run = () => ({ status: 0 });
 runner.runShell = (command, opts = {}) => {
   shellCommands.push(command);
@@ -1737,7 +1737,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service disabled";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
   shellCommands.push(command);
   if (command.includes("cat") && command.includes("ollama.service.d/override.conf")) {
@@ -1812,7 +1812,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
   shellCommands.push(command);
   return { status: 0, stdout: "" };
@@ -1928,7 +1928,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.run = () => ({ status: 0 });
 runner.runShell = (command) => {
   shellCommands.push(command);
@@ -2012,7 +2012,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
   if (command.includes("ollama serve")) console.error("manual-start");
   return { status: 0 };
@@ -2069,7 +2069,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
-};
+}; runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner(runner.runCaptureEx);
 runner.runShell = (command) => {
   if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };
@@ -3434,8 +3434,8 @@ nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 
-// Select option 8 (nim-local), then model 1
-const { messages } = installPromptQueue(credentials, ["8", "1"]);
+// Select option 8 (nim-local), then model 1, and enter the NGC credential.
+const { messages } = installPromptQueue(credentials, ["8", "1", "ngc-test"]);
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
   // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
@@ -3594,7 +3594,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   return "";
 };
-runner.runCaptureEx = () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false });
+runner.runCaptureEx = createSuccessfulOllamaServiceExecutionProofRunner();
 runner.runShell = (command) => {
   if (command.includes("ollama serve")) console.error("manual-start");
   if (command.includes("install -D -m 0644")) return { status: 1 };

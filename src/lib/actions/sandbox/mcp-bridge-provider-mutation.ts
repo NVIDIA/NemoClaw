@@ -127,6 +127,7 @@ export function upsertMcpProvider(
   options: {
     allowExisting: boolean;
     expectedProviderId?: string;
+    requireExisting?: boolean;
     prepareMutation?: (action: "create" | "update") => void;
   },
 ): {
@@ -151,6 +152,11 @@ export function upsertMcpProvider(
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${providerName}'.`,
+    );
+  }
+  if (inspection.exists === false && options.requireExisting) {
+    throw new McpBridgeError(
+      `OpenShell provider '${providerName}' disappeared before credential republish. Refusing to create a replacement with a different identity.`,
     );
   }
   if (inspection.exists && !options.allowExisting) {
@@ -247,6 +253,49 @@ export function upsertMcpProvider(
     );
   }
   return { action: action === "create" ? "created" : "updated", inspection: after };
+}
+
+/**
+ * Republish an attached provider after its endpointless credential binding is
+ * active. OpenShell's Docker sidecar can observe the provider mutation before
+ * the bound policy generation; a no-field update advances the provider
+ * revision without reading or rotating the stored credential, giving the
+ * sidecar a post-policy generation to synchronize.
+ */
+export function refreshMcpProviderEnvironment(entry: McpBridgeEntry): McpProviderInspection {
+  assertPersistedAuthenticatedBridgeEntry(entry);
+  if (!entry.providerName || !entry.providerId) {
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' has no stable OpenShell provider identity for credential synchronization.`,
+    );
+  }
+  const before = inspectMcpProvider(entry.providerName);
+  if (!providerMatchesCredential(before, entry.env[0], entry.providerId)) {
+    throw new McpBridgeError(
+      `OpenShell provider '${entry.providerName}' changed before credential synchronization. ${providerShapeDetail(before, entry.env[0], entry.providerId)} Refusing to mutate it.`,
+    );
+  }
+  const result = runOpenshellProviderCommand(["provider", "update", entry.providerName], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  }) as OpenShellCommandResult;
+  if (result.status !== 0) {
+    throw new McpBridgeError(
+      commandOutput(result) ||
+        `Failed to synchronize MCP provider '${entry.providerName}' after policy binding.`,
+    );
+  }
+  const after = inspectMcpProvider(entry.providerName);
+  if (
+    !providerMatchesCredential(after, entry.env[0], entry.providerId) ||
+    !after.resourceVersion ||
+    after.resourceVersion <= (before.resourceVersion ?? 0)
+  ) {
+    throw new McpBridgeError(
+      `OpenShell provider '${entry.providerName}' changed during credential synchronization. ${providerShapeDetail(after, entry.env[0], entry.providerId)} Refusing later MCP side effects.`,
+    );
+  }
+  return after;
 }
 
 function inspectMcpProviderForDeletion(

@@ -12,11 +12,6 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
 import {
-  type CuaStateObservationDeps,
-  getObservedValidatedCuaState,
-  isCuaPublicStateEnabled,
-} from "../../cua/state";
-import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
@@ -520,34 +515,6 @@ function collectRegisteredSandboxChecks(
   return checks;
 }
 
-/** Report candidate install readiness only while both exact CUA gates are enabled. */
-export function collectCuaRuntimeDoctorChecks(
-  sb: SandboxEntry | null | undefined,
-  deps: CuaStateObservationDeps = {},
-): DoctorCheck[] {
-  if (!isCuaPublicStateEnabled() || sb?.agent !== "nemocua") return [];
-  const observed = getObservedValidatedCuaState(sb, process.env, deps);
-  if (!observed.readiness) {
-    return [
-      {
-        group: "Sandbox",
-        label: "CUA runtime",
-        status: "fail",
-        detail: "candidate readiness is missing, invalid, stale, or unavailable",
-        hint: "rerun canonical onboarding with exact candidate qualification authority",
-      },
-    ];
-  }
-  return [
-    {
-      group: "Sandbox",
-      label: "CUA runtime",
-      status: "ok",
-      detail: `candidate; source=${observed.readiness.sourceRevision}; manifest=${observed.readiness.runtimeManifestDigest}`,
-    },
-  ];
-}
-
 function collectToolScopeChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -610,9 +577,6 @@ async function collectDoctorChecks(
     ...collectManagedLlamaCppDoctorChecks(sandboxName, sb?.gatewayPort),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),
-    // Keep this last because every asynchronous check above may race an
-    // authority-clearing registry write.
-    ...collectCuaRuntimeDoctorChecks(registry.getSandbox(sandboxName)),
   ];
 }
 

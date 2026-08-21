@@ -63,8 +63,13 @@
     },
     {
       "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
-      "test": "keeps actionlint and live E2E on Ubuntu 26.04 and Podman 5.7 (#9006)",
+      "test": "keeps live E2E on the accepted rootless runtime and local registry authority (#9006)",
       "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test": "selects exact-commit rootless evidence for Portable recovery changes (#9707)",
+      "category": "security"
     },
     {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
@@ -162,8 +167,13 @@
       "category": "security"
     },
     {
+      "file": "test/release-daily-brev-image.test.ts",
+      "test": "attests one daily request before the isolated dispatch job (#9799)",
+      "category": "security"
+    },
+    {
       "file": "test/release-lkg-brev-image.test.ts",
-      "test": "attests one request before the isolated dispatch job (#9661)",
+      "test": "keeps the LKG credential on the production-only dispatch step (#9798)",
       "category": "security"
     },
     {
