@@ -446,7 +446,7 @@ async function addMcpBridgeUnlocked(
         requireExisting: true,
       });
     }
-    waitForAttachedMcpCredential(sandboxName, entry, {
+    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? {
             previousRevision: previousCredentialRevision,
@@ -482,7 +482,10 @@ async function addMcpBridgeUnlocked(
     registerAgentAdapter(sandboxName, adapter, entry, adapterEnvValues, {
       // An exact adapter entry is evidence of a post-commit process death.
       // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
+      // Mcporter must project the same live revision OpenShell will recognize
+      // at egress; its canonical, unversioned placeholder is not sufficient.
       replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
+      credentialRevision,
     });
     if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
     const { addState: _completedAddState, ...committedEntry } = entry;
