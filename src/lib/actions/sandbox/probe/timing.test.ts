@@ -61,6 +61,23 @@ describe("probe timing recorder", () => {
     expect(lines[0]).not.toContain("secret-token-value");
   });
 
+  it("emits one failed line when exit completion runs before normal completion", () => {
+    let clock = 0;
+    const lines: string[] = [];
+    const recorder = createProbeTimingRecorder({
+      now: () => clock,
+      write: (line) => lines.push(line),
+    });
+
+    clock = 7;
+    recorder.finishOnExit("failed", "forward");
+    recorder.finish("ready");
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("total=7ms");
+    expect(lines[0]).toContain("result=failed failedStage=forward");
+  });
+
   it("never changes the measured operation when its clock or writer fails", async () => {
     const writer = vi.fn(() => {
       throw new Error("writer failed");

@@ -1739,6 +1739,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }),
     );
     if (!forwardRecovered && relaunchedManagedHealth.failure) {
+      probeTiming?.setForwardAction("failed");
       return {
         checked: true,
         wasRunning: false,
