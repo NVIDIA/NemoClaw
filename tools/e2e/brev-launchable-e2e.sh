@@ -67,6 +67,9 @@ def retain(text: str) -> None:
 
 def sanitize_line(line: str) -> str:
     global debug_marker_written
+    line = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "", line)
+    line = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
+    line = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", line)
     for value in known_values:
         if value:
             line = line.replace(value, "[REDACTED]")
@@ -217,6 +220,63 @@ run_budgeted_diagnostic_probe() {
   fi
   [ "$remaining" -le 5 ] || remaining=5
   run_bounded_probe "$remaining" "$output_name" "$status_name" "$@"
+}
+
+report_full_e2e_failure_diagnostic() {
+  local label="$1" status="$2" output="$3"
+  if [ "$status" = "not-run" ]; then
+    log "Full E2E failure diagnostic $label: not run; output: $output"
+  else
+    log "Full E2E failure diagnostic $label: status $status; output: $output"
+  fi
+}
+
+capture_full_e2e_failure_diagnostics() {
+  local timeout_seconds="${FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS:-30}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local diagnostic_output diagnostic_status
+
+  log "Full E2E failure diagnostics budget: up to $timeout_seconds seconds"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; state=$(sudo -n systemctl show --no-pager --property=Id --property=LoadState --property=UnitFileState --property=ActiveState --property=SubState --property=Result --property=ExecMainCode --property=ExecMainStatus --property=NRestarts --property=ActiveEnterTimestampMonotonic --property=ActiveExitTimestampMonotonic --property=InactiveEnterTimestampMonotonic --property=InactiveExitTimestampMonotonic openshell-gateway.service); restart=$(sudo -n systemctl show --no-pager --property=Restart --value openshell-gateway.service); exec_start=$(sudo -n systemctl show --no-pager --property=ExecStart --value openshell-gateway.service); fragment=$(sudo -n systemctl show --no-pager --property=FragmentPath --value openshell-gateway.service); drop_ins=$(sudo -n systemctl show --no-pager --property=DropInPaths --value openshell-gateway.service); printf "%s\n" "$state" | sed -e "s/^ActiveEnterTimestampMonotonic=/active-enter-us: /" -e "s/^ActiveExitTimestampMonotonic=/active-exit-us: /" -e "s/^InactiveEnterTimestampMonotonic=/inactive-enter-us: /" -e "s/^InactiveExitTimestampMonotonic=/inactive-exit-us: /" -e "s/=/ : /"; if [ "$restart" = always ]; then printf "restart-policy expected\n"; else printf "restart-policy unexpected\n"; fi; if printf "%s\n" "$exec_start" | grep -Fq "path=/usr/local/bin/nemoclaw-openshell-gateway-service" && printf "%s\n" "$exec_start" | grep -Fq "argv[]=/usr/local/bin/nemoclaw-openshell-gateway-service"; then printf "exec-start expected\n"; else printf "exec-start unexpected\n"; fi; if [ "$fragment" = /etc/systemd/system/openshell-gateway.service ]; then printf "fragment-path expected\n"; else printf "fragment-path unexpected\n"; fi; if [ -z "$drop_ins" ]; then printf "drop-ins absent\n"; else printf "drop-ins present\n"; fi'
+  report_full_e2e_failure_diagnostic "gateway state" "$diagnostic_status" "$diagnostic_output"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; state=$(sudo -n systemctl show --no-pager --property=Id --property=ActiveState --property=SubState --property=Result --property=NRestarts --property=ActiveEnterTimestampMonotonic docker.service docker.socket); requires=$(sudo -n systemctl show --no-pager --property=Requires --value openshell-gateway.service); after=$(sudo -n systemctl show --no-pager --property=After --value openshell-gateway.service); docker_wants=$(sudo -n systemctl show --no-pager --property=Wants --value docker.service); printf "%s\n" "$state" | sed -e "s/^ActiveEnterTimestampMonotonic=/active-enter-us: /" -e "s/=/ : /"; if printf "%s\n" "$requires" | tr " " "\n" | grep -Fxq docker.service; then printf "gateway requires docker: present\n"; else printf "gateway requires docker: absent\n"; fi; if printf "%s\n" "$after" | tr " " "\n" | grep -Fxq docker.service; then printf "gateway after docker: present\n"; else printf "gateway after docker: absent\n"; fi; if printf "%s\n" "$docker_wants" | tr " " "\n" | grep -Fxq openshell-gateway.service; then printf "docker pulls gateway: present\n"; else printf "docker pulls gateway: absent\n"; fi; printf "boot-uptime-seconds "; cut -d. -f1 /proc/uptime; printf "boot-id-prefix "; cut -c1-12 /proc/sys/kernel/random/boot_id; sudo -n stat --printf="gateway-state-dir type=%F uid=%u gid=%g mode=%a\n" /var/lib/brev/openshell-gateway'
+  report_full_e2e_failure_diagnostic "platform state" "$diagnostic_status" "$diagnostic_output"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; events=$(sudo -n journalctl --boot _PID=1 --unit=openshell-gateway.service --no-pager --lines=80 --output=json); classified=$(printf "%s\n" "$events" | jq -r "(.MESSAGE // \"\" | tostring) as \$message | (if (\$message | test(\"Start request repeated too quickly\"; \"i\")) then \"start-limit-hit\" elif (\$message | test(\"Scheduled restart job\"; \"i\")) then \"restart-scheduled\" elif (\$message | test(\"Main process exited\"; \"i\")) then \"main-exited\" elif (\$message | test(\"Failed with result\"; \"i\")) then \"failed-result\" elif (\$message | test(\"Dependency failed\"; \"i\")) then \"dependency-failed\" elif (\$message | test(\"^Starting \")) then \"starting\" elif (\$message | test(\"^Started \")) then \"started\" elif (\$message | test(\"^Stopping \")) then \"stopping\" elif (\$message | test(\"Deactivated successfully\"; \"i\")) then \"deactivated\" elif (\$message | test(\"^Stopped \")) then \"stopped\" else \"other-systemd-event\" end) as \$event | [.__MONOTONIC_TIMESTAMP // \"unknown\", \$event] | @tsv"); printf "%s\n" "$classified" | tail -n 16'
+  report_full_e2e_failure_diagnostic "gateway lifecycle" "$diagnostic_status" "$diagnostic_output"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; events=$(sudo -n journalctl --boot _PID=1 --unit=docker.service --unit=docker.socket --no-pager --lines=80 --output=json); classified=$(printf "%s\n" "$events" | jq -r "((.UNIT // ._SYSTEMD_UNIT // \"\") | if . == \"docker.service\" then \"docker-service\" elif . == \"docker.socket\" then \"docker-socket\" else \"docker-unit\" end) as \$unit | (.MESSAGE // \"\" | tostring) as \$message | (if (\$message | test(\"Start request repeated too quickly\"; \"i\")) then \"start-limit-hit\" elif (\$message | test(\"Scheduled restart job\"; \"i\")) then \"restart-scheduled\" elif (\$message | test(\"Main process exited\"; \"i\")) then \"main-exited\" elif (\$message | test(\"Failed with result\"; \"i\")) then \"failed-result\" elif (\$message | test(\"Dependency failed\"; \"i\")) then \"dependency-failed\" elif (\$message | test(\"^Starting \")) then \"starting\" elif (\$message | test(\"^Started \")) then \"started\" elif (\$message | test(\"^Stopping \")) then \"stopping\" elif (\$message | test(\"Deactivated successfully\"; \"i\")) then \"deactivated\" elif (\$message | test(\"^Stopped \")) then \"stopped\" else \"other-systemd-event\" end) as \$event | [.__MONOTONIC_TIMESTAMP // \"unknown\", \$unit, \$event] | @tsv"); printf "%s\n" "$classified" | tail -n 16'
+  report_full_e2e_failure_diagnostic "Docker lifecycle" "$diagnostic_status" "$diagnostic_output"
+
+  # The remote shell expands the single-quoted command.
+  # shellcheck disable=SC2016
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    'set -eu; state=$(sudo -n systemctl show --no-pager --property=Id --property=LoadState --property=ActiveState --property=SubState --property=Result --property=ExecMainCode --property=ExecMainStatus --property=ActiveEnterTimestampMonotonic --property=InactiveEnterTimestampMonotonic cloud-final.service); printf "%s\n" "$state" | sed -e "s/^ActiveEnterTimestampMonotonic=/active-enter-us: /" -e "s/^InactiveEnterTimestampMonotonic=/inactive-enter-us: /" -e "s/=/ : /"'
+  report_full_e2e_failure_diagnostic "cloud-final state" "$diagnostic_status" "$diagnostic_output"
+
+  run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
+    ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
+    "sudo -n ss -H -ltnp 'sport = :8080'"
+  report_full_e2e_failure_diagnostic "port 8080 listener" "$diagnostic_status" "$diagnostic_output"
 }
 
 report_probe() {
@@ -428,6 +488,10 @@ if [ "$IMAGE_ONLY" -eq 0 ]; then
   if [ "${BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS+x}" = x ] \
     && ! [[ "$BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     die "BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS must be a positive integer"
+  fi
+  if [ "${FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS+x}" = x ] \
+    && ! [[ "$FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "FULL_E2E_FAILURE_DIAGNOSTIC_TIMEOUT_SECONDS must be a positive integer"
   fi
   if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     die "POLL_SECONDS must be a positive integer"
@@ -693,6 +757,7 @@ if [ "$e2e_status" -ne 0 ] || ! grep -q '^NEMOCLAW_FULL_E2E_PASSED$' "$WORK_DIR/
   jq '.fullE2e = "failed" | .validation.fullE2E = "failed"' \
     "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
   mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
+  capture_full_e2e_failure_diagnostics
   die "full E2E failed"
 fi
 jq '.fullE2e = "passed" | .validation.fullE2E = "passed"' \
