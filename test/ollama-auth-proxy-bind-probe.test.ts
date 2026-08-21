@@ -29,8 +29,9 @@
 //     - Refusal to accept malformed input (would otherwise degrade to
 //       "unknown -> ok" which is fail-open)
 
+import fs from "node:fs";
 import net from "node:net";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as proxyExports from "../scripts/ollama-auth-proxy.mts";
 
@@ -261,6 +262,42 @@ describe("probeLinuxLoopbackBind bind probe (#6014)", () => {
       expect(probeLinuxLoopbackBind(ephemeralPort)).toBeNull();
     },
   );
+});
+
+describe("probeLinuxLoopbackBind tcp6 visibility degradation (#9730)", () => {
+  // Hex port 0x2CAA = 11434, matching the fixtures above.
+  const PORT = 11434;
+  const V4_OK = HEADER + tcpRow(`${FIX_IPV4_LOOPBACK_1}:2CAA`, "0A");
+  const errWithCode = (code: string) => Object.assign(new Error(code), { code });
+  const readerFor = (byPath: Record<string, () => string>) => (requested: unknown) =>
+    (byPath[String(requested)] ?? (() => { throw errWithCode("ENOENT"); }))();
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("degrades to null when tcp6 is unreadable, so the caller falls back to lsof", () => {
+    vi.spyOn(fs, "readFileSync").mockImplementation(
+      readerFor({
+        "/proc/net/tcp": () => V4_OK,
+        "/proc/net/tcp6": () => { throw errWithCode("EACCES"); },
+      }) as typeof fs.readFileSync,
+    );
+
+    // Loopback-only IPv4 data must not produce ok: true while IPv6 listeners
+    // exist but are invisible; a non-loopback IPv6-only listener would pass.
+    expect(probeLinuxLoopbackBind(PORT)).toBeNull();
+  });
+
+  it("classifies from IPv4 alone when tcp6 is absent on an IPv6-disabled kernel", () => {
+    vi.spyOn(fs, "readFileSync").mockImplementation(
+      readerFor({ "/proc/net/tcp": () => V4_OK }) as typeof fs.readFileSync,
+    );
+
+    const result = probeLinuxLoopbackBind(PORT);
+    expect(result).not.toBeNull();
+    expect((result as NonNullable<typeof result>).ok).toBe(true);
+  });
 });
 
 describe("isLoopbackLsofAddress bind probe (#6014)", () => {
