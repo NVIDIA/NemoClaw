@@ -170,7 +170,11 @@ if [ -L "$output" ] || { [ -e "$output" ] && [ ! -f "$output" ]; }; then
 fi
 
 temporary_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/llama-cpp-publication-evidence-XXXXXX")"
+pulled_reference=''
 cleanup() {
+  if [ -n "$pulled_reference" ]; then
+    docker image rm "$pulled_reference" >/dev/null 2>&1 || true
+  fi
   rm -rf "$temporary_root"
 }
 trap cleanup EXIT
@@ -243,6 +247,7 @@ for arch in amd64 arm64; do
     echo "ERROR: anonymous exact-digest pull failed for $platform." >&2
     exit 1
   fi
+  pulled_reference="$reference"
   image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
   if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
     || [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
@@ -253,6 +258,11 @@ for arch in amd64 arm64; do
     --arg imageId "$image_id" \
     --arg platform "$platform" \
     '{platform:$platform,imageId:$imageId}' >>"$anonymous_pull_summary"
+  if ! docker image rm "$reference" >/dev/null; then
+    echo "ERROR: anonymous $platform pull could not be removed after verification." >&2
+    exit 1
+  fi
+  pulled_reference=''
 done
 
 for sbom in "$sbom_amd64" "$sbom_arm64"; do

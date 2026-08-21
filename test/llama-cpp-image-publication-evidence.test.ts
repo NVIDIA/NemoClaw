@@ -32,6 +32,7 @@ const certificateOidcIssuer = "https://token.actions.githubusercontent.com";
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
 type FixtureOptions = {
+  anonymousCleanupFailure?: "amd64" | "arm64";
   anonymousMismatch?: boolean;
   anonymousPullFailure?: "amd64" | "arm64";
   duplicateSbom?: boolean;
@@ -191,6 +192,10 @@ elif [ "$1" = "pull" ] && [ "$2" = "--platform" ]; then
   if [ "$platform" = "linux/${options.anonymousPullFailure ?? "none"}" ]; then
     exit 91
   fi
+  if [ -e "$FIXTURE_ROOT/last-pulled-platform" ]; then
+    printf 'cannot overwrite digest\n' >&2
+    exit 93
+  fi
   printf '%s\n' "$platform" > "$FIXTURE_ROOT/last-pulled-platform"
 elif [ "$*" = "image inspect --format {{.Id}} ${reference}" ]; then
   case "$(cat "$FIXTURE_ROOT/last-pulled-platform")" in
@@ -201,6 +206,11 @@ elif [ "$*" = "image inspect --format {{.Id}} ${reference}" ]; then
 elif [ "$1" = "image" ] && [ "$2" = "inspect" ] \
   && [ "$3" = "--format" ] && [[ "$5" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   printf '%s\n' "$5"
+elif [ "$*" = "image rm ${reference}" ]; then
+  if [ "$(cat "$FIXTURE_ROOT/last-pulled-platform")" = "linux/${options.anonymousCleanupFailure ?? "none"}" ]; then
+    exit 94
+  fi
+  rm "$FIXTURE_ROOT/last-pulled-platform"
 else
   printf 'unexpected docker invocation: %s\n' "$*" >&2
   exit 90
@@ -269,8 +279,9 @@ fi
   const receipt = fs.existsSync(receiptPath)
     ? (JSON.parse(fs.readFileSync(receiptPath, "utf8")) as Record<string, unknown>)
     : null;
+  const localImageWasRemoved = !fs.existsSync(path.join(root, "last-pulled-platform"));
   fs.rmSync(root, { recursive: true, force: true });
-  return { candidateDigest, receipt, result };
+  return { candidateDigest, localImageWasRemoved, receipt, result };
 }
 
 describe("llama.cpp image publication evidence verifier", () => {
@@ -278,6 +289,7 @@ describe("llama.cpp image publication evidence verifier", () => {
     const fixture = runEvidence();
 
     expect(fixture.result.status, fixture.result.stderr).toBe(0);
+    expect(fixture.localImageWasRemoved).toBe(true);
     expect(fixture.receipt).toMatchObject({
       schemaVersion: 1,
       image: {
@@ -327,6 +339,7 @@ describe("llama.cpp image publication evidence verifier", () => {
     ["substituted platform descriptor", { indexArm64Digest: `sha256:${"f".repeat(64)}` }],
     ["anonymous bytes mismatch", { anonymousMismatch: true }],
     ["anonymous arm64 pull failure", { anonymousPullFailure: "arm64" as const }],
+    ["anonymous amd64 cleanup failure", { anonymousCleanupFailure: "amd64" as const }],
     ["duplicate SBOM predicate", { duplicateSbom: true }],
     ["identical platform SBOM documents", { identicalSbomDocuments: true }],
     ["SBOM subject mismatch", { sbomDigest: "0".repeat(64) }],
