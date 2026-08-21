@@ -89,7 +89,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "4b75a7e3a7630eb8954d73ca828b394d5e0646adbaa4b087b2435329d53b61b3",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -129,7 +132,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "fa54640184e22fa74500ab24f5b4372582616c7e12a1152cb6983bc0738c5a74",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.82/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -164,7 +170,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.85/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -190,7 +199,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.99/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -233,6 +245,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "d3ee11fd805d84c0e0f760831e091c1f16632e61cf9c1af7e7856e0aafc9de54",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "741febd02f3a6b18c8aa5e34e42e23a200c8a4b09b41a7c0de045bf65b0a9bdd",
     ],
     manifests: [
       {
@@ -273,7 +287,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "95a290f0e0e2f57d7d46ba9171fca6e99e5226875cd12e12391b7338f6c219f9",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.103/openshell.rb",
     },
-    installerTemplateSha256: ["6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c"],
+    installerTemplateSha256: [
+      "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+      "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+    ],
     manifests: [
       {
         asset: "openshell-checksums-sha256.txt",
@@ -316,9 +333,13 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       sha256: "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642",
       url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.106/openshell.rb",
     },
-    // The first template came from the downstream 0.0.106 pin. The additional
-    // digests authorize its fail-before-download strings preflight and
-    // repair-aware formula reuse for the next stack layer.
+    // The first template came from the downstream 0.0.106 pin. The second authorizes its
+    // fail-before-download strings preflight. The third authorizes repair when an existing formula
+    // has an invalid checksum or its release formula is unavailable. Homebrew owns that source
+    // state, so NemoClaw cannot correct it there; the installer verifies the trusted release
+    // formula before reuse. installer-homebrew-formula-reuse-trust.test.ts and
+    // installer-hash-check.test.ts lock the template and trust transitions. Remove the repair
+    // digest when supported Homebrew installs no longer need this repair path.
     installerTemplateSha256: [
       "5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0",
       "e850e927aab619d52c5de72967137569d65dd7fa669920c7c5b558f0770140d1",
@@ -1174,7 +1195,7 @@ function assertTrustedTemplate(
   selectorPatterns: readonly RegExp[],
   expectedSha256: readonly string[],
   label: string,
-): void {
+): string {
   const normalized = normalizeTrustedInstallerTemplate(
     source,
     functionNames,
@@ -1188,6 +1209,7 @@ function assertTrustedTemplate(
         `expected_sha256=[${expectedSha256.join(", ")}], actual_sha256=${actualSha256}`,
     );
   }
+  return actualSha256;
 }
 
 function skipSeparators(tokens: Token[], start: number): number {
@@ -1490,7 +1512,7 @@ function runCli(): void {
     );
   const supervisorManifestPins = extractSupervisorManifestPins(supervisorRuntimeSource, supervisor);
   assertTrustedSupervisorManifestPins(supervisorManifestPins, release);
-  assertTrustedTemplate(
+  const installerTemplateSha256 = assertTrustedTemplate(
     installerSource,
     ["openshell_pinned_sha256", "pinned_sandbox_build_version"],
     [
@@ -1501,7 +1523,7 @@ function runCli(): void {
     release.installerTemplateSha256,
     "installer",
   );
-  assertTrustedTemplate(
+  const brevTemplateSha256 = assertTrustedTemplate(
     brevInstallerSource,
     ["openshell_cli_pinned_sha256"],
     [/^\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION="v([0-9]+\.[0-9]+\.[0-9]+)"\s*;;\s*$/gm],
@@ -1520,7 +1542,15 @@ function runCli(): void {
     }
   }
   if (options.format === "json") {
-    process.stdout.write(`${JSON.stringify(pins)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(
+        pins.map((pin) => ({
+          ...pin,
+          operationalTemplateSha256:
+            pin.source === "installer" ? installerTemplateSha256 : brevTemplateSha256,
+        })),
+      )}\n`,
+    );
     return;
   }
   if (options.format === "release-tsv") {

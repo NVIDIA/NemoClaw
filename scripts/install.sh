@@ -5562,7 +5562,7 @@ ensure_station_express_pair() {
         export NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL
       fi
       unset NEMOCLAW_DGX_STATION_SSH_BINDING
-      info "No trusted reciprocal dual-DGX Station pair was detected; using the existing single-Station Ultra recipe."
+      info "No eligible reciprocal dual-DGX Station pair is available; using the existing single-Station Ultra recipe."
       ;;
     ready)
       [ "$status" -eq 0 ] \

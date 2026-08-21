@@ -45,6 +45,38 @@ Make `brew` available through `PATH` or inspect the formula before you remove Op
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
 
+## Stop the Amazon Bedrock Runtime Adapter
+
+The selected gateway can use a host-local Amazon Bedrock Runtime adapter.
+Before it removes the selected state root, uninstall stops only the adapter bound to that state.
+
+Before each signal, uninstall revalidates the canonical PID, current user, stable process start identity, lifecycle generation, executable path, launcher path, and adapter port.
+Before it deletes lifecycle evidence, uninstall revalidates process absence, the state generation, the PID, and the local bearer-token hash.
+If the adapter remains after `SIGTERM` and `SIGKILL`, uninstall exits nonzero before state-root cleanup.
+It preserves the selected gateway's PID, bearer token, any lifecycle state that was published, and prepared uninstall journal for a retry.
+If required evidence conflicts before journal preparation, uninstall preserves that evidence and does not signal a process.
+
+The lifecycle evidence is `<selected-state-root>/bedrock-runtime-adapter.pid`, `<selected-state-root>/bedrock-runtime-adapter-token`, and `<selected-state-root>/bedrock-runtime-adapter.json`.
+If startup leaves only a private PID file containing one canonical positive PID, uninstall does not signal that PID.
+Under the adapter lifecycle lock, uninstall removes only the unchanged PID file after it observes that the PID is absent twice.
+It also confirms that no bearer token, lifecycle state, or uninstall journal appeared between those checks.
+A live or uninspectable PID, malformed or changed PID file, or newly published evidence makes uninstall exit nonzero.
+Uninstall preserves the PID file and any new lifecycle evidence in those cases.
+Keep those files intact while you resolve the reported process or state conflict.
+Rerun uninstall with the same `NEMOCLAW_GATEWAY_PORT` value afterward.
+The journal is `~/.local/state/nemoclaw-bedrock-runtime-adapter/<gateway-port>/uninstall.json`.
+Onboarding refuses to start another Amazon Bedrock adapter generation while that journal or non-reusable lifecycle evidence remains.
+If an older lifecycle record cannot prove the live process generation, NemoClaw does not signal that process.
+Do not signal a process from the saved PID alone; independently verify the current user, process start, executable path, launcher path, and listening port before resolving it, then rerun uninstall.
+
+While an adapter remains alive, its process retains any forwarded AWS credential until the process exits.
+After you resolve a failed stop, rerunning uninstall retires the local bearer token and lifecycle evidence.
+Remove or rotate the upstream AWS credential through its owning AWS credential source when required.
+
+Only full uninstall checks the configured adapter port when a recorded adapter PID file is absent.
+It never signals an unbound listener without matching lifecycle state.
+A selected-gateway uninstall uses only the selected state root and does not scan for a sibling gateway's adapter.
+
 ## Delete Host Models
 
 The `--delete-models` flag is an explicit opt-in for deleting host model files.
