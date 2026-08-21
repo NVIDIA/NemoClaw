@@ -1381,29 +1381,48 @@ describe("portable profile systemctl fixture", () => {
     }
   });
 
-  it("binds portable-launch setup and always-run cleanup to the shared systemctl fixture (#9006)", () => {
+  it("binds portable-launch to delegated systemd Podman and disposable BuildKit", () => {
     const provision = portableLaunchStep("Provision restricted rootless Linux runtime").run ?? "";
+    expect(provision).not.toContain("portable-profile-systemctl-shim.sh");
+    expect(provision).toContain('sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /run/nemoclaw');
     expect(provision).toContain(
-      'install -m 700 test/e2e/fixtures/portable-profile-systemctl-shim.sh "$shim_dir/systemctl"',
+      "/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf",
     );
+    expect(provision).toContain("/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf");
     expect(provision).toContain(
-      'sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" /run/nemoclaw',
+      "/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf",
     );
-    expect(provision).toContain("systemctl --user start podman.socket");
+    expect(provision).toContain("Delegate=cpu memory pids");
+    expect(provision.match(/CPUWeight=100/gu)).toHaveLength(2);
+    expect(provision).toContain('sudo systemctl stop "user@${uid}.service"');
+    expect(provision).toContain("sudo systemctl daemon-reload");
+    expect(provision).toContain('sudo systemctl start "user@${uid}.service"');
+    expect(provision).toContain("/usr/bin/systemctl --user start podman.socket");
+    expect(provision).toContain("inspectPortableCpuDelegation");
+    expect(provision).toContain('test "$cgroup_manager" = "systemd"');
     const runtimeExportIndex = provision.indexOf("XDG_RUNTIME_DIR=%s");
     expect(runtimeExportIndex).toBeGreaterThanOrEqual(0);
     expect(runtimeExportIndex).toBeLessThan(
-      provision.indexOf("systemctl --user start podman.socket"),
+      provision.indexOf("/usr/bin/systemctl --user start podman.socket"),
     );
 
+    const buildkit = portableLaunchStep("Prove nested BuildKit on the portable Podman socket");
+    expect(buildkit.run).toContain("docker buildx create");
+    expect(buildkit.run).toContain("--driver docker-container");
+    expect(buildkit.run).toContain('"$DOCKER_HOST"');
+    expect(buildkit.run).toContain('docker buildx inspect "$builder_name" --bootstrap');
+    expect(buildkit.run).toContain("docker buildx build");
+
     const cleanup = portableLaunchStep("Clean up portable runtime");
+    const cleanupRun = cleanup.run ?? "";
     expect(cleanup.if).toBe("always()");
-    expect(cleanup.run).toContain('runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"');
-    expect(cleanup.run).toContain(
-      'import { cleanupPortableProfileSystemctlFixture } from "./test/e2e/fixtures/portable-profile-systemctl.ts"; await cleanupPortableProfileSystemctlFixture(process.argv[1]);',
+    expect(cleanupRun).toContain('docker buildx rm "$builder_name"');
+    expect(cleanupRun).toContain("cleanup_fixture_drop_in");
+    expect(cleanupRun).toContain("sudo systemctl daemon-reload");
+    expect(cleanupRun.indexOf('docker buildx rm "$builder_name"')).toBeLessThan(
+      cleanupRun.indexOf("podman system reset"),
     );
-    expect(cleanup.run).toContain('"$runtime_dir"');
-    expect(cleanup.run).toContain(
+    expect(cleanupRun).toContain(
       "rm -f -- /run/nemoclaw/portable-inference.json /run/nemoclaw/.portable-inference.json.tmp",
     );
   });
