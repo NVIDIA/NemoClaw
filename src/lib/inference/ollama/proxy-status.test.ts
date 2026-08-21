@@ -26,6 +26,24 @@ describe("printProxyStartupReason backend-not-loopback remediation", () => {
     expect(errors[0]).toBe("  Error: Ollama auth proxy refused to start.");
   });
 
+  test("uses the persisted Ollama port during recovery", () => {
+    printProxyStartupReason(NOT_LOOPBACK, OLLAMA_PORT, "http://127.0.0.1:12345", "ollama");
+
+    const rendered = errors.join("\n");
+    expect(rendered).toContain("OLLAMA_HOST=127.0.0.1:12345");
+    expect(rendered).not.toContain(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT}`);
+  });
+
+  test("uses neutral remediation when persisted backend identity is unavailable", () => {
+    printProxyStartupReason(NOT_LOOPBACK, OLLAMA_PORT, OLLAMA_BACKEND, "unknown");
+
+    const rendered = errors.join("\n");
+    expect(rendered).toContain("127.0.0.1:11434");
+    expect(rendered).toContain("then re-run onboarding");
+    expect(rendered).not.toContain("OLLAMA_HOST=");
+    expect(rendered).not.toContain("bind Ollama to loopback");
+  });
+
   test.each([
     ["a vLLM endpoint", "http://localhost:8000", "localhost:8000", "only on port 8000"],
     ["a llama-server endpoint", "http://127.0.0.1:8080", "127.0.0.1:8080", "only on port 8080"],

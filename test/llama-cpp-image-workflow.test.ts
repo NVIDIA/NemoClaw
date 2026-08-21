@@ -110,18 +110,27 @@ function jobPermissionValues(workflowValue: Workflow): string[] {
 function runAnonymousPull(step: Step, result: "denied" | "success") {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "llama-cpp-anonymous-pull-"));
   const fakeBin = path.join(temporaryRoot, "bin");
-  const invocationLog = path.join(temporaryRoot, "docker-invocation");
+  const invocationLog = path.join(temporaryRoot, "docker-invocations");
   const configLog = path.join(temporaryRoot, "docker-config");
   fs.mkdirSync(fakeBin);
   fs.writeFileSync(
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" > "$INVOCATION_LOG"
-printf '%s\n' "$DOCKER_CONFIG" > "$CONFIG_LOG"
-[ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
-if [ "$RESULT" = "denied" ]; then
-  exit 37
+printf '%s\n' "$*" >> "$INVOCATION_LOG"
+if [ "$1" = "pull" ]; then
+  printf '%s\n' "$DOCKER_CONFIG" > "$CONFIG_LOG"
+  [ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
+  if [ "$RESULT" = "denied" ]; then
+    exit 37
+  fi
+  exit 0
+elif [ "$*" = "image inspect --format {{.Id}} ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}" ]; then
+  printf 'sha256:%s\n' '${"b".repeat(64)}'
+elif [ "$*" = "image inspect --format {{.Id}} sha256:${"b".repeat(64)}" ]; then
+  printf 'sha256:%s\n' '${"b".repeat(64)}'
+else
+  exit 92
 fi
 `,
     { mode: 0o755 },
@@ -133,6 +142,7 @@ fi
       encoding: "utf8",
       env: {
         ...process.env,
+        ARCH: "arm64",
         CONFIG_LOG: configLog,
         DIGEST: `sha256:${"a".repeat(64)}`,
         DOCKER_AUTH_CONFIG: "must-not-reach-docker",
@@ -145,10 +155,18 @@ fi
       },
     });
     const anonymousConfig = fs.readFileSync(configLog, "utf8").trim();
+    const evidencePath = path.join(
+      temporaryRoot,
+      "llama-cpp-anonymous-pulls",
+      "anonymous-pull-arm64.json",
+    );
     return {
       ...commandResult,
       anonymousConfigWasRemoved: !fs.existsSync(anonymousConfig),
-      invocation: fs.readFileSync(invocationLog, "utf8").trim(),
+      evidence: fs.existsSync(evidencePath)
+        ? (JSON.parse(fs.readFileSync(evidencePath, "utf8")) as Record<string, unknown>)
+        : null,
+      invocations: fs.readFileSync(invocationLog, "utf8").trim().split("\n"),
     };
   } finally {
     fs.rmSync(temporaryRoot, { force: true, recursive: true });
@@ -311,6 +329,7 @@ describe("llama.cpp image PR workflow", () => {
     const exportDigest = namedStep(publish, "Export validated platform digest");
     const logout = namedStep(publish, "Remove GHCR publication credentials");
     const anonymousPull = namedStep(publish, "Verify anonymous exact platform pull");
+    const uploadAnonymousPull = namedStep(publish, "Upload anonymous pull evidence");
     const uploadDigest = namedStep(publish, "Upload platform digest");
     const assemble = required(
       workflow.jobs?.["assemble-candidate"],
@@ -357,6 +376,7 @@ describe("llama.cpp image PR workflow", () => {
       contents: "read",
       packages: "write",
     });
+    expect(publish["runs-on"]).toBe("${{ matrix.runner }}");
     expect(publish.strategy?.matrix).toBe("${{ fromJSON(needs.config.outputs.matrix) }}");
     expect(publishBuild.with?.outputs).toBe(
       "type=image,name=${{ needs.config.outputs.publication_repository }},push-by-digest=true,name-canonical=true,push=true",
@@ -391,8 +411,16 @@ describe("llama.cpp image PR workflow", () => {
       publish.steps?.indexOf(anonymousPull) ?? Number.POSITIVE_INFINITY,
     );
     expect(publish.steps?.indexOf(anonymousPull)).toBeLessThan(
+      publish.steps?.indexOf(uploadAnonymousPull) ?? Number.POSITIVE_INFINITY,
+    );
+    expect(publish.steps?.indexOf(uploadAnonymousPull)).toBeLessThan(
       publish.steps?.indexOf(uploadDigest) ?? Number.POSITIVE_INFINITY,
     );
+    expect(uploadAnonymousPull.with).toMatchObject({
+      name: "llama-cpp-anonymous-pull-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}",
+      path: "${{ runner.temp }}/llama-cpp-anonymous-pulls/anonymous-pull-${{ matrix.arch }}.json",
+      "if-no-files-found": "error",
+    });
     expect(assemble.needs).toEqual(["config", "publication-gate", "publish-platform"]);
     expect(assembleStep.run).toContain(
       'docker buildx imagetools create --tag "$IMAGE:$CANDIDATE_TAG" "${sources[@]}"',
@@ -447,9 +475,17 @@ describe("llama.cpp image PR workflow", () => {
 
     const accepted = runAnonymousPull(anonymousPull, "success");
     expect(accepted.status, accepted.stderr).toBe(0);
-    expect(accepted.invocation).toBe(
+    expect(accepted.invocations).toEqual([
       `pull --platform linux/arm64 ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}`,
-    );
+      `image inspect --format {{.Id}} ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}`,
+      `image inspect --format {{.Id}} sha256:${"b".repeat(64)}`,
+    ]);
+    expect(accepted.evidence).toEqual({
+      imageId: `sha256:${"b".repeat(64)}`,
+      platform: "linux/arm64",
+      platformDigest: `sha256:${"a".repeat(64)}`,
+      reference: `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"a".repeat(64)}`,
+    });
     expect(accepted.anonymousConfigWasRemoved).toBe(true);
 
     const rejected = runAnonymousPull(anonymousPull, "denied");
@@ -468,6 +504,7 @@ describe("llama.cpp image PR workflow", () => {
     const downloadSboms = namedStep(verify, "Download SPDX SBOMs");
     const crypto = namedStep(verify, "Verify cryptographic evidence");
     const receipt = namedStep(verify, "Verify publication evidence and create receipt");
+    const downloadAnonymousPull = namedStep(verify, "Download anonymous pull evidence");
 
     expect(scan.needs).toEqual(["config", "publication-gate", "assemble-candidate"]);
     expect(scanStep.uses).toBe("anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2");
@@ -510,13 +547,16 @@ describe("llama.cpp image PR workflow", () => {
       path: "${{ runner.temp }}/llama-cpp-evidence",
       "merge-multiple": true,
     });
+    expect(downloadAnonymousPull.with).toEqual({
+      pattern: "llama-cpp-anonymous-pull-${{ github.run_id }}-${{ github.run_attempt }}-*",
+      path: "${{ runner.temp }}/llama-cpp-evidence",
+      "merge-multiple": true,
+    });
     expect(receipt.run).toContain("scripts/checks/verify-llama-cpp-image-publication-evidence.sh");
-    expect(receipt.run).toContain(
-      '--sbom-amd64 "$evidence/llama-cpp-sbom-amd64.spdx.json"',
-    );
-    expect(receipt.run).toContain(
-      '--sbom-arm64 "$evidence/llama-cpp-sbom-arm64.spdx.json"',
-    );
+    expect(receipt.run).toContain('--sbom-amd64 "$evidence/llama-cpp-sbom-amd64.spdx.json"');
+    expect(receipt.run).toContain('--sbom-arm64 "$evidence/llama-cpp-sbom-arm64.spdx.json"');
+    expect(receipt.run).toContain('--anonymous-pull-amd64 "$evidence/anonymous-pull-amd64.json"');
+    expect(receipt.run).toContain('--anonymous-pull-arm64 "$evidence/anonymous-pull-arm64.json"');
     const publicationJobs = [
       "publish-platform",
       "assemble-candidate",

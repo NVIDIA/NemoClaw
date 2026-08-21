@@ -13,6 +13,7 @@
 
 import type { GpuInfo } from "../local";
 import type { PulledModelDiscoveryDeps } from "./model-discovery";
+import type { ProxyBackendKind } from "./proxy-status";
 
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
@@ -66,6 +67,7 @@ const {
   removeLocalAdapterFile,
   SHARED_LOCAL_ADAPTER_STATE_DIR,
   spawnDetachedNodeAdapter,
+  writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
 } = require("../local-adapter-lifecycle");
 const {
@@ -81,12 +83,24 @@ const {
 const PROXY_STATE_DIR = SHARED_LOCAL_ADAPTER_STATE_DIR;
 const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
 const PROXY_BACKEND_PATH = path.join(PROXY_STATE_DIR, "ollama-backend");
+const PROXY_BACKEND_DESCRIPTOR_PATH = path.join(PROXY_STATE_DIR, "ollama-backend.json");
 const PROXY_PORT_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-port");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 const PROXY_STATUS_PATH = defaultProxyStatusPath(PROXY_STATE_DIR);
 const OLLAMA_PROXY_LIFECYCLE_LOCK = "host-global-ollama-auth-proxy";
 const OLLAMA_MODEL_OWNERSHIP_LOCK = "host-global-ollama-model-ownership";
 const MAX_PROXY_STATE_FILE_BYTES = 64 * 1024;
+
+type StoredProxyBackendKind = Exclude<ProxyBackendKind, "unknown">;
+type ProxyBackendDescriptor = {
+  readonly schemaVersion: 1;
+  readonly kind: StoredProxyBackendKind;
+  readonly url: string;
+};
+type ProxyBackendIdentity = {
+  readonly kind: ProxyBackendKind;
+  readonly url: string | null;
+};
 
 let ollamaProxyToken: string | null = null;
 
@@ -121,13 +135,27 @@ function withOllamaProxyLifecycleTransaction<T>(operation: () => Promise<T> | T)
 function persistProxyTokenUnlocked(
   token: string,
   backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`,
+  backendKind: StoredProxyBackendKind | null = "ollama",
 ): void {
   writeLocalAdapterSecretFile(PROXY_BACKEND_PATH, backendUrl);
+  if (backendKind === null) {
+    removeLocalAdapterFile(PROXY_BACKEND_DESCRIPTOR_PATH);
+  } else {
+    writeLocalAdapterJsonFile(PROXY_BACKEND_DESCRIPTOR_PATH, {
+      schemaVersion: 1,
+      kind: backendKind,
+      url: backendUrl,
+    } satisfies ProxyBackendDescriptor);
+  }
   writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, token);
 }
 
-function persistProxyToken(token: string, backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`): void {
-  withOllamaProxyLifecycleLock(() => persistProxyTokenUnlocked(token, backendUrl));
+function persistProxyToken(
+  token: string,
+  backendUrl = `http://127.0.0.1:${OLLAMA_PORT}`,
+  backendKind: StoredProxyBackendKind = "ollama",
+): void {
+  withOllamaProxyLifecycleLock(() => persistProxyTokenUnlocked(token, backendUrl, backendKind));
 }
 
 function readProxyStateFile(filePath: string): string | null {
@@ -143,6 +171,41 @@ function readProxyStateFile(filePath: string): string | null {
   } finally {
     opened.close();
   }
+}
+
+function parseProxyBackendDescriptor(raw: string | null): ProxyBackendDescriptor | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (
+      parsed?.schemaVersion !== 1 ||
+      (parsed.kind !== "ollama" && parsed.kind !== "compatible-endpoint") ||
+      typeof parsed.url !== "string" ||
+      parsed.url.trim().length === 0
+    ) {
+      return null;
+    }
+    return { schemaVersion: 1, kind: parsed.kind, url: parsed.url };
+  } catch {
+    return null;
+  }
+}
+
+function readProxyBackendIdentity(root = PROXY_STATE_DIR): ProxyBackendIdentity {
+  const url = readProxyStateFile(path.join(root, "ollama-backend"));
+  const descriptor = parseProxyBackendDescriptor(
+    readProxyStateFile(path.join(root, "ollama-backend.json")),
+  );
+  return descriptor?.url === url ? { kind: descriptor.kind, url } : { kind: "unknown", url };
+}
+
+function commonKnownBackendKind(
+  backends: readonly ProxyBackendIdentity[],
+): StoredProxyBackendKind | null {
+  const kinds = backends.map(({ kind }) => kind);
+  if (kinds.length === 0 || kinds.includes("unknown")) return null;
+  const uniqueKinds = [...new Set(kinds)];
+  return uniqueKinds.length === 1 ? (uniqueKinds[0] as StoredProxyBackendKind) : null;
 }
 
 function persistOrValidateProxyPortUnlocked(): boolean {
@@ -188,7 +251,7 @@ function adoptGatewayScopedProxyToken(): string | null {
       if (!token) return [];
       return [
         {
-          backendUrl: readProxyStateFile(path.join(root, "ollama-backend")),
+          backend: readProxyBackendIdentity(root),
           token,
           tokenPath: path.join(root, "ollama-proxy-token"),
         },
@@ -215,7 +278,7 @@ function adoptGatewayScopedProxyToken(): string | null {
 
   const selectedCandidates = candidates.filter(({ token }) => token === selectedToken);
   const backendUrls = [
-    ...new Set(selectedCandidates.map(({ backendUrl }) => backendUrl).filter(Boolean)),
+    ...new Set(selectedCandidates.map(({ backend }) => backend.url).filter(Boolean)),
   ];
   if (backendUrls.length > 1) {
     throw new Error(
@@ -223,8 +286,16 @@ function adoptGatewayScopedProxyToken(): string | null {
         "NemoClaw cannot safely select one.",
     );
   }
-  const selectedBackendUrl = backendUrls[0] ?? readProxyStateFile(PROXY_BACKEND_PATH) ?? undefined;
-  persistProxyTokenUnlocked(selectedToken, selectedBackendUrl);
+  const sharedBackend = readProxyBackendIdentity();
+  const selectedBackendUrl =
+    backendUrls[0] ?? sharedBackend.url ?? `http://127.0.0.1:${OLLAMA_PORT}`;
+  const selectedBackends =
+    backendUrls.length > 0 ? selectedCandidates.map(({ backend }) => backend) : [sharedBackend];
+  persistProxyTokenUnlocked(
+    selectedToken,
+    selectedBackendUrl,
+    commonKnownBackendKind(selectedBackends),
+  );
   return selectedToken;
 }
 
@@ -548,7 +619,8 @@ function noAuthProxy(endpointUrl: string) {
   return {
     baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${endpoint.pathname}`,
     credentialValue: getOllamaProxyToken()!,
-    persist: () => persistProxyToken(getOllamaProxyToken()!, endpoint.origin),
+    persist: () =>
+      persistProxyToken(getOllamaProxyToken()!, endpoint.origin, "compatible-endpoint"),
     restore: restorePersistedOllamaAuthProxy,
   };
 }
@@ -640,11 +712,14 @@ function ensureOllamaAuthProxyUnlocked(): void {
 
   // Proxy not running, token mismatch, or PID stale — restart with the persisted token.
   ollamaProxyToken = token;
-  const startedPid = spawnOllamaAuthProxy(token);
+  const backend = readProxyBackendIdentity();
+  const startedPid = spawnOllamaAuthProxy(token, backend.url ?? undefined);
   for (let attempt = 0; attempt < 10; attempt++) {
     if (isOllamaProxyProcess(startedPid) && probeProxyToken(token) === "accepted") return;
     sleep(1);
   }
+  const status = readProxyExitStatus(PROXY_STATUS_PATH);
+  if (printProxyStartupReason(status, OLLAMA_PORT, backend.url ?? undefined, backend.kind)) return;
   console.error(`  Error: Ollama auth proxy did not become ready after restart.`);
 }
 
