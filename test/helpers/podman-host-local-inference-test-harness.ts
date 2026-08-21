@@ -809,8 +809,7 @@ export function createPodmanHostLocalInferenceTestHarness(
         },
         createArguments: Object.freeze([
           "run",
-          "--http-proxy",
-          "false",
+          "--http-proxy=false",
           "--detach",
           "--pull",
           "never",
