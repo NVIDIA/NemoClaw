@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E
+name: E2E / Main and Manual Suite
 run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:

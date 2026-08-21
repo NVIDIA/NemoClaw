@@ -96,11 +96,21 @@ const OPAQUE_INPUTS = [
   ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
 ] as const;
 
+const WORKFLOW_NAME_TEST = "test/github-actions-workflow-names.test.ts";
+
 function triggeredBy(relativePath: string): string[] {
-  return resolveVitestWatchTests(path.resolve(relativePath));
+  return resolveVitestWatchTests(path.resolve(relativePath)).filter(
+    (test) => test !== WORKFLOW_NAME_TEST,
+  );
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  it("maps every workflow to the shared display-name contract", () => {
+    expect(resolveVitestWatchTests(path.resolve(".github/workflows/pr.yaml"))).toContain(
+      WORKFLOW_NAME_TEST,
+    );
+  });
+
   it.each([
     ".github/workflows/release-daily-brev-image.yaml",
     "scripts/release-daily-brev-image.sh",

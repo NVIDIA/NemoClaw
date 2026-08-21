@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Docs / Post-Merge Catch-Up
+name: Docs / Author Post-Merge Catch-Up
 
 on:
   push:

@@ -274,7 +274,7 @@ The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the following publi
 | Evidence | Value |
 | --- | --- |
 | Repository | `NVIDIA/NemoClaw` |
-| Workflow | `Images / Base Images` |
+| Workflow | `Images / Publish Base and Managed Images` |
 | Workflow path | `.github/workflows/base-image.yaml` |
 | Trigger | `workflow_dispatch` on `codex/hermes-acp` |
 | Producer run | `32413658315`, attempt 1, completed successfully |

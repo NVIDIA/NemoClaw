@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Images / llama.cpp Server
+name: Images / Build and Publish llama.cpp Server Image
 
 on:
   pull_request:
