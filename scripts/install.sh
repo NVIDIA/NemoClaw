@@ -4140,8 +4140,8 @@ ensure_docker() {
           done
         fi
         # Station Express saves its mode before this re-exec. The child treats an
-        # inherited provider as explicit intent, so remove the derived value and
-        # let the child restore the saved mode.
+        # inherited provider as explicit intent, so remove the derived value.
+        # The child restores the saved mode and derives the provider again.
         if [ "${_STATION_INSTALL_MODE:-}" = "express" ]; then
           unset NEMOCLAW_PROVIDER
         fi

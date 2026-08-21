@@ -11,6 +11,7 @@ import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 const INSTALLER_SOURCE = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
+const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_REVISION = "a".repeat(40);
 const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
@@ -146,6 +147,30 @@ function runEnsureDocker(
   };
 }
 
+function runSourcedInstaller(body: string) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-resume-mode-"));
+  try {
+    const result = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        env: {
+          HOME: home,
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+        },
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      },
+    );
+    return { result, output: `${result.stdout}${result.stderr}` };
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec", () => {
   it("re-execs through 'sg docker' instead of exiting 0 when NEMOCLAW_NON_INTERACTIVE=1", () => {
     // Repro of #4414: on a clean Ubuntu VM, the non-interactive curl|bash
@@ -240,6 +265,26 @@ describe("install.sh ensure_docker — Station intent across self re-exec", () =
     expect(outcome.status, outcome.stderr).toBe(0);
     expect(outcome.sgArgs.length).toBeGreaterThan(0);
     expect(outcome.sgProvider).toBe("install-vllm");
+  });
+
+  it("rejects an explicit managed-vLLM provider against an Express receipt (#9900)", () => {
+    const { result, output } = runSourcedInstaller(`
+state_dir="$(ensure_nemoclaw_state_dir)"
+receipt="$state_dir/station-express-resume"
+printf 'revision=${STATION_REVISION}\\nmodel=nemotron-3-ultra-550b-a55b\\ngeneration=${STATION_GENERATION}\\nagent=openclaw\\nsandbox=my-assistant\\npolicy_tier=balanced\\ngateway_port=8080\\ndashboard_port=18789\\nvllm_port=8000\\nmode=express\\n' >"$receipt"
+chmod 0600 "$receipt"
+detect_express_platform() { printf 'DGX Station'; }
+station_installer_revision() { printf '${STATION_REVISION}'; }
+NON_INTERACTIVE=''
+NEMOCLAW_PROVIDER='install-vllm'
+NEMOCLAW_NO_EXPRESS=''
+maybe_offer_express_install
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain(
+      "resume state was accepted in express mode; refusing to resume it in provider mode",
+    );
   });
 
   it("resumes the saved Station Express receipt after Docker-group re-exec (#9900)", () => {
