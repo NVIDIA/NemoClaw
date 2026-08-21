@@ -29,6 +29,9 @@ export const REVIEWED_NPM_INTEGRITY =
   "sha512-T67M4L5wNm0cZ7EBLErcEkY1SmzEW/WJ+SADBzsFUY1UdAPfFHXFQtZ6SEXiK0+vzXysCvAsepbMaBTwnrAD+w==";
 export const REVIEWED_NPM_TARBALL = "https://registry.npmjs.org/npm/-/npm-11.18.0.tgz";
 
+// This is the immutable upstream archive inventory, not the completed image
+// state. npm 11.18.0 includes affected tar 7.5.19, so every image composition
+// patches the private tar tree again after installing this reviewed archive.
 export const REVIEWED_NPM_PACKAGES = {
   "brace-expansion": "5.0.7",
   picomatch: "4.0.4",
