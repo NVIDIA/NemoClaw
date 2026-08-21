@@ -32,7 +32,6 @@ import {
   type RebuildRecreateOnboardOpts,
 } from "./rebuild-gpu-opt-out";
 import {
-  MCP_BRIDGE_POLICY_SOURCE,
   type McpRebuildPreparation,
   printMcpRebuildRetryCommand,
   restoreMcpRegistryForRebuildRetry,
@@ -286,32 +285,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
   try {
-    if (rebuildMcpEntries.length > 0) {
-      const currentEntry = registry.getSandbox(sandboxName);
-      if (!currentEntry) {
-        throw new Error("MCP-bearing rebuild lost its preserved registry entry before recreate.");
-      }
-      const mcpPolicyNames = new Set(rebuildMcpEntries.map((entry) => entry.policyName));
-      const currentPolicies = Array.isArray(currentEntry.policies) ? currentEntry.policies : [];
-      const stagedPolicies = excludePolicyPresetsByName(currentPolicies, [...mcpPolicyNames]);
-      const stagedCustomPolicies = (currentEntry.customPolicies ?? []).filter(
-        (entry) =>
-          !(mcpPolicyNames.has(entry.name) && entry.sourcePath === MCP_BRIDGE_POLICY_SOURCE),
-      );
-      if (!registry.updateSandbox(sandboxName, {
-        policies: stagedPolicies,
-        customPolicies: stagedCustomPolicies.length > 0 ? stagedCustomPolicies : undefined,
-        mcp: undefined,
-      })) {
-        throw new Error("MCP-bearing rebuild could not stage its inner policy selection.");
-      }
-      // The inner generic onboard path refuses any registry row that still
-      // advertises managed MCP state, and its policy carry-forward also reloads
-      // this row immediately before creation. Stage the dedicated rebuild
-      // handoff without MCP ownership or generated policies; failure recovery
-      // restores the original row, while successful post-rebuild MCP restore
-      // re-establishes the live manifest and generated policy registrations.
-    }
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
       rebuildGatewayAuthority,

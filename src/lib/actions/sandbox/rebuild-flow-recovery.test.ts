@@ -524,7 +524,6 @@ describe("rebuildSandbox flow: recovery", () => {
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { policies: ["npm"] });
     expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
       [expect.objectContaining({ name: "alpha", policies: ["npm", "mcp-bridge-github"] })],
     ]);

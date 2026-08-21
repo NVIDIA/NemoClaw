@@ -1604,6 +1604,8 @@ class SandboxStateFlow<
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
+      recreateJournalTargetIntentFingerprint:
+        this.options.recreateJournalTargetIntentFingerprint ?? undefined,
       extraProviders,
     };
   }

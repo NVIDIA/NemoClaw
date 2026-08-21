@@ -109,6 +109,36 @@ export async function completeHermesPortableSandboxRegistration(input: {
   return registered;
 }
 
+export function hasManagedMcpRebuildHandoff(
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  const handoff = createIntent?.recreateJournalTargetIntentFingerprint;
+  return Boolean(
+    handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff,
+  );
+}
+
+function shouldRefuseManagedMcpRecreate(
+  preservedMcpState: unknown,
+  managedMcpRebuildHandoff: boolean,
+): boolean {
+  return Boolean(preservedMcpState) && !managedMcpRebuildHandoff;
+}
+
+function hasPreservedManagedMcpRebuildHandoff(
+  preservedMcpState: unknown,
+  createIntent: SandboxCreateIntent | null | undefined,
+): boolean {
+  return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
+}
+
+function applyRecreatePolicyCarryForwardUnlessManagedMcpHandoff(
+  managedMcpRebuildHandoff: boolean,
+  apply: () => void,
+): void {
+  if (!managedMcpRebuildHandoff) apply();
+}
+
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
   return async function createSandboxWithBaseImageResolution(
     baseImageResolutionContext: import("../base-image-resolution-flow").BaseImageResolutionContext,
@@ -730,7 +760,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         { formatSandboxAgentName, note },
       );
-      if (preservedMcpState) {
+      const managedMcpRebuildHandoff = hasPreservedManagedMcpRebuildHandoff(
+        preservedMcpState,
+        createIntent,
+      );
+      if (shouldRefuseManagedMcpRecreate(preservedMcpState, managedMcpRebuildHandoff)) {
         for (const hint of recreateJournal.managedMcpRecreateRefusalHints({
           sandboxName,
           cliName: cliName(),
@@ -759,7 +793,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         baseImageResolutionContext,
         previousEntry?.imageTag,
       );
-      policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
+      // A journal-bound outer rebuild already seeded the exact policy selection
+      // after excluding generated MCP presets. Re-reading the preserved source
+      // row here would reintroduce those intentionally removed names before the
+      // dedicated post-rebuild MCP restore owns them again.
+      applyRecreatePolicyCarryForwardUnlessManagedMcpHandoff(
+        managedMcpRebuildHandoff,
+        () =>
+          policyPresetCarry.applyRecreatePolicyCarryForward(
+            sandboxName,
+            isNonInteractive(),
+            note,
+          ),
+      );
 
       const noRestorePending =
         pendingStateRestore === null && pendingStateRestoreBackupPath === null;

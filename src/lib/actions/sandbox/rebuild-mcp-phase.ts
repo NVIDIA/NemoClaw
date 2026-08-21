@@ -8,7 +8,6 @@ import { explicitObservabilityFlag } from "../../onboard/observability-command-f
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
-  MCP_BRIDGE_POLICY_SOURCE,
   prepareMcpBridgesForAbsentSandboxRebuild,
   prepareMcpBridgesForExecUnavailableRebuild,
   prepareMcpBridgesForRebuild,
@@ -20,7 +19,6 @@ import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
-export { MCP_BRIDGE_POLICY_SOURCE };
 
 function canExecuteMcpPreparation(sandboxName: string): boolean {
   // Live MCP preparation uses both transports: SSH-backed adapter

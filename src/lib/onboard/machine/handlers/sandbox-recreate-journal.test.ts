@@ -279,6 +279,7 @@ it("continues an outer rebuild journal after the outer rebuild deletes the sourc
     const createIntent = args.at(-1);
     expect(createIntent).toMatchObject({
       recreate: true,
+      recreateJournalTargetIntentFingerprint: targetIntentFingerprint,
       recreateTransaction: {
         id: transaction.id,
         targetGeneration: transaction.targetGeneration,

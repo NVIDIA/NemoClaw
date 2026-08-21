@@ -67,18 +67,11 @@ describe("rebuildSandbox flow: lifecycle", () => {
       createdAt: "2026-06-01T00:00:00.000Z",
       updatedAt: "2026-06-01T00:00:00.000Z",
     };
-    const generatedMcpPolicy = {
-      name: "mcp-bridge-github",
-      content: "preset:\n  name: mcp-bridge-github\n",
-      sourcePath: "generated:nemoclaw-mcp-bridge",
-    };
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
       backupPolicyPresets: ["npm", "bad", "throw", "mcp-bridge-github"],
       sandboxEntry: {
         policies: ["npm", "mcp-bridge-github"],
-        customPolicies: [generatedMcpPolicy],
-        mcp: { bridges: { github: mcpEntry } },
         policyPresetsFinalized: true,
         policyTier: "balanced",
       },
@@ -119,19 +112,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
     );
     expect(innerBackupMarker).toBe("1");
     expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBe("0");
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
-      policies: ["npm"],
-      customPolicies: undefined,
-      mcp: undefined,
-    });
-    const stagedMcpPolicyUpdate = harness.registryUpdateSpy.mock.calls.findIndex(
-      ([, update]) =>
-        Array.isArray((update as { policies?: unknown }).policies) &&
-        JSON.stringify((update as { policies: string[] }).policies) === JSON.stringify(["npm"]),
-    );
-    expect(harness.registryUpdateSpy.mock.invocationCallOrder[stagedMcpPolicyUpdate]).toBeLessThan(
-      harness.onboardSpy.mock.invocationCallOrder[0],
-    );
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({
