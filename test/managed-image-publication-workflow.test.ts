@@ -621,7 +621,7 @@ describe("complete managed-image publication workflow", () => {
     expect(steps.map(({ name }) => name)).toContain("Upload managed runtime activation evidence");
   });
 
-  it("passes the reported OpenClaw trusted-private MCP discovery twice on one exact PR cohort (#8746)", () => {
+  it("passes the reported OpenClaw managed-image MCP discovery twice on one exact PR cohort (#8746)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const discovery = managedPrOpenClawMcpDiscovery(workflow);
     const stableMcp = required(
@@ -641,6 +641,7 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(discovery.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG).toContain("managed-pr-catalog.json");
     expect(discovery.env?.NEMOCLAW_MCP_BRIDGE_AGENT).toBe("openclaw");
+    expect(discovery.env?.NEMOCLAW_MCP_BRIDGE_E2E_SCOPE).toBe("managed-image-discovery");
     expect(discovery.env?.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
     expect(discovery.env?.NEMOCLAW_E2E_SHARD).toBe("openclaw");
     expect(discovery.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
@@ -664,7 +665,7 @@ describe("complete managed-image publication workflow", () => {
     expect(assemble).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
-    const run = step(discovery, "Run exact OpenClaw trusted-private MCP discovery").run ?? "";
+    const run = step(discovery, "Run exact OpenClaw managed-image MCP discovery").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
     expect(JSON.stringify(discovery)).not.toContain("jq ");
     expect(run).toMatch(/npx --no-install tsx[\s\S]*test\/e2e\/live\/mcp-bridge\.test\.ts/u);

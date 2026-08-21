@@ -958,7 +958,7 @@ jobs:
           retention-days: 1
 
   pr-openclaw-mcp-discovery:
-    name: PR exact OpenClaw trusted-private MCP discovery (pass ${{ matrix.pass }})
+    name: PR exact OpenClaw managed-image MCP discovery (pass ${{ matrix.pass }})
     needs: pr-build-and-entrypoint
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
@@ -980,6 +980,7 @@ jobs:
       NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
       NEMOCLAW_E2E_SHARD: openclaw
       NEMOCLAW_MCP_BRIDGE_AGENT: openclaw
+      NEMOCLAW_MCP_BRIDGE_E2E_SCOPE: managed-image-discovery
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -1057,7 +1058,7 @@ jobs:
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
         run: bash scripts/install-openshell.sh
 
-      - name: Run exact OpenClaw trusted-private MCP discovery
+      - name: Run exact OpenClaw managed-image MCP discovery
         shell: bash
         run: |
           set -euo pipefail
