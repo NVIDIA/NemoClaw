@@ -114,6 +114,11 @@ export function ensureMessagingCredentialProviderProfile(input: {
   if (result.reason === "import-failed") {
     throw new Error("Could not import the OpenShell messaging credential profile.");
   }
+  if (result.reason === "export-failed") {
+    throw new Error(
+      `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' already exists but could not be exported for validation.`,
+    );
+  }
   throw new Error(
     `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless messaging credential contract.`,
   );
