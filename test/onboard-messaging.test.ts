@@ -646,7 +646,7 @@ const { createSandbox } = require(${onboardPath});
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not confirm messaging provider 'my-assistant-extra-telegram-bot-token-agent-b' before Docker sandbox creation/,
+        /did not confirm messaging provider 'my-assistant-extra-telegram-bot-token-agent-b' before sandbox creation/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(

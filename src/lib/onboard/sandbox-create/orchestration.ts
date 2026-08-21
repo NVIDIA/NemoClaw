@@ -15,7 +15,10 @@ import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
-import { publishAttachedProvidersBeforeDockerSandboxCreation } from "./provider-publication";
+import {
+  publishAttachedProvidersBeforeDockerSandboxCreation,
+  validateAttachedMessagingProvidersBeforeSandboxCreation,
+} from "./provider-publication";
 
 type SandboxRecreateReasonInput = {
   sandboxName: string;
@@ -1163,6 +1166,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
     });
 
+    const providerPreparationInput = {
+      openshellDriver: sandboxRuntimeFields.openshellDriver,
+      inferenceProvider: resolvedCreateIntent.inferenceProvider,
+      messagingProviders,
+      messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
+      extraProviders: resolvedCreateIntent.extraProviders,
+      gatewayName: GATEWAY_NAME,
+    };
+    const providerPreparationDeps = {
+      providerExistsInGateway,
+      runOpenshell,
+      cleanupCreateSources: () => {
+        cleanupInitialCreateSource();
+        cleanupBuildContext();
+      },
+    };
+    validateAttachedMessagingProvidersBeforeSandboxCreation(
+      providerPreparationInput,
+      providerPreparationDeps,
+    );
+
     if (hermesPortableAuthority) {
       if (!portableRuntimeContext?.environmentScope) {
         throw new Error("Hermes portable onboarding is missing runtime environment authority.");
@@ -1240,22 +1264,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       cleanupBuildContext();
     } else {
       publishAttachedProvidersBeforeDockerSandboxCreation(
-        {
-          openshellDriver: sandboxRuntimeFields.openshellDriver,
-          inferenceProvider: resolvedCreateIntent.inferenceProvider,
-          messagingProviders,
-          messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
-          extraProviders: resolvedCreateIntent.extraProviders,
-          gatewayName: GATEWAY_NAME,
-        },
-        {
-          providerExistsInGateway,
-          runOpenshell,
-          cleanupCreateSources: () => {
-            cleanupInitialCreateSource();
-            cleanupBuildContext();
-          },
-        },
+        providerPreparationInput,
+        providerPreparationDeps,
       );
       const created = await runCreateFlow(createArgv);
       cleanupInitialCreateSource();

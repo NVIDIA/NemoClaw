@@ -253,7 +253,10 @@ export function materializeSandboxCreatePlan({
   const messagingProviders = filterDisabledMessagingProviders(
     [
       ...new Set([
-        ...upsertMessagingProviders(enabledMessagingTokenDefs, { replaceExisting: true }),
+        ...upsertMessagingProviders(enabledMessagingTokenDefs, {
+          replaceExisting: true,
+          allowedSandboxes: [intent.sandboxName],
+        }),
         ...intent.reusableMessagingProviders,
       ]),
     ],

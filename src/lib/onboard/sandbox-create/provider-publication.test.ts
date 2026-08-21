@@ -4,7 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../../messaging/provider-profile";
-import { publishAttachedProvidersBeforeDockerSandboxCreation } from "./provider-publication";
+import {
+  publishAttachedProvidersBeforeDockerSandboxCreation,
+  validateAttachedMessagingProvidersBeforeSandboxCreation,
+} from "./provider-publication";
 
 type ProviderState = {
   type: string;
@@ -32,12 +35,16 @@ function providerOutput(name: string, state: ProviderState): string {
 function createHarness(
   initialState: ProviderState | null = exactState,
   postUpdateState: ProviderState = initialState || exactState,
+  profileImportResult = { status: 0, stdout: "", stderr: "" },
+  profileExportResult = { status: 0, stdout: "", stderr: "" },
 ) {
   let updated = false;
   const cleanupCreateSources = vi.fn();
   const providerExistsInGateway = vi.fn(() => true);
   const runOpenshell = vi.fn((args: string[]) => {
     switch (`${args[0]} ${args[1]}`) {
+      case "provider profile":
+        return args[2] === "import" ? profileImportResult : profileExportResult;
       case "provider get":
         return initialState
           ? {
@@ -89,13 +96,22 @@ function publicationInput(
   };
 }
 
-describe("Docker sandbox provider publication", () => {
+function prepareProviders(
+  input: Parameters<typeof publishAttachedProvidersBeforeDockerSandboxCreation>[0],
+  deps: Parameters<typeof publishAttachedProvidersBeforeDockerSandboxCreation>[1],
+): void {
+  validateAttachedMessagingProvidersBeforeSandboxCreation(input, deps);
+  publishAttachedProvidersBeforeDockerSandboxCreation(input, deps);
+}
+
+describe("sandbox provider preparation", () => {
   it("confirms an exact messaging binding before and after publication (#9875)", () => {
     const harness = createHarness();
 
-    publishAttachedProvidersBeforeDockerSandboxCreation(publicationInput(), harness.deps);
+    prepareProviders(publicationInput(), harness.deps);
 
     expect(harness.runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "import", "--file", expect.stringContaining("nemoclaw-mcp-v1.yaml")],
       ["provider", "get", "-g", "nemoclaw", providerName],
       ["provider", "update", "-g", "nemoclaw", providerName],
       ["provider", "get", "-g", "nemoclaw", providerName],
@@ -124,24 +140,21 @@ describe("Docker sandbox provider publication", () => {
   ])("rejects $case before publication (#9875)", ({ state }) => {
     const harness = createHarness(state);
 
-    expect(() =>
-      publishAttachedProvidersBeforeDockerSandboxCreation(publicationInput(), harness.deps),
-    ).toThrowError(
-      `OpenShell did not confirm messaging provider '${providerName}' before Docker sandbox creation.`,
+    expect(() => prepareProviders(publicationInput(), harness.deps)).toThrowError(
+      `OpenShell did not confirm messaging provider '${providerName}' before sandbox creation.`,
     );
-    expect(harness.runOpenshell).toHaveBeenCalledTimes(1);
+    expect(harness.runOpenshell).toHaveBeenCalledTimes(2);
     expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
   });
 
   it("rejects a messaging binding that changes during publication (#9875)", () => {
     const harness = createHarness(exactState, { ...exactState, type: "generic" });
 
-    expect(() =>
-      publishAttachedProvidersBeforeDockerSandboxCreation(publicationInput(), harness.deps),
-    ).toThrowError(
-      `OpenShell did not confirm messaging provider '${providerName}' before Docker sandbox creation.`,
+    expect(() => prepareProviders(publicationInput(), harness.deps)).toThrowError(
+      `OpenShell did not confirm messaging provider '${providerName}' after publication.`,
     );
     expect(harness.runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "import", "--file", expect.stringContaining("nemoclaw-mcp-v1.yaml")],
       ["provider", "get", "-g", "nemoclaw", providerName],
       ["provider", "update", "-g", "nemoclaw", providerName],
       ["provider", "get", "-g", "nemoclaw", providerName],
@@ -153,7 +166,7 @@ describe("Docker sandbox provider publication", () => {
     const harness = createHarness();
     const arbitraryProvider = "operator-provider";
 
-    publishAttachedProvidersBeforeDockerSandboxCreation(
+    prepareProviders(
       publicationInput({
         messagingProviders: [],
         messagingProviderRequests: [],
@@ -166,5 +179,52 @@ describe("Docker sandbox provider publication", () => {
       ["provider", "update", "-g", "nemoclaw", arbitraryProvider],
     ]);
     expect(harness.cleanupCreateSources).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incompatible messaging binding before a portable Hermes create (#9875)", () => {
+    const harness = createHarness({ ...exactState, type: "generic" });
+
+    expect(() =>
+      validateAttachedMessagingProvidersBeforeSandboxCreation(
+        publicationInput({ openshellDriver: "native" }),
+        harness.deps,
+      ),
+    ).toThrowError(`OpenShell did not confirm messaging provider '${providerName}'`);
+    expect(harness.runOpenshell).toHaveBeenCalledTimes(2);
+    expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an incompatible global messaging profile before provider adoption (#9875)", () => {
+    const harness = createHarness(
+      exactState,
+      exactState,
+      { status: 1, stdout: "", stderr: "profile already exists" },
+      {
+        status: 0,
+        stdout: JSON.stringify({
+          id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+          credentials: [],
+          endpoints: ["https://foreign.invalid"],
+          binaries: [],
+          inference_capable: false,
+        }),
+        stderr: "",
+      },
+    );
+
+    expect(() =>
+      validateAttachedMessagingProvidersBeforeSandboxCreation(publicationInput(), harness.deps),
+    ).toThrowError(/does not match NemoClaw's endpointless messaging credential contract/u);
+    expect(
+      harness.runOpenshell.mock.calls.some(
+        ([args]) => args.slice(0, 3).join(" ") === "provider profile import",
+      ),
+    ).toBe(true);
+    expect(
+      harness.runOpenshell.mock.calls.some(
+        ([args]) => args.slice(0, 2).join(" ") === "provider update",
+      ),
+    ).toBe(false);
+    expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
   });
 });

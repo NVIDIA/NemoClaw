@@ -81,7 +81,11 @@ const {
     baseUrl: string | null,
     env: Record<string, string | undefined>,
     runOpenshell: RunOpenshell,
-    options?: { knownExists?: boolean; replaceExisting?: boolean },
+    options?: {
+      knownExists?: boolean;
+      replaceExisting?: boolean;
+      allowedSandboxes?: readonly string[];
+    },
   ) => { ok: boolean; status?: number; message?: string };
   upsertMessagingProviders: (
     tokenDefs: Array<{
@@ -91,7 +95,11 @@ const {
       providerType?: string;
     }>,
     runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean; bestEffort?: boolean },
+    options?: {
+      replaceExisting?: boolean;
+      bestEffort?: boolean;
+      allowedSandboxes?: readonly string[];
+    },
   ) => string[];
 };
 
@@ -928,6 +936,44 @@ describe("onboard provider helpers", () => {
       "sandbox provider detach spark-nemo spark-nemo-telegram-bridge",
       "provider delete spark-nemo-telegram-bridge",
       "provider create --name spark-nemo-telegram-bridge --type generic --credential TELEGRAM_BOT_TOKEN",
+    ]);
+  });
+
+  it("does not detach a sibling sandbox while replacing a recreate-owned provider (#9875)", () => {
+    const commands: string[] = [];
+
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "spark-nemo-telegram-bridge",
+            envKey: "TELEGRAM_BOT_TOKEN",
+            token: "tg-test",
+            providerType: "generic",
+          },
+        ],
+        (command) => {
+          const joined = command.join(" ");
+          commands.push(joined);
+          return joined === "provider delete spark-nemo-telegram-bridge"
+            ? {
+                status: 1,
+                stdout: "",
+                stderr:
+                  "Error: status: FailedPrecondition, message: \"provider 'spark-nemo-telegram-bridge' is attached to sandbox(es): sibling-live\"",
+              }
+            : { status: 0, stdout: "", stderr: "" };
+        },
+        {
+          replaceExisting: true,
+          bestEffort: true,
+          allowedSandboxes: ["spark-nemo"],
+        },
+      ),
+    ).toThrow(/sibling-live/u);
+    expect(commands).toEqual([
+      "provider get spark-nemo-telegram-bridge",
+      "provider delete spark-nemo-telegram-bridge",
     ]);
   });
 

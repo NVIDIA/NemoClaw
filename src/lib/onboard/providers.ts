@@ -457,14 +457,17 @@ function providerExistsInGateway(name, _runOpenshell) {
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, knownExists?: boolean}} options - Optional replacement controls.
+ * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[]}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = options.knownExists ?? providerExistsInGateway(name, _runOpenshell);
   if (exists && options.replaceExisting) {
     const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
-    const r = deleteProviderWithRecovery(name, { runOpenshell: _runOpenshell });
+    const r = deleteProviderWithRecovery(name, {
+      runOpenshell: _runOpenshell,
+      allowedSandboxes: options.allowedSandboxes,
+    });
     if (!r.ok) {
       const base =
         compactText(redact(r.stderr)) ||
@@ -512,7 +515,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
  * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[]}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
@@ -593,7 +596,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       null,
       { [envKey]: token },
       _runOpenshell,
-      { replaceExisting: Boolean(options.replaceExisting), knownExists },
+      {
+        replaceExisting: Boolean(options.replaceExisting),
+        knownExists,
+        allowedSandboxes: options.allowedSandboxes,
+      },
     );
     if (result.ok && providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
       const verified = inspectGatewayCredentialOnlyProviderBinding(

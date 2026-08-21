@@ -535,9 +535,7 @@ export function provisionManagedCloneProviderTransaction(
     revalidateManagedCloneMutationAuthority(prepared, input);
     if (
       prepared.providers.some(
-        (provider) =>
-          provider.action === "create" &&
-          provider.binding.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        (provider) => provider.binding.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
       )
     ) {
       ensureMessagingCredentialProviderProfile({
