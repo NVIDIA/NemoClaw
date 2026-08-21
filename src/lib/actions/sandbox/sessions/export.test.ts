@@ -493,19 +493,80 @@ describe("exportSandboxSessions", () => {
     expect(runMock).not.toHaveBeenCalled();
   });
 
-  it("cleans up the staging tarball after the host download succeeds", async () => {
+  it("cleans up the staging tarball after the host download succeeds and stays silent when the cleanup exits zero", async () => {
     captureMock.mockReturnValueOnce(
       makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
     );
-    await exportSandboxSessions({
-      sandboxName: "alpha",
-      out: "./out.tgz",
-      format: "tar",
-    });
-    const cleanupCall = runMock.mock.calls.at(-1);
-    expect(cleanupCall?.[0]).toContain("rm");
-    expect(cleanupCall?.[0]).toContain("-f");
-    expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      });
+      const cleanupCall = runMock.mock.calls.at(-1);
+      expect(cleanupCall?.[0]).toContain("rm");
+      expect(cleanupCall?.[0]).toContain("-f");
+      expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
+      expect(consoleWarnSpy).not.toHaveBeenCalled();
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it("warns about a non-zero in-sandbox cleanup exit so a leftover sensitive tarball never disappears silently from the sandbox", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    runMock
+      .mockReturnValueOnce(makeRun(0))
+      .mockReturnValueOnce(makeRun(0))
+      .mockReturnValueOnce(makeRun(2));
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      });
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /failed to remove in-sandbox staging tarball '\/sandbox\/\.nemoclaw-staging\/[^']+'.*sandbox 'alpha'.*exit 2.*remove it manually with `[^`]+ sandbox exec --name alpha -- rm -f \/sandbox\/\.nemoclaw-staging\/[^`]+`/,
+        ),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  // Both the tar step and the cleanup can fail in the same run. The tar failure
+  // is the primary rejection the caller must see; the cleanup warning is
+  // additive and must still name the leftover artefact and how to remove it.
+  it("keeps the tar failure as the primary rejection and still warns with the staging path, sandbox, exit status, and manual removal command when the cleanup also exits non-zero", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    runMock.mockReturnValueOnce(makeRun(1)).mockReturnValueOnce(makeRun(3));
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await expect(
+        exportSandboxSessions({
+          sandboxName: "alpha",
+          out: "./out.tgz",
+          format: "tar",
+        }),
+      ).rejects.toThrow(/Failed to tar sessions/);
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /failed to remove in-sandbox staging tarball '\/sandbox\/\.nemoclaw-staging\/[^']+'.*sandbox 'alpha'.*exit 3.*remove it manually with `[^`]+ sandbox exec --name alpha -- rm -f \/sandbox\/\.nemoclaw-staging\/[^`]+`/,
+        ),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
   });
 
   it("still cleans up the staging tarball when the in-sandbox tar exits non-zero", async () => {

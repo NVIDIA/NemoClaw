@@ -3,6 +3,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 
+import { dockerSpawnSync } from "../../../adapters/docker/exec";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
@@ -12,6 +13,11 @@ import {
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
+import {
+  privilegedSandboxExecArgv,
+  withPrivilegedSandboxExecutionLease,
+} from "../../../sandbox/privileged-exec";
+import { sanitizeReadinessText } from "../../../readiness/sanitize";
 import { readManagedSnapshotProfileAuthority } from "./managed-profile";
 import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
 
@@ -31,6 +37,192 @@ interface SnapshotBackupAuthorityDependencies {
   readonly prepareHostLocalInference: typeof prepareSandboxHostLocalInferenceAuthority;
   readonly confirmHostLocalInference: typeof confirmHostLocalInferenceAuthority;
   readonly backup: typeof sandboxState.backupSandboxState;
+  readonly captureOpenClawStateFile: typeof captureOpenClawStateFile;
+}
+
+const MAX_OPENCLAW_CONFIG_BYTES = 16 * 1024 * 1024;
+const OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER = MAX_OPENCLAW_CONFIG_BYTES + 1024 * 1024;
+const OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS = 30_000;
+const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX = "nemoclaw-openclaw-config-capture:";
+const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES = 128;
+const OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES = 1024;
+const OPENCLAW_CONFIG_DIRECTORY = "/sandbox/.openclaw";
+const OPENCLAW_CONFIG_NAME = "openclaw.json";
+export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
+maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
+directory = sys.argv[1]
+name = sys.argv[2]
+protocol = "${OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX}"
+def fail(status, reason):
+    print(protocol + reason, file=sys.stderr)
+    raise SystemExit(status)
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+try:
+    directory_fd = os.open(directory, directory_flags)
+except OSError:
+    fail(10, "directory-unavailable")
+try:
+    directory_before = os.fstat(directory_fd)
+    try:
+        file_fd = os.open(name, file_flags, dir_fd=directory_fd)
+    except FileNotFoundError:
+        fail(2, "missing")
+    except OSError:
+        fail(10, "file-unavailable")
+    try:
+        before = os.fstat(file_fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            fail(11, "unsafe-file-metadata")
+        if before.st_size > maximum:
+            fail(12, "size-limit-exceeded")
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(file_fd, min(64 * 1024, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                fail(12, "size-limit-exceeded")
+        after = os.fstat(file_fd)
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
+        if identity(before) != identity(after) or identity(before) != identity(current) or not stat.S_ISREG(current.st_mode):
+            fail(13, "file-changed-during-read")
+        directory_current = os.stat(directory, follow_symlinks=False)
+        if (directory_before.st_dev, directory_before.st_ino) != (directory_current.st_dev, directory_current.st_ino) or not stat.S_ISDIR(directory_current.st_mode):
+            fail(13, "directory-changed-during-read")
+        sys.stdout.buffer.write(b"".join(chunks))
+    finally:
+        os.close(file_fd)
+finally:
+    os.close(directory_fd)
+`;
+
+type OpenClawConfigCaptureFailure =
+  | "missing"
+  | "directory-unavailable"
+  | "file-unavailable"
+  | "unsafe-file-metadata"
+  | "size-limit-exceeded"
+  | "file-changed-during-read"
+  | "directory-changed-during-read";
+
+function captureFailureProtocol(stderr: unknown): OpenClawConfigCaptureFailure | null {
+  if (
+    (Buffer.isBuffer(stderr) && stderr.length > OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES) ||
+    (typeof stderr === "string" &&
+      Buffer.byteLength(stderr) > OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES)
+  ) {
+    return null;
+  }
+  const value = Buffer.isBuffer(stderr)
+    ? stderr.toString("utf8")
+    : typeof stderr === "string"
+      ? stderr
+      : "";
+  const line = value.endsWith("\n") ? value.slice(0, -1) : value;
+  if (!line.startsWith(OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX) || /[\r\n]/.test(line)) {
+    return null;
+  }
+  const reason = line.slice(OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX.length);
+  switch (reason) {
+    case "missing":
+    case "directory-unavailable":
+    case "file-unavailable":
+    case "unsafe-file-metadata":
+    case "size-limit-exceeded":
+    case "file-changed-during-read":
+    case "directory-changed-during-read":
+      return reason;
+    default:
+      return null;
+  }
+}
+
+function captureFailureDiagnostic(stderr: unknown): string | null {
+  const value = Buffer.isBuffer(stderr)
+    ? stderr.subarray(0, OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES).toString("utf8")
+    : typeof stderr === "string"
+      ? Buffer.from(stderr)
+          .subarray(0, OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES)
+          .toString("utf8")
+      : "";
+  const sanitized = sanitizeReadinessText(value, 240).replace(/\s+/g, " ").trim();
+  return sanitized || null;
+}
+
+export function captureOpenClawStateFile(
+  sandboxName: string,
+  request: sandboxState.StateFileCaptureRequest,
+): sandboxState.StateFileCaptureResult | null {
+  if (
+    request.dir !== "/sandbox/.openclaw" ||
+    request.spec.path !== "openclaw.json" ||
+    request.spec.strategy !== "copy"
+  ) {
+    return null;
+  }
+  try {
+    return withPrivilegedSandboxExecutionLease(
+      sandboxName,
+      "OpenClaw config snapshot capture",
+      () => {
+        const argv = privilegedSandboxExecArgv(
+          sandboxName,
+          [
+            "/usr/bin/python3",
+            "-I",
+            "-S",
+            "-c",
+            OPENCLAW_CONFIG_CAPTURE_SCRIPT,
+            OPENCLAW_CONFIG_DIRECTORY,
+            OPENCLAW_CONFIG_NAME,
+          ],
+          false,
+          true,
+        );
+        const result = dockerSpawnSync(argv, {
+          encoding: null,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
+          maxBuffer: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
+        });
+        const protocolFailure = captureFailureProtocol(result.stderr);
+        if (
+          result.status === 2 &&
+          result.signal === null &&
+          !result.error &&
+          protocolFailure === "missing"
+        ) {
+          return { outcome: "missing" };
+        }
+        if (
+          result.status !== 0 ||
+          result.signal !== null ||
+          result.error ||
+          !Buffer.isBuffer(result.stdout)
+        ) {
+          const primaryDetail =
+            result.error?.message ??
+            (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+          const stderrDetail = protocolFailure
+            ? `reason ${protocolFailure}`
+            : captureFailureDiagnostic(result.stderr);
+          const detail = stderrDetail ? `${primaryDetail}; ${stderrDetail}` : primaryDetail;
+          return { outcome: "failed", error: `privileged config capture failed: ${detail}` };
+        }
+        return { outcome: "backed_up", data: result.stdout };
+      },
+    );
+  } catch (error) {
+    return {
+      outcome: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox"> = {
@@ -42,6 +234,7 @@ const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox
   // Keep the call late-bound so tests and alternative state stores can replace
   // the module export without this adapter retaining an import-time reference.
   backup: (...args) => sandboxState.backupSandboxState(...args),
+  captureOpenClawStateFile,
 };
 
 function failure(error: unknown): sandboxState.BackupResult {
@@ -59,9 +252,9 @@ function failure(error: unknown): sandboxState.BackupResult {
 function backupStateOnly(
   dependencies: SnapshotBackupAuthorityDependencies,
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name">,
+  options: Pick<sandboxState.BackupOptions, "name" | "captureStateFile">,
 ): sandboxState.BackupResult {
-  return options.name === undefined
+  return options.name === undefined && options.captureStateFile === undefined
     ? dependencies.backup(sandboxName)
     : dependencies.backup(sandboxName, options);
 }
@@ -201,6 +394,15 @@ export function backupSandboxStateWithManagedAuthority(
   const entry = dependencies.getSandbox(sandboxName);
   if (!entry) return backupStateOnly(dependencies, sandboxName, options);
 
+  const stateFileOptions: Pick<sandboxState.BackupOptions, "captureStateFile"> =
+    !entry.agent || entry.agent === "openclaw"
+      ? {
+          captureStateFile: (request) =>
+            dependencies.captureOpenClawStateFile(sandboxName, request),
+        }
+      : {};
+  const backupOptions = { ...options, ...stateFileOptions };
+
   let authority: SnapshotBackupAuthority | null;
   try {
     authority = captureSnapshotAuthority(entry, dependencies);
@@ -208,6 +410,6 @@ export function backupSandboxStateWithManagedAuthority(
     return failure(error);
   }
   return authority
-    ? dependencies.backup(sandboxName, { ...options, ...authority })
-    : backupStateOnly(dependencies, sandboxName, options);
+    ? dependencies.backup(sandboxName, { ...backupOptions, ...authority })
+    : backupStateOnly(dependencies, sandboxName, backupOptions);
 }

@@ -21,7 +21,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 17 as const;
+export const RISK_PLAN_VERSION = 18 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -47,6 +47,7 @@ const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
   "src/lib/onboard/docker-driver-sandbox-recovery.ts",
   "src/lib/onboard/docker-startup-command-agent.ts",
   "src/lib/onboard/sandbox-create-step.ts",
+  "tools/e2e/onboard-timeout-contract.mts",
 ]);
 const MANAGED_STARTUP_E2E_JOB_IDS = [
   "device-auth-health",
