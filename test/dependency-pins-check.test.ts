@@ -17,6 +17,7 @@ const OPENCLAW_INTEGRITY =
 const ALTERNATE_INTEGRITY =
   "sha512-PzSJiYqmwpTudmakYs2oCJ57OW3VwEJYf8buTuKvuRvcYEUf/KOTu2dD6pLf2XYgDKErpvcDaoSAJ1nGCyvzAA==";
 const HERMES_SEMVER = "7.8.9";
+const FORMULA_SHA256 = "d".repeat(64);
 const MAP_SHA256 = "b".repeat(64);
 const MANIFEST_SHA256 = "c".repeat(64);
 const OPENSHELL_RELEASE_MANIFESTS = [
@@ -55,6 +56,10 @@ function writeFixture(root: string, overrides: FixtureOverrides = {}): void {
   const installerTrustRecords = installerTrustVersions
     .map(
       (version) => `  {
+    formula: {
+      asset: "openshell.rb",
+      sha256: "${overrides.releaseFormulaSha256 ?? FORMULA_SHA256}",
+    },
     manifests: [
 ${OPENSHELL_RELEASE_MANIFESTS.filter((manifest) => manifest !== overrides.releaseTrustOmitManifest)
   .map(
@@ -114,6 +119,10 @@ const minVersion = deps.getBlueprintMinOpenshellVersion() ?? "${overrides.minFal
 const DIGESTS = {
   "${overrides.supervisorMapVersion ?? openshellMax}": "sha256:${MAP_SHA256}",
 };
+`,
+    "src/lib/onboard/docker-driver-gateway-service.ts": `
+export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =
+  "${overrides.gatewayFormulaSha256 ?? FORMULA_SHA256}";
 `,
     "src/lib/onboard/openshell-feature-gate.ts": `
 const BUILDS = new Map([
@@ -214,6 +223,19 @@ describe("dependency pin drift check", () => {
       "nemoclaw-dependency-pins-multi-release-",
       { releaseTrustExtraVersion: "1.2.3" },
       (root) => expect(verifyDependencyPins(root)).toEqual([]),
+    );
+  });
+
+  it("rejects a stale Homebrew lifecycle formula pin", () => {
+    const staleFormulaSha256 = "e".repeat(64);
+    withFixture(
+      "nemoclaw-dependency-pins-homebrew-formula-",
+      { gatewayFormulaSha256: staleFormulaSha256 },
+      (root) => {
+        expect(verifyDependencyPins(root)).toEqual([
+          `OpenShell gateway Homebrew formula SHA-256: expected ${FORMULA_SHA256}, found ${staleFormulaSha256}`,
+        ]);
+      },
     );
   });
 
