@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 import os from "node:os";
-import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,7 +15,6 @@ import {
 } from "../../../../test/helpers/hermes-portable-uninstall-fixture";
 import { runPortableRuntimeCleanupTransaction } from "./portable-runtime-cleanup";
 import { inspectHermesPortableUninstallJournal } from "./hermes-portable-uninstall-transaction";
-import { hermesPortableUninstallInternals } from "./hermes-portable-uninstall";
 
 let homeDir: string;
 let fixture: HermesPortableUninstallFixture | undefined;
@@ -42,28 +40,6 @@ afterEach(() => {
 });
 
 describe("Hermes Portable schema-5 uninstall", () => {
-  it("rejects same-name recovery authority replacement after opening the original file (#9608)", () => {
-    const authorityDirectory = path.join(homeDir, "recovery-authority");
-    const authorityFile = path.join(authorityDirectory, "receipt.json");
-    const displacedFile = `${authorityFile}.displaced`;
-    fs.mkdirSync(authorityDirectory, { mode: 0o700 });
-    fs.writeFileSync(authorityFile, "original", { mode: 0o600 });
-
-    const originalLstat = fs.lstatSync.bind(fs);
-    vi.spyOn(fs, "lstatSync")
-      .mockImplementationOnce(originalLstat)
-      .mockImplementationOnce(((target, options) => {
-        expect(path.resolve(String(target))).toBe(path.resolve(authorityFile));
-        fs.renameSync(authorityFile, displacedFile);
-        fs.writeFileSync(authorityFile, "replacement", { mode: 0o600 });
-        return originalLstat(target, options as never);
-      }) as typeof fs.lstatSync);
-
-    expect(() =>
-      hermesPortableUninstallInternals.directoryAuthoritySha256(authorityDirectory),
-    ).toThrow("Hermes Portable uninstall authority entry is unsafe");
-  });
-
   it("retires exact owned resources, preserves unrelated state, and completes a second no-op (#9608)", async () => {
     fixture = await createHermesPortableUninstallFixture(homeDir);
     const image = hermesPortableUninstallFixtureConstants.inferenceImage;

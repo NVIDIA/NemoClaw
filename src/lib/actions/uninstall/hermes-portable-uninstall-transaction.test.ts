@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createHermesPortableUninstallJournalStore } from "../../state/hermes-portable-uninstall/journal";
 import {
   hermesPortableUninstallJournalPath,
   inspectHermesPortableUninstallJournal,
@@ -216,6 +217,27 @@ afterEach(() => {
 });
 
 describe("Hermes Portable uninstall transaction", () => {
+  it("coordinates phases through the injected journal state store (#9608)", () => {
+    const state = stateDir();
+    const fixture = transactionDeps(state);
+    const persisted = createHermesPortableUninstallJournalStore(state);
+    const journalStore = {
+      authoritySha256: vi.fn(persisted.authoritySha256),
+      read: vi.fn(persisted.read),
+      publishPrepared: vi.fn(persisted.publishPrepared),
+      replacePrepared: vi.fn(persisted.replacePrepared),
+      replacePhase: vi.fn(persisted.replacePhase),
+    };
+
+    expect(
+      runHermesPortableUninstallTransaction(state, { ...fixture.deps, journalStore }),
+    ).toMatchObject({ phase: "completed", targetCount: 1 });
+    expect(journalStore.read).toHaveBeenCalledOnce();
+    expect(journalStore.publishPrepared).toHaveBeenCalledOnce();
+    expect(journalStore.replacePrepared).not.toHaveBeenCalled();
+    expect(journalStore.replacePhase).toHaveBeenCalledTimes(7);
+  });
+
   it.each([
     "prepared",
     "sandboxes-retired",

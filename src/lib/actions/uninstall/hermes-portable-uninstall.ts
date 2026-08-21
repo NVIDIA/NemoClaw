@@ -1,18 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { isErrnoException } from "../../core/errno";
-import { writeConfigFile } from "../../state/config-io";
+import { runHermesPortableUninstallOpenShell } from "../../adapters/openshell/hermes-portable-uninstall";
+import type { GatewayRegistryDocument } from "../../state/gateway-registry";
 import {
-  readGatewayRegistryFile,
-  type GatewayRegistryDocument,
-} from "../../state/gateway-registry";
+  hermesPortableInferenceStateDirectory as inferenceDirectory,
+  hermesPortableUninstallDigest as digest,
+  hermesPortableUninstallPathDigest as pathDigest,
+  hermesPortableUninstallSandboxStem as sandboxStem,
+  hermesPortableUninstallTextSha256,
+  inspectHermesPortableUninstallDirectoryAuthority as directoryAuthoritySha256,
+  readHermesPortableUninstallRegistry as exactRegistry,
+  retireHermesPortableUninstallDirectory as retireExactDirectory,
+  retireHermesPortableUninstallRegistryRows as retireRegistryRows,
+  verifyHermesPortableUninstallRegistryRetired as verifyRegistryRetired,
+} from "../../state/hermes-portable-uninstall/authority";
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   inspectPortableRetirementRecovery,
@@ -58,9 +63,6 @@ import {
   type HermesPortableUninstallTargetAuthority,
   type HermesPortableUninstallTransactionResult,
 } from "./hermes-portable-uninstall-transaction";
-
-const MAX_AUTHORITY_DIRECTORY_ENTRIES = 64;
-const MAX_AUTHORITY_FILE_BYTES = 1024 * 1024;
 
 export interface HermesPortableUninstallInput {
   readonly env: NodeJS.ProcessEnv;
@@ -118,161 +120,8 @@ const NO_RESOURCE_ABSENCE: AdmittedResourceAbsence = Object.freeze({
   inference: false,
 });
 
-function digest(value: unknown): string {
-  return createHash("sha256").update(stableJson(value), "utf8").digest("hex");
-}
-
 function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => compareCodeUnits(left, right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function pathDigest(value: string): string {
-  return digest(path.resolve(value));
-}
-
-function sandboxStem(sandboxName: string): string {
-  return createHash("sha256").update(sandboxName, "utf8").digest("hex");
-}
-
-function inferenceDirectory(sandboxName: string, stateDir: string): string {
-  return path.join(stateDir, "portable-inference", digest({ sandboxName }));
-}
-
-function statAuthority(stat: fs.BigIntStats): object {
-  return Object.freeze({
-    dev: String(stat.dev),
-    ino: String(stat.ino),
-    mode: String(stat.mode),
-    uid: String(stat.uid),
-    nlink: String(stat.nlink),
-    size: String(stat.size),
-    mtimeNs: String(stat.mtimeNs),
-    ctimeNs: String(stat.ctimeNs),
-  });
-}
-
-function directoryAuthoritySha256(directory: string): string | null {
-  let root: fs.BigIntStats;
-  try {
-    root = fs.lstatSync(directory, { bigint: true });
-  } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return null;
-    throw error;
-  }
-  const uid = process.getuid?.();
-  if (
-    uid === undefined ||
-    !root.isDirectory() ||
-    root.isSymbolicLink() ||
-    root.uid !== BigInt(uid) ||
-    (root.mode & 0o777n) !== 0o700n
-  ) {
-    throw new Error(`Hermes Portable uninstall authority directory is unsafe: ${directory}`);
-  }
-  let count = 0;
-  const entries: object[] = [{ path: ".", kind: "directory", stat: statAuthority(root) }];
-  const walk = (current: string, relative: string): void => {
-    const names = fs.readdirSync(current).sort();
-    count += names.length;
-    if (count > MAX_AUTHORITY_DIRECTORY_ENTRIES) {
-      throw new Error(`Hermes Portable uninstall authority directory is too large: ${directory}`);
-    }
-    for (const name of names) {
-      const child = path.join(current, name);
-      const childRelative = relative ? path.join(relative, name) : name;
-      const descriptor = fs.openSync(
-        child,
-        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | (fs.constants.O_NONBLOCK ?? 0),
-      );
-      try {
-        const opened = fs.fstatSync(descriptor, { bigint: true });
-        const named = fs.lstatSync(child, { bigint: true });
-        if (
-          named.isSymbolicLink() ||
-          !isDeepStrictEqual(statAuthority(opened), statAuthority(named)) ||
-          opened.uid !== BigInt(uid)
-        ) {
-          throw new Error(`Hermes Portable uninstall authority entry is unsafe: ${child}`);
-        }
-        if (opened.isDirectory()) {
-          if ((opened.mode & 0o777n) !== 0o700n) {
-            throw new Error(
-              `Hermes Portable uninstall authority directory is not private: ${child}`,
-            );
-          }
-          entries.push({ path: childRelative, kind: "directory", stat: statAuthority(opened) });
-          walk(child, childRelative);
-          if (
-            !isDeepStrictEqual(
-              statAuthority(opened),
-              statAuthority(fs.fstatSync(descriptor, { bigint: true })),
-            ) ||
-            !isDeepStrictEqual(
-              statAuthority(opened),
-              statAuthority(fs.lstatSync(child, { bigint: true })),
-            )
-          ) {
-            throw new Error(`Hermes Portable uninstall authority directory changed: ${child}`);
-          }
-          continue;
-        }
-        if (
-          !opened.isFile() ||
-          opened.nlink !== 1n ||
-          (opened.mode & 0o777n) !== 0o600n ||
-          opened.size > BigInt(MAX_AUTHORITY_FILE_BYTES)
-        ) {
-          throw new Error(`Hermes Portable uninstall authority file is unsafe: ${child}`);
-        }
-        const bytes = fs.readFileSync(descriptor);
-        const after = fs.fstatSync(descriptor, { bigint: true });
-        if (
-          !isDeepStrictEqual(statAuthority(opened), statAuthority(after)) ||
-          !isDeepStrictEqual(
-            statAuthority(opened),
-            statAuthority(fs.lstatSync(child, { bigint: true })),
-          )
-        ) {
-          throw new Error(`Hermes Portable uninstall authority file changed: ${child}`);
-        }
-        entries.push({
-          path: childRelative,
-          kind: "file",
-          stat: statAuthority(after),
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-        });
-      } finally {
-        fs.closeSync(descriptor);
-      }
-    }
-  };
-  walk(directory, "");
-  if (
-    !isDeepStrictEqual(
-      statAuthority(root),
-      statAuthority(fs.lstatSync(directory, { bigint: true })),
-    )
-  ) {
-    throw new Error(`Hermes Portable uninstall authority directory changed: ${directory}`);
-  }
-  return digest(entries);
-}
-
-function exactRegistry(input: HermesPortableUninstallInput): GatewayRegistryDocument {
-  const registry = readGatewayRegistryFile(input.homeDir, input.registryFile);
-  if (!registry) throw new Error("Hermes Portable uninstall registry authority is missing");
-  return registry;
 }
 
 function schema5SandboxNames(input: HermesPortableUninstallInput): string[] {
@@ -324,33 +173,12 @@ export function inspectHermesPortableUninstallSandboxNames(
   return [...names];
 }
 
-function defaultRunOpenShell(
-  executable: string,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv,
-  timeoutMs: number,
-): HermesPortableLifecycleCommandResult {
-  const result = spawnSync(executable, [...args], {
-    encoding: "utf8",
-    env,
-    maxBuffer: 512 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: timeoutMs,
-  });
-  return {
-    status: result.status,
-    stdout: String(result.stdout ?? ""),
-    stderr: String(result.stderr ?? ""),
-    ...(result.error ? { error: result.error } : {}),
-  };
-}
-
 function gatewayRunner(
   receipt: HermesPortableConfiguredReceipt,
   input: HermesPortableUninstallInput,
   deps: HermesPortableUninstallDeps,
 ): HermesPortableOllamaGatewayRunner {
-  const run = deps.runOpenShell ?? defaultRunOpenShell;
+  const run = deps.runOpenShell ?? runHermesPortableUninstallOpenShell;
   return (args, options) => {
     const command = buildHermesPortableOpenShellCommandAuthority(
       receipt,
@@ -484,9 +312,7 @@ function targetAuthority(input: {
     inference: Object.freeze({
       disposition: inferenceDisposition,
       providerId: input.inference.providerId,
-      receiptSha256: createHash("sha256")
-        .update(input.inference.serializedReceipt, "utf8")
-        .digest("hex"),
+      receiptSha256: hermesPortableUninstallTextSha256(input.inference.serializedReceipt),
       sharingAuthoritySha256: input.sharing.sha256,
       directorySha256: inferenceDirectorySha256,
       runtimeId: runtime.runtimeId,
@@ -648,67 +474,6 @@ function requireCache(cache: LoadedAuthority | null): LoadedAuthority {
   return cache;
 }
 
-function retireExactDirectory(directory: string, expectedSha256: string): void {
-  const current = directoryAuthoritySha256(directory);
-  if (current === null) return;
-  if (current !== expectedSha256) {
-    throw new Error(`Hermes Portable uninstall evidence changed before retirement: ${directory}`);
-  }
-  fs.rmSync(directory, { recursive: true, force: true });
-  if (directoryAuthoritySha256(directory) !== null) {
-    throw new Error(`Hermes Portable uninstall evidence remained after retirement: ${directory}`);
-  }
-}
-
-function retireRegistryRows(
-  input: HermesPortableUninstallInput,
-  authority: HermesPortableUninstallAuthority,
-): void {
-  const current = exactRegistry(input);
-  const nextSandboxes = { ...current.sandboxes };
-  for (const target of authority.targets) {
-    const row = nextSandboxes[target.sandboxName];
-    if (!row) continue;
-    if (digest(row) !== target.registryRowSha256) {
-      throw new Error(
-        `Hermes Portable uninstall registry row '${target.sandboxName}' was replaced`,
-      );
-    }
-    delete nextSandboxes[target.sandboxName];
-  }
-  const next: GatewayRegistryDocument = {
-    ...current,
-    defaultSandbox:
-      current.defaultSandbox &&
-      authority.targets.some(({ sandboxName }) => sandboxName === current.defaultSandbox)
-        ? null
-        : current.defaultSandbox,
-    sandboxes: nextSandboxes,
-  };
-  if (!isDeepStrictEqual(next, current)) writeConfigFile(input.registryFile, next);
-  const verified = exactRegistry(input);
-  if (!isDeepStrictEqual(verified, next)) {
-    throw new Error("Hermes Portable uninstall registry retirement could not be verified");
-  }
-}
-
-function verifyRegistryRetired(
-  input: HermesPortableUninstallInput,
-  authority: HermesPortableUninstallAuthority,
-): void {
-  const registry = exactRegistry(input);
-  for (const target of authority.targets) {
-    const row = registry.sandboxes[target.sandboxName];
-    if (row && digest(row) !== target.registryRowSha256) {
-      throw new Error(
-        `Hermes Portable uninstall found same-name registry replacement '${target.sandboxName}'`,
-      );
-    }
-    if (row)
-      throw new Error(`Hermes Portable uninstall registry row '${target.sandboxName}' remains`);
-  }
-}
-
 /** Run schema-5 cleanup after the host fence, sorted lifecycle locks, and registry lock. */
 export function runHermesPortableUninstall(
   input: HermesPortableUninstallInput,
@@ -847,8 +612,3 @@ export function runHermesPortableUninstall(
     ...(deps.afterPhaseAction ? { afterPhaseAction: deps.afterPhaseAction } : {}),
   });
 }
-
-export const hermesPortableUninstallInternals = Object.freeze({
-  directoryAuthoritySha256,
-  schema5SandboxNames,
-});
