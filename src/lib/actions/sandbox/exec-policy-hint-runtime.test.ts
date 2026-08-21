@@ -9,6 +9,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({ captureOpenshell }));
 
 import {
   maybeEmitPolicyDenialHint,
+  maybeEmitScopeUpgradeHint,
   POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
   POLICY_HINT_TAIL_LINES,
 } from "./exec-policy-hint";
@@ -104,5 +105,66 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
     expect(hint).toBeNull();
     expect(captureOpenshell).toHaveBeenCalledTimes(2);
     expect(sleep).not.toHaveBeenCalled();
+  });
+});
+
+describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("reads pending devices through one bounded read-only OpenShell exec", async () => {
+    captureOpenshell.mockReturnValueOnce({
+      output: JSON.stringify({ pending: [{ requestId: "req-1" }] }),
+      status: 0,
+    });
+    const stderr: string[] = [];
+
+    const hint = await maybeEmitScopeUpgradeHint(
+      "nemoclaw",
+      "oc-fresh",
+      1,
+      false,
+      ["openclaw", "cron", "add"],
+      { env: {}, writeStderr: (line: string) => stderr.push(line) },
+      "nemoclaw-8091",
+    );
+
+    expect(captureOpenshell).toHaveBeenCalledTimes(1);
+    expect(captureOpenshell.mock.calls[0]?.[0]).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "oc-fresh",
+      "-g",
+      "nemoclaw-8091",
+      "--no-tty",
+      "--",
+      "openclaw",
+      "devices",
+      "list",
+      "--json",
+    ]);
+    expect(captureOpenshell.mock.calls[0]?.[1]?.timeout).toBeLessThanOrEqual(
+      POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
+    );
+    expect(stderr).toEqual([hint]);
+  });
+
+  it("stays silent when the pending-devices probe exits non-zero", async () => {
+    captureOpenshell.mockReturnValueOnce({ output: "", status: 1 });
+    const stderr: string[] = [];
+
+    const hint = await maybeEmitScopeUpgradeHint(
+      "nemoclaw",
+      "oc-fresh",
+      1,
+      false,
+      ["openclaw", "cron", "add"],
+      { env: {}, writeStderr: (line: string) => stderr.push(line) },
+    );
+
+    expect(hint).toBeNull();
+    expect(stderr).toEqual([]);
   });
 });

@@ -13,6 +13,9 @@ ARG GGML_BACKEND_DIR
 ARG C_COMPILER
 ARG CXX_COMPILER
 ARG CUDA_HOST_CXX_COMPILER
+ARG REQUEST_GUARD_GO_ARCHIVE_SHA256
+ARG REQUEST_GUARD_GO_VERSION
+ARG TARGETARCH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -22,7 +25,10 @@ RUN test -n "${LLAMA_CPP_REVISION}" \
     && test -n "${GGML_BACKEND_DIR}" \
     && test -n "${C_COMPILER}" \
     && test -n "${CXX_COMPILER}" \
-    && test -n "${CUDA_HOST_CXX_COMPILER}"
+    && test -n "${CUDA_HOST_CXX_COMPILER}" \
+    && test -n "${REQUEST_GUARD_GO_ARCHIVE_SHA256}" \
+    && test -n "${REQUEST_GUARD_GO_VERSION}" \
+    && { [ "${TARGETARCH}" = "amd64" ] || [ "${TARGETARCH}" = "arm64" ]; }
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -32,14 +38,26 @@ RUN apt-get update \
       curl=8.5.0-2ubuntu10.12 \
       g++-14=14.2.0-4ubuntu2~24.04.1 \
       gcc-14=14.2.0-4ubuntu2~24.04.1 \
-      golang-go=2:1.22~2build1 \
       libcurl4-openssl-dev=8.5.0-2ubuntu10.12 \
       libssl-dev=3.0.13-0ubuntu3.12 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CC=${C_COMPILER} \
     CXX=${CXX_COMPILER} \
-    CUDAHOSTCXX=${CUDA_HOST_CXX_COMPILER}
+    CUDAHOSTCXX=${CUDA_HOST_CXX_COMPILER} \
+    GOTOOLCHAIN=local \
+    PATH=/usr/local/go/bin:${PATH}
+
+RUN go_archive="/tmp/go${REQUEST_GUARD_GO_VERSION}.linux-${TARGETARCH}.tar.gz" \
+    && curl --fail --location --proto '=https' --tlsv1.2 --retry 5 \
+      --output "$go_archive" \
+      "https://go.dev/dl/go${REQUEST_GUARD_GO_VERSION}.linux-${TARGETARCH}.tar.gz" \
+    && printf '%s  %s\n' "${REQUEST_GUARD_GO_ARCHIVE_SHA256#sha256:}" "$go_archive" \
+      | sha256sum --check --strict \
+    && test ! -e /usr/local/go \
+    && tar --extract --gzip --file "$go_archive" --directory /usr/local \
+    && rm "$go_archive" \
+    && test "$(go env GOVERSION)" = "go${REQUEST_GUARD_GO_VERSION}"
 
 WORKDIR /src/llama.cpp
 
@@ -91,12 +109,10 @@ RUN go test ./... \
       -ldflags='-s -w -buildid=' \
       -o /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard . \
     && mkdir -p /opt/llama.cpp/licenses/go \
-    && set -- /usr/share/doc/golang-[0-9]*-go/copyright \
-    && test "$#" -eq 1 \
-    && cp "$1" /opt/llama.cpp/licenses/go/copyright \
+    && cp /usr/local/go/LICENSE /opt/llama.cpp/licenses/go/LICENSE \
     && chmod 0555 /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard \
     && chmod 0555 /opt/llama.cpp/licenses/go \
-    && chmod 0444 /opt/llama.cpp/licenses/go/copyright
+    && chmod 0444 /opt/llama.cpp/licenses/go/LICENSE
 
 FROM ${CUDA_RUNTIME_IMAGE} AS runtime
 
@@ -106,6 +122,8 @@ ARG CUDA_ARCHITECTURES
 ARG LLAMA_CPP_REVISION
 ARG LLAMA_CPP_ARCHIVE_SHA256
 ARG NEMOCLAW_REVISION
+ARG REQUEST_GUARD_GO_ARCHIVE_SHA256
+ARG REQUEST_GUARD_GO_VERSION
 ARG TARGETPLATFORM
 ARG RUNTIME_UID
 ARG RUNTIME_GID
@@ -116,6 +134,8 @@ RUN test -n "${CUDA_DEV_IMAGE}" \
     && test -n "${LLAMA_CPP_REVISION}" \
     && test -n "${LLAMA_CPP_ARCHIVE_SHA256}" \
     && test -n "${NEMOCLAW_REVISION}" \
+    && test -n "${REQUEST_GUARD_GO_ARCHIVE_SHA256}" \
+    && test -n "${REQUEST_GUARD_GO_VERSION}" \
     && test -n "${TARGETPLATFORM}" \
     && test -n "${RUNTIME_UID}" \
     && test -n "${RUNTIME_GID}"
@@ -125,6 +145,7 @@ RUN apt-get update \
       ca-certificates=20260601~24.04.1 \
       libcurl4t64=8.5.0-2ubuntu10.12 \
       libgomp1=14.2.0-4ubuntu2~24.04.1 \
+      libssl3t64=3.0.13-0ubuntu3.12 \
     && groupadd --gid "${RUNTIME_GID}" nemoclaw-llama \
     && useradd --uid "${RUNTIME_UID}" --gid "${RUNTIME_GID}" \
       --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin nemoclaw-llama \
@@ -159,6 +180,8 @@ LABEL org.opencontainers.image.source="https://github.com/NVIDIA/NemoClaw" \
       io.nvidia.nemoclaw.inference-server.upstream.repository="https://github.com/ggml-org/llama.cpp" \
       io.nvidia.nemoclaw.inference-server.upstream.revision="${LLAMA_CPP_REVISION}" \
       io.nvidia.nemoclaw.inference-server.upstream.archive-sha256="${LLAMA_CPP_ARCHIVE_SHA256}" \
+      io.nvidia.nemoclaw.inference-server.request-guard.go.version="${REQUEST_GUARD_GO_VERSION}" \
+      io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256="${REQUEST_GUARD_GO_ARCHIVE_SHA256}" \
       io.nvidia.nemoclaw.inference-server.cuda.development-base="${CUDA_DEV_IMAGE}" \
       io.nvidia.nemoclaw.inference-server.cuda.runtime-base="${CUDA_RUNTIME_IMAGE}" \
       io.nvidia.nemoclaw.inference-server.cuda.architectures="${CUDA_ARCHITECTURES}"

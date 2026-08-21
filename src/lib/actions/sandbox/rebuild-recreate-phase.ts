@@ -15,7 +15,10 @@ import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { cloneSandboxHostMounts } from "../../state/registry/host-mount";
-import type { RebuildBackupManifest } from "./rebuild-backup-phase";
+import {
+  excludePolicyPresetsByName,
+  type RebuildBackupManifest,
+} from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
@@ -104,6 +107,13 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   } = input;
   console.log("");
   console.log("  Creating new sandbox with current image...");
+
+  const recreatePolicyPresets = Array.isArray(rebuildSessionPolicyPresets)
+    ? excludePolicyPresetsByName(
+        rebuildSessionPolicyPresets,
+        rebuildMcpEntries.map((entry) => entry.policyName),
+      )
+    : null;
 
   const rebuildGpuOverrides = getRebuildSandboxGpuOverrides(sb);
   log(
@@ -195,7 +205,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.agent = rebuildAgent;
     s.messagingPlan = rebuildMessagingPlan;
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
-    s.policyPresets = rebuildSessionPolicyPresets;
+    // MCP preparation removes these generated policies before sandbox delete,
+    // and the dedicated post-rebuild phase restores them with their provider
+    // bindings. Do not ask inner onboarding to resolve their stale preset names
+    // as built-ins while the generated definitions are intentionally absent.
+    s.policyPresets = recreatePolicyPresets;
     s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
     s.metadata.fromDockerfile = storedFromDockerfile;
     s.provider = resumeConfig.provider;
@@ -274,6 +288,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
       rebuildGatewayAuthority,
+      ...(Array.isArray(recreatePolicyPresets) ? { rebuildPolicyPresets: recreatePolicyPresets } : {}),
       ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
         ? { rebuildPreservedEnv: backupManifest.preservedEnv }
         : {}),

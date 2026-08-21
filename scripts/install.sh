@@ -2178,8 +2178,8 @@ install_nodejs() {
   elif command_exists shasum; then
     actual_hash="$(shasum -a 256 "$nvm_tmp" | awk '{print $1}')"
   else
-    warn "No SHA-256 tool found — skipping nvm integrity check"
-    actual_hash="$NVM_SHA256" # allow execution
+    rm -f "$nvm_tmp"
+    error "No SHA-256 tool available (sha256sum/shasum)"
   fi
   if [[ "$actual_hash" != "$NVM_SHA256" ]]; then
     rm -f "$nvm_tmp"

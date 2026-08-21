@@ -480,3 +480,96 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
     expect(stderr).toHaveLength(0);
   });
 });
+
+describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
+  const cleanupSkipped: SandboxExecCleanupDeps = {
+    getSandbox: () => null,
+    inspectMutableConfigPerms: vi.fn(() => {
+      throw new Error("cleanup should be skipped for an unregistered sandbox");
+    }) as unknown as SandboxExecCleanupDeps["inspectMutableConfigPerms"],
+    repairMutableConfigPerms: vi.fn(() => {
+      throw new Error("cleanup should be skipped for an unregistered sandbox");
+    }) as unknown as SandboxExecCleanupDeps["repairMutableConfigPerms"],
+  };
+
+  const UNRELATED_ADMIN_PENDING = JSON.stringify({
+    pending: [
+      {
+        requestId: "c0ffee00-dead-4beef-b0bb-000000000001",
+        device: "unrelated-device-fingerprint",
+        scopes: ["operator.admin"],
+      },
+    ],
+  });
+
+  const runOpenClawExec = async (status: number, devicesJson: string) => {
+    const stderr: string[] = [];
+    const probePendingDevices = vi.fn(() => devicesJson);
+    let exitCode = Number.NaN;
+    const exit = ((code?: number) => {
+      exitCode = code ?? 0;
+      throw new Error("__exec_exit__");
+    }) as (code: number) => never;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await execSandbox(
+      "wire-sbx",
+      ["openclaw", "cron", "add"],
+      {},
+      {
+        resolveBinary: () => "openshell",
+        selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+        run: async () => ({ status }),
+        cleanupDeps: cleanupSkipped,
+        exit,
+        policyHint: {
+          now: () => 0,
+          env: {},
+          probeLogs: () => "",
+          enableAudit: () => {},
+          sleep: async () => {},
+          attempts: 1,
+          probePendingDevices,
+          writeStderr: (line) => stderr.push(line),
+        },
+      },
+    ).catch(() => {});
+    errSpy.mockRestore();
+    return { exitCode, probePendingDevices, stderr: stderr.join("\n") };
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("names the review command and preserves the exit code when a request is pending", async () => {
+    const { exitCode, stderr } = await runOpenClawExec(1, UNRELATED_ADMIN_PENDING);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("nemoclaw wire-sbx exec -- openclaw devices list");
+  });
+
+  it.each([
+    ["the uncorrelated request id", "c0ffee00-dead-4beef-b0bb-000000000001"],
+    ["the requested scopes", "operator.admin"],
+    ["the requesting device", "unrelated-device-fingerprint"],
+  ])("never presents %s as this command's remedy", async (_label, leaked) => {
+    const { stderr } = await runOpenClawExec(1, UNRELATED_ADMIN_PENDING);
+    expect(stderr).toContain("openclaw devices approve <requestId>");
+    expect(stderr).not.toContain(leaked);
+  });
+
+  it("skips the probe entirely when the openclaw command succeeds", async () => {
+    const { exitCode, probePendingDevices, stderr } = await runOpenClawExec(
+      0,
+      UNRELATED_ADMIN_PENDING,
+    );
+    expect(exitCode).toBe(0);
+    expect(probePendingDevices).not.toHaveBeenCalled();
+    expect(stderr).toBe("");
+  });
+
+  it("stays silent when the failure leaves no pending request", async () => {
+    const { exitCode, stderr } = await runOpenClawExec(1, JSON.stringify({ pending: [] }));
+    expect(exitCode).toBe(1);
+    expect(stderr).toBe("");
+  });
+});
