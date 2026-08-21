@@ -5,14 +5,20 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { setupBedrockRuntimeInference } from "../../../src/lib/onboard/bedrock-runtime.ts";
+import { loadPortableInferenceDescriptor } from "../../../src/lib/onboard/experimental/portable-inference-descriptor.ts";
+import { setupOpenRouterRuntimeInference } from "../../../src/lib/onboard/openrouter-runtime.ts";
+import { resolveRequestedProviderSelection } from "../../../src/lib/onboard/provider-selection.ts";
+import { createPortableOnboardEnvironmentScope } from "../../../src/lib/onboard/session-bootstrap.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { ProviderClient, trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
   buildHostedInferenceModelsProbe,
   requireHostedInferenceConfig,
+  stagePortableHostedInferenceDescriptor,
 } from "../fixtures/hosted-inference.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import type {
@@ -192,6 +198,137 @@ describe("hosted inference E2E config", () => {
 
     expect(cfg.apiKey).toBe("sk-compatible-key");
     expect(cfg.credentialEnv).toBe("COMPATIBLE_API_KEY");
+  });
+
+  it("stages the Portable NVIDIA inference descriptor before provider selection or network activity (#9200)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-hosted-"));
+    const filePath = path.join(directory, "portable-inference.json");
+    const now = Date.parse("2026-08-20T16:00:00Z");
+    const resolverCalls: string[] = [];
+    const config = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "portable-hosted-key" }),
+      {
+        NEMOCLAW_ENDPOINT_URL: "https://inference.example.test/v1",
+        NEMOCLAW_MODEL: "nvidia/provider-model",
+      },
+    );
+
+    try {
+      const staged = stagePortableHostedInferenceDescriptor(config, {
+        filePath,
+        now: () => now,
+      });
+      const metadata = fs.lstatSync(filePath);
+      expect(resolverCalls).toEqual([]);
+      expect(metadata.isFile()).toBe(true);
+      expect(metadata.isSymbolicLink()).toBe(false);
+      expect(metadata.mode & 0o777).toBe(0o600);
+      expect(metadata.nlink).toBe(1);
+      expect(JSON.parse(fs.readFileSync(filePath, "utf8"))).toMatchObject({
+        schemaVersion: 1,
+        baseUrl: config.endpointUrl,
+        model: config.model,
+      });
+
+      const conflicting = { ...config, model: "ollama/model" };
+      expect(() =>
+        stagePortableHostedInferenceDescriptor(conflicting, {
+          filePath,
+          now: () => now,
+        }),
+      ).toThrow(/already exists.*refusing to replace/u);
+      expect(JSON.parse(fs.readFileSync(filePath, "utf8"))).toMatchObject({
+        baseUrl: config.endpointUrl,
+        model: config.model,
+      });
+      expect(fs.existsSync(path.join(directory, ".portable-inference.json.tmp"))).toBe(false);
+
+      const descriptor = await loadPortableInferenceDescriptor({
+        filePath,
+        now: () => now,
+        resolveEndpointHost: async (hostname) => {
+          resolverCalls.push(hostname);
+          return [{ address: "93.184.216.34", family: 4 }];
+        },
+      });
+      expect(resolverCalls).toEqual(["inference.example.test"]);
+      expect(descriptor).not.toBeNull();
+
+      const selectorEnv: NodeJS.ProcessEnv = {
+        NEMOCLAW_PROVIDER: "install-ollama",
+        NEMOCLAW_MODEL: "nvidia/provider-model",
+      };
+      const environmentScope = createPortableOnboardEnvironmentScope(selectorEnv, {
+        schemaVersion: descriptor!.schemaVersion,
+        baseUrl: descriptor!.baseUrl,
+        model: descriptor!.model,
+        expiresAt: descriptor!.expiresAt,
+      });
+      const selection = resolveRequestedProviderSelection({
+        options: [
+          { key: "custom", label: "Compatible endpoint" },
+          { key: "install-ollama", label: "Install Ollama" },
+        ],
+        requestedProvider: selectorEnv.NEMOCLAW_PROVIDER ?? null,
+        sandboxName: "portable-launch",
+        remoteProviderConfig: {},
+        isWsl: false,
+        isWindowsHostOllama: false,
+        windowsHostOllamaSupported: false,
+        hermesProviderAvailable: false,
+        ollamaRunning: false,
+        readRecordedProvider: () => null,
+        readRecordedNimContainer: () => null,
+        readRecordedModel: () => null,
+      });
+
+      expect(selectorEnv.NEMOCLAW_PROVIDER).toBe("custom");
+      expect(selectorEnv.NEMOCLAW_MODEL).toBe(config.model);
+      expect(selectorEnv.NEMOCLAW_ENDPOINT_URL).toBe(config.endpointUrl);
+      expect(selection.kind).toBe("selected");
+      expect(selection.kind === "selected" ? selection.selected.key : null).toBe("custom");
+
+      const unexpectedRuntimeCall = (): never => {
+        throw new Error("Portable NVIDIA hosted inference entered a local-adapter lifecycle.");
+      };
+      const bedrockAdapter = vi.fn(async () => unexpectedRuntimeCall());
+      const openrouterAdapter = vi.fn(async () => unexpectedRuntimeCall());
+      const commonRuntimeOptions = {
+        sandboxName: "portable-launch",
+        provider: config.providerName,
+        model: config.model,
+        credentialEnv: config.credentialEnv,
+        isNonInteractive: () => true,
+        runOpenshell: unexpectedRuntimeCall,
+        upsertProvider: unexpectedRuntimeCall,
+        verifyInferenceRoute: unexpectedRuntimeCall,
+        verifyOnboardInferenceSmoke: unexpectedRuntimeCall,
+        exitProcess: unexpectedRuntimeCall,
+        error: unexpectedRuntimeCall,
+        log: unexpectedRuntimeCall,
+      };
+      expect(
+        await setupBedrockRuntimeInference({
+          ...commonRuntimeOptions,
+          endpointUrl: config.endpointUrl,
+          ensureAdapter: bedrockAdapter,
+        }),
+      ).toEqual({ handled: false });
+      expect(
+        await setupOpenRouterRuntimeInference({
+          ...commonRuntimeOptions,
+          credentialValue: config.apiKey,
+          ensureAdapter: openrouterAdapter,
+        }),
+      ).toEqual({ handled: false });
+      expect(bedrockAdapter).not.toHaveBeenCalled();
+      expect(openrouterAdapter).not.toHaveBeenCalled();
+      expect(fs.existsSync(filePath)).toBe(false);
+      expect(() => staged.dispose()).not.toThrow();
+      environmentScope.restore();
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("passes hosted authorization to curl on stdin without exposing the key in arguments", () => {
