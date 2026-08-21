@@ -24,12 +24,14 @@ describe("Dockerfile RUN command discovery", () => {
       "    # install from the reviewed lock",
       "    npm --prefix /runtime ci",
       "RUN if true; then npm --prefix=/runtime install; fi",
+      "RUN true && NPM_CONFIG_OFFLINE=true OTHER=value npm ci --prefix /runtime",
       "",
     ].join("\n");
 
     expect(dockerfileRunCommandPositions(source, "npm")).toEqual([
       source.indexOf("npm --prefix /runtime"),
       source.indexOf("npm --prefix=/runtime"),
+      source.indexOf("npm ci --prefix"),
     ]);
   });
 
