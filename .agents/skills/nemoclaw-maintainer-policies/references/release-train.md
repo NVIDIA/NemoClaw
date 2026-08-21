@@ -24,9 +24,12 @@ Daily release labels coordinate release work. They do not classify issues and th
 
 ## Release-Prep Docs
 
-Use one cumulative documentation PR for all merged changes selected for the release. Continue the
-managed Pi PR when one exists. If no managed PR exists and only release documentation remains, use
-one direct documentation-only PR.
+Use one cumulative documentation PR for all merged changes selected for the release. Each push to
+`main` refreshes the same managed PR with an independently reviewed cumulative patch. The PR title
+names the next patch tag after the latest release tag. The PR body names both tags and defines the
+development and release-cutoff procedure. The publisher creates a merge commit, fast-forwards the
+branch, and never force-pushes. Continue that PR when one exists.
+If no managed PR exists and only release documentation remains, use one direct documentation-only PR.
 
 That PR must include all required user documentation and one canonical
 `docs/changelog/YYYY-MM-DD.mdx` entry headed `## vX.Y.Z`. In the normal evening flow, merge it before
@@ -34,15 +37,23 @@ generating the release plan so the entry is in the planned candidate. If direct 
 skill has already produced a plan whose candidate lacks the entry or another required documentation
 change, merge the documentation PR and generate a new plan for the resulting candidate.
 
-Require the exact candidate's `Docs / Post-Merge Catch-Up` run to finish with a successful
-`Publish documentation catch-up` job. That success records an independently reviewed, approved
-empty Pi patch for the candidate. If Pi finds a change, the workflow opens a managed PR and
-publication does not succeed.
+A push that changes only `docs/**`, `fern/docs.yml`, or `fern/assets/**` does not start
+`Docs / Post-Merge Catch-Up`. Merging the cumulative docs PR therefore does not start a final model
+run or create an empty-patch receipt.
 
-For the candidate only, require no open managed PR and no remote branch named
-`automation/post-merge-docs-<first-12-candidate-characters>`. A managed PR or branch for a later
-commit does not invalidate an earlier candidate. The release entry and approved-empty Pi result
-cannot be waived.
+Before tag confirmation, show the maintainer:
+
+- the latest included cumulative docs PR, its final PR commit, and its merge commit;
+- the final automated refresh coverage commit;
+- every commit and merged PR after that coverage point through the candidate;
+- whether the docs PR changed only allowed documentation paths;
+- the docs PR review decision and complete check state;
+- every open managed docs PR; and
+- the canonical release entry and path.
+
+The maintainer must choose to proceed, create or update a docs PR for the uncovered range, or stop.
+Record a proceed decision in the signed release brief. The release entry cannot be waived. Do not
+create a separate documentation receipt or exception record.
 
 ## Cutoff
 
@@ -56,9 +67,9 @@ At cutoff:
 4. Complete [Release-Prep Docs](#release-prep-docs) for the intended release range.
 5. Generate the immutable release plan with the exact `--version vX.Y.Z` to capture the candidate
    commit.
-6. Verify the candidate's required documentation and image evidence. If
-   documentation is missing, complete [Release-Prep Docs](#release-prep-docs), merge that PR,
-   generate a new plan, and repeat the evidence checks for the new candidate.
+6. Show the candidate's documentation coverage and required image evidence. If the maintainer
+   requests documentation work, complete [Release-Prep Docs](#release-prep-docs), merge that PR,
+   generate a new plan, and show the evidence for the new candidate.
 7. Show the newest full E2E context and record the maintainer's focused, full, or proceed decision.
 8. Build the Markdown release brief from the exact range and evidence.
 9. Cut the release tag only with the plan's explicit maintainer confirmation.
@@ -101,8 +112,8 @@ and no requested run remains unresolved. Otherwise, record one plain-language re
 different, missing, non-successful, or unresolved status and explains why the maintainer is
 proceeding.
 
-This decision applies only to E2E. It cannot cover missing documentation or required image
-evidence. Do not maintain a separate exception schema or ledger.
+This decision applies only to E2E. It cannot replace the release entry, documentation coverage
+decision, or required image evidence. Do not maintain a separate exception schema or ledger.
 
 ## Signed Release Brief
 
@@ -111,7 +122,8 @@ Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the exact plan range. 
 - exact range, commit and risky-file counts, risky areas, and suggested QA focus from the handoff
   helper;
 - the complete canonical release entry and its path;
-- Pi documentation workflow and job URLs, artifact name, and normalized approved-empty review;
+- the latest included cumulative docs PR, coverage commit, later commits and PRs, changed-path
+  result, review and check state, open managed docs PRs, and maintainer decision;
 - the base-image aggregate URL and identity;
 - the newest full E2E result and every requested run;
 - the maintainer's E2E decision; and
@@ -121,18 +133,27 @@ Pass that exact Markdown to `release:cut` with `--message-file`. It becomes the 
 message and is the release evidence record. Do not create a separate exception file.
 
 Require the full confirmation phrase from the plan. After the script reads the remote tag back and
-confirms that it peels to the candidate, report the tag as cut and return.
+confirms that it peels to the candidate, report the tag as cut. Then continue the same task.
 
 ## Post-Tag States
 
-Moving `latest`, carrying labels forward, publishing public documentation, rebuilding and publishing release
-images, promoting `lkg`, and publishing the Announcement do not extend tag cutting. Some share a
-workflow or depend on another post-tag state. Report only already-known results and mark the rest
-pending or unknown; do not poll before returning the tag result.
+The tag event starts `Release / Latest Tag`, `Docs / Publish Public`, and `Images / Base Images`.
+Monitor the exact tag and candidate runs concurrently. Draft the Announcement while they run.
+
+Report the tag as cut before this follow-through. Post-tag results never change tag success. Verify
+the owned effects instead of relying only on workflow conclusions:
+
+- `latest` and release-label carry-forward;
+- the public documentation `publish` job; and
+- the production managed-image promotion job, with Pi candidate results reported separately.
+
+Read `lkg` after production image classification. Never move `lkg` automatically. When production
+promotion succeeds, ask for separate maintainer authorization. After an authorized move, monitor
+`Release / LKG Brev Image` and its returned downstream production-image run.
 
 Tag-triggered image publication performs a release rebuild and can fail after the tag exists. Repair
-and rerun that workflow independently. Do not describe it as promotion-only and do not move the
-semver tag.
+and rerun that workflow independently. Ask before a rerun. Do not describe it as promotion-only and
+do not move the semver tag.
 
 ## Carry Forward
 

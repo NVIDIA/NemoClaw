@@ -20,6 +20,8 @@ function parseStdoutJson<T>(stdout: string): T {
 
 interface StartupResult {
   returned: boolean;
+  threw: string | null;
+  backendUrls: string[];
   spawnCount: number;
   ncCalls: number;
   authedProbes: number;
@@ -31,9 +33,13 @@ interface StartupResult {
  * Run a child process that mocks the runner/child_process boundary and calls
  * startOllamaAuthProxy() against the compiled proxy module. `setup` is inlined
  * verbatim into the child and defines the runCapture / spawnSync behavior for
- * the scenario under test.
+ * the scenario under test. `invocation` selects the entry point under test so a
+ * scenario can drive the compatible-endpoint route as well as the Ollama one.
  */
-function runStartupScenario(setup: string): {
+function runStartupScenario(
+  setup: string,
+  invocation = "proxy.startOllamaAuthProxy()",
+): {
   status: number | null;
   stderr: string;
   payload: StartupResult;
@@ -55,6 +61,7 @@ let ncCalls = 0;
 let authedProbes = 0;
 let unauthProbes = 0;
 const killCommands = [];
+const backendUrls = [];
 
 ${setup}
 
@@ -64,8 +71,10 @@ if (!runner.run.__mocked) {
 }
 
 const proxy = require(${proxyPath});
-const returned = proxy.startOllamaAuthProxy();
-console.log(JSON.stringify({ returned, spawnCount, ncCalls, authedProbes, unauthProbes, killCommands }));
+let returned = false;
+let threw = null;
+try { returned = ${invocation}; } catch (error) { threw = error.message; }
+console.log(JSON.stringify({ returned: Boolean(returned), threw, backendUrls, spawnCount, ncCalls, authedProbes, unauthProbes, killCommands }));
 `;
   fs.writeFileSync(scriptPath, script);
 
@@ -118,6 +127,8 @@ childProcess.spawnSync = (...args) => {
 `);
 
     assert.equal(payload.returned, false);
+    // A conflict is reported, not thrown: the caller decides what to do next.
+    assert.equal(payload.threw, null);
     // Conflict is detected before any proxy is spawned.
     assert.equal(payload.spawnCount, 0);
     assert.match(stderr, /port 11435 is already in use/);
@@ -274,6 +285,7 @@ childProcess.spawnSync = (...args) => {
 `);
 
     assert.equal(payload.returned, false);
+    assert.equal(payload.threw, null);
     assert.equal(payload.spawnCount, 1);
     assert.match(stderr, /exited during startup/);
     assert.doesNotMatch(stderr, /already in use/);
@@ -338,5 +350,92 @@ childProcess.spawnSync = (...args) => {
       ),
       "expected killStaleProxy to issue `kill 4242`",
     );
+  });
+
+  it("names the compatible endpoint, not Ollama, when its backend is not loopback-bound (#9730)", () => {
+    const { payload, stderr } = runStartupScenario(
+      String.raw`
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : command;
+  // Proxy port stays free; the spawned proxy exits before binding it.
+  if (text.includes("lsof") && text.includes("11435")) return "";
+  if (text.includes("ps -p 8888")) return "";
+  return "";
+};
+const fs2 = require("node:fs");
+childProcess.spawn = (...args) => {
+  spawnCount += 1;
+  // Read the backend and status-file path the host actually handed the proxy,
+  // so the scenario pins the real wiring instead of a guessed path.
+  const env = (args[2] || {}).env || {};
+  backendUrls.push(env.OLLAMA_BACKEND_URL);
+  fs2.writeFileSync(
+    env.NEMOCLAW_OLLAMA_PROXY_STATUS_FILE,
+    JSON.stringify({ reason: "backend-not-loopback", details: "00000000:8000" }),
+  );
+  return { pid: 8888, unref() {} };
+};
+const origSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  if (args[0] === "nc") { ncCalls += 1; return { error: null, status: 0, stdout: "", stderr: "" }; }
+  if (args[0] === "curl") return { status: 0, stdout: "000", stderr: "" };
+  return origSpawnSync(...args);
+};
+`,
+      `proxy.noAuthProxy("http://localhost:8000/v1")`,
+    );
+
+    // The refusal is correct and stays: a non-loopback backend would bypass the
+    // token check. Only the remediation text is under test here.
+    assert.equal(payload.threw, "Could not start the protected loopback route.");
+    assert.deepEqual(payload.backendUrls, ["http://localhost:8000"]);
+    assert.equal(payload.spawnCount, 1);
+    // The user runs a compatible endpoint on :8000, not the Ollama daemon.
+    assert.match(stderr, /localhost:8000/);
+    assert.doesNotMatch(stderr, /OLLAMA_HOST=/);
+    assert.doesNotMatch(stderr, /bind Ollama to loopback/);
+  });
+
+  it("keeps endpoint remediation for a compatible endpoint on the Ollama port (#9730)", () => {
+    const { payload, stderr } = runStartupScenario(
+      String.raw`
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : command;
+  // Proxy port stays free; the spawned proxy exits before binding it.
+  if (text.includes("lsof") && text.includes("11435")) return "";
+  if (text.includes("ps -p 8888")) return "";
+  return "";
+};
+const fs2 = require("node:fs");
+childProcess.spawn = (...args) => {
+  spawnCount += 1;
+  const env = (args[2] || {}).env || {};
+  backendUrls.push(env.OLLAMA_BACKEND_URL);
+  fs2.writeFileSync(
+    env.NEMOCLAW_OLLAMA_PROXY_STATUS_FILE,
+    JSON.stringify({ reason: "backend-not-loopback", details: "00000000:11434" }),
+  );
+  return { pid: 8888, unref() {} };
+};
+const origSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "sleep") return { status: 0, stdout: "", stderr: "" };
+  if (args[0] === "nc") { ncCalls += 1; return { error: null, status: 0, stdout: "", stderr: "" }; }
+  if (args[0] === "curl") return { status: 0, stdout: "000", stderr: "" };
+  return origSpawnSync(...args);
+};
+`,
+      `proxy.noAuthProxy("http://127.0.0.1:11434/v1")`,
+    );
+
+    // The endpoint sits on the Ollama daemon's own port, but the user selected
+    // it explicitly, so it is not the daemon and OLLAMA_HOST is the wrong knob.
+    assert.equal(payload.threw, "Could not start the protected loopback route.");
+    assert.deepEqual(payload.backendUrls, ["http://127.0.0.1:11434"]);
+    assert.equal(payload.spawnCount, 1);
+    assert.match(stderr, /127\.0\.0\.1:11434/);
+    assert.doesNotMatch(stderr, /OLLAMA_HOST=/);
+    assert.doesNotMatch(stderr, /bind Ollama to loopback/);
   });
 });

@@ -3,6 +3,7 @@
 
 import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest/types";
+import { bridgeSecretEnvsForChannel } from "./messaging-bridge-provider";
 import {
   enforceMessagingChannelConflicts as defaultEnforceMessagingChannelConflicts,
   type MessagingConflictGuardDeps,
@@ -86,6 +87,19 @@ export async function prepareSandboxMessagingPreflight(
     providerExistsInGateway: deps.providerExistsInGateway,
     providerMatchesGatewayCredential: deps.providerMatchesGatewayCredential,
   });
+
+  // Fail before the caller can act on this intent: onboard may delete and
+  // recreate the sandbox, and a selected channel that resolved to nothing would
+  // be dropped from the replacement without a word.
+  result.missingBridgeChannels.forEach((channel) => {
+    deps.error(
+      `  ${channel} mints its outbound token gateway-side and needs ${bridgeSecretEnvsForChannel(channel).join(", ")} to configure it.`,
+    );
+    deps.error("  Paste the secret at the enrollment prompt or export the env var, then re-run.");
+  });
+  if (result.missingBridgeChannels.length > 0) {
+    deps.exitProcess(1);
+  }
 
   if (result.missingWebSearchCredentialEnv) {
     const envKey = result.missingWebSearchCredentialEnv;

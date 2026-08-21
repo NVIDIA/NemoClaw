@@ -85,8 +85,7 @@ describe("Podman local inference command translation", () => {
       ),
     ).toEqual([
       "run",
-      "--http-proxy",
-      "false",
+      "--http-proxy=false",
       "--detach",
       "--pull",
       "never",
@@ -140,8 +139,7 @@ describe("Podman local inference command translation", () => {
       ),
     ).toEqual([
       "run",
-      "--http-proxy",
-      "false",
+      "--http-proxy=false",
       "--detach",
       "--pull",
       "never",
@@ -189,10 +187,16 @@ describe("Podman local inference command translation", () => {
 
     expect(translatePodmanLocalInferenceArgs(args, authority())).toEqual([
       "run",
-      "--http-proxy",
-      "false",
+      "--http-proxy=false",
       ...args.slice(1),
     ]);
+  });
+
+  it("keeps the Podman proxy boolean attached so false cannot become the image", () => {
+    const translated = translatePodmanLocalInferenceArgs(["run", IMAGE], authority());
+
+    expect(translated).toEqual(["run", "--http-proxy=false", IMAGE]);
+    expect(translated.slice(1, translated.indexOf(IMAGE))).not.toContain("false");
   });
 
   it("rejects auto-removal that would erase exact cleanup evidence", () => {

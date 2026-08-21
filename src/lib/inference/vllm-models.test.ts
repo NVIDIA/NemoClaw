@@ -5,10 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { vllmProbePolicyForModel } from "./openai-probe-models";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
-import type {
-  HostLocalInferenceServingRecipe,
-  ServingModelPreparation,
-} from "./serving/types";
+import type { HostLocalInferenceServingRecipe, ServingModelPreparation } from "./serving/types";
 import { detectVllmProfile, resolveVllmModelRuntime } from "./vllm";
 import {
   assertGatedModelAccess,
@@ -280,9 +277,9 @@ describe("vllm model registry", () => {
       ]),
       dockerRunArgsMode: "replace",
       minComputeCapability: 100,
-      minGpuMemoryBytes: 352_381_245_521,
       pullTimeoutSec: 43_200,
     });
+    expect(ultra!.runtime?.minGpuMemoryBytes).toBeUndefined();
 
     const cmd = buildVllmServeCommand(ultra!);
     expect(cmd).toContain("export VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY=1");

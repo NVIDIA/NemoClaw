@@ -4,10 +4,8 @@
 # Candidate Evidence
 
 Candidate evidence is the release-specific evidence required for the planned candidate. Use the
-exact version and candidate from `plan.json`. These are read-only checks. Run every section except
-[Final Documentation Recheck](#final-documentation-recheck) before the general E2E decision. Keep
-the first shell only until its evidence is copied into the release brief. It does not need to remain
-open while waiting for tag confirmation.
+exact version and candidate from `plan.json`. These are read-only checks. Run every section before
+the general E2E decision. Keep the shell only until its evidence is copied into the release brief.
 
 ```bash
 set -euo pipefail
@@ -42,16 +40,17 @@ run_or_stop "release plan read" jq -er '
       "previousTag", "previousTagCommit", "previousTagObject"
     ] and
     (.nextTag | test("^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$")) and
-    (.originMainCommit | test("^[0-9a-f]{40}$"))
-  then [.nextTag, .originMainCommit] | @tsv
+    (.originMainCommit | test("^[0-9a-f]{40}$")) and
+    (.previousTagCommit | test("^[0-9a-f]{40}$"))
+  then [.nextTag, .originMainCommit, .previousTagCommit] | @tsv
   else error("release plan is invalid")
   end
 ' "$PLAN_PATH" >"$PLAN_FIELDS"
-IFS=$'\t' read -r VERSION CANDIDATE_SHA <"$PLAN_FIELDS"
-DOCS_BRANCH="automation/post-merge-docs-${CANDIDATE_SHA:0:12}"
+IFS=$'\t' read -r VERSION CANDIDATE_SHA PREVIOUS_TAG_SHA <"$PLAN_FIELDS"
+DOCS_PREFIX='automation/post-merge-docs-'
 ```
 
-## Release Entry and Pi Result
+## Release Entry and Documentation Coverage
 
 Find exactly one target heading at the candidate. Save only that H2 section, ending before the next
 H2, for the release brief.
@@ -82,93 +81,182 @@ run_or_stop "release-entry detail validation" awk '
 ' "$ENTRY_FILE"
 ```
 
-Read the newest exact-candidate `Docs / Post-Merge Catch-Up` run. Require its one publish job to pass:
+Read documentation coverage from Git history and GitHub PR state. Do not require another
+`Docs / Post-Merge Catch-Up` run after the cumulative docs PR merges.
+
+First, list every open managed docs PR. Preserve this JSON for the release brief.
 
 ```bash
-DOCS_RUNS_FILE="$EVIDENCE_DIR/docs-runs.json"
-run_or_stop "documentation run list" gh run list --repo NVIDIA/NemoClaw \
-  --workflow post-merge-docs.yaml --event push --branch main --commit "$CANDIDATE_SHA" \
-  --limit 100 --json databaseId,headSha,status,conclusion,url,createdAt >"$DOCS_RUNS_FILE"
-DOCS_RUN_ID_FILE="$EVIDENCE_DIR/docs-run-id"
-run_or_stop "documentation run selection" jq -er --arg sha "$CANDIDATE_SHA" \
-  '[.[] | select(.headSha == $sha)] | sort_by(.createdAt) | last | .databaseId' \
-  "$DOCS_RUNS_FILE" >"$DOCS_RUN_ID_FILE"
-IFS= read -r DOCS_RUN_ID <"$DOCS_RUN_ID_FILE"
-DOCS_RUN_FILE="$EVIDENCE_DIR/docs-run.json"
-run_or_stop "documentation run read" gh run view "$DOCS_RUN_ID" --repo NVIDIA/NemoClaw \
-  --json attempt,headSha,status,conclusion,url,jobs >"$DOCS_RUN_FILE"
-run_or_stop "documentation run validation" jq -e --arg sha "$CANDIDATE_SHA" '
-  .headSha == $sha and .status == "completed" and .conclusion == "success" and
-  ([.jobs[] | select(.name == "Publish documentation catch-up")] | length == 1) and
-  ([.jobs[] | select(.name == "Publish documentation catch-up")][0] |
-    .status == "completed" and .conclusion == "success")
-' "$DOCS_RUN_FILE" >/dev/null
-DOCS_RUN_FIELDS_FILE="$EVIDENCE_DIR/docs-run-fields.txt"
-run_or_stop "documentation run field read" jq -er '
-  [.attempt, .url, ([.jobs[] | select(.name == "Publish documentation catch-up")][0].url)] |
-  .[]
-' "$DOCS_RUN_FILE" >"$DOCS_RUN_FIELDS_FILE"
-{
-  IFS= read -r DOCS_RUN_ATTEMPT
-  IFS= read -r DOCS_RUN_URL
-  IFS= read -r DOCS_PUBLISH_JOB_URL
-} <"$DOCS_RUN_FIELDS_FILE"
+OPEN_DOCS_PRS="$EVIDENCE_DIR/open-docs-prs.json"
+run_or_stop "open documentation PR read" gh pr list --repo NVIDIA/NemoClaw --state open \
+  --base main --limit 1000 \
+  --json headRefName,headRefOid,headRepository,isDraft,number,title,url >"$OPEN_DOCS_PRS"
+run_or_stop "open documentation PR selection" jq -c --arg prefix "$DOCS_PREFIX" '
+  [.[] | select(
+    (.headRefName | startswith($prefix)) and
+    .headRepository.nameWithOwner == "NVIDIA/NemoClaw"
+  )]
+' "$OPEN_DOCS_PRS" >"$EVIDENCE_DIR/open-managed-docs-prs.json"
 ```
 
-Download that run's reviewed patch. A successful publish job is release evidence only when the
-review covers this candidate and the approved patch is empty.
+Next, list merged PRs and select the newest managed docs PR whose merge commit is an ancestor of
+`CANDIDATE_SHA`. Do not select a PR only by merge time. If no such PR exists, report that state and
+use `PREVIOUS_TAG_SHA` as the conservative coverage point.
 
 ```bash
-DOCS_ARTIFACT='post-merge-docs-approved'
-DOCS_ARTIFACT_DIR="$EVIDENCE_DIR/docs-approved"
-mkdir "$DOCS_ARTIFACT_DIR"
-run_or_stop "documentation artifact download" gh run download "$DOCS_RUN_ID" \
-  --repo NVIDIA/NemoClaw --name "$DOCS_ARTIFACT" --dir "$DOCS_ARTIFACT_DIR"
-DOCS_PATCH="$DOCS_ARTIFACT_DIR/docs.patch"
-DOCS_REVIEW="$DOCS_ARTIFACT_DIR/review.json"
-[[ -f "$DOCS_PATCH" && -f "$DOCS_REVIEW" ]] || stop "The documentation artifact is incomplete"
-[[ ! -s "$DOCS_PATCH" ]] || stop "The approved documentation patch is not empty"
-EMPTY_PATCH_SHA256='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
-run_or_stop "documentation review validation" jq -e --arg sha "$CANDIDATE_SHA" \
-  --arg digest "$EMPTY_PATCH_SHA256" '
-  type == "object" and
-  (keys | sort) == ["mainSha", "outcome", "patchSha256", "repository", "version"] and
-  .version == 1 and .repository == "NVIDIA/NemoClaw" and .mainSha == $sha and
-  .patchSha256 == $digest and .outcome == "approved"
-' "$DOCS_REVIEW" >/dev/null
-DOCS_REVIEW_NORMALIZED="$EVIDENCE_DIR/docs-review-normalized.json"
-run_or_stop "documentation review normalization" jq -cS . "$DOCS_REVIEW" >"$DOCS_REVIEW_NORMALIZED"
-IFS= read -r DOCS_REVIEW_JSON <"$DOCS_REVIEW_NORMALIZED"
+MERGED_DOCS_PRS="$EVIDENCE_DIR/merged-docs-prs.json"
+run_or_stop "merged documentation PR read" gh pr list --repo NVIDIA/NemoClaw --state merged \
+  --base main --limit 1000 \
+  --json headRefName,headRefOid,headRepository,mergeCommit,mergedAt,number,reviewDecision,statusCheckRollup,title,url \
+  >"$MERGED_DOCS_PRS"
+run_or_stop "merged documentation PR selection" jq -c --arg prefix "$DOCS_PREFIX" '
+  [.[] | select(
+    (.headRefName | startswith($prefix)) and
+    .headRepository.nameWithOwner == "NVIDIA/NemoClaw" and
+    (.mergeCommit.oid | test("^[0-9a-f]{40}$"))
+  )] | sort_by(.mergedAt) | reverse | .[]
+' "$MERGED_DOCS_PRS" >"$EVIDENCE_DIR/managed-docs-pr-candidates.jsonl"
 ```
 
-Record these values in the release brief:
-
-- `DOCS_RUN_ID`;
-- `DOCS_RUN_ATTEMPT`;
-- `DOCS_RUN_URL`;
-- `DOCS_PUBLISH_JOB_URL`;
-- the artifact name; and
-- `DOCS_REVIEW_JSON`.
-
-The signed tag annotation then retains the exact candidate and approved-empty patch digest after the
-workflow artifact expires.
-
-Require no managed PR or branch for this candidate. A PR or branch for a later candidate does not
-invalidate this one.
+For each candidate PR in order, test its merge commit against `CANDIDATE_SHA`. Keep the first
+ancestor. Stop on an ancestry-check error. Record the selected PR as JSON and assign every field
+before a later command reads it. If there is no match, record `null`, assign `None` to the PR
+fields, and use `PREVIOUS_TAG_SHA` as the conservative coverage point.
 
 ```bash
-DOCS_PRS_FILE="$EVIDENCE_DIR/docs-prs.json"
-DOCS_BRANCH_FILE="$EVIDENCE_DIR/docs-branch.txt"
-run_or_stop "candidate documentation PR read" gh pr list --repo NVIDIA/NemoClaw --state open \
-  --head "$DOCS_BRANCH" --limit 100 --json number >"$DOCS_PRS_FILE"
-run_or_stop "candidate documentation PR validation" jq -e 'length == 0' "$DOCS_PRS_FILE" >/dev/null
-run_or_stop "candidate documentation branch read" git ls-remote --heads origin \
-  "refs/heads/$DOCS_BRANCH" >"$DOCS_BRANCH_FILE"
-[[ ! -s "$DOCS_BRANCH_FILE" ]] || stop "The candidate documentation branch still exists"
+SELECTED_DOCS_PR="$EVIDENCE_DIR/selected-docs-pr.json"
+: >"$SELECTED_DOCS_PR"
+while IFS= read -r DOCS_PR_CANDIDATE; do
+  DOCS_PR_MERGE_SHA="$(printf '%s\n' "$DOCS_PR_CANDIDATE" | jq -er '.mergeCommit.oid')"
+  if git merge-base --is-ancestor "$DOCS_PR_MERGE_SHA" "$CANDIDATE_SHA"; then
+    printf '%s\n' "$DOCS_PR_CANDIDATE" >"$SELECTED_DOCS_PR"
+    break
+  else
+    ANCESTRY_STATUS=$?
+    [[ "$ANCESTRY_STATUS" == 1 ]] || stop \
+      "documentation PR ancestry check failed with status $ANCESTRY_STATUS"
+  fi
+done <"$EVIDENCE_DIR/managed-docs-pr-candidates.jsonl"
+
+DOCS_PR_FIELDS="$EVIDENCE_DIR/selected-docs-pr-fields.tsv"
+if [[ -s "$SELECTED_DOCS_PR" ]]; then
+  run_or_stop "selected documentation PR read" jq -er '
+    [
+      (.number | tostring),
+      .url,
+      .mergeCommit.oid,
+      .headRefOid,
+      (.reviewDecision // "None")
+    ] | @tsv
+  ' "$SELECTED_DOCS_PR" >"$DOCS_PR_FIELDS"
+  IFS=$'\t' read -r DOCS_PR_NUMBER DOCS_PR_URL DOCS_PR_MERGE_SHA \
+    DOCS_PR_HEAD_SHA DOCS_PR_REVIEW_DECISION <"$DOCS_PR_FIELDS"
+else
+  printf 'null\n' >"$SELECTED_DOCS_PR"
+  DOCS_PR_NUMBER='None'
+  DOCS_PR_URL='None'
+  DOCS_PR_MERGE_SHA='None'
+  DOCS_PR_HEAD_SHA='None'
+  DOCS_PR_REVIEW_DECISION='None'
+  DOCS_COVERAGE_SHA="$PREVIOUS_TAG_SHA"
+  printf 'None\tNone\tNone\tNone\tNone\n' >"$DOCS_PR_FIELDS"
+fi
 ```
 
-This is the initial pending-state check. Do not repeat it before showing the release brief. Run the
-self-contained final recheck below only after the maintainer confirms the tag.
+Only when a PR was selected, read all of its commits and files and derive its coverage point.
+Otherwise, preserve empty API evidence and the previous-release coverage point without making a
+selected-PR API request.
+
+```bash
+DOCS_PR_COMMITS="$EVIDENCE_DIR/docs-pr-commits.json"
+DOCS_PR_FILES="$EVIDENCE_DIR/docs-pr-files.json"
+if [[ "$DOCS_PR_NUMBER" != 'None' ]]; then
+  run_or_stop "documentation PR commit read" gh api --paginate --slurp \
+    "repos/NVIDIA/NemoClaw/pulls/${DOCS_PR_NUMBER}/commits?per_page=100" >"$DOCS_PR_COMMITS"
+  run_or_stop "documentation PR file read" gh api --paginate --slurp \
+    "repos/NVIDIA/NemoClaw/pulls/${DOCS_PR_NUMBER}/files?per_page=100" >"$DOCS_PR_FILES"
+  run_or_stop "documentation PR final commit verification" jq -er \
+    --arg expected "$DOCS_PR_HEAD_SHA" '
+    [.[][]] as $commits |
+    if
+      ($commits | length) > 0 and
+      $commits[-1].sha == $expected
+    then $commits[-1].sha
+    else error("documentation PR final commit does not match headRefOid")
+    end
+  ' "$DOCS_PR_COMMITS" >"$EVIDENCE_DIR/docs-pr-final-sha"
+  run_or_stop "documentation PR check rollup read" jq -ce '
+    if (.statusCheckRollup | type) == "array"
+    then .statusCheckRollup
+    else error("documentation PR check rollup is missing")
+    end
+  ' "$SELECTED_DOCS_PR" >"$EVIDENCE_DIR/docs-pr-checks.json"
+  run_or_stop "documentation coverage commit selection" jq -er \
+    --arg message $'docs: catch up after main\n\nSigned-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>' '
+    [.[][] | select(
+      .commit.message == $message and
+      .commit.author.email == "41898282+github-actions[bot]@users.noreply.github.com" and
+      .commit.verification.verified == true and
+      ((.parents | length) == 1 or (.parents | length) == 2)
+    )] | last | .parents[-1].sha
+  ' "$DOCS_PR_COMMITS" >"$EVIDENCE_DIR/docs-coverage-sha"
+  IFS= read -r DOCS_COVERAGE_SHA <"$EVIDENCE_DIR/docs-coverage-sha"
+  run_or_stop "documentation coverage ancestry" git merge-base --is-ancestor \
+    "$DOCS_COVERAGE_SHA" "$CANDIDATE_SHA"
+  run_or_stop "documentation changed-path read" jq -r '.[].[] | .filename' \
+    "$DOCS_PR_FILES" >"$EVIDENCE_DIR/docs-changed-paths.txt"
+else
+  printf '[]\n' >"$DOCS_PR_COMMITS"
+  printf '[]\n' >"$DOCS_PR_FILES"
+  printf 'None\n' >"$EVIDENCE_DIR/docs-pr-final-sha"
+  printf '[]\n' >"$EVIDENCE_DIR/docs-pr-checks.json"
+  printf '%s\n' "$DOCS_COVERAGE_SHA" >"$EVIDENCE_DIR/docs-coverage-sha"
+  : >"$EVIDENCE_DIR/docs-changed-paths.txt"
+fi
+```
+
+Confirm that every changed path is under `docs/**`, `fern/docs.yml`, or `fern/assets/**`. Report
+the result instead of converting it into an automatic tag gate. The selected PR's final commit must
+match its recorded `headRefOid`; show its review decision and every completed, failed, pending, or
+skipped check.
+
+List all first-parent commits after the coverage point through the candidate:
+
+```bash
+run_or_stop "documentation coverage gap read" git log --first-parent \
+  --format='%H%x09%s' "${DOCS_COVERAGE_SHA}..${CANDIDATE_SHA}" \
+  >"$EVIDENCE_DIR/docs-coverage-gap.tsv"
+```
+
+For each commit in that file, read `repos/NVIDIA/NemoClaw/commits/<sha>/pulls` with the GitHub
+`groot-preview` media type. Show the associated merged PR number, title, and URL. The docs PR merge
+itself can appear in this range; identify any other merge as work after the final automated refresh.
+
+Record all of this evidence in the release brief:
+
+- target tag and candidate commit;
+- latest included cumulative docs PR, its final PR commit, and its merge commit, or `None`;
+- the final automated refresh coverage commit, or the previous release commit when none exists;
+- every commit and merged PR after that coverage point through the candidate;
+- whether the docs PR changed only allowed documentation paths;
+- the docs PR review decision and complete check state;
+- every open managed docs PR; and
+- the canonical release entry and path.
+
+Then offer exactly these choices:
+
+1. Proceed with the candidate as shown.
+2. Create or update a docs PR for the uncovered range.
+3. Stop tagging.
+
+If the maintainer selects option 1, add this exact line to the signed release brief:
+
+```text
+- Maintainer decision: Proceed with the candidate as shown.
+```
+
+If the maintainer selects option 2 or 3, stop before the E2E decision and tag confirmation.
+If documentation work changes the intended candidate, generate a new immutable release plan.
 
 ## Image Evidence
 
@@ -391,63 +479,3 @@ boundary in `nemoclaw-maintainer-e2e`. This remains operational follow-up, not a
 
 If the base-image aggregate is missing or failed, repair or rerun the affected publisher workflow
 and verifier. The general E2E decision cannot replace required image evidence.
-
-## Final Documentation Recheck
-
-Run this block only after the maintainer supplies the exact confirmation phrase. It reads the
-candidate from the immutable plan again and does not depend on the earlier evidence shell. If both
-checks pass, call the cutter immediately without another wait.
-
-```bash
-set -euo pipefail
-PLAN_PATH='../nemoclaw-release-vX.Y.Z/plan.json'
-FINAL_DOCS_DIR="$(mktemp -d)"
-chmod 700 "$FINAL_DOCS_DIR"
-trap 'rm -rf "$FINAL_DOCS_DIR"' EXIT
-
-run_or_stop() {
-  local label="$1"
-  local status
-  shift
-  if "$@"; then
-    return 0
-  else
-    status=$?
-    printf '%s failed with status %s\n' "$label" "$status" >&2
-    exit "$status"
-  fi
-}
-
-stop() {
-  printf '%s\n' "$1" >&2
-  exit 1
-}
-
-FINAL_CANDIDATE_FILE="$FINAL_DOCS_DIR/candidate.txt"
-run_or_stop "final release plan read" jq -er '
-  if
-    (keys | sort) == [
-      "nextTag", "originMainCommit", "originMainHeadline",
-      "previousTag", "previousTagCommit", "previousTagObject"
-    ] and
-    (.originMainCommit | test("^[0-9a-f]{40}$"))
-  then .originMainCommit
-  else error("release plan is invalid")
-  end
-' "$PLAN_PATH" >"$FINAL_CANDIDATE_FILE"
-IFS= read -r CANDIDATE_SHA <"$FINAL_CANDIDATE_FILE"
-DOCS_BRANCH="automation/post-merge-docs-${CANDIDATE_SHA:0:12}"
-
-FINAL_DOCS_PRS_FILE="$FINAL_DOCS_DIR/docs-prs.json"
-FINAL_DOCS_BRANCH_FILE="$FINAL_DOCS_DIR/docs-branch.txt"
-run_or_stop "final candidate documentation PR read" gh pr list --repo NVIDIA/NemoClaw --state open \
-  --head "$DOCS_BRANCH" --limit 100 --json number >"$FINAL_DOCS_PRS_FILE"
-run_or_stop "final candidate documentation PR validation" jq -e 'length == 0' \
-  "$FINAL_DOCS_PRS_FILE" >/dev/null
-run_or_stop "final candidate documentation branch read" git ls-remote --heads origin \
-  "refs/heads/$DOCS_BRANCH" >"$FINAL_DOCS_BRANCH_FILE"
-[[ ! -s "$FINAL_DOCS_BRANCH_FILE" ]] || stop "The candidate documentation branch still exists"
-```
-
-Treat the confirmation as consumed if a read fails or pending state appears. Resolve that state and
-request a new confirmation.

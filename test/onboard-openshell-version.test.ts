@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../src/lib/adapters/openshell/resolve-shared";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -146,7 +147,7 @@ describe("OpenShell version helpers", () => {
     }
   });
 
-  it("shipped blueprint.yaml exposes parseable min/max OpenShell versions", () => {
+  it("keeps Hermes Portable aligned with both shipped OpenShell bounds (#9211)", () => {
     const min = getBlueprintMinOpenshellVersion(repoRoot);
     const max = getBlueprintMaxOpenshellVersion(repoRoot);
     expect(min).not.toBe(null);
@@ -154,6 +155,8 @@ describe("OpenShell version helpers", () => {
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(min || "")).toBe(true);
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(max || "")).toBe(true);
     expect(versionGte(max, min)).toBe(true);
+    expect(HERMES_PORTABLE_OPENSHELL_VERSION).toBe(min);
+    expect(HERMES_PORTABLE_OPENSHELL_VERSION).toBe(max);
   });
 
   it("reads max_openshell_version from blueprint.yaml", () => {

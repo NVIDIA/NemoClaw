@@ -165,12 +165,13 @@ describe("Fern changelog documentation", () => {
     expect(source.match(/^```bash$/gm)?.length ?? 0, "v0.0.34 must retain its examples").toBe(3);
   });
 
-  it("requires the approved empty-patch publisher result before release", () => {
+  it("records a maintainer decision from displayed documentation coverage", () => {
     const guide = fs.readFileSync(path.join(docsDir, "CONTRIBUTING.md"), "utf8");
 
     expect(guide).toContain(
-      "The tag skill then requires the `Publish documentation catch-up` job to succeed for an independently approved empty patch at the exact `origin/main` commit",
+      "The maintainer then decides whether to proceed, request another docs PR,",
     );
+    expect(guide).not.toContain("independently approved empty patch");
   });
 
   it("sorts complete semantic versions newest first", () => {

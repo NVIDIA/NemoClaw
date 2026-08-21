@@ -41,6 +41,10 @@ type ImageManifest = {
       cmake?: Record<string, boolean>;
       compiler?: { c?: string; cudaHostCxx?: string; cxx?: string };
       packages?: Record<string, string>;
+      requestGuardToolchain?: {
+        archives?: { amd64?: string; arm64?: string };
+        version?: string;
+      };
       target?: string;
     };
     cuda?: { developmentBase?: string; runtimeBase?: string };
@@ -197,7 +201,7 @@ describe("declarative llama.cpp server image", () => {
             "/opt/llama.cpp/lib/libggml-cuda.so",
             "/usr/local/bin/llama-server",
             "/usr/local/bin/nemoclaw-llama-cpp-request-guard",
-            "/usr/local/share/licenses/go/copyright",
+            "/usr/local/share/licenses/go/LICENSE",
             "/usr/local/share/licenses/llama.cpp/LICENSE",
           ]),
           writablePaths: ["/tmp"],
@@ -214,6 +218,13 @@ describe("declarative llama.cpp server image", () => {
     );
     expect(manifest.spec?.runtime?.uid).toBeGreaterThan(0);
     expect(manifest.spec?.runtime?.gid).toBeGreaterThan(0);
+    expect(manifest.spec?.build?.requestGuardToolchain).toEqual({
+      archives: {
+        amd64: "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
+        arm64: "sha256:d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e",
+      },
+      version: "1.26.6",
+    });
   });
 
   it("declares native amd64 and DGX Spark arm64 compilation explicitly (#8231)", () => {
@@ -340,6 +351,7 @@ describe("declarative llama.cpp server image", () => {
         manifest.spec?.publication?.evidence?.vulnerability?.scanner,
       publication_vulnerability_severity_cutoff:
         manifest.spec?.publication?.evidence?.vulnerability?.severityCutoff,
+      request_guard_go_version: manifest.spec?.build?.requestGuardToolchain?.version,
       runtime_forbidden_paths: JSON.stringify(manifest.spec?.runtime?.forbiddenPaths),
       runtime_gid: String(manifest.spec?.runtime?.gid),
       runtime_required_paths: JSON.stringify(manifest.spec?.runtime?.requiredPaths),
@@ -348,12 +360,17 @@ describe("declarative llama.cpp server image", () => {
       source_revision: manifest.spec?.source?.revision,
     });
     expect(JSON.parse(output.matrix ?? "null")).toEqual({
-      include: manifest.spec?.platforms?.map(({ cudaArchitectures, platform, runner }) => ({
-        arch: platform?.slice("linux/".length),
-        cuda_architectures: cudaArchitectures,
-        platform,
-        runner,
-      })),
+      include: manifest.spec?.platforms?.map(({ cudaArchitectures, platform, runner }) => {
+        const arch = platform?.slice("linux/".length) as "amd64" | "arm64";
+        return {
+          arch,
+          cuda_architectures: cudaArchitectures,
+          platform,
+          request_guard_go_archive_sha256:
+            manifest.spec?.build?.requestGuardToolchain?.archives?.[arch],
+          runner,
+        };
+      }),
     });
     expect(JSON.parse(output.publication_qualification ?? "null")).toEqual(
       manifest.spec?.publication?.qualification,
@@ -374,6 +391,17 @@ describe("declarative llama.cpp server image", () => {
       manifestSource.replace(
         "sha256:ef2203909e80b8b976cfc672f7e2ae2b00bc0e25c404ee86d89e10a3802f1c52",
         "sha256:invalid",
+      ),
+    ],
+    [
+      "an unreviewed request guard Go version",
+      manifestSource.replace("version: 1.26.6", "version: 1.26.5"),
+    ],
+    [
+      "a substituted request guard Go archive",
+      manifestSource.replace(
+        "sha256:708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89",
+        `sha256:${"0".repeat(64)}`,
       ),
     ],
     [
@@ -534,10 +562,7 @@ describe("declarative llama.cpp server image", () => {
   });
 
   it.each([
-    [
-      "an unexpected publication field",
-      addUnexpectedPublicationField(manifestSource),
-    ],
+    ["an unexpected publication field", addUnexpectedPublicationField(manifestSource)],
     ["automatic publication", manifestSource.replace("workflow_dispatch", "push")],
     ["an untrusted ref", manifestSource.replace("refs/heads/main", "refs/heads/release")],
     [
@@ -694,17 +719,32 @@ describe("declarative llama.cpp server image", () => {
     expect(dockerfile).toContain("--target llama-server");
     expect(dockerfile).toContain('-DGGML_BACKEND_DIR="${GGML_BACKEND_DIR}"');
     expect(dockerfile).toContain('test -f "${GGML_BACKEND_DIR}/libggml-cuda.so"');
-    expect(Object.entries({
-          ...manifest.spec?.build?.packages,
-          ...manifest.spec?.runtime?.packages,
-        }).every(([packageName, version]) => dockerfile.includes(`${packageName}=${version}`))).toBe(true);
+    expect(
+      Object.entries({
+        ...manifest.spec?.build?.packages,
+        ...manifest.spec?.runtime?.packages,
+      }).every(([packageName, version]) => dockerfile.includes(`${packageName}=${version}`)),
+    ).toBe(true);
     expect(dockerfile).toContain("USER ${RUNTIME_UID}:${RUNTIME_GID}");
     expect(dockerfile).toContain('SHELL ["/bin/bash", "-o", "pipefail", "-c"]');
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/llama-server"]');
     expect(dockerfile).toContain("go test ./...");
     expect(dockerfile).toContain("CGO_ENABLED=0 go build");
-    expect(dockerfile).toContain("set -- /usr/share/doc/golang-[0-9]*-go/copyright");
-    expect(dockerfile).toContain('cp "$1" /opt/llama.cpp/licenses/go/copyright');
+    expect(dockerfile).toContain("GOTOOLCHAIN=local");
+    expect(dockerfile).toContain(
+      '"https://go.dev/dl/go${REQUEST_GUARD_GO_VERSION}.linux-${TARGETARCH}.tar.gz"',
+    );
+    expect(dockerfile).toContain('"${REQUEST_GUARD_GO_ARCHIVE_SHA256#sha256:}" "$go_archive"');
+    expect(dockerfile).toContain('test "$(go env GOVERSION)" = "go${REQUEST_GUARD_GO_VERSION}"');
+    expect(dockerfile).toContain("test ! -e /usr/local/go");
+    expect(dockerfile).toContain("cp /usr/local/go/LICENSE /opt/llama.cpp/licenses/go/LICENSE");
+    expect(dockerfile).toContain(
+      'io.nvidia.nemoclaw.inference-server.request-guard.go.version="${REQUEST_GUARD_GO_VERSION}"',
+    );
+    expect(dockerfile).toContain(
+      'io.nvidia.nemoclaw.inference-server.request-guard.go.archive-sha256="${REQUEST_GUARD_GO_ARCHIVE_SHA256}"',
+    );
+    expect(dockerfile).not.toContain("golang-go=");
     expect(dockerfile).toContain(
       "COPY --from=build --chmod=0555 /opt/llama.cpp/bin/nemoclaw-llama-cpp-request-guard /usr/local/bin/nemoclaw-llama-cpp-request-guard",
     );
@@ -714,9 +754,13 @@ describe("declarative llama.cpp server image", () => {
     expect(dockerfile).toContain("ENV CC=${C_COMPILER}");
     expect(dockerfile).toContain("CXX=${CXX_COMPILER}");
     expect(dockerfile).toContain("CUDAHOSTCXX=${CUDA_HOST_CXX_COMPILER}");
-    expect((manifest.spec?.runtime?.forbiddenPaths?.filter(
+    expect(
+      (
+        manifest.spec?.runtime?.forbiddenPaths?.filter(
           (forbiddenPath) => forbiddenPath !== "/opt/llama.cpp/ui",
-        ) ?? []).every((shellPath) => dockerfile.includes(shellPath))).toBe(true);
+        ) ?? []
+      ).every((shellPath) => dockerfile.includes(shellPath)),
+    ).toBe(true);
     expect(dockerfile).toContain("sha256sum --check --strict");
     expect(dockerfile).toContain("cp LICENSE AUTHORS");
     expect(dockerfile).toContain("find /opt/llama.cpp/licenses -type d -exec chmod 0555");

@@ -187,7 +187,7 @@ export function getProviderSelectionConfig(
     case "gemini-api":
       return {
         ...base,
-        model: model || "gemini-2.5-flash",
+        model: model || "gemini-3.6-flash",
         credentialEnv: "GEMINI_API_KEY",
         providerLabel: "Google Gemini",
       };

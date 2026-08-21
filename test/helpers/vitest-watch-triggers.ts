@@ -22,6 +22,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
+  "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
@@ -46,6 +47,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
+      /(?:^|\/)(?:\.github\/workflows\/release-daily-brev-image\.yaml|scripts\/release-daily-brev-image\.sh)$/,
+    testsToRun: runTests("test/release-daily-brev-image.test.ts"),
+  },
+  {
+    pattern:
       /(?:^|\/)(?:\.github\/workflows\/release-lkg-brev-image\.yaml|scripts\/release-lkg-brev-image\.sh)$/,
     testsToRun: runTests("test/release-lkg-brev-image.test.ts"),
   },
@@ -58,14 +64,39 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern:
+      /(?:^|\/)internal\/security-reviews\/hermes-0\.19\.0-dependency-review\.md$/,
+    testsToRun: runTests("test/hermes-dependency-review.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/actions\/resolve-hermes-base-image\/action\.yaml$/,
+    testsToRun: runTests("test/base-image-resolver-helper.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)agents\/hermes\/Dockerfile\.base$/,
+    testsToRun: runTests(
+      "test/hermes-dependency-review.test.ts",
+      "test/hermes-share-mount-deps.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/sandbox-provisioning.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)(agents\/(?:hermes|langchain-deepagents-code)\/)?Dockerfile$/,
-    testsToRun: (_file, match) =>
-      match[1]
+    testsToRun: (_file, match) => {
+      if (match[1] === "agents/hermes/") {
+        return [
+          "src/lib/onboard/managed-startup-profile.test.ts",
+          "test/hermes-mcp-runtime-capability.test.ts",
+        ];
+      }
+      return match[1]
         ? ["src/lib/onboard/managed-startup-profile.test.ts"]
         : [
             "src/lib/onboard/managed-startup-profile.test.ts",
             "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
-          ],
+          ];
+    },
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,
@@ -148,6 +179,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)scripts\/checks\/validate-managed-base-index\.sh$/,
     testsToRun: runTests("test/validate-managed-base-index.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/checks\/download-hermes-source-archive[.]sh$/,
+    testsToRun: runTests(
+      "test/hermes-share-mount-deps.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)scripts\/checks\/retry-docker-imagetools-inspect\.sh$/,
@@ -253,6 +291,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)ci\/platform-vitest-macos-requirements\.lock$/,
     testsToRun: runTests("test/platform-vitest-main-workflow.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/SKILL\.md|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
+    testsToRun: runTests("test/release-post-tag-follow-through.test.ts"),
   },
 ];
 export function resolveVitestWatchTests(file: string): string[] {

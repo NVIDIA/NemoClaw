@@ -204,6 +204,37 @@ describe("model prompt helpers", () => {
     expect(result).toBe("gpt-5.4-mini");
   });
 
+  it("offers Gemini 3.6 Flash and excludes Gemini 2.5 Flash (#9298)", async () => {
+    await expect(
+      promptRemoteModel("Google Gemini", "gemini", "gemini-3.6-flash", null, {
+        promptFn: promptSequence([""]),
+        writeLine: vi.fn(),
+      }),
+    ).resolves.toBe("gemini-3.6-flash");
+
+    const promptFn = promptSequence(["7", "gemini-custom"]);
+    const writeLine = vi.fn();
+    const result = await promptRemoteModel("Google Gemini", "gemini", "gemini-3.6-flash", null, {
+      promptFn,
+      writeLine,
+    });
+
+    expect(result).toBe("gemini-custom");
+    expect(promptFn).toHaveBeenNthCalledWith(1, "  Choose model [1]: ");
+    expect(writeLine.mock.calls.map(([line]) => line)).toEqual([
+      "",
+      "  Google Gemini models:",
+      "    1) gemini-3.6-flash",
+      "    2) gemini-3.1-pro-preview",
+      "    3) gemini-3.1-flash-lite-preview",
+      "    4) gemini-3-flash-preview",
+      "    5) gemini-2.5-pro",
+      "    6) gemini-2.5-flash-lite",
+      "    7) Other...",
+      "",
+    ]);
+  });
+
   it("treats non-numeric curated selections as manual-entry fallback", async () => {
     const result = await promptRemoteModel("OpenAI", "openai", "gpt-5.4-mini", null, {
       promptFn: promptSequence(["abc", "custom-model"]),
