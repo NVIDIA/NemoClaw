@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -122,14 +122,17 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
   });
 
   it("rejects an unsafe Hermes sandbox name before staging Shields down", () => {
+    const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
+
     expect(() =>
       buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
         livePolicyYaml: "",
         readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
         sandboxName: "bad:provider",
-        writeTempPolicy: () => "/must-not-stage.yaml",
+        writeTempPolicy,
       }),
     ).toThrow("Cannot materialize the Shields-down credential provider binding");
+    expect(writeTempPolicy).not.toHaveBeenCalled();
   });
 
   it("preserves exact managed MCP entries without copying unrelated live egress (#7952)", () => {
