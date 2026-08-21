@@ -88,6 +88,10 @@ const OPAQUE_INPUTS = [
   ".github/workflows/platform-vitest-main.yaml",
   "tools/wsl/ci-helper.ps1",
   "ci/platform-vitest-macos-requirements.lock",
+  ".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md",
+  ".agents/skills/nemoclaw-maintainer-evening/SKILL.md",
+  ".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md",
+  ".agents/skills/nemoclaw-maintainer-policies/references/release-train.md",
 ] as const;
 
 function triggeredBy(relativePath: string): string[] {
@@ -281,6 +285,18 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",
     ]);
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md")).toEqual([
+      "test/release-post-tag-follow-through.test.ts",
+    ]);
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-evening/SKILL.md")).toEqual([
+      "test/release-post-tag-follow-through.test.ts",
+    ]);
+    expect(triggeredBy(".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md")).toEqual([
+      "test/release-post-tag-follow-through.test.ts",
+    ]);
+    expect(
+      triggeredBy(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md"),
+    ).toEqual(["test/release-post-tag-follow-through.test.ts"]);
   });
 
   it.each(Array.from(vitestWatchTriggerPatterns, (value) => [value]))(

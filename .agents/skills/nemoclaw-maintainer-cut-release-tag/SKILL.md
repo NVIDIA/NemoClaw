@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Cuts one signed NemoClaw semver tag after required candidate checks and the maintainer's E2E decision. Use when preparing or publishing a vX.Y.Z release tag.
+description: Cuts one signed NemoClaw semver tag after required candidate checks and the maintainer's E2E decision, then follows the tag-triggered release work and drafts the Announcement. Use when preparing or publishing a vX.Y.Z release tag.
 user_invocable: true
 ---
 
@@ -18,8 +18,9 @@ Treat these as separate states:
 - **Tag can be cut:** all required documentation and image checks pass.
   The release brief records the maintainer's general E2E decision and contains no unresolved prompts.
 - **Tag cut:** the remote signed tag exists and peels to the planned candidate.
-- **Post-tag work:** `latest`, release labels, public documentation, release images, `lkg`, and the Announcement
-  continue outside this skill. Do not wait for them here; some share a downstream workflow.
+- **Post-tag follow-through:** after reporting the tag as cut, continue the same task. Monitor
+  `latest`, release labels, public documentation, and release images. Draft the Announcement and
+  report `lkg` state.
 
 ## Hard Rules
 
@@ -37,6 +38,10 @@ Treat these as separate states:
   signed tag annotation; do not maintain another exception record.
 - Ask the maintainer to paste the plan's full confirmation phrase before cutting.
 - Push only the planned semver tag. Never push or move `latest` or `lkg` here.
+- Report the tag as cut immediately after remote readback. This report is a progress checkpoint, not
+  the final response.
+- Continue the same task through post-tag follow-through. Do not make a post-tag result a tag gate.
+- Ask before a workflow rerun. Never create a GitHub Discussion.
 - Never move, delete, or replace an existing remote semver tag unless the maintainer starts a
   protected-tag remediation.
 - Follow the [release-train policy](../nemoclaw-maintainer-policies/references/release-train.md) and
@@ -53,6 +58,7 @@ Release tag:
 - [ ] 3. Show E2E context and record the maintainer's decision
 - [ ] 4. Finish and review the Markdown release brief
 - [ ] 5. Confirm, cut, and read back the signed tag
+- [ ] 6. Follow tag-triggered work and draft the Announcement
 ```
 
 ### 1. Generate the Plan and Brief Template
@@ -163,7 +169,7 @@ Do not put secrets in the brief. Show the complete rendered file to the maintain
 exact public Markdown becomes the signed tag annotation, make any correction in the file before
 asking for confirmation.
 
-### 5. Confirm, Cut, and Return
+### 5. Confirm, Cut, and Report the Tag
 
 Ask the maintainer to paste the plan's exact phrase:
 
@@ -188,13 +194,47 @@ npm run release:cut -- \
 ```
 
 Require the script's remote readback to show that the signed annotated tag exists and peels to the
-planned candidate. Return immediately with the tag, candidate, plan path, brief path, and readback.
+planned candidate. Report the tag, candidate, plan path, brief path, and readback. Then continue the
+same task.
 
-Report any already-known `latest`, release-label, public-documentation, release-image, `lkg`, and Announcement
-state, and mark the rest pending or unknown. Do not poll. These states are separate from tag
-completion, but `latest` and label carry-forward share the release workflow. The tag-triggered image
-workflow performs a release rebuild and publication; it can fail after the tag is cut and can be
-retried without moving the semver tag. Do not call it promotion-only.
+### 6. Follow Tag-Triggered Work and Draft the Announcement
+
+Start these operations together:
+
+1. Load `nemoclaw-maintainer-release-notes`. Draft `release-note-draft.md` from the plan's immutable
+   range. Open the completed draft in the requested editor. Never create the Discussion.
+2. Find the tag-push runs for these workflow files:
+   - `.github/workflows/release-latest-tag.yaml`
+   - `.github/workflows/docs-publish-public.yaml`
+   - `.github/workflows/base-image.yaml`
+3. Bind each run by workflow path, `event=push`, release tag, and planned candidate. Retain its run
+   ID and attempt. Monitor the three runs concurrently until they reach terminal results.
+
+Classify the effects that each workflow owns:
+
+- For `Release / Latest Tag`, verify that `latest` identifies the release tag. Verify label
+  carry-forward and released-label deletion.
+- For `Docs / Publish Public`, require the `publish` job to succeed.
+- For `Images / Base Images`, require `Publish complete managed images` to
+  succeed. Report Pi candidate failures separately; they do not determine production promotion.
+
+A failed post-tag workflow does not change tag success. Report the failing job and recovery path.
+Ask before a rerun. Bind and monitor the new attempt. The managed-image workflow supports failed-job
+reruns that reuse successful producer artifacts from the same run.
+
+After image classification, read the peeled `lkg` commit. This skill never moves `lkg`. If
+production promotion succeeded and `lkg` differs, show the current and proposed releases and ask for
+separate maintainer authorization. If the maintainer moves `lkg`, monitor
+`.github/workflows/release-lkg-brev-image.yaml` and its returned downstream production-image run.
+
+Send the final response only after:
+
+- all three automatic workflows are terminal and their effects are classified;
+- the Announcement draft exists; and
+- `lkg` already identifies the release, is ineligible because production promotion failed, awaits
+  an explicit maintainer decision, or its authorized downstream production run is classified.
+
+Keep the semver tag immutable.
 
 ## Recovery
 
