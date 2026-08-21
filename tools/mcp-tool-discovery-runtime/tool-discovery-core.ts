@@ -49,8 +49,19 @@ export function parseMcpToolDiscoveryArguments(args: string[]): McpToolDiscovery
   return { url, credentialEnv };
 }
 
-export function buildMcpToolDiscoveryAuthorizationPlaceholder(credentialEnv: string): string {
-  return `Bearer openshell:resolve:env:${credentialEnv}`;
+export function buildMcpToolDiscoveryAuthorizationPlaceholder(
+  credentialEnv: string,
+  runtimeValue: string | undefined,
+): string | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(credentialEnv) || runtimeValue === undefined) {
+    return null;
+  }
+  const escapedCredentialEnv = credentialEnv.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const placeholderPattern = new RegExp(
+    `^openshell:resolve:env:(?:v[0-9]{1,20}_)?${escapedCredentialEnv}$`,
+    "u",
+  );
+  return placeholderPattern.test(runtimeValue) ? `Bearer ${runtimeValue}` : null;
 }
 
 export type McpToolPageLoader = (cursor?: string) => Promise<McpToolPage>;

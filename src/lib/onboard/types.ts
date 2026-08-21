@@ -82,6 +82,8 @@ export interface SandboxCreateIntent {
   };
   /** Validated non-secret Hermes environment assignments carried by a rebuild. */
   readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
+  /** Built-in policy presets owned by the outer authoritative rebuild lifecycle. */
+  readonly rebuildPolicyPresets?: readonly string[];
 }
 
 /** Durable onboarding-session identity that owns the pending inference route. */
@@ -130,6 +132,8 @@ export type OnboardOptions = {
   managedWorkloadRebuild?: import("./workload/rebuild").ManagedWorkloadRebuildHandoff;
   /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
   rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
+  /** Internal authoritative policy selection carried across sandbox recreation. */
+  rebuildPolicyPresets?: readonly string[];
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
   baseImageResolutionHint?:
     | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata
