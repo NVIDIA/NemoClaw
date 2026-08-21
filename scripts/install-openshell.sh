@@ -739,10 +739,22 @@ repair_existing_macos_vm_driver() {
 }
 
 macos_homebrew_formula_installed() {
+  local formula_info formula_operation_pin
   [ "$OS" = "Darwin" ] || return 1
   command -v brew >/dev/null 2>&1 || return 1
-  brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1 || return 1
-  brew info --json=v2 "$HOMEBREW_FORMULA_NAME" 2>/dev/null \
+  if [ "$RELEASE_TAG" = "dev" ]; then
+    formula_operation_pin="unverified-dev"
+  else
+    formula_operation_pin="$(openshell_pinned_sha256 "$RELEASE_TAG" "openshell.rb")" \
+      || return 1
+  fi
+  run_trusted_openshell_homebrew_operation "$formula_operation_pin" -- \
+    brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1 \
+    || return 1
+  formula_info="$(run_trusted_openshell_homebrew_operation "$formula_operation_pin" -- \
+    brew info --json=v2 "$HOMEBREW_FORMULA_NAME" 2>/dev/null)" \
+    || return 1
+  printf '%s\n' "$formula_info" \
     | grep -Eq '"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"'
 }
 
@@ -872,7 +884,7 @@ if command -v openshell >/dev/null 2>&1; then
       if required_driver_bins_present "$ACTIVE_OPENSHELL_BIN" && openshell_has_required_messaging_features "$ACTIVE_OPENSHELL_BIN"; then
         if [ "$FORCE_INSTALL" != "1" ]; then
           if [ "$OS" = "Darwin" ] && command -v brew >/dev/null 2>&1 && ! macos_homebrew_formula_installed; then
-            warn "openshell $INSTALLED_VERSION_OUTPUT is installed without the Homebrew gateway service — installing OpenShell with Homebrew..."
+            warn "NemoClaw cannot confirm the Homebrew gateway formula for openshell $INSTALLED_VERSION_OUTPUT — installing OpenShell with Homebrew..."
           else
             if [ "$OS" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
               warn "Homebrew is not installed; reusing the standalone OpenShell gateway without reboot persistence."
@@ -901,7 +913,7 @@ if command -v openshell >/dev/null 2>&1; then
       elif ! openshell_has_required_messaging_features "$ACTIVE_OPENSHELL_BIN"; then
         fail "${OPENSHELL_FEATURE_CHECK_ERROR:-openshell $INSTALLED_VERSION is missing required messaging credential rewrite and MCP L7 policy support. Install an OpenShell build that includes provider aliases, WebSocket text rewrite, request-body credential rewrite, and MCP/JSON-RPC L7 policy enforcement.}"
       elif [ "$OS" = "Darwin" ] && command -v brew >/dev/null 2>&1 && ! macos_homebrew_formula_installed; then
-        warn "openshell $INSTALLED_VERSION is installed without the Homebrew gateway service — reinstalling pinned OpenShell ${PIN_VERSION} with Homebrew..."
+        warn "NemoClaw cannot confirm the pinned Homebrew gateway formula for openshell $INSTALLED_VERSION — reinstalling pinned OpenShell ${PIN_VERSION} with Homebrew..."
       else
         if [ "$OS" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
           warn "Homebrew is not installed; reusing the standalone OpenShell gateway without reboot persistence."
