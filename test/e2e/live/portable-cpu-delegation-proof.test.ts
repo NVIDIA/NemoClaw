@@ -142,16 +142,16 @@ function proveAdmission(
         DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
         networkName,
       ]),
-      commandResult(0, JSON.stringify([{ Subnet: "169.254.1.0/24" }])),
+      commandResult(0, JSON.stringify([{ Subnet: "10.87.0.0/24" }])),
     ],
     [
       JSON.stringify([
         "inspect",
         "--format",
-        `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
+        `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }}|{{.State.Running}}|{{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
         registryContainer,
       ]),
-      commandResult(0, `1 true ${PORTABLE_REGISTRY_IP}`),
+      commandResult(0, `1|true|${PORTABLE_REGISTRY_IP}`),
     ],
   ]);
   const ipResults: ReadonlyMap<string, readonly [string, SpawnResult]> = new Map([

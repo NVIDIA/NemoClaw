@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Google Chat bridge for Hermes: keyless reply + Pub/Sub pull. The gateway mints
+# one chat.bot + pubsub token and injects it on both hosts; the private key stays
+# gateway-side, delivered by messaging-bridge-provider.ts through
+# `--secret-material-env` so it never reaches argv or the sandbox.
+id: google-chat-hermes-bridge
+display_name: Google Chat Bridge (Hermes)
+description: Gateway-minted Google Chat bot token (chat.bot + pubsub) for Hermes Pub/Sub pull + Chat reply
+category: agent
+credentials:
+  - name: access_token
+    description: Google Chat bot OAuth access token (gateway-minted via service-account JWT; chat.bot + pubsub)
+    env_vars:
+      - GOOGLE_CHAT_ACCESS_TOKEN
+    required: true
+    auth_style: bearer
+    header_name: Authorization
+    query_param: ''
+    refresh:
+      strategy: google-service-account-jwt
+      scopes:
+        - https://www.googleapis.com/auth/chat.bot
+        - https://www.googleapis.com/auth/pubsub
+      material:
+        - name: client_email
+          description: Service-account client email (JWT issuer)
+          required: true
+        - name: private_key
+          description: Service-account RSA private key (PEM); signs the JWT assertion
+          required: true
+          secret: true
+        - name: scope
+          description: OAuth scope(s) to mint the token for
+endpoints:
+  - host: pubsub.googleapis.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+  - host: chat.googleapis.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+# OpenShell resolves the process via /proc/pid/exe and matches binaries EXACTLY:
+# a `/usr/bin/python3*` glob misses `python3.13` and is 403'd at CONNECT, so list
+# the concrete path Hermes' venv resolves to. Revisit on a base-image Python bump.
+binaries:
+  - /opt/hermes/.venv/bin/python
+  - /usr/bin/python3
+  - /usr/bin/python3.13
+inference_capable: false

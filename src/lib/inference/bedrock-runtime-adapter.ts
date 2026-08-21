@@ -16,6 +16,7 @@ import {
   BEDROCK_RUNTIME_ADAPTER_LOOPBACK_HOST,
   BEDROCK_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
   BEDROCK_RUNTIME_ADAPTER_OPENAI_BASE_URL,
+  BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
   BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
   BEDROCK_RUNTIME_AWS_BEARER_TOKEN_ENV,
   BEDROCK_RUNTIME_COMPATIBLE_CREDENTIAL_ENV,
@@ -288,17 +289,10 @@ export function startBedrockRuntimeAdapterFromEnv(): http.Server {
   return server;
 }
 
-const ADAPTER_LAUNCHER_BASENAMES = ["bedrock-runtime-adapter.mts", "bedrock-runtime-adapter.js"];
-const ADAPTER_PROCESS_NEEDLE = new RegExp(
-  `(?:^|[^A-Za-z0-9_.-])(?:${ADAPTER_LAUNCHER_BASENAMES.map((name) =>
-    name.replaceAll(".", "\\."),
-  ).join("|")})(?:$|[^A-Za-z0-9_.-])`,
-);
-
 const ADAPTER_PROCESS: LocalAdapterProcessOptions & { statePath: string } = {
   pidPath: PID_PATH,
   statePath: STATE_PATH,
-  processMatcher: ADAPTER_PROCESS_NEEDLE,
+  processMatcher: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
   run,
   runCapture,
 };
@@ -382,7 +376,7 @@ export async function ensureBedrockRuntimeAdapter(options: {
   const priorPid = loadLocalAdapterPid(PID_PATH);
   if (
     priorToken &&
-    isLocalAdapterProcess(priorPid, ADAPTER_PROCESS_NEEDLE, runCapture) &&
+    isLocalAdapterProcess(priorPid, BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER, runCapture) &&
     priorState?.endpointUrl === endpointUrl &&
     priorState?.region === region &&
     priorState?.credentialHash === credentialHash &&
@@ -458,6 +452,6 @@ export function getCompatibleAnthropicCredentialForBedrock(): string | null {
 
 export const __test = {
   adapterCredentialHash,
-  adapterProcessNeedle: ADAPTER_PROCESS_NEEDLE,
+  adapterProcessNeedle: BEDROCK_RUNTIME_ADAPTER_PROCESS_MATCHER,
   getAdapterScriptPath,
 };

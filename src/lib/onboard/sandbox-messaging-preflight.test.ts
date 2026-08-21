@@ -22,6 +22,7 @@ function createResult(overrides = {}) {
     hasMessagingTokens: false,
     reusableMessagingProviders: [],
     reusableMessagingChannels: [],
+    missingBridgeChannels: [],
     missingWebSearchCredentialEnv: null,
     ...overrides,
   };
@@ -201,38 +202,39 @@ describe("prepareSandboxMessagingPreflight", () => {
   it.each([
     { mode: "interactive", nonInteractive: false },
     { mode: "non-interactive", nonInteractive: true },
-  ])("aborts an enabled channel with an unavailable credential hash before $mode onboarding (#7808)", async ({
-    nonInteractive,
-  }) => {
-    const planWithoutHash = createPlan("demo", "discord", undefined);
-    const incompletePlan = {
-      ...planWithoutHash,
-      credentialBindings: planWithoutHash.credentialBindings.map((binding) => {
-        const { credentialHash: _credentialHash, ...bindingWithoutHash } = binding;
-        return { ...bindingWithoutHash, credentialAvailable: false };
-      }),
-    };
-    const listSandboxes = vi.fn(() => ({
-      sandboxes: [
-        { name: "other", messaging: { plan: createPlan("other", "discord", "other-hash") } },
-      ],
-    }));
-    const deps = createDeps({
-      readMessagingPlanFromEnv: vi.fn(() => incompletePlan),
-      isNonInteractive: vi.fn(() => nonInteractive),
-      registry: { listSandboxes },
-    });
+  ])(
+    "aborts an enabled channel with an unavailable credential hash before $mode onboarding (#7808)",
+    async ({ nonInteractive }) => {
+      const planWithoutHash = createPlan("demo", "discord", undefined);
+      const incompletePlan = {
+        ...planWithoutHash,
+        credentialBindings: planWithoutHash.credentialBindings.map((binding) => {
+          const { credentialHash: _credentialHash, ...bindingWithoutHash } = binding;
+          return { ...bindingWithoutHash, credentialAvailable: false };
+        }),
+      };
+      const listSandboxes = vi.fn(() => ({
+        sandboxes: [
+          { name: "other", messaging: { plan: createPlan("other", "discord", "other-hash") } },
+        ],
+      }));
+      const deps = createDeps({
+        readMessagingPlanFromEnv: vi.fn(() => incompletePlan),
+        isNonInteractive: vi.fn(() => nonInteractive),
+        registry: { listSandboxes },
+      });
 
-    await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
-      code: 1,
-    });
-    expect(deps.error).toHaveBeenCalledWith(
-      expect.stringContaining("credential hashes are unavailable for discord"),
-    );
-    expect(listSandboxes).not.toHaveBeenCalled();
-    expect(deps.promptYesNoOrDefault).not.toHaveBeenCalled();
-    expect(deps.prepareCreateSandboxMessaging).not.toHaveBeenCalled();
-  });
+      await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
+        code: 1,
+      });
+      expect(deps.error).toHaveBeenCalledWith(
+        expect.stringContaining("credential hashes are unavailable for discord"),
+      );
+      expect(listSandboxes).not.toHaveBeenCalled();
+      expect(deps.promptYesNoOrDefault).not.toHaveBeenCalled();
+      expect(deps.prepareCreateSandboxMessaging).not.toHaveBeenCalled();
+    },
+  );
 
   it("aborts a second Slack Socket Mode sandbox on the same gateway (#7808)", async () => {
     let gatewayName = "startup-gateway";
@@ -280,6 +282,21 @@ describe("prepareSandboxMessagingPreflight", () => {
     });
     expect(deps.error).toHaveBeenCalledWith(
       "  Web search is enabled, but BRAVE_API_KEY is not available in this process.",
+    );
+  });
+
+  it("fails before recreate/delete when a selected bridge channel has no usable provider", async () => {
+    const deps = createDeps({
+      prepareCreateSandboxMessaging: vi.fn(() =>
+        createResult({ missingBridgeChannels: ["googlechat"] }),
+      ),
+    });
+
+    await expect(
+      prepareSandboxMessagingPreflight({ ...baseInput, enabledChannels: ["googlechat"] }, deps),
+    ).rejects.toMatchObject({ code: 1 });
+    expect(deps.error).toHaveBeenCalledWith(
+      "  googlechat mints its outbound token gateway-side and needs GOOGLECHAT_SERVICE_ACCOUNT to configure it.",
     );
   });
 
