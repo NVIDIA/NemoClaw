@@ -10,6 +10,7 @@ import {
   MANAGED_LLAMA_CPP_CONTAINER_NAME,
   MANAGED_LLAMA_CPP_NETWORK_NAME,
 } from "../../../src/lib/inference/llama-cpp/managed-installer.ts";
+import { LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH } from "../../../src/lib/inference/llama-cpp/host-local-runtime.ts";
 import {
   loadManagedLlamaCppApiKey,
   loadManagedLlamaCppOwner,
@@ -210,7 +211,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   );
   expect(inspect.exitCode, resultText(inspect)).toBe(0);
   const inspectedRuntime = JSON.parse(inspect.stdout) as Array<{
-    Config?: { Cmd?: unknown; Image?: unknown };
+    Config?: { Cmd?: unknown; Entrypoint?: unknown; Image?: unknown };
     HostConfig?: { PortBindings?: Record<string, unknown> };
     NetworkSettings?: { Ports?: Record<string, unknown> };
     State?: { Pid?: unknown; Running?: unknown };
@@ -220,6 +221,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   expect(runtime?.State?.Running).toBe(true);
   expect(runtime?.State?.Pid).toEqual(expect.any(Number));
   expect(runtime?.Config?.Image).toBe(recipe.spec.runtime.image);
+  expect(runtime?.Config?.Entrypoint).toEqual([LLAMA_CPP_HOST_LOCAL_REQUEST_GUARD_PATH]);
   const containerPid = runtime?.State?.Pid as number;
   expect(containerPid).toBeGreaterThan(0);
   expect(runtime?.Config?.Cmd).toEqual(expect.any(Array));
@@ -227,6 +229,12 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   const gpuLayersIndex = command.indexOf("--gpu-layers");
   expect(gpuLayersIndex).toBeGreaterThanOrEqual(0);
   expect(command[gpuLayersIndex + 1]).toBe("all");
+  const upstreamHostIndex = command.indexOf("--upstream-host");
+  expect(upstreamHostIndex).toBeGreaterThanOrEqual(0);
+  expect(command[upstreamHostIndex + 1]).toBe("127.0.0.1");
+  const upstreamPortIndex = command.indexOf("--upstream-port");
+  expect(upstreamPortIndex).toBeGreaterThanOrEqual(0);
+  expect(command[upstreamPortIndex + 1]).toBe(String(recipe.spec.serve.requestGuard.upstreamPort));
   expect(inspectedRuntime[0]?.HostConfig?.PortBindings).toEqual({});
   expect(
     Object.values(inspectedRuntime[0]?.NetworkSettings?.Ports ?? {}).every(
@@ -251,7 +259,7 @@ test("installs managed llama.cpp on a generic Linux NVIDIA GPU and routes a real
   );
   expect(startupLog).toContain("llama_server: model loaded");
   expect(startupLog).toContain(
-    `llama_server: listening on http://0.0.0.0:${recipe.spec.serve.port}`,
+    `llama_server: listening on http://127.0.0.1:${recipe.spec.serve.requestGuard.upstreamPort}`,
   );
   const computeApps = await host.command(
     "nvidia-smi",
