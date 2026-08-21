@@ -290,7 +290,7 @@ describe("authenticated MCP live fixtures", () => {
     }
   });
 
-  it("implements Streamable HTTP with an authenticated event channel", async () => {
+  it("implements authenticated Streamable HTTP and legacy SSE", async () => {
     const secret = "fixture-secret";
     const challenge = "fixture-challenge";
     const resultToken = `MCP_AUTH_REWRITE_OK::${challenge}`;
@@ -310,17 +310,19 @@ describe("authenticated MCP live fixtures", () => {
     const request = async (
       method: string,
       body?: Record<string, unknown>,
+      target = url,
+      extraHeaders: Record<string, string> = {},
     ): Promise<{ status: number; body: string; json(): unknown }> =>
       await new Promise((resolve, reject) => {
         const encoded = body ? JSON.stringify(body) : "";
         const req = https.request(
-          url,
+          target,
           {
             method,
             ca: fixtureTls.cert,
             headers: encoded
-              ? { ...headers, "content-length": Buffer.byteLength(encoded) }
-              : headers,
+              ? { ...headers, ...extraHeaders, "content-length": Buffer.byteLength(encoded) }
+              : { ...headers, ...extraHeaders },
           },
           (response) => {
             let responseBody = "";
@@ -384,12 +386,6 @@ describe("authenticated MCP live fixtures", () => {
     });
     expect(missingCredential.statusCode).toBe(401);
     missingCredential.resume();
-    const missingSession = await openEventChannel({
-      authorization: `Bearer ${secret}`,
-      accept: "text/event-stream",
-    });
-    expect(missingSession.statusCode).toBe(400);
-    missingSession.resume();
     const eventChannel = await openEventChannel({
       authorization: `Bearer ${secret}`,
       accept: "text/event-stream",
@@ -405,6 +401,66 @@ describe("authenticated MCP live fixtures", () => {
     expect(firstEventChunk).toBe(": connected\n\n");
     expect(eventChannel.complete).toBe(false);
     eventChannel.destroy();
+
+    const legacyEventChannel = await openEventChannel({
+      authorization: `Bearer ${secret}`,
+      accept: "text/event-stream",
+    });
+    expect(legacyEventChannel.statusCode).toBe(200);
+    legacyEventChannel.setEncoding("utf8");
+    const [legacyEndpointChunk] = await once(legacyEventChannel, "data", {
+      signal: AbortSignal.timeout(1_000),
+    });
+    const endpointPath = String(legacyEndpointChunk).match(
+      /data: (\/mcp\?legacySessionId=\S+)/u,
+    )?.[1];
+    expect(endpointPath).toMatch(/^\/mcp\?legacySessionId=legacy-session-\d+$/u);
+    const legacyEndpoint = new URL(endpointPath ?? "", url).href;
+    const legacyInitializeEvent = once(legacyEventChannel, "data", {
+      signal: AbortSignal.timeout(1_000),
+    });
+    expect(
+      (
+        await request(
+          "POST",
+          {
+            jsonrpc: "2.0",
+            id: 10,
+            method: "initialize",
+            params: { protocolVersion: "2025-06-18" },
+          },
+          legacyEndpoint,
+        )
+      ).status,
+    ).toBe(202);
+    const [legacyInitializeChunk] = await legacyInitializeEvent;
+    expect(String(legacyInitializeChunk)).toContain('"protocolVersion":"2025-06-18"');
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", method: "notifications/initialized" },
+          legacyEndpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        )
+      ).status,
+    ).toBe(202);
+    const legacyListEvent = once(legacyEventChannel, "data", {
+      signal: AbortSignal.timeout(1_000),
+    });
+    expect(
+      (
+        await request(
+          "POST",
+          { jsonrpc: "2.0", id: 11, method: "tools/list" },
+          legacyEndpoint,
+          { "mcp-protocol-version": "2025-06-18" },
+        )
+      ).status,
+    ).toBe(202);
+    const [legacyListChunk] = await legacyListEvent;
+    expect(String(legacyListChunk)).toContain('"name":"fake_echo"');
+    legacyEventChannel.destroy();
 
     const list = await request("POST", {
       jsonrpc: "2.0",

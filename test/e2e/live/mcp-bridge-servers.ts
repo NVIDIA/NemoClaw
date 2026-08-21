@@ -656,6 +656,7 @@ export async function startFakeMcpHttpsServer(options: {
   let expectedSecret = options.secret;
   let nextSessionId = 1;
   const sessions = new Map<string, string>();
+  const legacyEventStreams = new Map<string, http.ServerResponse>();
   const serverEventStreams = new Set<http.ServerResponse>();
   const tls =
     options.tls ??
@@ -671,7 +672,9 @@ export async function startFakeMcpHttpsServer(options: {
     })();
   const requests: FakeMcpRequest[] = [];
   const server = https.createServer(tls, async (req, res) => {
-    const requestPath = new URL(req.url ?? "/", "https://fake-mcp.local").pathname;
+    const requestUrl = new URL(req.url ?? "/", "https://fake-mcp.local");
+    const requestPath = requestUrl.pathname;
+    const legacySessionId = requestUrl.searchParams.get("legacySessionId") ?? "";
     const body = await readRequestBody(req);
     const auth = Array.isArray(req.headers.authorization)
       ? req.headers.authorization.join(",")
@@ -720,6 +723,28 @@ export async function startFakeMcpHttpsServer(options: {
       res.writeHead(status, headers);
       res.end();
     };
+    const respondRpc = (payload: unknown): void => {
+      if (!legacySessionId) {
+        respondJson(200, payload);
+        return;
+      }
+      const eventStream = legacyEventStreams.get(legacySessionId);
+      if (!eventStream) {
+        respondJson(404, { error: { message: "legacy MCP event stream is unavailable" } });
+        return;
+      }
+      if (recordedRequest) {
+        recordedRequest.responseStatus = 202;
+        recordedRequest.responseHasResult =
+          typeof payload === "object" &&
+          payload !== null &&
+          Object.prototype.hasOwnProperty.call(payload, "result") &&
+          !Object.prototype.hasOwnProperty.call(payload, "error");
+      }
+      res.writeHead(202);
+      res.end();
+      eventStream.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
     if (requestPath !== "/mcp") {
       respondJson(404, { error: { message: "not found" } });
       return;
@@ -731,6 +756,24 @@ export async function startFakeMcpHttpsServer(options: {
     if (req.method === "GET") {
       if (auth !== `Bearer ${expectedSecret}`) {
         respondJson(401, { error: { message: "missing rewritten bearer credential" } });
+        return;
+      }
+      if (sessionId === "" && protocolVersion === "") {
+        const eventSessionId = `legacy-session-${nextSessionId}`;
+        nextSessionId += 1;
+        if (recordedRequest) recordedRequest.responseStatus = 200;
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        res.write(`event: endpoint\ndata: /mcp?legacySessionId=${eventSessionId}\n\n`);
+        legacyEventStreams.set(eventSessionId, res);
+        serverEventStreams.add(res);
+        res.once("close", () => {
+          legacyEventStreams.delete(eventSessionId);
+          serverEventStreams.delete(res);
+        });
         return;
       }
       const negotiatedProtocolVersion = sessions.get(sessionId);
@@ -772,11 +815,19 @@ export async function startFakeMcpHttpsServer(options: {
       respondJson(400, { error: { message: "invalid json" } });
       return;
     }
+    if (legacySessionId && !legacyEventStreams.has(legacySessionId)) {
+      respondJson(404, { error: { message: "legacy MCP event stream is unavailable" } });
+      return;
+    }
     // This shared fixture also serves intentional stateless policy probes.
     // Validate any supplied session metadata as an all-or-nothing pair; the
     // focused discovery assertion separately requires the negotiated pair on
     // every post-initialize request.
-    if (parsedPayload.method !== "initialize" && (sessionId !== "" || protocolVersion !== "")) {
+    if (
+      !legacySessionId &&
+      parsedPayload.method !== "initialize" &&
+      (sessionId !== "" || protocolVersion !== "")
+    ) {
       const negotiatedProtocolVersion = sessions.get(sessionId);
       if (!negotiatedProtocolVersion || protocolVersion !== negotiatedProtocolVersion) {
         respondJson(400, { error: { message: "missing negotiated MCP session metadata" } });
@@ -796,13 +847,15 @@ export async function startFakeMcpHttpsServer(options: {
         params?: { protocolVersion?: string };
       };
       const negotiatedProtocolVersion = request.params?.protocolVersion ?? "2025-03-26";
-      const negotiatedSessionId = `fake-session-${nextSessionId}`;
-      nextSessionId += 1;
-      sessions.set(negotiatedSessionId, negotiatedProtocolVersion);
-      res.setHeader("mcp-session-id", negotiatedSessionId);
-      if (recordedRequest) {
-        recordedRequest.negotiatedSessionId = negotiatedSessionId;
-        recordedRequest.negotiatedProtocolVersion = negotiatedProtocolVersion;
+      if (!legacySessionId) {
+        const negotiatedSessionId = `fake-session-${nextSessionId}`;
+        nextSessionId += 1;
+        sessions.set(negotiatedSessionId, negotiatedProtocolVersion);
+        res.setHeader("mcp-session-id", negotiatedSessionId);
+        if (recordedRequest) {
+          recordedRequest.negotiatedSessionId = negotiatedSessionId;
+          recordedRequest.negotiatedProtocolVersion = negotiatedProtocolVersion;
+        }
       }
       result = {
         protocolVersion: negotiatedProtocolVersion,
@@ -839,7 +892,7 @@ export async function startFakeMcpHttpsServer(options: {
           ],
         };
       } else {
-        respondJson(200, {
+        respondRpc({
           jsonrpc: "2.0",
           id: parsedPayload.id ?? 1,
           error: { code: -32602, message: "invalid tools/list cursor" },
@@ -852,7 +905,7 @@ export async function startFakeMcpHttpsServer(options: {
         parsedPayload.params?.name !== "fake_echo" ||
         (options.challenge !== undefined && challenge !== options.challenge)
       ) {
-        respondJson(200, {
+        respondRpc({
           jsonrpc: "2.0",
           id: parsedPayload.id ?? 1,
           error: { code: -32602, message: "invalid fake_echo challenge" },
@@ -874,14 +927,14 @@ export async function startFakeMcpHttpsServer(options: {
     ) {
       result = MCP_EMPTY_RESULT_BY_METHOD[parsedPayload.method];
     } else {
-      respondJson(200, {
+      respondRpc({
         jsonrpc: "2.0",
         id: parsedPayload.id ?? 1,
         error: { code: -32601, message: "method not found" },
       });
       return;
     }
-    respondJson(200, {
+    respondRpc({
       jsonrpc: "2.0",
       id: parsedPayload.id ?? 1,
       result,
