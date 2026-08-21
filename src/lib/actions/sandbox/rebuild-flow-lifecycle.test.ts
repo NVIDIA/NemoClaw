@@ -112,6 +112,15 @@ describe("rebuildSandbox flow: lifecycle", () => {
     );
     expect(innerBackupMarker).toBe("1");
     expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBe("0");
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { policies: ["npm"] });
+    const stagedMcpPolicyUpdate = harness.registryUpdateSpy.mock.calls.findIndex(
+      ([, update]) =>
+        Array.isArray((update as { policies?: unknown }).policies) &&
+        JSON.stringify((update as { policies: string[] }).policies) === JSON.stringify(["npm"]),
+    );
+    expect(harness.registryUpdateSpy.mock.invocationCallOrder[stagedMcpPolicyUpdate]).toBeLessThan(
+      harness.onboardSpy.mock.invocationCallOrder[0],
+    );
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({

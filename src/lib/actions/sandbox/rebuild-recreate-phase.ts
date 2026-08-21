@@ -285,6 +285,30 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
   try {
+    if (rebuildMcpEntries.length > 0) {
+      const currentEntry = registry.getSandbox(sandboxName);
+      if (!currentEntry) {
+        throw new Error("MCP-bearing rebuild lost its preserved registry entry before recreate.");
+      }
+      const currentPolicies = Array.isArray(currentEntry.policies) ? currentEntry.policies : [];
+      const stagedPolicies = excludePolicyPresetsByName(
+        currentPolicies,
+        rebuildMcpEntries.map((entry) => entry.policyName),
+      );
+      if (
+        stagedPolicies.length !== currentPolicies.length &&
+        !registry.updateSandbox(sandboxName, { policies: stagedPolicies })
+      ) {
+        throw new Error("MCP-bearing rebuild could not stage its inner policy selection.");
+      }
+      // The recreate path reloads policy carry-forward from the preserved
+      // registry row and overwrites the session immediately before sandbox
+      // creation. Generated MCP definitions are intentionally absent until the
+      // dedicated post-rebuild restore, so their stale names must be removed
+      // from that transient carry-forward source as well as from the session.
+      // Failure recovery restores the original row from `sb`/the recovery
+      // snapshot; successful MCP restoration writes the live ownership back.
+    }
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
       rebuildGatewayAuthority,
