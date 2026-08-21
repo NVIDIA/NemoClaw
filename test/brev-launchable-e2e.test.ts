@@ -29,6 +29,7 @@ function fixture(
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
     imageRepositorySha?: string;
+    listenerOutput?: string;
     missingProvisionReceipt?: boolean;
     omitReceiptField?: "imageName" | "imageRepositorySha" | "project";
     platformDiagnosticFails?: boolean;
@@ -116,8 +117,7 @@ exec "$@"
     path.join(bin, "ss"),
     `#!/usr/bin/env bash
 set -euo pipefail
-printf 'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("%s",pid=99,fd=3))\n' \
-  "$FAKE_LISTENER_PROCESS_LABEL"
+printf '%s\n' "$FAKE_LISTENER_OUTPUT"
 `,
   );
   executable(
@@ -364,7 +364,9 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_E2E_DIAGNOSTIC_TIMES_OUT: options.e2eDiagnosticTimesOut ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
-    FAKE_LISTENER_PROCESS_LABEL: "s3cr3t",
+    FAKE_LISTENER_OUTPUT:
+      options.listenerOutput ??
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=3))',
     FAKE_MISSING_PROVISION_RECEIPT: options.missingProvisionReceipt ? "1" : "0",
     FAKE_OMIT_RECEIPT_FIELD: options.omitReceiptField ?? "",
     FAKE_PLATFORM_DIAGNOSTIC_FAILS: options.platformDiagnosticFails ? "1" : "0",
@@ -912,6 +914,39 @@ describe("focused staging Brev Launchable lane", () => {
     ).toEqual([]);
     expect(output).not.toContain("\u001B");
     expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it.each([
+    ["absent", "", "listener presence: absent"],
+    [
+      "expected owner",
+      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+      "listener owner: openshell-gateway",
+    ],
+    [
+      "mixed owners",
+      [
+        'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+        'LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=4))',
+      ].join("\n"),
+      "listener owner: mixed",
+    ],
+    [
+      "owner unavailable",
+      "LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*",
+      "listener owner: unavailable",
+    ],
+  ])("classifies port 8080 listener evidence with %s (#6409)", (_name, listenerOutput, expected) => {
+    const { env, workDir } = fixture({ e2eFails: true, listenerOutput });
+    const result = run(env);
+
+    expect(result.status).not.toBe(0);
+    const laneLog = fs.readFileSync(path.join(workDir, "lane.log"), "utf8");
+    expect(laneLog).toContain(expected);
+    expect(laneLog).not.toContain("s3cr3t");
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
     });

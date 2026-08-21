@@ -278,7 +278,7 @@ capture_full_e2e_failure_diagnostics() {
   # shellcheck disable=SC2016
   run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
     ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
-    'set -eu; listeners=$(sudo -n ss -H -ltnp "sport = :8080"); if [ -z "$listeners" ]; then printf "listener presence: absent\n"; elif printf "%s\n" "$listeners" | grep -Fq "users:((\"openshell-gatew"; then printf "listener presence: present\n"; if printf "%s\n" "$listeners" | grep -Fvq "users:((\"openshell-gatew"; then printf "listener owner: mixed or unexpected\n"; else printf "listener owner: openshell-gateway\n"; fi; elif printf "%s\n" "$listeners" | grep -Fq "users:("; then printf "listener presence: present\nlistener owner: unexpected\n"; else printf "listener presence: present\nlistener owner: unavailable\n"; fi'
+    'set -eu; listeners=$(sudo -n ss -H -ltnp "sport = :8080"); if [ -z "$listeners" ]; then printf "listener presence: absent\n"; elif printf "%s\n" "$listeners" | grep -Fq "users:((\"openshell-gatew"; then printf "listener presence: present\n"; if printf "%s\n" "$listeners" | grep -Fvq "users:((\"openshell-gatew"; then printf "listener owner: mixed\n"; else printf "listener owner: openshell-gateway\n"; fi; elif printf "%s\n" "$listeners" | grep -Fq "users:("; then printf "listener presence: present\nlistener owner: unexpected\n"; else printf "listener presence: present\nlistener owner: unavailable\n"; fi'
   report_full_e2e_failure_diagnostic "port 8080 listener" "$diagnostic_status" "$diagnostic_output"
 }
 
