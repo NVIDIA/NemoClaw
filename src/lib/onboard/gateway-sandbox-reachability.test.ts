@@ -126,7 +126,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
     const result = await isSandboxBridgeGatewayReachable({
       inspectNetworkImpl: (networkName) => {
         expect(networkName).toBe(PORTABLE_DOCKER_NETWORK_NAME);
-        return { subnet: PORTABLE_DOCKER_NETWORK_SUBNET, gatewayIp: "169.254.1.1" };
+        return { subnet: PORTABLE_DOCKER_NETWORK_SUBNET, gatewayIp: "10.87.0.1" };
       },
       usesHostGatewayRouteImpl: () => false,
       runImpl: (args) => {
@@ -147,7 +147,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
     const addHostIndex = seen.args.indexOf("--add-host");
     expect(seen.args[networkIndex + 1]).toBe(PORTABLE_DOCKER_NETWORK_NAME);
     expect(seen.args[addHostIndex + 1]).toBe(`host.openshell.internal:${PORTABLE_HOST_GATEWAY_IP}`);
-    expect(seen.args).not.toContain("host.openshell.internal:169.254.1.1");
+    expect(seen.args).not.toContain("host.openshell.internal:10.87.0.1");
   });
 
   it("does not call a missing Docker network a firewall failure", async () => {

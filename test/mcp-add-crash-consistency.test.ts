@@ -18,6 +18,7 @@ type CrashBoundary =
   | "credential-collision"
   | "credential-command-race"
   | "credential-projection-coalesced"
+  | "credential-projection-delayed-hostless"
   | "registered-credential-collision"
   | "registered-late-collision"
   | "adapter"
@@ -40,7 +41,10 @@ includeSecret ? (process.env.FAKE_MCP_SECRET = "host-only-secret") : delete proc
 const fs = require("node:fs");
 const path = require("node:path");
 const crashAfter = ${JSON.stringify(crashAfter)};
-if (crashAfter === "credential-projection-coalesced") {
+if (
+  crashAfter === "credential-projection-coalesced" ||
+  crashAfter === "credential-projection-delayed-hostless"
+) {
   process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "2";
 }
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
@@ -54,8 +58,11 @@ const foreignProviderId = "99999999-8888-4777-8666-555555555555";
 let providerGetCount = 0;
 let observedProviderName = null;
 let attachmentAttemptedThisProcess = false;
+let credentialUpdatedThisProcess = false;
 let observedCredentialAbsentThisProcess = false;
-let credentialRefreshAfterAbsenceCountThisProcess = 0;
+let credentialRepublishBeforeObservationCountThisProcess = 0;
+let credentialRepublishAfterAbsenceCountThisProcess = 0;
+let credentialFreeRefreshAfterAbsenceCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -111,13 +118,34 @@ providerCommands.runOpenshellProviderCommand = (args) => {
         throw new Error("Unexpected provider update: " + args.join(" "));
       }
       setProviderVersion(providerVersion() + 1);
-      if (isCredentialUpdate) mark("updated");
+      if (isCredentialUpdate) {
+        credentialUpdatedThisProcess = true;
+        mark("updated");
+      }
       if (
         crashAfter === "credential-projection-coalesced" &&
+        isCredentialUpdate &&
+        marked("bound-policy") &&
+        !observedCredentialAbsentThisProcess
+      ) {
+        credentialRepublishBeforeObservationCountThisProcess += 1;
+        fs.appendFileSync(marker("republish-before-observation"), "republish\n", { mode: 0o600 });
+      }
+      if (
+        crashAfter === "credential-projection-coalesced" &&
+        isCredentialUpdate &&
+        marked("bound-policy") &&
+        observedCredentialAbsentThisProcess
+      ) {
+        credentialRepublishAfterAbsenceCountThisProcess += 1;
+        fs.appendFileSync(marker("republish-after-observed-absence"), "republish\n", { mode: 0o600 });
+      }
+      if (
+        crashAfter === "credential-projection-delayed-hostless" &&
         isCredentialFreeRefresh &&
         observedCredentialAbsentThisProcess
       ) {
-        credentialRefreshAfterAbsenceCountThisProcess += 1;
+        credentialFreeRefreshAfterAbsenceCountThisProcess += 1;
         fs.appendFileSync(marker("refresh-after-observed-absence"), "refresh\n", { mode: 0o600 });
       }
     }
@@ -175,6 +203,7 @@ policies.applyPresetContent = () => {
   if (crashAfter === "policy-failure") return false;
   fs.appendFileSync(marker("policy-apply-log"), "apply\n", { mode: 0o600 });
   mark("policy");
+  if (marked("attached")) mark("bound-policy");
   if (crashAfter === "policy") process.exit(86);
   return true;
 };
@@ -190,17 +219,28 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const isPreupdateObservation =
     isObservation &&
     providerPresentAtStart &&
-    !marked("updated") &&
+    !credentialUpdatedThisProcess &&
     !attachmentAttemptedThisProcess;
   isPreupdateObservation && mark("observation");
   if (crashAfter === "credential-projection-coalesced" && isObservation) {
-    if (credentialRefreshAfterAbsenceCountThisProcess === 0) {
+    if (credentialRepublishBeforeObservationCountThisProcess === 0) {
       observedCredentialAbsentThisProcess = true;
       mark("credential-observed-absent");
     }
     return {
       status: 0,
-      stdout: credentialRefreshAfterAbsenceCountThisProcess > 0 ? "v" + providerVersion() : "absent",
+      stdout: credentialRepublishBeforeObservationCountThisProcess > 0 ? "v" + providerVersion() : "absent",
+      stderr: "",
+    };
+  }
+  if (crashAfter === "credential-projection-delayed-hostless" && isObservation) {
+    if (credentialFreeRefreshAfterAbsenceCountThisProcess === 0) {
+      observedCredentialAbsentThisProcess = true;
+      mark("credential-observed-absent");
+    }
+    return {
+      status: 0,
+      stdout: credentialFreeRefreshAfterAbsenceCountThisProcess > 0 ? "v" + providerVersion() : "absent",
       stderr: "",
     };
   }
@@ -545,18 +585,44 @@ describe("MCP add crash consistency", () => {
       expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
       expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
       expect(combinedOutput).not.toContain("host-only-secret");
-      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "refresh-after-observed-absence.marker"))).toBe(true);
-      const credentialRefreshCount = fs
-        .readFileSync(path.join(home, "refresh-after-observed-absence.marker"), "utf8")
+      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "republish-before-observation.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "republish-after-observed-absence.marker"))).toBe(false);
+      const credentialRepublishCount = fs
+        .readFileSync(path.join(home, "republish-before-observation.marker"), "utf8")
         .split("\n")
         .filter(Boolean).length;
-      expect(credentialRefreshCount).toBe(1);
+      expect(credentialRepublishCount).toBe(1);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("uses one credential-free refresh when hostless recovery observes absence (#9764)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-hostless-projection-"));
+    try {
+      const interrupted = runAddProcess(home, "adapter");
+      expect(interrupted.status, `${interrupted.stdout}\n${interrupted.stderr}`).toBe(86);
+
+      const resumed = runAddProcess(home, "credential-projection-delayed-hostless", false);
+      expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
+      expect(`${resumed.stdout}\n${resumed.stderr}`).not.toContain("host-only-secret");
+      expect(fs.existsSync(path.join(home, "credential-observed-absent.marker"))).toBe(true);
+      const credentialFreeRefreshCount = fs
+        .readFileSync(path.join(home, "refresh-after-observed-absence.marker"), "utf8")
+        .split("\n")
+        .filter(Boolean).length;
+      expect(credentialFreeRefreshCount).toBe(1);
+      expect(readBridge(home).addState).toBeUndefined();
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

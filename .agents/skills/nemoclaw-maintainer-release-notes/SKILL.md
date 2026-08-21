@@ -163,7 +163,8 @@ Create a Markdown draft outside the checkout root so the repo stays clean, for e
 
 The Markdown body is the source the maintainer can paste into GitHub Discussions.
 
-Stop here. The maintainer creates the GitHub Discussion and shares the announcement link.
+Return the draft path to the calling release workflow. The maintainer creates the GitHub Discussion
+and shares the Announcement link.
 
 ## Output
 

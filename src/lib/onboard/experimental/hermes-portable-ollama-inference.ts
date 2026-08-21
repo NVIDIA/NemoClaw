@@ -18,7 +18,10 @@ import {
   qualifyPodmanInferenceAuthority,
   revalidatePodmanInferenceAuthority,
 } from "../runtime-provider/podman-preflight";
-import { redactOnboardDiagnosticText } from "../session-bootstrap";
+import {
+  redactOnboardCommandDiagnosticText,
+  redactOnboardDiagnosticText,
+} from "../session-bootstrap";
 import { PORTABLE_DOCKER_NETWORK_NAME, isPortableExperimentalProfile } from "./portable-profile";
 import {
   captureHermesPortablePodmanExecutableAuthority,
@@ -245,6 +248,7 @@ export function createHermesPortableOllamaInferenceResolver(
       }),
       engines.hostLocalInference,
       assertCurrent,
+      redactOnboardCommandDiagnosticText,
     );
     const selection: HostLocalInferenceStartupSelection = Object.freeze({
       runtimeProviderId: "podman",

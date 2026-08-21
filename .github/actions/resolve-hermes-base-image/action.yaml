@@ -17,12 +17,19 @@ runs:
         source "${GITHUB_ACTION_PATH}/../base-image-resolver.sh"
 
         # Build-time package/import guard only. Authenticated HTTPS execution is
-        # validated by test/e2e/live/mcp-bridge.test.ts against a
-        # final Hermes sandbox image and OpenShell policy.
-        mcp_client_imports_ok() {
+        # validated by test/e2e/live/mcp-bridge.test.ts against a final Hermes
+        # sandbox image and OpenShell policy. Managed-image validation exercises
+        # the ACP adapter entrypoint separately.
+        optional_runtime_imports_ok() {
           local ref="$1"
-          docker run --rm --entrypoint /opt/hermes/.venv/bin/python "$ref" -c \
-            'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False); assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False)' \
+          docker run --rm \
+            --network none \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --read-only \
+            --user sandbox \
+            --entrypoint /opt/hermes/.venv/bin/python "$ref" -I -c \
+            'import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit(1); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit(1); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit(1)' \
             >/dev/null 2>&1
         }
 
@@ -58,8 +65,8 @@ runs:
             echo "::warning::Hermes sandbox base image ${ref} contains retired sandbox state; trying another candidate"
             return 1
           fi
-          if ! mcp_client_imports_ok "$digest_ref"; then
-            echo "::warning::Hermes sandbox base image ${ref} lacks the packaged MCP Streamable HTTP client imports"
+          if ! optional_runtime_imports_ok "$digest_ref"; then
+            echo "::warning::Hermes sandbox base image ${ref} lacks the required MCP Streamable HTTP or ACP 0.9.0 adapter imports"
             return 1
           fi
           resolver_write_env HERMES_BASE_IMAGE "$digest_ref" || return 1
@@ -104,8 +111,8 @@ runs:
           echo "::error::Local Hermes sandbox base image contains retired sandbox state"
           exit 1
         fi
-        if ! mcp_client_imports_ok nemoclaw-hermes-base-local; then
-          echo "::error::Local Hermes sandbox base image lacks the packaged MCP Streamable HTTP client imports"
+        if ! optional_runtime_imports_ok nemoclaw-hermes-base-local; then
+          echo "::error::Local Hermes sandbox base image lacks the required MCP Streamable HTTP or ACP 0.9.0 adapter imports"
           exit 1
         fi
         resolver_write_env HERMES_BASE_IMAGE nemoclaw-hermes-base-local

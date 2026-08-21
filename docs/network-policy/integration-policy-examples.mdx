@@ -55,7 +55,7 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 | Discord messaging | `discord` | OpenClaw and Hermes |
 | GitHub and GitHub API | `github` | OpenClaw and Hermes |
 | Gmail IMAP and SMTP | `gmail` | OpenClaw and Hermes |
-| Google Chat messaging (experimental) | `googlechat` | OpenClaw |
+| Google Chat messaging (experimental) | `googlechat` | OpenClaw and Hermes |
 | Hugging Face Hub and Inference API | `huggingface` | OpenClaw and Hermes |
 | Jira and Atlassian Cloud | `jira` | OpenClaw and Hermes |
 | Local Ollama or vLLM through the host gateway | `local-inference` | OpenClaw and Hermes |
@@ -140,8 +140,10 @@ If delivery fails, open the TUI and send a test message to the bot:
 openshell term
 ```
 
-The matching preset uses the channel name: `telegram`, `discord`, `slack`, `wechat`, `whatsapp`, or `teams`.
-OpenClaw also uses the `googlechat` preset.
+The matching preset uses the channel name: `telegram`, `discord`, `slack`, `wechat`, `whatsapp`, `teams`, or `googlechat`.
+The `googlechat` preset resolves to the selected agent's transport policy.
+OpenClaw receives the restricted webhook and sends Google Chat REST requests.
+Hermes pulls and acknowledges Pub/Sub messages over REST and sends Google Chat REST requests.
 
 ## Slack or Discord Messaging
 

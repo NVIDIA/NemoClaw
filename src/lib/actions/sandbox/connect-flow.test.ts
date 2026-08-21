@@ -853,9 +853,13 @@ describe("connectSandbox flow", () => {
     );
   });
 
-  it("probe-only reports final semantic validation failure as a runtime failure (#8942)", async () => {
+  it("probe-only names the failed final semantic check (#9834)", async () => {
     const harness = createConnectHarness({
-      readinessPublicationResult: { kind: "validation-failed", category: "health" },
+      readinessPublicationResult: {
+        kind: "validation-failed",
+        category: "health",
+        failedCheck: "inference request",
+      },
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
@@ -864,7 +868,7 @@ describe("connectSandbox flow", () => {
 
     expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "final launch-readiness validation failed due to health",
+      "final launch-readiness validation failed because the inference request failed",
     );
     expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
       "complete probe and recovery succeeded",
