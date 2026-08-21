@@ -109,6 +109,18 @@ exec "$@"
     '#!/usr/bin/env bash\nprintf "sleep %s\\n" "$*" >> "$FAKE_CALLS"\n',
   );
   executable(
+    path.join(bin, "sudo"),
+    '#!/usr/bin/env bash\nset -euo pipefail\n[ "${1:-}" != -n ] || shift\nexec "$@"\n',
+  );
+  executable(
+    path.join(bin, "ss"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf 'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("%s",pid=99,fd=3))\n' \
+  "$FAKE_LISTENER_PROCESS_LABEL"
+`,
+  );
+  executable(
     path.join(bin, "python3"),
     `#!/usr/bin/env bash
 set -euo pipefail
@@ -271,9 +283,11 @@ case "$remote" in
     printf 'ActiveState : inactive\nSubState : dead\nResult : success\n'
     printf 'ExecMainCode : 1\nExecMainStatus : 0\nNRestarts : 0\n'
     printf 'active-enter-us: 1234\ninactive-enter-us: 5678\n'
-    printf 'restart-policy expected\nexec-start expected\nfragment-path expected\ndrop-ins absent\n'
+    printf 'restart-policy is always: true\n'
+    printf 'exec-start matches packaged gateway service: true\n'
+    printf 'fragment-path is packaged unit path: true\ndrop-ins: absent\n'
     exit 0 ;;
-  *"gateway requires docker"*)
+  *"gateway service requires Docker service"*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic platform state\n' >> "$FAKE_CALLS"
     if [ "$FAKE_PLATFORM_DIAGNOSTIC_FAILS" = 1 ]; then
@@ -287,8 +301,10 @@ case "$remote" in
     fi
     printf 'Id : docker.service\nActiveState : active\nSubState : running\nResult : success\nNRestarts : 0\nactive-enter-us: 1000\n'
     printf 'Id : docker.socket\nActiveState : active\nSubState : running\nResult : success\nNRestarts : 0\nactive-enter-us: 1000\n'
-    printf 'gateway requires docker: present\ngateway after docker: present\ndocker pulls gateway: present\n'
-    printf 'boot-uptime-seconds 180\nboot-id-prefix 123456789abc\n'
+    printf 'gateway service requires Docker service: present\n'
+    printf 'gateway service ordered after Docker service: present\n'
+    printf 'Docker service wants gateway service: present\n'
+    printf 'boot-uptime-seconds 180\n'
     printf 'gateway-state-dir type=directory uid=1000 gid=1000 mode=750\n'
     exit 0 ;;
   *journalctl*openshell-gateway.service*)
@@ -310,8 +326,12 @@ case "$remote" in
   *"ss -H -ltnp"*)
     probe_options_present "$@"
     printf 'ssh full-e2e diagnostic port 8080 listener\n' >> "$FAKE_CALLS"
-    printf 'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("unexpected-proxy",pid=99,fd=3))\n'
-    exit 0 ;;
+    bash -c "$remote"
+    exit $? ;;
+  "bash -s") ;;
+  *)
+    printf 'unexpected SSH remote command\n' >&2
+    exit 97 ;;
 esac
 script="$(cat)"
 [ "\${*: -2:1}" = "$INSTANCE_NAME" ]
@@ -344,6 +364,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_E2E_DIAGNOSTIC_TIMES_OUT: options.e2eDiagnosticTimesOut ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
+    FAKE_LISTENER_PROCESS_LABEL: "s3cr3t",
     FAKE_MISSING_PROVISION_RECEIPT: options.missingProvisionReceipt ? "1" : "0",
     FAKE_OMIT_RECEIPT_FIELD: options.omitReceiptField ?? "",
     FAKE_PLATFORM_DIAGNOSTIC_FAILS: options.platformDiagnosticFails ? "1" : "0",
@@ -795,12 +816,13 @@ describe("focused staging Brev Launchable lane", () => {
     expect(laneLog).toContain("Full E2E failure diagnostic gateway state: status 0; output:");
     expect(laneLog).toContain("ActiveState : inactive");
     expect(laneLog).toContain("NRestarts : 0");
-    expect(laneLog).toContain("restart-policy expected");
-    expect(laneLog).toContain("exec-start expected");
-    expect(laneLog).toContain("fragment-path expected");
-    expect(laneLog).toContain("drop-ins absent");
+    expect(laneLog).toContain("restart-policy is always: true");
+    expect(laneLog).toContain("exec-start matches packaged gateway service: true");
+    expect(laneLog).toContain("fragment-path is packaged unit path: true");
+    expect(laneLog).toContain("drop-ins: absent");
     expect(laneLog).toContain("Full E2E failure diagnostic platform state: status 0; output:");
-    expect(laneLog).toContain("docker pulls gateway: present");
+    expect(laneLog).toContain("Docker service wants gateway service: present");
+    expect(laneLog).not.toContain("boot-id-prefix");
     expect(laneLog).toContain("gateway-state-dir type=directory uid=1000 gid=1000 mode=750");
     expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
     expect(laneLog).toContain("2300 deactivated");
@@ -808,7 +830,9 @@ describe("focused staging Brev Launchable lane", () => {
     expect(laneLog).toContain("950 docker-service started");
     expect(laneLog).toContain("Full E2E failure diagnostic cloud-final state: status 0; output:");
     expect(laneLog).toContain("SubState : exited");
-    expect(laneLog).toContain("unexpected-proxy");
+    expect(laneLog).toContain("listener presence: present");
+    expect(laneLog).toContain("listener owner: unexpected");
+    expect(laneLog).not.toContain("s3cr3t");
     const diagnosticLines = laneLog
       .split("\n")
       .filter((line) => line.startsWith("Full E2E failure diagnostic "));
@@ -829,6 +853,7 @@ describe("focused staging Brev Launchable lane", () => {
         "private-key-material",
         "203.0.113.20",
         "workspace.hidden.internal",
+        "s3cr3t",
       ].filter((secretOrAddress) => output.includes(secretOrAddress)),
     ).toEqual([]);
     expect(output).not.toContain("\u001B");
