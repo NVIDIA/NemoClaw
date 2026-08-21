@@ -561,52 +561,52 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Stopped Ollama auth proxy 33333");
   });
 
-  it.each([
-    "ollama-auth-proxy-helper.mjs",
-    "ollama-auth-proxy.mts.backup",
-  ])("never kills the near-named %s process on :11435", (scriptName) => {
-    const logs: string[] = [];
-    const killed: number[] = [];
-    const stub = psStub("99999", {
-      exited: new Set(),
-      cmdline: `/usr/bin/node /opt/nemoclaw/scripts/${scriptName}\n`,
-    });
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        commandExists: () => true,
-        env: {
-          HOME: "/tmp/nemoclaw-uninstall-test-2759-foreign",
-          LOGNAME: "testuser",
-        } as NodeJS.ProcessEnv,
-        existsSync: () => false,
-        isTty: false,
-        kill: (pid) => {
-          killed.push(pid);
-          return true;
+  it.each(["ollama-auth-proxy-helper.mjs", "ollama-auth-proxy.mts.backup"])(
+    "never kills the near-named %s process on :11435",
+    (scriptName) => {
+      const logs: string[] = [];
+      const killed: number[] = [];
+      const stub = psStub("99999", {
+        exited: new Set(),
+        cmdline: `/usr/bin/node /opt/nemoclaw/scripts/${scriptName}\n`,
+      });
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: {
+            HOME: "/tmp/nemoclaw-uninstall-test-2759-foreign",
+            LOGNAME: "testuser",
+          } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          isTty: false,
+          kill: (pid) => {
+            killed.push(pid);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          rmSync: vi.fn(),
+          run: (command, args) => {
+            if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
+              return ok("99999\n");
+            }
+            if (command === "ps") {
+              const result = stub(args);
+              if (result) return result;
+            }
+            if (args[0] === "-c") return ok("/fake/bin/tool\n");
+            if (args[0] === "-f") return ok("");
+            return okWithKnownGatewayList(command, args);
+          },
+          runDocker: () => ok(""),
         },
-        log: (line) => logs.push(line),
-        rmSync: vi.fn(),
-        run: (command, args) => {
-          if (command === "lsof" && args[0] === "-ti" && args[1] === ":11435") {
-            return ok("99999\n");
-          }
-          if (command === "ps") {
-            const result = stub(args);
-            if (result) return result;
-          }
-          if (args[0] === "-c") return ok("/fake/bin/tool\n");
-          if (args[0] === "-f") return ok("");
-          return okWithKnownGatewayList(command, args);
-        },
-        runDocker: () => ok(""),
-      },
-    );
+      );
 
-    expect(result.exitCode).toBe(0);
-    expect(killed).not.toContain(99999);
-    expect(logs).toContain("No Ollama auth proxy processes found");
-  });
+      expect(result.exitCode).toBe(0);
+      expect(killed).not.toContain(99999);
+      expect(logs).toContain("No Ollama auth proxy processes found");
+    },
+  );
 
   it("kills the model router via onboard-session routerPid (#5169)", () => {
     const logs: string[] = [];
@@ -1458,6 +1458,8 @@ describe("uninstall run plan", () => {
 
   it("exits nonzero when full uninstall cannot remove the gateway registration", () => {
     const warnings: string[] = [];
+    const logs: string[] = [];
+    const rmSync = vi.fn();
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: false },
       {
@@ -1468,20 +1470,31 @@ describe("uninstall run plan", () => {
         hasPortableRuntimeCleanup: () => false,
         isTty: false,
         kill: () => true,
-        log: () => {},
-        rmSync: vi.fn(),
+        log: (line) => logs.push(line),
+        rmSync,
         run: (command: string, args: string[]) =>
           command === "openshell" && args[0] === "gateway" && args[1] === "remove"
-            ? { status: 1, stdout: "", stderr: "connection refused" }
+            ? {
+                status: 1,
+                stdout: "",
+                stderr: "connection refused; OPENAI_API_KEY=must-not-be-logged",
+              }
             : okWithKnownGatewayList(command, args),
         runDocker: () => ok(""),
       },
     );
 
     expect(result.exitCode).toBe(1);
-    expect(warnings).toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(warnings).toContain(
+      "Could not remove gateway registration 'nemoclaw': openshell gateway remove failed (connection refused; exit 1).",
+    );
+    expect(warnings.join("\n")).not.toContain("must-not-be-logged");
+    expect(warnings).not.toContain("Gateway 'nemoclaw' already removed or unreachable");
     expect(warnings).toContain(
       "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
     );
+    expect(rmSync).not.toHaveBeenCalled();
+    expect(logs).not.toContain("[3/6] NemoClaw CLI");
+    expect(logs).not.toContain("Claws retracted. Until next time.");
   });
 });

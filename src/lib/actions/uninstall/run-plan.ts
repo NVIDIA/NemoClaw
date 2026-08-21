@@ -861,6 +861,19 @@ const GATEWAY_ALREADY_ABSENT =
 const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
 
+function gatewayRegistrationRemovalFailureMessage(
+  gatewayLabel: string,
+  operation: "destroy" | "remove",
+  result: RunResult,
+): string {
+  const output = `${result.stdout}\n${result.stderr}`;
+  // Map untrusted command output only to fixed phrases so diagnostics stay
+  // actionable without echoing credentials or unbounded sandbox-controlled text.
+  const cause = /connection refused/iu.test(output) ? "connection refused; " : "";
+  const status = result.status === null ? "no exit status" : `exit ${String(result.status)}`;
+  return `Could not remove gateway registration '${gatewayLabel}': openshell gateway ${operation} failed (${cause}${status}).`;
+}
+
 function removeGatewayRegistration(
   runtime: UninstallRuntime,
   gatewayLabel: string,
@@ -880,7 +893,7 @@ function removeGatewayRegistration(
     return true;
   }
   if (!GATEWAY_REMOVE_UNSUPPORTED.test(removeOutput)) {
-    runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
+    runtime.warn(gatewayRegistrationRemovalFailureMessage(gatewayLabel, "remove", removeResult));
     return false;
   }
   if (!allowLegacyDestroy) {
@@ -905,7 +918,7 @@ function removeGatewayRegistration(
     runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
     return true;
   }
-  runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
+  runtime.warn(gatewayRegistrationRemovalFailureMessage(gatewayLabel, "destroy", destroyResult));
   return false;
 }
 
@@ -1729,8 +1742,7 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
     const versionDir = path.join(nodeVersionsDir, version.name);
     const modulesDir = path.join(versionDir, "lib", "node_modules");
     const packageEntry = dirEntries(modulesDir).find(
-      (entry) =>
-        (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
+      (entry) => (entry.isDirectory() || entry.isSymbolicLink()) && entry.name === "nemoclaw",
     );
     const packageDir = packageEntry ? path.join(modulesDir, packageEntry.name) : null;
     const packageBins = packageDir ? nvmPackageBinTargets(packageDir) : new Map<string, string>();
@@ -2307,7 +2319,9 @@ function removeHostModelStores(
   preserveForFailedLlamaCleanup: boolean,
 ): boolean {
   if (preserveForFailedLlamaCleanup) {
-    runtime.log("Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.");
+    runtime.log(
+      "Managed llama.cpp cleanup did not complete. NemoClaw kept model stores for retry.",
+    );
     return true;
   }
   if (scopedToSelectedGateway) {
