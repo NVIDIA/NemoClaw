@@ -8,7 +8,10 @@ import {
   initialDockerGpuRoute,
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
-import type { ManagedBootstrapNativeGpuFallbackRollbackOutcome } from "./managed-bootstrap/runtime-create";
+import type {
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
+} from "./managed-bootstrap/runtime-create";
 import {
   type OpenShellDockerSandboxContainerQuery,
   queryOpenShellDockerSandboxContainers,
@@ -33,10 +36,8 @@ export type SandboxGpuCreateAttemptFailure = {
   stage: SandboxGpuCreateFailureStage;
   error: unknown;
   fallbackEligible: boolean;
-  nativeCleanupHandoff?: Extract<
-    ManagedBootstrapNativeGpuFallbackRollbackOutcome,
-    { readonly kind: "openshell-owner-cleanup-required" }
-  >;
+  nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
+  nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 };
 
 export type SandboxGpuCreateAttemptResult<T> =
@@ -228,15 +229,33 @@ export function cleanupNativeGpuAttemptForFallback(
 }
 
 /**
- * Keep owner-managed runtimes out of the mutable-name cleanup path. A handoff
- * means the provider deliberately retained the exact sandbox/runtime identity
- * for recovery; OpenShell's name-only delete cannot consume that authority.
+ * Keep owner-managed runtimes out of the generic mutable-name cleanup path.
+ * Only the lifecycle's exact owner-cleanup receipt may authorize the retry.
  */
 export function cleanupNativeGpuFailureForFallback(
   sandboxName: string,
   failure: SandboxGpuCreateAttemptFailure,
   deps: NativeGpuFallbackCleanupDeps,
 ): NativeGpuFallbackCleanupResult {
+  if (failure.nativeCleanupReceipt) {
+    const receipt = failure.nativeCleanupReceipt;
+    if (receipt.sandboxName === sandboxName) {
+      return {
+        safe: true,
+        reason: null,
+        deleteStatus: null,
+        sandboxPresent: false,
+        containerIds: [],
+      };
+    }
+    return {
+      safe: false,
+      reason: "managed bootstrap owner cleanup receipt does not match the requested sandbox",
+      deleteStatus: null,
+      sandboxPresent: null,
+      containerIds: [receipt.runtimeId],
+    };
+  }
   if (failure.nativeCleanupHandoff) {
     return {
       safe: false,

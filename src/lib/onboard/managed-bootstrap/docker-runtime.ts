@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
+import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
 import { buildDockerGpuMode, selectDockerGpuPatchMode } from "../docker-gpu-patch-mode";
 import type { DockerGpuPatchMode } from "../docker-gpu-patch-types";
@@ -26,6 +28,8 @@ import {
 import { createDockerManagedBootstrapAdapter } from "./docker";
 import { createDockerManagedBootstrapAuthorityStore } from "./docker-authority-store";
 import type {
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
+  ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome,
   ManagedBootstrapRuntimeCompatibilityLaunchInput,
   ManagedBootstrapRuntimeCreateLaunchResult,
   ManagedBootstrapRuntimeCreateLifecycle,
@@ -38,6 +42,76 @@ type SupportedBootstrapSurface = Extract<
   RuntimeProviderBootstrapSurface,
   { readonly supported: true }
 >;
+
+type CompleteOwnerCleanupInput = Readonly<{
+  providerId: string;
+  bootstrapIdentity: string;
+  handoff: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
+  runOpenshell: NonNullable<
+    ManagedBootstrapRuntimeCreateLifecycleInput["dependencies"]["runOpenshell"]
+  >;
+  recoverUnfinished: ManagedBootstrapRuntimeCreateLifecycle["recoverUnfinished"];
+}>;
+
+/**
+ * Consume OpenShell's name-only deletion API only after binding that name to
+ * the durable sandbox ID retained by the managed-bootstrap transaction.
+ */
+export async function completeDockerManagedNativeGpuFallbackOwnerCleanup(
+  input: CompleteOwnerCleanupInput,
+): Promise<ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome> {
+  const { handoff } = input;
+  try {
+    const lookup = input.runOpenshell(["sandbox", "get", handoff.sandboxName], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    if (
+      lookup.error ||
+      Number(lookup.status ?? 1) !== 0 ||
+      parseOpenShellSandboxId(String(lookup.stdout ?? "")) !== handoff.sandboxId
+    ) {
+      return handoff;
+    }
+    const deletion = input.runOpenshell(["sandbox", "delete", handoff.sandboxName], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    const deleteStatus = Number(deletion.status ?? 1);
+    const { alreadyGone } = getSandboxDeleteOutcome({
+      status: deletion.status ?? null,
+      stdout: String(deletion.stdout ?? ""),
+      stderr: String(deletion.stderr ?? ""),
+    });
+    if (deletion.error || (deleteStatus !== 0 && !alreadyGone)) return handoff;
+
+    const recovery = await input.recoverUnfinished();
+    const exactReceipt = recovery.receipts.find(
+      (receipt) =>
+        receipt.providerId === input.providerId &&
+        receipt.sourcePhase === "owner-cleanup-required" &&
+        receipt.bootstrapIdentity === input.bootstrapIdentity &&
+        receipt.outcome === "rolled-back" &&
+        receipt.sandbox.sandboxName === handoff.sandboxName &&
+        receipt.sandbox.sandboxId === handoff.sandboxId &&
+        receipt.sandbox.driverId === input.providerId &&
+        receipt.finalization.bootstrapIdentity === input.bootstrapIdentity &&
+        receipt.finalization.outcome === "rolled-back" &&
+        receipt.finalization.sandbox.sandboxName === handoff.sandboxName &&
+        receipt.finalization.sandbox.sandboxId === handoff.sandboxId &&
+        receipt.finalization.sandbox.driverId === input.providerId,
+    );
+    if (!exactReceipt) return handoff;
+    return Object.freeze({
+      kind: "openshell-owner-cleanup-completed",
+      sandboxName: handoff.sandboxName,
+      sandboxId: handoff.sandboxId,
+      runtimeId: handoff.runtimeId,
+    });
+  } catch {
+    return handoff;
+  }
+}
 
 function dockerReplacementOptions(
   mode: DockerGpuPatchMode,
@@ -158,6 +232,18 @@ function createDockerLifecycle(
             nativeGpuAttachmentState: snapshot.nativeGpuAttachmentState,
           }
         : null;
+    },
+    async completeNativeGpuFallbackOwnerCleanup(handoff) {
+      if (handoff.sandboxName !== input.sandboxName || !input.dependencies.runOpenshell) {
+        return handoff;
+      }
+      return completeDockerManagedNativeGpuFallbackOwnerCleanup({
+        providerId,
+        bootstrapIdentity: input.bootstrapIdentity,
+        handoff,
+        runOpenshell: input.dependencies.runOpenshell,
+        recoverUnfinished: () => recoverManagedBootstrapTransactions(adapter),
+      });
     },
     async recoverUnfinished() {
       return recoverManagedBootstrapTransactions(adapter);
