@@ -280,7 +280,9 @@ describe("install.sh ensure_docker — Station intent across self re-exec", () =
         "set -euo pipefail",
         'source "$INSTALLER_UNDER_TEST" >/dev/null',
         "uname() { printf 'Linux\\n'; }",
-        "docker() { return 1; }",
+        "docker() {",
+        '  [[ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" == "1" ]]',
+        "}",
         "systemctl() { return 0; }",
         "sudo() { return 0; }",
         "id() {",
@@ -303,8 +305,8 @@ describe("install.sh ensure_docker — Station intent across self re-exec", () =
         "phase=parent",
         '[[ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" == "1" ]] && phase=child',
         'printf \'PHASE=%s MODE=%s PROVIDER=%s\\n\' "$phase" "$_STATION_INSTALL_MODE" "$NEMOCLAW_PROVIDER"',
-        '[[ "$phase" == "child" ]] && exit 0',
         "ensure_docker",
+        '[[ "$phase" == "child" ]] && printf "CHILD_CONTINUED\\n"',
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -332,6 +334,7 @@ describe("install.sh ensure_docker — Station intent across self re-exec", () =
       expect(result.status, output).toBe(0);
       expect(output).toContain("PHASE=parent MODE=express PROVIDER=install-vllm");
       expect(output).toContain("PHASE=child MODE=express PROVIDER=install-vllm");
+      expect(output).toContain("CHILD_CONTINUED");
       expect(output).not.toContain("refusing to resume it in provider mode");
       expect(fs.readFileSync(receipt, "utf-8")).toBe(receiptContents);
     } finally {
