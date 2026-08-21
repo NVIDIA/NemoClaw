@@ -39,6 +39,7 @@ type LockedGraph = ReviewedPackage &
 type AuditConfig = Readonly<{
   archivePackages: readonly ReviewedPackage[];
   archiveGraphId: string;
+  archiveTarVersion: "7.5.21";
   artifactDirectory: string;
   exceptionFile: string;
   lockedGraphs: readonly LockedGraph[];
@@ -135,6 +136,7 @@ export function parseAuditConfig(contents: string): AuditConfig {
     !SEVERITIES.includes(parsed.severityThreshold) ||
     typeof parsed.archiveGraphId !== "string" ||
     !parsed.archiveGraphId ||
+    parsed.archiveTarVersion !== "7.5.21" ||
     typeof parsed.exceptionFile !== "string" ||
     !parsed.exceptionFile ||
     typeof parsed.registryOrigin !== "string" ||
@@ -164,12 +166,28 @@ function readConfig(): AuditConfig {
   return parseAuditConfig(fs.readFileSync(CONFIG_PATH, "utf-8"));
 }
 
-function materializeArchiveGraph(packages: readonly ReviewedPackage[], tempRoot: string): string {
+export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
+  if (archiveTarVersion !== "7.5.21") {
+    throw new Error("reviewed archive graph tar version must be exactly 7.5.21");
+  }
+  return {
+    name: "nemoclaw-reviewed-production-graph",
+    overrides: { tar: archiveTarVersion },
+    private: true,
+    version: "1.0.0",
+  } as const;
+}
+
+function materializeArchiveGraph(
+  packages: readonly ReviewedPackage[],
+  tempRoot: string,
+  archiveTarVersion: "7.5.21",
+): string {
   const graphDirectory = path.join(tempRoot, "reviewed-archive-graph");
   fs.mkdirSync(graphDirectory);
   fs.writeFileSync(
     path.join(graphDirectory, "package.json"),
-    `${JSON.stringify({ name: "nemoclaw-reviewed-production-graph", private: true, version: "1.0.0" }, null, 2)}\n`,
+    `${JSON.stringify(reviewedArchiveGraphManifest(archiveTarVersion), null, 2)}\n`,
   );
   const archives = packages.map((reviewed) => {
     const archive = packReviewedNpmArchive({
@@ -529,7 +547,11 @@ function main(): void {
       {
         label: "reviewed archive graph",
         result: runReviewedNpmAudit({
-          directory: materializeArchiveGraph(config.archivePackages, tempRoot),
+          directory: materializeArchiveGraph(
+            config.archivePackages,
+            tempRoot,
+            config.archiveTarVersion,
+          ),
           exceptionFile,
           graph: config.archiveGraphId,
           provenance: {
